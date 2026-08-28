@@ -50,8 +50,7 @@ export function routeCapabilities(path: string): RouteCapabilities {
   if (pathname === "/share" || pathname.startsWith("/share/")) {
     return { profile: "projects", privateContent: false, jobHistory: false };
   }
-  const canvas = pathname === "/canvas" || pathname.startsWith("/canvas/");
-  const library = pathname === "/library" || pathname.startsWith("/library/");
   const projectContents = pathname === "/studio/project" || pathname.startsWith("/studio/project/");
-  return { profile: "workspace", privateContent: !projectContents, jobHistory: canvas || library || !projectContents };
+  // Project attention includes terminal failures even though it needs no private inputs.
+  return { profile: "workspace", privateContent: !projectContents, jobHistory: true };
 }

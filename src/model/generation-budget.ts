@@ -85,6 +85,7 @@ export function documentRenderTokenReservation(kind: string, itemCount = 1, maxi
 }
 
 const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
+  "scenePolicyStopSummary",
   "providerSubmissionProtocol", "providerSubmissionLegacyUncertain", "providerSubmissions",
   "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission", "presentationProviderClientRequestId", "presentationCandidates", "presentationRecoveryOnly", "recoverablePresentationCandidate",
   "reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "prepaidProviderCostMicrousd", "audioEstimatedCostMicrousd",

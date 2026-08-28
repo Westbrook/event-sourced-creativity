@@ -341,7 +341,7 @@ test("each route requests only its own evidence, private content, and historical
     "/operations/canvas": ["projects", false, false], "/operations/events/permissions": ["projects", false, false],
     "/laboratory/replay": ["projects", false, false], "/laboratory/image-adapters": ["projects", false, false],
     "/laboratory/focal-points": ["workspace", false, false], "/laboratory/design-system": ["workspace", false, false],
-    "/studio/project": ["workspace", false, false], "/document/document-1": ["workspace", true, true],
+    "/studio/project": ["workspace", false, true], "/document/document-1": ["workspace", true, true],
     "/canvas/canvas-1": ["workspace", true, true], "/canvas/projects": ["projects", false, false], "/canvas/projects/project-1": ["projects", false, false], "/canvas/library": ["workspace", true, true], "/canvas/library/output/output-1": ["workspace", true, true], "/library": ["workspace", true, true], "/share/token": ["projects", false, false],
   };
   for (const [path, [profile, privateContent, jobHistory]] of Object.entries(expected)) assert.deepEqual(routeCapabilities(`${path}?safe=1#section`), { profile, privateContent, jobHistory }, path);

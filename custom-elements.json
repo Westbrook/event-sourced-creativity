@@ -10612,7 +10612,7 @@
             {
               "name": "document-artifact-queued",
               "type": {
-                "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"
+                "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; } | { documentId: string; kind: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },

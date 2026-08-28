@@ -33,10 +33,10 @@ import { AudioProviderInputError } from "../src/model/audio-provider-contracts";
 import { clearPresentationServerOwnedCheckpointFields, documentRenderTokenReservation, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField } from "../src/model/generation-budget";
 import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, minimumPresentationSlideCount, scoreManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production";
 import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
-import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
+import { buildPresentationSourceContract, inferPresentationSourceOutline, presentationCitationEvidenceChecks } from "../src/model/presentation-source";
 import { documentArtifactValidationIssues, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactDraft } from "../src/model/document-artifacts";
 import { combinedContextGroups } from "../src/model/combined-context";
-import { safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
+import { historicalPresentationValidationRejection, presentationCandidateAccounting, presentationCandidateOriginalValidation, safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, sanitizePresentationCitationChecks, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
 import { authoritativeCreativeContext, authoritativePresentationRecoveryContext, ContextIntegrityError } from "./context-authority";
@@ -45,6 +45,7 @@ import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from
 import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES, PRESENTATION_ADAPTER_VERSION } from "./openai-adapter";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights";
 import { combinedSceneSnapshot } from "./managed-production";
+import { prepareSceneCostConsent, readExistingSceneRequest, requireSceneCostApproval, sceneCostErrorResponse, scenePolicyStopIncomingField, readScenePolicyStopEvidence, sceneRequestExclusion, type PreparedSceneCost } from "./scene-cost-consent.ts";
 import { standingConstraints } from "../src/model/taste";
 import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from "../src/model/production-workflow";
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration";
@@ -177,7 +178,7 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
 
 function safeScopedJob(row:DocumentJobRow,recoveryBlocker:DocumentJobRow|null=null){
   const job=serializeJob(row,recoveryBlocker,false);
-  const sensitive=new Set(["providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
+  const sensitive=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
   const recoverySummary=(value:unknown)=>value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key,item])=>["mode","original_source_revision","new_generation_requests","provider_retrieval_only","current_edits_preserved"].includes(key)&&["string","number","boolean"].includes(typeof item))):null;
   sensitive.add("audioOriginalSourceRecovery");
   const redact=(value:unknown):unknown=>Array.isArray(value)?value.map(redact):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key])=>!sensitive.has(key)).map(([key,item])=>[key,key==="recovery"?recoverySummary(item):redact(item)])):value;
@@ -376,18 +377,18 @@ async function retainedPresentationContentSha256(content:string){
 
 type PrivatePresentationCandidateRow={
   content_id:string;content:string;expires_at:string;created_at:string;
-  classification:string;policy_version:number;source_content:string;source_expires_at:string;
+  classification:string;policy_version:number;source_content_id:string;source_content:string;source_expires_at:string;read_expires_at:string;
 };
-type VerifiedPresentationCandidate={row:PrivatePresentationCandidateRow;envelope:Record<string,unknown>;summary:PresentationCandidateSummary;detail:PresentationCandidateDetail};
+type VerifiedPresentationCandidate={row:PrivatePresentationCandidateRow;envelope:Record<string,unknown>;summary:PresentationCandidateSummary;detail:PresentationCandidateDetail;originalValidation:Record<string,unknown>;accountingEvidence:string};
 
 /** Read paid drafts and their original governed source evidence under one live, actor-private authorization guard. */
-async function privatePresentationCandidateRows(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId=""){
+function privatePresentationCandidateQuery(user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId=""){
   const now=new Date().toISOString();
   const scope=user.projectExecution;
-  const sharedSelect="content.content_id,content.content,content.expires_at,content.created_at,source.content AS source_content,source.expires_at AS source_expires_at";
+  const sharedSelect=`content.content_id,content.content,content.expires_at,content.created_at,source.content_id AS source_content_id,source.content AS source_content,source.expires_at AS source_expires_at,MIN(content.expires_at,source.expires_at${scope?",selection.expires_at":""}) AS read_expires_at`;
   if(scope){
-    if(!projectContextId||scope.actorUserId!==user.userId)return[];
-    const result=await env.DB.prepare(`SELECT ${sharedSelect},retention.classification,retention.policy_version
+    if(!projectContextId||scope.actorUserId!==user.userId)return null;
+    return{sql:`SELECT ${sharedSelect},retention.classification,retention.policy_version
       FROM private_content content
       JOIN project_resource_scopes evidence ON evidence.resource_kind='content' AND evidence.resource_id=content.content_id
         AND evidence.visibility='actor_private' AND evidence.project_access_id=? AND evidence.organization_id=? AND evidence.project_id=?
@@ -406,9 +407,9 @@ async function privatePresentationCandidateRows(env:WorkerEnv,user:PilotUser,job
         AND json_extract(anchor.payload,'$.actor_user_id')=resource.actor_user_id
       JOIN project_context_sessions selection ON selection.context_id=? AND selection.principal_user_id=?
         AND selection.organization_id=evidence.organization_id AND selection.project_access_id=evidence.project_access_id
-        AND selection.revoked_at IS NULL AND selection.expires_at>?
+        AND selection.revoked_at IS NULL AND selection.expires_at>? AND selection.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       JOIN private_content source ON source.owner_id=content.owner_id AND source.kind='document-artifact-input'
-        AND source.redacted_at IS NULL AND source.expires_at>? AND json_valid(source.content)=1
+        AND source.redacted_at IS NULL AND source.expires_at>? AND source.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_valid(source.content)=1
         AND json_extract(source.content,'$.job_id')=? AND json_extract(source.content,'$.document_id')=?
       JOIN project_resource_scopes source_scope ON source_scope.resource_kind='content' AND source_scope.resource_id=source.content_id
         AND source_scope.visibility='actor_private' AND source_scope.project_access_id=evidence.project_access_id
@@ -418,32 +419,130 @@ async function privatePresentationCandidateRows(env:WorkerEnv,user:PilotUser,job
         AND source_retention.organization_id=evidence.organization_id AND source_retention.project_access_id=evidence.project_access_id
         AND source_retention.project_id=evidence.project_id AND source_retention.actor_user_id=evidence.actor_user_id
         AND source_retention.classification='governed-evidence' AND source_retention.assigned_expires_at=source.expires_at
-      WHERE content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>?
+      WHERE content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>? AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
         AND json_valid(content.content)=1 AND json_extract(content.content,'$.job_id')=?
         AND json_extract(content.content,'$.stream_id')=? AND json_extract(content.content,'$.document_id')=?
-        AND (?='' OR json_extract(content.content,'$.response_id')=?) AND ${activeProjectExecutionSql}
-      ORDER BY content.created_at,content.content_id LIMIT 64`)
-      .bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,user.userId,
+        AND (?='' OR json_extract(content.content,'$.response_id')=?) AND NOT EXISTS(SELECT 1 FROM organization_deletion_jobs deletion WHERE deletion.organization_id=evidence.organization_id AND deletion.status IN('pending','partial','processing','completed')) AND ${activeProjectExecutionSql}
+      ORDER BY content.created_at,content.content_id LIMIT 64`,bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,user.userId,
         job.job_id,user.streamId,projectContextId,user.userId,now,now,job.job_id,job.document_id,
         user.userId,now,job.job_id,user.streamId,job.document_id,responseId,responseId,
-        ...projectExecutionBindings(scope,job.document_id)).all<PrivatePresentationCandidateRow>();
-    return result.results;
+        ...projectExecutionBindings(scope,job.document_id)]};
   }
-  const result=await env.DB.prepare(`SELECT ${sharedSelect},CASE WHEN json_extract(content.content,'$.preserved_at') IS NOT NULL THEN 'governed-evidence' ELSE 'transient-private' END AS classification,0 AS policy_version
+  return{sql:`SELECT ${sharedSelect},CASE WHEN json_extract(content.content,'$.preserved_at') IS NOT NULL THEN 'governed-evidence' ELSE 'transient-private' END AS classification,0 AS policy_version
     FROM private_content content
     JOIN private_content source ON source.owner_id=content.owner_id AND source.kind='document-artifact-input'
-      AND source.redacted_at IS NULL AND source.expires_at>? AND json_valid(source.content)=1
+      AND source.redacted_at IS NULL AND source.expires_at>? AND source.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_valid(source.content)=1
       AND json_extract(source.content,'$.job_id')=? AND json_extract(source.content,'$.document_id')=?
-    WHERE content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>?
+    WHERE content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>? AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND json_valid(content.content)=1 AND json_extract(content.content,'$.job_id')=?
       AND json_extract(content.content,'$.stream_id')=? AND json_extract(content.content,'$.document_id')=?
       AND (?='' OR json_extract(content.content,'$.response_id')=?)
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=?)
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id IN(content.content_id,source.content_id))
-    ORDER BY content.created_at,content.content_id LIMIT 64`)
-    .bind(now,job.job_id,job.document_id,user.userId,now,job.job_id,user.streamId,job.document_id,responseId,responseId,job.job_id)
-    .all<PrivatePresentationCandidateRow>();
-  return result.results;
+    ORDER BY content.created_at,content.content_id LIMIT 64`,bindings:[now,job.job_id,job.document_id,user.userId,now,job.job_id,user.streamId,job.document_id,responseId,responseId,job.job_id]};
+}
+
+async function privatePresentationCandidateRows(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId=""){
+  const query=privatePresentationCandidateQuery(user,job,projectContextId,responseId);
+  return query?(await env.DB.prepare(query.sql).bind(...query.bindings).all<PrivatePresentationCandidateRow>()).results:[];
+}
+
+type PresentationAccountingEvidence={reservations:Record<string,unknown>[];usage:Record<string,unknown>[]};
+function presentationAccountingEvidenceQuery(user:PilotUser,job:DocumentJobRow){
+  const prefix=job.job_id+":attempt:",scope=user.projectExecution;
+  const custody=scope?`EXISTS(SELECT 1 FROM project_budget_reservation_scopes held_scope
+    WHERE (held_scope.reservation_kind,held_scope.reservation_id,held_scope.organization_id,held_scope.project_access_id,held_scope.actor_user_id,held_scope.workspace_scope_id)
+      =('usd',reservation.reservation_id,?,?,?,reservation.workspace_id))`
+    :`NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes held_scope WHERE held_scope.reservation_kind='usd' AND held_scope.reservation_id=reservation.reservation_id)`;
+  return{sql:`SELECT json_object('reservations',json((SELECT json_group_array(json_object(
+      'reservation_id',reservation_id,'status',status,'reserved_microusd',reserved_microusd,'used_microusd',used_microusd))
+    FROM(SELECT reservation.* FROM cost_budget_reservations reservation
+      WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.operation='document-render:slides'
+        AND(reservation.correlation_id=? OR reservation.correlation_id=? OR substr(reservation.correlation_id,1,?)=?) AND ${custody}
+      ORDER BY reservation.reservation_id))),
+    'usage',json((SELECT json_group_array(json(payload)) FROM(SELECT payload FROM events
+      WHERE stream_id=? AND actor='worker:policy' AND type='GenerationUsageRecorded' AND json_valid(payload)=1
+        AND json_extract(payload,'$.document_id')=?
+        AND(json_extract(payload,'$.operation')='document-render:slides' OR substr(json_extract(payload,'$.operation'),1,23)='document-render:slides:')
+        AND(correlation_id=? OR correlation_id=? OR substr(correlation_id,1,?)=?)
+      ORDER BY event_id)))) AS evidence`,
+    bindings:[user.billingUserId??user.userId,user.streamId,job.correlation_id,job.job_id,prefix.length,prefix,
+      ...(scope?[scope.organizationId,scope.projectAccessId,user.userId]:[]),
+      user.streamId,job.document_id,job.correlation_id,job.job_id,prefix.length,prefix] as Array<string|number>};
+}
+
+/** Materialize independent proofs instead of nesting deep private-source/ACL expressions.
+ * This same final statement certifies reads and the preservation transaction. */
+function presentationCandidateDisclosureQuery(user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId:string,accountingEvidence:string){
+  const snapshot=user.authorizationSnapshot,source=privatePresentationCandidateQuery(user,job,projectContextId,responseId);
+  if(!snapshot||!source)return null;
+  const financial=presentationAccountingEvidenceQuery(user,job);
+  return{
+    ctes:`WITH candidate_principal AS MATERIALIZED(${PRINCIPAL_WITH_ACCESS_SQL}),
+      candidate_authority AS MATERIALIZED(SELECT 1 AS authorized FROM candidate_principal principal
+        WHERE(principal.user_id,principal.role,principal.updated_at,COALESCE(principal.permission_epoch,''),
+          COALESCE(principal.grants_json,'[]'),COALESCE(principal.organizations_json,'[]'),COALESCE(principal.projects_json,'[]'),
+          COALESCE(principal.identity_policies_json,'[]'),COALESCE(principal.approved_canvas_requirements,0))=(?,?,?,?,?,?,?,?,?)
+          AND principal.consent_version IS ?),
+      candidate_custody AS MATERIALIZED(${source.sql}),
+      candidate_accounting AS MATERIALIZED(${financial.sql})`,
+    from:"candidate_custody CROSS JOIN candidate_authority CROSS JOIN candidate_accounting",
+    where:`candidate_authority.authorized=1 AND candidate_accounting.evidence=?
+      AND EXISTS(SELECT 1 FROM document_jobs current_job WHERE(current_job.job_id,current_job.owner_id,current_job.stream_id,
+        current_job.document_id,current_job.kind,current_job.status,current_job.correlation_id)=(?,?,?,?,?,?,?)
+        AND current_job.request_json IS ? AND current_job.result_json IS ?)`,
+    bindings:[user.userId,user.userId,user.role,snapshot.updatedAt,snapshot.rawEpoch,snapshot.grants,snapshot.organizations,
+      snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,user.consentVersion,...source.bindings,...financial.bindings,
+      accountingEvidence,job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.correlation_id,job.request_json,job.result_json] as Array<string|number|null>,
+  };
+}
+
+/** Last await before disclosure: audit writes, hashes and assessments happen before this read-only batch.
+ * Nothing from these internal SQL proofs or private row copies is serialized to the client. */
+async function certifyPresentationCandidateDisclosures(env:WorkerEnv,user:PilotUser,entries:Array<{job:DocumentJobRow;contextId:string;candidates:VerifiedPresentationCandidate[]}>){
+  const nonempty=entries.filter(entry=>entry.candidates.length);
+  if(!nonempty.length)return true;
+  const queries=nonempty.map(({job,contextId,candidates})=>presentationCandidateDisclosureQuery(user,job,contextId,candidates.length===1?candidates[0]!.summary.responseId:"",candidates[0]!.accountingEvidence));
+  if(queries.some(query=>!query))return false;
+  const statements=queries.map(query=>env.DB.prepare(`${query!.ctes} SELECT candidate_custody.* FROM ${query!.from} WHERE ${query!.where}`).bind(...query!.bindings));
+  const current=await env.DB.batch(statements);
+  return nonempty.every((entry,index)=>{
+    const rows=(current[index]?.results??[]) as PrivatePresentationCandidateRow[];
+    return entry.candidates.every(({row})=>rows.some(value=>value.content_id===row.content_id&&value.content===row.content
+      &&value.expires_at===row.expires_at&&value.created_at===row.created_at&&value.classification===row.classification
+      &&value.policy_version===row.policy_version&&value.source_content_id===row.source_content_id
+      &&value.source_content===row.source_content&&value.source_expires_at===row.source_expires_at
+      &&Date.parse(value.read_expires_at)>Date.now()));
+  });
+}
+
+function presentationOriginalValidation(job:DocumentJobRow,row:PrivatePresentationCandidateRow,envelope:Record<string,unknown>,candidate:Record<string,unknown>|undefined,sourceReceiptHash:string){
+  const identity={response_id:envelope.response_id,content_sha256:envelope.content_sha256,
+    source_snapshot_sha256:envelope.source_snapshot_sha256,source_content_id:row.source_content_id,source_receipt_sha256:sourceReceiptHash};
+  if(row.classification==="governed-evidence"&&!Object.hasOwn(envelope,"original_validation"))return{schema_version:1,adapter_version:null,outcome:"unconfirmed",...identity};
+  if(Object.hasOwn(envelope,"original_validation")){
+    const saved=envelope.original_validation&&typeof envelope.original_validation==="object"&&!Array.isArray(envelope.original_validation)?envelope.original_validation as Record<string,unknown>:{};
+    if(saved.schema_version===1&&["rejected","accepted","unconfirmed"].includes(String(saved.outcome))
+      &&Object.entries(identity).every(([key,value])=>saved[key]===value)
+      &&(saved.adapter_version===null||typeof saved.adapter_version==="string"))return saved;
+    return{schema_version:1,adapter_version:null,outcome:"unconfirmed",...identity};
+  }
+  const checkpoint=parseResult(job);
+  const object=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
+  const receipt=object(checkpoint.generationReceipt),validation=object(object(checkpoint.plannerInput).validation);
+  const reconciliation=object(validation.adapter_reconciliation);
+  const responseIds=validation.provider_response_ids;
+  // A cached recovery flag can become stale. The original successful selected plan
+  // is independent evidence only with its exact original response set, final verdict
+  // and source receipt. Current parsing alone cannot invent an original acceptance.
+  const originalPlan=candidate?parseDocumentArtifactContent(JSON.stringify(checkpoint.artifactPlan??null)):null;
+  const originalPlanAccepted=Boolean(originalPlan&&checkpoint.plannerResponseId===envelope.response_id
+    &&Array.isArray(responseIds)&&responseIds.length>0&&responseIds.every(id=>typeof id==="string"&&id)
+    &&responseIds.at(-1)===envelope.response_id&&JSON.stringify(responseIds)===JSON.stringify(checkpoint.plannerResponseIds)
+    &&reconciliation.final_issue_count===0&&typeof reconciliation.adapter_version==="string"
+    &&reconciliation.adapter_version===receipt.presentation_adapter_version
+    &&receipt.input_ref===row.source_content_id&&receipt.source_snapshot_sha256===envelope.source_snapshot_sha256);
+  return{...presentationCandidateOriginalValidation(checkpoint,candidate?.locallyRecoverable===true||originalPlanAccepted),...identity};
 }
 
 async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId=""):Promise<VerifiedPresentationCandidate[]>{
@@ -455,15 +554,10 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
   const retained=await privatePresentationCandidateRows(env,user,job,projectContextId,responseId);
   if(!retained.length)return[];
   const receiptCheckpoint=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)?checkpoint.generationReceipt as Record<string,unknown>:{};
-  let settledCostMicrousd=Math.max(0,Math.floor(Number(receiptCheckpoint.settled_cost_microusd??0)));
-  if(!settledCostMicrousd){
-    const settled=await env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN json_valid(payload)=1
-      THEN MAX(0,CAST(COALESCE(json_extract(payload,'$.cost_microusd'),0) AS INTEGER)) ELSE 0 END),0) AS settled_cost_microusd
-      FROM events WHERE stream_id=? AND type='GenerationUsageRecorded'
-        AND json_extract(payload,'$.document_id')=? AND correlation_id LIKE ?`)
-      .bind(user.streamId,job.document_id,`${job.job_id}:attempt:%`).first<{settled_cost_microusd:number}>();
-    settledCostMicrousd=Math.max(0,Math.floor(Number(settled?.settled_cost_microusd??0)));
-  }
+  const financial=presentationAccountingEvidenceQuery(user,job);
+  const financialRow=await env.DB.prepare(financial.sql).bind(...financial.bindings).first<{evidence:string}>();
+  if(!financialRow)return[];
+  const accountingEvidence=financialRow.evidence,accountingState=JSON.parse(accountingEvidence) as PresentationAccountingEvidence;
   const verified:VerifiedPresentationCandidate[]=[];
   for(const [ordinal,row] of retained.entries()){
     let envelope:Record<string,unknown>;let receipt:Record<string,unknown>;
@@ -493,6 +587,10 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
       ||candidate.contentSha256!==envelope.content_sha256||Number(candidate.candidateBytes??-1)!==rawBytes
       ||candidate.model!==envelope.model||candidate.compiledSnapshotSha256!==envelope.compiled_snapshot_sha256
       ||candidate.pageIndex!==envelope.page_index||candidate.pageCount!==envelope.page_count||candidate.globalStartIndex!==envelope.global_start_index))continue;
+    const originalValidation=presentationOriginalValidation(job,row,envelope,candidate,await retainedPresentationContentSha256(row.source_content));
+    const reviewOnlyReason=historicalPresentationValidationRejection(checkpoint,PRESENTATION_ADAPTER_VERSION)
+      ||originalValidation.outcome==="rejected"&&originalValidation.adapter_version!==PRESENTATION_ADAPTER_VERSION
+      ?"historical-validation-rejection" as const:row.classification==="governed-evidence"&&originalValidation.outcome==="unconfirmed"?"validation-provenance-unavailable" as const:undefined;
     const pageIndex=Number(envelope.page_index??0),pageCount=Number(envelope.page_count??1),globalStartIndex=Number(envelope.global_start_index??0);
     const plannedSlideCount=Number(envelope.planned_slide_count??receiptRequest.predicted_slide_count??receiptRequest.item_count??request.itemCount??0);
     const requestedSlideCount=Number(envelope.requested_slide_count??receiptRequest.requested_slide_count??request.requestedSlideCount??plannedSlideCount);
@@ -535,13 +633,15 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
       pageIndex,pageCount,globalStartIndex,generatedSlideCount,requestedSlideCount,plannedSlideCount,
       providerBatchCount:Number(envelope.provider_batch_count??planned?.providerBatchCount??1),
       providerCalls:Math.max(recordedResponses.size,Number(receiptCheckpoint.actual_provider_call_count??0),providerAttempt),
-      settledCostMicrousd,
-      complete:Boolean(assessment.output&&issues.length===0&&pageCount===1&&generatedSlideCount===plannedSlideCount&&requestedSlideCount===plannedSlideCount&&missingContextGroupLabels.length===0),
+      settledCostMicrousd:null,
+      complete:Boolean(originalValidation.outcome==="accepted"&&!reviewOnlyReason&&assessment.output&&issues.length===0&&pageCount===1&&generatedSlideCount===plannedSlideCount&&requestedSlideCount===plannedSlideCount&&missingContextGroupLabels.length===0),
+      ...(reviewOnlyReason?{reviewOnlyReason}:{}),
       missingContextGroupLabels,issues,
     };
-    const sourceContract=buildPresentationSourceContract(sourceSnapshot,{requestedSlideCount:plannedSlideCount,itemCount:expectedPageCount});
+    const sourceContract=assessment.sourceContract;
     const privateReferences=[...sourceContract.sources.flatMap((source)=>[source.alias,source.sourceId,source.blockId??"",...source.contextGroupIds]),...groups.map((group)=>group.id)];
     const slides=sanitizePresentationCandidateSlides(assessment.output?.items??[],labels,privateReferences);
+    const citationChecks=sanitizePresentationCitationChecks(presentationCitationEvidenceChecks(assessment.output?.items??[],sourceContract,{pageStart:globalStartIndex,pageSize:expectedPageCount}),privateReferences);
     let rawOutput:Record<string,unknown>={};try{rawOutput=JSON.parse(raw) as Record<string,unknown>;}catch{/* Invalid paid JSON remains reviewable as metadata only. */}
     const rawItems=Array.isArray(rawOutput.items)?rawOutput.items:[];
     const normalizationChanges=slides.flatMap((slide,index)=>{
@@ -553,8 +653,19 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     });
     const sourcePresentation=assessment.output?.presentation;
     const presentation=sourcePresentation?{...sourcePresentation,theme:sanitizePresentationCandidateText(sourcePresentation.theme,privateReferences),footerLabel:sanitizePresentationCandidateText(sourcePresentation.footerLabel,privateReferences),...(sourcePresentation.fontFamily?{fontFamily:sanitizePresentationCandidateText(sourcePresentation.fontFamily,privateReferences)}:{})}:null;
-    const detail:PresentationCandidateDetail={...summary,title:sanitizePresentationCandidateText(assessment.output?.title,privateReferences),summary:sanitizePresentationCandidateText(assessment.output?.summary,privateReferences),presentation,slides,normalizationChanges};
-    verified.push({row,envelope,summary,detail});
+    const detail:PresentationCandidateDetail={...summary,title:sanitizePresentationCandidateText(assessment.output?.title,privateReferences),summary:sanitizePresentationCandidateText(assessment.output?.summary,privateReferences),presentation,slides,citationChecks,normalizationChanges};
+    verified.push({row,envelope,summary,detail,originalValidation,accountingEvidence});
+  }
+  const accounting=presentationCandidateAccounting(checkpoint,{...accountingState,responseIds:verified.map(candidate=>candidate.summary.responseId),
+    minimumAttempt:Math.max(0,...verified.map(candidate=>candidate.summary.providerAttempt)),
+    preserved:verified.flatMap(candidate=>{const saved=candidate.envelope.preserved_accounting;
+      if(!saved||typeof saved!=="object"||Array.isArray(saved))return[];
+      const record=saved as Record<string,unknown>;
+      return["response_id","content_sha256","source_snapshot_sha256","source_content_id","source_receipt_sha256"].every(key=>record[key]===candidate.originalValidation[key])?[record]:[];})});
+  for(const candidate of verified){
+    candidate.summary={...candidate.summary,settledCostMicrousd:accounting.settled_cost_microusd,
+      providerCalls:Math.max(candidate.summary.providerAttempt,accounting.actual_provider_call_count??0,accounting.attempted_provider_call_count??0)};
+    candidate.detail={...candidate.detail,...candidate.summary,accounting};
   }
   return verified.sort((left,right)=>left.summary.providerAttempt-right.summary.providerAttempt
     ||left.summary.pageIndex-right.summary.pageIndex
@@ -575,6 +686,7 @@ async function freshlyRecoverablePresentationRows(env:WorkerEnv,user:PilotUser,r
       const retained=await readJob(env,user.userId,compact.job_id);
       if(!retained||retained.owner_id!==user.userId||retained.stream_id!==user.streamId||retained.document_id!==compact.document_id)continue;
       const checkpoint=parseResult(retained);
+      if(historicalPresentationValidationRejection(checkpoint,PRESENTATION_ADAPTER_VERSION)){certified.set(compact.job_id,false);continue;}
       const reservationId=String(checkpoint.costReservationId??"");
       const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
       if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")continue;
@@ -589,7 +701,7 @@ async function freshlyRecoverablePresentationRows(env:WorkerEnv,user:PilotUser,r
 }
 
 async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,candidate:VerifiedPresentationCandidate){
-  if(candidate.summary.retentionClass==="governed-evidence")return candidate.summary;
+  if(candidate.summary.retentionClass==="governed-evidence")return await certifyPresentationCandidateDisclosures(env,user,[{job,contextId:projectContextId,candidates:[candidate]}])?candidate.summary:null;
   const now=new Date().toISOString();
   const scope=user.projectExecution;
   const policy=scope?await env.DB.prepare("SELECT evidence_days,version FROM organization_retention_policies WHERE organization_id=?").bind(scope.organizationId).first<{evidence_days:number;version:number}>():null;
@@ -598,7 +710,8 @@ async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:Do
   const candidateExpiry=Math.max(Date.parse(candidate.row.expires_at),Math.min(Date.parse(candidate.row.source_expires_at),Date.parse(candidate.row.created_at)+evidenceDays*86_400_000));
   if(!Number.isFinite(candidateExpiry)||candidateExpiry<=Date.now())return null;
   const expiresAt=new Date(candidateExpiry).toISOString();
-  const envelope={...candidate.envelope,preserved_at:now,preservation_expires_at:expiresAt,retention_class:"governed-evidence"};
+  const envelope={...candidate.envelope,preserved_at:now,preservation_expires_at:expiresAt,retention_class:"governed-evidence",
+    original_validation:candidate.originalValidation,preserved_accounting:{...candidate.originalValidation,accounting:candidate.detail.accounting}};
   const checkpoint=parseResult(job);
   if(Array.isArray(checkpoint.presentationCandidates))checkpoint.presentationCandidates=checkpoint.presentationCandidates.map((entry)=>entry&&typeof entry==="object"&&(entry as Record<string,unknown>).responseId===candidate.summary.responseId?{...entry as Record<string,unknown>,contentExpiresAt:expiresAt,retentionClass:"governed-evidence"}:entry);
   const statements=[];
@@ -613,48 +726,42 @@ async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:Do
       AND ${activeProjectExecutionSql}`;
     const guardBindings=[projectContextId,user.userId,scope.organizationId,scope.projectAccessId,now,policyVersion,scope.organizationId,scope.organizationId,policyVersion,scope.organizationId,...projectExecutionBindings(scope,job.document_id)];
     statements.push(env.DB.prepare(`UPDATE private_content SET content=?,expires_at=? WHERE content_id=? AND owner_id=? AND kind='provider-response'
-      AND redacted_at IS NULL AND expires_at=? AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+      AND redacted_at IS NULL AND content=? AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention
         WHERE retention.content_id=private_content.content_id AND retention.organization_id=? AND retention.project_access_id=?
           AND retention.actor_user_id=? AND retention.classification='transient-private' AND retention.assigned_expires_at=private_content.expires_at)${projectGuard}`)
-      .bind(JSON.stringify(envelope),expiresAt,candidate.row.content_id,user.userId,candidate.row.expires_at,scope.organizationId,scope.projectAccessId,user.userId,...guardBindings));
+      .bind(JSON.stringify(envelope),expiresAt,candidate.row.content_id,user.userId,candidate.row.content,candidate.row.expires_at,scope.organizationId,scope.projectAccessId,user.userId,...guardBindings));
     statements.push(env.DB.prepare(`UPDATE private_content_retention_scopes SET classification='governed-evidence',policy_version=?,assigned_expires_at=?
       WHERE content_id=? AND organization_id=? AND project_access_id=? AND project_id=? AND actor_user_id=? AND classification='transient-private'
         AND EXISTS(SELECT 1 FROM private_content content WHERE content.content_id=private_content_retention_scopes.content_id AND content.owner_id=? AND content.kind='provider-response' AND content.expires_at=?)`)
       .bind(policyVersion,expiresAt,candidate.row.content_id,scope.organizationId,scope.projectAccessId,scope.projectId,user.userId,user.userId,expiresAt));
   }else{
     statements.push(env.DB.prepare(`UPDATE private_content SET content=?,expires_at=? WHERE content_id=? AND owner_id=? AND kind='provider-response'
-      AND redacted_at IS NULL AND expires_at=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource
+      AND redacted_at IS NULL AND content=? AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource
         WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)`)
-      .bind(JSON.stringify(envelope),expiresAt,candidate.row.content_id,user.userId,candidate.row.expires_at));
+      .bind(JSON.stringify(envelope),expiresAt,candidate.row.content_id,user.userId,candidate.row.content,candidate.row.expires_at));
   }
   const checkpointJson=JSON.stringify(checkpoint);
   if(job.result_json!==null)statements.push(env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND result_json=?")
     .bind(checkpointJson,now,job.job_id,user.userId,user.streamId,job.result_json));
-  // D1 commits zero-row UPDATE statements; force the entire batch to roll back unless every
-  // actor-private evidence, retention, source, and checkpoint invariant survived the transaction.
-  const projectVerification=scope?` AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention
-    WHERE retention.content_id=content.content_id AND retention.organization_id=? AND retention.project_access_id=?
-      AND retention.project_id=? AND retention.actor_user_id=? AND retention.classification='governed-evidence'
-      AND retention.policy_version=? AND retention.assigned_expires_at=content.expires_at)`
-    :" AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id IN(content.content_id,source.content_id))";
-  const checkpointVerification=job.result_json!==null?" AND EXISTS(SELECT 1 FROM document_jobs saved WHERE saved.job_id=? AND saved.owner_id=? AND saved.stream_id=? AND saved.result_json=?)":"";
-  const verificationBindings:Array<string|number>=[expiresAt,job.job_id,job.document_id,candidate.row.content_id,user.userId,expiresAt,now,
-    ...(scope?[scope.organizationId,scope.projectAccessId,scope.projectId,user.userId,Number(policy?.version??0)]:[]),
-    ...(job.result_json!==null?[job.job_id,user.userId,user.streamId,checkpointJson]:[])];
-  statements.push(env.DB.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM private_content content
-    JOIN private_content source ON source.owner_id=content.owner_id AND source.kind='document-artifact-input'
-      AND source.redacted_at IS NULL AND source.expires_at>=? AND json_valid(source.content)=1
-      AND json_extract(source.content,'$.job_id')=? AND json_extract(source.content,'$.document_id')=?
-    WHERE content.content_id=? AND content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL
-      AND content.expires_at=? AND json_extract(content.content,'$.preserved_at')=?
-      AND json_extract(content.content,'$.retention_class')='governed-evidence'${projectVerification})${checkpointVerification}
+  const savedJob={...job,result_json:job.result_json===null?null:checkpointJson};
+  const savedCandidate:VerifiedPresentationCandidate={...candidate,row:{...candidate.row,content:JSON.stringify(envelope),expires_at:expiresAt,
+    classification:"governed-evidence",policy_version:scope?Number(policy?.version??0):0},envelope,
+    summary:{...candidate.summary,retentionClass:"governed-evidence",expiresAt}};
+  const proof=presentationCandidateDisclosureQuery(user,savedJob,projectContextId,candidate.summary.responseId,candidate.accountingEvidence);
+  if(!proof)return null;
+  // Zero-row updates do not abort D1 batches. Exact bytes and the same final live
+  // authority/custody/accounting proof must hold or this SELECT rolls the batch back.
+  statements.push(env.DB.prepare(`${proof.ctes} SELECT CASE WHEN EXISTS(SELECT 1 FROM ${proof.from} WHERE ${proof.where}
+    AND(candidate_custody.content_id,candidate_custody.content,candidate_custody.expires_at,candidate_custody.classification,
+      candidate_custody.policy_version,candidate_custody.source_content_id,candidate_custody.source_content,candidate_custody.source_expires_at)=(?,?,?,?,?,?,?,?))
     THEN 1 ELSE json_extract('invalid-presentation-evidence-preservation','$') END AS presentation_preservation_verified`)
-    .bind(...verificationBindings));
+    .bind(...proof.bindings,savedCandidate.row.content_id,savedCandidate.row.content,expiresAt,"governed-evidence",savedCandidate.row.policy_version,
+      candidate.row.source_content_id,candidate.row.source_content,candidate.row.source_expires_at));
   let results;
   try{results=await env.DB.batch(statements);}catch{return null;}
   if(results.slice(0,-1).some((result)=>Number(result.meta.changes??0)!==1))return null;
   await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"PresentationCandidatePreserved",{job_id:job.job_id,document_id:job.document_id,provider_response_id:candidate.summary.responseId,retention_class:"governed-evidence",expires_at:expiresAt},job.job_id);
-  return{...candidate.summary,retentionClass:"governed-evidence" as const,expiresAt};
+  return await certifyPresentationCandidateDisclosures(env,user,[{job:savedJob,contextId:projectContextId,candidates:[savedCandidate]}])?savedCandidate.summary:null;
 }
 
 type PresentationRecoveryResult={job:DocumentJobRow;recovered:true}|{error:string;status:number;reason?:string};
@@ -674,6 +781,7 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const plannerResponseId=String(checkpoint.plannerResponseId??"");
   if(plannerResponseId)responseIds.add(plannerResponseId);
   if(!receipt||!originalHash||!plannerResponseId||!candidates.length)return failed("paid_response_receipt_missing");
+  if(historicalPresentationValidationRejection(checkpoint,PRESENTATION_ADAPTER_VERSION))return failed("historical_validation_rejection");
   const reservationId=String(checkpoint.costReservationId??"");
   const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
   if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")return failed("settled_reservation_unavailable");
@@ -777,6 +885,13 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
       ||Number(envelope.requested_slide_count??requestedSlideCount)!==requestedSlideCount||Number(envelope.planned_slide_count??itemCount)!==itemCount||Number(envelope.provider_batch_count??1)!==1
       ||String(envelope.production_mode??"manual")!==(production?"managed":"manual")
       ||await retainedPresentationContentSha256(raw)!==candidate.contentSha256||envelope.content_sha256!==candidate.contentSha256){candidateRejection="paid_provider_response_integrity_mismatch";continue;}
+    const originalRows=await privatePresentationCandidateRows(env,user,row,projectContextId,responseId);
+    const originalRow=originalRows.find(original=>original.content_id===String(candidate.contentRef??"")&&original.content===retained.content);
+    if(!originalRow){candidateRejection="private_provider_source_unavailable";continue;}
+    if(originalRow.classification==="governed-evidence"||Object.hasOwn(envelope,"original_validation")){
+      const original=presentationOriginalValidation(row,originalRow,envelope,candidate,await retainedPresentationContentSha256(originalRow.source_content));
+      if(original.outcome!=="accepted"){candidateRejection=original.outcome==="rejected"?"historical_validation_rejection":"original_validation_provenance_unavailable";continue;}
+    }
     const assessment=assessStoredPresentationCandidate(raw,assessmentSnapshot,{itemCount,requestedSlideCount,presentationStyle,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful",...(production?{productionScenes:production.scenes}:{})});
     if(assessment.output&&assessment.issues.length===0){plan=assessment.output;recoveredResponseId=responseId;break;}
     candidateRejection="paid_provider_response_validation_failed";
@@ -872,6 +987,8 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   const artifactKind=String(payload.artifactKind??"");
   const sceneConfiguration=sceneConfigurationFromRequest(payload);
   const isSlides=artifactKind==="slides";
+  // Scene has no downstream media render: the existing planning guard bounds its full cost.
+  const applicationSpendingCap=isSlides||artifactKind==="scene";
   const sourceOutline=isSlides?inferPresentationSourceOutline(snapshot):null;
   const rawRequestedCount=payload.requestedSlideCount??payload.itemCount;
   const requestedSlideCount=isSlides&&Number.isSafeInteger(Number(rawRequestedCount))&&Number(rawRequestedCount)>0?Number(rawRequestedCount):null;
@@ -910,12 +1027,13 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   };
   const privateReceipt={
     schema_version:1,job_id:jobId,artifact_kind:artifactKind,document_id:documentId,captured_at:capturedAt,
+    ...(sceneConfiguration?{scene_request_id:payload.sceneRequestId,scene_cost_binding_hash:(payload.sceneCostConsent as Record<string,unknown>|undefined)?.bindingHash}:{}),
     ...(sceneConfiguration?{scene_medium:sceneConfiguration.medium,scene_configuration:sceneConfiguration,context_continuity:sceneContext}:{}),
     request:{...requestSettings,...(audioProfile?{audio_profile:audioProfile,audio_video_artifact_id:typeof payload.audioVideoArtifactId==="string"?payload.audioVideoArtifactId:null,audio_video_provider_transfer:payload.sendAudioVideoToProvider===true}:{})},document_snapshot:snapshot,...(effectiveSnapshot?{production_workflow_snapshot:effectiveSnapshot}:{}),
     source_block_versions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions:[],
     planner:{provider:plannerProvider,model:plannerModel,request_status:"not_submitted"},
     source:{scope:"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
-    accounting:{reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{})},
+    accounting:{reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:applicationSpendingCap,...(applicationSpendingCap?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{})},
   };
   const stored=await storePrivateContent(env,user.userId,"document-artifact-input",JSON.stringify(privateReceipt),contentScope);
   return{
@@ -926,7 +1044,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     ...(isSlides?{presentation_adapter_version:PRESENTATION_ADAPTER_VERSION}:{}),
     batch_count:batchCount,minimum_provider_call_count:plannedProviderCallCount,planned_provider_call_count:plannedProviderCallCount,actual_provider_call_count:null,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_status:"estimated",
-    reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
+    reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:applicationSpendingCap,...(applicationSpendingCap?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
     source_transmission_scope:"authorized_document_context",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted",
     source_fact_count:Array.isArray(snapshot.facts)?snapshot.facts.length:0,source_snapshot_sha256:sourceHash,
     input_ref:stored.contentId,input_expires_at:stored.expiresAt,settings:requestSettings,
@@ -1007,11 +1125,11 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
-  const privateCheckpointKeys=new Set(["providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","quote"]);
+  const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","quote"]);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
   if(sanitizedResult&&consentedAdaptiveJob(row)&&!certifiedAdaptiveRows.has(row)){delete sanitizedResult.structure;delete sanitizedResult.intent;}
   // Present current evidence without changing the stored receipt, checkpoint, or cost hold.
-  if(sanitizedResult&&parsed.generationReceipt)sanitizedResult.generationReceipt=generationExecutionSummary(parsed,errorDetail);
+  if(sanitizedResult&&parsed.generationReceipt)sanitizedResult.generationReceipt=generationExecutionSummary(parsed,errorDetail,{jobId:row.job_id,correlationId:row.correlation_id,bindingHash:String((request.sceneCostConsent as Record<string,unknown>|undefined)?.bindingHash??""),attemptCount:row.attempt_count,status:row.status});
   const visibleResult = row.kind === "render_document" && request.artifactKind
     ? { ...(sanitizedResult ?? {}), artifactKind: String(parsed.artifactKind ?? request.artifactKind),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),...(request.artifactKind==="storyboard"&&Number.isSafeInteger(Number(request.itemCount))&&Number(request.itemCount)>0&&Number(request.itemCount)<=100?{requestedItemCount:Number(request.itemCount)}:{}) }
     : sanitizedResult;
@@ -1080,19 +1198,23 @@ async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:Documen
   const plannerInput=checkpoint.plannerInput&&typeof checkpoint.plannerInput==="object"?checkpoint.plannerInput as Record<string,unknown>:{};
   const plannerValidation=plannerInput.validation&&typeof plannerInput.validation==="object"?plannerInput.validation as Record<string,unknown>:{};
   const recordedPlannerCalls=Math.max(plannerResponses.length,Math.max(0,Number(plannerInput.provider_request_count??plannerValidation.provider_call_count??0)));
-  const submissions=providerSubmissions(checkpoint);
+  const stopEvidence=previous.artifact_kind==="scene"&&failure?.code==="scene_paid_authority_changed"
+    ?await readScenePolicyStopEvidence(env,user,latest as unknown as Record<string,unknown>,checkpoint,user.projectExecution):null;
+  const submissions=providerSubmissions(checkpoint).filter(entry=>entry.clientRequestId!==stopEvidence?.stoppedRequestId);
+  const provenSceneUnused=stopEvidence?.unused===true&&!completed&&plannerResponses.length===0&&!checkpoint.plannerResponseId
+    &&!checkpoint.providerJobId&&recordedPlannerCalls===0&&Number(plannerUsage.totalTokens??0)===0&&usage.length===0;
   const providerResponseReceived=Boolean(checkpoint.presentationProviderSubmission==="pending"&&failure?.httpStatus&&definitiveProviderRejection(failure.httpStatus));
   const failedMediaPayload=payloads.find((event)=>event.type==="DocumentRenderFailed")?.payload;
   const unconfirmedMediaSubmission=(previous.artifact_kind==="audio"||previous.artifact_kind==="video"||previous.artifact_kind==="storyboard")&&Boolean(!checkpoint.providerJobId&&!completed&&(checkpoint.audioProviderSubmission==="pending"||checkpoint.storyboardProviderSubmission==="pending"||failedMediaPayload?.provider_charge_status==="unconfirmed"));
-  const confirmedProviderRequest=Boolean(submissions.some((entry)=>entry.status!=="pending")||completed||checkpoint.plannerResponseId||plannerResponses.length||Number(plannerUsage.totalTokens??0)>0||checkpoint.providerJobId||usage.some((event)=>Boolean(event.planner_response_id)||Number(event.total_tokens??0)>0)||checkpoint.providerSubmissionProtocol!==1&&failure?.requestId&&failure.code!=="provider_submission_uncertain"||previous.provider_request_status==="submitted"||previous.provider_request_status==="completed"||providerResponseReceived);
+  const confirmedProviderRequest=Boolean(submissions.some((entry)=>entry.status!=="pending")||completed||checkpoint.plannerResponseId||plannerResponses.length||Number(plannerUsage.totalTokens??0)>0||checkpoint.providerJobId||usage.some((event)=>Boolean(event.planner_response_id)||Number(event.total_tokens??0)>0)||checkpoint.providerSubmissionProtocol!==1&&failure?.requestId&&failure.code!=="provider_submission_uncertain"||!provenSceneUnused&&(previous.provider_request_status==="submitted"||previous.provider_request_status==="completed")||providerResponseReceived);
   const audioSubmissionRejected=checkpoint.audioProviderSubmission==="rejected";
   const storyboardSubmissionRejected=checkpoint.storyboardProviderSubmission==="rejected";
-  const uncertainProviderRequest=!completed&&(hasUnresolvedProviderSubmission(checkpoint)||unconfirmedMediaSubmission||checkpoint.presentationProviderSubmission==="pending"&&!providerResponseReceived||previous.provider_request_status==="submission_unknown"&&checkpoint.presentationProviderSubmission!=="confirmed"&&checkpoint.audioProviderSubmission!=="confirmed"&&checkpoint.storyboardProviderSubmission!=="confirmed"&&!audioSubmissionRejected&&!storyboardSubmissionRejected||checkpoint.providerSubmissionProtocol!==1&&!confirmedProviderRequest&&!audioSubmissionRejected&&!storyboardSubmissionRejected&&Boolean(failure&&(failure.category==="network"||failure.category==="rate_limit"||failure.category==="server"&&failure.scope==="provider")));
+  const uncertainProviderRequest=!completed&&!provenSceneUnused&&(hasUnresolvedProviderSubmission(checkpoint)||unconfirmedMediaSubmission||checkpoint.presentationProviderSubmission==="pending"&&!providerResponseReceived||previous.provider_request_status==="submission_unknown"&&checkpoint.presentationProviderSubmission!=="confirmed"&&checkpoint.audioProviderSubmission!=="confirmed"&&checkpoint.storyboardProviderSubmission!=="confirmed"&&!audioSubmissionRejected&&!storyboardSubmissionRejected||checkpoint.providerSubmissionProtocol!==1&&!confirmedProviderRequest&&!audioSubmissionRejected&&!storyboardSubmissionRejected&&Boolean(failure&&(failure.category==="network"||failure.category==="rate_limit"||failure.category==="server"&&failure.scope==="provider")));
   const activeSubmission=submissions.find((entry)=>entry.status==="pending")??submissions.find((entry)=>entry.status==="accepted")??submissions.at(-1);
   const provider=String(completed?.provider??body.provider??activeSubmission?.provider??checkpoint.provider??(checkpoint.storyboardProviderSubmission==="confirmed"&&checkpoint.providerJobId?"fal":null)??previous.provider??"openai");
   const model=String(completed?.model_id??activeSubmission?.model??checkpoint.providerModel??checkpoint.plannerModel??previous.model??env.OPENAI_MODEL??"gpt-5.6-terra");
   const settledFromEvents=usage.reduce((total,event)=>total+Math.max(0,Number(event.cost_microusd??0)),0);
-  const sourcePreviouslyTransmitted=previous.source_transmission_status==="transmitted";
+  const sourcePreviouslyTransmitted=!provenSceneUnused&&previous.source_transmission_status==="transmitted";
   const failedStage=interruptedStage||String(checkpoint.stage??"");
   const failureStage=failure?.code==="local_persistence_failed"?"local_persistence"
     :failure?.code==="source_fidelity_validation_failed"?"source_fidelity_validation"
@@ -1104,18 +1226,25 @@ async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:Documen
   const receipt={
     ...previous,provider,model,
     ...(previous.artifact_kind==="slides"&&completed&&Number.isSafeInteger(Number(completed.item_count))?{actual_slide_count:Number(completed.item_count)}:{}),
-    actual_provider_call_count:Math.max(recordedPlannerCalls,submissions.filter((entry)=>entry.status!=="pending").length)||previous.actual_provider_call_count||null,
+    actual_provider_call_count:provenSceneUnused?0:Math.max(recordedPlannerCalls,submissions.filter((entry)=>entry.status!=="pending").length)||previous.actual_provider_call_count||null,
     reservation_microusd:Number(reservation?.reserved_microusd??checkpoint.costReservationMicrousd??budget?.reserved_microusd??previous.reservation_microusd),
     settled_cost_microusd:(hasUnsettledProviderSubmission(checkpoint)||uncertainProviderRequest||previous.artifact_kind==="storyboard"&&checkpoint.storyboardProviderSubmission==="confirmed"&&!completed&&reservation?.status==="executing")&&verifiedSettledCost===0?null:verifiedSettledCost,
     reservation_status:reservation?String(reservation.status):latest.status==="failed"&&settledFromEvents===0?"released":String(previous.reservation_status??"unknown"),
-    source_transmission_status:confirmedProviderRequest||sourcePreviouslyTransmitted||failure?.code==="safety_preflight_flagged"?"transmitted":uncertainProviderRequest||previous.source_transmission_status==="unknown"?"unknown":"not_transmitted",
+    source_transmission_status:confirmedProviderRequest||sourcePreviouslyTransmitted||failure?.code==="safety_preflight_flagged"?"transmitted":uncertainProviderRequest||!provenSceneUnused&&previous.source_transmission_status==="unknown"?"unknown":"not_transmitted",
     provider_request_status:completed?"completed":uncertainProviderRequest?"submission_unknown":confirmedProviderRequest?"submitted":"not_submitted",
     ...(failure?{failure_code:failure.code,failure_category:failure.category,failure_stage:failureStage}:{}),
   };
+// A historical execution certificate only; fresh New-request eligibility still re-reads the full canonical proof.
+  const scenePolicyStopSummary=stopEvidence?.stoppedRequestId?{version:"scene-policy-stop-summary-v1",job_id:latest.job_id,attempt_correlation_id:latest.correlation_id,
+    binding_hash:String((parseRequest(latest).sceneCostConsent as Record<string,unknown>).bindingHash),artifact_id:checkpoint.artifactId,input_ref:previous.input_ref,
+    source_snapshot_sha256:previous.source_snapshot_sha256,stopped_client_request_id:stopEvidence.stoppedRequestId,evidence_sha256:await consentHash(stopEvidence.hashInput)}:null;
+  const certifiedReceipt=stopEvidence?{...receipt,execution_evidence_version:1,actual_planner_call_count:receipt.actual_provider_call_count,actual_media_call_count:0,
+    unresolved_provider_call_count:0,provider_submission_uncertain:false,provider_call_breakdown_complete:true,provider_call_forecast_scope:"planning"}:receipt;
   const updatedAt=new Date().toISOString();
-  const result={...checkpoint,...(providerResponseReceived?{presentationProviderSubmission:"confirmed"}:{}),generationReceipt:receipt};
-  const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=?")
-    .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status).run();
+  const result={...checkpoint,...(providerResponseReceived?{presentationProviderSubmission:"confirmed"}:{}),generationReceipt:certifiedReceipt,...(scenePolicyStopSummary?{scenePolicyStopSummary}:{})};
+
+  const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=?"+(stopEvidence?" AND result_json=? AND ("+stopEvidence.guard.sql+")":""))
+    .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status,...(stopEvidence?[latest.result_json,...stopEvidence.guard.bindings]:[])).run();
   return Number(updated.meta.changes??0)===1?{...latest,result_json:JSON.stringify(result),updated_at:updatedAt}:await readJob(env,user.userId,row.job_id)??latest;
 }
 
@@ -1859,8 +1988,10 @@ export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,sc
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env);
   if(path==="adaptive")return handleAdaptiveDocumentJobs(request,env,context);
+  let sceneInspection=false;
+  if(request.method==="POST"&&!path){try{const inspected=await request.clone().json() as {kind?:unknown;payload?:Record<string,unknown>};sceneInspection=inspected.kind==="render_document"&&inspected.payload?.artifactKind==="scene"&&inspected.payload.sceneCostPreview===true;}catch{/* The normal admission parser still rejects malformed input. */}}
   const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
-  const auth=await requireUser(request,env,scoped?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
+  const auth=await requireUser(request,env,scoped||sceneInspection?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
   if(auth.response||!auth.user)return auth.response!;
   const principal=auth.user,selected=scoped?await readProjectRequestContext(request,env,principal):{context:null,response:null};
   if(selected.response)return selected.response;
@@ -1869,7 +2000,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // A current reader may find their own original planning jobs, but this grants
   // neither queue execution nor other output/recovery mutations.
   const readOnlyPlanning=Boolean(project&&!canRequestOutputs&&request.method==="GET"&&(!path||!path.includes("/"))&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
-  if(!canRequestOutputs&&!readOnlyPlanning)return Response.json({error:"project_read_only"},{status:403});
+  const readOnlyScene=Boolean(sceneInspection&&project&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
+  if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
   if(path==="presentation-candidates"){
     if(request.method!=="GET")return new Response("Method not allowed",{status:405,headers:{"cache-control":"private, no-store"}});
@@ -1883,9 +2015,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       WHERE job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.kind='render_document'
         AND job.status IN('failed','partial','completed') ORDER BY job.requested_at DESC LIMIT 40`)
       .bind(new Date().toISOString(),user.userId,user.streamId,documentId).all<DocumentJobRow>();
-    const verified=await Promise.all(rows.results.map(async(row)=>({jobId:row.job_id,documentId:row.document_id,
-      candidates:(await verifiedPresentationCandidates(env,user,row,project?.contextId??"")).filter((candidate)=>candidate.summary.retentionClass==="governed-evidence").map((candidate)=>candidate.summary)})));
-    return Response.json({documentId,jobs:verified.filter((listing)=>listing.candidates.length)},{headers:{"cache-control":"private, no-store"}});
+    const verified=await Promise.all(rows.results.map(async(row)=>({job:row,contextId:project?.contextId??"",
+      candidates:(await verifiedPresentationCandidates(env,user,row,project?.contextId??"")).filter((candidate)=>candidate.summary.retentionClass==="governed-evidence")})));
+    if(!await certifyPresentationCandidateDisclosures(env,user,verified))return Response.json({error:"presentation_candidate_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
+    return Response.json({documentId,jobs:verified.filter(listing=>listing.candidates.length).map(listing=>({jobId:listing.job.job_id,documentId:listing.job.document_id,candidates:listing.candidates.map(candidate=>candidate.summary)}))},{headers:{"cache-control":"private, no-store"}});
   }
   const candidateRoute=path.match(/^([^/]+)\/presentation-candidates(?:\/([^/]+)(\/preserve)?)?$/u);
   if(candidateRoute){
@@ -1905,8 +2038,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     if(responseId){
       await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"PresentationCandidateReviewed",{job_id:jobId,document_id:row.document_id,provider_response_id:responseId,page_index:candidates[0]!.summary.pageIndex,provider_attempt:candidates[0]!.summary.providerAttempt},jobId);
+      if(!await certifyPresentationCandidateDisclosures(env,user,[{job:row,contextId:project?.contextId??"",candidates:[candidates[0]!]}]))return notFound();
       return Response.json({jobId,documentId:row.document_id,candidate:candidates[0]!.detail},{headers:{"cache-control":"private, no-store"}});
     }
+    if(!await certifyPresentationCandidateDisclosures(env,user,[{job:row,contextId:project?.contextId??"",candidates}]))return notFound();
     return Response.json({jobId,documentId:row.document_id,candidates:candidates.map((candidate)=>candidate.summary)},{headers:{"cache-control":"private, no-store"}});
   }
   const issueNotesRoute=path.match(/^([^/]+)\/notes$/u);
@@ -2067,7 +2202,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         'promptFanId',json_extract(job.request_json,'$.promptFanId'),'parentJobId',json_extract(job.request_json,'$.parentJobId'),
         'fanKind',json_extract(job.request_json,'$.fanKind'),'artifactKind',json_extract(job.request_json,'$.artifactKind'),'productionMode',json_extract(job.request_json,'$.productionMode'),'itemCount',json_extract(job.request_json,'$.itemCount'),'canvasId',json_extract(job.request_json,'$.canvasId'),
         'sceneMedium',json_extract(job.request_json,'$.sceneMedium'),'sceneConfiguration',json(json_extract(job.request_json,'$.sceneConfiguration'))) AS request_json,
-      json_remove(job.result_json,'$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionFrameReceipts','$.productionAnchor','$.providerStatusUrl','$.providerResponseUrl','$.providerCancelUrl','$.moderationPromptRef','$.intentRef','$.providerJobId','$.providerRequestId','$.storyboardSafeRecovery','$.storyboardRejectedProviderReceipt','$.generationReceipt','$.generation_receipt','$.input_ref','$.inputRef','$.source_snapshot_sha256') AS result_json,
+      json_remove(job.result_json,'$.scenePolicyStopSummary','$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionFrameReceipts','$.productionAnchor','$.providerStatusUrl','$.providerResponseUrl','$.providerCancelUrl','$.moderationPromptRef','$.intentRef','$.providerJobId','$.providerRequestId','$.storyboardSafeRecovery','$.storyboardRejectedProviderReceipt','$.generationReceipt','$.generation_receipt','$.input_ref','$.inputRef','$.source_snapshot_sha256') AS result_json,
       job.error_message,job.attempt_count,job.requested_at,job.started_at,job.completed_at,job.lease_expires_at,job.notified_at,job.expires_at,job.updated_at
       FROM document_jobs job JOIN project_resource_scopes resource ON resource.resource_kind='job'
       AND resource.resource_id=job.job_id AND resource.actor_user_id=job.owner_id AND resource.owner_user_id=?
@@ -2435,6 +2570,25 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const input = submittedInput??await request.json() as DocumentJobAdmission;
   if (!KINDS.has(input.kind as DocumentJobKind)) return Response.json({ error: "unsupported_document_job" }, { status: 400 });
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
+  let scenePrepared:PreparedSceneCost|null=null;
+  const retainedSceneResponse=(existing:NonNullable<Awaited<ReturnType<typeof readExistingSceneRequest>>>)=>{
+    const row=existing.row as unknown as DocumentJobRow;
+    return Response.json({job:existing.scope?safeScopedJob(row):serializeJob(row),reused:true,sceneCostExisting:{requestId:String(row.job_id),preview:existing.preview,safeUnused:existing.safeUnused}},{status:sceneInspection?200:202,headers:{"cache-control":"private, no-store"}});
+  };
+  if(payload.sceneCostPreview!==undefined&&!(kind==="render_document"&&payload.artifactKind==="scene"&&payload.sceneCostPreview===true))return Response.json({error:"scene_cost_request_invalid",attemptSubmission:"not-submitted"},{status:400});
+  if(kind==="render_document"&&payload.artifactKind==="scene"){
+    if(scenePolicyStopIncomingField(payload))return Response.json({error:"scene_policy_stop_server_owned"},{status:400});
+    try{
+      if(payload.sceneMedium!==undefined&&!isSceneMedium(payload.sceneMedium))return Response.json({error:"scene_medium_invalid",attemptSubmission:"not-submitted"},{status:400});
+      if(!payload.sceneRequestId)return Response.json({error:"scene_cost_confirmation_required",attemptSubmission:"not-submitted"},{status:428});
+      const documentId=String(input.documentId??"");
+      const existing=await readExistingSceneRequest(env,user,documentId,payload.sceneRequestId,project?.contextId??null,{certifyUnused:sceneInspection});
+      if(existing)return retainedSceneResponse(existing);
+      scenePrepared=await prepareSceneCostConsent(env,user,documentId,payload,project?.contextId??null,{synchronize:!sceneInspection});
+      if(sceneInspection)return Response.json({sceneCostPreview:scenePrepared.preview,providerCalls:0,reservations:0},{headers:{"cache-control":"private, no-store"}});
+      requireSceneCostApproval(payload.sceneCostConsent,scenePrepared);
+    }catch(error){return sceneCostErrorResponse(error);}
+  }
   if(kind==="render_document"){
     if(payload.sceneMedium!==undefined&&!isSceneMedium(payload.sceneMedium))return Response.json({error:"scene_medium_invalid",message:"Scene medium must be either visual or audio."},{status:400});
     if(payload.artifactKind==="scene"){
@@ -2498,7 +2652,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         // Persist only the authenticated authored snapshot. Synthetic output context is
         // transient and will be re-resolved under fresh authorization during execution.
         workflowPlanningSnapshot=resolved.snapshot;
-        payload.workflowSources=resolved.sources;
+        if(!(kind==="render_document"&&payload.artifactKind==="scene"))payload.workflowSources=resolved.sources;
         if(kind==="render_document"&&payload.artifactKind==="scene"&&resolved.sceneConfiguration){
           payload.sceneMedium=resolved.sceneConfiguration.medium;
           payload.sceneConfiguration=resolved.sceneConfiguration;
@@ -2512,6 +2666,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         if(sourceMinimumSlideCount>supportedMaximum)return Response.json({error:"presentation_slide_count_invalid",message:`This presentation requires ${sourceMinimumSlideCount} source-authored slides, exceeding the ${supportedMaximum}-slide ${payload.productionMode==="managed"?"managed":"manual"} limit.`,supported:{minimum:1,maximum:supportedMaximum},sourceMinimumSlideCount},{status:400});
         const requested=Number(payload.requestedSlideCount??payload.itemCount??0);
         if(requested>0&&requested<sourceMinimumSlideCount)return Response.json({error:"presentation_slide_count_conflict",message:`This presentation requires at least ${sourceMinimumSlideCount} source-authored or independently isolated slides; ${requested} would merge or omit required chapters.`,sourceMinimumSlideCount,authoredSlideCount:outline.authoredSlideCount??sourceMinimumSlideCount,requestedSlideCount:requested,plannedSlideCount:sourceMinimumSlideCount},{status:409});
+        const sourceContract=buildPresentationSourceContract(sourceSnapshot,{...(requested>0?{requestedSlideCount:requested}:{})});
+        if(sourceContract.sourceIssues?.length)return Response.json({error:"presentation_source_contract_invalid",message:sourceContract.sourceIssues[0]!.message,issues:sourceContract.sourceIssues},{status:422});
         payload.authoredSlideCount=outline.authoredSlideCount;
       }
     }catch(error){
@@ -2611,7 +2767,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     let production:ManagedProductionPlan|null=null;
     if(kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video","audio"].includes(artifactKind)){
       try{
-        production=buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video"|"audio",workflowPlanningSnapshot??(payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{}),artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{}),...(artifactKind==="scene"?{sceneMedium:isSceneMedium(payload.sceneMedium)?payload.sceneMedium:"visual"}:{})});
+        production=scenePrepared?.production??buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video"|"audio",workflowPlanningSnapshot??(payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{}),artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{}),...(artifactKind==="scene"?{sceneMedium:isSceneMedium(payload.sceneMedium)?payload.sceneMedium:"visual"}:{})});
       }catch(error){
         if(error instanceof ManagedPresentationPlanningError)return Response.json({error:error.code,message:error.message},{status:422});
         throw error;
@@ -2621,7 +2777,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }
     }
     const audioProviderCost=selectedAudio?.estimatedCostMicrousd??AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd;
-    const estimatedCostMicrousd=production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioProviderCost:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?audioProviderCost+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
+    const estimatedCostMicrousd=scenePrepared?scenePrepared.preview.maximumMicrousd:production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioProviderCost:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?audioProviderCost+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
     productionPlan=production;estimatedGenerationCostMicrousd=estimatedCostMicrousd;
     if(pilotAllowance.pilot){
       const fixed=await env.DB.prepare(`SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters
@@ -2712,8 +2868,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const providedRequestKey=String(payload.requestKey??"").trim();
       const sceneConfiguration=sceneConfigurationFromRequest(payload);
       payload.requestKey=providedRequestKey||`render:${String(payload.artifactKind??"unknown")}${sceneConfiguration?`:${sceneConfiguration.medium}`:""}:${payload.productionMode==="managed"?"managed":"manual"}:${generationRevisionFromRequest(payload,documentId)}`;
-      const idempotencyKey=renderRequestIdempotencyKey(payload,documentId);payload.idempotencyKey=idempotencyKey;
-      active=candidates.find((candidate)=>renderRequestIdempotencyKey(parseRequest(candidate),documentId)===idempotencyKey)??null;
+      const idempotencyKey=scenePrepared?"scene:"+String(payload.sceneRequestId):renderRequestIdempotencyKey(payload,documentId);payload.idempotencyKey=idempotencyKey;
+      active=candidates.find((candidate)=>scenePrepared?candidate.job_id===payload.sceneRequestId:renderRequestIdempotencyKey(parseRequest(candidate),documentId)===idempotencyKey)??null;
     }else if(kind==="structure_adaptive"){
       const sourceSurface=String(input.sourceSurface??payload.sourceSurface??"studio").slice(0,80)||"studio";
       const sameSurface=(candidate:DocumentJobRow)=>candidate.source_surface===sourceSurface&&(parseRequest(candidate).canvasId??null)===(payload.canvasId??null);
@@ -2721,6 +2877,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       if(!active&&candidates.some(sameSurface))return Response.json({error:"adaptive_request_in_progress"},{status:409});
     }else active=candidates[0]??null;
   }
+  if(active&&scenePrepared){try{const retained=await readExistingSceneRequest(env,user,documentId,payload.sceneRequestId,project?.contextId??null,{certifyUnused:sceneInspection});if(retained)return retainedSceneResponse(retained);}catch(error){return sceneCostErrorResponse(error);}}
   if(active)return Response.json({job:project?safeScopedJob(active):serializeJob(active),reused:true},{status:202});
 
   if (kind === "chat" || kind === "structure_adaptive") {
@@ -2730,18 +2887,28 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const stored = await storePrivateContent(env, user.userId, kind === "chat" ? "chat-user" : "adaptive-intent", text, projectContentScope); payload[field] = undefined; payload.jobInputRef = stored.contentId;
   }
 
-  const jobId = uuidV7(); const requestedAt = new Date(); const configuredRetention = Number(projectRetentionDays ?? env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
+  if(scenePrepared){
+    try{
+      scenePrepared=await prepareSceneCostConsent(env,user,documentId,payload,project?.contextId??null,{synchronize:true});
+      requireSceneCostApproval(payload.sceneCostConsent,scenePrepared);
+      productionPlan=scenePrepared.production;estimatedGenerationCostMicrousd=scenePrepared.preview.maximumMicrousd;
+    }catch(error){return sceneCostErrorResponse(error);}
+  }
+  const jobId = scenePrepared?String(payload.sceneRequestId):uuidV7(); const requestedAt = new Date(); const configuredRetention = Number(projectRetentionDays ?? env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
   const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId);
   const createdAt=requestedAt.toISOString();
-  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,user,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,projectContentScope,workflowPlanningSnapshot):kind==="preview"||kind==="generate"?{artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedGenerationCostMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"}:null;
+  // Cookie-free tenant owners retain the same resolved custody as the exact Scene approval.
+  const admissionUser=scenePrepared?.scope?{...user,projectExecution:scenePrepared.scope}:user;
+  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,admissionUser,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,scenePrepared?.scope??projectContentScope,scenePrepared?.effectiveSnapshot??workflowPlanningSnapshot):kind==="preview"||kind==="generate"?{artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedGenerationCostMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"}:null;
   const sceneConfiguration=kind==="render_document"?sceneConfigurationFromRequest(payload):null;
-  const initialResult=receipt?{artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
-  const inserted=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined);
-  const resource=projectJobResource(env,user,jobId,documentId,createdAt);
+  const initialResult=receipt?{...(scenePrepared?{providerSubmissionProtocol:1,providerSubmissions:{}}:{}),artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
+  const inserted=documentJobInsert(env,admissionUser,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined,scenePrepared?sceneRequestExclusion(jobId,scenePrepared.guard):undefined);
+  const resource=projectJobResource(env,admissionUser,jobId,documentId,createdAt,Boolean(scenePrepared));
   let created=false;
   if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
   else created=Number((await inserted.run()).meta.changes??0)===1;
   if(!created){
+    if(scenePrepared){try{const retained=await readExistingSceneRequest(env,user,documentId,payload.sceneRequestId,project?.contextId??null,{certifyUnused:sceneInspection});if(retained)return retainedSceneResponse(retained);}catch(error){return sceneCostErrorResponse(error);}}
     if(kind==="render_document"||kind==="structure_adaptive"){
       const duplicate=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND document_id=? AND kind=? AND status IN('queued','running','committing') AND json_extract(request_json,'$.idempotencyKey')=? ORDER BY requested_at DESC LIMIT 1`)
         .bind(user.userId,user.streamId,documentId,kind,String(payload.idempotencyKey??"")).first<DocumentJobRow>();
@@ -2749,8 +2916,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     return Response.json({error:project?"project_access_revoked":"document_job_admission_conflict"},{status:project?403:409});
   }
-  if(resource)await anchorProjectJobs(env,user,[{jobId,kind,documentId}]);
+  if(resource)await anchorProjectJobs(env,admissionUser,[{jobId,kind,documentId}]);
   const job = await readJob(env, user.userId, jobId);
   if(!requiresForegroundDocumentExecution(job!))context?.waitUntil(driveDocumentQueue(env,user));
-  return Response.json({job:project?safeScopedJob(job!):serializeJob(job!),accepted:true},{status:202});
+  return Response.json({job:admissionUser.projectExecution?safeScopedJob(job!):serializeJob(job!),accepted:true},{status:202});
 }

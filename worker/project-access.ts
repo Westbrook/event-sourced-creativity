@@ -526,12 +526,17 @@ export async function readProjectAssistantEventView(env:WorkerEnv,context:Projec
 }
 
 /** Internal generation receives exact project history, never an owner's account-wide stream. */
-export async function readProjectSourceEvents(env:WorkerEnv,scope:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string}){
-  await synchronizeProjectScope(env,scope);
+export async function readProjectSourceEvents(env:WorkerEnv,scope:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string},options:{synchronize?:boolean}={}){
+  const readonlyHead=options.synchronize===false?await env.DB.prepare("SELECT migration.last_owner_sequence AS indexed_head,(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS source_head FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND migration.status='active'")
+    .bind("creative:"+scope.ownerUserId,scope.projectAccessId,scope.organizationId,scope.ownerUserId).first<{indexed_head:number;source_head:number}>():null;
+  if(options.synchronize!==false)await synchronizeProjectScope(env,scope);
+  else if(!readonlyHead||Number(readonlyHead.indexed_head)!==Number(readonlyHead.source_head))throw new Error("project_source_index_stale");
   const rows=await env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
     LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.project_id=? AND scope.owner_user_id=?
     ORDER BY scope.project_sequence`).bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId).all<Record<string,unknown>>();
+  if(options.synchronize===false&&!await env.DB.prepare("SELECT 1 FROM project_migration_states migration WHERE (migration.project_access_id,migration.organization_id,migration.owner_user_id,migration.status,migration.last_owner_sequence)=(?,?,?,'active',?) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?")
+    .bind(scope.projectAccessId,scope.organizationId,scope.ownerUserId,Number(readonlyHead!.source_head),"creative:"+scope.ownerUserId,Number(readonlyHead!.source_head)).first())throw new Error("project_source_index_stale");
   return rows.results.map((row)=>serializeEvent(row));
 }
 

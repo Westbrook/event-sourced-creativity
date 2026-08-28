@@ -914,6 +914,106 @@ export async function claimCostBudgetReservation(env: WorkerEnv, userId: string,
   return false;
 }
 
+
+/** Server-only identity of an already claimed Scene purchase; never accepted from request JSON. */
+export type ClaimedSceneBudget = {
+  actorUserId: string;
+  streamId: string;
+  correlationId: string;
+  period: string;
+  tokenReservationId: string;
+  costReservationId: string;
+  reservedTokens: number;
+  reservedMicrousd: number;
+  projectScope: ProjectExecutionScope | null;
+  pilotCohortId: string | null;
+};
+
+/**
+ * Read-only dispatch proof for the original reservation, not another reservation or a release.
+ * Current counters already include this hold. Comparing their totals never adds the hold twice.
+ */
+export function claimedSceneBudgetGuard(env: WorkerEnv, claim: ClaimedSceneBudget): BudgetReservationGuard {
+  const tokens=budgetLimits(env), money=costBudgetLimits(env), scope=claim.projectScope;
+  if (!claim.actorUserId || !claim.streamId || !claim.correlationId || claim.period!==period()
+    || !claim.tokenReservationId || !claim.costReservationId
+    || !Number.isSafeInteger(claim.reservedTokens) || claim.reservedTokens<=0
+    || !Number.isSafeInteger(claim.reservedMicrousd) || claim.reservedMicrousd<=0
+    || scope && scope.actorUserId!==claim.actorUserId || claim.pilotCohortId && !scope) return {sql:"0",bindings:[]};
+  const value=JSON.stringify({...claim,workspaceId:scope?.organizationId??"forma",
+    tokenUserLimit:tokens.user,tokenGlobalLimit:tokens.workspace,
+    costUserLimit:money.user,costGlobalLimit:money.workspace,now:new Date().toISOString()});
+  const counter=(alias:string,unit:"tokens"|"microusd",held:string,limit?:string)=>`
+    typeof(${alias}.used_${unit})='integer' AND typeof(${alias}.reserved_${unit})='integer'
+    AND typeof(${alias}.hard_limit_${unit})='integer' AND ${alias}.used_${unit}>=0
+    AND ${alias}.reserved_${unit}>=${held} AND ${alias}.hard_limit_${unit}>0
+    AND ${alias}.used_${unit}+${alias}.reserved_${unit}<=${limit?`MIN(${alias}.hard_limit_${unit},${limit})`:`${alias}.hard_limit_${unit}`}`;
+  const sql=`EXISTS(
+    SELECT 1 FROM (SELECT ? AS value) pinned
+    JOIN budget_reservations token ON token.reservation_id=json_extract(pinned.value,'$.tokenReservationId')
+    JOIN cost_budget_reservations cost ON cost.reservation_id=json_extract(pinned.value,'$.costReservationId')
+    JOIN budget_counters token_user ON token_user.scope='user' AND token_user.scope_id=token.owner_id AND token_user.period=token.period
+    JOIN budget_counters token_global ON token_global.scope='workspace' AND token_global.scope_id='forma' AND token_global.period=token.period
+    JOIN cost_budget_counters cost_user ON cost_user.scope='user' AND cost_user.scope_id=cost.owner_id AND cost_user.period=cost.period
+    JOIN cost_budget_counters cost_global ON cost_global.scope='workspace' AND cost_global.scope_id='forma' AND cost_global.period=cost.period
+    WHERE (token.owner_id,token.stream_id,token.correlation_id,token.operation,token.period,token.reserved_tokens,token.used_tokens,token.status)=
+      (json_extract(pinned.value,'$.actorUserId'),json_extract(pinned.value,'$.streamId'),json_extract(pinned.value,'$.correlationId'),
+       'document-render:scene',json_extract(pinned.value,'$.period'),json_extract(pinned.value,'$.reservedTokens'),0,'active')
+      AND token.settled_at IS NULL
+      AND (cost.owner_id,cost.stream_id,cost.correlation_id,cost.operation,cost.period,cost.reserved_microusd,cost.used_microusd,cost.status,cost.allow_user_overage,cost.workspace_id)=
+      (token.owner_id,token.stream_id,token.correlation_id,token.operation,token.period,
+       json_extract(pinned.value,'$.reservedMicrousd'),0,'executing',0,json_extract(pinned.value,'$.workspaceId'))
+      AND cost.settled_at IS NULL
+      AND (${counter("token_user","tokens","token.reserved_tokens","json_extract(pinned.value,'$.tokenUserLimit')")})
+      AND (${counter("token_global","tokens","token.reserved_tokens","json_extract(pinned.value,'$.tokenGlobalLimit')")})
+      AND (${counter("cost_user","microusd","cost.reserved_microusd","json_extract(pinned.value,'$.costUserLimit')")})
+      AND (${counter("cost_global","microusd","cost.reserved_microusd","json_extract(pinned.value,'$.costGlobalLimit')")})
+      AND ${scope?`EXISTS(
+        SELECT 1 FROM project_budget_reservation_scopes token_scope
+        JOIN project_budget_reservation_scopes cost_scope ON cost_scope.reservation_kind='usd' AND cost_scope.reservation_id=cost.reservation_id
+        JOIN budget_scope_policies policy ON policy.scope='workspace' AND policy.scope_id=cost.workspace_id AND policy.organization_id=cost.workspace_id
+        JOIN budget_counters workspace_tokens ON workspace_tokens.scope='workspace' AND workspace_tokens.scope_id=cost.workspace_id AND workspace_tokens.period=token.period
+        JOIN cost_budget_counters workspace_cost ON workspace_cost.scope='workspace' AND workspace_cost.scope_id=cost.workspace_id AND workspace_cost.period=cost.period
+        WHERE token_scope.reservation_kind='tokens' AND token_scope.reservation_id=token.reservation_id
+          AND (token_scope.organization_id,token_scope.project_access_id,token_scope.actor_user_id,token_scope.workspace_scope_id)=
+            (cost.workspace_id,json_extract(pinned.value,'$.projectScope.projectAccessId'),token.owner_id,cost.workspace_id)
+          AND (cost_scope.organization_id,cost_scope.project_access_id,cost_scope.actor_user_id,cost_scope.workspace_scope_id)=
+            (token_scope.organization_id,token_scope.project_access_id,token_scope.actor_user_id,token_scope.workspace_scope_id)
+          AND typeof(policy.token_limit)='integer' AND policy.token_limit>0
+          AND typeof(policy.microusd_limit)='integer' AND policy.microusd_limit>0
+          AND (${counter("workspace_tokens","tokens","token.reserved_tokens","policy.token_limit")})
+          AND (${counter("workspace_cost","microusd","cost.reserved_microusd","policy.microusd_limit")})
+          AND ${activeProjectBillingSql}
+      )`:`NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes billing
+        WHERE (billing.reservation_kind,billing.reservation_id) IN (('tokens',token.reservation_id),('usd',cost.reservation_id)))`}
+      AND ${claim.pilotCohortId?`EXISTS(
+        SELECT 1 FROM pilot_cost_reservation_scopes fixed
+        JOIN pilot_cohorts cohort ON cohort.cohort_id=fixed.cohort_id AND cohort.organization_id=fixed.organization_id
+        JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+        JOIN cost_budget_counters pilot_org ON pilot_org.scope='pilot_org' AND pilot_org.scope_id=cohort.cohort_id AND pilot_org.period='pilot:'||cohort.cohort_id
+        JOIN cost_budget_counters pilot_user ON pilot_user.scope='pilot_user' AND pilot_user.scope_id=cost.owner_id AND pilot_user.period=pilot_org.period
+        WHERE (fixed.reservation_id,fixed.cohort_id,fixed.organization_id,fixed.actor_user_id)=
+          (cost.reservation_id,json_extract(pinned.value,'$.pilotCohortId'),cost.workspace_id,cost.owner_id)
+          AND cohort.status='active' AND cohort.starts_at<=json_extract(pinned.value,'$.now')
+          AND cohort.ends_at>json_extract(pinned.value,'$.now') AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND participant.user_id=cost.owner_id AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer'
+          AND typeof(cohort.participant_cap_microusd)='integer' AND cohort.participant_cap_microusd>0
+          AND typeof(cohort.organization_cap_microusd)='integer' AND cohort.organization_cap_microusd>0
+          AND (${counter("pilot_org","microusd","cost.reserved_microusd","cohort.organization_cap_microusd")})
+          AND (${counter("pilot_user","microusd","cost.reserved_microusd","cohort.participant_cap_microusd")})
+      )`:`(NOT EXISTS(SELECT 1 FROM pilot_cost_reservation_scopes fixed WHERE fixed.reservation_id=cost.reservation_id)
+        AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort
+          WHERE cohort.status IN ('active','paused','closed')
+            AND (cohort.status!='closed' OR NOT EXISTS(SELECT 1 FROM pilot_cohorts successor
+              WHERE successor.organization_id=cohort.organization_id AND successor.status IN ('active','paused')))
+            AND (cohort.organization_id=cost.workspace_id OR cost.workspace_id='forma' AND EXISTS(
+              SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id
+                AND participant.organization_id=cohort.organization_id AND participant.user_id=cost.owner_id
+                AND participant.status='active' AND participant.revoked_at IS NULL))))`}
+  )`;
+  return {sql,bindings:[value,...(scope?[claim.actorUserId,claim.actorUserId,scope.projectAccessId,scope.organizationId,claim.actorUserId]:[])]};
+}
+
 export async function settleCostBudget(env: WorkerEnv, userId: string, reservation: string | number, usedMicrousd: number, options:{activeOnly?:boolean}={}) {
   const row = await resolveCostReservation(env, userId, reservation);
   if (!row) return { settled: false as const, reservedMicrousd: 0, usedMicrousd: 0, status: "missing" as const };

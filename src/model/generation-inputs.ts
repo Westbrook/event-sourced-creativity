@@ -11,6 +11,8 @@ export type GenerationInputInspection = {
   receipt: Record<string, unknown>;
   retained: boolean;
   outcome?: "completed" | "failed" | "in_progress";
+  /** System-owned presentation metadata; retained title, subtitle and receipt stay unchanged. */
+  systemHeader?: { format: "scene"; attemptCount: number };
 };
 
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
@@ -192,7 +194,8 @@ function inspectDocumentGenerationInputs(job:DocumentJob,events:CreativeEvent[],
   };
   const family=job.kind==="render_document"?(artifactKind?artifactKind.replaceAll("_"," "):"document output"):job.kind==="prompt_fan"?`${job.fanKind==="preview"?"Draft":"Full-quality"} fan`:job.kind==="preview"?"Draft image":"Full-quality image";
   const title=outcome==="failed"?"Failed generation inputs":outcome==="in_progress"?"Generation in progress":"Completed generation inputs";
-  return{title,subtitle:`${family} · attempt ${job.attemptCount}`,prompt,receipt,retained:generationReceipt?retainedPrivateInput:Boolean(retainedPrivateInput||requests.length),outcome};
+  const systemHeader:GenerationInputInspection["systemHeader"]=job.kind==="render_document"&&artifactKind==="scene"?{format:"scene",attemptCount:job.attemptCount}:undefined;
+  return{title,subtitle:`${family} · attempt ${job.attemptCount}`,prompt,receipt,retained:generationReceipt?retainedPrivateInput:Boolean(retainedPrivateInput||requests.length),outcome,...(systemHeader?{systemHeader}:{})};
 }
 
 /** Inspect the same actor-private frozen request while queued, running, failed, or completed. */

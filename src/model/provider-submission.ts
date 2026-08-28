@@ -34,7 +34,7 @@ export function hasUnresolvedProviderSubmission(checkpoint: Record<string, unkno
     || providerSubmissions(checkpoint).some((receipt) => receipt.status === "pending");
 }
 
-function invalidProviderSubmissions(checkpoint: Record<string, unknown>) {
+export function invalidProviderSubmissions(checkpoint: Record<string, unknown>) {
   if (!Object.hasOwn(checkpoint, "providerSubmissions")) return false;
   const entries = checkpoint.providerSubmissions;
   if (!entries || typeof entries !== "object" || Array.isArray(entries)) return true;

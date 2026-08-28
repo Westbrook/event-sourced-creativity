@@ -1,4 +1,4 @@
-import { providerSubmissions } from "./provider-submission.ts";
+import { providerSubmissions, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, invalidProviderSubmissions } from "./provider-submission.ts";
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value : null;
@@ -11,14 +11,45 @@ export function knownProviderRejection(failure: unknown) {
     && detail.category === "safety" && detail.retryable === false);
 }
 
+
+/** Server row identity is required; a caller-authored marker is not a projection authority. */
+export type ScenePolicyStopProjectionIdentity={jobId:string;correlationId:string;bindingHash:string;attemptCount:number;status:string};
+function certifiedSceneLocalStop(checkpoint:Record<string,unknown>,receipt:Record<string,unknown>,failure:unknown,identity?:ScenePolicyStopProjectionIdentity){
+  if(!identity)return null;
+  const certificate=record(checkpoint.scenePolicyStopSummary),detail=record(failure);
+  const keys=["version","job_id","attempt_correlation_id","binding_hash","artifact_id","input_ref","source_snapshot_sha256","stopped_client_request_id","evidence_sha256"];
+  if(Object.keys(certificate).length!==keys.length||keys.some(key=>!Object.hasOwn(certificate,key))
+    ||certificate.version!=="scene-policy-stop-summary-v1"||certificate.job_id!==identity.jobId||certificate.attempt_correlation_id!==identity.correlationId
+    ||identity.correlationId!==identity.jobId+":attempt:1"||identity.attemptCount!==1||identity.status!=="failed"
+    ||certificate.binding_hash!==identity.bindingHash||!/^[a-f0-9]{64}$/u.test(identity.bindingHash)
+    ||certificate.artifact_id!==checkpoint.artifactId||!text(certificate.artifact_id)
+    ||certificate.input_ref!==receipt.input_ref||!text(certificate.input_ref)||certificate.source_snapshot_sha256!==receipt.source_snapshot_sha256
+    ||typeof certificate.source_snapshot_sha256!=="string"||!/^[a-f0-9]{64}$/u.test(certificate.source_snapshot_sha256)
+    ||typeof certificate.evidence_sha256!=="string"||!/^[a-f0-9]{64}$/u.test(certificate.evidence_sha256)
+    ||checkpoint.artifactKind!=="scene"||checkpoint.stage!=="failed"||checkpoint.providerSubmissionProtocol!==1||receipt.execution_evidence_version!==1
+    ||receipt.artifact_kind!=="scene"||receipt.failure_code!=="scene_paid_authority_changed"||receipt.failure_category!=="access"
+    ||detail.code!=="scene_paid_authority_changed"||detail.httpStatus!==403||detail.category!=="access"||detail.scope!=="project"
+    ||detail.action!=="check_project"||detail.retryable!==false||detail.requestId!==null)return null;
+  const id=text(certificate.stopped_client_request_id);if(!id)return null;
+  const stopped=record(record(checkpoint.providerSubmissions)[id]);
+  return Object.keys(stopped).sort().join(",")==="clientRequestId,costMicrousd,model,operation,provider,status"
+    &&stopped.clientRequestId===id&&stopped.provider==="openai"&&stopped.operation==="planning"&&stopped.model===receipt.model
+    &&stopped.status==="rejected"&&stopped.costMicrousd===0?id:null;
+}
+
 /** Read-only presentation of retained evidence. Never changes a submission or a reservation. */
-export function generationExecutionSummary(checkpoint: Record<string, unknown>, failure: unknown = null) {
+export function generationExecutionSummary(checkpoint: Record<string, unknown>, failure: unknown = null, sceneIdentity?:ScenePolicyStopProjectionIdentity) {
   const receipt = record(checkpoint.generationReceipt);
   // The server removes private observer records after deriving this projection.
   // A second client-side projection cannot disprove its known pending calls.
   if (receipt.execution_evidence_version === 1 && !Object.hasOwn(checkpoint, "providerSubmissions")) return { ...receipt };
-  const submissions = providerSubmissions(checkpoint);
-  const confirmed = submissions.filter((entry) => entry.status !== "pending");
+  const stopped=certifiedSceneLocalStop(checkpoint,receipt,failure,sceneIdentity);
+  const submissions = providerSubmissions(checkpoint).filter(entry=>entry.clientRequestId!==stopped);
+  const sceneCertificatePresent=checkpoint.artifactKind==="scene"&&Object.hasOwn(checkpoint,"scenePolicyStopSummary");
+  const sceneInvalid=sceneCertificatePresent&&invalidProviderSubmissions(checkpoint);
+  const validated=sceneCertificatePresent?submissions.filter(entry=>record(checkpoint.providerSubmissions)[entry.clientRequestId]===entry
+    &&!invalidProviderSubmissions({providerSubmissions:{[entry.clientRequestId]:entry}})):submissions;
+  const confirmed = validated.filter((entry) => entry.status !== "pending");
   const mediaRequests = new Set(confirmed.filter((entry) => entry.operation !== "planning").map((entry) => `${entry.provider}:${entry.providerRequestId ?? entry.clientRequestId}`));
   const addMedia = (value: unknown, defaultProvider = "fal") => {
     const item = record(value), id = text(item.providerJobId) ?? text(item.provider_job_id) ?? text(item.provider_request_id);
@@ -37,8 +68,10 @@ export function generationExecutionSummary(checkpoint: Record<string, unknown>, 
   const retainedTotal = count(receipt.actual_provider_call_count);
   const identifiedTotal = plannerCount + mediaRequests.size;
   const breakdownComplete = retainedTotal === null || retainedTotal <= identifiedTotal;
-  const pending = submissions.filter((entry) => entry.status === "pending");
-  const legacyPending = checkpoint.providerSubmissionLegacyUncertain === true
+  const pending = validated.filter((entry) => entry.status === "pending");
+  const sceneUnresolved=sceneCertificatePresent&&hasUnresolvedProviderSubmission(checkpoint);
+  const sceneUnsettled=sceneCertificatePresent&&hasUnsettledProviderSubmission(checkpoint);
+  const legacyPending = sceneInvalid || checkpoint.providerSubmissionLegacyUncertain === true
     || checkpoint.audioProviderSubmission === "pending" && !text(checkpoint.providerJobId) && !pending.some((entry) => entry.operation === "audio")
     || checkpoint.storyboardProviderSubmission === "pending" && !text(checkpoint.providerJobId) && !pending.some((entry) => entry.operation === "image")
     || checkpoint.presentationProviderSubmission === "pending" && !text(checkpoint.plannerResponseId) && !pending.some((entry) => entry.operation === "planning");
@@ -54,6 +87,12 @@ export function generationExecutionSummary(checkpoint: Record<string, unknown>, 
       provider_request_status: "rejected", provider_contacted: true, failure_stage: "provider",
       request_outcome_basis: "retained_provider_error_response",
     } : {}),
+    ...(sceneCertificatePresent&&(sceneUnresolved||confirmed.length>0)?{
+      provider_request_status:sceneUnresolved?"submission_unknown":"submitted",
+      source_transmission_status:confirmed.length>0||receipt.source_transmission_status==="transmitted"?"transmitted":"unknown",
+      ...(sceneUnsettled?{settled_cost_microusd:(count(receipt.settled_cost_microusd)??0)>0?receipt.settled_cost_microusd:null,
+        reservation_status:["reserved","executing"].includes(String(receipt.reservation_status))?receipt.reservation_status:"unknown"}:{}),
+    }:{}),
     ...(submissions.length || identifiedTotal ? {
       actual_planner_call_count: breakdownComplete ? plannerCount : null,
       actual_media_call_count: breakdownComplete ? mediaRequests.size : null,

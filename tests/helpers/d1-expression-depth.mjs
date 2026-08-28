@@ -7,8 +7,25 @@ import { createHash } from "node:crypto";
 // The default prepare-time check sends only schema and SQL, never fixture row data.
 // An explicit bindings option is available for exact mocked-statement probes.
 const COMPILE = String.raw`
-import json,re,sqlite3,sys
-data=json.load(sys.stdin)
+import json,re,sqlite3,sys,time
+started=time.monotonic()
+def milestone(stage,**fields):
+    print(json.dumps({"stage":stage,"elapsedMs":round((time.monotonic()-started)*1000),**fields}),file=sys.stderr,flush=True)
+milestone("started")
+# The parent owns one complete JSON frame. Do not wait for a separate pipe EOF
+# after all of its UTF-8 bytes have arrived.
+if len(sys.argv)!=2 or not re.fullmatch(r"[1-9][0-9]*",sys.argv[1]):
+    raise ValueError("D1 compiler requires a positive decimal input byte length")
+expected=int(sys.argv[1])
+if expected>sys.maxsize:
+    raise ValueError("D1 compiler input byte length exceeds the platform limit")
+milestone("input-read-start",expectedBytes=expected)
+payload=sys.stdin.buffer.read(expected)
+milestone("input-read-complete",expectedBytes=expected,receivedBytes=len(payload))
+if len(payload)!=expected:
+    raise EOFError("D1 compiler input frame is truncated")
+data=json.loads(payload)
+milestone("input-parsed")
 if not hasattr(sqlite3.Connection,"setlimit"):
     raise RuntimeError("D1 depth tests require Python 3.11+ with sqlite3.Connection.setlimit")
 db=sqlite3.connect(":memory:",cached_statements=0)
@@ -27,10 +44,12 @@ for function in data.get("functions",[]):
         db.create_function(function["name"],function["narg"],lambda *args:1,deterministic=bool(function["flags"]&2048))
 for statement in data["schema"]:
     db.executescript(statement+";")
+milestone("schema-created")
 db.setlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH,data["limit"])
 assert db.getlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH)==data["limit"]
 try:
     try:
+        milestone("before-explain",suppliedBindings=len(data.get("bindings",[])))
         compiled=db.execute("EXPLAIN "+data["sql"],data.get("bindings",[]))
     except sqlite3.ProgrammingError as error:
         # SQLite reports the real parameter count after parsing. Null placeholders
@@ -38,12 +57,16 @@ try:
         match=re.fullmatch(r"Incorrect number of bindings supplied\. The current statement uses (\d+), and there are 0 supplied\.",str(error))
         if not match:
             raise
+        milestone("before-explain-placeholder-bindings",placeholderBindings=int(match.group(1)))
         compiled=db.execute("EXPLAIN "+data["sql"],(None,)*int(match.group(1)))
     compiled.fetchall()
+    milestone("after-explain")
     result={"ok":True}
 except sqlite3.Error as error:
+    milestone("sqlite-error")
     result={"ok":False,"error":str(error)}
 print(json.dumps({**result,"limit":data["limit"],"sqliteVersion":sqlite3.sqlite_version}))
+milestone("finished")
 `;
 const schemaSql = sqlite => sqlite.prepare("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END").all().map(row => row.sql);
 
@@ -52,11 +75,27 @@ const functionSignatures = sqlite => sqlite.prepare("PRAGMA function_list").all(
   .sort((a, b) => a.name.localeCompare(b.name) || a.narg - b.narg || a.type.localeCompare(b.type));
 
 export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema = schemaSql(sqlite), bindings, functions = functionSignatures(sqlite) } = {}) {
-  const compiled = spawnSync(process.env.FORMA_SQLITE_PYTHON ?? "python3", ["-I", "-S", "-B", "-c", COMPILE], {
-    input: JSON.stringify({ schema, sql, limit, functions, ...(bindings === undefined ? {} : { bindings }) }), encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30_000,
+  const started = performance.now();
+  const input = JSON.stringify({ schema, sql, limit, functions, ...(bindings === undefined ? {} : { bindings }) });
+  const compiled = spawnSync(process.env.FORMA_SQLITE_PYTHON ?? "python3", ["-I", "-S", "-B", "-c", COMPILE, String(Buffer.byteLength(input, "utf8"))], {
+    input, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30_000,
   });
-  assert.equal(compiled.status, 0, (compiled.stderr || compiled.error?.message || compiled.stdout) + "\n" + sql.slice(0, 220));
-  return JSON.parse(compiled.stdout);
+  try {
+    assert.equal(compiled.status, 0, (compiled.stderr || compiled.error?.message || compiled.stdout) + "\n" + sql.slice(0, 220));
+    return JSON.parse(compiled.stdout);
+  } catch (error) {
+    // A route may turn this assertion into a generic response before the fixture
+    // sees it. Keep process/stage evidence here, without printing fixture values.
+    console.error("[forma:d1-compiler-failure] " + JSON.stringify({
+      elapsedMs: Math.round(performance.now() - started), limit,
+      sqlSha256: createHash("sha256").update(sql).digest("hex"), sqlBytes: Buffer.byteLength(sql),
+      schemaStatements: schema.length, suppliedBindings: bindings?.length ?? null,
+      status: compiled.status, signal: compiled.signal,
+      processError: compiled.error ? { name: compiled.error.name, code: compiled.error.code, message: compiled.error.message } : null,
+      childStderr: compiled.stderr?.slice(-8192) ?? "", childStdout: compiled.stdout?.slice(-2048) ?? "",
+    }));
+    throw error;
+  }
 }
 
 // Only reuse a completed depth-100 compile for byte-identical SQL, schema and function signatures. The
@@ -76,7 +115,12 @@ export function enforceD1ExpressionDepth(state) {
       const key = schemaHash + "\n" + JSON.stringify(functions) + "\n100\n" + sql;
       let result = verifiedCompiles.get(key);
       if (!result) {
-        result = compileSqliteExpressionDepth(state.sqlite, sql, { schema, functions });
+        try {
+          result = compileSqliteExpressionDepth(state.sqlite, sql, { schema, functions });
+        } catch (error) {
+          failures.push({ sql, ok: false, limit: 100, kind: "compiler-exception", error: error instanceof Error ? error.message : String(error) });
+          throw error;
+        }
         verifiedCompiles.set(key, result);
       }
       if (!observed.has(key)) { observed.add(key); records.push({ sql, ...result }); }

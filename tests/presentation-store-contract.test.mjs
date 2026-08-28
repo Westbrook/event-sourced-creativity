@@ -9,7 +9,7 @@ const store = syntax.statements.find((statement) => ts.isClassDeclaration(statem
 assert.ok(store, "the actual FormaStore class remains available for contract verification");
 
 function actualMethod(name) {
-  const method = store.members.find((member) => ts.isMethodDeclaration(member) && member.name.getText(syntax) === name);
+  const method = store.members.find((member) => ts.isMethodDeclaration(member) && member.body && member.name.getText(syntax) === name);
   assert.ok(method, `the actual ${name} store method remains available`);
   return method.getText(syntax);
 }
@@ -386,6 +386,25 @@ test("actor-private presentation draft review rejects mismatched identity, forbi
     assert.deepEqual(harness.jobs,[listed]);
     assert.deepEqual(harness.contentValues,{});
   }
+});
+
+test("resolved citation checks stay in the authorized private detail without broadening store caches",async(context)=>{
+  const harness=new PresentationStoreHarness();
+  const listed={jobId:"job-private-citation",documentId:"authorized-document",result:null};
+  harness.jobs=[listed];
+  const candidate={jobId:listed.jobId,documentId:listed.documentId,responseId:"private-citation-response",reviewOnlyReason:"historical-validation-rejection",
+    citationChecks:[{slideIndex:0,citationIndex:0,sourceLabel:"Synthetic research",excerpt:"Synthetic quoted evidence.",excerptTruncated:false,
+      sourceStatus:"authorized",excerptStatus:"ungrounded",anchorStatus:"valid",passages:[{content:"Synthetic frozen source passage.",truncated:false}]}]};
+  context.mock.method(globalThis,"fetch",async(url)=>{
+    assert.equal(url,`/api/document-jobs/${listed.jobId}/presentation-candidates/${candidate.responseId}`);
+    return{ok:true,json:async()=>({jobId:listed.jobId,documentId:listed.documentId,candidate})};
+  });
+  const detail=await harness.loadPresentationCandidate(listed.jobId,candidate.responseId);
+  assert.equal(detail.citationChecks[0].sourceStatus,"authorized");
+  assert.equal(detail.citationChecks[0].excerptStatus,"ungrounded");
+  assert.deepEqual(harness.jobs,[listed]);
+  assert.deepEqual(harness.contentValues,{});
+  assert.deepEqual(harness.hydrations,[]);
 });
 
 test("preserved actor-private drafts remain discoverable after their transient job leaves ordinary application state",async(context)=>{

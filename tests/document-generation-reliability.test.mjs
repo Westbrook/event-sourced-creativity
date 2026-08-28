@@ -8,6 +8,7 @@ import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "
 import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobCanRecoverProviderRender, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
 import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
 import { appendAuditEvent } from "../worker/runtime.ts";
+import { isSceneCostPreview } from "../src/model/scene-cost-consent.ts";
 
 const workspaceRoot=new URL("../",import.meta.url).href;
 const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
@@ -74,6 +75,29 @@ async function reliabilityWorker(){
 
 function json(body,headers={}){
   return{method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)};
+}
+
+/** Exercise the real free inspection and one approved durable request; no execution authority is mocked. */
+async function approvedReliabilityScene(fixture,input){
+  assert.equal(input.kind,"render_document");assert.equal(input.payload.artifactKind,"scene");assert.equal(input.payload.productionMode,"manual");
+  const sceneRequestId="reliability-scene-"+crypto.randomUUID();
+  const counts=()=>Object.fromEntries(["document_jobs","budget_reservations","cost_budget_reservations"].map(table=>[table,fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+  const before=counts();
+  const inspection=await fixture.request("/api/document-jobs",json({...input,payload:{...input.payload,sceneRequestId,sceneCostPreview:true}}));
+  assert.equal(inspection.status,200,await inspection.clone().text());
+  const inspected=await inspection.json(),preview=inspected.sceneCostPreview;
+  assert.ok(isSceneCostPreview(preview));assert.equal(preview.requestId,sceneRequestId);assert.equal(preview.documentId,input.documentId);
+  assert.equal(preview.model,fixture.environment.OPENAI_MODEL);assert.equal(preview.productionMode,input.payload.productionMode);
+  assert.equal(preview.providerCallCount,1);assert.equal(preview.maximumProviderCallCount,2);assert.equal(preview.maximumMicrousd,1_000_000);
+  assert.equal(inspected.providerCalls,0);assert.equal(inspected.reservations,0);assert.deepEqual(counts(),before);
+  const accepted=await fixture.request("/api/document-jobs",json({...input,payload:{...input.payload,sceneRequestId,sceneCostConsent:{...preview,confirmed:true}}}));
+  assert.equal(accepted.status,202,await accepted.clone().text());
+  const {job}=await accepted.clone().json();assert.equal(job.jobId,sceneRequestId);
+  const original=JSON.parse(fixture.sqlite.prepare("SELECT request_json FROM document_jobs WHERE job_id=?").get(job.jobId).request_json);
+  assert.deepEqual(original.sceneCostConsent,{...preview,confirmed:true});
+  assert.equal(job.result.generationReceipt.maximum_authorized_cost_microusd,preview.maximumMicrousd);
+  assert.equal(job.result.generationReceipt.maximum_provider_call_count,preview.maximumProviderCallCount);
+  return accepted;
 }
 
 async function authoredOutline(fixture,count=12,owner="dev-local-creative"){
@@ -728,7 +752,8 @@ for(const form of ["preview","generate","short_story","scene","storyboard","audi
     globalThis.fetch=async(url)=>{assert.equal(String(url),"https://api.openai.com/v1/moderations");return Response.json({id:"test-moderation",results:[{flagged:false,categories:{}}]});};
     await fixture.drainBackground();
     const kind=form==="preview"||form==="generate"?form:"render_document";
-    const accepted=await fixture.request("/api/document-jobs",json({kind,documentId:"doc-atmosphere",payload:{...(kind==="render_document"?{artifactKind:form,productionMode:"manual",itemCount:1,paidMediaConfirmed:true}:{}),requestKey:`foreground-${form}`}}));
+    const admission={kind,documentId:"doc-atmosphere",payload:{...(kind==="render_document"?{artifactKind:form,productionMode:"manual",itemCount:1,paidMediaConfirmed:true}:{}),requestKey:`foreground-${form}`}};
+    const accepted=form==="scene"?await approvedReliabilityScene(fixture,admission):await fixture.request("/api/document-jobs",json(admission));
     assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
     const {job}=await accepted.json();assert.equal(fixture.backgroundCount,0);
     const entered=Promise.withResolvers(),release=Promise.withResolvers();
@@ -1533,6 +1558,35 @@ test("rejects source-free slideshow requests at both admission boundaries withou
   }finally{globalThis.fetch=previousFetch;}
 });
 
+test("unresolved output-outline evidence is rejected at both admission boundaries before reservations or job writes",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId="isolated-unresolved-output-outline";
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","DocumentCreated",{project_id:"project-atmosphere",document_id:documentId,title:"Isolated outline preflight test"});
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{
+    project_id:"project-atmosphere",document_id:documentId,block_id:"isolated-outline-only",type:"format",handle:"format/isolated-outline",position:"outline-1",
+    properties:{text:"Presentation outline\nSlide 1: Orchard yield. Explain orchard yield and drip irrigation.\nSlide 2: Archive retrieval. Describe archive retrieval and catalog records.",weight:1,authority:"authored"},
+  });
+  const baselineEvents=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+  const baselinePrivate=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+  const original=globalThis.fetch;let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("Unresolved source scope must stop before provider contact.");};
+  try{
+    for(const mode of ["manual","managed"])for(const boundary of ["jobs","events"]){
+      const payload={artifactKind:"slides",productionMode:mode,itemCount:2,requestedSlideCount:2,budgetAcknowledged:true};
+      const rejected=boundary==="jobs"?await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json({kind:"render_document",documentId,payload})),fixture.environment,""):await handleEvents(new Request("http://localhost/api/events",json({action:"render_document",documentId,...payload})),fixture.environment);
+      assert.equal(rejected.status,422,`${boundary}/${mode}: ${JSON.stringify(await rejected.clone().json())}`);
+      const detail=await rejected.json();assert.equal(detail.error,"presentation_source_contract_invalid");
+      assert.ok(detail.issues.some((issue)=>issue.code==="unresolved_outline_evidence"));
+    }
+    assert.equal(providerCalls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,baselineEvents);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,baselinePrivate);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE document_id=?").get(documentId).count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,0);
+  }finally{globalThis.fetch=original;}
+});
+
 test("both slideshow admission boundaries reject six slides for seven isolated authored chapters before any paid work",async()=>{
   const fixture=await reliabilityWorker();
   const documentId="seven-independent-authored-presentation-chapters";
@@ -1790,18 +1844,15 @@ test("all document media reject unpriced planning before source transmission or 
   globalThis.fetch=async()=>{providerCalls+=1;throw new Error("An unpriced document planner must never receive authored source context.");};
 
   try{
-    const response=await handleEvents(new Request("http://localhost/api/events",json({
-      action:"render_document",
-      documentId:"doc-atmosphere",
-      artifactKind:"scene",
-      productionMode:"manual",
-      itemCount:1,
-      requestKey:"unpriced-cross-media-planner",
-    })),fixture.environment);
-    const failed=await response.json();
+    const accepted=await approvedReliabilityScene(fixture,{kind:"render_document",documentId:"doc-atmosphere",payload:{
+      artifactKind:"scene",productionMode:"manual",itemCount:1,requestKey:"unpriced-cross-media-planner",
+    }});
+    const {job}=await accepted.json();
+    const response=await fixture.runJob(job),failed=(await response.json()).job;
 
-    assert.equal(response.status,429,JSON.stringify(failed));
-    assert.equal(failed.error,"document_model_pricing_unavailable");
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.httpStatus,429,JSON.stringify(failed));
+    assert.equal(failed.errorDetail.code,"document_model_pricing_unavailable");
     assert.equal(providerCalls,0);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
@@ -1859,9 +1910,11 @@ test("a planning dollar ceiling remains authoritative even with unused reserved 
   const previousFetch=globalThis.fetch;let calls=0;
   globalThis.fetch=async()=>{calls+=1;assert.equal(calls,1);return Response.json({id:"metered-expensive-plan",model:"gpt-5.6-sol",output_text:"{}",usage:{input_tokens:40000,output_tokens:23000,total_tokens:63000}});};
   try{
-    const response=await handleEvents(new Request("http://localhost/api/events",json({action:"render_document",documentId:"doc-atmosphere",artifactKind:"scene",productionMode:"manual",itemCount:1,requestKey:"unchanged-dollar-ceiling"})),fixture.environment);
-    assert.equal(response.status,429,await response.clone().text());
-    assert.equal((await response.json()).error,"document_spend_cap_reached");
+    const accepted=await approvedReliabilityScene(fixture,{kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"scene",productionMode:"manual",itemCount:1,requestKey:"unchanged-dollar-ceiling"}});
+    const {job}=await accepted.json();const response=await fixture.runJob(job),failed=(await response.json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.httpStatus,429,JSON.stringify(failed));
+    assert.equal(failed.errorDetail.code,"document_spend_cap_reached");
     assert.equal(calls,1);
     assert.equal(fixture.sqlite.prepare("SELECT used_microusd FROM cost_budget_reservations WHERE operation='document-render:scene'").get().used_microusd,890_000);
   }finally{globalThis.fetch=previousFetch;}
@@ -1889,18 +1942,15 @@ test("an oversized cross-media repair stops before another provider call and set
   };
 
   try{
-    const response=await handleEvents(new Request("http://localhost/api/events",json({
-      action:"render_document",
-      documentId:"doc-atmosphere",
-      artifactKind:"scene",
-      productionMode:"manual",
-      itemCount:1,
-      requestKey:"oversized-cross-media-repair",
-    })),fixture.environment);
-    const failed=await response.json();
+    const accepted=await approvedReliabilityScene(fixture,{kind:"render_document",documentId:"doc-atmosphere",payload:{
+      artifactKind:"scene",productionMode:"manual",itemCount:1,requestKey:"oversized-cross-media-repair",
+    }});
+    const {job}=await accepted.json();
+    const response=await fixture.runJob(job),failed=(await response.json()).job;
 
-    assert.equal(response.status,429,JSON.stringify(failed));
-    assert.equal(failed.error,"document_token_cap_reached");
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.httpStatus,429,JSON.stringify(failed));
+    assert.equal(failed.errorDetail.code,"document_token_cap_reached");
     assert.equal(providerCalls,1,"the initial response is retained but its unsafe repair is never purchased");
     const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE operation='document-render:scene'").get();
     assert.deepEqual({...reservation},{reserved_tokens:128_000,used_tokens:150,status:"settled"});
@@ -2149,6 +2199,7 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     assert.ok(candidates[0].issues.some((issue)=>issue.code==="unknown_source_reference"&&issue.category==="authorization"));
     assert.ok(candidates[1].issues.some((issue)=>issue.code==="unknown_context_group_reference"&&issue.category==="authorization"));
     assert.ok(candidates.every((candidate)=>candidate.generatedSlideCount===12&&!candidate.complete));
+    assert.ok(candidates.every((candidate)=>!Object.hasOwn(candidate,"citationChecks")),"private citation excerpts and passages never enter listing summaries");
 
     const detailed=await requestSourceJob(`${job.jobId}/presentation-candidates/rejected-visible-alternative-1`);
     assert.equal(detailed.status,200,JSON.stringify(await detailed.clone().json()));
@@ -2156,6 +2207,8 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     const detail=JSON.parse(text).candidate;
     assert.equal(detail.slides.length,12);
     assert.equal(detail.slides[0].title,"RESPONSIVE ASSESSMENT");
+    assert.ok(detail.citationChecks.length>0,"the authorized private detail explains citation grounding against frozen source passages");
+    assert.ok(detail.citationChecks.every((check)=>check.passages.every((passage)=>!Object.hasOwn(passage,"id"))),"private passage identifiers never become display text");
     assert.doesNotMatch(text,/PRIVATE_AUTHORED_SLIDE_|blk_999|context_group_999|"(?:sourceIds|source_id|source_ids|image_prompt|content_markdown|output_text)"\s*:/u);
 
     const foreignHeaders={"oai-authenticated-user-id":"other-presentation-author","oai-authenticated-user-email":"other-presentation-author@example.test"};
@@ -2179,6 +2232,59 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     assert.equal(impossiblePromotion.status,409,"source-invalid rejected alternatives cannot be promoted");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
     assert.equal(providerCalls,2,"candidate review and blocked promotion never issue another provider request");
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("an adapter upgrade cannot promote a historically rejected paid presentation or rewrite its receipt",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture,"historical-rejection-review-only");
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(_url,init={})=>{
+    providerCalls+=1;
+    return Response.json({id:"historical-review-only-response",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  };
+  try{
+    const admitted=await requestSourceJob("",json(presentationAdmission(documentId,"historical-rejection-review-only")));
+    assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));
+    const{job}=await admitted.json();
+    fixture.sqlite.exec("CREATE TRIGGER fail_review_only_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_review_only_persistence_failure'); END");
+    const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    const failed=(await failedResponse.json()).job;
+    assert.equal(failed.status,"failed");
+    fixture.sqlite.exec("DROP TRIGGER fail_review_only_persistence");
+    const current=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(current.recoverablePresentationCandidate,true,"the synthetic response passes current validation, so the historical guard is exercised");
+    for(const version of ["2026-08-26-source-aware-render-v4",undefined]){
+      const checkpoint=structuredClone(current);
+      checkpoint.generationReceipt.presentation_adapter_version=version;
+      checkpoint.generationReceipt.failure_stage="source_fidelity_validation";
+      checkpoint.generationReceipt.failure_code="source_fidelity_validation_failed";
+      checkpoint.errorDetail={...checkpoint.errorDetail,code:"source_fidelity_validation_failed"};
+      // This stale true flag must not override the historical validation rejection.
+      checkpoint.recoverablePresentationCandidate=true;
+      const original=JSON.stringify(checkpoint);
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(original,job.jobId);
+      const listed=await requestSourceJob();
+      assert.equal(listed.status,200);
+      assert.notEqual((await listed.json()).jobs.find((entry)=>entry.jobId===job.jobId).result.recoverablePresentationCandidate,true);
+      const alternatives=await requestSourceJob(`${job.jobId}/presentation-candidates`);
+      assert.equal(alternatives.status,200);
+      const candidates=(await alternatives.json()).candidates;
+      assert.equal(candidates.length,1);
+      assert.equal(candidates[0].complete,false);
+      assert.equal(candidates[0].reviewOnlyReason,"historical-validation-rejection");
+      assert.equal(candidates[0].issues.length,0,"passing current checks must not erase the previous rejection");
+      const recovery=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+      assert.equal(recovery.status,409);
+      assert.equal((await recovery.json()).reason,"historical_validation_rejection");
+      const retained=fixture.sqlite.prepare("SELECT result_json,status FROM document_jobs WHERE job_id=?").get(job.jobId);
+      assert.equal(retained.status,"failed");
+      assert.equal(retained.result_json,original,"review and blocked recovery do not migrate immutable failure accounting");
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+    }
+    assert.equal(providerCalls,1,"reviewing and blocking recovery never submit another provider request");
   }finally{globalThis.fetch=previousFetch;}
 });
 

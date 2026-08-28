@@ -8,7 +8,7 @@ import { selectArtifactProductionKind } from "../src/model/managed-production.ts
 import { foldEvents } from "../src/model/events.ts";
 import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
-import { generateCreativeVideo, generateDocumentArtifact } from "../worker/openai-adapter.ts";
+import { generateCreativeVideo, generateDocumentArtifact, PRESENTATION_ADAPTER_VERSION } from "../worker/openai-adapter.ts";
 import { artifactGenerationInputInspection, outputGenerationInputInspection } from "../src/model/generation-inputs.ts";
 
 const event=(sequence,type,payload,actor=type.startsWith("DocumentRender")?"worker:renderer":"user")=>({eventId:`e${sequence}`,streamId:"s",sequence,occurredAt:"2026-08-19T12:00:00.000Z",recordedAt:"2026-08-19T12:00:00.000Z",actor,clientId:"test",correlationId:"c",causationId:null,compensatesEventId:null,schemaVersion:1,type,payload});
@@ -597,7 +597,7 @@ test("locally heals repeated slide openings and generic captions while registeri
     assert.deepEqual(validation.adapter_reconciliation.issue_codes,["duplicate_slide_copy","generic_visual_label"]);
     assert.equal(validation.adapter_reconciliation.status,"pending");
     assert.equal(validation.adapter_reconciliation.self_healed,true);
-    assert.equal(validation.adapter_reconciliation.adapter_version,"2026-08-26-source-aware-render-v4");
+    assert.equal(validation.adapter_reconciliation.adapter_version,PRESENTATION_ADAPTER_VERSION);
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -620,13 +620,13 @@ test("first-time storyboards prefer coherent production without silently changin
 
   const component=await readFile(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8");
   assert.match(component,/#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false/);
-  assert.match(component,/#selectArtifactKind\(kind:DocumentArtifactKind\)\{const selected=selectArtifactProductionKind/);
+  assert.match(component,/#selectArtifactKind\(kind:DocumentArtifactKind\)\{if\(this\.#kind!==kind\)this\.#clearSceneCost\(\);const selected=selectArtifactProductionKind/);
   const opener=component.slice(component.indexOf("  async openRender("),component.indexOf("  async openArtifactById("));
   assert.match(opener,/if\(kind\)this\.#selectArtifactKind\(kind\)/);assert.match(opener,/return this\.#openCreate\(!kind,current\)/);
   assert.match(component,/name="artifact-kind"[^\n]*@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\)/);
-  assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="manual";(?:this\.#sendSoundtrackToVideoProvider=false;)?this\.#storyboardManagedDefault=false/);
-  assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;/,"switching to manual production must revoke soundtrack-provider transfer consent");
-  assert.match(component,/value="managed"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="managed";this\.#sendSoundtrackToVideoProvider=false;/,"switching to managed production must revoke soundtrack-provider transfer consent");
+  assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#sceneDraftChanged\(\);this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;this\.#storyboardManagedDefault=false/);
+  assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#sceneDraftChanged\(\);this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;/,"switching to manual production must revoke soundtrack-provider transfer consent");
+  assert.match(component,/value="managed"[^\n]*@change=\$\{\(\)=>\{this\.#sceneDraftChanged\(\);this\.#productionMode="managed";this\.#sendSoundtrackToVideoProvider=false;/,"switching to managed production must revoke soundtrack-provider transfer consent");
   assert.match(component,/if\(this\.#kind==="storyboard"\)this\.#storyboardManualOptOut=true/);
   assert.match(component,/if\(this\.#kind==="storyboard"\)this\.#storyboardManualOptOut=false/);
   assert.match(component,/Production cost and provider disclosure/);

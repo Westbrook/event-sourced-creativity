@@ -65,7 +65,10 @@ test("presentation authoring names the real paid provider, bounded repair exposu
 
 test("clears actor-private presentation receipts immediately when authorization changes", () => {
   assert.match(authoringSource, /#actorInputContent:Record<string,string>/);
-  assert.match(authoringSource, /#clearPrivateGenerationInputs=\(\)=>\{this\.#actorInputContent=\{\};this\.#failedInputJob=null;this\.#runningInputJob=null/);
+  const privateCleanup=authoringSource.slice(authoringSource.indexOf("  #clearPrivateGenerationInputs="),authoringSource.indexOf("  override connectedCallback()"));
+  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/, "authorization withdrawal invalidates the owned Scene input read before clearing its quote");
+  assert.match(privateCleanup, /this\.#actorInputContent=\{\};this\.#failedInputJob=null;this\.#runningInputJob=null/);
+  assert.doesNotMatch(privateCleanup, /\bawait\b/, "private receipts must be cleared synchronously on authorization withdrawal");
   assert.match(authoringSource, /addEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
   assert.match(authoringSource, /removeEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
   assert.match(authoringSource, /loadActorDocumentGenerationReceipt\(job\.jobId\)/);
@@ -101,7 +104,7 @@ test("managed presentation requests reject unsupported counts, prevent duplicate
   assert.match(authoringSource, /value>MAX_MANAGED_PRESENTATION_SLIDES/);
   assert.match(authoringSource, /this\.#invalidSlideCount\?(?:this\.i18n\.system\("|`)Enter a whole number/);
   assert.match(authoringSource, /unsupportedAuthoredSlideCount=authoredSlideCount!==null&&authoredSlideCount>MAX_MANAGED_PRESENTATION_SLIDES/);
-  assert.match(authoringSource, /this\.#productionMode==="managed"&&!unsupportedAuthoredSlideCount\?buildManagedProductionPlan/);
+  assert.match(authoringSource, /this\.#productionMode==="managed"&&this\.#kind!=="scene"&&!unsupportedAuthoredSlideCount\?buildManagedProductionPlan/);
   assert.match(authoringSource, /authored slides exceed the \$\{MAX_MANAGED_PRESENTATION_SLIDES\}-slide editable PowerPoint limit/);
   assert.match(authoringSource, /\|\|unsupportedAuthoredSlideCount\|\|/);
   assert.match(authoringSource, /if\(this\.#submitting\|\|this\.#referenceBusy/);

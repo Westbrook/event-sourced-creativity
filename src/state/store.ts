@@ -26,6 +26,8 @@ import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapte
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../model/video-adapter";
 import { normalizeAudioRequestProfile, selectAudioAdapterContract, type AudioRequestProfile } from "../model/audio";
 import { isSceneMedium, type SceneMedium } from "../model/scene-configuration";
+import { isSceneCostPreview, isSceneSafeUnusedProof, sceneCostApprovalMatches, sceneCostRequestDescription, sceneCostRequestHash, type SceneCostApproval, type SceneCostInspection, type SceneCostPreview, type SceneCostRequest } from "../model/scene-cost-consent";
+import { standingConstraints } from "../model/taste";
 import { estimatePlannerOperationMicrousd, formatGenerationUsd, generationBudgetGate, generationBudgetPreferenceKey, type GenerationCostBudgets } from "../model/generation-budget";
 import { currentFormaLocale, FORMA_DEFAULT_MESSAGES } from "../components/design-system/localization";
 import { localizedGenerationFailureGuidance } from "../components/design-system/localized-runtime-copy";
@@ -78,6 +80,18 @@ export type ArtifactRevisionSummary={revision:number;sha256:string;createdByUser
 export type ArtifactRevisionDetail={revision:number;currentRevision:number;createdAt:string;content:{markdown:string;items:Array<{title:string;body:string;notes:string}>}};
 export type PlanningConsentRequest={prompt:string;projectId:string;documentId:string;canvasId:string|null;sourceSurface:string;projectScope:boolean;locale:string;requestKey:string};
 export type PlanningConsentState={id:string;request:PlanningConsentRequest;quote:AvailableConsequentialPreview|null;working:boolean;notice:""|"failed"|"refresh"|"not-submitted"|"uncertain";submitted:boolean;recoveryExecutionId?:string;replaceExecutionId?:string;recoveredPlan?:AdaptiveStructure;readRevision?:number};
+
+export type SceneSubmissionResult={requestId:string;job:DocumentJob|null;preview:SceneCostPreview|null;reused:boolean;attemptSubmission:"not-submitted"|"submitted"|"unknown"};
+export type SceneSubmissionPorts={current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void};
+export type SceneGenerationReceiptReadOptions={documentId:string;fresh:true;current?:()=>boolean};
+export type SceneGenerationReceiptInspection={job:DocumentJob;content:Record<string,string>};
+function sceneCostJobMatches(value:unknown,requestId:string,documentId:string):value is DocumentJob{
+  if(!value||typeof value!=="object"||Array.isArray(value))return false;
+  const job=value as DocumentJob;
+  return job.jobId===requestId&&job.documentId===documentId&&job.kind==="render_document"
+    &&["queued","running","committing","completed","failed","partial","canceled"].includes(job.status);
+}
+
 /** An ephemeral navigation handle, never a cached plan, financial receipt, or new request. */
 export type PlanningRecoveryIdentity=Pick<DocumentJob,"jobId"|"documentId"|"canvasId"|"planningExecutionId"|"planningProjectScope"|"planningLocale">&{kind:"structure_adaptive";sourceSurface?:string;requestKey?:string};
 
@@ -513,7 +527,10 @@ export class FormaStore {
     let parsed:unknown;try{parsed=JSON.parse(retained);}catch{throw new Error("The private generation receipt could not be verified for this authorized job.");}
     if(!parsed||typeof parsed!=="object"||Array.isArray(parsed)||(parsed as Record<string,unknown>).job_id!==job.jobId||(parsed as Record<string,unknown>).document_id!==job.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
   }
-  async loadDocumentJobDetail(jobId:string){
+  loadDocumentJobDetail(jobId:string,options:SceneGenerationReceiptReadOptions):Promise<SceneGenerationReceiptInspection>;
+  loadDocumentJobDetail(jobId:string):Promise<DocumentJob>;
+  async loadDocumentJobDetail(jobId:string,options?:SceneGenerationReceiptReadOptions):Promise<DocumentJob|SceneGenerationReceiptInspection>{
+    if(options)return this.loadActorDocumentGenerationReceipt(jobId,options);
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const cached=this.#jobDetails.get(jobId);
@@ -575,7 +592,70 @@ export class FormaStore {
     }
   }
   /** Explicit actor-only project receipts never enter shared job or content caches. */
-  async loadActorDocumentGenerationReceipt(jobId:string):Promise<{job:DocumentJob;content:Record<string,string>}>{
+  async loadActorDocumentGenerationReceipt(jobId:string,options?:SceneGenerationReceiptReadOptions):Promise<SceneGenerationReceiptInspection>{
+    if(options){
+      // Scene handoff is response-only. Neither an old feed row nor a late
+      // general content hydration can supply its job or retained source bytes.
+      const authorization=this.#activeAuthorizationScope(),documentId=options.documentId,current=options.current;
+      const shared=Boolean(this.session.get()?.projectContext),route=this.route.get();
+      const access=()=>{const session=this.session.get();return JSON.stringify({context:session?.projectContext??null,permissions:session?.projectContext?.permissions??session?.capabilities??[]});};
+      const accessKey=access();
+      const unavailable=()=>new Error("The retained generation inputs could not be loaded.");
+      const mismatch=()=>new Error("The retained generation inputs do not belong to this authorized job.");
+      const verifyCurrent=()=>{
+        this.#assertAuthorizationScope(authorization);
+        const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];
+        if(options.fresh!==true||typeof documentId!=="string"||!documentId.trim()||typeof jobId!=="string"||!jobId.trim()
+          ||Boolean(session?.projectContext)!==shared||access()!==accessKey||this.route.get()!==route
+          ||!permissions.some(permission=>permission==="project.read"||permission==="project.output.request")
+          ||session?.projectContext&&!(Date.parse(session.projectContext.expiresAt)>Date.now())
+          ||current!==undefined&&(typeof current!=="function"||!current()))throw unavailable();
+      };
+      const read=async(url:string)=>{
+        verifyCurrent();
+        const response=await fetch(url,{cache:"no-store"});
+        verifyCurrent();
+        // Denial headers are authoritative even if their body never resolves.
+        if(!response.ok&&[401,403,404,410].includes(response.status))throw unavailable();
+        const body=await response.json() as {job?:DocumentJob;content?:Record<string,unknown>};
+        verifyCurrent();
+        if(!response.ok||!body||typeof body!=="object"||Array.isArray(body))throw unavailable();
+        return body;
+      };
+      const matches=(job:unknown):job is DocumentJob=>sceneCostJobMatches(job,jobId,documentId)&&(job as DocumentJob).result?.artifactKind==="scene";
+      const identity=(job:DocumentJob)=>JSON.stringify([job.jobId,job.documentId,job.kind,job.canvasId??null,job.sourceSurface,job.requestKey,job.documentRevision,job.requestedAt]);
+      verifyCurrent();
+      const listed=this.documentJobs.get().find(job=>job.jobId===jobId);
+      if(listed&&listed.documentId!==documentId)throw mismatch();
+      const inspected=await read("/api/document-jobs/"+encodeURIComponent(jobId)+"?inspection=1");
+      verifyCurrent();
+      if(!matches(inspected.job))throw mismatch();
+      let job=inspected.job,content:Record<string,unknown>|undefined;
+      if(shared){
+        const receipt=await read("/api/document-jobs/"+encodeURIComponent(jobId)+"/private-receipt");
+        verifyCurrent();
+        if(!matches(receipt.job)||identity(receipt.job)!==identity(job))throw mismatch();
+        job=receipt.job;content=receipt.content;
+      }
+      const receipt=job.result?.generationReceipt;
+      const reference=receipt&&typeof receipt==="object"&&!Array.isArray(receipt)?(receipt as Record<string,unknown>).input_ref:null;
+      if(typeof reference!=="string"||!reference.trim())throw unavailable();
+      if(!shared){
+        const retained=await read("/api/events?after="+this.head.get()+"&limit=1&content=1");
+        verifyCurrent();content=retained.content;
+      }
+      if(!content||typeof content!=="object"||Array.isArray(content)||shared&&Object.keys(content).length!==1
+        ||!Object.hasOwn(content,reference)||typeof content[reference]!=="string")throw unavailable();
+      const raw=content[reference];let retained:unknown;
+      try{retained=JSON.parse(raw);}catch{throw unavailable();}
+      if(!retained||typeof retained!=="object"||Array.isArray(retained)
+        ||(retained as Record<string,unknown>).job_id!==jobId||(retained as Record<string,unknown>).document_id!==documentId)throw mismatch();
+      const selected:Record<string,string>={[reference]:raw};
+      const prompt=job.moderationPromptRef;
+      if(!shared&&typeof prompt==="string"&&prompt.trim()&&prompt!==reference&&Object.hasOwn(content,prompt)&&typeof content[prompt]==="string")selected[prompt]=content[prompt];
+      verifyCurrent();
+      return{job,content:selected};
+    }
     const authorization=this.#activeAuthorizationScope();
     if(!this.session.get()?.projectContext)throw new Error("Actor-private project receipts require an active project context.");
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
@@ -1009,6 +1089,80 @@ async syncDocumentJobs(){
       if(this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}
     }
   }
+
+  /** Read-only client evidence guard; the server still recertifies private sources and the HttpOnly context. */
+  captureSceneCostSource(request:SceneCostRequest){
+    const source=()=>{
+      const session=this.session.get(),projection=this.projection.get();
+      const document=projection.documents.find(candidate=>candidate.id===request.documentId&&candidate.projectId===projection.projectId&&!candidate.removed);
+      const context=session?.projectContext,permissions=context?.permissions??session?.capabilities??[];
+      if(!session||!document||!permissions.includes("project.read")||context&&context.projectId!==projection.projectId
+        ||context&&!(Date.parse(context.expiresAt)>Date.now()))return null;
+      const selected=(request.workflowSources??[]).map(item=>{
+        const output=item.outputKind==="image"?projection.libraryOutputs.find(candidate=>candidate.id===item.outputId):projection.libraryArtifacts.find(candidate=>candidate.id===item.outputId);
+        return [item,output??null,output?.contentRef?this.content.get()[output.contentRef]??null:null,
+          this.eventView.get().filter(event=>String(event.payload.artifact_id??event.payload.object_id??"")===item.outputId)];
+      });
+      return JSON.stringify([this.#activeAuthorizationScope(),this.route.get(),projection.projectId,document.id,document.title,
+        [...permissions].sort(),context?.role??null,context?.expiresAt??null,session.policy.accepted,session.policy.version,
+        session.provider.plannerModel??null,session.provider.plannerConfigured??null,new Date().toISOString().slice(0,7),
+        this.#generationContext(request.documentId),sceneCostRequestDescription(request),selected,
+        request.workflowId?this.eventView.get().filter(event=>event.type==="DocumentProductionWorkflowConfigured"&&event.payload.workflow_id===request.workflowId&&event.payload.document_id===request.documentId):[],
+        standingConstraints(this.eventView.get())]);
+    };
+    const original=source();
+    return ()=>original!==null&&source()===original;
+  }
+
+  /** A free exact read: no budget modal, job feed reconciliation, polling, retry or provider execution. */
+  async previewSceneCost(request:SceneCostRequest,options:{sourceSurface?:string;current?:()=>boolean}={}):Promise<SceneCostInspection>{
+    const input=JSON.parse(JSON.stringify(request)) as SceneCostRequest;
+    const authorization=this.#activeAuthorizationScope(),session=this.session.get(),projectId=this.projection.get().projectId;
+    const sourceCurrent=this.captureSceneCostSource(input);
+    const current=()=>Boolean(session&&this.#scopeStillActive(authorization)&&sourceCurrent()&&(!options.current||options.current()));
+    const check=()=>{if(!current())throw new Error("scene_cost_changed");};
+    check();
+    const context=this.#generationContext(input.documentId),navigation=this.#navigationCommit;
+    await this.#appendPipeline;check();
+    if(navigation){if(!await navigation)throw new Error("scene_cost_changed");check();}
+    const requestHash=await sceneCostRequestHash(input);check();
+    const {requestId,...settings}=input;
+    const payload={...context,...settings,artifactKind:"scene",sceneRequestId:requestId,sceneCostPreview:true};
+    const response=await fetch("/api/document-jobs",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({kind:"render_document",documentId:input.documentId,sourceSurface:options.sourceSurface??"document",payload})});
+    check();
+    if(!response.ok&&[401,403,404,410].includes(response.status))throw new Error("scene_cost_unavailable");
+    const body=await response.json() as {sceneCostPreview?:unknown;sceneCostExisting?:{requestId?:unknown;preview?:unknown;safeUnused?:unknown};job?:DocumentJob;providerCalls?:unknown;reservations?:unknown;reused?:unknown;error?:unknown};
+    check();
+    if(!response.ok)throw new Error(typeof body.error==="string"&&(/^(?:scene_cost_|workflow_source_|context_source_)/u.test(body.error)||body.error==="project_source_index_stale")?body.error:"scene_cost_unavailable");
+    if(body.job||body.sceneCostExisting){
+      if(body.reused!==true||!sceneCostJobMatches(body.job,input.requestId,input.documentId)
+        ||body.sceneCostExisting?.requestId!==input.requestId)throw new Error("scene_cost_unavailable");
+      const preview=body.sceneCostExisting.preview;
+      if(preview!==null&&(!isSceneCostPreview(preview)||preview.requestId!==input.requestId
+        ||preview.actorUserId!==session!.user.userId||preview.projectId!==projectId||preview.documentId!==input.documentId))throw new Error("scene_cost_unavailable");
+      const candidate=body.sceneCostExisting.safeUnused,job=body.job;
+      // Response-only evidence from this exact free read. Status or a zero-looking receipt is never permission.
+      const safeUnused=isSceneSafeUnusedProof(candidate)&&preview!==null
+        &&candidate.requestId===input.requestId&&candidate.actorUserId===session!.user.userId
+        &&candidate.projectId===projectId&&candidate.documentId===input.documentId
+        &&candidate.permissionEpoch===(session!.permissionEpoch??"legacy")
+        &&Boolean(candidate.contextSessionId)===Boolean(session!.projectContext)
+        &&candidate.bindingHash===preview.bindingHash&&candidate.jobStatus===job.status
+        &&candidate.jobUpdatedAt===job.updatedAt&&candidate.attemptCount===job.attemptCount
+        &&job.leaseExpiresAt===null&&typeof job.completedAt==="string"
+        &&Number.isFinite(Date.parse(job.completedAt))&&Date.parse(job.completedAt)<=Date.parse(candidate.verifiedAt)
+        ?candidate:null;
+      return{requestId:input.requestId,preview,job,safeUnused};
+    }
+    const preview=body.sceneCostPreview;
+    if(body.providerCalls!==0||body.reservations!==0||!isSceneCostPreview(preview)||preview.requestId!==input.requestId
+      ||preview.actorUserId!==session!.user.userId||preview.projectId!==projectId||preview.documentId!==input.documentId
+      ||preview.permissionEpoch!==(session!.permissionEpoch??"legacy")||Boolean(preview.contextSessionId)!==Boolean(session!.projectContext)
+      ||preview.period!==new Date().toISOString().slice(0,7)||preview.requestHash!==requestHash
+      ||session!.provider.plannerModel&&preview.model!==session!.provider.plannerModel)throw new Error("scene_cost_changed");
+    return{requestId:input.requestId,preview,job:null,safeUnused:null};
+  }
+
   #budgetPreference(key:string){try{return localStorage.getItem(key)==="true";}catch{return false;}}
   #setBudgetPreference(key:string){try{localStorage.setItem(key,"true");}catch{/* A blocked browser storage policy only affects reminder persistence. */}}
   #generationEstimate(kind:DocumentJobKind,payload:Record<string,unknown>){
@@ -1016,6 +1170,7 @@ async syncDocumentJobs(){
     if(kind==="prompt_fan")return 4_000_000;
     if(kind!=="render_document")return 1_000_000;
     const artifactKind=String(payload.artifactKind??"");
+    if(artifactKind==="scene"){const consent=payload.sceneCostConsent as Partial<SceneCostApproval>|undefined;const {confirmed,...preview}=consent??{};if(confirmed!==true||!isSceneCostPreview(preview))throw new Error("scene_cost_confirmation_required");return preview.maximumMicrousd;}
     const audioCost=artifactKind==="audio"?selectAudioAdapterContract(normalizeAudioRequestProfile(payload.audioProfile,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{}),payload.audioProviderModel?{preferredModel:String(payload.audioProviderModel)}:{}).estimatedCostMicrousd:0;
     if(payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video","audio"].includes(artifactKind)){const production=buildManagedProductionPlan(artifactKind as DocumentArtifactKind,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??payload.requestedSlideCount??0),...(artifactKind==="slides"?{requestedSlideCount:Number(payload.requestedSlideCount??payload.itemCount??0)}:{})});return production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioCost:0);}
     return artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:artifactKind==="audio"?audioCost+1_000_000:artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
@@ -1048,7 +1203,9 @@ async syncDocumentJobs(){
     if(!accepted)throw new Error(localize("Generation canceled before any provider work was started."));
     payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
   }
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
+    const scene=kind==="render_document"&&payload.artifactKind==="scene";
+    const check=()=>{if(scene&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     if(!payload.locale&&["preview","generate","prompt_fan","render_document"].includes(kind))payload={...payload,locale:typeof document==="undefined"?"en":document.documentElement.lang||"en"};
     const authorization=this.#activeAuthorizationScope();
     if(!this.#canRequestProjectOutputs())throw new Error("Your project role does not permit creating outputs.");
@@ -1057,7 +1214,7 @@ async syncDocumentJobs(){
     const requestKey=String(payload.requestKey??"");
     if(requestKey){
       const active=this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&job.requestKey===requestKey&&["queued","running","committing"].includes(job.status));
-      if(active&&kind!=="structure_adaptive")return{job:active,reused:true};
+      if(active&&kind!=="structure_adaptive"&&!scene)return{job:active,reused:true};
       if(kind==="render_document"&&payload.artifactKind==="slides"&&payload.paidRetryConfirmed!==true){
         const failed=this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&job.requestKey===requestKey&&job.status==="failed"&&job.result?.artifactKind==="slides");
         if(failed&&documentJobCanRecoverPresentation(failed)){
@@ -1067,21 +1224,28 @@ async syncDocumentJobs(){
       }
     }
     if(requestKey&&this.#jobStarts.has(requestKey))throw new Error(kind==="render_document"?"This exact output request is already being queued.":"This exact image request is already being queued.");
-    if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);
+    if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);check();
       if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");
-      this.#assertAuthorizationScope(authorization);await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);check();await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);check();
       const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;
-      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);
-      this.#assertAuthorizationScope(authorization);
-      const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};
-      this.#assertAuthorizationScope(authorization);
-      if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");
+      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,scene?controls:{});
+      this.#assertAuthorizationScope(authorization);check();
+      const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness;attemptSubmission?:string;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}};
+      this.#assertAuthorizationScope(authorization);check();
+      if(!response.ok||!body.job)throw Object.assign(new Error(body.message??body.error??"Document operation could not be started"),scene&&body.attemptSubmission==="not-submitted"?{attemptSubmission:"not-submitted"}:{});
+      if(scene){
+        if(!sceneCostJobMatches(body.job,String(payload.sceneRequestId??""),documentId))throw new Error("scene_cost_unavailable");
+        const original=body.sceneCostExisting,session=this.session.get();
+        if(original&&(original.requestId!==payload.sceneRequestId||original.preview!==null&&(!isSceneCostPreview(original.preview)
+          ||original.preview.requestId!==payload.sceneRequestId||original.preview.actorUserId!==session?.user.userId
+          ||original.preview.projectId!==this.projection.get().projectId||original.preview.documentId!==documentId)))throw new Error("scene_cost_unavailable");
+      }
       if(kind==="structure_adaptive"&&!adaptiveJobMatchesRequest(body.job,{documentId,canvasId:typeof payload.canvasId==="string"?payload.canvasId:null,sourceSurface,requestKey}))throw new Error(currentFormaLocale().messages["next.exact.unavailable"]??"The exact planning request changed.");
       const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");
       if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});
       const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];
       this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);
-      return{job:body.job,reused:Boolean(body.reused)};
+      return{job:body.job,reused:Boolean(body.reused),...(scene&&body.sceneCostExisting?{sceneCostExisting:body.sceneCostExisting}:{})};
     }finally{if(requestKey&&this.#scopeStillActive(authorization)){this.#jobStarts.delete(requestKey);this.notify();}}
   }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
@@ -1096,10 +1260,11 @@ async syncDocumentJobs(){
     if(!this.session.get()?.impersonation)return true;if(this.#impersonationConfirmation)return false;this.patchUi({impersonationConfirmOpen:true,impersonationAction:action});return new Promise<boolean>((resolve)=>{this.#impersonationConfirmation=resolve;});
   }
   resolveImpersonatedInteraction(confirmed:boolean){const resolve=this.#impersonationConfirmation;this.#impersonationConfirmation=undefined;this.patchUi({impersonationConfirmOpen:false,impersonationAction:""});resolve?.(confirmed);if(!confirmed)this.toast("Canceled. The fictional account was not changed.");}
-  async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account"){
+  async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account",controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">={}){
+    const check=()=>{if(controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     const authorization=this.#activeAuthorizationScope(),method=String(init.method??(input instanceof Request?input.method:"GET")).toUpperCase();
-    if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){const response=await fetch(input,init);if(authorization)this.#assertAuthorizationScope(authorization);return response;}
-    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);if(!confirmed)return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");const response=await fetch(input,{...init,headers});this.#assertAuthorizationScope(authorization);return response;
+    if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){check();const pending=fetch(input,init);try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();if(authorization)this.#assertAuthorizationScope(authorization);return response;}
+    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);check();if(!confirmed)return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");check();const pending=fetch(input,{...init,headers});try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();this.#assertAuthorizationScope(authorization);return response;
   }
   async startImpersonating(personaId:string,route="/projects"){
     const response=await fetch("/api/impersonation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({personaId,confirmation:"I understand, continue"})});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"The fictional account could not be opened");window.location.assign(body.route??route);
@@ -1965,11 +2130,49 @@ async syncDocumentJobs(){
     }
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[]}={}){
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
+    if(kind==="scene"){
+      const documentId=options.documentId??this.projection.get().documentId,session=this.session.get(),authorization=this.#activeAuthorizationScope();
+      const request:SceneCostRequest={documentId,requestId:options.sceneRequestId??"",sceneMedium:isSceneMedium(options.sceneMedium)?options.sceneMedium:"visual",
+        productionMode:options.productionMode??"manual",...(options.itemCount===undefined?{}:{itemCount:options.itemCount}),
+        audience:options.audience?.trim()??"",tone:options.tone?.trim()??"",locale:options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en"),
+        ...(options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:{}),
+      };
+      const input=JSON.parse(JSON.stringify(request)) as SceneCostRequest;
+      const sourceCurrent=this.captureSceneCostSource(input);
+      const current=()=>Boolean(session&&this.#scopeStillActive(authorization)&&this.#canRequestProjectOutputs()&&sourceCurrent()&&(!options.current||options.current()));
+      let dispatched=false,reported=false;
+      const report=(result:SceneSubmissionResult)=>{if(reported)return;reported=true;try{options.onResult?.(result);}catch{/* Presentation failure cannot change the original submission receipt. */}};
+      try{
+        if(!/^[a-z0-9][a-z0-9:_-]{0,119}$/iu.test(input.requestId)||!current())throw new Error("scene_cost_changed");
+        const consent={...options.sceneCostConsent},preview={...consent};delete preview.confirmed;
+        if(!isSceneCostPreview(preview)||!sceneCostApprovalMatches(consent,preview)||preview.requestId!==input.requestId
+          ||preview.actorUserId!==session!.user.userId||preview.projectId!==this.projection.get().projectId||preview.documentId!==documentId
+          ||preview.permissionEpoch!==(session!.permissionEpoch??"legacy")||Boolean(preview.contextSessionId)!==Boolean(session!.projectContext)
+          ||preview.period!==new Date().toISOString().slice(0,7)||session!.provider.plannerModel&&preview.model!==session!.provider.plannerModel)throw new Error("scene_cost_changed");
+        const requestHash=await sceneCostRequestHash(input);
+        if(!current()||requestHash!==preview.requestHash)throw new Error("scene_cost_changed");
+        const {requestId,...settings}=input;
+        const result=await this.#startDocumentJob("render_document",{...this.#generationContext(documentId),...settings,artifactKind:"scene",
+          requestKey:"render:scene:"+requestId,sceneRequestId:requestId,sceneCostConsent:consent},options.sourceSurface??"document",documentId,
+          {current,onDispatch:()=>{dispatched=true;options.onDispatch?.();}});
+        if(!current())throw new Error("scene_cost_changed");
+        const original=result.sceneCostExisting?result.sceneCostExisting.preview:preview;
+        report({requestId,job:result.job,preview:original,reused:result.reused,attemptSubmission:"submitted"});
+        if(current())this.toast(currentFormaLocale().messages[result.reused?"scene.cost.recorded":"scene.cost.queued"]??(result.reused?"This exact Scene request is already recorded.":"Scene queued. You can keep working while it is prepared."));
+        return true;
+      }catch(error){
+        const attempt=dispatched&&!(error&&typeof error==="object"&&"attemptSubmission" in error&&error.attemptSubmission==="not-submitted")?"unknown":"not-submitted";
+        report({requestId:input.requestId,job:null,preview:null,reused:false,attemptSubmission:attempt});
+        if(this.#scopeStillActive(authorization)&&(!options.current||options.current()))this.toast(currentFormaLocale().messages["scene.cost.unavailable"]??"The exact Scene request could not be verified. Check its original status before approving paid work.");
+        return false;
+      }
+    }
+
     const productionMode=options.productionMode??"manual";const requestedSlideCount=kind==="slides"?options.requestedSlideCount??options.itemCount:undefined;const itemCount=kind==="slides"?requestedSlideCount:options.itemCount;
     if(kind==="slides"){if(options.itemCount!==undefined&&options.requestedSlideCount!==undefined&&options.itemCount!==options.requestedSlideCount){this.toast("The selected slide count does not match the requested presentation size.");return false;}const maximumSlideCount=productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;if(requestedSlideCount!==undefined&&(!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1||requestedSlideCount>maximumSlideCount)){this.toast(this.#systemNotice("{mode} presentations support between 1 and {maximum} slides. The request was not started.",{mode:this.#systemNotice(productionMode==="managed"?"Managed":"Manual"),maximum:maximumSlideCount}));return false;}}
-    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const sceneMedium=kind==="scene"?(isSceneMedium(options.sceneMedium)?options.sceneMedium:"visual"):undefined;const sceneIdentity=sceneMedium?`:scene:${sceneMedium}`:"";const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${sceneIdentity}${presentationIdentity}${audioIdentity}${workflowIdentity}`;
-    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,...(sceneMedium?{sceneMedium}:{}),videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId);this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
+    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}${audioIdentity}${workflowIdentity}`;
+    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId);this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
   async openProject(projectId:string,destination="/") {

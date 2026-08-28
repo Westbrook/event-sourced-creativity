@@ -94,6 +94,51 @@ test("Activity deduplicates repeated field diagnostics using the newest provider
   assert.equal(evidence[0].stage, "repair");
 });
 
+test("Activity shows remaining repair failures while retaining the initial diagnostics in the job receipt", () => {
+  const retained = [
+    issue({ code: "incorrect_citation_source", path: "items.0.slide.citations.0.sourceId" }),
+    issue({ code: "missing_title", path: "items.1.title", globalSlideIndex: 2 }),
+    issue({ code: "ungrounded_citation_excerpt", path: "items.0.slide.citations.0.excerpt", providerAttempt: 2, stage: "repair" }),
+  ];
+  const failed = job({ errorDetail: { ...job().errorDetail, validationIssues: retained } });
+  const before = structuredClone(failed);
+  const evidence = activityJobEvidence(failed);
+  assert.deepEqual(evidence.map((entry) => entry.code), ["ungrounded_citation_excerpt"]);
+  assert.equal(evidence[0].providerAttempt, 2);
+  assert.match(evidence[0].message, /resolved source passage/u);
+  assert.match(evidence[0].message, /does not establish invented wording/u);
+  assert.deepEqual(failed, before, "projecting current actions must not rewrite historical evidence");
+  assert.doesNotMatch(activityJobIssueReport(failed), /incorrect_citation_source|missing_title|PRIVATE|PROMPT/u);
+});
+
+test("Activity selects the newest attempt independently for every presentation page", () => {
+  const evidence = activityJobEvidence(job({ errorDetail: { ...job().errorDetail, validationIssues: [
+    issue({ code: "missing_title", pageCount: 2, providerAttempt: 1 }),
+    issue({ code: "ungrounded_citation_excerpt", path: "items.0.slide.citations.0.excerpt", pageCount: 2, providerAttempt: 2, stage: "repair" }),
+    issue({ code: "incorrect_slide_source", pageIndex: 1, pageCount: 2, globalSlideIndex: 9, providerAttempt: 3 }),
+  ] } }));
+  assert.deepEqual(evidence.map((entry) => [entry.pageIndex, entry.providerAttempt, entry.code]), [
+    [0, 2, "ungrounded_citation_excerpt"],
+    [1, 3, "incorrect_slide_source"],
+  ]);
+});
+
+test("Citation assignment and excerpt failures have distinct public-safe guidance", () => {
+  const evidence = activityJobEvidence(job({ errorDetail: { ...job().errorDetail, validationIssues: [
+    issue({ code: "incorrect_citation_source", path: "items.0.slide.citations.0.sourceId" }),
+    issue({ code: "ungrounded_citation_excerpt", path: "items.0.slide.citations.0.excerpt" }),
+  ] } }));
+  const assignment = evidence.find((entry) => entry.code === "incorrect_citation_source");
+  const excerpt = evidence.find((entry) => entry.code === "ungrounded_citation_excerpt");
+  assert.equal(assignment.category, "authorization");
+  assert.equal(assignment.path, "items.0.slide.citations.0.sourceId");
+  assert.match(assignment.message, /evidence permitted for this slide/u);
+  assert.equal(excerpt.category, "source-integrity");
+  assert.match(excerpt.message, /contiguous quotation/u);
+  assert.ok(evidence.every((entry) => entry.blocking && !entry.overridable));
+  assert.doesNotMatch(JSON.stringify(evidence), /PRIVATE|PROMPT|req_secret/u);
+});
+
 test("Activity rejects invalid pagination and sanitizes hostile field names and failure codes", () => {
   const evidence = activityJobEvidence(job({
     errorDetail: {

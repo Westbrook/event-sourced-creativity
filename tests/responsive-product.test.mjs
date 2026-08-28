@@ -357,7 +357,7 @@ test("generation failure recovery cards adapt to their actual pane instead of cr
   assert.match(artifacts, /class="document-artifact-failure-copy"/);
   assert.match(artifacts, /class="document-artifact-failure-actions"/);
   assert.match(artifacts, /class="document-artifact-failure-format"/);
-  assert.match(artifacts, /<h3>\$\{guidance\.title\}<\/h3>/);
+  assert.match(artifacts, /<h3 aria-label=\$\{applicationEligibility\?`\$\{guidance\.title\} · \$\{requestContext\}`:nothing\}>\$\{guidance\.title\}<\/h3>/, "the visible heading remains intact while exact Scene requests have distinct accessible names");
   const cardRule = sheets.find((sheet) => sheet.name === "responsive-foundation.css")?.root.nodes.find((rule) =>
     rule.type === "rule" && rule.selector === ".document-artifact-failures > article.document-artifact-failure-card",
   );
@@ -662,6 +662,29 @@ test("Activity rejects orphan, removed, cross-tenant, unauthorized, and imperson
   assert.match(deliver, /documentIds\.has\(output\.documentId\)/);
 });
 
+test("Project attention counts one failed Slides job without treating paid repairs or rejected drafts as outputs", () => {
+  const projection = { projectId: "project-a", documents: [
+    { id: "doc-a", projectId: "project-a", removed: false },
+    { id: "doc-b", projectId: "project-b", removed: false },
+    { id: "removed", projectId: "project-a", removed: true },
+  ], libraryArtifacts: [] };
+  const session = { user: { userId: "alice" }, projectContext: null, projects: [], impersonation: null };
+  const failed = { jobId: "slides-job", documentId: "doc-a", kind: "render_document", status: "failed", dismissedAt: null,
+    attemptCount: 1, result: { artifactKind: "slides", generationReceipt: { actual_provider_call_count: 2, settled_cost_microusd: 135008 } } };
+  const jobs = [failed,
+    { ...failed, jobId: "completed", status: "completed" },
+    { ...failed, jobId: "dismissed", dismissedAt: "2026-08-27T15:30:00.000Z" },
+    { ...failed, jobId: "foreign", documentId: "doc-b" },
+    { ...failed, jobId: "removed", documentId: "removed" },
+  ];
+  const activity = scopedFormaActivity(session, projection, [], [], jobs);
+  assert.equal(formaActivityAttention(activity), 1);
+  assert.equal(projection.libraryArtifacts.length, 0, "paid provider responses do not create accepted artifacts");
+  assert.equal(failed.result.generationReceipt.actual_provider_call_count, 2);
+  assert.equal(failed.result.generationReceipt.settled_cost_microusd, 135008);
+  assert.equal(formaActivityAttention(scopedFormaActivity(session, projection, [], [], jobs.map((job) => job.jobId === failed.jobId ? { ...job, dismissedAt: "2026-08-27T15:31:00.000Z" } : job))), 0);
+});
+
 test("Write, Shape, and Present preserve all seven authorized document lenses", () => {
   for (const family of ["studio.family.write", "studio.family.shape", "studio.family.present"]) assert.match(studio, new RegExp(family.replaceAll(".", "\\.")));
   assert.match(studio, /canAuthor\?\[\{id:"shape"/);
@@ -721,7 +744,9 @@ test("large workbenches expose real scoped project boards, review tasks, and a d
   assert.match(projectContents,/const boards=canAccessCanvas\?this\.store\.canvasProjection/);
   assert.doesNotMatch(projectContents,/session\?\.canvas\.access\?html/);
   assert.match(projectContents,/board\.projectId===p\.projectId&&!board\.removed/);
-  assert.match(projectContents,/scopedFormaActivity\(session,p,\[\],this\.store\.reviewInbox\.get\(\),\[\]\)/);
+  assert.match(projectContents,/scopedFormaActivity\(session,p,this\.store\.projectNotifications\.get\(\),this\.store\.reviewInbox\.get\(\),this\.store\.documentJobs\.get\(\)\)/);
+  assert.match(projectContents,/const needsAttention=formaActivityAttention\(\{\.\.\.activity,reviews:assignedReviews\}\)/);
+  assert.match(projectContents,/<b>\$\{this\.i18n\.number\(needsAttention\)\}<\/b><span>\$\{this\.i18n\.t\("activity\.needsYou","Needs you"\)\}/);
   assert.match(projectContents,/canvasRoute\(board\)/);
   assert.match(projectContents,/class="project-overview-summary"/);
   assert.match(workspace,/data-inspector-open=\$\{String\(this\.#workbenchInspectorOpen\)\}/);

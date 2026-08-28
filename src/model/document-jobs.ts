@@ -60,6 +60,8 @@ export type GenerationFailureGuidance = {
   actionLabel: string | null;
   actionUrl: string | null;
   retryAllowed: boolean;
+  /** Exact application-side Scene stop; not provider failure or a billing certificate. */
+  applicationEligibility?: true;
 };
 
 export type DocumentJob = {
@@ -323,6 +325,11 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
     const summary=budget?"Planning was stopped. "+documentJobStopBudgetMessage(budget):documentJobStopStatusParts(detail.message)?.join(" ")??"Planning was stopped. "+documentJobStopBudgetMessage();
     return{title:"Planning was stopped.",summary,actionLabel:null,actionUrl:null,retryAllowed:false};
   }
+  if(job?.kind==="render_document"&&job.status==="failed"&&job.result?.artifactKind==="scene"
+    &&detail?.code==="scene_paid_authority_changed"&&detail.category==="access"&&detail.scope==="project"
+    &&detail.action==="check_project"&&detail.httpStatus===403&&detail.retryable===false&&detail.retryAfterMs===null&&detail.requestId===null){
+    return{title:"Scene stopped at an application eligibility check",summary:"Forma could not confirm current application eligibility, access, or spending limits before the next provider request. Review these settings with an authorized administrator. Earlier confirmed usage remains recorded; this stop does not clear uncertain charges or budget holds.",actionLabel:"Review application settings",actionUrl:"/operations",retryAllowed:false,applicationEligibility:true};
+  }
   const result=job?.result&&typeof job.result==="object"?job.result:{};
   const receipt=result.generationReceipt&&typeof result.generationReceipt==="object"&&!Array.isArray(result.generationReceipt)?result.generationReceipt as Record<string,unknown>:{};
   const providerStatus=typeof receipt.provider_request_status==="string"?receipt.provider_request_status:"";
@@ -410,10 +417,23 @@ const PROVIDER_POLICY_DESTINATIONS = new Set([
 /** Privileged provider destinations are visible only to the exact nonimpersonating platform principal. */
 export function authorizedGenerationFailureRemediation(
   guidance: GenerationFailureGuidance,
-  principal: { capabilities?: readonly string[]; projectContext?: unknown; impersonation?: unknown } | null,
+  principal: { capabilities?: readonly string[]; projectContext?: unknown; impersonation?: unknown; organizations?: readonly { organizationId: string; role: string }[] } | null,
 ) {
-  if (!principal || principal.projectContext || principal.impersonation || guidance.retryAllowed || !guidance.actionUrl || !guidance.actionLabel || !Array.isArray(principal.capabilities)) return null;
+  if (!principal || principal.impersonation || guidance.retryAllowed || !guidance.actionUrl || !guidance.actionLabel || !Array.isArray(principal.capabilities)) return null;
   const capabilities = principal.capabilities;
+  if(guidance.applicationEligibility){
+    if(guidance.actionUrl!=="/operations")return null;
+    if(principal.projectContext){
+      const context=typeof principal.projectContext==="object"&&!Array.isArray(principal.projectContext)?principal.projectContext as Record<string,unknown>:{};
+      const organization=typeof context.organizationId==="string"&&context.organizationId&&Array.isArray(principal.organizations)
+        ?principal.organizations.find(item=>item.organizationId===context.organizationId):null;
+      return organization&&["owner","administrator"].includes(organization.role)
+        ?{href:`/settings/workspaces/${encodeURIComponent(organization.organizationId)}/usage`,label:guidance.actionLabel,external:false}:null;
+    }
+    return capabilities.includes("platform.policy.manage")?{href:"/operations",label:guidance.actionLabel,external:false}
+      :capabilities.includes("self.usage.read")?{href:"/settings",label:guidance.actionLabel,external:false}:null;
+  }
+  if(principal.projectContext)return null;
   const provider = capabilities.includes("platform.provider.configure");
   const policy = capabilities.includes("platform.policy.manage");
   const destination = guidance.actionUrl;

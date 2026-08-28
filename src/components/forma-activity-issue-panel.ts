@@ -412,6 +412,7 @@ export class FormaActivityIssuePanel extends FormaElement {
           })}</button>`)}
       </nav>` : !this.#busy ? html`<p>${this.i18n.t("presentation.draft.expired", "No unexpired, authorized provider drafts remain for this generation.")}</p>` : nothing}
       ${candidate ? html`<div class="forma-activity-issue-draft-preview"><b dir="auto">${candidate.title || this.i18n.t("presentation.draft.rejectedTitle", "Rejected presentation draft")}</b>
+        ${candidate.reviewOnlyReason === "historical-validation-rejection" ? html`<p>${this.i18n.t("presentation.draft.historicalRejection", "This response was rejected under an earlier validation contract. Current checks are for private review only and cannot approve or recover it. The original receipt is unchanged.")}</p>` : nothing}
         ${candidate.summary ? html`<p dir="auto">${candidate.summary}</p>` : nothing}
         ${candidate.slides.length ? html`<ol>${candidate.slides.slice(0, 4).map((slide, index) => html`<li><b dir="auto">${this.i18n.t("presentation.draft.slideHeading", "Slide {slide}: {title}", {
           slide: this.i18n.number(candidate.globalStartIndex + index + 1), title: slide.title,

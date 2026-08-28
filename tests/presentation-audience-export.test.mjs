@@ -103,6 +103,26 @@ function assertAudiencePrivacy(value, surface) {
   assert.doesNotMatch(value, /PRIVATE_[A-Z][A-Z_]*_ID/u, `${surface} must not expose opaque source identifiers`);
 }
 
+test("default PDF and PowerPoint exports hide v2 passage anchors while preserving public attribution and canonical evidence", () => {
+  const item = closingSlide();
+  item.slide.citations = [
+    { sourceId: "PRIVATE_PASSAGE_SOURCE_ID", label: "Published research passage_001", anchor: "Appendix B passage_002", excerpt: "PRIVATE_CITED_PASSAGE_CONTENT" },
+    { sourceId: "PRIVATE_REPORT_SOURCE_ID", label: "Public technical report", anchor: "passage_003", excerpt: "PRIVATE_REPORT_WORKPAPER" },
+  ];
+  const before = structuredClone(item);
+  const pdf = createPresentationPdf([item], presentation, { title: "Passage-safe delivery" });
+  const powerpoint = createPowerPointDocument([item], presentation);
+  const parts = storedZipEntries(powerpoint);
+
+  for (const [surface, text] of [["PDF", pdfText(pdf.bytes)], ["PowerPoint", [...parts.values()].join("\n")]]) {
+    assert.doesNotMatch(text, /passage_\d+|PRIVATE_CITED_PASSAGE_CONTENT|PRIVATE_REPORT_WORKPAPER|PRIVATE_(?:PASSAGE|REPORT)_SOURCE_ID/u, surface);
+    assert.match(text, /Published research/u, `${surface} retains public research attribution`);
+    assert.match(text, /Appendix B/u, `${surface} retains meaningful public anchors`);
+    assert.match(text, /Public technical report/u, `${surface} does not drop the source when its private anchor is removed`);
+  }
+  assert.deepEqual(item, before, "exports must not mutate canonical evidence or conceal an incorrect anchor from later validation");
+});
+
 test("audience PDFs retain exact closing copy without publishing adapter labels, excerpts, or presenter notes", () => {
   const result = createPresentationPdf([closingSlide()], presentation, { title: "Forma pitch" });
   const contents = pdfText(result.bytes);

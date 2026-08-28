@@ -19,6 +19,9 @@ export class GenerationInputDialog extends FormaElement {
   override render(){
     const inspection=this.inspection;if(!inspection)return nothing;
     const failed=inspection.outcome==="failed",running=inspection.outcome==="in_progress";
+    const systemHeader=inspection.systemHeader?.format==="scene"&&inspection.outcome?inspection.systemHeader:null;
+    const title=systemHeader?this.i18n.system(failed?"Failed generation inputs":running?"Generation in progress":"Completed generation inputs"):inspection.title;
+    const subtitle=systemHeader?this.i18n.t("scene.receipt.subtitle","{format} · attempt {attempt}",{format:this.i18n.t("artifact.scene.label","Scene"),attempt:this.i18n.number(systemHeader.attemptCount)}):inspection.subtitle;
     const storyboard=savedStoryboardInspection(inspection);
     const receipt=JSON.stringify(inspection.receipt,null,2),accounting=record(inspection.receipt.generation_receipt);
     const managed=record(record(inspection.receipt.artifact_checkpoint).managed_inputs);
@@ -58,8 +61,8 @@ export class GenerationInputDialog extends FormaElement {
       ["Failure stage",accounting.failure_stage?status(accounting.failure_stage):null],
     ].filter((entry):entry is [string,string]=>entry[1]!==null);
     const description=inspection.retained?failed?this.i18n.system("These are the retained inputs captured before the attempt failed. They are not rebuilt from the document’s current state."):running?this.i18n.system("These are the immutable private inputs captured when this in-progress generation was accepted."):this.i18n.system("This is the retained input receipt for the completed output. It is not rebuilt from the document’s current state."):failed?this.i18n.system("Only the surviving job and event receipt is available; private inputs expired or were not captured for this earlier failure."):running?this.i18n.system("The accepted generation receipt is available, but its private inputs have not been loaded."):this.i18n.system("Only the surviving public receipt is available for this older output.");
-    return html`<dialog class="generation-input-dialog" aria-labelledby=${this.#titleId} closedby="any" @click=${this.#backdrop} @close=${()=>{if(this.open){this.open=false;this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}}}>
-      <article><header><div><span>${inspection.subtitle}</span><h2 id=${this.#titleId}>${inspection.title}</h2><p>${description}</p></div><button class="icon-button" aria-label="Close generation inputs" @click=${()=>this.#close()}>${icon("close")}</button></header>
+    return html`<dialog class="generation-input-dialog" aria-labelledby=${this.#titleId} closedby="any" @click=${this.#backdrop} @close=${(event:Event)=>{if(this.open&&event.currentTarget===this.renderRoot.querySelector("dialog")&&!(event.currentTarget as HTMLDialogElement).open){this.open=false;this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}}}>
+      <article><header><div><span>${subtitle}</span><h2 id=${this.#titleId}>${title}</h2><p>${description}</p></div><button class="icon-button" aria-label="Close generation inputs" @click=${()=>this.#close()}>${icon("close")}</button></header>
       <div class="generation-input-body">
         ${storyboard?html`<section class="saved-storyboard-inspection" aria-label=${this.i18n.system("Saved storyboard preview")}>
           <header><div><h3>${this.i18n.system("{saved} of {total} frames recorded · Incomplete",{saved:this.i18n.number(storyboard.recordedFrameCount),total:this.i18n.number(storyboard.totalFrameCount)})}</h3><p>${this.i18n.system("Original request source, not current approval. Viewing does not generate, replace, approve, or release any work or budget hold.")}</p></div></header>

@@ -24,8 +24,8 @@ type PresentationAudienceArtifactInput = {
 };
 
 const compact = (value: unknown) => typeof value === "string" ? value.trim().replace(/\s+/gu, " ") : "";
-const opaqueAlias = /(?:^|\s)(?:blk|clm|grp|context_group|decision|source)_\d+(?:\s|$)/iu;
-const opaqueAliasToken = /\b(?:blk|clm|grp|context_group|decision|source)_\d+\b/giu;
+const opaqueAlias = /(?:^|\s)(?:blk|clm|grp|context_group|decision|source|passage)_\d+(?:\s|$)/iu;
+const opaqueAliasToken = /\b(?:blk|clm|grp|context_group|decision|source|passage)_\d+\b/giu;
 const durableIdentifierToken = /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/giu;
 const structuralPosition = /^(?:(?:authored|source|context|presentation|deck|outline|original)\s+)?(?:slide|frame|scene|screen|step)\s*(?:#|no\.?\s*|number\s*)?\d+(?:\s*[-–—:]\s*.*)?$/iu;
 const internalSource = /^(?:(?:an?|the)\s+)?(?:(?:internal|private|authored|authorized|approved|source|project|document|presentation|slide|context|creative|editorial|narrative|producer|production|adapter|generation|model|provider|message|direction|audience|format|exclusion)\s+)*(?:brief|source|sources|evidence|excerpt|outline|context|content|instructions?|directives?|notes?|prompt|prompts?|draft|artifact|document|presentation|deck|slide|copy|material|reference|references?|citation|citations?|strategy)(?:\s+\d+)?$/iu;

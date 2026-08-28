@@ -636,10 +636,10 @@ test("the real worker rejects forged inputs and completes a non-mutating, source
   assert.equal(configured.status, 200);
   const admission = {
     kind: "render_document", documentId: document.documentId, sourceSurface: `workflow:${production.id}:scene-final`,
-    payload: { artifactKind: "scene", productionMode: "manual", itemCount: 1, requestKey: "workflow-e2e", workflowId: production.id, workflowStageId: "scene-final", workflowSources: [step.source] },
+    payload: { artifactKind: "scene", sceneRequestId: "workflow-e2e-scene-request", productionMode: "manual", itemCount: 1, requestKey: "workflow-e2e", workflowId: production.id, workflowStageId: "scene-final", workflowSources: [step.source] },
   };
   const rejected = await request("/api/document-jobs", { ...admission, payload: {
-    ...admission.payload, workflowSources: [{ ...step.source, media_url: "/api/media/private" }],
+    ...admission.payload, sceneCostPreview: true, workflowSources: [{ ...step.source, media_url: "/api/media/private" }],
   } });
   assert.equal(rejected.status, 400);
   assert.equal((await rejected.json()).error, "workflow_source_untrusted");
@@ -692,7 +692,14 @@ test("the real worker rejects forged inputs and completes a non-mutating, source
     assert.equal(unacknowledged.status, 428);
     assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count), 0);
 
-    const response = await request("/api/document-jobs", admission);
+    const confirmScene = async (candidate) => {
+      const inspection = await request("/api/document-jobs", { ...candidate, payload: { ...candidate.payload, sceneCostPreview: true } });
+      assert.equal(inspection.status, 200, await inspection.clone().text());
+      const inspected = await inspection.json();
+      assert.equal(inspected.providerCalls, 0); assert.equal(inspected.reservations, 0);
+      return { ...candidate, payload: { ...candidate.payload, sceneCostConsent: { ...inspected.sceneCostPreview, confirmed: true } } };
+    };
+    const response = await request("/api/document-jobs", await confirmScene(admission));
     assert.equal(response.status, 202);
     const { job } = await response.json();
     const persisted = JSON.parse(sqlite.prepare("SELECT request_json FROM document_jobs WHERE job_id=?").get(job.jobId).request_json);
@@ -738,13 +745,13 @@ test("the real worker rejects forged inputs and completes a non-mutating, source
     });
     assert.equal(sonicConfigured.status, 200);
 
-    const sonicResponse = await request("/api/document-jobs", {
+    const sonicResponse = await request("/api/document-jobs", await confirmScene({
       kind: "render_document", documentId: document.documentId, sourceSurface: `workflow:${sonicProduction.id}:${sonicScene.id}`,
       payload: {
-        artifactKind: "scene", productionMode: "manual", itemCount: 1, requestKey: "workflow-audio-e2e",
+        artifactKind: "scene", sceneRequestId: "workflow-audio-scene-request", productionMode: "manual", itemCount: 1, requestKey: "workflow-audio-e2e",
         sceneMedium: "visual", workflowId: sonicProduction.id, workflowStageId: sonicScene.id, workflowSources: [step.source],
       },
-    });
+    }));
     assert.equal(sonicResponse.status, 202);
     const { job: sonicJob } = await sonicResponse.json();
     const sonicPersisted = JSON.parse(sqlite.prepare("SELECT request_json FROM document_jobs WHERE job_id=?").get(sonicJob.jobId).request_json);
@@ -816,7 +823,10 @@ test("workflow ownership, safety, responsive layout, and localization stay integ
   assert.match(styles, /\.artifact-scene-medium\s*\{/);
   assert.match(styles, /\.artifact-scene-medium\s*>\s*label\s*>\s*input\[type="radio"\]/);
   assert.match(store, /workflowSources/);
-  assert.match(store, /sceneIdentity/);
+  assert.match(store, /sceneRequestId/);
+  assert.match(store, /sceneCostRequestHash/);
+  assert.match(store, /captureSceneCostSource/);
+  assert.match(store, /sceneCostApprovalMatches/);
   assert.match(events, /DocumentProductionWorkflowConfigured/);
   assert.match(events, /scene_context_fingerprint/);
   assert.match(jobs, /resolveProductionWorkflowContext/);

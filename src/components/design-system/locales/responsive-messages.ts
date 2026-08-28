@@ -1,3 +1,4 @@
+import { SCENE_COST_MESSAGES } from "./scene-cost-messages.ts";
 import { ACTIVITY_ISSUE_MESSAGES } from "./activity-issue-messages.ts";
 import { ASSISTANT_MESSAGES } from "./assistant-messages.ts";
 import { PRESENTATION_CANDIDATE_MESSAGES } from "./presentation-candidate-messages.ts";
@@ -7,6 +8,7 @@ const english = {
   ...ASSISTANT_MESSAGES.en,
   ...PRESENTATION_CANDIDATE_MESSAGES.en,
   "generation.planningLimit.title": "This request exceeds its planning allowance",
+  ...SCENE_COST_MESSAGES.en,
   "generation.planningLimit.summary": "No further provider request was sent. Review the retained inputs and simplify or divide this request; resetting a monthly budget will not change this per-request limit.",
   "studio.family.label": "Creative work modes",
   "studio.family.write": "Write",
@@ -143,6 +145,7 @@ const french: ResponsiveMessages = {
   ...ASSISTANT_MESSAGES.fr,
   ...PRESENTATION_CANDIDATE_MESSAGES.fr,
   "generation.planningLimit.title": "Cette demande dépasse son allocation de planification",
+  ...SCENE_COST_MESSAGES.fr,
   "generation.planningLimit.summary": "Aucune autre demande n’a été envoyée au fournisseur. Vérifiez les données conservées et simplifiez ou divisez cette demande ; réinitialiser un budget mensuel ne modifiera pas cette limite par demande.",
   "studio.family.label": "Modes de travail créatif",
   "studio.family.write": "Écrire",
@@ -277,6 +280,7 @@ const arabic: ResponsiveMessages = {
   ...ASSISTANT_MESSAGES.ar,
   ...PRESENTATION_CANDIDATE_MESSAGES.ar,
   "generation.planningLimit.title": "يتجاوز هذا الطلب مخصصات التخطيط الخاصة به",
+  ...SCENE_COST_MESSAGES.ar,
   "generation.planningLimit.summary": "لم يُرسل أي طلب إضافي إلى المزوّد. راجع المدخلات المحفوظة وبسّط هذا الطلب أو قسّمه؛ فلن تؤدي إعادة ضبط الميزانية الشهرية إلى تغيير هذا الحد الخاص بكل طلب.",
   "studio.family.label": "أوضاع العمل الإبداعي",
   "studio.family.write": "كتابة",
@@ -411,6 +415,7 @@ const japanese: ResponsiveMessages = {
   ...ASSISTANT_MESSAGES.ja,
   ...PRESENTATION_CANDIDATE_MESSAGES.ja,
   "generation.planningLimit.title": "このリクエストは計画処理の上限を超えています",
+  ...SCENE_COST_MESSAGES.ja,
   "generation.planningLimit.summary": "プロバイダーへの追加リクエストは送信されていません。保存された入力を確認し、このリクエストを簡略化または分割してください。月次予算をリセットしても、リクエスト単位の上限は変わりません。",
   "studio.family.label": "クリエイティブ作業モード",
   "studio.family.write": "書く",

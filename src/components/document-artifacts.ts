@@ -19,10 +19,13 @@ import {
 } from "../model/audio";
 import { formatGenerationUsd, generationBudgetGate } from "../model/generation-budget";
 import { MAX_MANAGED_PRESENTATION_SLIDES, buildManagedProductionPlan, minimumPresentationSlideCount, productionTeamFor, selectArtifactProductionKind, type ProductionFormat, type ProductionMode } from "../model/managed-production";
-import { inferPresentationSourceOutline } from "../model/presentation-source";
+import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../model/presentation-source";
+import { formatPresentationSourceIssue, formatPresentationSourceIssues } from "./presentation-source-guidance";
 import { creatorProductionSummary } from "../model/production-summary";
 import { describeOutput, describeOutputs, imageOutputNamingCandidate } from "../model/output-naming";
 import { createSceneConfiguration, isSceneMedium, type SceneMedium } from "../model/scene-configuration";
+import { renderSceneProviderDisclosure } from "./scene-provider-disclosure";
+import { isSceneCostPreview, isSceneSafeUnusedProof, sceneCostRequestDescription, sceneCostRequestHash, type SceneCostInspection, type SceneCostRequest } from "../model/scene-cost-consent";
 import { FormaElement, icon } from "./forma-element";
 import { renderVideoReel } from "./video-reel";
 import { renderAudioPlayer, renderIncludedSoundtrackTranscripts, renderSoundtrackCompanions as renderAudioCompanions, soundtrackCompanions, type SoundtrackAsset } from "./audio-playback";
@@ -45,7 +48,7 @@ import {
   type ProductionWorkflowSource,
   type ProductionWorkflowStage,
 } from "../model/production-workflow";
-import type { ArtifactRevisionDetail, ArtifactRevisionSummary } from "../state/store";
+import type { ArtifactRevisionDetail, ArtifactRevisionSummary, SceneSubmissionResult } from "../state/store";
 import { localizedDocumentJobProgress, localizedGenerationFailureGuidance } from "./design-system/localized-runtime-copy";
 import "./icons-media";
 import "./presentation-deck";
@@ -67,17 +70,34 @@ export function documentArtifactPlaybackSeconds(artifact:Pick<DocumentArtifact,"
   return typeof configured==="number"&&Number.isFinite(configured)&&configured>0?configured:null;
 }
 
+type SceneRequestHandle = { requestId: string; everDispatched: boolean };
+type SceneCostView = {
+  handle: SceneRequestHandle; request: SceneCostRequest; sourceSurface: string; requestHash: string;
+  formCurrent: () => boolean; current: () => boolean; busy: boolean;
+  inspection: SceneCostInspection | null; checked: boolean; error: "" | "unavailable" | "source-index" | "recovery";
+};
+// Navigation continuity only: no private source, quote, job or accounting is retained here.
+// It is deliberately transient and never evicts an unresolved request to admit another.
+const sceneRequestHandles = new WeakMap<object, Map<string, SceneRequestHandle>>();
+const MAX_SCENE_REQUEST_HANDLES = 32;
+
 export class DocumentArtifacts extends FormaElement {
   static properties={compact:{type:Boolean},source:{type:String},documentId:{type:String,attribute:"document-id"},launcherOnly:{type:Boolean,attribute:"launcher-only"}};
   compact=false;source="document";documentId="";launcherOnly=false;#kind:DocumentArtifactKind="short_story";#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false;#itemCount=6;#managedSlideInput="";#invalidSlideCount=false;#presentationStyle:SlideStylePresetId|"document"="document";#presentationFidelity:"faithful"|"creative"="faithful";#audience="";#tone="";#rememberedAudiences=new Set<string>();#rememberedTones=new Set<string>();#seconds:VideoDurationSeconds=VIDEO_ADAPTER_CONTRACT.defaultDuration;#videoSize:"1280x720"|"720x1280"="1280x720";#videoAudioMode:VideoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;#confirmed=false;#submitting=false;#referenceBusy=false;#activeId="";#inputId="";#failedInputJob:DocumentJob|null=null;#runningInputJob:DocumentJob|null=null;#actorInputContent:Record<string,string>={};#createOpen=false;#convertingId="";#showAll=false;#editingId="";#editMarkdown="";#editItems:Array<{title:string;body:string;notes:string}>=[];#editRevision=0;#savingEdit=false;#historyOpen=false;#historyBusy=false;#revisionHistory:ArtifactRevisionSummary[]=[];#revisionBefore:number|null=null;#revisionPreview:ArtifactRevisionDetail|null=null;#reviewers:Array<{userId:string;displayName:string}>=[];#selectedReviewerId="";#reviewNote="";#viewerFocused=false;#reviewPanelOpen=false;#viewerActionsOpen=false;#viewerReturnFocus?:HTMLElement;
   #soundtrackBlockIds:string[]=[];#sendSoundtrackToVideoProvider=false;#audioImageBlockId="";#reconcilingProviderJobId="";
   #audioGoal:AudioGenerationGoal="music";#audioDestination:AudioDestination="standalone";#audioDuration=30;#audioDurationInput="30";#invalidAudioDuration=false;#audioSpeakerCount=1;#audioInstrumental=false;#audioVideoArtifactId="";#sendAudioVideoToProvider=false;
   #sceneMedium:SceneMedium="visual";
+  #sceneCostView:SceneCostView|null=null;
+  #sceneCostRevision=0;
+  #sceneSourcesRefreshed=false;
+  #sceneCapacityDestination:string|null=null;
+  #sceneSubmitting:SceneCostView|null=null;
+  #sceneInputCurrent:(()=>boolean)|null=null;
   #workflowTarget:ProductionFormat="video";#workflowTargetSelected=false;#workflowDocumentScope="";#workflowExpanded:boolean|null=null;#activeWorkflowId="";#activeWorkflowStageId="";#workflowBusy=false;#workflowRisk:{workflowId:string;stageId:string;requestKey:string;summary:string}|null=null;#autoBoundWorkflowEvents=new Set<string>();
-  #pendingWorkflowRegeneration:{workflowId:string;documentId:string;stageId:string;source:ProductionWorkflowSource}|null=null;
-  #clearPrivateGenerationInputs=()=>{this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;this.#pendingWorkflowRegeneration=null;this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#viewerActionsOpen=false;this.requestUpdate();};
+  #pendingWorkflowRegeneration:{workflowId:string;documentId:string;stageId:string;source:ProductionWorkflowSource;sceneSubmission?:{requestId:string;pending:boolean;dispatched:boolean}}|null=null;
+  #clearPrivateGenerationInputs=()=>{this.#sceneInputCurrent=null;this.#clearSceneCost();if(this.#kind==="scene"){this.#audience="";this.#tone="";this.#rememberedAudiences.clear();this.#rememberedTones.clear();this.#createOpen=false;this.#configurationCurrent=null;this.#createDialog()?.close();}this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;this.#pendingWorkflowRegeneration=null;this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#viewerActionsOpen=false;this.requestUpdate();};
   override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);}
-  override disconnectedCallback(){window.removeEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#sceneInputCurrent=null;this.#clearSceneCost();window.removeEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;super.disconnectedCallback();}
   #projection(){const current=this.store.projection.get();return this.documentId&&this.documentId!==current.documentId?foldEvents(this.store.events.get(),Number.POSITIVE_INFINITY,this.documentId,current.projectId):current;}
   #artifactSourceBlocks(artifact:Pick<DocumentArtifact,"documentId">){const current=this.store.projection.get();return current.libraryBlocks.filter((block)=>block.scope==="document"&&block.documentId===artifact.documentId&&block.projectId===current.projectId);}
   #eligibleAudioVideos(){
@@ -131,6 +151,246 @@ export class DocumentArtifacts extends FormaElement {
     const appended=await this.store.append({type:"OutputRenamed",payload:{output_id:artifact.id,artifact_id:artifact.id,artifact_kind:artifact.kind,output_kind:"artifact",document_id:artifact.documentId,project_id:this.#projection().projectId,old_title:artifact.title,new_title:name,source_surface:`${this.source}-artifact-viewer`}});
     if(appended.length)this.#viewDialog()?.setAttribute("aria-label",name);
   }
+
+  #sceneDestination(){
+    const session=this.store.session.get(),projection=this.#projection(),documentId=this.#targetDocumentId();
+    const authorization=this.store.captureAuthorizationScope(),permissions=session?.projectContext?.permissions??session?.capabilities??[];
+    if(!session||!authorization||!this.store.authorizationScopeActive(authorization)||!permissions.includes("project.read")
+      ||!projection.documents.some(document=>document.id===documentId&&document.projectId===projection.projectId)
+      ||session.projectContext&&session.projectContext.projectId!==projection.projectId)return null;
+    return JSON.stringify([session.user.userId,projection.projectId,documentId]);
+  }
+  #sceneHandles(){
+    let handles=sceneRequestHandles.get(this.store);
+    if(!handles){handles=new Map();sceneRequestHandles.set(this.store,handles);}
+    return handles;
+  }
+  #sceneCanAuthor(){
+    const session=this.store.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];
+    return Boolean(this.#sceneDestination()&&session?.policy.accepted&&permissions.includes("project.author")&&permissions.includes("project.output.request"));
+  }
+  #sceneCanCreate(){return this.#sceneCanAuthor()&&this.store.session.get()?.provider.plannerConfigured===true;}
+  #clearSceneCost(){
+    this.#sceneCostRevision++;this.#sceneCostView=null;this.#sceneSourcesRefreshed=false;this.#sceneCapacityDestination=null;this.#sceneSubmitting=null;
+  }
+  #sceneDraftChanged(){
+    if(this.#kind!=="scene")return;
+    this.#clearSceneCost();this.requestUpdate();
+  }
+  #sceneSettings(requestId:string){
+    const workflow=this.#activeWorkflowStageId?this.#currentWorkflow():null;
+    const stage=workflow?.stages.find(candidate=>candidate.id===this.#activeWorkflowStageId&&candidate.format==="scene");
+    if(this.#activeWorkflowStageId&&!stage)return null;
+    const states=workflow?productionWorkflowStageStates(workflow,this.#projection(),this.store.events.get(),this.#runningWorkflowStages(workflow)):[];
+    const sceneConfiguration=workflow&&stage?productionWorkflowSceneConfiguration(workflow,stage.id):createSceneConfiguration(this.#sceneMedium);
+    if(!sceneConfiguration)return null;
+    const request:SceneCostRequest={requestId,documentId:this.#targetDocumentId(),sceneMedium:sceneConfiguration.medium,
+      productionMode:this.#productionMode,audience:this.#audience.trim(),tone:this.#tone.trim(),locale:this.i18n.locale,
+      ...(workflow&&stage?{workflowId:workflow.id,workflowStageId:stage.id,workflowSources:productionWorkflowSourcesForStage(workflow,stage.id,states)}:{})};
+    // Scene counts remain automatic. A returned plan count is never copied into this request.
+    return{request,sourceSurface:workflow&&stage?`workflow:${workflow.id}:${stage.id}`:this.source};
+  }
+  #sceneActionCurrent(){
+    const destination=this.#sceneDestination(),opening=this.#configurationCurrent,revision=this.#sceneCostRevision;
+    return()=>Boolean(destination&&this.isConnected&&this.#createOpen&&this.#kind==="scene"
+      &&this.#configurationCurrent===opening&&opening?.()&&this.#sceneCostRevision===revision&&this.#sceneDestination()===destination);
+  }
+  #sceneInspectionValid(inspection:SceneCostInspection,view:SceneCostView){
+    const session=this.store.session.get(),preview=inspection?.preview,job=inspection?.job;
+    if(!view.current()||inspection?.requestId!==view.handle.requestId)return false;
+    if(preview!==null&&(!isSceneCostPreview(preview)||preview.requestId!==view.handle.requestId
+      ||preview.documentId!==view.request.documentId||preview.actorUserId!==session?.user.userId||preview.projectId!==this.#projection().projectId))return false;
+    if(job)return job.jobId===view.handle.requestId&&job.documentId===view.request.documentId&&job.kind==="render_document"
+      &&["queued","running","committing","completed","failed","partial","canceled"].includes(job.status);
+    return Boolean(preview&&preview.requestHash===view.requestHash&&preview.permissionEpoch===(session?.permissionEpoch??"legacy")
+      &&Boolean(preview.contextSessionId)===Boolean(session?.projectContext)&&preview.period===new Date().toISOString().slice(0,7)
+      &&(!session?.provider.plannerModel||preview.model===session.provider.plannerModel)
+      &&preview.sceneMedium===(view.request.sceneMedium??"visual")&&preview.productionMode===(view.request.productionMode??"manual"));
+  }
+  #sceneFreshPreview(){
+    const view=this.#sceneCostView;
+    return view&&!view.busy&&view.current()&&view.inspection&&!view.inspection.job&&this.#sceneInspectionValid(view.inspection,view)?view.inspection.preview:null;
+  }
+  async #prepareSceneCost(required:()=>boolean){
+    if(!required()||this.#submitting||this.#sceneSubmitting?.formCurrent()||this.#workflowBusy)return;
+    const destination=this.#sceneDestination();if(!destination)return;
+    const handles=this.#sceneHandles();
+    let handle=handles.get(destination);
+    if(!handle){if(handles.size>=MAX_SCENE_REQUEST_HANDLES){this.#clearSceneCost();this.#sceneCapacityDestination=destination;this.requestUpdate();return;}handle={requestId:crypto.randomUUID(),everDispatched:false};handles.set(destination,handle);}
+    const settings=this.#sceneSettings(handle.requestId);if(!settings)return;
+    const request=structuredClone(settings.request),requestIdentity=JSON.stringify(sceneCostRequestDescription(request));
+    const opening=this.#configurationCurrent,authorization=this.store.captureAuthorizationScope(),route=this.store.route.get();
+    const sourceCurrent=this.store.captureSceneCostSource(request),revision=++this.#sceneCostRevision;
+    const view:SceneCostView={handle,request,sourceSurface:settings.sourceSurface,requestHash:"",busy:true,inspection:null,checked:false,error:"",
+      formCurrent:()=>Boolean(this.isConnected&&this.#createOpen&&this.#kind==="scene"&&this.#configurationCurrent===opening&&opening?.()
+        &&this.#sceneCostView===view&&this.#sceneCostRevision===revision&&this.#sceneDestination()===destination&&handles.get(destination)===handle
+        &&this.store.authorizationScopeActive(authorization)&&this.store.route.get()===route
+        &&JSON.stringify(sceneCostRequestDescription(this.#sceneSettings(view.handle.requestId)?.request??{requestId:"",documentId:""}))===requestIdentity),
+      current:()=>view.formCurrent()&&sourceCurrent()};
+    this.#sceneCostView=view;this.#sceneSourcesRefreshed=false;this.requestUpdate();
+    try{
+      view.requestHash=await sceneCostRequestHash(request);if(!view.current())return;
+      const inspection=await this.store.previewSceneCost(request,{sourceSurface:view.sourceSurface,current:view.current});
+      if(!view.current())return;
+      if(!this.#sceneInspectionValid(inspection,view))throw new Error("scene_cost_unavailable");
+      if(inspection.job)view.handle.everDispatched=true;
+      view.inspection=inspection;view.checked=true;
+    }catch(error){
+      if(view.current()){view.inspection=null;view.error=error instanceof Error&&error.message==="project_source_index_stale"?"source-index":"unavailable";}
+    }finally{
+      if(this.#sceneCostView===view){view.busy=false;if(!view.current())this.#clearSceneCost();this.requestUpdate();}
+    }
+  }
+  async #refreshSceneSources(view:SceneCostView){
+    if(this.#sceneCostView!==view||view.busy||view.error!=="source-index"||!view.formCurrent())return;
+    view.busy=true;this.requestUpdate();
+    try{
+      await this.store.refreshEvents();
+      if(!view.formCurrent())return;
+      this.#clearSceneCost();this.#sceneSourcesRefreshed=true;
+    }catch{
+      if(view.formCurrent())view.error="source-index";
+    }finally{
+      if(this.#sceneCostView===view)view.busy=false;
+      this.requestUpdate();
+    }
+  }
+  #sceneSafeUnused(view:SceneCostView,inspection=view.inspection){
+    if(!inspection||!this.#sceneInspectionValid(inspection,view))return false;
+    const proof=inspection.safeUnused,job=inspection.job,preview=inspection.preview,session=this.store.session.get();
+    return Boolean(isSceneSafeUnusedProof(proof)&&job&&preview
+      &&proof.requestId===view.handle.requestId&&proof.actorUserId===session?.user.userId
+      &&proof.projectId===this.#projection().projectId&&proof.documentId===view.request.documentId
+      &&proof.permissionEpoch===(session?.permissionEpoch??"legacy")&&Boolean(proof.contextSessionId)===Boolean(session?.projectContext)
+      &&proof.bindingHash===preview.bindingHash&&proof.jobStatus===job.status&&proof.jobUpdatedAt===job.updatedAt
+      &&proof.attemptCount===job.attemptCount&&job.leaseExpiresAt===null&&typeof job.completedAt==="string"
+      &&Number.isFinite(Date.parse(job.completedAt))&&Date.parse(job.completedAt)<=Date.parse(proof.verifiedAt));
+  }
+  async #newSceneRequest(view:SceneCostView,offeredUnused=false){
+    if(this.#sceneCostView!==view||view.busy||!view.current()||!view.checked
+      ||view.inspection?.job?.status!=="completed"&&!offeredUnused||!this.#sceneCanAuthor())return;
+    // An offered certificate may expire while its button waits. It only permits this
+    // free recheck; replacing the handle always requires the newly returned proof.
+    view.busy=true;this.requestUpdate();
+    try{
+      const inspection=await this.store.previewSceneCost(view.request,{sourceSurface:view.sourceSurface,current:view.current});
+      if(!view.current())return;
+      if(!this.#sceneInspectionValid(inspection,view))throw new Error("scene_cost_unavailable");
+      view.inspection=inspection;view.checked=true;
+      if(inspection.job?.status!=="completed"&&!this.#sceneSafeUnused(view,inspection)){view.error="recovery";return;}
+      const destination=this.#sceneDestination();if(!destination||this.#sceneHandles().get(destination)!==view.handle)return;
+      this.#sceneHandles().set(destination,{requestId:crypto.randomUUID(),everDispatched:false});
+      this.#clearSceneCost();
+      await this.#prepareSceneCost(this.#sceneActionCurrent());
+    }catch{
+      if(view.current()){view.inspection=null;view.checked=false;view.error="unavailable";}
+    }finally{
+      if(this.#sceneCostView===view)view.busy=false;
+      this.requestUpdate();
+    }
+  }
+  async #inspectSceneRequest(view:SceneCostView){
+    const job=view.inspection?.job;
+    if(!job||this.#sceneCostView!==view||view.busy||!view.current()||!view.checked)return;
+    await this.#inspectOwnedSceneInputs(job);
+  }
+  #sceneFailureInspectionAction(job:DocumentJob){
+    const jobId=job.jobId,documentId=job.documentId,authorization=this.store.captureAuthorizationScope(),route=this.store.route.get(),locale=this.i18n.locale;
+    const opening=this.#configurationCurrent,revision=this.#sceneCostRevision,viewer=this.#viewerCurrent,input=this.#sceneInputCurrent;
+    const exact=()=>this.store.documentJobs.get().find(candidate=>candidate.jobId===jobId&&candidate.documentId===documentId
+      &&candidate.kind==="render_document"&&candidate.result?.artifactKind==="scene"&&documentJobFailureVisible(candidate));
+    const current=()=>Boolean(this.isConnected&&this.#targetDocumentId()===documentId&&this.#sceneDestination()
+      &&this.store.authorizationScopeActive(authorization)&&this.store.route.get()===route&&this.i18n.locale===locale
+      &&!this.#createOpen&&this.#configurationCurrent===opening&&this.#sceneCostRevision===revision
+      &&!this.#viewerOpening&&this.#viewerCurrent===viewer&&!this.#activeId&&!this.#inputId
+      &&!this.#failedInputJob&&!this.#runningInputJob&&this.#sceneInputCurrent===input&&exact());
+    // The rendered action owns one exact public request. A refreshed row for that
+    // same request is allowed; a later opening or a different request is not.
+    // A bounded page can omit an authorized request. A present contradictory
+    // row still invalidates this opening; absence alone does not.
+    const knownJobCurrent=()=>{const known=this.store.documentJobs.get().find(candidate=>candidate.jobId===jobId);
+      return !known||known.documentId===documentId&&known.kind==="render_document"&&known.result?.artifactKind==="scene"&&documentJobFailureVisible(known);};
+    return()=>{if(!current())return;const selected=exact();if(selected)return this.#inspectOwnedSceneInputs(selected,knownJobCurrent);};
+  }
+  async #inspectOwnedSceneInputs(job:DocumentJob,knownJobCurrent?:()=>boolean){
+    const authorization=this.store.captureAuthorizationScope(),route=this.store.route.get(),documentId=job.documentId,locale=this.i18n.locale;
+    if(!authorization||!this.#sceneDestination()||this.#targetDocumentId()!==documentId)return;
+    const closingComposer=this.#createOpen;
+    this.#createOpen=false;this.#configurationCurrent=null;this.#activeWorkflowStageId="";this.#clearSceneCost();
+    const revision=this.#sceneCostRevision,viewer=this.#viewerCurrent,activeId=this.#activeId,inputId=this.#inputId;
+    // The deliberate close owns this handoff, not a later composer or viewer opening.
+    const current=()=>Boolean(this.#sceneInputCurrent===current&&this.isConnected&&!this.#createOpen&&this.#configurationCurrent===null
+      &&this.#sceneCostRevision===revision&&this.#targetDocumentId()===documentId&&this.store.route.get()===route
+      &&this.store.authorizationScopeActive(authorization)&&this.i18n.locale===locale&&(!knownJobCurrent||knownJobCurrent())&&this.#viewerCurrent===viewer&&this.#activeId===activeId&&this.#inputId===inputId);
+    this.#sceneInputCurrent=current;
+    this.#createDialog()?.close();if(closingComposer)void this.#restoreWorkflowRegeneration();this.requestUpdate();await this.updateComplete;
+    if(!current())return;
+    if(["failed","partial","canceled"].includes(job.status))await this.#inspectFailedInputs(job,current);else await this.#inspectRunningInputs(job,current);
+  }
+  async #submitScene(view:SceneCostView|null){
+    const preview=this.#sceneFreshPreview();
+    if(!view||this.#sceneCostView!==view||!preview||view.inspection?.preview!==preview||!this.#sceneCanCreate()
+      ||this.#submitting||this.#sceneSubmitting?.formCurrent()||this.#workflowBusy||this.#referenceBusy||generationBudgetGate(this.store.session.get()?.costBudgets,{projectedMicrousd:preview.maximumMicrousd}).level==="blocked")return;
+    this.#sceneSubmitting=view;this.requestUpdate();
+    const pending=this.#pendingWorkflowRegeneration;
+    const regeneration=pending&&pending.documentId===view.request.documentId&&pending.workflowId===view.request.workflowId&&pending.stageId===view.request.workflowStageId?pending:null;
+    const submission=regeneration?{requestId:view.handle.requestId,pending:true,dispatched:false}:null;
+    if(regeneration&&submission)regeneration.sceneSubmission=submission;
+    const outcome:{result:SceneSubmissionResult|null}={result:null};
+    try{
+      const{requestId,...settings}=view.request;
+      const ok=await this.store.renderDocumentArtifact("scene",{...settings,sceneRequestId:requestId,sceneCostConsent:{...preview,confirmed:true},
+        sourceSurface:view.sourceSurface,current:()=>view.current()&&this.#sceneCostView===view,
+        onDispatch:()=>{
+          view.handle.everDispatched=true;
+          if(regeneration&&submission&&regeneration.sceneSubmission===submission){submission.dispatched=true;if(this.#pendingWorkflowRegeneration===regeneration)this.#pendingWorkflowRegeneration=null;}
+        },
+        onResult:returned=>{
+          if(returned.requestId!==requestId)return;
+          if(!view.current())return;
+          const inspection={requestId,preview:returned.preview,job:returned.job};
+          if(returned.attemptSubmission==="submitted"&&returned.job&&this.#sceneInspectionValid(inspection,view)){outcome.result=returned;view.inspection=inspection;view.checked=false;view.error="";}
+          else{view.inspection=null;view.checked=false;view.error="unavailable";}
+        }});
+      if(!view.current())return;
+      if(ok&&outcome.result&&!outcome.result.reused&&outcome.result.job){
+        if(regeneration&&this.#pendingWorkflowRegeneration===regeneration)this.#pendingWorkflowRegeneration=null;
+        if(view.request.audience)this.#rememberedAudiences.add(view.request.audience);
+        if(view.request.tone)this.#rememberedTones.add(view.request.tone);
+        this.#activeWorkflowStageId="";this.#createOpen=false;this.#clearSceneCost();this.#createDialog()?.close();
+        this.dispatchEvent(new CustomEvent("document-artifact-queued",{detail:{documentId:view.request.documentId,kind:"scene"},bubbles:true,composed:true}));
+      }else if(!ok&&this.#sceneCostView===view){view.inspection=null;view.checked=false;view.error="unavailable";}
+    }catch{
+      if(view.current()){view.inspection=null;view.checked=false;view.error="unavailable";}
+    }finally{
+      if(this.#sceneSubmitting===view)this.#sceneSubmitting=null;
+      if(regeneration&&submission&&regeneration.sceneSubmission===submission){
+        submission.pending=false;
+        if(submission.dispatched){if(this.#pendingWorkflowRegeneration===regeneration)this.#pendingWorkflowRegeneration=null;}
+        else if(!this.#createOpen&&this.#pendingWorkflowRegeneration===regeneration)void this.#restoreWorkflowRegeneration();
+      }
+      this.requestUpdate();
+    }
+  }
+  #sceneCostControls(){
+    const required=this.#sceneActionCurrent(),view=this.#sceneCostView?.current()?this.#sceneCostView:null;
+    const destination=this.#sceneDestination(),handle=destination?this.#sceneHandles().get(destination):undefined;
+    const job=view?.inspection?.job,preview=this.#sceneFreshPreview(),unused=Boolean(view&&this.#sceneSafeUnused(view)),busy=Boolean(view?.busy||this.#submitting||this.#sceneSubmitting?.formCurrent()||this.#workflowBusy);
+    return html`<aside class="artifact-cost-confirm artifact-scene-cost-status" aria-label=${this.i18n.t("scene.cost.review","Scene cost and request status")}><span>
+      <b>${job?this.i18n.t("scene.cost.original","Original Scene request — not the current draft"):preview?this.i18n.t("scene.cost.ready","Verified Scene plan — approval required"):this.i18n.t("scene.cost.notVerified","Scene plan not yet verified")}</b>
+      <small role="status">${destination&&this.#sceneCapacityDestination===destination?this.i18n.t("scene.cost.capacity","This window is retaining the maximum number of Scene request references. Return to an existing Scene destination or inspect its recorded work in Activity; unresolved requests will not be replaced."):view?.busy?this.i18n.t("scene.cost.checking","Checking this exact Scene request…"):view?.error==="source-index"?this.i18n.t("scene.cost.sourcesStale","The Document’s saved source index needs refreshing. Refresh the Document, then check this same request again."):view?.error==="recovery"?this.i18n.t("scene.cost.recoveryChanged","The original request no longer permits a new request. Keep this reference and check it again; no new request was started."):view?.error?this.i18n.t("scene.cost.unavailable","The exact Scene request could not be verified. Check its original status before approving paid work."):this.#sceneSourcesRefreshed?this.i18n.t("scene.cost.sourcesRefreshed","Document sources refreshed. Check this same Scene request again before approving."):job?this.i18n.t("scene.cost.originalStatus","Original request status: {status}. Draft changes do not change this recorded request.",{status:this.i18n.t(`activity.status.${job.status}`,job.status)}):handle?.everDispatched?this.i18n.t("scene.cost.unknown","This request may already have been submitted. Check its original status; no replacement request will be started automatically."):this.i18n.t("scene.cost.free","Checking the current plan or original request is free: no provider call, reservation, or generation starts.")}</small>
+      ${this.store.session.get()?.provider.plannerConfigured!==true?html`<small>${this.i18n.system("Provider")}: ${this.i18n.t("lab.unavailable","Unavailable")} · ${this.i18n.t("generation.contactAdministrator","Contact your project administrator")}</small>`:nothing}
+      ${unused?html`<small>${this.i18n.t("scene.cost.unused","The original request is verified unused. New Scene request checks it again, then prepares a new plan for separate approval.")}</small>`:nothing}
+      ${job&&!view?.inspection?.preview?html`<small>${this.i18n.t("scene.cost.detailsUnavailable","The original cost and settings are unavailable. This does not establish a zero charge or released reservation.")}</small>`:nothing}
+      <div>
+        <button type="button" class="button secondary compact" ?disabled=${busy||!required()} @click=${()=>void this.#prepareSceneCost(required)}>${handle?.everDispatched||job?this.i18n.t("scene.cost.inspect","Check original Scene request · free"):this.i18n.t("scene.cost.check","Check Scene cost · free")}</button>
+        ${view?.error==="source-index"?html`<button type="button" class="button secondary compact" ?disabled=${busy} @click=${()=>void this.#refreshSceneSources(view)}>${this.i18n.t("scene.cost.refreshSources","Refresh Document sources")}</button>`:nothing}
+        ${job&&view?html`<button type="button" class="button secondary compact" ?disabled=${busy||!view.checked} @click=${()=>void this.#inspectSceneRequest(view)}>${this.i18n.t("scene.cost.receipt","Inspect original Scene inputs")}</button>`:nothing}
+        ${(job?.status==="completed"||unused)&&view?.checked&&this.#sceneCanAuthor()?html`<button type="button" class="button secondary compact" ?disabled=${busy} @click=${()=>void this.#newSceneRequest(view,unused)}>${this.i18n.t("scene.cost.new","New Scene request")}</button>`:nothing}
+      </div>
+    </span></aside>`;
+  }
+
   #sceneMediumLabel(medium:SceneMedium|"auto"){return this.i18n.t(`scene.medium.${medium}`,medium==="auto"?"Automatic (downstream)":medium==="audio"?"Audio":"Visual");}
   #sceneVariantLabel(medium:SceneMedium){return this.i18n.t(`scene.variant.${medium}`,medium==="audio"?"Audio scene":"Visual scene");}
   #sceneAlternateLabel(medium:SceneMedium){return this.i18n.t(`scene.alternate.${medium}`,medium==="audio"?"Audio scene available as an alternate":"Visual scene available as an alternate");}
@@ -225,8 +485,11 @@ export class DocumentArtifacts extends FormaElement {
   async #restoreWorkflowRegeneration(){
     if(this.#submitting)return;
     const pending=this.#pendingWorkflowRegeneration;
-    if(!pending)return;
+    // Close may occur during Store preparation or inside fetch, before onDispatch runs.
+    // Only this exact submission may release or consume its existing rollback.
+    if(!pending||pending.sceneSubmission?.pending)return;
     this.#pendingWorkflowRegeneration=null;
+    if(pending.sceneSubmission?.dispatched)return;
     const workflow=this.#currentWorkflow();
     if(!workflow||workflow.id!==pending.workflowId||workflow.documentId!==pending.documentId)return;
     const stage=workflow.stages.find((candidate)=>candidate.id===pending.stageId);
@@ -234,6 +497,7 @@ export class DocumentArtifacts extends FormaElement {
     await this.#updateWorkflowStage(workflow,stage.id,(current)=>({...current,source:pending.source}));
   }
   async #selectSceneMedium(medium:SceneMedium){
+    this.#sceneDraftChanged();
     if(this.#workflowBusy||!isSceneMedium(medium))return;
     const workflow=this.#activeWorkflowStageId?this.#currentWorkflow():null;
     const stage=workflow?.stages.find((candidate)=>candidate.id===this.#activeWorkflowStageId&&candidate.format==="scene");
@@ -246,12 +510,14 @@ export class DocumentArtifacts extends FormaElement {
   #presentationOutline(){return inferPresentationSourceOutline(this.#projection().blocks.filter((block)=>Number(block.properties.weight??.5)>0));}
   #presentationPlanningSnapshot(){const projection=this.#projection();const facts=projection.blocks.map((block)=>({block_id:block.id,type:block.type,role:block.type,handle:block.handle,locked:block.locked,active:Number(block.properties.weight??.5)>0,properties:block.properties}));const blockIds=new Set(facts.map((fact)=>fact.block_id));const relationships=projection.blockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties}));return{facts,relationships};}
   #resetPresentationCount(mode=this.#productionMode){const authored=this.#presentationOutline().authoredSlideCount;const minimum=minimumPresentationSlideCount(this.#presentationPlanningSnapshot());this.#itemCount=Math.max(1,Math.min(mode==="manual"?12:MAX_MANAGED_PRESENTATION_SLIDES,Math.max(authored??6,minimum)));this.#managedSlideInput="";this.#invalidSlideCount=false;}
-  #selectArtifactKind(kind:DocumentArtifactKind){const selected=selectArtifactProductionKind({kind:this.#kind,mode:this.#productionMode,storyboardManagedDefault:this.#storyboardManagedDefault,storyboardManualOptOut:this.#storyboardManualOptOut},kind);this.#kind=selected.kind;this.#productionMode=selected.mode;this.#storyboardManagedDefault=selected.storyboardManagedDefault;this.#storyboardManualOptOut=selected.storyboardManualOptOut;this.#soundtrackBlockIds=[];this.#sendSoundtrackToVideoProvider=false;this.#audioImageBlockId="";this.#sendAudioVideoToProvider=false;if(kind!=="audio")this.#audioVideoArtifactId="";if(kind==="audio"&&this.#audioGoal!=="music")this.#productionMode="manual";}
+  #selectArtifactKind(kind:DocumentArtifactKind){if(this.#kind!==kind)this.#clearSceneCost();const selected=selectArtifactProductionKind({kind:this.#kind,mode:this.#productionMode,storyboardManagedDefault:this.#storyboardManagedDefault,storyboardManualOptOut:this.#storyboardManualOptOut},kind);this.#kind=selected.kind;this.#productionMode=selected.mode;this.#storyboardManagedDefault=selected.storyboardManagedDefault;this.#storyboardManualOptOut=selected.storyboardManualOptOut;this.#soundtrackBlockIds=[];this.#sendSoundtrackToVideoProvider=false;this.#audioImageBlockId="";this.#sendAudioVideoToProvider=false;if(kind!=="audio")this.#audioVideoArtifactId="";if(kind==="audio"&&this.#audioGoal!=="music")this.#productionMode="manual";}
   #createDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-create");}#viewDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-view");}
   #configurationCurrent:CreativePreparationGuard|null=null;
   #viewerCurrent:(()=>boolean)|null=null;
   #viewerOpening=false;
   protected override willUpdate(changed:PropertyValues<this>){
+    if(this.#sceneInputCurrent&&!this.#sceneInputCurrent()){this.#sceneInputCurrent=null;this.#failedInputJob=null;this.#runningInputJob=null;this.#actorInputContent={};}
+    if(this.#sceneCostView&&!this.#sceneCostView.current())this.#clearSceneCost();
     if(changed.has("documentId")&&changed.get("documentId")!==undefined&&changed.get("documentId")!==this.documentId){
       this.#createOpen=false;this.#confirmed=false;this.#activeId="";this.#inputId="";this.#failedInputJob=null;this.#runningInputJob=null;this.#actorInputContent={};this.#activeWorkflowStageId="";
       this.#createDialog()?.close();this.#viewDialog()?.close();
@@ -302,7 +568,7 @@ export class DocumentArtifacts extends FormaElement {
       if(!bound)this.#autoBoundWorkflowEvents.delete(completion.eventId);
     });
   }
-  #openCreate=async(inferKind=false,required?:CreativePreparationGuard)=>{const current=required??retainCreativePreparation(()=>nextActionFacts(this.store,this.#targetDocumentId(),this.source==="canvas"?this.store.canvasProjection.get().selectedCanvasId:null));if(!current())return false;this.#configurationCurrent=current;const project=this.store.session.get()?.projectContext;if(project&&!project.permissions.includes("project.output.request"))return false;if(inferKind){const projection=this.#projection(),inferred=inferDocumentArtifactKind(projection.blocks,projection.documentTitle);if(inferred)this.#selectArtifactKind(inferred);if(!this.#activeWorkflowStageId)this.#sceneMedium="visual";}this.#confirmed=false;this.#videoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;this.#soundtrackBlockIds=[];this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#audioImageBlockId="";if(this.#kind==="slides")this.#resetPresentationCount();this.#createOpen=true;this.requestUpdate();await this.updateComplete;if(this.#configurationCurrent!==current||!current()){this.#createOpen=false;this.#configurationCurrent=null;this.#createDialog()?.close();this.requestUpdate();return false;}const dialog=this.#createDialog();if(dialog&&!dialog.open)ensureModalDialog(dialog);return Boolean(dialog?.open)&&current.beginEditing();};
+  #openCreate=async(inferKind=false,required?:CreativePreparationGuard)=>{const current=required??retainCreativePreparation(()=>nextActionFacts(this.store,this.#targetDocumentId(),this.source==="canvas"?this.store.canvasProjection.get().selectedCanvasId:null));if(!current())return false;const project=this.store.session.get()?.projectContext;if(project&&!project.permissions.includes("project.output.request"))return false;this.#configurationCurrent=current;if(inferKind){const projection=this.#projection(),inferred=inferDocumentArtifactKind(projection.blocks,projection.documentTitle);if(inferred)this.#selectArtifactKind(inferred);if(!this.#activeWorkflowStageId)this.#sceneMedium="visual";}this.#confirmed=false;this.#videoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;this.#soundtrackBlockIds=[];this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#audioImageBlockId="";if(this.#kind==="slides")this.#resetPresentationCount();this.#createOpen=true;this.requestUpdate();await this.updateComplete;if(this.#configurationCurrent!==current)return false;if(!current()){this.#createOpen=false;this.#configurationCurrent=null;this.#createDialog()?.close();this.requestUpdate();return false;}const dialog=this.#createDialog();if(dialog&&!dialog.open)ensureModalDialog(dialog);return Boolean(dialog?.open)&&current.beginEditing();};
   async #revealWorkbenchPane(){this.dispatchEvent(new CustomEvent("document-artifact-open",{bubbles:true,composed:true}));const workspace=this.closest("forma-workspace") as (HTMLElement&{updateComplete?:Promise<boolean>})|null;if(workspace?.updateComplete)await workspace.updateComplete;}
   async openRender(kind?:DocumentArtifactKind,documentId?:string,options:{videoSeconds?:VideoDurationSeconds;sceneMedium?:SceneMedium;current?:(stage:CreativePreparationStage)=>boolean}={}){
     this.#activeWorkflowStageId="";if(documentId)this.documentId=documentId;
@@ -321,7 +587,12 @@ export class DocumentArtifacts extends FormaElement {
   #cancelViewer(event:Event){if(!this.#viewerFocused)return;event.preventDefault();event.stopPropagation();this.#setViewerFocus(false);}
   async #openArtifact(artifact:DocumentArtifact,required:()=>boolean=()=>true,revision=documentArtifactRevision(this.store.events.get(),artifact.id)){const authorization=this.store.captureAuthorizationScope();let opening=true,retained:string|undefined=this.store.content.get()[artifact.contentRef??""],contentCaptured=retained!==undefined;const current=()=>this.#viewerCurrent===current&&Boolean(authorization&&this.store.authorizationScopeActive(authorization))&&required()&&this.store.projection.get().libraryArtifacts.some((candidate)=>candidate.id===artifact.id&&candidate.documentId===artifact.documentId&&candidate.sequence===artifact.sequence&&candidate.sourceEventId===artifact.sourceEventId&&candidate.contentRef===artifact.contentRef)&&(!opening||documentArtifactRevision(this.store.events.get(),artifact.id)===revision&&(!contentCaptured||this.store.content.get()[artifact.contentRef??""]===retained));this.#viewerCurrent=current;this.#viewerOpening=true;this.#viewDialog()?.close();this.#activeId="";this.#viewerReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:undefined;if(artifact.contentRef&&!this.store.content.get()[artifact.contentRef])await this.store.ensurePrivateContent(artifact.contentRef);if(!current())return false;retained=this.store.content.get()[artifact.contentRef??""];contentCaptured=true;this.#activeId=artifact.id;this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#historyOpen=false;this.#revisionHistory=[];this.#revisionBefore=null;this.#revisionPreview=null;this.#reviewers=[];this.#selectedReviewerId="";this.#reviewNote="";const context=this.store.session.get()?.projectContext;if(context&&context.permissions.includes("project.author")){try{const authorization=this.store.captureAuthorizationScope();const response=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/projects/${encodeURIComponent(context.projectAccessId)}/members`,{credentials:"same-origin"});const body=await response.json() as {members?:Array<{user_id:string;display_name:string;review_access?:number|boolean}>};if(response.ok&&authorization&&this.store.authorizationScopeActive(authorization)&&this.#activeId===artifact.id){const history=this.store.events.get();const completed=history.find((event)=>event.eventId===artifact.sourceEventId);const rendered=[...history].reverse().find((event)=>event.type==="DocumentRenderRequested"&&String(event.payload.artifact_id??"")===artifact.id);const actorOf=(value:string)=>value.startsWith("user:")?value.slice(5):"";const contributors=history.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifact.id).flatMap((event)=>[actorOf(event.actor),String(event.payload.edited_by_user_id??"")]);const disqualified=new Set([this.store.session.get()?.user.userId??"",String(completed?.payload.requested_by_user_id??actorOf(rendered?.actor??"")),...contributors].filter(Boolean));this.#reviewers=(body.members??[]).filter((member)=>Boolean(member.review_access)&&!disqualified.has(member.user_id)).map((member)=>({userId:member.user_id,displayName:member.display_name}));this.#selectedReviewerId=this.#reviewers[0]?.userId??"";}}catch{/* The exact review request remains disabled until eligible reviewers can be verified. */}}if(!current())return false;this.requestUpdate();await this.updateComplete;if(!current())return false;const dialog=this.#viewDialog();this.#viewerOpening=false;if(dialog){dialog.setAttribute("aria-label",artifact.title);dialog.addEventListener("close",()=>{this.#reviewNote="";this.#viewerFocused=false;this.#reviewPanelOpen=false;const opener=this.#viewerReturnFocus;this.#viewerReturnFocus=undefined;if(opener?.isConnected)opener.focus({preventScroll:true});this.dispatchEvent(new CustomEvent("document-artifact-close",{bubbles:true,composed:true}));},{once:true});if(!dialog.open)ensureModalDialog(dialog);if(dialog.open){opening=false;retained=undefined;}}if(!this.store.session.get()?.projectContext&&this.store.ui.instrumentation)void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,source_surface:`${this.source}-artifact-gallery`}});return Boolean(dialog?.open);}
   async #create(){
+    if(this.#kind==="scene")return;
     if(this.#submitting||this.#referenceBusy||this.#workflowBusy||this.#kind==="slides"&&this.#productionMode==="managed"&&this.#invalidSlideCount||this.#kind==="audio"&&this.#invalidAudioDuration)return;
+    if(this.#kind==="slides"){
+      const sourceIssues=buildPresentationSourceContract(this.#presentationPlanningSnapshot(),{requestedSlideCount:this.#itemCount}).sourceIssues??[];
+      if(sourceIssues.length){this.store.toast(formatPresentationSourceIssues(sourceIssues,this.i18n));return;}
+    }
     if(this.#kind==="slides"&&minimumPresentationSlideCount(this.#presentationPlanningSnapshot())>MAX_MANAGED_PRESENTATION_SLIDES){this.store.toast(this.i18n.system("The authored presentation exceeds the {maximum}-slide editable PowerPoint limit. No generation was started.",{maximum:this.i18n.number(MAX_MANAGED_PRESENTATION_SLIDES)}));return;}
     if(this.#kind==="slides"&&minimumPresentationSlideCount(this.#presentationPlanningSnapshot())>this.#itemCount){this.store.toast(this.i18n.t("presentation.planning.countConflict","Choose the complete authored slide count before generating this presentation."));return;}
     const paid=this.#kind==="storyboard"||this.#kind==="video"||this.#kind==="audio";if(paid)this.#confirmed=true;
@@ -335,11 +606,11 @@ export class DocumentArtifacts extends FormaElement {
       if(references.rightsBlockedCount||references.unavailablePixelCount||this.#productionMode!=="managed"&&references.providerLimitExceededCount){this.store.toast(references.rightsBlockedCount?"Confirm usable rights for every pixel-backed reference before starting this video render.":references.unavailablePixelCount?"Replace or re-upload each unavailable pixel-backed reference before starting this video render.":this.i18n.system("Choose at most {maximum} pixel-backed references; keep the others description-only.",{maximum:this.i18n.number(references.providerReferenceLimit)}));return;}
     }
     this.#submitting=true;this.requestUpdate();
-    const workflow=this.#activeWorkflowStageId?this.#currentWorkflow():null;const workflowStage=workflow?.stages.find((stage)=>stage.id===this.#activeWorkflowStageId&&stage.format===this.#kind);if(this.#activeWorkflowStageId&&!workflowStage){this.#submitting=false;this.requestUpdate();return;}const states=workflow?productionWorkflowStageStates(workflow,this.#projection(),this.store.events.get(),this.#runningWorkflowStages(workflow)):[];const workflowOptions=workflow&&workflowStage?{workflowId:workflow.id,workflowStageId:workflowStage.id,workflowSources:productionWorkflowSourcesForStage(workflow,workflowStage.id,states),sourceSurface:`workflow:${workflow.id}:${workflowStage.id}`}:{sourceSurface:this.source};const sceneConfiguration=this.#kind==="scene"?(workflow&&workflowStage?productionWorkflowSceneConfiguration(workflow,workflowStage.id):createSceneConfiguration(this.#sceneMedium)):null;
+    const workflow=this.#activeWorkflowStageId?this.#currentWorkflow():null;const workflowStage=workflow?.stages.find((stage)=>stage.id===this.#activeWorkflowStageId&&stage.format===this.#kind);if(this.#activeWorkflowStageId&&!workflowStage){this.#submitting=false;this.requestUpdate();return;}const states=workflow?productionWorkflowStageStates(workflow,this.#projection(),this.store.events.get(),this.#runningWorkflowStages(workflow)):[];const workflowOptions=workflow&&workflowStage?{workflowId:workflow.id,workflowStageId:workflowStage.id,workflowSources:productionWorkflowSourcesForStage(workflow,workflowStage.id,states),sourceSurface:`workflow:${workflow.id}:${workflowStage.id}`}:{sourceSurface:this.source};
     const audience=this.#audience.trim(),tone=this.#tone.trim(),authoredSlideCount=this.#kind==="slides"?this.#presentationOutline().authoredSlideCount:null;
     const audioProfile=this.#kind==="audio"?this.#audioRequestProfile():null;
     const audioSelection=audioProfile?this.#selectedAudioAdapter(audioProfile):null;
-    const ok=await this.store.renderDocumentArtifact(this.#kind,{documentId:this.#targetDocumentId(),locale:this.i18n.locale,itemCount:this.#kind==="slides"||this.#productionMode==="manual"&&this.#kind==="storyboard"?this.#itemCount:undefined,...(this.#kind==="slides"?{requestedSlideCount:this.#itemCount,...(authoredSlideCount===null?{}:{authoredSlideCount}),...(this.#presentationStyle==="document"?{}:{presentationStyle:this.#presentationStyle}),presentationFidelity:this.#presentationFidelity}:{}),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium}:{}),audience:audience||undefined,tone:tone||undefined,videoSeconds:this.#kind==="video"&&this.#productionMode==="manual"?this.#seconds:undefined,videoSize:this.#kind==="video"?this.#videoSize:undefined,videoAudioMode:this.#kind==="video"?this.#videoAudioMode:undefined,soundtrackBlockIds:this.#soundtrackBlockIds,sendSoundtrackToVideoProvider:this.#kind==="video"&&this.#sendSoundtrackToVideoProvider,audioImageBlockId:this.#kind==="audio"?this.#audioImageBlockId||undefined:undefined,...(audioProfile&&audioSelection?{audioProfile,audioProviderModel:audioSelection.contract.model,...(this.#audioVideoArtifactId?{audioVideoArtifactId:this.#audioVideoArtifactId}:{}),...(this.#sendAudioVideoToProvider?{sendAudioVideoToProvider:true}:{})}:{}),productionMode:this.#productionMode,paidMediaConfirmed:paid&&this.#confirmed,...workflowOptions});
+    const ok=await this.store.renderDocumentArtifact(this.#kind,{documentId:this.#targetDocumentId(),locale:this.i18n.locale,itemCount:this.#kind==="slides"||this.#productionMode==="manual"&&this.#kind==="storyboard"?this.#itemCount:undefined,...(this.#kind==="slides"?{requestedSlideCount:this.#itemCount,...(authoredSlideCount===null?{}:{authoredSlideCount}),...(this.#presentationStyle==="document"?{}:{presentationStyle:this.#presentationStyle}),presentationFidelity:this.#presentationFidelity}:{}),audience:audience||undefined,tone:tone||undefined,videoSeconds:this.#kind==="video"&&this.#productionMode==="manual"?this.#seconds:undefined,videoSize:this.#kind==="video"?this.#videoSize:undefined,videoAudioMode:this.#kind==="video"?this.#videoAudioMode:undefined,soundtrackBlockIds:this.#soundtrackBlockIds,sendSoundtrackToVideoProvider:this.#kind==="video"&&this.#sendSoundtrackToVideoProvider,audioImageBlockId:this.#kind==="audio"?this.#audioImageBlockId||undefined:undefined,...(audioProfile&&audioSelection?{audioProfile,audioProviderModel:audioSelection.contract.model,...(this.#audioVideoArtifactId?{audioVideoArtifactId:this.#audioVideoArtifactId}:{}),...(this.#sendAudioVideoToProvider?{sendAudioVideoToProvider:true}:{})}:{}),productionMode:this.#productionMode,paidMediaConfirmed:paid&&this.#confirmed,...workflowOptions});
     this.#submitting=false;if(ok){this.#pendingWorkflowRegeneration=null;if(audience)this.#rememberedAudiences.add(audience);if(tone)this.#rememberedTones.add(tone);this.#activeWorkflowStageId="";this.#createOpen=false;this.#createDialog()?.close();this.dispatchEvent(new CustomEvent("document-artifact-queued",{detail:{documentId:this.#targetDocumentId(),kind:this.#kind},bubbles:true,composed:true}));}else if(!this.#createOpen)void this.#restoreWorkflowRegeneration();this.requestUpdate();
   }
   async #stop(jobId:string){await this.store.stopDocumentJob(jobId);this.requestUpdate();}
@@ -364,8 +635,56 @@ export class DocumentArtifacts extends FormaElement {
     const next=remaining[Math.min(Math.max(index,0),remaining.length-1)];
     (next?.querySelector<HTMLElement>(".document-artifact-failure-actions > .button")??this.querySelector<HTMLElement>(".document-artifacts > header > button"))?.focus({preventScroll:true});
   }
-  async #inspectFailedInputs(job:DocumentJob){const authorization=this.store.captureAuthorizationScope();if(!authorization)return;this.#actorInputContent={};this.#failedInputJob=job;this.requestUpdate();try{let detail:DocumentJob;if(authorization.shared){const inspected=await this.store.loadActorDocumentGenerationReceipt(job.jobId);if(!this.store.authorizationScopeActive(authorization))return;detail=inspected.job;this.#actorInputContent=inspected.content;}else{detail=await this.store.loadDocumentJobDetail(job.jobId);if(detail.moderationPromptRef&&!this.store.content.get()[detail.moderationPromptRef])await this.store.ensurePrivateContent(detail.moderationPromptRef);}if(this.store.authorizationScopeActive(authorization)&&this.#failedInputJob?.jobId===job.jobId){this.#failedInputJob=detail;this.requestUpdate();}}catch(error){if(this.store.authorizationScopeActive(authorization))this.store.toast(error instanceof Error?error.message:"The retained generation inputs could not be loaded.");}}
-  async #inspectRunningInputs(job:DocumentJob){const authorization=this.store.captureAuthorizationScope();if(!authorization)return;this.#actorInputContent={};this.#runningInputJob=job;this.requestUpdate();try{let detail:DocumentJob;if(authorization.shared){const inspected=await this.store.loadActorDocumentGenerationReceipt(job.jobId);if(!this.store.authorizationScopeActive(authorization))return;detail=inspected.job;this.#actorInputContent=inspected.content;}else detail=await this.store.loadDocumentJobDetail(job.jobId);if(!this.store.authorizationScopeActive(authorization)||this.#runningInputJob?.jobId!==job.jobId)return;this.#runningInputJob=detail;this.requestUpdate();}catch(error){if(this.store.authorizationScopeActive(authorization))this.store.toast(error instanceof Error?error.message:"The in-progress generation receipt could not be loaded.");}}
+  async #inspectFailedInputs(job:DocumentJob,required?:()=>boolean){
+    const authorization=this.store.captureAuthorizationScope();if(!authorization||required&&!required())return;
+    if(!required)this.#sceneInputCurrent=null;
+    const current=()=>this.store.authorizationScopeActive(authorization)&&(required?required():!this.#sceneInputCurrent&&this.#failedInputJob?.jobId===job.jobId);
+    this.#actorInputContent={};this.#runningInputJob=null;this.#failedInputJob=required?null:job;this.requestUpdate();
+    try{
+      let detail:DocumentJob,content:Record<string,string>={};
+      if(required){
+        const options={documentId:job.documentId,fresh:true as const,current:required};
+        const inspected=authorization.shared?await this.store.loadActorDocumentGenerationReceipt(job.jobId,options):await this.store.loadDocumentJobDetail(job.jobId,options);
+        if(!current())return;detail=inspected.job;content=inspected.content;
+      }else if(authorization.shared){const inspected=await this.store.loadActorDocumentGenerationReceipt(job.jobId);if(!current())return;detail=inspected.job;content=inspected.content;}
+      else{
+        detail=await this.store.loadDocumentJobDetail(job.jobId);if(!current())return;
+        if(required&&(detail.jobId!==job.jobId||detail.documentId!==job.documentId))throw new Error("scene_cost_unavailable");
+        if(detail.moderationPromptRef&&!this.store.content.get()[detail.moderationPromptRef]){await this.store.ensurePrivateContent(detail.moderationPromptRef);if(!current())return;}
+      }
+      if(!current())return;
+      if(required&&(detail.jobId!==job.jobId||detail.documentId!==job.documentId))throw new Error("scene_cost_unavailable");
+      this.#actorInputContent=content;this.#failedInputJob=detail;this.requestUpdate();
+    }catch(error){
+      if(current()){
+        if(required){this.#sceneInputCurrent=null;this.#failedInputJob=null;this.#actorInputContent={};this.requestUpdate();}
+        this.store.toast(required?this.i18n.t("scene.cost.unavailable","The exact Scene request could not be verified. Check its original status before approving paid work."):error instanceof Error?error.message:"The retained generation inputs could not be loaded.");
+      }
+    }
+  }
+  async #inspectRunningInputs(job:DocumentJob,required?:()=>boolean){
+    const authorization=this.store.captureAuthorizationScope();if(!authorization||required&&!required())return;
+    if(!required)this.#sceneInputCurrent=null;
+    const current=()=>this.store.authorizationScopeActive(authorization)&&(required?required():!this.#sceneInputCurrent&&this.#runningInputJob?.jobId===job.jobId);
+    this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=required?null:job;this.requestUpdate();
+    try{
+      let detail:DocumentJob,content:Record<string,string>={};
+      if(required){
+        const options={documentId:job.documentId,fresh:true as const,current:required};
+        const inspected=authorization.shared?await this.store.loadActorDocumentGenerationReceipt(job.jobId,options):await this.store.loadDocumentJobDetail(job.jobId,options);
+        if(!current())return;detail=inspected.job;content=inspected.content;
+      }else if(authorization.shared){const inspected=await this.store.loadActorDocumentGenerationReceipt(job.jobId);if(!current())return;detail=inspected.job;content=inspected.content;}
+      else detail=await this.store.loadDocumentJobDetail(job.jobId);
+      if(!current())return;
+      if(required&&(detail.jobId!==job.jobId||detail.documentId!==job.documentId))throw new Error("scene_cost_unavailable");
+      this.#actorInputContent=content;this.#runningInputJob=detail;this.requestUpdate();
+    }catch(error){
+      if(current()){
+        if(required){this.#sceneInputCurrent=null;this.#runningInputJob=null;this.#actorInputContent={};this.requestUpdate();}
+        this.store.toast(required?this.i18n.t("scene.cost.unavailable","The exact Scene request could not be verified. Check its original status before approving paid work."):error instanceof Error?error.message:"The in-progress generation receipt could not be loaded.");
+      }
+    }
+  }
   #content(artifact:DocumentArtifact){return parseDocumentArtifactContent(this.store.content.get()[artifact.contentRef??""]);}
   #createdAt(artifact:DocumentArtifact){const events=this.store.events.get();return(events.find((event)=>event.eventId===artifact.sourceEventId)??events.find((event)=>event.sequence===artifact.sequence))?.occurredAt??"";}
   #createdTime(artifact:DocumentArtifact){const value=this.#createdAt(artifact),date=new Date(value);if(!value||!Number.isFinite(date.getTime()))return nothing;return html`<time class="document-artifact-created" datetime=${value}>${this.i18n.system("Created")} ${this.i18n.date(date,{dateStyle:"medium",timeStyle:"short"})}</time>`;}
@@ -470,6 +789,10 @@ export class DocumentArtifacts extends FormaElement {
     const definition=documentArtifactDefinition(this.#kind);
     const paid=this.#kind==="storyboard"||this.#kind==="video"||this.#kind==="audio";
     const session=this.store.session.get();
+    const sceneView=this.#sceneCostView?.current()?this.#sceneCostView:null,scenePreview=this.#sceneFreshPreview();
+    const renderedKind=this.#kind,configurationOpening=this.#configurationCurrent;
+    const ownsOpening=()=>Boolean(configurationOpening&&this.#createOpen&&this.#configurationCurrent===configurationOpening&&this.#kind===renderedKind);
+    const formCurrent=()=>this.isConnected&&ownsOpening()&&this.#createDialog()?.open===true&&Boolean(configurationOpening?.());
     const videoUnavailable=this.#kind==="video"&&!session?.provider.videoConfigured;const audioUnavailable=this.#kind==="audio"&&!session?.provider.audioConfigured;
     const references=videoReferencePreflight(this.#projection().blocks,this.store.events.get());
     const videoBlocked=this.#kind==="video"&&Boolean(references.rightsBlockedCount||references.unavailablePixelCount||this.#productionMode!=="managed"&&references.providerLimitExceededCount);
@@ -496,15 +819,16 @@ export class DocumentArtifacts extends FormaElement {
     const outline=this.#kind==="slides"?this.#presentationOutline():null;
     const authoredSlideCount=outline?.authoredSlideCount??null;
     const planningSnapshot=this.#presentationPlanningSnapshot();
+    const sourceContract=this.#kind==="slides"?buildPresentationSourceContract(planningSnapshot,{requestedSlideCount:this.#itemCount}):null;
     const minimumSlideCount=this.#kind==="slides"?minimumPresentationSlideCount(planningSnapshot):0;
     const unsupportedAuthoredSlideCount=authoredSlideCount!==null&&authoredSlideCount>MAX_MANAGED_PRESENTATION_SLIDES;
     const managedReferences=references.items.filter((item)=>item.sendsPixels&&item.rightsConfirmed).map((item)=>({referenceId:String(item.block.properties.reference_id??""),blockId:item.block.id,sequence:item.sequence,contextGroupIds:[],label:item.label}));
-    let planningError=this.#kind==="slides"&&this.#itemCount<minimumSlideCount?`This presentation requires at least ${minimumSlideCount} source-authored or independently isolated slides.`:"";
+    let planningError=formatPresentationSourceIssues(sourceContract?.sourceIssues??[],this.i18n)||(this.#kind==="slides"&&this.#itemCount<minimumSlideCount?this.i18n.t("presentation.source.minimumSlides","At least {minimum} source-authored or separately isolated slides are required. Increase the requested slide count before generating.",{minimum:this.i18n.number(minimumSlideCount)}):"");
     let managedPlan:ReturnType<typeof buildManagedProductionPlan>|null=null;
-    try{managedPlan=this.#productionMode==="managed"&&!unsupportedAuthoredSlideCount?buildManagedProductionPlan(this.#kind,planningSnapshot,{references:managedReferences,...(this.#kind==="slides"?{requestedItemCount:this.#itemCount,requestedSlideCount:this.#itemCount}:{})}):null;}
-    catch(error){planningError=error instanceof Error?error.message:"The presentation sources cannot be assigned to their requested slides.";}
+    try{managedPlan=this.#productionMode==="managed"&&this.#kind!=="scene"&&!unsupportedAuthoredSlideCount?buildManagedProductionPlan(this.#kind,planningSnapshot,{references:managedReferences,...(this.#kind==="slides"?{requestedItemCount:this.#itemCount,requestedSlideCount:this.#itemCount}:{})}):null;}
+    catch(error){planningError=planningError||(this.#kind==="slides"?formatPresentationSourceIssue({code:"presentation_source_unavailable"},this.i18n):error instanceof Error?error.message:"The presentation sources cannot be assigned to their requested slides.");}
     const managedEstimate=managedPlan?managedPlan.estimatedTotalCostMicrousd+(this.#kind==="storyboard"?managedPlan.scenes.length*1_000_000:this.#kind==="audio"?audioSelection?.estimatedCostMicrousd??0:0):0;
-    const estimatedCost=managedEstimate||this.#kind==="video"?managedEstimate||this.#seconds*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:this.#kind==="audio"?(audioSelection?.estimatedCostMicrousd??0)+1_000_000:this.#kind==="storyboard"?this.#itemCount*1_000_000+1_000_000:1_000_000;
+    const estimatedCost=this.#kind==="scene"?scenePreview?.maximumMicrousd??0:managedEstimate||this.#kind==="video"?managedEstimate||this.#seconds*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:this.#kind==="audio"?(audioSelection?.estimatedCostMicrousd??0)+1_000_000:this.#kind==="storyboard"?this.#itemCount*1_000_000+1_000_000:1_000_000;
     const preciseTotalAudioPrice=this.i18n.number(estimatedCost/1_000_000,{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:6});
     const budgetGate=generationBudgetGate(session?.costBudgets,{projectedMicrousd:estimatedCost});
     const predictedSlideCount=this.#kind==="slides"?(managedPlan?.predictedSlideCount??managedPlan?.scenes.length??this.#itemCount):null;
@@ -519,9 +843,9 @@ export class DocumentArtifacts extends FormaElement {
     const audioMaximumReservation=audioSelection?.contract.pricing.mode==="per_1000_characters"||audioSelection?.contract.pricing.mode==="per_minute";
     const paidConfirmation=this.#kind==="audio"?`${audioMaximumReservation?this.i18n.t("audio.provider.maximum","Maximum provider reservation: {amount}",{amount:preciseAudioPrice}):this.i18n.t("audio.provider.estimate","Estimated provider cost: {amount}",{amount:preciseAudioPrice})} · ${this.i18n.system("Total reserved: up to {amount}.",{amount:preciseTotalAudioPrice})}`:this.#kind==="video"&&managedPlan?(managedPlan.scenes.length===1?this.i18n.system("This starts {count} paid video scene totaling {seconds} seconds and reserves up to {amount}.",{count:this.i18n.number(managedPlan.scenes.length),seconds:this.i18n.number(managedPlan.totalDurationSeconds),amount:formatGenerationUsd(managedEstimate)}):this.i18n.system("This starts {count} paid video scenes totaling {seconds} seconds and reserves up to {amount}.",{count:this.i18n.number(managedPlan.scenes.length),seconds:this.i18n.number(managedPlan.totalDurationSeconds),amount:formatGenerationUsd(managedEstimate)}))+" "+(references.providerPixelCount?references.providerPixelCount===1?this.i18n.system("{count} authorized image may be sent to the provider; {descriptions} remain description-only.",{count:this.i18n.number(references.providerPixelCount),descriptions:this.i18n.number(references.describeOnlyCount)}):this.i18n.system("{count} authorized images may be sent to the provider; {descriptions} remain description-only.",{count:this.i18n.number(references.providerPixelCount),descriptions:this.i18n.number(references.describeOnlyCount)}):this.i18n.system("No existing user reference images are sent."))+(generatedAnchor?" "+this.i18n.system("Forma will generate and send an account-owned continuity image to the video provider."):"")+audioConfirmation:this.#kind==="video"?videoConfirmation+" "+this.i18n.system("Total reserved: up to {amount}.",{amount:formatGenerationUsd(estimatedCost)}):(managedPlan?.scenes.length??this.#itemCount)===1?this.i18n.system("This creates {count} paid storyboard frame, saves every finished image, and reserves up to {amount}.",{count:this.i18n.number(managedPlan?.scenes.length??this.#itemCount),amount:formatGenerationUsd(estimatedCost)}):this.i18n.system("This creates {count} paid storyboard frames, saves every finished image, and reserves up to {amount}.",{count:this.i18n.number(managedPlan?.scenes.length??this.#itemCount),amount:formatGenerationUsd(estimatedCost)});
     const documentId=this.#targetDocumentId();const listSuffix=documentId.replace(/[^a-z0-9_-]/gi,"-");const audienceListId=`document-artifact-audiences-${listSuffix}`,toneListId=`document-artifact-tones-${listSuffix}`;const audienceSuggestions=[...this.#rememberedAudiences,...documentRenderSuggestions(this.store.events.get(),documentId,"audience")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);const toneSuggestions=[...this.#rememberedTones,...documentRenderSuggestions(this.store.events.get(),documentId,"tone")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);
-    const close=()=>{this.#createOpen=false;this.#activeWorkflowStageId="";this.#createDialog()?.close();void this.#restoreWorkflowRegeneration();this.requestUpdate();};
-    return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @click=${this.#closeOnBackdrop} @close=${()=>{if(this.#createOpen){this.#createOpen=false;this.#activeWorkflowStageId="";this.requestUpdate();}void this.#restoreWorkflowRegeneration();}}>
-      <form class="document-artifact-dialog" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#create();}}>
+    const close=()=>{if(!ownsOpening())return;this.#configurationCurrent=null;if(renderedKind==="scene")this.#clearSceneCost();this.#createOpen=false;this.#activeWorkflowStageId="";this.#createDialog()?.close();void this.#restoreWorkflowRegeneration();this.requestUpdate();};
+    return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
+      <form class="document-artifact-dialog" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!formCurrent())return;if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create();}}>
         <header><div><span>Render document</span><h2 id="document-artifact-create-title">Create another form of this work</h2><p>The same creative direction can become a story, presentation, storyboard, or video without changing the original document.</p></div><button type="button" class="icon-button" aria-label="Close" @click=${close}>${icon("close")}</button></header>
         <fieldset class="artifact-kind-picker" aria-label="Artifact type">${DOCUMENT_ARTIFACT_KINDS.map((kind)=>{const item=documentArtifactDefinition(kind);return html`<label class=${this.#kind===kind?"selected":""}><input type="radio" name="artifact-kind" value=${kind} .checked=${this.#kind===kind} @change=${()=>{this.#selectArtifactKind(kind);if(kind==="slides")this.#resetPresentationCount();this.#confirmed=false;this.requestUpdate();}}><span aria-hidden="true">${icon(kindIcon(kind))}</span><b>${this.i18n.system(item.label)}</b><small>${this.i18n.system(item.description)}</small></label>`;})}</fieldset>
         <section class="artifact-options">
@@ -535,7 +859,7 @@ export class DocumentArtifacts extends FormaElement {
             {goal:"video_sound_effects",label:this.i18n.t("audio.goal.videoEffects","Sound effects for video")},
           ].map((option)=>{const goal=option.goal as AudioGenerationGoal;const unavailable=(goal==="video_music"||goal==="video_sound_effects")&&!eligibleAudioVideos.length;return html`<label class=${`artifact-audio-goal${this.#audioGoal===goal?" selected":""}${unavailable?" unavailable":""}`}><input type="radio" name="artifact-audio-goal" value=${goal} .checked=${this.#audioGoal===goal} ?disabled=${unavailable} @change=${()=>this.#setAudioGoal(goal)}><b>${option.label}</b>${unavailable?html`<small>${this.i18n.t("audio.goal.videoUnavailable","Create and approve a video in this document to unlock synchronized audio.")}</small>`:nothing}</label>`;})}</fieldset>`:nothing}
           <div class="artifact-option-intro"><h3>${this.#kind==="scene"?this.#sceneVariantLabel(this.#sceneMedium):this.i18n.system(definition.label)}</h3><p>${this.#kind==="scene"?this.#sceneMediumDescription(this.#sceneMedium):this.i18n.system(definition.description)}</p></div>
-          <fieldset class="artifact-production-mode" aria-label="Production management"><legend>How should this be produced?</legend><label><input type="radio" name="artifact-production-mode" value="manual" .checked=${this.#productionMode==="manual"} @change=${()=>{this.#productionMode="manual";this.#sendSoundtrackToVideoProvider=false;this.#storyboardManagedDefault=false;if(this.#kind==="storyboard")this.#storyboardManualOptOut=true;if(this.#kind==="slides")this.#resetPresentationCount("manual");this.#confirmed=false;this.requestUpdate();}}> Use my settings</label><label><input type="radio" name="artifact-production-mode" value="managed" .checked=${this.#productionMode==="managed"} ?disabled=${this.#kind==="audio"&&this.#audioGoal!=="music"} @change=${()=>{this.#productionMode="managed";this.#sendSoundtrackToVideoProvider=false;this.#storyboardManagedDefault=false;if(this.#kind==="storyboard")this.#storyboardManualOptOut=false;if(this.#kind==="slides")this.#resetPresentationCount("managed");this.#confirmed=false;this.requestUpdate();}}> Use a structured production workflow</label></fieldset>
+          <fieldset class="artifact-production-mode" aria-label="Production management"><legend>How should this be produced?</legend><label><input type="radio" name="artifact-production-mode" value="manual" .checked=${this.#productionMode==="manual"} @change=${()=>{this.#sceneDraftChanged();this.#productionMode="manual";this.#sendSoundtrackToVideoProvider=false;this.#storyboardManagedDefault=false;if(this.#kind==="storyboard")this.#storyboardManualOptOut=true;if(this.#kind==="slides")this.#resetPresentationCount("manual");this.#confirmed=false;this.requestUpdate();}}> Use my settings</label><label><input type="radio" name="artifact-production-mode" value="managed" .checked=${this.#productionMode==="managed"} ?disabled=${this.#kind==="audio"&&this.#audioGoal!=="music"} @change=${()=>{this.#sceneDraftChanged();this.#productionMode="managed";this.#sendSoundtrackToVideoProvider=false;this.#storyboardManagedDefault=false;if(this.#kind==="storyboard")this.#storyboardManualOptOut=false;if(this.#kind==="slides")this.#resetPresentationCount("managed");this.#confirmed=false;this.requestUpdate();}}> Use a structured production workflow</label></fieldset>
           ${this.#kind==="audio"?html`<div class="artifact-audio-settings">
             <label>${this.i18n.t("audio.settings.destination","Where will this be used?")}<select .value=${audioVideoGoal?"video":this.#audioDestination} ?disabled=${Boolean(audioVideoGoal)} @change=${(event:Event)=>{this.#audioDestination=(event.currentTarget as HTMLSelectElement).value as AudioDestination;this.#confirmed=false;this.requestUpdate();}}>${(["standalone","video","podcast","radio"] as const).map((destination)=>html`<option value=${destination}>${this.i18n.t(`audio.destination.${destination}`,destination==="standalone"?"Standalone audio":destination==="video"?"Video":destination==="podcast"?"Podcast":"Radio or advertisement")}</option>`)}</select></label>
             ${this.#audioGoal==="timed_music"||this.#audioGoal==="sound_effects"?html`<label>${this.i18n.t("audio.settings.duration","Duration in seconds")}<input type="number" min="1" max=${this.#audioGoal==="timed_music"?600:180} step="1" inputmode="numeric" .value=${this.#invalidAudioDuration?this.#audioDurationInput:String(this.#audioDuration)} @input=${(event:InputEvent)=>{const input=event.currentTarget as HTMLInputElement;const value=Number(input.value);const maximum=this.#audioGoal==="timed_music"?600:180;this.#audioDurationInput=input.value;this.#invalidAudioDuration=!input.value||!Number.isSafeInteger(value)||value<1||value>maximum;input.setCustomValidity(this.#invalidAudioDuration?this.i18n.t("audio.settings.duration","Duration in seconds"):"");if(!this.#invalidAudioDuration){this.#audioDuration=value;if(value>380)this.#audioInstrumental=false;}this.#audioImageBlockId="";this.#confirmed=false;this.requestUpdate();}}></label>`:nothing}
@@ -551,13 +875,15 @@ export class DocumentArtifacts extends FormaElement {
           ${["slides","storyboard","video"].includes(this.#kind)?html`<label class="artifact-soundtrack-picker"><span>${this.i18n.t("audio.soundtrack.label","Optional soundtrack")}</span><select ?disabled=${!soundtrackCandidates.length} .value=${this.#soundtrackBlockIds[0]??""} @change=${(event:Event)=>{const selected=(event.currentTarget as HTMLSelectElement).value;this.#soundtrackBlockIds=selected?[selected]:[];this.#sendSoundtrackToVideoProvider=false;this.#confirmed=false;this.requestUpdate();}}><option value="">${this.i18n.t("audio.soundtrack.none","No soundtrack")}</option>${soundtrackCandidates.map((block)=>html`<option value=${block.id}>${String(block.properties.label??block.handle)}</option>`)}</select>${!soundtrackCandidates.length?html`<small>${this.i18n.t("audio.soundtrack.empty","To add a soundtrack, enable Pair with finished outputs on an audio context block.")}</small>`:selectedSoundtrack?html`<small>${this.#sendSoundtrackToVideoProvider?this.i18n.t("audio.soundtrack.transferNotice","This recording is sent as an approved video-provider reference; the returned video may contain provider-interpreted audio."):this.i18n.t("audio.soundtrack.companionNotice","This soundtrack is played alongside the output; it is not embedded in exported PDF or video files.")}</small>`:nothing}</label>`:nothing}
           ${this.#kind==="video"&&this.#productionMode==="manual"&&selectedSoundtrack?html`<label class="artifact-soundtrack-transfer"><input type="checkbox" .checked=${this.#sendSoundtrackToVideoProvider} ?disabled=${!soundtrackTransferEligible} @change=${(event:Event)=>{this.#sendSoundtrackToVideoProvider=(event.currentTarget as HTMLInputElement).checked;this.#confirmed=false;this.requestUpdate();}}><span><b>${this.i18n.t("audio.soundtrack.videoTransfer","Send this soundtrack to the video provider")}</b><small>${this.i18n.t("audio.soundtrack.videoTransferNotice","Requires an approved image plus an MP3 or WAV clip of 15 seconds or less.")}${Number(selectedSoundtrack.properties.duration_seconds??0)>15?` ${this.i18n.t("audio.soundtrack.excerptNotice","Longer recordings send only an authenticated excerpt from the first 15 seconds.")}`:""}</small></span></label>`:nothing}
           ${this.#kind==="audio"&&audioSelection?.contract.maximumImageReferences&&eligibleAudioImages.length?html`<label><span>${this.i18n.system("Reference image")}</span><select .value=${this.#audioImageBlockId} @change=${(event:Event)=>{this.#audioImageBlockId=(event.currentTarget as HTMLSelectElement).value;this.#confirmed=false;this.requestUpdate();}}><option value="">${this.i18n.t("audio.image.none","No reference image")}</option>${eligibleAudioImages.map((image)=>html`<option value=${image.block.id}>${image.label}</option>`)}</select>${this.#audioImageBlockId?html`<small>${this.i18n.t("audio.image.transferNotice","Choosing an image sends its approved image pixels to Fal and Lyria 3 Pro through temporary provider storage.")}</small>`:nothing}</label>`:nothing}
-          <label>Audience <span>optional</span><input maxlength="120" list=${audienceListId} autocomplete="off" placeholder="Festival audience, client team…" .value=${this.#audience} @input=${(event:InputEvent)=>{this.#audience=(event.target as HTMLInputElement).value;}}><datalist id=${audienceListId}>${audienceSuggestions.map((value)=>html`<option value=${value}></option>`)}</datalist></label>
-          <label>Tone <span>optional</span><input maxlength="120" list=${toneListId} autocomplete="off" placeholder="Let the document decide" .value=${this.#tone} @input=${(event:InputEvent)=>{this.#tone=(event.target as HTMLInputElement).value;}}><datalist id=${toneListId}>${toneSuggestions.map((value)=>html`<option value=${value}></option>`)}</datalist></label>
+          <label>Audience <span>optional</span><input maxlength="120" list=${audienceListId} autocomplete="off" placeholder="Festival audience, client team…" .value=${this.#audience} @input=${(event:InputEvent)=>{this.#audience=(event.target as HTMLInputElement).value;this.#sceneDraftChanged();}}><datalist id=${audienceListId}>${audienceSuggestions.map((value)=>html`<option value=${value}></option>`)}</datalist></label>
+          <label>Tone <span>optional</span><input maxlength="120" list=${toneListId} autocomplete="off" placeholder="Let the document decide" .value=${this.#tone} @input=${(event:InputEvent)=>{this.#tone=(event.target as HTMLInputElement).value;this.#sceneDraftChanged();}}><datalist id=${toneListId}>${toneSuggestions.map((value)=>html`<option value=${value}></option>`)}</datalist></label>
         </section>
         ${this.#kind==="slides"?html`<aside class="video-provider-note artifact-presentation-preflight" aria-label="Presentation source and generation plan" aria-live="polite"><b>${unsupportedAuthoredSlideCount?this.i18n.system("Presentation unavailable · {authoredSlideCount} authored slides", { authoredSlideCount: this.i18n.number(authoredSlideCount) }):(predictedSlideCount===1 ? this.i18n.system("Predicted presentation · {predictedSlideCount} slide", { predictedSlideCount: typeof predictedSlideCount === "number" ? this.i18n.number(predictedSlideCount) : String(predictedSlideCount) }) : this.i18n.system("Predicted presentation · {predictedSlideCount} slides", { predictedSlideCount: typeof predictedSlideCount === "number" ? this.i18n.number(predictedSlideCount) : String(predictedSlideCount) }))}</b><p>${authoredSlideCount===null?this.i18n.system("No explicitly numbered slide outline was detected in the active document context."):(authoredSlideCount===1 ? (outline?.sections.length ? (outline.sections.length===1 ? this.i18n.system("{authoredSlideCount} explicitly numbered authored slide detected across {count} source section.", { authoredSlideCount: this.i18n.number(authoredSlideCount), count: this.i18n.number(outline.sections.length) }) : this.i18n.system("{authoredSlideCount} explicitly numbered authored slide detected across {count} source sections.", { authoredSlideCount: this.i18n.number(authoredSlideCount), count: this.i18n.number(outline.sections.length) })) : this.i18n.system("{authoredSlideCount} explicitly numbered authored slide detected.", { authoredSlideCount: this.i18n.number(authoredSlideCount) })) : (outline?.sections.length ? (outline.sections.length===1 ? this.i18n.system("{authoredSlideCount} explicitly numbered authored slides detected across {count} source section.", { authoredSlideCount: this.i18n.number(authoredSlideCount), count: this.i18n.number(outline.sections.length) }) : this.i18n.system("{authoredSlideCount} explicitly numbered authored slides detected across {count} source sections.", { authoredSlideCount: this.i18n.number(authoredSlideCount), count: this.i18n.number(outline.sections.length) })) : this.i18n.system("{authoredSlideCount} explicitly numbered authored slides detected.", { authoredSlideCount: this.i18n.number(authoredSlideCount) })))}</p>${unsupportedAuthoredSlideCount?html`<p role="alert"><b>${authoredSlideCount} authored slides exceed the ${MAX_MANAGED_PRESENTATION_SLIDES}-slide editable PowerPoint limit.</b> Divide the authored presentation before requesting generation; no provider call or reservation can be started.</p>`:slideCountMismatch||requestedCountMismatch?html`<p role="alert"><b>Authored and planned slide counts differ.</b> ${requestedCountMismatch?this.i18n.system("You requested {itemCount} slides, but the structured workflow will preserve all {predictedSlideCount} authored slides.", { itemCount: this.i18n.number(this.#itemCount), predictedSlideCount: String(predictedSlideCount) }):predictedSlideCount!==null&&authoredSlideCount!==null&&predictedSlideCount<authoredSlideCount?(authoredSlideCount-predictedSlideCount===1 ? this.i18n.system("{count} authored slide cannot fit this {predictedSlideCount}-slide manual plan. Choose a larger supported count or switch to structured production.", { count: this.i18n.number(authoredSlideCount-predictedSlideCount), predictedSlideCount: this.i18n.number(predictedSlideCount) }) : this.i18n.system("{count} authored slides cannot fit this {predictedSlideCount}-slide manual plan. Choose a larger supported count or switch to structured production.", { count: this.i18n.number(authoredSlideCount-predictedSlideCount), predictedSlideCount: this.i18n.number(predictedSlideCount) })):this.i18n.system("The {predictedSlideCount}-slide plan expands the {authoredSlideCount}-slide authored outline; added slides must remain source-grounded.", { predictedSlideCount: String(predictedSlideCount), authoredSlideCount: String(authoredSlideCount) })}</p>`:nothing}${outline?.slides.length?html`<details><summary>Inspect ${outline.slides.length} authored slide title${outline.slides.length===1?"":"s"}</summary><ol>${outline.slides.map((slide)=>html`<li><b>Slide ${slide.number}</b>${slide.title?html` · ${slide.title}`:nothing}</li>`)}</ol></details>`:nothing}</aside>`:nothing}
+        ${sourceContract?.numberedOutline.some((slide)=>slide.sourceMode==="outline")?html`<aside class="video-provider-note artifact-presentation-outline-note"><p>${this.i18n.t("presentation.planning.outlineEvidence","Short outlines provide slide titles and coverage requirements. Supporting research is assigned separately; explicit source groups take priority. Unresolved source scope blocks generation before spending. Scene and other output specifications are excluded from Slides.")}</p></aside>`:nothing}
         ${planningError?html`<aside class="video-provider-note artifact-production-plan" role="alert"><b>${this.i18n.t("presentation.planning.attention","Presentation source placement needs attention")}</b><p>${planningError}</p><small>${this.i18n.t("presentation.planning.noProvider","No provider request or budget reservation will be started.")}</small></aside>`:nothing}
         ${managedPlan?html`<aside class="video-provider-note artifact-production-plan"><b>${this.i18n.system(productionTeamFor(this.#kind).label)}</b><p>${managedPlan.team.specialists.map((member)=>this.i18n.system(member.label)).join(" · ")}</p><p>${this.#kind==="video"?(managedPlan.scenes.length===1 ? this.i18n.system("{count} individually playable scene · {totalDurationSeconds} seconds total · each scene 15 seconds or less · up to {amount} reserved.", { count: this.i18n.number(managedPlan.scenes.length), totalDurationSeconds: this.i18n.number(managedPlan.totalDurationSeconds), amount: formatGenerationUsd(managedEstimate) }) : this.i18n.system("{count} individually playable scenes · {totalDurationSeconds} seconds total · each scene 15 seconds or less · up to {amount} reserved.", { count: this.i18n.number(managedPlan.scenes.length), totalDurationSeconds: this.i18n.number(managedPlan.totalDurationSeconds), amount: formatGenerationUsd(managedEstimate) })):this.#kind==="slides"?(providerBatchCount===1 ? this.i18n.system("{predictedSlideCount} source-grounded slides · {providerBatchCount} provider batch of up to 8 slides · {amount} initially reserved.", { predictedSlideCount: typeof predictedSlideCount === "number" ? this.i18n.number(predictedSlideCount) : String(predictedSlideCount), providerBatchCount: this.i18n.number(providerBatchCount), amount: formatGenerationUsd(managedEstimate) }) : this.i18n.system("{predictedSlideCount} source-grounded slides · {providerBatchCount} provider batches of up to 8 slides · {amount} initially reserved.", { predictedSlideCount: typeof predictedSlideCount === "number" ? this.i18n.number(predictedSlideCount) : String(predictedSlideCount), providerBatchCount: this.i18n.number(providerBatchCount), amount: formatGenerationUsd(managedEstimate) })):this.i18n.system("{count} context-led {label} · up to {amount} reserved.", { count: this.i18n.number(managedPlan.scenes.length), label: this.#kind==="storyboard" ? this.i18n.system("frames") : this.i18n.system("narrative movements"), amount: formatGenerationUsd(managedEstimate) })}</p>${this.#kind==="video"?html`<small>${managedPlan.anchorRationale} Existing authorized references run in parallel where possible. Transitions use text guidance; the provider does not support native start/end frame locks or extracted video frames. The completed result is an ordered scene reel.</small>`:nothing}</aside>`:nothing}
         ${this.#kind==="slides"&&!unsupportedAuthoredSlideCount?html`<aside class="artifact-cost-confirm artifact-presentation-provider-disclosure" aria-label="Paid presentation provider, source transmission, and cost"><span><b>Paid provider · OpenAI Responses · ${slideProviderModel}</b><small>${this.#productionMode==="managed"?(providerBatchCount===1 ? this.i18n.system("{providerBatchCount} planned provider batch", { providerBatchCount: this.i18n.number(providerBatchCount) }) : this.i18n.system("{providerBatchCount} planned provider batches", { providerBatchCount: this.i18n.number(providerBatchCount) })):this.i18n.system("1 planned provider request")}; ${providerCallCount} initial paid request${providerCallCount===1?"":"s"}, up to ${maximumProviderCallCount} total paid requests including bounded validation and continuity repairs. Initial reservation and application-enforced spending ceiling: ${formatGenerationUsd(estimatedCost)}. Forma blocks any request or repair whose conservative maximum would exceed this ceiling; it is not a provider-enforced cap. Actual provider usage is shown after completion.</small><small>Submitting transmits this document’s active, authorized source text, numbered slide instructions, stakeholder quotations, and numerical claims to OpenAI. Stable source identifiers remain private to Forma; request-local evidence aliases support source-grounded review.</small></span></aside>`:nothing}
+        ${this.#kind==="scene"?html`${this.#sceneCostControls()}${renderSceneProviderDisclosure(this.i18n,{preview:sceneView?.inspection?.preview??null,existing:Boolean(sceneView?.inspection?.job)})}`:nothing}
         ${this.#kind==="audio"&&audioSelection?html`<aside class="artifact-cost-confirm artifact-audio-provider-disclosure" aria-label=${this.i18n.t("artifact.audio.label","Audio")} aria-live="polite"><span>
           <b>${audioMaximumReservation?this.i18n.t("audio.provider.maximum","Maximum provider reservation: {amount}",{amount:preciseAudioPrice}):this.i18n.t("audio.provider.estimate","Estimated provider cost: {amount}",{amount:preciseAudioPrice})}</b>
           <small>${audioVideoGoal?this.i18n.t("audio.settings.videoPermissionHint","The selected video, including any embedded sound, is sent to Fal and its specialist provider only for synchronization."):this.#audioImageBlockId?this.i18n.t("audio.image.transferNotice","Choosing an image sends its approved image pixels to Fal and Lyria 3 Pro through temporary provider storage."):this.i18n.t("audio.settings.textOnly","Only approved written creative direction is sent. Existing audio recordings stay private.")}</small>
@@ -567,9 +893,9 @@ export class DocumentArtifacts extends FormaElement {
           ${audioUnavailable?html`<small role="alert">${this.i18n.t("audio.generation.unavailable","Audio generation is unavailable. Contact your workspace administrator.")}</small>`:nothing}
         </span></aside>`:nothing}
         ${this.#kind==="video"?html`<forma-video-reference-preflight .disabled=${this.#submitting} .source=${this.source} @video-reference-change=${()=>{this.#confirmed=false;this.requestUpdate();}} @video-reference-busy=${(event:CustomEvent<{busy:boolean}>)=>{this.#referenceBusy=event.detail.busy;this.#confirmed=false;this.requestUpdate();}}></forma-video-reference-preflight><aside class="video-provider-note"><b>Provider path · ${configuredVideoLabel}</b><p>${videoUnavailable?this.i18n.system("Video generation is unavailable. Contact your workspace administrator."):videoBlocked?videoBlockedMessage:generatedAnchor?(references.providerPixelCount ? (references.providerPixelCount===1 ? this.i18n.system("Fal will receive an account-owned generated continuity image on the reference-to-video path, alongside {providerPixelCount} authorized existing image. Every provider request and receipt remains inspectable.", { providerPixelCount: this.i18n.number(references.providerPixelCount) }) : this.i18n.system("Fal will receive an account-owned generated continuity image on the reference-to-video path, alongside {providerPixelCount} authorized existing images. Every provider request and receipt remains inspectable.", { providerPixelCount: this.i18n.number(references.providerPixelCount) })) : this.i18n.system("Fal will receive an account-owned generated continuity image on the reference-to-video path; no existing user reference images are sent. Every provider request and receipt remains inspectable.")):references.providerPath==="reference-to-video"?(references.providerPixelCount===1 ? this.i18n.system("Fal will upload {providerPixelCount} actual image to short-lived storage and send them to the adopted {configuredVideoLabel} adapter. Storyboard order is retained, authorized provenance is stated without identity-policy priming, and a pseudonymous end-user identifier accompanies the request. The prepared request and provider receipt remain inspectable.", { providerPixelCount: this.i18n.number(references.providerPixelCount), configuredVideoLabel: configuredVideoLabel }) : this.i18n.system("Fal will upload {providerPixelCount} actual images to short-lived storage and send them to the adopted {configuredVideoLabel} adapter. Storyboard order is retained, authorized provenance is stated without identity-policy priming, and a pseudonymous end-user identifier accompanies the request. The prepared request and provider receipt remain inspectable.", { providerPixelCount: this.i18n.number(references.providerPixelCount), configuredVideoLabel: configuredVideoLabel })):this.i18n.system("Fal will use {configuredVideoLabel} as the configured prompt-only video path. Reference descriptions and storyboard direction inform the prompt, but no image pixels are attached. The request and provider receipt remain inspectable.", { configuredVideoLabel: configuredVideoLabel })}</p></aside>`:nothing}
-        ${budgetGate.level!=="none"?html`<aside class="artifact-cost-confirm"><span><b>${budgetGate.level==="blocked"?this.i18n.system("Monthly budget unavailable"):this.i18n.system("Monthly budget review")}</b><small>${budgetGate.level==="blocked"?this.i18n.system("This request exceeds the remaining {amount} {label} budget.", { amount: formatGenerationUsd(budgetGate.remainingMicrousd), label: budgetGate.scope==="workspace" ? this.i18n.system("organization") : this.i18n.system("personal") }):this.i18n.system("{percent}% of the {label} budget would be committed. {amount} remains before this request.", { percent: this.i18n.number(Math.round(budgetGate.projectedUtilization*100)), label: budgetGate.scope==="workspace" ? this.i18n.system("organization") : this.i18n.system("personal"), amount: formatGenerationUsd(budgetGate.remainingMicrousd) })}</small></span></aside>`:nothing}
+        ${budgetGate.level!=="none"&&(this.#kind!=="scene"||Boolean(scenePreview))?html`<aside class="artifact-cost-confirm"><span><b>${budgetGate.level==="blocked"?this.i18n.system("Monthly budget unavailable"):this.i18n.system("Monthly budget review")}</b><small>${budgetGate.level==="blocked"?this.i18n.system("This request exceeds the remaining {amount} {label} budget.", { amount: formatGenerationUsd(budgetGate.remainingMicrousd), label: budgetGate.scope==="workspace" ? this.i18n.system("organization") : this.i18n.system("personal") }):this.i18n.system("{percent}% of the {label} budget would be committed. {amount} remains before this request.", { percent: this.i18n.number(Math.round(budgetGate.projectedUtilization*100)), label: budgetGate.scope==="workspace" ? this.i18n.system("organization") : this.i18n.system("personal"), amount: formatGenerationUsd(budgetGate.remainingMicrousd) })}</small></span></aside>`:nothing}
         ${paid?html`<aside class="artifact-cost-confirm"><span><b>Production cost and provider disclosure</b><small>${paidConfirmation}${this.#kind==="storyboard"&&this.#productionMode==="managed"&&references.providerPixelCount?(references.providerPixelCount===1 ? " " + this.i18n.system("{providerPixelCount} authorized source image may be used as scoped frame references; completed frames can guide later images.", { providerPixelCount: this.i18n.number(references.providerPixelCount) }) : " " + this.i18n.system("{providerPixelCount} authorized source images may be used as scoped frame references; completed frames can guide later images.", { providerPixelCount: this.i18n.number(references.providerPixelCount) })):""}</small></span></aside>`:nothing}
-        <footer><button type="button" class="button ghost" @click=${close}>Cancel</button><button class="button primary" ?disabled=${this.#submitting||this.#workflowBusy||this.#referenceBusy||unsupportedAuthoredSlideCount||Boolean(planningError)||requestedCountMismatch||this.#kind==="slides"&&this.#productionMode==="managed"&&this.#invalidSlideCount||this.#kind==="audio"&&this.#invalidAudioDuration||audioVideoBlocked||videoUnavailable||audioUnavailable||videoBlocked||this.#sendSoundtrackToVideoProvider&&!soundtrackTransferEligible||budgetGate.level==="blocked"}>${this.#submitting?this.i18n.system("Adding to the queue…"):this.#referenceBusy?this.i18n.system("Saving reference modes…"):this.#productionMode==="managed"?this.i18n.t("artifact.create.workflow","Start {kind} workflow",{kind:this.#kind==="scene"?this.#sceneVariantLabel(this.#sceneMedium):this.i18n.system(productionTeamFor(this.#kind).label)}):this.i18n.t("artifact.create.kind","Create {kind}",{kind:this.#kind==="scene"?this.#sceneVariantLabel(this.#sceneMedium):this.i18n.t(`artifact.${this.#kind}.label`,definition.label)})}</button></footer>
+        <footer><button type="button" class="button ghost" @click=${close}>Cancel</button><button class="button primary" ?disabled=${this.#submitting||Boolean(this.#sceneSubmitting?.formCurrent())||this.#workflowBusy||this.#referenceBusy||this.#kind==="scene"&&(!scenePreview||!this.#sceneCanCreate())||unsupportedAuthoredSlideCount||Boolean(planningError)||requestedCountMismatch||this.#kind==="slides"&&this.#productionMode==="managed"&&this.#invalidSlideCount||this.#kind==="audio"&&this.#invalidAudioDuration||audioVideoBlocked||videoUnavailable||audioUnavailable||videoBlocked||this.#sendSoundtrackToVideoProvider&&!soundtrackTransferEligible||budgetGate.level==="blocked"}>${this.#submitting||this.#sceneSubmitting?.formCurrent()?this.i18n.system("Adding to the queue…"):this.#referenceBusy?this.i18n.system("Saving reference modes…"):this.#productionMode==="managed"?this.i18n.t("artifact.create.workflow","Start {kind} workflow",{kind:this.#kind==="scene"?this.#sceneVariantLabel(this.#sceneMedium):this.i18n.system(productionTeamFor(this.#kind).label)}):this.i18n.t("artifact.create.kind","Create {kind}",{kind:this.#kind==="scene"?this.#sceneVariantLabel(this.#sceneMedium):this.i18n.t(`artifact.${this.#kind}.label`,definition.label)})}</button></footer>
       </form>
     </dialog>`;
   }
@@ -709,8 +1035,8 @@ export class DocumentArtifacts extends FormaElement {
     const rejectedDraftJobs=readOnly?[]:this.store.documentJobs.get().filter((job)=>job.documentId===this.#targetDocumentId()&&job.kind==="render_document"&&job.result?.artifactKind==="slides"&&(job.status==="failed"||job.status==="partial"));
     const recoverablePresentationJob=failedJobs.find(documentJobCanRecoverPresentation);
     const active=this.#viewerCurrent&&!this.#viewerCurrent()?null:this.store.projection.get().libraryArtifacts.find((artifact)=>artifact.id===this.#activeId)??null;const inputArtifact=this.store.projection.get().libraryArtifacts.find((artifact)=>artifact.id===this.#inputId)??active;
-    const inspectionContent=project?this.#actorInputContent:this.store.content.get();
-    const dialogs=html`${readOnly?nothing:this.#createDialogTemplate()}${this.#viewer(active)}${this.#runningInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${documentGenerationInputInspection(this.#runningInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{this.#runningInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:this.#failedInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${failedGenerationInputInspection(this.#failedInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{this.#failedInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:!project&&inputArtifact?html`<forma-generation-input-dialog .open=${Boolean(this.#inputId)} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
+    const inspectionContent=project||this.#sceneInputCurrent?this.#actorInputContent:this.store.content.get(),sceneInputOwner=this.#sceneInputCurrent;
+    const dialogs=html`${readOnly?nothing:this.#createDialogTemplate()}${this.#viewer(active)}${this.#runningInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${documentGenerationInputInspection(this.#runningInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{if(this.#sceneInputCurrent!==sceneInputOwner)return;this.#sceneInputCurrent=null;this.#runningInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:this.#failedInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${failedGenerationInputInspection(this.#failedInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{if(this.#sceneInputCurrent!==sceneInputOwner)return;this.#sceneInputCurrent=null;this.#failedInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:!project&&inputArtifact?html`<forma-generation-input-dialog .open=${Boolean(this.#inputId)} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
     if(this.launcherOnly)return html`<div class="document-artifact-launcher">${dialogs}</div>`;
     const workflow=this.#currentWorkflow();
     const outdatedWorkflowOutputs=new Set(workflow
@@ -727,6 +1053,11 @@ export class DocumentArtifacts extends FormaElement {
         const kind=DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?job.result!.artifactKind as DocumentArtifactKind:"short_story";
         const detail=documentJobFailure(job);
         const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??"",job),detail,job.error??"",this.i18n);
+        const applicationEligibility=guidance.applicationEligibility===true;
+        const inspectScene=applicationEligibility?this.#sceneFailureInspectionAction(job):null;
+        const requestContext=applicationEligibility?this.i18n.t("scene.receipt.requestContext","Document {document} · request {request}",{
+          document:`\u2068${job.documentId}\u2069`,request:`\u2068${job.jobId}\u2069`,
+        }):"";
         const recoverable=documentJobCanRecoverProviderRender(job)&&guidance.retryAllowed;
         const presentationRecoverable=documentJobCanRecoverPresentation(job);
         const session=this.store.session.get();
@@ -734,21 +1065,21 @@ export class DocumentArtifacts extends FormaElement {
         const savedFrameCount=Array.isArray(job.result?.renderedItems)?job.result.renderedItems.length:0;
         const savedStoryboardAvailable=kind==="storyboard"&&savedFrameCount>0&&!session?.projectContext;
         const infrastructureBlocked=Boolean(detail&&!recoverable&&!guidance.retryAllowed&&guidance.actionUrl&&(["authentication","quota","access"].includes(detail.category)||["review_budget","add_credits","verify_organization"].includes(detail.action)||detail.code==="video_provider_not_configured"));
-        const remediation=infrastructureBlocked&&session&&!session.impersonation?authorizedGenerationFailureRemediation(guidance,session)??{href:"/settings",label:this.i18n.system("Review settings"),external:false}:null;
+        const remediation=infrastructureBlocked&&session&&!session.impersonation?authorizedGenerationFailureRemediation(guidance,session)??(applicationEligibility?null:{href:"/settings",label:this.i18n.system("Review settings"),external:false}):null;
         return html`<article class=${`document-artifact-failure-card${guidance.retryAllowed?"":" document-artifact-failure-card--terminal"}`}>
           <div class="document-artifact-failure-copy">
-            <div class="document-artifact-failure-heading"><span class="document-artifact-failure-icon" aria-hidden="true">${icon("info")}</span><div><span class="document-artifact-failure-format">${this.i18n.system(documentArtifactDefinition(kind).label)}</span><h3>${guidance.title}</h3></div></div>
+            <div class="document-artifact-failure-heading"><span class="document-artifact-failure-icon" aria-hidden="true">${icon("info")}</span><div><span class="document-artifact-failure-format">${this.i18n.system(documentArtifactDefinition(kind).label)}</span><h3 aria-label=${applicationEligibility?`${guidance.title} · ${requestContext}`:nothing}>${guidance.title}</h3>${applicationEligibility?html`<small>${requestContext}</small>`:nothing}</div></div>
             <p>${guidance.summary}</p>
             ${presentationRecoverable?html`<small>${this.i18n.system("Paid once · replay without another provider call")}</small>`:nothing}
             ${savedStoryboardAvailable?html`<small>${this.i18n.system("{saved} frames recorded. Inspect the original plan without generating again. The storyboard is incomplete; its existing budget hold is unchanged.",{saved:this.i18n.number(savedFrameCount)})}</small>`:nothing}
           </div>
           <div class="document-artifact-failure-actions">
-            ${savedStoryboardAvailable?html`<button type="button" class="button primary compact" @click=${()=>this.#inspectFailedInputs(job)}>${this.i18n.system("View saved frames")}</button>`:reconciliationEligible?html`<button type="button" class="button primary compact" ?disabled=${Boolean(this.#reconcilingProviderJobId)} @click=${()=>void this.#reconcileProviderReceipt(job.jobId)}>${this.#reconcilingProviderJobId===job.jobId?this.i18n.system("Checking…"):this.i18n.system("Refresh provider status")}</button>`:remediation&&!presentationRecoverable?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind,job)}>${this.i18n.system("Review & change request")}</button>`:html`<button type="button" class="button primary compact" title=${presentationRecoverable?this.i18n.system("Paid once · replay without another provider call"):nothing} @click=${()=>presentationRecoverable?this.#recoverPresentation(job.jobId):recoverable?this.#recover(job.jobId):this.#prepareRetry(kind,job)}>${presentationRecoverable||recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
+            ${applicationEligibility?html`<button type="button" class="button primary compact" aria-label=${`${this.i18n.system("Inspect original Scene inputs · free")} · ${requestContext}`} @click=${inspectScene}>${this.i18n.system("Inspect original Scene inputs · free")}</button>${remediation?html`<a class="button secondary compact" href=${remediation.href}>${remediation.label}</a>`:html`<small>${this.i18n.t("generation.contactAdministrator","Contact your project administrator")}</small>`}`:savedStoryboardAvailable?html`<button type="button" class="button primary compact" @click=${()=>this.#inspectFailedInputs(job)}>${this.i18n.system("View saved frames")}</button>`:reconciliationEligible?html`<button type="button" class="button primary compact" ?disabled=${Boolean(this.#reconcilingProviderJobId)} @click=${()=>void this.#reconcileProviderReceipt(job.jobId)}>${this.#reconcilingProviderJobId===job.jobId?this.i18n.system("Checking…"):this.i18n.system("Refresh provider status")}</button>`:remediation&&!presentationRecoverable?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind,job)}>${this.i18n.system("Review & change request")}</button>`:html`<button type="button" class="button primary compact" title=${presentationRecoverable?this.i18n.system("Paid once · replay without another provider call"):nothing} @click=${()=>presentationRecoverable?this.#recoverPresentation(job.jobId):recoverable?this.#recover(job.jobId):this.#prepareRetry(kind,job)}>${presentationRecoverable||recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
             ${presentationRecoverable?html`<button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind,job)}>${this.i18n.system("Review & change request")}</button>`:nothing}
-            ${savedStoryboardAvailable?nothing:html`<button type="button" class="button secondary compact" @click=${()=>this.#inspectFailedInputs(job)}>Inspect inputs</button>`}
+            ${savedStoryboardAvailable||applicationEligibility?nothing:html`<button type="button" class="button secondary compact" @click=${()=>this.#inspectFailedInputs(job)}>Inspect inputs</button>`}
             <button type="button" class="button ghost compact" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${(event:Event)=>void this.#dismissFailure(job.jobId,event)}>Dismiss</button>
           </div>
-          ${detail?.requestId||detail?.code||detail?.httpStatus||detail?.validationIssues?.length?html`<details class="creative-diagnostics document-artifact-failure-details"><summary>Technical details</summary><div class="document-artifact-failure-receipt" tabindex="0" aria-label=${this.i18n.system("Technical receipt")}>${detail?.code?html`<code>Reason: ${detail.code}</code>`:nothing}${detail?.requestId?html`<code>Provider request: ${detail.requestId}</code>`:nothing}${detail?.httpStatus?html`<code>Provider status: ${detail.httpStatus}</code>`:nothing}${detail?.validationIssues?.map((issue)=>html`<code>${issue.globalSlideIndex?`Slide ${issue.globalSlideIndex} · `:""}${issue.stage} attempt ${issue.providerAttempt}: ${issue.code} · ${issue.message}</code>`)}</div></details>`:nothing}
+          ${detail?.requestId||detail?.code||detail?.httpStatus||detail?.validationIssues?.length?html`<details class="creative-diagnostics document-artifact-failure-details"><summary>Technical details</summary><div class="document-artifact-failure-receipt" tabindex="0" aria-label=${this.i18n.system("Technical receipt")}>${detail?.code?html`<code>Reason: ${detail.code}</code>`:nothing}${detail?.requestId?html`<code>Provider request: ${detail.requestId}</code>`:nothing}${detail?.httpStatus?applicationEligibility?html`<code>${this.i18n.system("Application status")}: ${detail.httpStatus}</code>`:html`<code>Provider status: ${detail.httpStatus}</code>`:nothing}${detail?.validationIssues?.map((issue)=>html`<code>${issue.globalSlideIndex?`Slide ${issue.globalSlideIndex} · `:""}${issue.stage} attempt ${issue.providerAttempt}: ${issue.code} · ${issue.message}</code>`)}</div></details>`:nothing}
         </article>`;
       })}</div></details>`:nothing}
       ${readOnly?nothing:html`<forma-presentation-rejected-drafts .documentId=${this.#targetDocumentId()} .jobs=${rejectedDraftJobs}></forma-presentation-rejected-drafts>`}

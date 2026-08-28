@@ -1965,6 +1965,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .presentation-rejected-draft-jobs,.presentation-rejected-draft-attempts,.presentation-rejected-draft-modes { display: flex; flex-wrap: wrap; gap: .5rem; }
 .presentation-rejected-drafts-dialog { width: min(calc(100dvi - 2rem),110rem); }
 .presentation-rejected-drafts-reader { display: grid; gap: 1rem; max-block-size: calc(100dvb - 2rem); padding: clamp(.85rem,2vi,1.5rem); overflow: auto; overscroll-behavior: contain; }
+.presentation-rejected-drafts-reader summary { min-block-size: var(--forma-control-min-size,44px); min-inline-size: var(--forma-control-min-size,44px); padding-block: .5rem; padding-inline: .25rem; align-content: center; cursor: pointer; overflow-wrap: anywhere; }
+.presentation-rejected-drafts-reader summary:focus-visible { outline-offset: 3px; }
+@media (forced-colors: active) { .presentation-rejected-drafts-reader summary:focus-visible { outline: 2px solid Highlight; outline-offset: 3px; } }
 .presentation-rejected-drafts-reader > header h2,.presentation-rejected-draft-card > header h3,.presentation-rejected-draft-reference h3 { margin: .25rem 0 0; }
 .presentation-rejected-draft-comparison { display: grid; gap: 1rem; align-items: start; }
 .presentation-rejected-draft-comparison--split { grid-template-columns: repeat(2,minmax(0,1fr)); }

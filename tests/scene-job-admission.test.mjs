@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
 import { createSceneConfiguration, isSceneMedium } from "../src/model/scene-configuration.ts";
+import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
 
 const jobsApiSource = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
 
@@ -116,4 +117,70 @@ test("workflow scene admission overwrites client medium and records private cont
     (jobsApiSource.match(/scene_medium:sceneConfiguration\.medium,scene_configuration:sceneConfiguration,context_continuity:sceneContext/g) ?? []).length >= 3,
     "request settings, the private receipt, and the generation receipt must preserve the exact configuration and context lineage",
   );
+});
+
+function receiptBuilder(privateReceipts) {
+  const helpers = stripTypeScriptTypes([
+    sourceFunction("sceneConfigurationFromRequest"),
+    sourceFunction("generationRevisionFromRequest"),
+    `async ${sourceFunction("sourceSnapshotSha256")}`,
+    `async ${sourceFunction("acceptedGenerationReceipt")}`,
+  ].join("\n"));
+  return new Function(
+    "createSceneConfiguration", "isSceneMedium", "documentGenerationRevision", "storePrivateContent",
+    `${helpers}\nreturn acceptedGenerationReceipt;`,
+  )(
+    createSceneConfiguration, isSceneMedium, documentGenerationRevision,
+    async (_env, ownerId, kind, content) => {
+      privateReceipts.push({ ownerId, kind, value: JSON.parse(content) });
+      return { contentId: `private-scene-receipt-${privateReceipts.length}`, expiresAt: "2099-01-01T00:00:00Z" };
+    },
+  );
+}
+
+test("new Scene receipts report the existing complete application cap and exact manual or managed call limits", async () => {
+  const privateReceipts = [];
+  const receipt = receiptBuilder(privateReceipts);
+  const snapshot = { facts: [{ block_id: "PRIVATE_TEST_SCENE_SOURCE", type: "direction", properties: { text: "The keeper hears a harbor bell." } }] };
+  for (const medium of ["visual", "audio"]) {
+    for (const count of [null, 1, 8, 9, 17]) {
+      const production = count === null ? null : buildManagedProductionPlan("scene", snapshot, { requestedItemCount: count, sceneMedium: medium });
+      const batches = count === null ? 1 : Math.ceil(count / 8);
+      const ceiling = batches * 1_000_000;
+      const result = await receipt(
+        { OPENAI_MODEL: "configured-scene-text-model" }, { userId: "authorized-test-actor" },
+        { artifactKind: "scene", sceneMedium: medium, snapshot, productionMode: production ? "managed" : "manual", documentRevision: "scene-test-revision" },
+        "scene-test-document", `scene-test-${medium}-${count}`, ceiling, production,
+      );
+      assert.equal(result.provider, "openai");
+      assert.equal(result.model, "configured-scene-text-model");
+      assert.equal(result.reservation_is_application_hard_cap, true);
+      assert.equal(result.reservation_is_provider_hard_cap, false);
+      assert.equal(result.maximum_authorized_cost_microusd, ceiling);
+      assert.equal(result.reservation_microusd, ceiling);
+      assert.equal(result.planned_provider_call_count, batches);
+      assert.equal(result.maximum_provider_call_count, production ? batches * 4 : 2);
+      assert.equal(result.max_repair_call_count, production ? batches * 3 : 1);
+      assert.equal(result.provider_request_status, "not_submitted");
+      assert.equal(result.source_transmission_status, "not_transmitted");
+      assert.equal(result.settled_cost_microusd, 0);
+      assert.equal(result.scene_medium, medium);
+      const captured = privateReceipts.at(-1);
+      assert.equal(captured.ownerId, "authorized-test-actor");
+      assert.equal(captured.kind, "document-artifact-input");
+      assert.equal(captured.value.accounting.reservation_is_application_hard_cap, true);
+      assert.equal(captured.value.accounting.maximum_authorized_cost_microusd, ceiling);
+      assert.deepEqual(captured.value.document_snapshot, snapshot);
+    }
+  }
+});
+
+test("the Scene receipt correction does not claim a complete application cap for downstream storyboard media", async () => {
+  const result = await receiptBuilder([])(
+    { OPENAI_MODEL: "configured-text-model" }, { userId: "authorized-test-actor" },
+    { artifactKind: "storyboard", snapshot: {}, productionMode: "manual" },
+    "test-document", "test-storyboard", 7_000_000, null,
+  );
+  assert.equal(result.reservation_is_application_hard_cap, false);
+  assert.equal(result.maximum_authorized_cost_microusd, undefined);
 });
