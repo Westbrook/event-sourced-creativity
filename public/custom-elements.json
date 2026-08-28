@@ -11365,6 +11365,256 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-output-requirement-card.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaOutputRequirementCard",
+          "tagName": "forma-output-requirement-card",
+          "customElement": true,
+          "summary": "Author requested deliverables with native forms and inspect authoritative output status.",
+          "description": "Author requested deliverables with native forms and inspect authoritative output status.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "editorState",
+              "type": {
+                "text": "OutputCardEditorState"
+              },
+              "default": "{ status: \"idle\" }"
+            },
+            {
+              "kind": "field",
+              "name": "presentation",
+              "type": {
+                "text": "\"full\" | \"compact\""
+              },
+              "default": "\"full\""
+            },
+            {
+              "kind": "field",
+              "name": "readOnlyReason",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "kind": "field",
+              "name": "resourceState",
+              "type": {
+                "text": "\"loading\" | \"ready\" | \"refreshing\" | \"unavailable\""
+              },
+              "default": "\"loading\""
+            },
+            {
+              "kind": "field",
+              "name": "snapshot",
+              "type": {
+                "text": "OutputRequirementCardSnapshot | null"
+              },
+              "default": "null"
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-output-cancel",
+              "type": {
+                "text": "CustomEvent<OutputRequirementCancelIntent>"
+              },
+              "description": "Editing ended after preserving or explicitly discarding changes. Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-output-edit",
+              "type": {
+                "text": "CustomEvent<OutputRequirementEditIntent>"
+              },
+              "description": "The user opens or deliberately reapplies a local draft. Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-output-open-result",
+              "type": {
+                "text": "CustomEvent<OutputRequirementOpenResultIntent>"
+              },
+              "description": "Inspect an authorized exact result revision. Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-output-review-plan",
+              "type": {
+                "text": "CustomEvent<OutputRequirementReviewPlanIntent>"
+              },
+              "description": "Inspect the saved plan; never start generation. Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-output-save",
+              "type": {
+                "text": "CustomEvent<OutputRequirementSaveIntent>"
+              },
+              "description": "Save the reviewed requirement with its expected revision; no execution authority. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-border-strong",
+              "syntax": "<color>",
+              "description": "Native field and full-perimeter state boundary."
+            },
+            {
+              "name": "--forma-color-danger-text",
+              "syntax": "<color>",
+              "description": "Field validation copy."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Minimum native control target size."
+            },
+            {
+              "name": "--forma-space-4",
+              "syntax": "<length>",
+              "description": "Card and field spacing."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-output-requirement-card"
+            }
+          ],
+          "x-forma": {
+            "category": "organism",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-output-requirement-card",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-output-requirement-card",
+          "declaration": {
+            "name": "FormaOutputRequirementCard",
+            "module": "src/components/forma-output-requirement-card.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaOutputRequirementCard",
+          "declaration": {
+            "name": "FormaOutputRequirementCard",
+            "module": "src/components/forma-output-requirement-card.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/forma-output-requirements.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaOutputRequirements",
+          "tagName": "forma-output-requirements",
+          "customElement": true,
+          "summary": "Output requirements application interface.",
+          "description": "Owns the authenticated Output interaction. The card itself has no store or network access.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "blockId",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "documentId",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "documentName",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "inspectionOnly",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "surface",
+              "type": {
+                "text": "\"document\" | \"deliver\" | \"project\""
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-output-show-plan",
+              "type": {
+                "text": "CustomEvent<PlanIntent>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-output-requirements"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true,
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-output-requirements",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-output-requirements",
+          "declaration": {
+            "name": "FormaOutputRequirements",
+            "module": "src/components/forma-output-requirements.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaOutputRequirements",
+          "declaration": {
+            "name": "FormaOutputRequirements",
+            "module": "src/components/forma-output-requirements.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-platform-assistant.ts",
       "declarations": [
         {

@@ -1,3 +1,4 @@
+import { slideCountAccepted, type SlideCountPolicy } from "./presentation-count-policy.ts";
 import type { ImageFocalPoint } from "./focal-point.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
 import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
@@ -501,6 +502,7 @@ export function resolveDocumentArtifactContextGroups(output:DocumentArtifactDraf
 
 export type DocumentArtifactValidationOptions={
   itemCount:number;
+  slideCountPolicy?:SlideCountPolicy;
   contextGroupIds?:string[];
   unknownContextGroupAssignments?:string[];
   rawContextGroupAssignments?:string[][];
@@ -547,7 +549,8 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
   if(!output)return[{code:"invalid_json",path:"$",message:"The provider response was not a valid artifact object."}];
   const issues:DocumentArtifactValidationIssue[]=[];const add=(code:string,path:string,message:string)=>issues.push({code,path,message});const expectedGroups=options.contextGroupIds??[];const knownGroups=new Set(expectedGroups);const assignedGroups=output.items.flatMap((item)=>item.context_group_ids??[]);
   if(!output.content_markdown.trim())add("missing_content","content_markdown","The durable readable output is empty.");
-  if(output.items.length!==options.itemCount)add("wrong_item_count","items",`Expected ${options.itemCount} items but received ${output.items.length}.`);
+  const countPolicy=kind==="slides"?options.slideCountPolicy??options.sourceContract?.slideCountPolicy:undefined;
+  if(!slideCountAccepted(output.items.length,countPolicy,options.itemCount))add("wrong_item_count","items",countPolicy?.kind==="flexible"?`Expected between ${countPolicy.min} and ${countPolicy.max} slides but received ${output.items.length}; the suggested count is not exact.`:`Expected ${options.itemCount} items but received ${output.items.length}.`);
   if(options.unknownContextGroupAssignments?.length){
     const unknown=new Set(options.unknownContextGroupAssignments);
     const positions=(options.rawContextGroupAssignments??[]).flatMap((references,index)=>references.some((reference)=>unknown.has(reference))?[index]:[]);

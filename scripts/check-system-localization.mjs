@@ -1,3 +1,5 @@
+import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "../src/components/design-system/locales/output-delivery-messages.ts";
+import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "../src/components/design-system/locales/output-requirement-messages.ts";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +34,11 @@ const catalogs = new Map([["fr", frenchMessages], ["ar", arabicMessages], ["ja",
 const errors = [];
 const normalize = (value) => String(value).replace(/\s+/gu, " ").trim();
 const placeholders = (value) => [...String(value).matchAll(/\{([^{}]+)\}/gu)].map((match) => match[1]).sort().join("|");
-const defaults = new Map(Object.entries(FORMA_RESPONSIVE_MESSAGES.en));
+const outputMessageBundles = { outputDelivery: FORMA_OUTPUT_DELIVERY_MESSAGES, outputRequirement: FORMA_OUTPUT_REQUIREMENT_MESSAGES };
+const defaults = new Map([
+  ...Object.entries(FORMA_RESPONSIVE_MESSAGES.en),
+  ...Object.values(outputMessageBundles).flatMap((bundle) => Object.entries(bundle.en)),
+]);
 const defaultSource = typescript.createSourceFile("localization.ts", readFileSync(resolve(root, "src/components/design-system/localization.ts"), "utf8"), typescript.ScriptTarget.Latest, true);
 
 for (const statement of defaultSource.statements) {
@@ -63,6 +69,20 @@ for (const [id, source] of Object.entries(FORMA_RESPONSIVE_MESSAGES.en)) {
     if (!translation?.trim()) errors.push(`${locale} is missing the responsive message ${id}`);
     else if (placeholders(translation) !== placeholders(source)) errors.push(`${locale} changes interpolation placeholders for responsive message ${id}`);
     else if (messages[id] !== translation) errors.push(`${locale} overrides the authoritative responsive message ${id}`);
+  }
+}
+
+for (const [name, bundle] of Object.entries(outputMessageBundles)) {
+  const englishKeys = Object.keys(bundle.en).sort().join("|");
+  for (const [locale, messages] of catalogs) {
+    const translated = bundle[locale];
+    if (Object.keys(translated).sort().join("|") !== englishKeys) errors.push(`${locale} changes ${name} catalog coverage`);
+    for (const [id, source] of Object.entries(bundle.en)) {
+      const translation = translated[id];
+      if (!translation?.trim()) errors.push(`${locale} is missing ${name} message ${id}`);
+      else if (placeholders(translation) !== placeholders(source)) errors.push(`${locale} changes interpolation placeholders for ${id}`);
+      else if (messages[id] !== translation) errors.push(`${locale} overrides the authoritative ${name} message ${id}`);
+    }
   }
 }
 

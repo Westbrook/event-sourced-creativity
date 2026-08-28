@@ -1,5 +1,5 @@
 import { normalizeSpatialScope } from "./spatial-scope.ts";
-import { documentImageFormat, imageAspectRatioLabel, imageOrientationLabel } from "./image-format.ts";
+import { documentImageFormat, imageAspectRatioLabel, imageOrientationLabel, type ImageFormat } from "./image-format.ts";
 import { combinedContextGroups, combinedContextMemberships, combinedContextPromptDirectives, type CombinedContextGroup } from "./combined-context.ts";
 import { requiredContextAdaptationFacts } from "./context-adaptation.ts";
 import { promptFactIsActive, providerFacingRenderingContext } from "./prompt-policy.ts";
@@ -8,6 +8,10 @@ export const PROMPT_TECHNIQUES = ["prose", "bullets", "json", "xml"] as const;
 export type PromptTechnique = typeof PROMPT_TECHNIQUES[number];
 export type PromptPreferenceScope = "document" | "collection" | "project" | "account";
 export const IMAGE_PROMPT_MAX_CHARACTERS = 32_000;
+export type ImagePromptOptions = {size?:string;quality?:string;partialImages?:number;outputImageFormat?:ImageFormat;outputTargetInstructions?:string};
+const outputPromptInstructions=(options:ImagePromptOptions)=>options.outputImageFormat
+  ? `The confirmed Output context defines the frame for this one deliverable; any legacy Format geometry is only its ad-hoc default. Other source constraints remain unchanged. Selected delivery instructions (not factual evidence): ${options.outputTargetInstructions??""}`
+  : options.outputTargetInstructions?`Selected delivery instructions (not factual evidence): ${options.outputTargetInstructions}`:"";
 
 export type BoundedPromptRepresentation = {
   prompt: string;
@@ -71,6 +75,7 @@ type PromptLayout = { height?: number; overall_prompt?: string; regions?: Prompt
 export type StructuredImagePrompt = {
   operation: string;
   prompt: string;
+  output_requirements?:{instructions:string;citable:false};
   aspect_ratio?: string;
   disable_search?: number;
   intermediate_image_steps?: number[];
@@ -187,11 +192,12 @@ function activeCreativeContext(snapshot: Record<string, unknown>) {
   return { facts: activeFacts, relationships, context_groups: combinedContextGroups({...snapshot,facts:activeFacts}), pins: list(snapshot.pins), standing_constraints: list(snapshot.standing_constraints), document: snapshot.document, ...(production ? { production_brief: production } : {}) };
 }
 
-export function buildProsePrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const spatialDirectives = buildSpatialPromptDirectives(snapshot); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:list(snapshot.facts).filter(promptFactIsActive)},"image"); const imageFormat = documentImageFormat(snapshot).format;
+export function buildProsePrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options:ImagePromptOptions={}) {
+  const spatialDirectives = buildSpatialPromptDirectives(snapshot); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:list(snapshot.facts).filter(promptFactIsActive)},"image"); const imageFormat = options.outputImageFormat??documentImageFormat(snapshot).format;
   const production = productionBriefForPrompt(snapshot);
   return [
     `Create one polished ${imageOrientationLabel(imageFormat)} image that realizes the supplied creative direction.`,
+    ...(outputPromptInstructions(options)?[outputPromptInstructions(options)]:[]),
     `Output frame: ${imageFormat.dimensions.width} × ${imageFormat.dimensions.height} pixels at ${imageAspectRatioLabel(imageFormat)}. Treat the ratio and intended production dimensions as binding document constraints.`,
     "Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
     "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
@@ -206,8 +212,8 @@ export function buildProsePrompt(snapshot: Record<string, unknown>, direction: R
   ].join("\n\n");
 }
 
-export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:context.facts},"image");const spatialDirectives=buildSpatialPromptDirectives({...snapshot,facts:context.facts}); const imageFormat = documentImageFormat(snapshot).format;
+export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options:ImagePromptOptions={}) {
+  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:context.facts},"image");const spatialDirectives=buildSpatialPromptDirectives({...snapshot,facts:context.facts}); const imageFormat = options.outputImageFormat??documentImageFormat(snapshot).format;
   const production = productionBriefForPrompt(snapshot);
   const factLines = facts.map((fact, index) => {
     const rawProperties=record(fact.properties);const properties=record(providerFacingRenderingContext(rawProperties));const scope=normalizeSpatialScope(rawProperties.spatial_scope);
@@ -222,6 +228,7 @@ export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: 
   return [
     "Create one polished image from the following independently addressable instructions.",
     "Global requirements:",
+    ...(outputPromptInstructions(options)?[outputPromptInstructions(options)]:[]),
     `- Output frame: ${imageFormat.dimensions.width} × ${imageFormat.dimensions.height} pixels at ${imageAspectRatioLabel(imageFormat)}. Preserve this framing throughout generation.`,
     "- Honor every active instruction, its role, intent, influence, relationships, and local application area.",
     "- Treat avoid, prohibit, must_not_include, and exclusion instructions only as negative constraints.",
@@ -263,8 +270,8 @@ function attachedBlob(reference: PromptReferenceDescriptor, index: number): Prom
   return { kind: "attached_image", input_index: index, mime_type: reference.mimeType || "image/*", label: reference.label || `Reference ${index + 1}`, source: reference.source };
 }
 
-export function buildStructuredPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: { size?: string; quality?: string; partialImages?: number } = {}): StructuredImagePrompt {
-  const targetFormat = documentImageFormat(snapshot).format; const width = targetFormat.dimensions.width; const height = targetFormat.dimensions.height; const facts = list(snapshot.facts).map(record).filter(promptFactIsActive); const blobs = references.map(attachedBlob);
+export function buildStructuredPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: ImagePromptOptions = {}): StructuredImagePrompt {
+  const targetFormat = options.outputImageFormat??documentImageFormat(snapshot).format; const width = targetFormat.dimensions.width; const height = targetFormat.dimensions.height; const facts = list(snapshot.facts).map(record).filter(promptFactIsActive); const blobs = references.map(attachedBlob);
   const production = productionBriefForPrompt(snapshot);
   const blockAliases=new Map(facts.map((fact,index)=>[String(fact.block_id??""),`decision_${index+1}`]));
   const groups=combinedContextGroups({...snapshot,facts});const groupAliases=new Map(groups.map((group,index)=>[group.id,`context_group_${index+1}`]));
@@ -286,7 +293,7 @@ export function buildStructuredPrompt(snapshot: Record<string, unknown>, directi
   const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts},"image");const productionClause=production?` Coordinated production art direction: ${JSON.stringify(production)}.`:"";const prompt = `Create one polished image. ${Object.entries(direction).map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join(", ") : String(value)}`).join(". ")}. Typed relationships: ${relationships||"none"}. Combined-context isolation: ${groupedDirectives.join(" ")||"none"}. Standing constraints: ${constraints||"none"}. Pinned evidence: ${pins||"none"}.${productionClause} Honor negative intent, typed relationships, local regions, grouped isolation, and reference-image policy.`;
   const layout: PromptLayout = { width: Number.isFinite(width) ? width : undefined, height: Number.isFinite(height) ? height : undefined, overall_prompt: `${prompt} Coordinates are document-normalized from 0 to 1.`, regions };
   return {
-    operation: "generate_image", prompt, aspect_ratio: imageAspectRatioLabel(targetFormat),
+    operation: "generate_image", prompt, ...(outputPromptInstructions(options)?{output_requirements:{instructions:outputPromptInstructions(options),citable:false as const}}:{}), aspect_ratio: imageAspectRatioLabel(targetFormat),
     disable_search: 1, ...(options.partialImages ? { intermediate_image_steps: Array.from({ length: options.partialImages }, (_, index) => index + 1), preview_interval_seconds: 2 } : {}),
     reference_images: references.map((reference, index) => ({ image: blobs[index], prompt: buildReferencePromptDirectives([reference]).replace(/^- /, "") })), resolution: `${width}x${height}`,
     streaming: options.partialImages ? 1 : 0, use_reference_images: references.length ? 1 : 0, user_edited_layout: layout, context_groups:groups.map((group,index)=>({context_key:`context_group_${index+1}`,name:group.name,role:group.role,target:group.target,application:group.application,relativity:group.relativity,members:group.members.map((member)=>({decision_key:blockAliases.get(member.blockId)??"",label:member.label,role:member.role,relativity:member.relativity,order:member.order}))})),
@@ -304,7 +311,7 @@ function xmlNodes(value: unknown, key: string, depth: number): string[] {
   return [`${pad}<${name}>${xmlEscape(value)}</${name}>`];
 }
 
-export function buildXmlPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: { size?: string; quality?: string; partialImages?: number } = {}) {
+export function buildXmlPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: ImagePromptOptions = {}) {
   const structured = buildStructuredPrompt(snapshot, direction, references, options);
   const context = record(providerFacingRenderingContext(activeCreativeContext(snapshot)));
   return [
@@ -317,11 +324,11 @@ export function buildXmlPrompt(snapshot: Record<string, unknown>, direction: Rec
   ].join("\n");
 }
 
-export function buildPromptRepresentation(technique: PromptTechnique, snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: { size?: string; quality?: string; partialImages?: number } = {}) {
-  if (technique === "bullets") return buildBulletPrompt(snapshot, direction, references);
+export function buildPromptRepresentation(technique: PromptTechnique, snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: ImagePromptOptions = {}) {
+  if (technique === "bullets") return buildBulletPrompt(snapshot, direction, references, options);
   if (technique === "json") return JSON.stringify(buildStructuredPrompt(snapshot, direction, references, options), null, 2);
   if (technique === "xml") return buildXmlPrompt(snapshot, direction, references, options);
-  return buildProsePrompt(snapshot, direction, references);
+  return buildProsePrompt(snapshot, direction, references, options);
 }
 
 const compactPromptWhitespace=(technique:PromptTechnique,prompt:string)=>technique==="json"?JSON.stringify(JSON.parse(prompt)):technique==="xml"?prompt.replace(/>\s+</g,"><"):prompt;
@@ -349,7 +356,7 @@ const mandatoryPromptStrings=(snapshot:Record<string,unknown>)=>{
  * validation failure. Every key and array member is retained; only oversized
  * string leaves are explicitly marked and shortened as a last resort.
  */
-export function buildBoundedPromptRepresentation(technique:PromptTechnique,snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:PromptReferenceDescriptor[]=[],options:{size?:string;quality?:string;partialImages?:number}={},limit=IMAGE_PROMPT_MAX_CHARACTERS):BoundedPromptRepresentation{
+export function buildBoundedPromptRepresentation(technique:PromptTechnique,snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:PromptReferenceDescriptor[]=[],options:ImagePromptOptions={},limit=IMAGE_PROMPT_MAX_CHARACTERS):BoundedPromptRepresentation{
   const original=buildPromptRepresentation(technique,snapshot,direction,references,options);const originalLength=original.length;
   if(originalLength<=limit)return{prompt:original,originalLength,finalLength:originalLength,compacted:false,fits:true,limit};
   const whitespaceCompacted=compactPromptWhitespace(technique,original);

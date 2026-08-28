@@ -29,6 +29,7 @@ import {
 } from "./pilot-policy.ts";
 import { AssistantProviderRejectedError, requestAssistantProvider, type AssistantProviderResult } from "./assistant-provider.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
+import { prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
 import { appendProjectEvents, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, type ProjectRequestContext } from "./project-access.ts";
 import { priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
@@ -908,6 +909,9 @@ function authoritativeAssistantEvents(action: AssistantContextAction, context: A
     events = events.map((event) => ({ ...event, payload: { ...event.payload, project_id: context.scope.projectId,
       document_id: context.scope.documentId, source_surface: "assistant", source_chat_turn_id: turnId } }));
   }
+  const outputGuard=prepareOutputRequirementClientEvents(events,projection.libraryBlocks);
+  if(!outputGuard.ok)return {events:[],error:outputGuard.error};
+  events=outputGuard.events;
   const issue = validateContextCompositionGraph({ blocks: projection.libraryBlocks, relations: projection.libraryBlockRelations,
     events, ignoreLocks: false });
   return issue ? { events: [], error: issue.code } : { events, error: null };

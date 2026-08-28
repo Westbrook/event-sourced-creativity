@@ -1,0 +1,11 @@
+{
+  "output.delivery.governedSourcesTitle": "Governed sources in this Document",
+  "output.delivery.governedSourcesUnavailable": "The authorized governed-source list is unavailable. Inspect this Document’s source blocks and ask a workspace administrator to investigate.",
+  "output.delivery.governedSourcesIncomplete": "This is a partial list of authorized source labels. It is not the complete governed-source inventory.",
+  "output.delivery.governedVerificationActions": "Matching, content review, exports, and exact-file downloads also require these source checks. Owned uploads do not bypass them.",
+  "output.delivery.governedVerificationRetained": "The full assignment, saved plans, previous results, and spending history remain. Confirming structure does not verify sources or make delivery ready.",
+  "output.delivery.governedVerificationRemedy": "Refresh only rechecks the state; it does not increase capacity. Preserve source and origin records. Ask a workspace administrator to inspect the governed-source chain; flattening or deleting origin records is not a valid workaround.",
+  "output.delivery.governedCaptureDetails": "Technical verification limit",
+  "output.delivery.governedCaptureLimit": "Database capture batches allowed for this verification: {limit}. This is a database-work limit, not a package count or nesting-depth limit.",
+  "output.delivery.governedCaptureUnknown": "The database capture-batch limit was not supplied."
+}

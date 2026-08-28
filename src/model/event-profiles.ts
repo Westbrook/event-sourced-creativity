@@ -1,3 +1,4 @@
+import { OUTPUT_REQUIREMENT_EVENT_TYPES } from "./output-requirement-events.ts";
 import { isPhantomAttentionEpisode } from "./attention.ts";
 
 export const EVENT_PROFILE_ORDER = ["projects", "workspace", "memory", "scout", "sessions", "full"] as const;
@@ -7,6 +8,7 @@ export type ScopedEventProfile = Exclude<EventProfile, "full">;
 
 /** Project cards need structural and output receipts, not account-wide telemetry. */
 export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
+  ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
   "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
   "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",

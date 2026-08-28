@@ -1,5 +1,5 @@
 export type BlockGroup = "intent" | "scene" | "craft" | "constraint" | "evidence";
-export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "action" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
+export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "action" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "output" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
 export type BlockIntent = "include" | "prefer" | "avoid" | "prohibit";
 export type ReferencePixelMode = "context_only" | "inspiration" | "preserve_composition" | "preserve_subject" | "preserve_style";
 
@@ -79,6 +79,7 @@ export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"typography", label:"Typography", description:"Type roles, voice, layout, and letterform rules", prompt:"How should type behave?", group:"craft", subtypes:["Role","Voice","Layout","Letterform constraint"] },
   { type:"audio", label:"Audio", description:"Music, soundscapes, spoken words, and deliberate silence", prompt:"Describe the music, sonic environment, or emotional arc…", group:"craft", subtypes:["Score","Song","Soundscape","Sound design","Voice","Silence"] },
   { type:"format", label:"Format", description:"The destination, proportions, and production frame", prompt:"Where and at what dimensions will this live?", group:"constraint", subtypes:["Aspect ratio","Channel","Resolution","Safe area"] },
+  { type:"output", label:"Output", description:"The deliverables this document owes, with their quantities and requirements", prompt:"Describe the files you need, including quantities, proportions, and coverage…", group:"constraint", subtypes:["Social media image","Social media video","Executive summary","Custom deliverables"] },
   { type:"brand", label:"Brand", description:"Identity cues and mandatory or forbidden treatments", prompt:"What identity rules must be carried forward?", group:"constraint", subtypes:["Identity cue","Mandatory asset","Tone rule","Forbidden treatment"] },
   { type:"exclusion", label:"Exclusion", description:"A failure mode or motif the work must avoid", prompt:"What would break the direction?", group:"constraint", subtypes:["Visual exclusion","Semantic exclusion","Safety boundary","Failure mode"] },
   { type:"accessibility", label:"Accessibility", description:"Perceptual and cultural requirements for clear access", prompt:"What must remain perceivable and understandable?", group:"constraint", subtypes:["Contrast","Legibility","Motion sensitivity","Cultural clarity"] },

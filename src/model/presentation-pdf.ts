@@ -239,7 +239,14 @@ const slidePage=(item:DocumentArtifactDraftItem,presentation:SlidePresentation,i
   ops.push(text(slide.kicker.toLocaleUpperCase(),TEXT_LEFT,492,10,palette.muted,{bold:true,maxWidth:360,maxLines:1}));
   ops.push(text(`${String(index+1).padStart(2,"0")} / ${String(total).padStart(2,"0")}`,840,492,10,palette.muted,{bold:true,maxWidth:68,maxLines:1}));
   ops.push(text(item.title,TEXT_LEFT,418,item.title.length>70?29:36,palette.foreground,{bold:true,maxWidth:TEXT_WIDTH,maxLines:3,leading:item.title.length>70?33:40}));
-  let bodyY=item.title.length>70?300:306;if(item.body){ops.push(text(item.body,TEXT_LEFT,bodyY,15,palette.muted,{maxWidth:TEXT_WIDTH,maxLines:4,leading:20}));bodyY-=94;}
+  let bodyY=item.title.length>70?300:306;
+  if(item.body){
+    const quoteSpace=slide.quote&&slide.visual.kind!=="quote"?164:0;
+    const bodySpace=Math.max(0,Math.min(160,bodyY-contentFloor-quoteSpace-slide.bullets.length*22-18));
+    const body=completeText(item.body,TEXT_LEFT,bodyY,TEXT_WIDTH,bodySpace,palette.muted,{preferredSize:15,minimumSize:10,actualText:true});
+    if(body.height>bodySpace)throw new RangeError("presentation_pdf_body_does_not_fit");
+    ops.push(body.content);bodyY-=body.height+18;
+  }
   if(slide.quote&&slide.visual.kind!=="quote"){
     const available=Math.max(44,Math.min(140,bodyY-contentFloor-slide.bullets.length*22-24));
     const quote=completeText(slide.quote.text,TEXT_LEFT,bodyY,TEXT_WIDTH,available,palette.foreground,{preferredSize:15,minimumSize:10,bold:true,actualText:true});

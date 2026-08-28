@@ -1491,7 +1491,7 @@ test("rejects invalid, conflicting, and over-limit slide counts before source re
   await authoredOutline(fixture,12);
   const initialPrivate=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
   const cases=[
-    [{productionMode:"manual",itemCount:13},400,"presentation_slide_count_invalid",12],
+    [{productionMode:"manual",itemCount:16},400,"presentation_slide_count_invalid",15],
     [{productionMode:"managed",itemCount:101},400,"presentation_slide_count_invalid",100],
     [{productionMode:"managed",itemCount:0},400,"presentation_slide_count_invalid",100],
     [{productionMode:"managed",itemCount:2.5},400,"presentation_slide_count_invalid",100],

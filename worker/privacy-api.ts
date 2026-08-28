@@ -1,3 +1,8 @@
+import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
+import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
+import { EXPIRED_DOCUMENT_JOB_REDACTION_SQL } from "./document-jobs-api.ts";
+import { releaseUndispatchedOutputReservations } from "./output-execution-control.ts";
+import { personalOutputErasureStatements, personalOutputErasureProgress } from "./output-requirement-retention.ts";
 import { migrateLegacyEventPayloads, unsafePublicIdentifierPredicate } from "./event-privacy-migration.ts";
 import { requireConsent, requireUser } from "./pilot-policy.ts";
 import { readProjectRequestContext } from "./project-access.ts";
@@ -50,6 +55,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
   const now = new Date().toISOString();
   const platformAssistant = await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
     .first<{ available: number }>();
+  const outputErasure=await personalOutputErasureStatements(env,actor.userId,now,EXPIRED_DOCUMENT_JOB_REDACTION_SQL);
   const result = await env.DB.batch([
     env.DB.prepare(`UPDATE event_private_payloads SET private_json='',redacted_at=?
       WHERE owner_id=? AND redacted_at IS NULL
@@ -66,8 +72,21 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     env.DB.prepare("DELETE FROM external_content WHERE owner_id=?").bind(actor.userId),
     ...(platformAssistant ? [env.DB.prepare("UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE actor_user_id=? AND redacted_at IS NULL")
       .bind(now, actor.userId)] : []),
+    ...outputErasure,
   ]);
+  let outputReservationReconciliationPending=false;
+  if(outputErasure.length)try{const remaining=await releaseUndispatchedOutputReservations(env,{ownerUserId:actor.userId,personalOnly:true,limit:1});outputReservationReconciliationPending=remaining.pending>0;}catch{outputReservationReconciliationPending=true;}
+  let outputReconciliationCheckFailed=false;
+  let outputProgress={providerReconciliationPending:0,storageCleanupPending:0};
+  if(outputErasure.length){
+    try{await reconcileOutputNativeStorage(env,{ownerUserId:actor.userId,personalOnly:true,limit:1});}catch{outputReconciliationCheckFailed=true;}
+    try{await reconcileOutputAssetStorage(env,{ownerUserId:actor.userId,personalOnly:true,limit:1});}catch{outputReconciliationCheckFailed=true;}
+    try{outputProgress=await personalOutputErasureProgress(env,actor.userId);}catch{outputReconciliationCheckFailed=true;}
+  }
+  const outputResultOffset=platformAssistant?4:3;
   return Response.json({ erasedAuthoredEventBodies: Number(result[0]?.meta.changes ?? 0), erasedTemporaryContent: Number(result[1]?.meta.changes ?? 0),
-    erasedPlatformConversations: Number(result[3]?.meta.changes ?? 0), clearedDerivedContent: Number(result[2]?.meta.changes ?? 0),
+    erasedPlatformConversations: platformAssistant?Number(result[3]?.meta.changes ?? 0):0, clearedDerivedContent: Number(result[2]?.meta.changes ?? 0),
+    revokedOutputGrantCount: Number(result[outputResultOffset]?.meta.changes??0), uncertainProviderAccountingRetained: true, outputReservationReconciliationPending,
+    outputProviderReconciliationPending:outputProgress.providerReconciliationPending, outputStorageCleanupPending:outputProgress.storageCleanupPending, outputReconciliationCheckFailed,
     finishedOutputsRetained: true, sharedOrganizationContextRetained: true, uploadedFilesRetained: true, otherDevicesAndBackupsPurged: false });
 }

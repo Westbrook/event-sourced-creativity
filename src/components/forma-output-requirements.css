@@ -1,0 +1,34 @@
+forma-output-requirements { display:block; min-inline-size:0; }
+.output-governed-source-disclosure { min-inline-size:0; overflow-wrap:anywhere; }
+.output-requirements { margin-block:1.5rem; padding:clamp(.8rem,2vw,1.4rem); border:1px solid var(--forma-color-border, GrayText); border-radius:var(--forma-radius-large, 1rem); background:var(--forma-color-surface, Canvas); color:var(--forma-color-text, CanvasText); }
+.output-requirements-heading, .output-target > header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+.output-requirements h2, .output-requirements h3, .output-requirements h4 { margin-block:.2rem .6rem; }
+.output-requirements p, .output-card-host p { line-height:1.55; overflow-wrap:anywhere; }
+.output-requirements form, .output-remove-confirm { display:grid; gap:.8rem; min-inline-size:0; }
+.output-requirements fieldset { min-inline-size:0; border:1px solid var(--forma-color-border, GrayText); border-radius:.6rem; padding:.9rem; display:grid; gap:.7rem; }
+.output-requirements legend { padding-inline:.35rem; font-weight:600; }
+.output-requirements label { display:flex; align-items:flex-start; gap:.6rem; flex-wrap:wrap; line-height:1.45; }
+.output-requirements label:has(select), .output-requirements label:has(textarea), .output-requirements label:has(input[type="number"]) { display:grid; }
+.output-requirements input[type="checkbox"] { flex:0 0 auto; inline-size:1.2rem; block-size:1.2rem; margin-block-start:.1rem; }
+.output-requirements select, .output-requirements textarea, .output-requirements input[type="number"], .output-requirements input[type="file"] { max-inline-size:100%; min-inline-size:0; font:inherit; color:inherit; }
+.output-requirements select, .output-requirements textarea, .output-requirements input[type="number"] { inline-size:100%; border:1px solid var(--forma-color-border-strong, GrayText); background:var(--forma-color-surface, Canvas); border-radius:.4rem; padding:.6rem; }
+.output-requirements button, .output-card-host button { min-block-size:2.75rem; white-space:normal; }
+.output-requirements :focus-visible, .output-card-host :focus-visible { outline:3px solid var(--forma-focus-ring-color, Highlight); outline-offset:3px; }
+.output-targets { display:grid; gap:1rem; margin-block:1.3rem; }
+.output-target { border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; padding:1rem; min-inline-size:0; }
+.output-result { border:1px solid var(--forma-color-border-strong, GrayText); margin-block:1rem; padding:.7rem 1rem; }
+.output-result-review { margin-block-start:.9rem; }
+.output-plan-review, .output-adoption, .output-execution, .output-export { margin-block-start:1.4rem; border-block-start:1px solid var(--forma-color-border, GrayText); padding-block-start:1.2rem; }
+.output-actions { display:flex; gap:.65rem; flex-wrap:wrap; }
+.output-provider-disclosure { background:var(--forma-color-surface-subtle, Canvas); padding:1rem; margin-block:1rem; border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; }
+.output-provider-disclosure li, .output-unresolved li { margin-block:.6rem; }
+.output-provider-disclosure li > span, .output-unresolved li > span { display:block; }
+.output-grant { padding-block:1rem; border-block-start:1px solid var(--forma-color-border, GrayText); }
+.output-grant code { overflow-wrap:anywhere; font-size:.8em; }
+.output-notice { padding:.7rem; background:var(--forma-color-surface-subtle, Canvas); border-radius:.4rem; }
+.output-notice[role="alert"] { border:1px solid var(--forma-color-danger, CanvasText); }
+.output-file-facts { font-size:.85rem; }
+.output-card-host { margin-block:.6rem; }
+.output-remove-confirm { padding:1rem; border:1px solid var(--forma-color-danger, CanvasText); border-radius:.6rem; margin-block:.5rem; }
+@media (max-width:36rem) { .output-requirements .output-actions > button { flex:1 1 100%; } .output-target { padding:.75rem; } .output-result { padding-inline:.7rem; } }
+@media (forced-colors:active) { .output-requirements, .output-target, .output-result, .output-provider-disclosure { border:1px solid CanvasText; } }

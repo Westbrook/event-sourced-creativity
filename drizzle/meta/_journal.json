@@ -127,6 +127,13 @@
       "when": 1787530951487,
       "tag": "0017_previous_pixie",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787853600000,
+      "tag": "0018_output_requirements",
+      "breakpoints": true
     }
   ]
 }

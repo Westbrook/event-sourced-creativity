@@ -1,3 +1,4 @@
+import "../forma-output-requirement-card";
 import { html, nothing, type TemplateResult } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { icon } from "../icons";
@@ -179,6 +180,28 @@ export class FormaComponentCatalog extends FormaPresentationalElement {
     if (!entry.preview) return nothing;
     const choices = this.#catalog().choices;
     switch (entry.tag) {
+      case "forma-output-requirement-card": {
+        const label = this.i18n.t("output.delivery.demo.title", "Executive summary example");
+        const content = this.i18n.t("output.delivery.demo.requirement", "One presentation, 5–15 slides, outlining the Document.");
+        const safe = this.i18n.t("output.delivery.demo.safe", "Fictional, read-only example. No project data, provider calls, payment authorization, or downloads.");
+        const snapshot = {
+          scope: { projectId: "catalog-project", documentId: "catalog-document", authorizationScopeKey: "catalog-fictional" },
+          requirementId: "catalog-requirement", revision: "catalog-revision", label, originalText: content,
+          spec: { schema_version: 1, id: "catalog-requirement", label, original_text: content,
+            value_origins: { original_text: { kind: "authored", text: content } },
+            deliverables: [{ id: "catalog-deck", label, media_kind: "slides", required: true,
+              quantity: { kind: "exact", unit: "presentation", value: 1 },
+              content_quantity: { kind: "range", unit: "slide", min: 5, max: 15 },
+              source_scope: { kind: "document" }, coverage: { kind: "document_outline" },
+              original_text: content, value_origins: { original_text: { kind: "authored", text: content } },
+            }],
+          },
+          canEdit: false, canReviewPlan: false,
+          summary: { headline: this.i18n.t("output.delivery.demo.scope", "One required group · no accepted files"), detail: safe, overall: "unresolved", requiredRemaining: null, unresolvedGroups: 1, selectedResultFiles: 0 },
+          sourceOptions: [], results: [],
+        };
+        return html`<forma-output-requirement-card .snapshot=${snapshot} .resourceState=${"ready"} .presentation=${"full"} .readOnlyReason=${safe}></forma-output-requirement-card>`;
+      }
       case "forma-ui-locale": return html`<form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-locale lang=${this.i18n.locale}><forma-ui-search .label=${this.i18n.t("catalog.searchLabel", "Search components")}></forma-ui-search></forma-ui-locale></form>`;
       case "forma-ui-language-picker": return html`<forma-ui-language-picker .label=${this.i18n.t("language.label")} .value=${this.i18n.locale.split("-")[0]}></forma-ui-language-picker>`;
       case "forma-ui-theme": return html`<forma-ui-theme radius="soft"><forma-ui-badge .label=${this.i18n.t("sample.scopedTheme", "Scoped theme")} tone="accent"></forma-ui-badge></forma-ui-theme>`;

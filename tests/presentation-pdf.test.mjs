@@ -143,7 +143,7 @@ test("preserves verbatim attributed quotations on quote cards and mixed roadmap 
   const source=new TextDecoder().decode(result.bytes);
 
   assert.equal(result.pageCount,2);
-  assert.equal((source.match(/\/Span << \/ActualText <FEFF/g)??[]).length,2);
+  assert.equal((source.match(/\/Span << \/ActualText <FEFF/g)??[]).length,4);
   assert.equal((source.match(/\(Morgan Lee - Product Owner\) Tj/g)??[]).length,2);
   for(const datum of roadmap){
     assert.match(source,new RegExp(datum.label.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")),`Missing roadmap phase ${datum.label}.`);
@@ -151,7 +151,7 @@ test("preserves verbatim attributed quotations on quote cards and mixed roadmap 
   assert.match(source,/4-6 weeks/);
   assert.match(source,/12-16 weeks/);
   assert.doesNotMatch(source,/private-stakeholder-source-id|private note|presenter notes/i);
-  assert.deepEqual(actualText(source),[quote,quote]);
+  assert.deepEqual(actualText(source),[slides[0].body,quote,slides[1].body,quote]);
 });
 
 test("repairs the actual native split quotation into one complete, searchable, attributed quote",()=>{
@@ -175,7 +175,7 @@ test("repairs the actual native split quotation into one complete, searchable, a
   };
   const source=new TextDecoder().decode(createPresentationPdf([item],presentation).bytes);
 
-  assert.deepEqual(actualText(source),[expected]);
+  assert.deepEqual(actualText(source),[item.body,expected]);
   assert.match(source,/\(Product Owner\) Tj/);
   assert.doesNotMatch(source,/\(Continuation\) Tj/);
   assert.doesNotMatch(source,/source-only speaker notes/);

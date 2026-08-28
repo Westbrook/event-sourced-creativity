@@ -1,3 +1,5 @@
+import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./locales/output-delivery-messages.ts";
+import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./locales/output-requirement-messages.ts";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { formaSystemMessageId } from "./system-message-id.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./locales/responsive-messages.ts";
@@ -11,6 +13,8 @@ export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   ...FORMA_RESPONSIVE_MESSAGES.en,
+  ...FORMA_OUTPUT_DELIVERY_MESSAGES.en,
+  ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.en,
   "presentation.planning.outlineEvidence": "Short outlines provide slide titles and coverage requirements. Supporting research is assigned separately; explicit source groups take priority. Unresolved source scope blocks generation before spending. Scene and other output specifications are excluded from Slides.",
   "scene.provider.disclosure": "Paid Scene provider, source transmission, and cost",
   "scene.provider.identity": "Paid provider · OpenAI Responses · {model}",

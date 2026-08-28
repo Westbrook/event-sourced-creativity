@@ -30,6 +30,15 @@ export function renderApplicationPatternPreview(tag: string, messages: PatternMe
   const t = (id: string, fallback: string, values: Record<string, string | number> = {}) => messages.t(id, fallback, values);
   const count = (value: number) => messages.number(value);
   switch (tag) {
+    case "forma-output-requirements":
+      return html`<div class="component-pattern component-pattern-artifact" role="group" aria-label=${t("output.delivery.demo.label", "Fictional Output delivery example")}>
+        <h4>${t("output.delivery.demo.title", "Executive summary example")}</h4>
+        <p>${t("output.delivery.demo.safe", "Fictional, read-only example. No project data, provider calls, payment authorization, or downloads.")}</p>
+        <forma-ui-badge .label=${t("output.delivery.required", "Required")}></forma-ui-badge>
+        <forma-ui-list-item .label=${t("output.delivery.demo.requirement", "One presentation, 5–15 slides, outlining the Document.")} .detail=${t("output.delivery.demo.scope", "One required group · no accepted files")} value="fictional-output-plan"></forma-ui-list-item>
+        <p>${t("output.delivery.confirmationFree", "Confirming defines the work owed. It never authorizes payment or starts generation.")}</p>
+        <forma-ui-status .label=${t("output.delivery.state.not_started", "Not started")} tone="neutral"></forma-ui-status>
+      </div>`;
     case "forma-area-navigation":
       return html`<div class="component-pattern component-pattern-navigation" role="group" aria-label=${t("pattern.navigation", "Example audience-specific navigation")}>
         <span class="component-pattern-kicker">${t("shell.knowledge", "Design & Knowledge")}</span>

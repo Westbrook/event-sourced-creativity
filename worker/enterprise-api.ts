@@ -1,3 +1,6 @@
+import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
+import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
+import { organizationOutputAssetInventory, organizationOutputDeletionStatements, organizationOutputSubmissionBlockers, outputAssetCustodyMatches, outputOrganizationDeletionGuard, outputRecoveryRecordIsInert, outputRequirementRecoveryRecords } from "./output-requirement-retention.ts";
 import { cancelProjectActorJobs, projectProviderSubmissionBlockers } from "./document-jobs-api.ts";
 import { unsettledProviderSubmissionSql } from "../src/model/provider-submission";
 import { ensureOrganizationKey, openOrganizationPayload, organizationEncryptionConfigured, OrganizationCryptoUnavailable, sealOrganizationPayload } from "./organization-crypto.ts";
@@ -370,6 +373,7 @@ async function snapshotContents(env: WorkerEnv, actor: PilotUser, organizationId
   const results = await env.DB.batch<Record<string, unknown>>(statements);
   const names=["events","content","revisions","packages","packageVersions","packageContents","packageSources","packageBindings","packageMembers","reviewTasks","capabilityGrants","projectMemberships","memberships","legalHolds","audit","resources","retentionPolicies","securityPolicies","automationPolicies","pilotCohorts","pilotParticipants","identityBindings","identityGroups","identityGroupMembers","projectMigrations","organizations","retentionScopes"];
   const records = Object.fromEntries(results.map((result, index) => [names[index]!, result.results]));
+  Object.assign(records,await outputRequirementRecoveryRecords(env,organizationId));
   for(const revision of records.revisions as Array<Record<string,unknown>>){
     if(await sha256(String(revision.content_json??""))!==String(revision.content_sha256??""))
       return Response.json({error:"organization_recovery_revision_integrity_failed"},{status:409});
@@ -392,13 +396,15 @@ async function snapshotContents(env: WorkerEnv, actor: PilotUser, organizationId
   }
   const media: Array<{ key: string; ownerId: string; contentSha256: string; bytes: string; contentType: string; metadata: Record<string, string> }> = [];
   const resources = records.resources as Array<Record<string, unknown>>;
-  const storedResources=[...new Map([...resources.filter((item)=>item.resource_kind==="media"),...sourceObjects].map((resource)=>[String(resource.resource_id),resource])).values()];
+  const outputAssets:Array<Record<string,unknown>>=(await organizationOutputAssetInventory(env,organizationId)).map((row)=>({...row,resource_kind:"output-requirement-media"}));
+  const storedResources=[...new Map([...resources.filter((item)=>item.resource_kind==="media"),...sourceObjects,...outputAssets].map((resource)=>[String(resource.resource_id),resource])).values()];
   let encodedMediaBytes=0;
   for(const resource of storedResources){
     if (typeof env.MEDIA.get !== "function") return Response.json({ error: "organization_recovery_media_unavailable" }, { status: 409 });
     const object = await env.MEDIA.get(String(resource.resource_id));
     const metadata=object?.customMetadata;
-    if(!object||!metadata||(resource.resource_kind==="organization-context-media"?metadata.organizationId!==organizationId:metadata.ownerId!==String(resource.owner_user_id)))return Response.json({error:"organization_recovery_media_integrity_failed"},{status:409});
+    if(!object||!metadata||(resource.resource_kind!=="output-requirement-media"&&(resource.resource_kind==="organization-context-media"?metadata.organizationId!==organizationId:metadata.ownerId!==String(resource.owner_user_id))))return Response.json({error:"organization_recovery_media_integrity_failed"},{status:409});
+    if(resource.resource_kind==="output-requirement-media"&&!outputAssetCustodyMatches(resource,metadata))return Response.json({error:"organization_recovery_output_asset_custody_invalid"},{status:409});
     const declaredSize=Number((object as {size?:unknown}).size??0);
     if(Number.isFinite(declaredSize)&&declaredSize>0&&encodedMediaBytes+Math.ceil(declaredSize/3)*4>MAX_RECOVERY_PAYLOAD_BYTES)
       return Response.json({error:"organization_recovery_snapshot_too_large",maximumBytes:MAX_RECOVERY_PAYLOAD_BYTES},{status:413});
@@ -407,7 +413,7 @@ async function snapshotContents(env: WorkerEnv, actor: PilotUser, organizationId
     encodedMediaBytes+=Math.ceil(bytes.byteLength/3)*4;
     if(encodedMediaBytes>MAX_RECOVERY_PAYLOAD_BYTES)return Response.json({error:"organization_recovery_snapshot_too_large",maximumBytes:MAX_RECOVERY_PAYLOAD_BYTES},{status:413});
     const digest = await sha256(bytes);
-    if (metadata.sha256 && metadata.sha256 !== digest) return Response.json({ error: "organization_recovery_media_integrity_failed" }, { status: 409 });
+    if (metadata.sha256 && metadata.sha256 !== digest || resource.resource_kind==="output-requirement-media" && (!("content_sha256" in resource)||resource.content_sha256!==digest)) return Response.json({ error: "organization_recovery_media_integrity_failed" }, { status: 409 });
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     media.push({ key: String(resource.resource_id), ownerId: String(resource.owner_user_id), contentSha256: digest, bytes: base64(bytes), contentType: headers.get("content-type") ?? "application/octet-stream", metadata });
@@ -421,7 +427,7 @@ async function snapshotContents(env: WorkerEnv, actor: PilotUser, organizationId
 async function recoveryManifest(payload:{organizationId:string;projects:unknown[];records:Record<string,unknown[]>;media:Array<{key:string;contentSha256:string}>}){
   const counts=Object.fromEntries(Object.entries(payload.records).map(([name,rows])=>[name,rows.length]));
   const objects=await Promise.all(payload.media.map(async(object)=>({keySha256:await sha256(object.key),contentSha256:object.contentSha256})));
-  return{schema:1,organizationId:payload.organizationId,projectCount:payload.projects.length,counts,media:objects,originalMediaIncluded:true,actorPrivateConversationsIncluded:false,personalCompiledPreferencesIncluded:false};
+  return{schema:1,organizationId:payload.organizationId,projectCount:payload.projects.length,counts,media:objects,originalMediaIncluded:true,actorPrivateConversationsIncluded:false,personalCompiledPreferencesIncluded:false,outputExecutionRestored:false,outputDeliveryRequiresRevalidation:true};
 }
 
 type VerifiedRecoveryPayload={schema:number;organizationId:string;projects:unknown[];records:Record<string,unknown[]>;media:Array<{key:string;bytes:string;contentSha256:string}>};
@@ -467,6 +473,7 @@ async function verifyIsolatedRollbackRestore(env:WorkerEnv,actor:PilotUser,organ
     for(const value of values){
       if(!value||typeof value!=="object"||Array.isArray(value))return Response.json({error:"organization_recovery_restore_record_invalid"},{status:409});
       const row=value as Record<string,unknown>;
+      if(!outputRecoveryRecordIsInert(kind,row))return Response.json({error:"organization_recovery_output_authority_must_be_inert"},{status:409});
       if(row.organization_id!==undefined&&row.organization_id!==organizationId)return Response.json({error:"organization_recovery_restore_tenant_invalid"},{status:409});
       const project=row.project_access_id?projects.get(String(row.project_access_id)):undefined;
       if(row.project_access_id&&!project)return Response.json({error:"organization_recovery_restore_project_invalid"},{status:409});
@@ -788,6 +795,16 @@ async function handleOwnershipTransfer(request: Request, env: WorkerEnv, actor: 
   return Response.json({ transferId: id, organizationId, ownerUserId: targetId, scope: "organization-administration-only", projectCustodyTransferred: false }, { headers: { "set-cookie": projectContextCookie(request, "", 0) } });
 }
 
+async function reconciledOrganizationOutputBlockers(env:WorkerEnv,organizationId:string){
+  let blockers=await organizationOutputSubmissionBlockers(env,organizationId);
+  if(blockers.some((blocker)=>blocker.storageCleanupPending)){
+    try{await reconcileOutputNativeStorage(env,{organizationId,limit:1});}catch{/* Durable blockers remain and deletion cannot report completion. */}
+    try{await reconcileOutputAssetStorage(env,{organizationId,limit:1});}catch{/* The next authenticated attempt may resume cleanup. */}
+    blockers=await organizationOutputSubmissionBlockers(env,organizationId);
+  }
+  return blockers;
+}
+
 async function deletionInventory(env: WorkerEnv, organizationId: string) {
   const [projects, media, packages, revisions, privateBodies] = await env.DB.batch<Record<string, unknown>>([
     env.DB.prepare("SELECT project_access_id,project_id,owner_user_id FROM organization_projects WHERE organization_id=?").bind(organizationId),
@@ -816,7 +833,9 @@ async function deletionInventory(env: WorkerEnv, organizationId: string) {
       OR EXISTS(SELECT 1 FROM organization_projects project WHERE project.organization_id=?
         AND project.owner_user_id=body.owner_id AND project.project_id=body.project_id))`).bind(organizationId,organizationId),
   ]);
-  return { projects: projects.results, media: media.results, packageCount: packages.results.length, revisionCount: revisions.results.length, privateEventBodyCount: privateBodies.results.length };
+  const outputAssets=await organizationOutputAssetInventory(env,organizationId);
+  const allMedia=[...new Map([...media.results,...outputAssets].map((row)=>[String(row.resource_id),row])).values()];
+  return { projects: projects.results, media: allMedia, outputAssetCount:outputAssets.length, packageCount: packages.results.length, revisionCount: revisions.results.length, privateEventBodyCount: privateBodies.results.length };
 }
 
 async function initializedAssistantTables(env:WorkerEnv){
@@ -865,7 +884,7 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
   const now = new Date().toISOString();
   const assistantTables=await initializedAssistantTables(env);
   if((await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables)).length||(await projectProviderSubmissionBlockers(env,organizationId)).length
-    ||(await organizationExecutingReservationBlockers(env,organizationId)).length)
+    ||(await organizationExecutingReservationBlockers(env,organizationId)).length||(await organizationOutputSubmissionBlockers(env,organizationId)).length)
     throw new Error("provider_submission_in_flight");
   const removed=await env.DB.prepare(`SELECT
     COALESCE(SUM(CASE WHEN status='deleted' THEN 1 ELSE 0 END),0) AS deleted,
@@ -884,6 +903,8 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
     removedContextPackages: inventory.packageCount,
     removedArtifactRevisions: inventory.revisionCount,
     removedPrivateEventBodies: inventory.privateEventBodyCount,
+    removedOutputAssets: inventory.outputAssetCount,
+    outputOperationalTombstonesRetained: true,
     immutableOperationalMetadataRetained: true,
     immutableAuditReceiptsRetained: true,
     externalBackupsPurged: false,
@@ -893,6 +914,7 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
     env.DB.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=? AND hold.status='active')
       OR EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.legal_hold=1)
       THEN json('active organization legal hold') ELSE 1 END AS hold_guard`).bind(organizationId,organizationId),
+    ...await organizationOutputDeletionStatements(env,organizationId,now,jobId),
     ...["assistant_action_proposals","assistant_specialist_tasks","assistant_turns"].filter((table)=>assistantTables.has(table))
       .map((table)=>env.DB.prepare(`DELETE FROM ${table} WHERE organization_id=?`).bind(organizationId)),
     env.DB.prepare(`DELETE FROM event_private_payloads WHERE EXISTS(SELECT 1 FROM project_event_scopes scoped
@@ -977,10 +999,11 @@ async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,org
   const assistantBlockers=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables);
   const providerBlockers=await projectProviderSubmissionBlockers(env,organizationId);
   const executingReservations=await organizationExecutingReservationBlockers(env,organizationId);
-  if(assistantBlockers.length||providerBlockers.length||executingReservations.length){
+  const outputBlockers=await reconciledOrganizationOutputBlockers(env,organizationId);
+  if(assistantBlockers.length||providerBlockers.length||executingReservations.length||outputBlockers.length){
     await env.DB.prepare("UPDATE organization_deletion_jobs SET status='partial',updated_at=? WHERE job_id=? AND organization_id=? AND status='processing'")
       .bind(new Date().toISOString(),jobId,organizationId).run();
-    return Response.json({jobId,status:"partial",error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations},{status:409});
+    return Response.json({jobId,status:"partial",error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations,outputSlots:outputBlockers},{status:409});
   }
   for (const resource of inventory.media) {
     const item = await env.DB.prepare("SELECT status FROM organization_deletion_items WHERE job_id=? AND organization_id=? AND resource_kind='media' AND resource_id=?")
@@ -1010,9 +1033,10 @@ async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,org
     try {
       if(typeof env.MEDIA.delete!=="function"||typeof env.MEDIA.head!=="function"&&typeof env.MEDIA.get!=="function")throw new Error("media_delete_unavailable");
       const object=typeof env.MEDIA.head==="function"?await env.MEDIA.head(key):await env.MEDIA.get(key);
-      if(object&&(resource.custody_kind==="organization"
+      if(object&&resource.custody_kind!=="output-requirement"&&(resource.custody_kind==="organization"
         ?object.customMetadata?.organizationId!==organizationId
         :object.customMetadata?.ownerId!==String(resource.owner_user_id)))throw new Error("media_owner_mismatch");
+      if(object&&resource.custody_kind==="output-requirement"&&!outputAssetCustodyMatches(resource,object.customMetadata))throw new Error("media_owner_mismatch");
       if(object){
         await env.MEDIA.delete(key);
         const remains=typeof env.MEDIA.head==="function"?await env.MEDIA.head(key):await env.MEDIA.get(key);
@@ -1057,7 +1081,8 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
   const assistantBlockers=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables);
   const providerBlockers=await projectProviderSubmissionBlockers(env,organizationId);
   const executingReservations=await organizationExecutingReservationBlockers(env,organizationId);
-  if(assistantBlockers.length||providerBlockers.length||executingReservations.length)return Response.json({error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations},{status:409});
+  const outputBlockers=await reconciledOrganizationOutputBlockers(env,organizationId);
+  if(assistantBlockers.length||providerBlockers.length||executingReservations.length||outputBlockers.length)return Response.json({error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations,outputSlots:outputBlockers},{status:409});
   let historicalCursor="";
   while(true){
     const historical=await env.DB.prepare(`SELECT event.event_id,event.payload FROM events event
@@ -1106,6 +1131,7 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
           OR json_extract(COALESCE(job.result_json,'{}'),'$.generationReceipt.provider_request_status') IN('submitted','submission_unknown')
           OR EXISTS(SELECT 1 FROM json_each(COALESCE(job.result_json,'{}'),'$.productionSceneReceipts') scene
             WHERE json_extract(scene.value,'$.status') IN('submitted','completed'))))))`;
+  const outputDeletionGuard=await outputOrganizationDeletionGuard(env,organizationId);
   const executingReservationGuard=` AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped
     JOIN cost_budget_reservations cost ON cost.reservation_id=scoped.reservation_id AND cost.owner_id=scoped.actor_user_id
     WHERE scoped.reservation_kind='usd' AND scoped.organization_id=? AND cost.status='executing')`;
@@ -1116,9 +1142,9 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
         AND NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.legal_hold=1)
         AND NOT EXISTS(SELECT 1 FROM organization_recovery_snapshots recovery WHERE recovery.organization_id=? AND recovery.status='staging')
         AND NOT EXISTS(SELECT 1 FROM organization_deletion_jobs previous WHERE previous.organization_id=?
-          AND previous.status IN('pending','partial','processing'))${assistantSubmissionGuard}${documentSubmissionGuard}${executingReservationGuard}`)
+          AND previous.status IN('pending','partial','processing'))${assistantSubmissionGuard}${documentSubmissionGuard}${executingReservationGuard} AND(${outputDeletionGuard.sql})`)
       .bind(id,organizationId,actor.userId,JSON.stringify({projectCount:inventory.projects.length,mediaCount:inventory.media.length,packageCount:inventory.packageCount,revisionCount:inventory.revisionCount,privateEventBodyCount:inventory.privateEventBodyCount}),now,now,organizationId,organizationId,organizationId,organizationId,
-        ...(assistantTables.has("assistant_specialist_tasks")?[organizationId]:[]),organizationId,organizationId),
+        ...(assistantTables.has("assistant_specialist_tasks")?[organizationId]:[]),organizationId,organizationId,...outputDeletionGuard.bindings),
     env.DB.prepare(`UPDATE pilot_cohorts SET status='closed',updated_at=? WHERE organization_id=? AND status IN('active','paused') AND ${jobGuard}`)
       .bind(now,organizationId,id,organizationId),
     env.DB.prepare(`UPDATE project_context_sessions SET revoked_at=? WHERE organization_id=? AND revoked_at IS NULL AND ${jobGuard}`)

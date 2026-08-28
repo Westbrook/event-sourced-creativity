@@ -51,12 +51,9 @@ function assignedQuotes(contract) {
     const slideNumber = quote.slideNumber ?? 1;
     grouped.set(slideNumber, [...(grouped.get(slideNumber) ?? []), quote]);
   }
-  const assigned = new Map();
-  for (const [slideNumber, quotes] of grouped) {
-    const start = Math.max(1, slideNumber - quotes.length + 1);
-    quotes.forEach((quote, index) => assigned.set(start + index, quote));
-  }
-  return assigned;
+  // A source slide may own several quotes. Never redistribute them to earlier
+  // slides merely because the native card has room for one first-class quote.
+  return grouped;
 }
 
 function visualForSlide(fixture, sequence, sourceId, quote) {
@@ -165,7 +162,8 @@ function buildFaithfulDraft(fixture) {
   const items = plan.scenes.map((scene, index) => {
     const sequence = index + 1;
     const sourceId = scene.sourceBlockIds[0];
-    const quote = quotes.get(sequence);
+    const slideQuotes = quotes.get(sequence) ?? [];
+    const quote = slideQuotes[0];
     const heading = fixture.expectedSlideTitles[index];
     const source = contract.sources.find((candidate) => candidate.sourceId === sourceId);
     const citation = {
@@ -188,6 +186,7 @@ function buildFaithfulDraft(fixture) {
       ]);
       body = quoteDescriptions.get(sequence) ?? body;
     }
+    if (slideQuotes.length > 1) body += "\n\n" + slideQuotes.slice(1).map((extra) => `“${extra.text}” — ${extra.role}`).join("\n\n");
     const { layout, visual } = visualForSlide(fixture, sequence, sourceId, quote);
     const role = quote?.role;
     const noteLines = [
@@ -196,7 +195,7 @@ function buildFaithfulDraft(fixture) {
       ...(sequence === (fixture === executive ? 2 : 3)
         ? executive.scores.map(({ label, value }) => `${label}: ${value}`)
         : []),
-      ...(quote ? [`“${quote.text}” — ${role}`] : []),
+      ...slideQuotes.map((authored) => `“${authored.text}” — ${authored.role}`),
       "[Sources]",
       `${citation.label} · ${citation.anchor}`,
     ];
@@ -295,6 +294,11 @@ function actualPdfText(source) {
     const bytes = Buffer.from(encoded, "hex");
     return bytes.swap16().toString("utf16le").replace(/^\ufeff/u, "");
   });
+}
+
+function visiblePdfText(source) {
+  return [...source.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/gu)]
+    .map(([, value]) => value.replace(/\\([\\()])/gu, "$1")).join(" ");
 }
 
 const issueCodes = (issues) => new Set(issues.map((issue) => issue.code));
@@ -500,14 +504,21 @@ test("complete authored presentations validate all visible protected content and
   assert.deepEqual(validatePresentationSourceCoverage(draft.items, contract, { requireEverySlideSource: true }), []);
   assert.equal(draft.items.length, 12);
   assert.ok(draft.items.every((item) => slideSourceIds(item).length));
-  assert.equal(draft.items.filter((item) => item.slide.quote).length, 4);
+  assert.equal(draft.items.filter((item) => item.slide.quote).length, new Set(executive.quotes.map((quote) => quote.slide)).size);
   for (const quote of executive.quotes) {
-    const visible = draft.items.find((item) => item.slide.quote?.text === quote.text);
-    assert.ok(visible, `the complete ${quote.speaker} quotation is visible in a first-class quote card`);
-    assert.equal(visible.slide.quote.role, quote.speaker);
+    const visible = draft.items[quote.slide - 1];
+    assert.ok(visible.slide.quote?.text === quote.text || visible.body.includes(`“${quote.text}” — ${quote.speaker}`), `the complete ${quote.speaker} quotation is visible and attributed on its source-authored slide`);
+    if (visible.slide.quote?.text === quote.text) assert.equal(visible.slide.quote.role, quote.speaker);
     assert.match(visible.notes, new RegExp(quote.text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
     assert.ok(draft.content_markdown.includes(quote.text));
   }
+  const movedQuote = structuredClone(draft);
+  movedQuote.items[10].slide.quote = structuredClone(draft.items[11].slide.quote);
+  assert.equal(issueCodes(validate(movedQuote)).has("ungrounded_quote_text"), false, "an exact protected quote can retain its truthful source-slide anchor on a neighboring card in the same authored block");
+  movedQuote.items[10].slide.quote.citation = "Authored slide 11";
+  assert.ok(issueCodes(validate(movedQuote)).has("ungrounded_quote_text"), "a quote authored on slide twelve cannot falsely cite slide eleven as its source");
+  movedQuote.items[10].slide.quote.citation = "";
+  assert.ok(issueCodes(validate(movedQuote)).has("ungrounded_quote_text"), "a neighboring quote card must retain its original source-slide anchor");
 
   const fiveRows = structuredClone(draft);
   fiveRows.items[1].slide.visual.data.pop();
@@ -586,7 +597,9 @@ test("authorized presenter PowerPoint exports retain exact scores and quotes whi
   }
 
   const roadmapShapes = editableShapes(archive.get("ppt/slides/slide11.xml"));
-  assert.ok(roadmapShapes.some((shape) => shape.name === "Editable quotation"));
+  assert.equal(roadmapShapes.some((shape) => shape.name === "Editable quotation"), false, "export cannot move a closing quotation onto the preceding roadmap");
+  const closingShapes = editableShapes(archive.get("ppt/slides/slide12.xml"));
+  for (const quote of executive.quotes.filter((quote) => quote.slide === 12)) assert.ok(closingShapes.some((shape) => shape.text.includes(quote.text)), "both source-authored closing quotations remain visible in the exported slide");
   assert.ok(roadmapShapes.some((shape) => shape.name === "Editable timeline value 1" && shape.text === "4–6 weeks"));
   assert.ok(roadmapShapes.some((shape) => shape.name === "Editable timeline value 2" && shape.text === "12–16 weeks"));
 });
@@ -606,13 +619,21 @@ test("programmatic presentation PDFs retain scores, precision, searchable quotat
   assert.ok(pdf.includes("61.125"));
   assert.ok(pdf.includes("61.13"));
   for (const quote of executive.quotes) {
-    assert.ok(searchable.includes(quote.text), `the PDF retains searchable verbatim ${quote.speaker} quotation text`);
-    assert.ok(pdf.includes(quote.speaker), `the PDF visibly attributes the ${quote.speaker} quotation`);
+    assert.ok(searchable.some((text) => text.includes(quote.text)), `the PDF retains searchable verbatim ${quote.speaker} quotation text`);
+    assert.ok(visiblePdfText(pdf).includes(quote.text), `the actual PDF drawing instructions retain the complete ${quote.speaker} quote, not only hidden alternative text`);
+    assert.ok(visiblePdfText(pdf).includes(quote.speaker), `the PDF visibly attributes the ${quote.speaker} quotation even when the role wraps across lines`);
   }
   assert.ok(pdf.includes("4-6 weeks"));
   assert.ok(pdf.includes("12-16 weeks"));
   assert.equal(pdf.includes("Authorized executive source"), false, "audience-facing PDF pages do not expose internal provenance");
   for (const fact of executive.snapshot.facts) assert.equal(pdf.includes(fact.block_id), false);
+});
+
+test("programmatic presentation PDFs reject body overflow instead of silently truncating audience evidence", () => {
+  const { draft } = buildFaithfulDraft(executive);
+  const overfull = structuredClone(draft.items[11]);
+  overfull.body += "\n" + "Required audience evidence must remain complete. ".repeat(500);
+  assert.throws(() => createPresentationPdf([overfull], draft.presentation, { title: draft.title }), /presentation_pdf_body_does_not_fit/u);
 });
 
 test("browser-captured PDF reading alternatives preserve tagged searchable six-score and full-quotation evidence", () => {

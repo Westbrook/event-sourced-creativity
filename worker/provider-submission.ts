@@ -1,9 +1,9 @@
 import { mergeProviderSubmissions, providerSubmissions, type PaidProviderSubmission, type PaidProviderSubmissionObserver } from "../src/model/provider-submission.ts";
 
-type Progress = (stage: string, message: string, patch?: Record<string, unknown>) => void | Promise<void>;
+type Progress = (stage: string, message: string, patch?: Record<string, unknown>,options?:{financialReceiptPersisted?:true}) => void | Promise<void>;
 
 /** Serialize paid checkpoints before dispatch, including parallel production units. */
-export function paidProviderObserver(checkpoint: Record<string, unknown>, progress?: Progress, accounting: Record<string, unknown> = {}): PaidProviderSubmissionObserver {
+export function paidProviderObserver(checkpoint: Record<string, unknown>, progress?: Progress, accounting: Record<string, unknown> = {}, observe?:PaidProviderSubmissionObserver,options:{presentation?:boolean}={}): PaidProviderSubmissionObserver {
   checkpoint.providerSubmissionProtocol=1;
   let queue = Promise.resolve();
   return (observation) => {
@@ -19,10 +19,13 @@ export function paidProviderObserver(checkpoint: Record<string, unknown>, progre
         plannerResponseIds: planning.map((entry) => entry.providerRequestId).filter(Boolean),
         plannerUsage: planning.reduce((total, entry) => ({ inputTokens: total.inputTokens + Number(entry.inputTokens ?? 0), outputTokens: total.outputTokens + Number(entry.outputTokens ?? 0), totalTokens: total.totalTokens + Number(entry.totalTokens ?? 0) }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
       } : {};
-      const patch = { ...accounting, providerSubmissionProtocol: 1, providerSubmissions: receipts, ...plannerPatch };
+      const patch = { ...accounting, providerSubmissionProtocol: 1, providerSubmissions: receipts, ...plannerPatch,...(options.presentation?{presentationProviderSubmission:receipt.status==="pending"?"pending":"confirmed",presentationProviderClientRequestId:receipt.clientRequestId}:{}) };
+      // Output supplies an independent, source-free accounting observer. Retain it
+      // before any private progress write that erasure may now prohibit.
+      await observe?.(receipt);
       await progress?.(receipt.status === "pending" ? "submitting" : "provider-receipt", receipt.status === "pending"
         ? `Recording the approved ${receipt.operation} request before sending it.`
-        : `The ${receipt.operation} provider receipt is safely recorded.`, patch);
+        : `The ${receipt.operation} provider receipt is safely recorded.`, patch,observe&&receipt.status!=="pending"?{financialReceiptPersisted:true}:undefined);
       Object.assign(checkpoint, patch);
     };
     const next = queue.then(persist);

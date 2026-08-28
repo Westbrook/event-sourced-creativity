@@ -22,6 +22,7 @@ export class PrivateViewer {
   i18n = { number:String, date:()=>"fixture retention", t:(_key,fallback,values={})=>fallback.replace(/\\{(\\w+)\\}/g,(_match,key)=>String(values[key]??"")) };
   #slide() { return nothing; }
   #preserveCandidate() { throw new Error("test must not preserve a rejected draft"); }
+  ${actualMethod("#requestedCountLabel")}
   ${actualMethod("#citationChecks")}
   ${actualMethod("#candidate")}
   render(detail) { return this.#candidate(detail); }
@@ -109,4 +110,9 @@ test("the real restricted viewer separates citation assignment, quotation text, 
   const legacy = visibleText(new PrivateViewer().render({ ...detail, citationChecks: undefined, reviewOnlyReason: undefined }));
   assert.doesNotMatch(legacy, /Inspect citation grounding|earlier validation contract/u);
   assert.match(legacy, /Settled job cost/u);
+  const flexible = visibleText(new PrivateViewer().render({ ...detail, requestedSlideCount: null, plannedSlideCount: 8, generatedSlideCount: 9,
+    slideCountPolicy: { kind: "flexible", unit: "slide", min: 5, max: 15, aim: 8 },
+  }));
+  assert.match(flexible, /5–15 \/ 8 slides/u, "the actual viewer shows the accepted range separately from the attempt aim");
+  assert.match(visibleText(new PrivateViewer().render({ ...detail, requestedSlideCount: null })), /— \/ 14 slides/u, "unknown exact counts never masquerade as zero");
 });

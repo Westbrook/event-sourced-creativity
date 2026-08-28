@@ -8,6 +8,7 @@ import { FormaElement, icon } from "./forma-element";
 import "./artifact-summary";
 import "./output-visual";
 import "./project-rail";
+import "./forma-output-requirements";
 
 export class FormaDeliver extends FormaElement {
   override connectedCallback() {
@@ -38,6 +39,7 @@ export class FormaDeliver extends FormaElement {
 
     return html`<section class="workspace-page studio-subpage forma-deliver-page"><forma-project-rail surface="studio" destination="/deliver" quiet></forma-project-rail>
       <div class="studio-main forma-deliver-main"><header class="page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${projection.projectName} / ${this.i18n.t("deliver.eyebrow", "Present and deliver")}</span><h1>${this.i18n.t("shell.navigation.deliver", "Deliver")}</h1><p>${this.i18n.t("deliver.description", "Review the real creative results produced in this project, then open the exact artifact to present, review, share, or export it when authorized.")}</p></div><a class="button secondary" href="/activity" @click=${(event: MouseEvent) => { event.preventDefault(); this.#open("/activity"); }}>${this.i18n.t("deliver.reviewActivity", "Review activity")} ${icon("arrow")}</a></header>
+        ${activity.documents.map((document) => html`<forma-output-requirements .documentId=${document.id} .documentName=${document.title} .surface=${"deliver"}></forma-output-requirements>`)}
         ${artifactSection(approvedArtifacts, this.i18n.t("deliver.review.approved", "Approved"))}
         ${artifactSection(readyArtifacts, this.i18n.t("deliver.presentable", "Presentable work"))}
         ${artifactSection(pendingArtifacts, this.i18n.t("sample.review", "Needs review"))}

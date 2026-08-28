@@ -121,7 +121,7 @@ test("recovers an expired running job before advancing queued document renders",
   assert.doesNotMatch(jobsApi,/if \(running\) return;/);
 });
 
-test("a manual presentation bypasses only a verified video in another project",async()=>{
+test("a manual presentation bypasses only a verified video in another project",async(context)=>{
   const [jobsApi,store]=await Promise.all([
     readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
@@ -135,10 +135,21 @@ test("a manual presentation bypasses only a verified video in another project",a
   assert.match(store,/projectDocuments\.has\(job\.documentId\)/u,
     "the browser must not select an older unrelated project's running job");
   const projectExpression=(alias)=>projectTemplate.replaceAll("${alias}",alias);
-  const claimSql=claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"))
-    .replaceAll('${documentJobProjectSql("document_jobs")}',projectExpression("document_jobs"));
+  const staleHeartbeatTemplate="${outputBinding?'':' OR updated_at<?'}";
+  assert.ok(claimTemplate.includes(staleHeartbeatTemplate),"native claims must respect their longer lease without changing legacy heartbeat recovery");
+  const claimSqlFor=(outputBinding)=>claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"))
+    .replaceAll('${documentJobProjectSql("document_jobs")}',projectExpression("document_jobs"))
+    .replaceAll(staleHeartbeatTemplate,outputBinding?"":" OR updated_at<?");
+  const legacyClaimSql=claimSqlFor(false),nativeClaimSql=claimSqlFor(true);
+  for(const [sql,bindings]of[[legacyClaimSql,13],[nativeClaimSql,12]]){
+    assert.doesNotMatch(sql,/\$\{/u,"every trusted SQL-template expression must be resolved before the SQLite proof");
+    assert.equal((sql.match(/\?/gu)??[]).length,bindings,"legacy and native claim parameter layouts differ only by the heartbeat cutoff");
+  }
+  assert.match(legacyClaimSql,/ OR updated_at<\?/u);
+  assert.doesNotMatch(nativeClaimSql,/ OR updated_at<\?/u);
 
   const sqlite=new DatabaseSync(":memory:");
+  context.after(()=>sqlite.close());
   sqlite.exec("CREATE TABLE events(stream_id TEXT,sequence INTEGER,type TEXT,payload TEXT)");
   sqlite.exec("CREATE TABLE document_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT,stream_id TEXT,document_id TEXT,kind TEXT,status TEXT,correlation_id TEXT,started_at TEXT,lease_expires_at TEXT,result_json TEXT,updated_at TEXT,attempt_count INTEGER,requested_at TEXT,request_json TEXT)");
   const stream="creative:owner",owner="owner",now="2026-08-26T12:00:00.000Z";
@@ -166,10 +177,13 @@ test("a manual presentation bypasses only a verified video in another project",a
   assert.equal(lookup("presentation-one"),"presentation-project");
   assert.equal(lookup("legacy-target"),"legacy-project","legacy creation inherits its historically active project");
   assert.equal(lookup("unknown-target"),"","missing provenance fails closed");
-  const claim=(id,manual=true)=>Number(sqlite.prepare(claimSql).run(
-    `${id}:attempt:1`,now,"2099-01-01T00:00:00.000Z","{}",now,id,owner,stream,now,now,
-    `${id}:original`,"{}",Number(manual),
-  ).changes);
+  const claim=(id,manual=true,outputBinding=false)=>{
+    const sql=outputBinding?nativeClaimSql:legacyClaimSql;
+    const bindings=[`${id}:attempt:1`,now,"2099-01-01T00:00:00.000Z","{}",now,id,owner,stream,now,
+      ...(outputBinding?[]:[now]),`${id}:original`,"{}",Number(manual)];
+    assert.equal(bindings.length,(sql.match(/\?/gu)??[]).length,"each executed claim must bind every SQL parameter exactly once");
+    return Number(sqlite.prepare(sql).run(...bindings).changes);
+  };
 
   sqlite.prepare("UPDATE document_jobs SET correlation_id='racing-attempt' WHERE job_id='presentation-one'").run();
   assert.equal(claim("presentation-one"),0,"a concurrent attempt must keep its provider correlation");
@@ -192,11 +206,31 @@ test("a manual presentation bypasses only a verified video in another project",a
   assert.deepEqual({...sqlite.prepare("SELECT status,attempt_count,correlation_id FROM document_jobs WHERE job_id='unrelated-video'").get()},
     {status:"running",attempt_count:1,correlation_id:"unrelated-video:original"},
     "the unrelated in-flight video, its attempt, and its provider correlation are never changed");
+  sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE status='running'").run();
+  add("long-native-lease","presentation-one","render_document","running","slides");
+  sqlite.prepare("UPDATE document_jobs SET updated_at='2000-01-01T00:00:00.000Z' WHERE job_id='long-native-lease'").run();
+  assert.equal(claim("long-native-lease",true,true),0,"an old heartbeat cannot steal a native attempt while its bounded lease is current");
+  assert.equal(claim("long-native-lease"),1,"legacy stale-heartbeat recovery is unchanged");
 });
 
-test("atomically hands both paid-render reservations to the recovered provider attempt", async () => {
+test("atomically hands both paid-render reservations to the recovered provider attempt", async (context) => {
   const jobsApi = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
-  assert.match(jobsApi, /const claims = await env\.DB\.batch\(\[claimAttempt, tokenReservationHandoff, costReservationHandoff\]\);/);
+  const handoff = jobsApi.match(/const\s+claims\s*=\s*outputBinding\s*\?\s*await\s+env\.DB\.batch\(([^;]+?)\)\s*:\s*await\s+env\.DB\.batch\(([^;]+?)\);/);
+  assert.ok(handoff, "reservation handoff distinguishes Output grants from the legacy job path");
+  assert.match(handoff[2], /^\s*\[\s*claimAttempt\s*,\s*tokenReservationHandoff\s*,\s*costReservationHandoff\s*\]\s*$/);
+  const outputBatch = handoff[1].replace(/\s+/gu, "");
+  assert.ok(outputBatch.startsWith('[claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),'), "every Output claim and reservation handoff is followed by an atomic rollback guard");
+  const admissionGuards='...outputAdmissionAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion))';
+  const freshCallGuard='...(freshOutput?outputAssertionStatements(env,{sql:"NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)",bindings:[outputBinding.scope.key,outputBinding.slot.slotId]}):[])'.replace(/\s+/gu, "");
+  assert.ok(outputBatch.endsWith(`${admissionGuards},${freshCallGuard}]`), "source and actor-private assertions precede the additional fresh-slot call guard in the same atomic batch");
+  assert.match(jobsApi,/outputAdmissionAssertions=\[\.\.\.outputProof\.assertions,\.\.\.\(jobAuthority\?\[jobAuthority\]:\[\]\)\]/u,
+    "the retained admission assertions contain both current source proof and exact actor-private project-job custody");
+  assert.match(jobsApi,/const jobAuthority=documentJobProjectAuthority\(user,row\.document_id,jobId\)/u);
+  assert.match(jobsApi,/const freshOutput=Boolean\(outputBinding&&row\.status==="queued"&&row\.attempt_count===0\)/u,
+    "the zero-call optimization is confined to an untouched native slot and job");
+  const freshCallSql=handoff[1].match(/freshOutput\?outputAssertionStatements\(env,\{sql:"([^"]+)"/u)?.[1];
+  assert.ok(freshCallSql);
+  assert.equal((freshCallSql.match(/\?/gu)??[]).length,2);
   assert.match(jobsApi, /if \(previousAttempt > 0 && !handoffPaidProviderReservations\) await releaseInterruptedAttempt/);
 
   const tokenHandoff = jobsApi.match(/const TOKEN_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];
@@ -205,6 +239,7 @@ test("atomically hands both paid-render reservations to the recovered provider a
   assert.ok(costHandoff);
 
   const sqlite = new DatabaseSync(":memory:");
+  context.after(()=>sqlite.close());
   sqlite.exec("CREATE TABLE document_jobs (job_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,attempt_count INTEGER,status TEXT)");
   sqlite.exec("CREATE TABLE budget_reservations (reservation_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,operation TEXT,period TEXT,status TEXT,updated_at TEXT)");
   sqlite.exec("CREATE TABLE cost_budget_reservations (reservation_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,operation TEXT,period TEXT,status TEXT,updated_at TEXT)");
@@ -235,6 +270,28 @@ test("atomically hands both paid-render reservations to the recovered provider a
   sqlite.prepare("INSERT INTO budget_reservations VALUES (?,?,?,?,?,?,?,?)").run("token-missing","billing-owner","creative:owner","job-missing:attempt:1",operation,period,"active","before");
   const missingCostBindings=["job-missing:attempt:2",now,"token-missing","billing-owner","creative:owner","job-missing:attempt:1",operation,"missing-cost","job-missing","creator","job-missing:attempt:2",2];
   assert.equal(Number(sqlite.prepare(tokenHandoff).run(...missingCostBindings).changes),0,"a token reservation cannot move without its matching cost reservation");
+
+  sqlite.exec("CREATE TABLE output_provider_calls(scope_key TEXT,slot_id TEXT); CREATE TABLE output_test_atomic_assertion(passed INTEGER NOT NULL CHECK(passed=1));");
+  const fresh=sqlite.prepare(`SELECT CASE WHEN (${freshCallSql}) THEN 1 ELSE 0 END AS current`);
+  assert.equal(fresh.get("scope-one","slot-one").current,1);
+  sqlite.prepare("INSERT INTO output_provider_calls VALUES(?,?),(?,?)").run("other-scope","slot-one","scope-one","other-slot");
+  assert.equal(fresh.get("scope-one","slot-one").current,1,"unrelated calls cannot block this exact slot");
+  sqlite.prepare("INSERT INTO output_provider_calls VALUES(?,?)").run("scope-one","slot-one");
+  assert.equal(fresh.get("scope-one","slot-one").current,0,"any existing call prevents treating this slot as never dispatched");
+  sqlite.prepare("UPDATE budget_reservations SET correlation_id=? WHERE reservation_id='token-1'").run(previousCorrelation);
+  sqlite.prepare("UPDATE cost_budget_reservations SET correlation_id=?,status='executing' WHERE reservation_id='cost-1'").run(previousCorrelation);
+  assert.throws(()=>{
+    sqlite.exec("BEGIN");
+    try{
+      assert.equal(Number(sqlite.prepare(tokenHandoff).run(...tokenBindings).changes),1);
+      assert.equal(Number(sqlite.prepare(costHandoff).run(...costBindings).changes),1);
+      sqlite.prepare(`INSERT INTO output_test_atomic_assertion VALUES(CASE WHEN (${freshCallSql}) THEN 1 ELSE 0 END)`).run("scope-one","slot-one");
+      sqlite.exec("COMMIT");
+    }catch(error){sqlite.exec("ROLLBACK");throw error;}
+  },/CHECK constraint failed/u,"the final zero-call assertion must roll back both preceding reservation handoffs");
+  assert.equal(sqlite.prepare("SELECT correlation_id FROM budget_reservations WHERE reservation_id='token-1'").get().correlation_id,previousCorrelation);
+  assert.deepEqual({...sqlite.prepare("SELECT correlation_id,status FROM cost_budget_reservations WHERE reservation_id='cost-1'").get()},
+    {correlation_id:previousCorrelation,status:"executing"},"the failed fresh-slot check cannot refund or reactivate an exposed cost reservation");
 });
 
 test("keeps pending artifact identity visible before its first worker checkpoint",async()=>{

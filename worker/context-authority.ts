@@ -1,3 +1,4 @@
+import { isOutputContextBlock } from "../src/model/output-source-policy.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { blockEffectFor, blockIntentFor } from "../src/model/block-types.ts";
 import { combinedContextGroups, isContextCompositionRelation } from "../src/model/combined-context.ts";
@@ -174,11 +175,13 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
     }
   }
 
-  const facts = blocks.map(factFor).map((fact) => canvasSnapshot
+  const factualBlocks = blocks.filter((block) => !isOutputContextBlock(block));
+  const factualBlockIds = new Set(factualBlocks.map((block) => block.id));
+  const facts = factualBlocks.map(factFor).map((fact) => canvasSnapshot
     ? { ...fact, canvas_id: canvasId, context_set_id: contextSetId }
     : fact);
   const relations = (canvasSnapshot ? projection.libraryBlockRelations : projection.blockRelations)
-    .filter((relation) => blockIds.has(relation.fromBlockId) && blockIds.has(relation.toBlockId))
+    .filter((relation) => factualBlockIds.has(relation.fromBlockId) && factualBlockIds.has(relation.toBlockId))
     .map((relation) => ({
       relation_id: relation.id,
       from_block_id: relation.fromBlockId,

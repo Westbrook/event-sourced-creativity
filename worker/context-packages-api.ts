@@ -1,3 +1,4 @@
+import { rejectOutputContextPackage } from "./output-context-package-policy.ts";
 import { foldEvents, type CreativeBlock, type CreativeBlockRelation } from "../src/model/events.ts";
 import { FORMA_CAPABILITIES } from "../src/platform/capabilities.ts";
 import { hasCapability, POLICY_VERSION, type PilotUser } from "./pilot-policy.ts";
@@ -149,6 +150,7 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
   }
   const selected = requested.map((id) => projection.blocks.find((block) => block.id === id && !block.removed && block.documentId === documentId));
   if (selected.some((block) => !block)) return denied();
+  const outputPackage=rejectOutputContextPackage(selected);if(outputPackage)return outputPackage;
   const now = Date.now();
   const blocks: PackageBlock[] = [];
   const preparedSources:Array<{block:PackageBlock;bytes:Uint8Array;metadata:Record<string,string>}>=[];
@@ -256,6 +258,7 @@ async function createVersion(env: WorkerEnv, actor: PilotUser, organizationId: s
   if(!createPackage){
     const previous=await loadPublishedVersion(env,organizationId,packageId,"",true);
     if(!previous)return Response.json({error:"published_context_package_unavailable"},{status:404});
+    const outputPackage=rejectOutputContextPackage(previous.snapshot.blocks);if(outputPackage)return outputPackage;
     if(previous.snapshot.sourceProjectAccessId!==safeName(body.sourceProjectAccessId,100)||previous.snapshot.sourceDocumentId!==safeName(body.documentId,100))
       return Response.json({error:"context_package_original_source_required",message:"Publish updates from the same source project and document as the approved package."},{status:409});
   }
@@ -379,6 +382,7 @@ async function adoptVersion(env: WorkerEnv, actor: PilotUser, organizationId: st
   if (!projection.documents.some((document) => document.id === documentId && !document.removed)) return denied();
   const version = await loadPublishedVersion(env, organizationId, packageId, safeName(body.versionId, 100));
   if (!version) return Response.json({ error: "published_context_package_unavailable" }, { status: 404 });
+  const outputPackage=rejectOutputContextPackage(version.snapshot.blocks);if(outputPackage)return outputPackage;
   const bindingId = uuidV7();
   const now = new Date().toISOString();
   const localIds = new Map(version.snapshot.blocks.map((block) => [block.sourceBlockId, uuidV7()]));
@@ -444,6 +448,8 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
   if (!binding) return Response.json({ error: "context_package_binding_unavailable" }, { status: 404 });
   const project = await resolveProject(env, actor, organizationId, String(binding.project_access_id), true);
   if (!project) return denied();
+  const effectiveVersion=await loadPublishedVersion(env,organizationId,packageId,String(binding.version_id),true);
+  const outputPackage=effectiveVersion?rejectOutputContextPackage(effectiveVersion.snapshot.blocks):null;if(outputPackage)return outputPackage;
   const action = String(body.action ?? "accept");
   const now = new Date().toISOString();
   if (action === "policy") {
@@ -486,6 +492,7 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
   if (!requestedVersion) return Response.json({ error: "explicit_context_package_version_required" }, { status: 400 });
   const next = await loadPublishedVersion(env, organizationId, packageId, requestedVersion);
   if (!next || String(next.row.version_id) === String(binding.version_id)) return Response.json({ error: "newer_published_context_package_required" }, { status: 409 });
+  const nextOutputPackage=rejectOutputContextPackage(next.snapshot.blocks);if(nextOutputPackage)return nextOutputPackage;
   const old=await loadPublishedVersion(env,organizationId,packageId,String(binding.version_id),true);
   if (!old || Number(next.row.version) <= Number(old.row.version)) return Response.json({ error: "newer_published_context_package_required" }, { status: 409 });
   const mapping = await env.DB.prepare("SELECT source_block_id,target_block_id,content_sha256 FROM project_context_package_members WHERE binding_id=? AND organization_id=?")
@@ -745,6 +752,7 @@ export async function handleContextPackages(request: Request, env: WorkerEnv, ac
     if(managedPilot&&row.created_by_user_id===actor.userId)return Response.json({error:"independent_context_approver_required",message:"A different authorized administrator or designated source-project reviewer must review and publish this controlled-pilot context."},{status:403});
     let snapshot:PackageSnapshot;
     try{snapshot=JSON.parse(row.content_json) as PackageSnapshot;}catch{return Response.json({error:"context_package_draft_unavailable"},{status:409});}
+    const outputPackage=rejectOutputContextPackage(Array.isArray(snapshot.blocks)?snapshot.blocks:[]);if(outputPackage)return outputPackage;
     if(managedPilot){
       const head=Number((await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?")
         .bind(row.source_project_access_id,organizationId).first<{head:number}>())?.head??0);

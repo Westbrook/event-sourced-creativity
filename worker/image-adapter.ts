@@ -1,5 +1,6 @@
 import type { WorkerEnv } from "./runtime.ts";
-import { generateCreativeImage as generateOpenAICreativeImage, type CreativeImageOptions } from "./openai-adapter.ts";
+import { outputImageBudget } from "./output-image-budget.ts";
+import { generateCreativeImage as generateOpenAICreativeImage, buildCreativeImagePrompt, type CreativeImageOptions } from "./openai-adapter.ts";
 import { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION, falImageModelForRequest, generateFalCreativeImage, type FalImageProviderReceipt } from "./fal-image-adapter.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
 import { priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
@@ -24,11 +25,25 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   const falOptions=options as CreativeImageOptions&{providerReceipt?:FalImageProviderReceipt;onProviderReceipt?:(receipt:FalImageProviderReceipt)=>void|Promise<void>};
   let submission:PaidProviderSubmission={clientRequestId:options.providerClientRequestId??`forma-image-${crypto.randomUUID()}`,provider:selection.providerName,operation:"image",model:selection.provider==="fal-ideogram"?falImageModelForRequest(env,options.quality,options.references??[],direction):selection.model,status:falOptions.providerReceipt?"accepted":"pending",...(falOptions.providerReceipt?{providerRequestId:falOptions.providerReceipt.providerRequestId}:{})};
   let attempted=false;
-  const observedOptions={...options,providerClientRequestId:submission.clientRequestId,
+  const preparedPrompt=options.preparedPrompt?.trim()||(options.onBeforeProviderAttempt?buildCreativeImagePrompt(snapshot,direction,options.references??[],options.promptTechnique,{size:options.size,quality:options.quality,partialImages:options.partialImages,outputImageFormat:options.outputImageFormat,outputTargetInstructions:options.outputTargetInstructions}):undefined);
+  const requestDigest=async()=>{
+    const hash=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(bytes).buffer)),byte=>byte.toString(16).padStart(2,"0")).join("");
+    const references=await Promise.all((options.references??[]).map(async(reference)=>({mimeType:reference.mimeType,sha256:await hash(reference.bytes)})));
+    return hash(new TextEncoder().encode(JSON.stringify({model:submission.model,prompt:preparedPrompt,size:options.size,quality:options.quality,outputFormat:options.outputFormat??"png",references})));
+  };
+  const observedOptions={...options,...(preparedPrompt?{preparedPrompt}:{}),providerClientRequestId:submission.clientRequestId,
     ...(options.onProviderSubmission?{onProviderSubmission:async(receipt:PaidProviderSubmission)=>{submission=receipt;await options.onProviderSubmission?.(receipt);}}:{}),
     onStage:async(stage:string,message:string)=>{
       // Validation and moderation run before this exact paid-dispatch boundary.
-      if(stage==="provider-submit"){await options.onProviderSubmission?.(submission);attempted=true;}
+      if(stage==="safety-review")await options.onBeforeSourceTransmission?.();
+      if(stage==="provider-submit"){
+        if(options.onBeforeProviderAttempt){
+          const budget=outputImageBudget(submission.model,options.size??"1536x1024",new TextEncoder().encode(preparedPrompt??"").byteLength);
+          if(!budget||(options.references?.length??0)>budget.maximumReferenceImages||options.quality!=="high"||(options.partialImages??0)!==0)throw new Error("output_image_request_outside_priced_contract");
+          await options.onBeforeProviderAttempt({model:submission.model,maximumInputTokens:budget.maximumInputTokens,maximumOutputTokens:budget.maximumOutputTokens,clientRequestId:submission.clientRequestId,logicalCallKey:"image:initial",requestDigest:await requestDigest()});
+        }
+        await options.onProviderSubmission?.(submission);attempted=true;
+      }
       await options.onStage?.(stage,message);
     },
     onProviderReceipt:async(receipt:FalImageProviderReceipt)=>{

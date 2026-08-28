@@ -1,3 +1,5 @@
+import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
+import { markOutputSchemaReady } from "./output-schema-state.ts";
 import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
 import { publicEventPayload } from "./event-privacy.ts";
@@ -58,6 +60,16 @@ export const uuidV7 = () => {
 };
 
 const initializedSchemas = new WeakMap<D1Database, Promise<void>>();
+const readySchemas = new WeakSet<D1Database>();
+
+/** A guarded proxy shares only a successfully initialized underlying binding. */
+export function inheritRuntimeSchemaReadiness(source: D1Database, guarded: D1Database) {
+  const initialization = initializedSchemas.get(source);
+  if (!initialization || !readySchemas.has(source)) return;
+  initializedSchemas.set(guarded, initialization);
+  readySchemas.add(guarded);
+  markOutputSchemaReady(guarded);
+}
 const retentionSweeps = new WeakMap<D1Database, number>();
 
 export const EVENT_WRITE_STAGE_TRIGGER_SQL = `CREATE TRIGGER IF NOT EXISTS event_write_stage_after_insert AFTER INSERT ON event_write_stage BEGIN
@@ -453,7 +465,11 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare("DROP TRIGGER IF EXISTS pilot_project_owner_participant_deletion_guard"),
     env.DB.prepare(PILOT_PARTICIPANT_OWNER_DELETION_TRIGGER_SQL),
     env.DB.prepare(PILOT_COHORT_DELETION_TRIGGER_SQL),
-  ]).then(() => undefined).catch((error: unknown) => {
+    ...OUTPUT_REQUIREMENTS_SCHEMA.map((sql) => env.DB.prepare(sql)),
+  ]).then(() => {
+    readySchemas.add(env.DB);
+    markOutputSchemaReady(env.DB);
+  }).catch((error: unknown) => {
     initializedSchemas.delete(env.DB);
     throw error;
   });
@@ -581,17 +597,17 @@ export class StaleSequenceError extends Error {
 }
 
 /** Reserve and append one contiguous event range in a single D1 batch. */
-export async function appendEvents(env: WorkerEnv, events: EventRow[], options: { expectedHead?: number; retries?: number } = {}) {
+export async function appendEvents(env: WorkerEnv, events: EventRow[], options: { expectedHead?: number; initialHead?:number; retries?: number; prepareSidecars?:(events:EventRow[])=>D1PreparedStatement[];onSidecarsCommitted?:(results:D1Result[])=>void } = {}) {
   if (!events.length) return events;
   const streamId = events[0].streamId; if (!events.every((event) => event.streamId === streamId)) throw new Error("mixed_event_stream_batch");
   const retries = options.expectedHead === undefined ? Math.max(1, options.retries ?? 4) : 1;
   for (let attempt = 0; attempt < retries; attempt += 1) {
-    const head = options.expectedHead ?? await streamHead(env, streamId);
+    const head = options.expectedHead ?? (attempt===0?options.initialHead:undefined) ?? await streamHead(env, streamId);
     events.forEach((event, index) => { event.sequence = head + index + 1; });
-    const results = await env.DB.batch(events.map((event, index) => insertEventAtHead(env, event, head + index)));
-    if (results.every((result) => Number(result.meta.changes ?? 0) > 0)) return events;
-    const current = await streamHead(env, streamId);
-    if (options.expectedHead !== undefined) throw new StaleSequenceError(options.expectedHead, current);
+    const sidecars=options.prepareSidecars?.(events)??[];
+    const results = await env.DB.batch([...events.map((event, index) => insertEventAtHead(env, event, head + index)),...sidecars]);
+    if (results.slice(0,events.length).every((result) => Number(result.meta.changes ?? 0) > 0)){options.onSidecarsCommitted?.(results.slice(events.length));return events;}
+    if (options.expectedHead !== undefined) throw new StaleSequenceError(options.expectedHead, await streamHead(env,streamId));
   }
   throw new Error("event_append_contention");
 }

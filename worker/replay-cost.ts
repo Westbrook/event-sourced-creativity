@@ -106,6 +106,9 @@ const IMAGE_RATES: Record<string, ImageRates> = {
   "gpt-image-2": { textInput: 5, imageInput: 8, output: 30 },
 };
 
+/** An application allowance must never rely on fallback image-model pricing. */
+export const hasKnownImageModelPricing=(model:string)=>Object.hasOwn(IMAGE_RATES,model);
+
 const DEFAULT_TEXT_RATES: TokenRates = { input: 5, output: 30 };
 const DEFAULT_IMAGE_RATES: ImageRates = { textInput: 5, imageInput: 8, output: 30 };
 const asMicrousd = (tokens: number, dollarsPerMillion: number) => Math.ceil(Math.max(0, tokens) * dollarsPerMillion);

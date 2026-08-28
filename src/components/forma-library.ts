@@ -1,3 +1,4 @@
+import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
 import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
 import { blockIconName } from "./icon-semantics";
@@ -68,8 +69,9 @@ export class FormaLibrary extends FormaElement {
         ||["media_url","reference_id","source_ref","source_evidence_hash","source_artifact_id","source_output_id","source_block_id"].includes(key))));
     if(restricted.length){this.store.toast(this.i18n.t("library.archive.unsafe"));return;}
     const documentId=crypto.randomUUID();
-    const events=[{type:"DocumentForked",payload:{document_id:documentId,title:`Imported · ${projection.documentTitle}`,source_stream_id:this.#imported.streamId,source_sequence:this.#imported.events.at(-1)?.sequence??0,carried_block_ids:projection.blocks.map((block)=>block.id)}},...projection.blocks.map((block,index)=>({type:"BlockCreated",payload:{block_id:crypto.randomUUID(),document_id:documentId,type:block.type,handle:`${block.handle}-import`,position:`z${index}`,properties:block.properties}}))];
-    const appended=await this.store.appendBatch(events);
+    const copiedIds=new Map(projection.blocks.map((block)=>[block.id,crypto.randomUUID()]));
+    const events=[{type:"DocumentForked",payload:{document_id:documentId,title:`Imported · ${projection.documentTitle}`,source_stream_id:this.#imported.streamId,source_sequence:this.#imported.events.at(-1)?.sequence??0,carried_block_ids:projection.blocks.map((block)=>block.id)}},...projection.blocks.map((block,index)=>({type:"BlockCreated",payload:{block_id:copiedIds.get(block.id)!,document_id:documentId,type:block.type,handle:`${block.handle}-import`,position:`z${index}`,properties:block.properties}}))];
+    const appended=await this.store.appendBatch(copyOutputRequirementCreationEvents(events,copiedIds));
     if(appended.length!==events.length)return;
     this.#imported=undefined;this.requestUpdate();this.store.toast(this.i18n.t("library.archive.imported"));
   }
