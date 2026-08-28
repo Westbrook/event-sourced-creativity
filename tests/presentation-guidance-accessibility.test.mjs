@@ -47,6 +47,7 @@ class ElementPort {
   querySelector(selector) { return this.fixture.renderer.query(this, selector)[0] ?? null; }
   querySelectorAll(selector) { return this.fixture.renderer.query(this, selector); }
   getAttribute(name) { return this.attributes?.[name] ?? null; }
+  hasAttribute(name) { return Object.hasOwn(this.attributes ?? {}, name); }
   setAttribute(name, value) { (this.attributes ??= {})[name] = String(value); }
   closest(selector) { if (selector === "forma-workspace") return this.fixture.workspace; let owner = this.parentElement; while (owner) { if (owner.tag === selector) return owner; owner = owner.parentElement; } return null; }
   dispatchEvent(event) {
@@ -71,7 +72,7 @@ async function loadActual(relative) {
     else if (specifier === "lit/directives/keyed.js") dependencies.set(specifier, { keyed });
     else if (specifier === "lit/directives/repeat.js") dependencies.set(specifier, { repeat });
     else if (specifier.startsWith("lit/")) dependencies.set(specifier, await import(specifier));
-    else if (/\/(?:forma-element|presentational-element)$/.test(specifier)) dependencies.set(specifier, { FormaElement: ElementPort, FormaPresentationalElement: ElementPort, icon: () => nothing, copyTextToClipboard: async value => { activeFixture.clipboard.push(value); return true; } });
+    else if (/\/(?:forma-element|presentational-element)(?:\.ts)?$/.test(specifier)) dependencies.set(specifier, { FormaElement: ElementPort, FormaPresentationalElement: ElementPort, icon: () => nothing, copyTextToClipboard: async value => { activeFixture.clipboard.push(value); return true; } });
     else if (specifier === "./modal-dialog") dependencies.set(specifier, modalPort);
     else if (/\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });
     else if (specifier.includes("?raw")) dependencies.set(specifier, { default: "" });
@@ -95,7 +96,7 @@ async function loadActual(relative) {
   const exports = {}, registry = { get() { return true; }, define() {} };
   const require = specifier => dependencies.get(specifier) ?? {};
   new Function("require", "exports", "customElements", "document", "window", "HTMLElement", "Element", "CSS", "location", "ResizeObserver", "getComputedStyle", "matchMedia", "InputEvent", code)(
-    require, exports, registry, documentPort, windowPort, ElementPort, ElementPort, { escape: String }, { origin: "https://fixture.invalid" }, class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" }), () => ({ matches: true }), class InputEvent {},
+    require, exports, registry, documentPort, windowPort, ElementPort, ElementPort, { escape: String }, { origin: "https://fixture.invalid" }, class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" }), () => ({ matches: true, addEventListener() {}, removeEventListener() {} }), class InputEvent {},
   );
   moduleCache.set(relative, exports);
   return exports;
@@ -112,7 +113,7 @@ class RendererPort {
       if (name[0] === ".") properties[name.slice(1)] = value;
       else if (name[0] === "@") handlers[name.slice(1)] = value;
       else if (name[0] === "?") { if (value) attributes[name.slice(1)] = ""; }
-      else attributes[name] = value;
+      else if (value !== nothing) attributes[name] = value;
     }
     return { attributes, properties, handlers };
   }
@@ -197,7 +198,7 @@ class RendererPort {
     if (selector.includes(",")) return selector.split(",").flatMap(part => this.query(owner, part.trim()));
     const within = candidate => { let current = candidate; while (current) { if (!owner || current === owner) return true; current = current.parentElement; } return false; };
     if (/^forma-/.test(selector)) return [...this.instances.values()].map(record => record.instance).filter(instance => instance.isConnected && within(instance.parentElement) && instance.tag === selector);
-    return (this.updatingOwner ? this.previousNodes : this.nodes).filter(node => within(node.owner) && (!selector.startsWith("dialog") || node.tag === "dialog") && (!selector.includes("[open]") || node.open) && (!selector.includes(".") || String(node.attributes.class ?? "").split(/\s+/).includes(selector.match(/\.([\w-]+)/)?.[1])) && (!/^[a-z]/.test(selector) || node.tag === selector.match(/^[\w-]+/)?.[0] || selector.includes(" ")));
+    return (this.updatingOwner ? this.previousNodes : this.nodes).filter(node => within(node.owner) && (!selector.startsWith("dialog") || node.tag === "dialog") && (!selector.includes("[open]") || node.open) && (!selector.includes("[popover]") || Object.hasOwn(node.attributes, "popover")) && (!selector.includes(".") || String(node.attributes.class ?? "").split(/\s+/).includes(selector.match(/\.([\w-]+)/)?.[1])) && (!/^[a-z]/.test(selector) || node.tag === selector.match(/^[\w-]+/)?.[0] || selector.includes(" ")));
   }
   component(tag, blockId) { return [...this.instances.values()].map(record => record.instance).find(instance => instance.tag === tag && (instance.block?.id ?? instance.blockId) === blockId); }
   ownNodes(owner, tag) { return this.nodes.filter(node => node.owner === owner && node.tag === tag); }

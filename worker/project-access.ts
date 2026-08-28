@@ -1,7 +1,7 @@
-import { foldEvents, type CreativeEvent } from "../src/model/events.ts";
+import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { FORMA_CAPABILITIES, type FormaCapability } from "../src/platform/capabilities.ts";
-import { DURABLE_WORK_RETENTION_END, POLICY_VERSION, hasCapability, type PilotUser } from "./pilot-policy.ts";
+import { DURABLE_WORK_RETENTION_END, POLICY_VERSION, hasCapability, type BudgetReservationGuard, type PilotUser } from "./pilot-policy.ts";
 import { appendEvents, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readEvents, readEventsByClientEventIds, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { validateCanvasEvent } from "./realtime/canvas-admission.ts";
 import { ARTIFACT_REVIEW_EVENT_TYPES, validateArtifactReview } from "./artifact-review.ts";
@@ -13,8 +13,12 @@ import { ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, isContextCompositi
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 
+import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
+import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
+
 const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
+  ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","EmptyCanvasChosen",
   "BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
   "BlockRelationAdded","BlockRelationRemoved","ReferenceIngested","RightsAsserted","RegionPromoted","ExtractionRequested","ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ChipEdited",
@@ -154,6 +158,7 @@ function scopedEvent(event:CreativeEvent,index:ProjectIndex){
   if(event.type.startsWith("Project"))return String(payload.project_id??"")===index.projectId;
   const explicit=String(payload.project_id??"");
   if(explicit&&explicit!==index.projectId)return false;
+  if(isOutputRequirementEvent(event.type))return explicit===index.projectId&&index.documentIds.has(String(payload.document_id??""));
   if(event.type==="OutputRenamed"){
     const documentId=String(payload.document_id??""),id=String(payload.output_id??"");
     if(explicit!==index.projectId||!documentId||!index.documentIds.has(documentId)||!id)return false;
@@ -202,20 +207,57 @@ const mediaKey=(value:unknown)=>{
   try{return decodeURIComponent(value.slice(prefix.length));}catch{return"";}
 };
 
+export type ProjectPublicationResource={kind:string;id:string;visibility:"collaborative_output"|"actor_private"|"internal";sourceEventId:string|null;actorUserId:string};
+
+/** One resource mapping serves full synchronization and trusted native publication. */
+export function projectPublicationResources(outputs:CreativeProjection["libraryOutputs"],artifacts:CreativeProjection["libraryArtifacts"],sourceActor:(sourceEventId:string|null)=>string){
+  const resources:ProjectPublicationResource[]=[];
+  const add=(kind:string,id:string,sourceEventId:string|null,visibility:ProjectPublicationResource["visibility"]="collaborative_output")=>{
+    if(id)resources.push({kind,id,visibility,sourceEventId,actorUserId:sourceActor(sourceEventId)});
+  };
+  for(const output of outputs)add("output",output.id,output.sourceEventId);
+  for(const artifact of artifacts)add("artifact",artifact.id,artifact.sourceEventId);
+  for(const output of outputs)if(output.mediaUrl)add("media",mediaKey(output.mediaUrl),output.sourceEventId);
+  for(const artifact of artifacts){
+    if(artifact.contentRef)add("content",artifact.contentRef,artifact.sourceEventId);
+    if(artifact.inputRef)add("content",artifact.inputRef,artifact.sourceEventId,"actor_private");
+    if(artifact.mediaUrl)add("media",mediaKey(artifact.mediaUrl),artifact.sourceEventId);
+    for(const item of artifact.items)if(item.mediaUrl)add("media",mediaKey(item.mediaUrl),artifact.sourceEventId);
+  }
+  return resources;
+}
+
+export function prepareProjectResourceScopeStatement(env:WorkerEnv,scope:ProjectSourceScope,resource:ProjectPublicationResource,createdAt:string,requireSourceEvent=false){
+  return env.DB.prepare(`INSERT OR IGNORE INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
+    ${requireSourceEvent?"SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)":"VALUES(?,?,?,?,?,?,?,?,?,?)"}`)
+    .bind(scope.projectAccessId,resource.kind,resource.id,scope.organizationId,scope.projectId,scope.ownerUserId,resource.visibility,resource.sourceEventId,resource.actorUserId,createdAt,...(requireSourceEvent?[resource.sourceEventId]:[]));
+}
+
+/** Reuse the ordinary event allowlist and document membership predicate. */
+export function projectDocumentPublicationEvents(events:CreativeEvent[],projectId:string,documentId:string){
+  const empty=new Set<string>();
+  const index:ProjectIndex={projectId,documentIds:new Set([documentId]),blockIds:empty,relationIds:empty,collectionIds:empty,outputIds:empty,artifactIds:empty,
+    generationIds:empty,referenceIds:empty,canvasIds:empty,canvasItemIds:empty,arrangementIds:empty,contextSetIds:empty,
+    canvasItemBoards:new Map(),arrangementBoards:new Map(),contextSetBoards:new Map()};
+  return events.filter((event)=>event.payload.document_id===documentId&&scopedEvent(event,index));
+}
+
 /** Rebuild an exact manifest from one immutable owner history; ambiguous/private rows never enter it. */
 export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string}){
   const ownerStream=`creative:${input.ownerUserId}`;
-  const state=await env.DB.prepare("SELECT status,last_owner_sequence FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-    .bind(input.projectAccessId,input.organizationId,input.ownerUserId).first<{status:string;last_owner_sequence:number}>();
-  const head=await streamHead(env,ownerStream);
-  if(state?.status==="active"&&Number(state.last_owner_sequence)===head){
-    const counts=await env.DB.batch<Record<string,unknown>>([
-      env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS count FROM project_event_scopes WHERE project_access_id=?").bind(input.projectAccessId),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='document'").bind(input.projectAccessId),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind='manifest_version' AND resource_id='canvas-v1'").bind(input.projectAccessId,input.organizationId),
-    ]);
-    if(Number(counts[2]?.results[0]?.count??0)>0)return{eventCount:Number(counts[0]?.results[0]?.count??0),documentCount:Number(counts[1]?.results[0]?.count??0)};
-  }
+  // The fast-path decision and its exact custody counts share one SQLite snapshot.
+  const state=await env.DB.prepare(`SELECT migration.status,migration.last_owner_sequence,
+    (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS owner_head,
+    (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?) AS event_count,
+    (SELECT COUNT(*) FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='document') AS document_count,
+    EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='manifest_version' AND resource_id='canvas-v1') AS manifest_current
+    FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=?`)
+    .bind(ownerStream,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
+      input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
+      input.projectAccessId,input.organizationId,input.ownerUserId)
+    .first<{status:string;last_owner_sequence:number;owner_head:number;event_count:number;document_count:number;manifest_current:number}>();
+  if(state?.status==="active"&&Number(state.last_owner_sequence)===Number(state.owner_head)&&Number(state.manifest_current)===1)
+    return{eventCount:Number(state.event_count),documentCount:Number(state.document_count)};
   const events=await readEvents(env,ownerStream);
   const projection=foldEvents(events,Number.POSITIVE_INFINITY,"",input.projectId);
   if(!projection.projects.some((project)=>project.id===input.projectId))throw new Error("owned_project_required");
@@ -357,10 +399,9 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     statements.push(env.DB.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind=? AND resource_id=?")
       .bind(input.projectAccessId,input.organizationId,resource.resource_kind,resource.resource_id));
   }
-  const insertResource=(kind:string,id:string,visibility="collaborative_output",sourceEventId:string|null=null,actorUserId=input.ownerUserId)=>{
+  const insertResource=(kind:string,id:string,visibility:ProjectPublicationResource["visibility"]="collaborative_output",sourceEventId:string|null=null,actorUserId=input.ownerUserId)=>{
     if(!id)return;
-    statements.push(env.DB.prepare("INSERT OR IGNORE INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-      .bind(input.projectAccessId,kind,id,input.organizationId,input.projectId,input.ownerUserId,visibility,sourceEventId,actorUserId,now));
+    statements.push(prepareProjectResourceScopeStatement(env,input,{kind,id,visibility,sourceEventId,actorUserId},now));
   };
   insertResource("project",input.projectId);
   for(const id of documentIds)insertResource("document",id);
@@ -368,8 +409,9 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   for(const id of relationIds)insertResource("relation",id);
   for(const id of collectionIds)insertResource("collection",id);
   const sourceActor=(sourceEventId:string|null)=>{const event=sourceEventId?eventsById.get(sourceEventId):undefined;return event?.actor.startsWith("user:")?event.actor.slice(5):event?actorByJobCorrelation.get(event.correlationId)??input.ownerUserId:input.ownerUserId;};
-  for(const output of projectOutputs)insertResource("output",output.id,"collaborative_output",output.sourceEventId,sourceActor(output.sourceEventId));
-  for(const artifact of projectArtifacts)insertResource("artifact",artifact.id,"collaborative_output",artifact.sourceEventId,sourceActor(artifact.sourceEventId));
+  const publicationResources=projectPublicationResources(projectOutputs,projectArtifacts,sourceActor);
+  for(const resource of publicationResources.filter((resource)=>resource.kind==="output"||resource.kind==="artifact"))
+    insertResource(resource.kind,resource.id,resource.visibility,resource.sourceEventId,resource.actorUserId);
   for(const id of referenceIds)insertResource("reference",id);
   for(const canvas of projectCanvas.canvases)insertResource("canvas",canvas.id,"collaborative_output",canvas.sourceEvents[0]??null);
   for(const item of validItems)insertResource("canvas_item",item.id,"collaborative_output",item.sourceEvents[0]??null);
@@ -377,14 +419,8 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   for(const contextSet of contextSets)insertResource("canvas_context",contextSet.id,"collaborative_output",contextSet.sourceEventId);
   insertResource("manifest_version","canvas-v1","internal");
   for(const item of referenceMedia)insertResource("media",item.key,"collaborative_output",item.sourceEventId);
-  for(const output of projectOutputs){if(output.mediaUrl)insertResource("media",mediaKey(output.mediaUrl),"collaborative_output",output.sourceEventId,sourceActor(output.sourceEventId));}
-  for(const artifact of projectArtifacts){
-    const actor=sourceActor(artifact.sourceEventId);
-    if(artifact.contentRef)insertResource("content",artifact.contentRef,"collaborative_output",artifact.sourceEventId,actor);
-    if(artifact.inputRef)insertResource("content",artifact.inputRef,"actor_private",artifact.sourceEventId,actor);
-    if(artifact.mediaUrl)insertResource("media",mediaKey(artifact.mediaUrl),"collaborative_output",artifact.sourceEventId,actor);
-    for(const item of artifact.items)if(item.mediaUrl)insertResource("media",mediaKey(item.mediaUrl),"collaborative_output",artifact.sourceEventId,actor);
-  }
+  for(const resource of publicationResources.filter((resource)=>resource.kind!=="output"&&resource.kind!=="artifact"))
+    insertResource(resource.kind,resource.id,resource.visibility,resource.sourceEventId,resource.actorUserId);
   for(const item of conversationContent)insertResource("content",item.id,"actor_private",item.sourceEventId,item.actor);
   for(const event of events){
     if(known.has(event.eventId)||!scopedEvent(event,index))continue;
@@ -525,16 +561,37 @@ export async function readProjectAssistantEventView(env:WorkerEnv,context:Projec
     .filter((event)=>event.type!=="ProjectResourceRestricted");
 }
 
+export type ProjectSourceScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string};
+
+/** A read may require a current projection, but cannot reactivate or repair one. */
+export function projectSourceProjectionCurrentAssertion(scope:ProjectSourceScope){
+  return{sql:`EXISTS(SELECT 1 FROM project_migration_states migration
+    JOIN organization_projects project ON project.project_access_id=migration.project_access_id AND project.organization_id=migration.organization_id
+      AND project.owner_user_id=migration.owner_user_id AND project.status='active'
+    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+    WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND project.project_id=?
+      AND migration.status='active' AND migration.last_owner_sequence=(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)
+      AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=migration.project_access_id
+        AND resource.organization_id=migration.organization_id AND resource.project_id=project.project_id AND resource.owner_user_id=migration.owner_user_id
+        AND resource.resource_kind='manifest_version' AND resource.resource_id='canvas-v1'))`,
+    bindings:[scope.projectAccessId,scope.organizationId,scope.ownerUserId,scope.projectId,`creative:${scope.ownerUserId}`]};
+}
+
+/** Shared source SELECT for ordinary refresh and guarded read-only Output execution. */
+export function prepareProjectSourceEventsStatement(env:WorkerEnv,scope:ProjectSourceScope){
+  return env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
+    LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
+    WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.project_id=? AND scope.owner_user_id=?
+    ORDER BY scope.project_sequence`).bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId);
+}
+
 /** Internal generation receives exact project history, never an owner's account-wide stream. */
-export async function readProjectSourceEvents(env:WorkerEnv,scope:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string},options:{synchronize?:boolean}={}){
+export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceScope,options:{synchronize?:boolean}={}){
   const readonlyHead=options.synchronize===false?await env.DB.prepare("SELECT migration.last_owner_sequence AS indexed_head,(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS source_head FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND migration.status='active'")
     .bind("creative:"+scope.ownerUserId,scope.projectAccessId,scope.organizationId,scope.ownerUserId).first<{indexed_head:number;source_head:number}>():null;
   if(options.synchronize!==false)await synchronizeProjectScope(env,scope);
   else if(!readonlyHead||Number(readonlyHead.indexed_head)!==Number(readonlyHead.source_head))throw new Error("project_source_index_stale");
-  const rows=await env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
-    LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-    WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.project_id=? AND scope.owner_user_id=?
-    ORDER BY scope.project_sequence`).bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId).all<Record<string,unknown>>();
+  const rows=await prepareProjectSourceEventsStatement(env,scope).all<Record<string,unknown>>();
   if(options.synchronize===false&&!await env.DB.prepare("SELECT 1 FROM project_migration_states migration WHERE (migration.project_access_id,migration.organization_id,migration.owner_user_id,migration.status,migration.last_owner_sequence)=(?,?,?,'active',?) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?")
     .bind(scope.projectAccessId,scope.organizationId,scope.ownerUserId,Number(readonlyHead!.source_head),"creative:"+scope.ownerUserId,Number(readonlyHead!.source_head)).first())throw new Error("project_source_index_stale");
   return rows.results.map((row)=>serializeEvent(row));
@@ -835,7 +892,7 @@ async function currentProjectArtifactDigest(env:WorkerEnv,context:ProjectRequest
 
 export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestContext,principal:PilotUser,body:{action?:string;event?:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null};events?:Array<{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null}>;clientId?:string;correlationId?:string;expectedSequence?:number},atomicEdit?:{artifactId:string;contentId:string;oldContent:string;newContent:string;expectedRevision:number;documentId:string;revisions:ArtifactRevisionSnapshot[];restoreSource?:{revision:number;contentSha256:string;contentJson:string}},atomicSidecars?:{
   statements?:D1PreparedStatement[];
-  buildStatements?:(eventId:string)=>D1PreparedStatement[];
+  buildStatements?:(lastEventId:string,writeProof?:BudgetReservationGuard,allocatedEvents?:readonly EventRow[])=>D1PreparedStatement[];
   guardSql?:string;
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
@@ -977,11 +1034,22 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if([...existing.values()].some((previous)=>previous.actor!==`user:${principal.userId}`))return Response.json({error:"canvas_receipt_scope_mismatch"},{status:409});
   const existingEvents=await readProjectReceiptEvents(env,context,[...existing.values()].map((event)=>event.eventId),principal.userId);
   if(existingEvents.size!==existing.size)return Response.json({error:"canvas_receipt_scope_mismatch"},{status:409});
+  let validatedOutputOwnerHead:number|null=null;
   const incoming=original.filter((_,index)=>!existing.has(receiptKeys[index]??""));
   if(!incoming.length&&existing.size){
     const current=await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
       .bind(context.projectAccessId,context.organizationId,context.ownerUserId).first<{head:number}>();
     return Response.json({appended:original.map((_,index)=>existingEvents.get(existing.get(receiptKeys[index])!.eventId)!),rejected:[],head:Number(current?.head??0),idempotent:true});
+  }
+  if(incoming.some((event)=>/^(?:Block|Chip|Output)/u.test(String(event.type??""))||event.type==="ExtractionRequested")){
+    const manifest=await env.DB.prepare("SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active'")
+      .bind(context.projectAccessId,context.organizationId,context.ownerUserId).first<{last_owner_sequence:number}>();
+    if(!manifest||!Number.isSafeInteger(Number(manifest.last_owner_sequence)))return Response.json({error:"output_requirement_context_unavailable"},{status:409});
+    validatedOutputOwnerHead=Number(manifest.last_owner_sequence);
+    const guarded=prepareOutputRequirementClientEvents(incoming,outputAuthoringBlocksFromEvents(await readProjectSourceEvents(env,context)));
+    if(!guarded.ok)return Response.json(guarded,{status:guarded.status});
+    // Preserve incoming identities: canvas receipts and response rows use the original event objects as keys.
+    guarded.events.forEach((event,index)=>{incoming[index]!.payload=event.payload;});
   }
   if(incoming.some((event)=>["BlockPropertyEdited","BlockRenamed","BlockWeightSet"].includes(String(event.type??"")))){
     const snapshot=foldEvents(await readProjectSourceEvents(env,context),Number.POSITIVE_INFINITY,"",context.projectId);
@@ -1107,6 +1175,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const ownerHead=await streamHead(env,ownerStream);
   if(atomicSidecars?.authoringOperation&&ownerHead!==atomicSidecars.expectedOwnerHead)return Response.json({error:"authoring_source_stale"},{status:409});
+  if(validatedOutputOwnerHead!==null&&ownerHead!==validatedOutputOwnerHead)return Response.json({error:"output_requirement_context_changed"},{status:409});
   if(assistantAcceptance&&ownerHead!==atomicSidecars?.expectedOwnerHead)return Response.json({error:"assistant_proposal_stale"},{status:409});
   if(validatedOwnerHead!==null&&ownerHead!==validatedOwnerHead)return Response.json({error:"stale_review_context",message:"The project changed while this review was being checked. Refresh and review the latest version."},{status:409});
   if(releaseValidationHead!==null&&ownerHead!==releaseValidationHead)return Response.json({error:"stale_release_context",message:"The project changed while export approval was being checked. Refresh the approved output before releasing it."},{status:409});
@@ -1114,6 +1183,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   let projectHead=Number(current?.head??0);
   if(action!=="canvas_sync"&&Number.isSafeInteger(body.expectedSequence)&&Number(body.expectedSequence)!==projectHead)return Response.json({error:"stale_sequence",expected:body.expectedSequence,head:projectHead},{status:409});
   const now=new Date().toISOString(),appended:EventRow[]=[],statements:D1PreparedStatement[]=[];
+  if(validatedOutputOwnerHead!==null)statements.push(outputRequirementHeadGuard(env,ownerStream,validatedOutputOwnerHead));
   for(const [offset,input] of incoming.entries()){
     const payload:Record<string,unknown>={...(input.payload??{}),project_id:context.projectId,...(canvasAction?{history_owner_id:principal.userId}:{})};
     const event=makeEvent(ownerStream,ownerHead+offset+1,`user:${principal.userId}`,String(body.clientId??`project:${principal.userId}`),String(body.correlationId??uuidV7()),String(input.type),payload,{compensatesEventId:input.compensatesEventId??null});
@@ -1214,12 +1284,12 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   const invalidatesResources=incoming.some(({type,payload})=>/Removed$|Restored$|Discarded$|Rehomed$/.test(String(type??""))
     ||(type==="BlockPropertyEdited"||type==="ChipEdited")&&["media_url","reference_id","source_document_id","source_block_id","source_output_id"].includes(String(type==="BlockPropertyEdited"?payload?.property_path:payload?.property)));
   if(atomicSidecars?.statements?.length)statements.push(...atomicSidecars.statements);
-  if(atomicSidecars?.buildStatements&&appended.length)statements.push(...atomicSidecars.buildStatements(appended.at(-1)!.eventId));
+  if(atomicSidecars?.buildStatements&&appended.length)statements.push(...atomicSidecars.buildStatements(appended.at(-1)!.eventId,undefined,appended));
   statements.push(env.DB.prepare("UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND (?='' OR EXISTS(SELECT 1 FROM events WHERE event_id=?))")
     .bind(invalidatesResources?ownerHead:ownerHead+incoming.length,now,context.projectAccessId,context.organizationId,context.ownerUserId,atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":"",atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":""));
   try{
     const results=await env.DB.batch(statements);
-    if(results.some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
+    if(results.slice(validatedOutputOwnerHead===null?0:1).some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
   }catch{return Response.json({error:"stale_sequence",head:projectHead-incoming.length},{status:409});}
   const first=projectHead-appended.length+1;
   const newEvents=new Map(incoming.map((input,index)=>[input,{...appended[index]!,streamId:`project:${context.projectAccessId}`,sequence:first+index}] as const));

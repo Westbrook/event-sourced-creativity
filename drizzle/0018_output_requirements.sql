@@ -1,0 +1,147 @@
+CREATE TABLE IF NOT EXISTS output_atomic_assertions(token TEXT PRIMARY KEY NOT NULL,passed INTEGER NOT NULL CHECK(passed=1));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_commands(
+    scope_key TEXT NOT NULL,actor_user_id TEXT NOT NULL,command_key TEXT NOT NULL,request_digest TEXT NOT NULL,
+    action TEXT NOT NULL,event_id TEXT NOT NULL,created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,actor_user_id,command_key),FOREIGN KEY(event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_plan_revisions(
+    scope_key TEXT NOT NULL,scope_kind TEXT NOT NULL CHECK(scope_kind IN('personal','project')),owner_user_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,document_id TEXT NOT NULL,organization_id TEXT,project_access_id TEXT,
+    plan_revision_id TEXT NOT NULL,plan_id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>0),
+    confirmed_event_id TEXT NOT NULL,requirements_digest TEXT NOT NULL,source_digest TEXT NOT NULL,
+    resolver_version TEXT NOT NULL,source_head INTEGER NOT NULL CHECK(typeof(source_head)='integer' AND source_head>=0),target_count INTEGER NOT NULL CHECK(typeof(target_count)='integer' AND target_count>=0 AND target_count<=1000),created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,plan_revision_id),
+    FOREIGN KEY(confirmed_event_id) REFERENCES events(event_id),
+    CHECK((scope_kind='personal' AND organization_id IS NULL AND project_access_id IS NULL) OR (scope_kind='project' AND organization_id IS NOT NULL AND project_access_id IS NOT NULL)));
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS idx_output_plans_document ON output_plan_revisions(scope_key,document_id,revision DESC);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_plan_targets(
+    scope_key TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,target_contract_digest TEXT NOT NULL,
+    media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document','unknown')),
+    required INTEGER NOT NULL CHECK(required IN(0,1)),selected INTEGER NOT NULL CHECK(selected IN(0,1)),ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>=0),
+    PRIMARY KEY(scope_key,plan_revision_id,target_id),
+    FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_preflights(
+    scope_key TEXT NOT NULL,preflight_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,
+    terms_digest TEXT NOT NULL,event_id TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,preflight_id),FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id),
+    FOREIGN KEY(event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_execution_grants(
+    scope_key TEXT NOT NULL,grant_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,payer_user_id TEXT NOT NULL,context_id TEXT,
+    preflight_id TEXT NOT NULL,authorization_event_id TEXT NOT NULL,maximum_microusd INTEGER NOT NULL CHECK(typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000),
+    maximum_calls INTEGER NOT NULL CHECK(typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=10000),
+    status TEXT NOT NULL CHECK(status IN('authorized','active','completed','revoked','exceeded')),expires_at TEXT NOT NULL,created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,grant_id),
+    FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id),
+    FOREIGN KEY(scope_key,preflight_id) REFERENCES output_preflights(scope_key,preflight_id),
+    FOREIGN KEY(authorization_event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_operation_slots(
+    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,grant_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,
+    target_contract_digest TEXT NOT NULL,source_digest TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,
+    route_digest TEXT NOT NULL,job_id TEXT NOT NULL,cost_reservation_id TEXT NOT NULL,token_reservation_id TEXT NOT NULL,
+    maximum_microusd INTEGER NOT NULL CHECK(typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000),
+    maximum_calls INTEGER NOT NULL CHECK(typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000),maximum_tokens INTEGER NOT NULL CHECK(typeof(maximum_tokens)='integer' AND maximum_tokens>0),
+    attempt_ordinal INTEGER NOT NULL DEFAULT 0 CHECK(typeof(attempt_ordinal)='integer' AND attempt_ordinal>=0),previous_slot_id TEXT,
+    status TEXT NOT NULL CHECK(status IN('authorized','queued','running','succeeded','failed','cancelled','unavailable','uncertain')),
+    outcome_event_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,slot_id),
+    CHECK((attempt_ordinal=0 AND previous_slot_id IS NULL) OR (attempt_ordinal>0 AND previous_slot_id IS NOT NULL)),
+    FOREIGN KEY(scope_key,grant_id) REFERENCES output_execution_grants(scope_key,grant_id),
+    FOREIGN KEY(scope_key,previous_slot_id) REFERENCES output_operation_slots(scope_key,slot_id),
+    FOREIGN KEY(scope_key,plan_revision_id,target_id) REFERENCES output_plan_targets(scope_key,plan_revision_id,target_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_operation_routes(
+    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,stage_key TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,
+    maximum_calls INTEGER NOT NULL CHECK(typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000),
+    PRIMARY KEY(scope_key,slot_id,stage_key),FOREIGN KEY(scope_key,slot_id) REFERENCES output_operation_slots(scope_key,slot_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_provider_calls(
+    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,call_key TEXT NOT NULL,client_request_id TEXT NOT NULL,request_digest TEXT NOT NULL,
+    stage_key TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,
+    reserved_microusd INTEGER NOT NULL CHECK(typeof(reserved_microusd)='integer' AND reserved_microusd>0),used_microusd INTEGER CHECK(used_microusd IS NULL OR typeof(used_microusd)='integer' AND used_microusd>=0),
+    status TEXT NOT NULL CHECK(status IN('pending','uncertain','settled','rejected')),provider_response_id TEXT,created_at TEXT NOT NULL,settled_at TEXT,
+    PRIMARY KEY(scope_key,slot_id,call_key),
+    FOREIGN KEY(scope_key,slot_id,stage_key) REFERENCES output_operation_routes(scope_key,slot_id,stage_key));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_assets(
+    scope_key TEXT NOT NULL,asset_id TEXT NOT NULL,document_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,created_by_user_id TEXT NOT NULL,
+    source_digest TEXT NOT NULL,storage_key TEXT NOT NULL,content_sha256 TEXT NOT NULL,byte_length INTEGER NOT NULL CHECK(typeof(byte_length)='integer' AND byte_length>0),
+    mime_type TEXT NOT NULL,media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document')),
+    created_event_id TEXT NOT NULL,created_at TEXT NOT NULL,redacted_at TEXT,
+    PRIMARY KEY(scope_key,asset_id),FOREIGN KEY(created_event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_native_storage_writes(
+    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,storage_key TEXT NOT NULL,content_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN('writing','written','cleanup_pending','deleted')),
+    write_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(write_acknowledged IN(0,1)),publication_event_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,slot_id,storage_key),FOREIGN KEY(scope_key,slot_id) REFERENCES output_operation_slots(scope_key,slot_id),FOREIGN KEY(publication_event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_asset_storage_writes(
+    scope_key TEXT NOT NULL,asset_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,
+    organization_id TEXT,project_access_id TEXT,project_id TEXT NOT NULL,document_id TEXT NOT NULL,context_id TEXT,
+    command_key TEXT NOT NULL,request_digest TEXT NOT NULL,source_digest TEXT NOT NULL,
+    storage_key TEXT NOT NULL,content_sha256 TEXT NOT NULL,byte_length INTEGER NOT NULL CHECK(typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=24000000),
+    status TEXT NOT NULL CHECK(status IN('writing','written','cleanup_pending','deleted')),write_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(write_acknowledged IN(0,1)),
+    publication_event_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,asset_id),
+    FOREIGN KEY(publication_event_id) REFERENCES events(event_id),
+    CHECK((organization_id IS NULL AND project_access_id IS NULL AND context_id IS NULL) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND context_id IS NOT NULL)));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_results(
+    scope_key TEXT NOT NULL,result_id TEXT NOT NULL,document_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,
+    target_contract_digest TEXT NOT NULL,source_digest TEXT NOT NULL,asset_id TEXT NOT NULL,result_revision TEXT NOT NULL,content_sha256 TEXT NOT NULL,
+    validation_policy TEXT NOT NULL,checks_status TEXT NOT NULL CHECK(checks_status IN('passed','failed','unavailable')),
+    created_by_user_id TEXT NOT NULL,bound_event_id TEXT NOT NULL,created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,result_id),FOREIGN KEY(scope_key,asset_id) REFERENCES output_assets(scope_key,asset_id),
+    FOREIGN KEY(scope_key,plan_revision_id,target_id) REFERENCES output_plan_targets(scope_key,plan_revision_id,target_id),
+    FOREIGN KEY(bound_event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_target_acceptances(
+    scope_key TEXT NOT NULL,acceptance_id TEXT NOT NULL,target_id TEXT NOT NULL,target_contract_digest TEXT NOT NULL,result_id TEXT NOT NULL,
+    result_revision TEXT NOT NULL,content_sha256 TEXT NOT NULL,source_digest TEXT NOT NULL,validation_policy TEXT NOT NULL,
+    reviewer_user_id TEXT NOT NULL,approval_event_id TEXT NOT NULL,created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,acceptance_id),FOREIGN KEY(scope_key,result_id) REFERENCES output_results(scope_key,result_id),
+    FOREIGN KEY(approval_event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_plan_fulfillments(
+    scope_key TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,acceptance_id TEXT NOT NULL,
+    eligibility_event_id TEXT NOT NULL,checked_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,plan_revision_id,target_id),
+    FOREIGN KEY(scope_key,plan_revision_id,target_id) REFERENCES output_plan_targets(scope_key,plan_revision_id,target_id),
+    FOREIGN KEY(scope_key,acceptance_id) REFERENCES output_target_acceptances(scope_key,acceptance_id),
+    FOREIGN KEY(eligibility_event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS output_delivery_manifests(
+    scope_key TEXT NOT NULL,manifest_id TEXT NOT NULL,document_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,
+    created_by_user_id TEXT NOT NULL,event_id TEXT NOT NULL,is_partial INTEGER NOT NULL CHECK(is_partial IN(0,1)),created_at TEXT NOT NULL,
+    PRIMARY KEY(scope_key,manifest_id),FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id),
+    FOREIGN KEY(event_id) REFERENCES events(event_id));
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_plan_revisions_unique_1 ON output_plan_revisions(scope_key,plan_id,revision);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_execution_grants_unique_1 ON output_execution_grants(scope_key,preflight_id);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_operation_slots_unique_1 ON output_operation_slots(scope_key,grant_id,target_id);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_operation_slots_unique_2 ON output_operation_slots(scope_key,target_id,target_contract_digest,attempt_ordinal);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_operation_slots_unique_3 ON output_operation_slots(job_id);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_operation_slots_unique_4 ON output_operation_slots(cost_reservation_id);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_operation_slots_unique_5 ON output_operation_slots(token_reservation_id);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_provider_calls_unique_1 ON output_provider_calls(client_request_id);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_assets_unique_1 ON output_assets(storage_key);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_native_storage_writes_unique_1 ON output_native_storage_writes(storage_key);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_asset_storage_writes_unique_1 ON output_asset_storage_writes(scope_key,actor_user_id,command_key);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_asset_storage_writes_unique_2 ON output_asset_storage_writes(storage_key);

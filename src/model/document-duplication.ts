@@ -1,3 +1,4 @@
+import { copyOutputRequirementBlock } from "./output-requirement-copy.ts";
 import { normalizeActionBlockReferences } from "./combined-context.ts";
 import type { CreativeProjection, EventInput } from "./events.ts";
 import { documentSlug } from "./routes.ts";
@@ -69,7 +70,8 @@ export function buildDocumentDuplicationPlan(input: DocumentDuplicationInput): D
 
   const deferredActionReferences: EventInput[] = [];
   for (const block of blocks) {
-    const properties: Record<string, unknown> = { ...block.properties };
+    const copied=copyOutputRequirementBlock(block,blockIds.get(block.id)!,blockIds,{preserveDocumentScope:true});
+    const properties: Record<string, unknown> = copied.properties;
     for (const key of ["context_set_id", "reference_set_id"]) {
       if (properties[key]) properties[key] = contextId(properties[key]);
     }
@@ -122,7 +124,7 @@ export function buildDocumentDuplicationPlan(input: DocumentDuplicationInput): D
         document_id: documentId,
         block_id: blockIds.get(block.id),
         copied_from_block_id: block.id,
-        type: block.type,
+        type: copied.type,
         handle: block.handle,
         position: block.position,
         properties,

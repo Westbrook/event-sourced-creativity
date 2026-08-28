@@ -436,6 +436,48 @@ and account-partitioned offline work.
   independent assistive-technology or formal PDF/UA certification; do not claim
   that certification or treat source-level checks as a human audit.
 
+## Output requirements and delivery
+
+`<forma-output-requirement-card>` is a store-independent organism for requested
+deliverables. It renders native forms in light DOM and takes property-only
+`snapshot`, `resourceState`, `presentation`, `editorState`, and `readOnlyReason`.
+The authorized snapshot includes the Document and authorization scope, expected
+revision, authored text, structured requirements, permitted source choices,
+whole-scope progress, and exact result references. Its host supplies translated
+status descriptions; authored text and stable identifiers are not translated.
+
+The card emits `forma-output-edit`, `forma-output-save`, `forma-output-cancel`,
+`forma-output-review-plan`, and `forma-output-open-result` intents. Save intent
+retains a mutation identity and expected revision; it grants no payment or
+execution authority. A conflict preserves the local draft for an explicit
+decision. Unknown quantities stay unresolved. Exact counts, authored ranges,
+accepted flexibility, and suggested aims remain separate. Optional work stays
+optional until chosen. Unsupported schema versions are read-only and retained.
+There are no influence, Include, Prefer, Avoid, or Never controls for Output
+requirements. Its canonical demonstration mounts the real card with an
+explicitly fictional, read-only snapshot and no result URLs.
+
+`<forma-output-requirements>` is the authenticated application controller. Its
+property-only `documentId`, optional `blockId`, and `surface` select a Document,
+one requirement card, or a Document/Project/Deliver view; they do not grant
+access. The host owns scoped loading, conditional writes, conflict responses,
+file adoption, exact-target checks, review, and authorized downloads. Confirming
+requirements does not run providers or authorize payment. Generation preflight,
+spending authorization, and execution are separate actions. Run selection does
+not reduce the owed scope. Execution, checks, review, freshness, availability,
+and capability are distinct facts; a finished operation is not an accepted
+assignment. A partial download is explicitly identified and retains the
+missing-work manifest.
+
+The controller's catalog demonstration composes existing presentational
+primitives and never imports or mounts the controller. Neither demonstration
+subscribes to application state, reads private media, calls a provider, grants
+payment authority, downloads files, or mutates data. Both entries have English,
+French, Arabic, and Japanese catalog descriptions. Their API references come
+from the generated Custom Elements Manifest, not manually invented slots or
+attributes. Run `pnpm cem` and `pnpm cem:check` after integration, and verify
+both generated manifests alongside the component and localization tests.
+
 ## Synthetic documentation and machine-readable contracts
 
 The living reference never mounts production application elements, subscribes

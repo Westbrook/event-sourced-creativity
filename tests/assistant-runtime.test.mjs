@@ -1368,10 +1368,12 @@ for(const started of [false,true])test(`legacy unsigned board job is parked with
   try{
     const parked=await runDocumentJob(state.env,auth.user,jobId);assert.equal(parked.status,"failed");assert.equal(parked.error_message,started?"provider_submission_uncertain":"adaptive_consent_required");
     assert.equal(JSON.parse(parked.result_json).noAutomaticRetry,true);assert.equal(JSON.parse(parked.result_json).errorDetail.retryable,false);
+    assert.equal(parked.output_slot_id,null,"Unsigned historical work must never acquire Output authority");
+    const parkedPhysical=Object.assign(Object.create(Object.getPrototypeOf(parked)),parked);delete parkedPhysical.output_slot_id;
     for(const key of ["job_id","owner_id","stream_id","document_id","correlation_id","attempt_count","request_json"])assert.equal(parked[key],original[key]);
     assert.deepEqual(ledger(),beforeLedger,"No exact non-submission proof exists for these original holds");
     appendFixtureEvents(state.sqlite,stream,[["CanvasRestored",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);
-    assert.deepEqual(await runDocumentJob(state.env,auth.user,jobId),parked,"Restoration is not retroactive approval");assert.deepEqual(adaptiveJob(state,jobId),parked);assert.deepEqual(ledger(),beforeLedger);
+    assert.deepEqual(await runDocumentJob(state.env,auth.user,jobId),parked,"Restoration is not retroactive approval");assert.deepEqual(adaptiveJob(state,jobId),parkedPhysical);assert.deepEqual(ledger(),beforeLedger);
     const sweep=await reconcileFailedBudgetReservations(state.env,auth.user,Date.now()+600_000);
     assert.deepEqual(sweep,{releasedTokens:0,reservationCount:0,releasedMicrousd:0,costReservationCount:0});
     assert.deepEqual(ledger(),beforeLedger,"The orphan sweep cannot reinterpret an unsigned original attempt as unused");
@@ -4421,7 +4423,7 @@ for(const shared of[false,true])test("adaptive routed withdrawal R9: "+(shared?"
     assert.equal((await adaptivePreissuedExecute(winnerPort,winner)).status,202);await providerEntered.promise;
     // readResult's own job query is not readJob. Pause only ports.read, after
     // retrieve has retained the early execution/quote and before certification.
-    intercept=interceptAdaptiveRegressionSql(state,(sql,stack)=>sql==="SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?"&&/\bat Object\.read\b/u.test(stack),"first",async()=>{readEntered.resolve();await readRelease.promise;});
+    intercept=interceptAdaptiveRegressionSql(state,(sql,stack)=>(sql==="SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?"||sql==="SELECT *,(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id FROM document_jobs WHERE job_id=? AND owner_id=?")&&/\bat Object\.read\b/u.test(stack),"first",async()=>{readEntered.resolve();await readRelease.promise;});
     redirect=adaptivePreissuedExecute(requestedPort,requested);await readEntered.promise;
     assert.deepEqual({...state.sqlite.prepare("SELECT status,result_ref FROM consequential_executions WHERE execution_id=?").get(winner.executionId)},{status:"reserved",result_ref:null});
     providerRelease.resolve();await state.drainBackground();
@@ -4618,6 +4620,14 @@ test("consequential consent preserves paid results when concurrent retrieval win
     const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0,release,entered,paused=false;
     const gate=new Promise((resolve)=>{release=resolve;}),started=new Promise((resolve)=>{entered=resolve;});
     const prepare=state.env.DB.prepare.bind(state.env.DB);
+    // Match only the two exact owned-reservation reads; claim/list/other scopes stay outside this gate.
+    const outputReservationProjection=(uncertain=false)=>`EXISTS(SELECT 1 FROM output_operation_slots slot
+ JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+ ${uncertain?"JOIN output_provider_calls call_row ON call_row.scope_key=slot.scope_key AND call_row.slot_id=slot.slot_id":""}
+ WHERE slot.${ledger==="budget_reservations"?"token":"cost"}_reservation_id=${ledger}.reservation_id AND grant_row.payer_user_id=${ledger}.owner_id
+ ${uncertain?"AND call_row.status IN('pending','uncertain')":""})`;
+    const settlementReads=new Set([`SELECT * FROM ${ledger} WHERE reservation_id=? AND owner_id=?`,
+      `SELECT *,${outputReservationProjection()} AS output_bound,${outputReservationProjection(true)} AS output_uncertain FROM ${ledger} WHERE reservation_id=? AND owner_id=?`]);
     try{
       globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state);
       state.env.DB.prepare=(sql)=>{
@@ -4626,7 +4636,7 @@ test("consequential consent preserves paid results when concurrent retrieval win
           const bound=bind(...values),first=bound.first.bind(bound);
           bound.first=async()=>{
             const result=await first();
-            if(!paused&&sql===`SELECT * FROM ${ledger} WHERE reservation_id=? AND owner_id=?`&&["active","executing"].includes(result?.status)
+            if(!paused&&settlementReads.has(sql)&&["active","executing"].includes(result?.status)
               &&state.sqlite.prepare("SELECT 1 FROM consequential_execution_steps WHERE status='usage-recorded'").get()){
               paused=true;entered();await gate;
             }
@@ -6975,4 +6985,633 @@ for (const shared of [false, true]) for (const surface of ["Document", "Canvas"]
       }
     } finally { await state.cleanup(); }
   });
+}
+
+const phase3ED1Profiles=[];
+async function withPhase3EOutputProposal(mode, run, options={}) {
+  const paid=options.paid!==false,state=mode==="personal"?await fixture({provider:paid}):await sharedProjectFixture({provider:paid});
+  const headers=mode==="personal"?{}:mode==="selected"?state.owner:Object.fromEntries(Object.entries(state.owner).filter(([key])=>key!=="cookie"));
+  const owner=mode==="personal"?"dev-local-creative":"assistant-owner",stream="creative:"+owner,original=globalThis.fetch,body=options.body??contextBody;let calls=0,depth,restore;
+  try {
+    await options.setup?.({state,headers,owner,stream,body});
+    let result=null,selected=null;
+    if(paid){
+      globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};
+      const quote=await quoteContext(state,body,headers),executed=await executeContext(state,quote,body,headers);
+      assert.equal(executed.status,200,await executed.clone().text());result=await executed.json();
+      selected=proposalSelection(result,0,options.edit??{type:"output",subtype:"Executive summary",label:"Reviewed delivery draft",text:"1 slideshow with 5 slides outlining the document."});
+    }
+    delete state.env.OPENAI_API_KEY;delete state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+    const {enforceD1ExpressionDepth}=await import("./helpers/d1-expression-depth.mjs");depth=enforceD1ExpressionDepth(state);
+    const {AsyncLocalStorage}=await import("node:async_hooks"),scope=new AsyncLocalStorage(),profiles=[];
+    const prototype=Object.getPrototypeOf(state.env.DB.prepare("SELECT 1")),execute=prototype.execute,request=state.request;
+    prototype.execute=function(kind){
+      const profile=scope.getStore();
+      if(profile){
+        profile.queries++;
+        profile.maxBindings=Math.max(profile.maxBindings,this.values.length);
+        profile.maxSqlBytes=Math.max(profile.maxSqlBytes,Buffer.byteLength(this.sql,"utf8"));
+        profile.maxValueBytes=Math.max(profile.maxValueBytes,...this.values.map(value=>typeof value==="string"?Buffer.byteLength(value,"utf8"):0));
+        assert.ok(this.values.length<=100,this.sql.slice(0,160));
+        assert.ok(Buffer.byteLength(this.sql,"utf8")<=100_000,this.sql.slice(0,160));
+        assert.ok(profile.queries<=1000,profile.action+" actual D1 request query budget");
+      }
+      return execute.call(this,kind);
+    };
+    state.request=(path,init)=>{
+      let action="read";try{action=JSON.parse(init?.body??"{}").action??action;}catch{ /* A non-JSON read has no action field. */ }
+      const profile={mode,path,action,queries:0,maxBindings:0,maxSqlBytes:0,maxValueBytes:0};profiles.push(profile);
+      return scope.run(profile,()=>request(path,init));
+    };
+    restore=()=>{prototype.execute=execute;state.request=request;};
+    await run({state,headers,owner,stream,body,result,selected,calls:()=>calls,profiles});
+    await state.drainBackground();
+    phase3ED1Profiles.push(...profiles);
+    assert.equal(calls,paid?1:0);
+  } finally { globalThis.fetch=original;restore?.();try{depth?.assertVerified();}finally{depth?.restore();state.phase3ECleanup?.();} }
+}
+async function phase3EAppend(state,headers,events){
+  const response=await state.request("/api/events",json({action:"batch",events,clientId:"phase3e-output-fixture"},headers));
+  assert.equal(response.status,200,await response.clone().text());return response.json();
+}
+const phase3EOutputCreation=(blockId="phase3e-source-output",documentId=contextBody.documentId,properties={})=>({type:"BlockCreated",payload:{project_id:contextBody.projectId,document_id:documentId,scope:"document",block_id:blockId,type:"output",handle:"output/reviewed-delivery",position:"z-output",properties:{label:"Reviewed requirements",text:"1 slideshow with 5 slides outlining the document.",subtype:"Executive summary",...properties}}});
+for(const mode of ["personal","owner-custody","selected"])test("Phase3E Output proposals normalize before approval and commit exact bytes: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected,calls})=>{
+  const before=contextEventCount(state,stream),costs=state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n;
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());
+  const {preview}=await response.json(),created=preview.events.find(event=>event.type==="BlockCreated");
+  assert.equal(created.payload.type,"output");assert.equal(created.payload.properties.output_spec?.id,created.payload.block_id);
+  for(const key of ["weight","intent","influence","effect"])assert.equal(Object.hasOwn(created.payload.properties,key),false,key);
+  const retained=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  assert.equal(await consequential.consentHash(retained.plan),preview.approvalHash);
+  assert.deepEqual(retained.plan.events,preview.events);assert.equal(contextEventCount(state,stream),before);
+  const committed=await applyContextChanges(state,preview,headers);assert.equal(committed.status,200,await committed.clone().text());
+  const first=await committed.json();assert.equal(first.status,"applied");assert.equal(first.blockIds[0],created.payload.block_id);
+  const exact=state.sqlite.prepare("SELECT event.type,secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.stream_id=? AND event.correlation_id=? ORDER BY event.sequence").all(stream,"authoring:"+retained.plan.binding.actorUserId+":"+preview.previewId);
+  assert.deepEqual(exact.map(row=>({type:row.type,payload:JSON.parse(row.private_json)})),preview.events);
+  const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  assert.deepEqual(saved.plan,retained.plan);assert.equal(saved.approvalHash,preview.approvalHash);
+  const recovered=await applyContextChanges(state,preview,headers,"retrieve");assert.equal(recovered.status,200);assert.equal((await recovered.json()).status,"applied");
+  assert.equal(contextEventCount(state,stream),before+preview.events.length);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type LIKE 'Output%'").get(stream).n,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,costs);assert.equal(calls(),1);
+}));
+for(const mode of ["personal","owner-custody","selected"])for(const fault of ["staged-private-body","retained-plan","source-private-owner"])test("Phase3E Output proposals final exactness rejects "+mode+"/"+fault,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,owner,selected})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json();
+  const before=contextEventCount(state,stream);
+  state.controls.beforeAuthoringCommit=()=>{
+    if(fault==="staged-private-body")state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','ALTERED_AFTER_STAGING') WHERE private_event_id IN(SELECT event_id FROM events WHERE correlation_id=? AND type='BlockCreated')").run("authoring:"+owner+":"+preview.previewId);
+    else if(fault==="retained-plan")state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.plan.events[1].payload.properties.text','ALTERED_SAVED_PLAN') WHERE content_id=?").run(preview.previewId);
+    else state.sqlite.prepare("UPDATE event_private_payloads SET owner_id='foreign-private-owner' WHERE private_event_id IN(SELECT event_id FROM events WHERE stream_id=? AND type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(stream,contextBody.blockId);
+  };
+  const committed=await applyContextChanges(state,preview,headers);assert.notEqual(committed.status,200,await committed.clone().text());
+  assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+}));
+
+
+for(const mode of ["personal","owner-custody","selected"])test("Phase3E Output proposals never rewrite a previously approved unnormalized draft: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected,calls})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json();
+  const stored=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  // A retained pre-main approval legitimately contained these pre-normalization bytes.
+  const legacy=structuredClone(stored),created=legacy.plan.events.find(event=>event.type==="BlockCreated");
+  delete created.payload.properties.output_spec;created.payload.properties.intent="include";created.payload.properties.weight=.8;
+  legacy.approvalHash=await consequential.consentHash(legacy.plan);
+  state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify(legacy),preview.previewId);
+  const before=contextEventCount(state,stream),rejected=await applyContextChanges(state,{...preview,approvalHash:legacy.approvalHash},headers);
+  const denied=await rejected.json();assert.equal(rejected.status,409,JSON.stringify(denied));assert.equal(denied.status,"not-applied");assert.equal(denied.error,"authoring_preview_stale");
+  assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  const unchanged=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  assert.deepEqual(unchanged.plan,legacy.plan);assert.equal(unchanged.approvalHash,legacy.approvalHash);
+  const fresh=await previewContextChanges(state,[selected],headers);assert.equal(fresh.status,200,await fresh.clone().text());
+  const next=(await fresh.json()).preview,newBlock=next.events.find(event=>event.type==="BlockCreated");
+  assert.notEqual(next.previewId,preview.previewId);assert.notEqual(next.approvalHash,legacy.approvalHash);
+  assert.equal(newBlock.payload.properties.output_spec.id,newBlock.payload.block_id);
+  assert.equal((await applyContextChanges(state,next,headers)).status,200);assert.equal(calls(),1);
+}));
+
+for(const mode of ["personal","owner-custody","selected"])for(const grouped of [false,true])test("Phase3E Output proposals existing Output requires its revision-aware editor: "+mode+"/"+grouped,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,body})=>{
+  const {prepareContextAuthority}=await import("../worker/context-authoring-authority.ts"),{storeAuthoringPreview}=await import("../worker/authoring-commits.ts");
+  const prepared=await prepareContextAuthority(new Request("http://localhost/api/context/apply",json(body,headers)),state.env,body,"author");
+  assert.ok(!(prepared instanceof Response));assert.equal(prepared.target.type,"output");
+  const plan={operation:"context-proposal",binding:prepared.binding,sourceHead:prepared.sourceHead,expiresAt:new Date(Date.now()+600_000).toISOString(),
+    events:[{type:"BlockRelationAdded",payload:{project_id:body.projectId,document_id:body.documentId,scope:"document",relation_id:crypto.randomUUID(),from_block_id:body.blockId,to_block_id:"block-direction",kind:"context_contains",properties:{member_order:0}}}],
+    changes:[{kind:"link",label:"Existing Output",text:"Unchanged source",sourceId:body.blockId,targetId:"block-direction"}],result:{blockIds:[],relationCount:1}};
+  const preview=await storeAuthoringPreview(state.env,prepared.principal,plan),before=contextEventCount(state,stream);
+  const response=await applyContextChanges(state,preview,headers,"apply",body),denied=await response.json();
+  assert.equal(response.status,409,JSON.stringify(denied));assert.equal(denied.status,"not-applied");assert.equal(denied.error,"output_requirement_endpoint_required");assert.equal(denied.blockId,body.blockId);
+  assert.match(denied.message,/Output requirements editor.*current revision.*draft was not saved/);
+  assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  assert.deepEqual(saved.plan,plan);assert.equal(saved.approvalHash,preview.approvalHash);
+},{paid:false,body:{...contextBody,blockId:"phase3e-existing-output"},setup:async({state,headers})=>{
+  await phase3EAppend(state,headers,[phase3EOutputCreation("phase3e-existing-output",contextBody.documentId,grouped?{context_group:{name:"Already grouped",application:"isolate",role:"direction",relativity:1}}:{})]);
+}}));
+
+for(const mode of ["personal","owner-custody","selected"])test("Phase3E Output proposals a dedicated Output draft revision invalidates the old approval without rewriting it: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected})=>{
+  const quoted=await previewContextChanges(state,[selected],headers);assert.equal(quoted.status,200,await quoted.clone().text());const{preview}=await quoted.json();
+  const old=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content;
+  const editorHeaders=state.owner??headers;
+  const inspected=await state.request("/api/output-requirements?documentId="+encodeURIComponent(contextBody.documentId),{headers:editorHeaders});assert.equal(inspected.status,200,await inspected.clone().text());
+  const snapshot=await inspected.json(),requirement=snapshot.requirements.find(item=>item.blockId==="phase3e-source-output");
+  assert.ok(requirement);const spec=structuredClone(requirement.spec);
+  spec.label="A new explicitly saved Output draft";
+  const changed=await state.request("/api/output-requirements",json({action:"save",documentId:contextBody.documentId,blockId:requirement.blockId,spec,expectedRevision:snapshot.revision,clientMutationId:crypto.randomUUID()},editorHeaders));
+  assert.equal(changed.status,200,await changed.clone().text());const changedBody=await changed.json();assert.ok(changedBody.appended.some(event=>event.type==="BlockPropertyEdited"));
+  const before=contextEventCount(state,stream),denied=await applyContextChanges(state,preview,headers);assert.equal(denied.status,409,await denied.clone().text());
+  assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  const retained=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  assert.deepEqual(retained.plan,JSON.parse(old).plan);assert.equal(retained.approvalHash,preview.approvalHash);
+  const recovered=await applyContextChanges(state,preview,headers,"retrieve");assert.equal(recovered.status,200);assert.equal((await recovered.json()).stale,true);
+},{setup:async({state,headers})=>phase3EAppend(state,state.owner??headers,[phase3EOutputCreation()])}));
+
+async function phase3ERetainedOutputPlan(state,stream,owner){
+  const {parseOutputRequirement,inspectOutputRequirement}=await import("../src/model/output-requirements.ts"),{compileOutputPlan}=await import("../src/model/output-plan.ts"),{makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+  const spec=parseOutputRequirement({id:"phase3e-ledger-only",type:"output",subtype:"Executive summary",content:"1 slideshow with 5-15 slides, one podcast episode, and a series of videos outlining the document."}).spec;
+  spec.deliverables=[spec.deliverables[0]];spec.deliverables[0].quantity={kind:"exact",unit:"presentation",value:1000};assert.equal(inspectOutputRequirement(spec).status,"valid");
+  const plan=compileOutputPlan([spec],{document_id:contextBody.documentId,source_revision:"a".repeat(64),requirement_revision:"b".repeat(64),count_policies:{[spec.deliverables[0].id]:{kind:"exact",unit:"slide",value:5}},max_targets:1000});
+  assert.equal(plan.issues.length,0);assert.equal(plan.targets.length,1000);assert.equal(plan.unresolved_groups.length,0);assert.ok(plan.targets.every(target=>target.blocking_issues.length===0));
+  const payload={project_id:contextBody.projectId,document_id:contextBody.documentId,plan_revision_id:"phase3e-ledger-only",confirmed_plan:{id:contextBody.documentId,revisionId:"phase3e-ledger-only",revision:1,confirmedAt:new Date().toISOString(),requirementsDigest:"b".repeat(64),sourceDigest:"a".repeat(64),plan,targetContractDigests:Object.fromEntries(plan.targets.map(target=>[target.id,"c".repeat(64)])),confirmationOptions:{}}};
+  const head=state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head;
+  const event=makeEvent(stream,head+1,"user:"+owner,"phase3e-retained-ledger-fixture",crypto.randomUUID(),"OutputPlanConfirmed",payload),values=eventWriteBindings(event);
+  await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+  const retained=state.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=?").get(event.eventId);
+  assert.ok(Buffer.byteLength(retained.private_json,"utf8")>1_000_000,"supported 1000-target retained plan exercises the original large-ledger boundary");
+  return event.eventId;
+}
+for(const mode of ["personal","owner-custody","selected"])test("Phase3E Output proposals unrelated 1000-target Output ledger retention is not a creative source dependency: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,owner,selected,profiles})=>{
+  const {prepareContextAuthority}=await import("../worker/context-authoring-authority.ts"),request=()=>new Request("http://localhost/api/context/apply",json(contextBody,headers));
+  const before=await prepareContextAuthority(request(),state.env,contextBody,"author");assert.ok(!(before instanceof Response));
+  const ledgerId=await phase3ERetainedOutputPlan(state,stream,owner);
+  const withLedger=await prepareContextAuthority(request(),state.env,contextBody,"author");assert.ok(!(withLedger instanceof Response));assert.ok(withLedger.events.some(event=>event.eventId===ledgerId));
+  assert.equal(withLedger.binding.sourceHash,before.binding.sourceHash,"actual main event reader includes the ledger but contextSourceHash does not depend on it");
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json();
+  const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  // Real retention can erase this unrelated result ledger without changing an authored decision.
+  state.sqlite.prepare("UPDATE event_private_payloads SET private_json='{}',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),ledgerId);
+  const current=await prepareContextAuthority(request(),state.env,contextBody,"author");assert.ok(!(current instanceof Response));assert.equal(current.binding.sourceHash,before.binding.sourceHash);
+  const count=contextEventCount(state,stream),committed=await applyContextChanges(state,preview,headers);assert.equal(committed.status,200,await committed.clone().text());
+  assert.equal(contextEventCount(state,stream),count+preview.events.length);
+  const same=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);assert.deepEqual(same.plan,saved.plan);assert.equal(same.approvalHash,saved.approvalHash);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type LIKE 'Output%'").get(stream).n,1,"no plan, job, grant, approval or result ledger was copied or created by acceptance");
+  assert.ok(profiles.filter(profile=>["preview","apply"].includes(profile.action)).every(profile=>profile.maxValueBytes<1_000_000),"no truncated or duplicated ledger body enters the exact creative source proof");
+}));
+
+for(const mode of ["personal","owner-custody","selected"])for(const change of ["source-private-erased","source-private-deleted","preview-private-erased","authority-withdrawn",...(mode==="personal"?[]:["source-event-custody","source-resource-custody","preview-retention-custody"])])test("Phase3E Output proposals retained source/current authority changes during the lease leave zero authored effects: "+mode+"/"+change,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,owner,selected})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json();
+  const before=contextEventCount(state,stream),correlation="authoring:"+owner+":"+preview.previewId;
+  const source=state.sqlite.prepare("SELECT event_id FROM events WHERE stream_id=? AND type='BlockCreated' AND json_extract(payload,'$.block_id')=?").get(stream,contextBody.blockId).event_id;
+  state.controls.afterAuthoringClaim=async()=>{
+    if(change==="source-private-erased")state.sqlite.prepare("UPDATE event_private_payloads SET private_json='{}',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source);
+    else if(change==="source-private-deleted")state.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(source);
+    else if(change==="preview-private-erased")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),preview.previewId);
+    else if(change==="authority-withdrawn")state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(owner);
+    else if(change==="source-event-custody")state.sqlite.prepare("DELETE FROM project_event_scopes WHERE event_id=?").run(source);
+    else if(change==="source-resource-custody")state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='block' AND resource_id=?").run(state.projectAccessId,contextBody.blockId);
+    else state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(preview.previewId);
+  };
+  const rejected=await applyContextChanges(state,preview,headers);assert.notEqual(rejected.status,200,await rejected.clone().text());
+  assert.equal(contextEventCount(state,stream),before);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE correlation_id=?").get(correlation).n,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM event_private_payloads secret JOIN events event ON event.event_id=secret.private_event_id WHERE event.correlation_id=?").get(correlation).n,0);
+  if(mode!=="personal")assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE source_event_id IN(SELECT event_id FROM events WHERE correlation_id=?)").get(correlation).n,0);
+}));
+
+for(const mode of ["personal","owner-custody","selected"])test("Phase3E Output proposals concurrent confirmation and lost-response recovery reuse the exact original receipt: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json(),before=contextEventCount(state,stream);
+  let enter,release;const entered=new Promise(resolve=>{enter=resolve;}),barrier=new Promise(resolve=>{release=resolve;});
+  state.controls.afterAuthoringClaim=async()=>{enter();await barrier;};
+  const first=applyContextChanges(state,preview,headers);await entered;
+  try{
+    const concurrent=await applyContextChanges(state,preview,headers);assert.equal(concurrent.status,202,await concurrent.clone().text());assert.equal((await concurrent.json()).status,"applying");
+  }finally{release();}
+  const committed=await first;assert.equal(committed.status,200,await committed.clone().text());
+  // The client receives no body here. Recovery uses only the original opaque preview identity/hash.
+  const recovered=await applyContextChanges(state,preview,headers,"retrieve");assert.equal(recovered.status,200,await recovered.clone().text());const receipt=await recovered.json();assert.equal(receipt.status,"applied");
+  const repeated=await applyContextChanges(state,preview,headers);assert.equal(repeated.status,200);assert.deepEqual((await repeated.json()).blockIds,receipt.blockIds);
+  assert.equal(contextEventCount(state,stream),before+preview.events.length);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+  const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+  assert.equal(saved.approvalHash,preview.approvalHash);assert.deepEqual(saved.plan.events,preview.events);
+}));
+
+
+
+test("Phase3E exact event proof preserves the extracted Phase6 truth table, including NULL and missing private rows",()=>withPhase3EOutputProposal("personal",async({state,stream,owner})=>{
+  const {authoringEventProof,authoringEventRowsProof}=await import("../worker/authoring-event-proof.ts"),{makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+  const columns=["event_id","stream_id","sequence","occurred_at","recorded_at","actor","client_id","correlation_id","causation_id","compensates_event_id","schema_version","type","payload"];
+  const head=state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?").get(stream).n,event=makeEvent(stream,head+1,"user:"+owner,"phase3e-proof-fixture","proof-correlation","BlockCreated",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:"proof-output",type:"output",properties:{text:"Exact Unicode Élodie 東京 — private source"}});
+  const values=eventWriteBindings(event);await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+  // Frozen Phase6's reference comparison: all 13 canonical fields, four private fields and live retention.
+  const originalSql="NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(SELECT 1 FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE "+columns.map((column,index)=>"event."+column+" IS json_extract(expected.value,'$["+index+"]')").join(" AND ")+" AND secret.owner_id IS json_extract(expected.value,'$[13]') AND secret.project_id IS json_extract(expected.value,'$[14]') AND secret.document_id IS json_extract(expected.value,'$[15]') AND secret.private_json IS json_extract(expected.value,'$[16]') AND secret.redacted_at IS NULL))";
+  const evaluate=async proof=>(await state.env.DB.prepare("SELECT CASE WHEN "+proof.sql+" THEN 1 ELSE 0 END AS verified").bind(...proof.bindings).first()).verified;
+  const compare=async(expected,want)=>{const old=await evaluate({sql:originalSql,bindings:[JSON.stringify([expected])]}),current=await evaluate(authoringEventRowsProof([expected]));assert.equal(old,want);assert.equal(current,old);};
+  assert.equal(await evaluate(authoringEventProof([event])),1);await compare(values,1);
+  for(let index=0;index<values.length;index++){
+    const wrong=[...values];wrong[index]=typeof wrong[index]==="number"?wrong[index]+1:wrong[index]===null?"unexpected-nonnull":String(wrong[index])+"-changed";await compare(wrong,0);
+    if(values[index]!==null){const absent=[...values];absent[index]=null;await compare(absent,0);}
+  }
+  state.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),event.eventId);await compare(values,0);
+  state.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(event.eventId);await compare(values,0);
+  const legacy=eventWriteBindings(event);legacy.splice(13,4,null,null,null,null);
+  assert.equal(await evaluate(authoringEventRowsProof([legacy],true)),1,"captured genuine legacy absence is explicit, not an allocated-write exemption");
+  assert.equal(await evaluate(authoringEventRowsProof([legacy])),0,"newly allocated writes always require their private row");
+  state.sqlite.prepare("INSERT INTO event_private_payloads(private_event_id,owner_id,project_id,document_id,private_json,created_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)").run(event.eventId,owner,contextBody.projectId,contextBody.documentId,"{}",new Date().toISOString());
+  assert.equal(await evaluate(authoringEventRowsProof([legacy],true)),0,"a newly introduced private body cannot match the captured absence");
+  assert.throws(()=>authoringEventProof([]),/invalid_authoring_operation/);
+  assert.throws(()=>authoringEventRowsProof([[null]]),/authoring_write_proof_required/);
+},{paid:false}));
+
+test("Phase3E exact source sidecar proof preserves every custody column without NULL widening",()=>withPhase3EOutputProposal("selected",async({state})=>{
+  const {authoringSidecarProof,AUTHORING_SIDECAR_COLUMNS}=await import("../worker/authoring-event-proof.ts");
+  for(const table of ["project_event_scopes","project_resource_scopes"]){
+    const row=state.sqlite.prepare("SELECT * FROM "+table+" WHERE project_access_id=? LIMIT 1").get(state.projectAccessId),columns=AUTHORING_SIDECAR_COLUMNS[table],values=columns.map(column=>row[column]??null);
+    const evaluate=async expected=>{const guard=authoringSidecarProof(table,[expected]);return(await state.env.DB.prepare("SELECT CASE WHEN "+guard.sql+" THEN 1 ELSE 0 END AS verified").bind(...guard.bindings).first()).verified;};
+    assert.equal(await evaluate(values),1);
+    for(let index=0;index<values.length;index++){const wrong=[...values];wrong[index]=values[index]===null?"unexpected":typeof values[index]==="number"?values[index]+1:String(values[index])+"-changed";assert.equal(await evaluate(wrong),0,table+"/"+columns[index]);if(values[index]!==null){wrong[index]=null;assert.equal(await evaluate(wrong),0,table+"/"+columns[index]+"/NULL");}}
+  }
+},{paid:false}));
+
+for(const mode of ["personal","owner-custody","selected"])for(const predicate of ["0","NULL"])test("Phase3E exact final receipt false-or-NULL source proof rolls back the whole authored operation: "+mode+"/"+predicate,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json();
+  const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content),{prepareContextAuthority}=await import("../worker/context-authoring-authority.ts"),{commitAuthoringPlan}=await import("../worker/authoring-commits.ts");
+  const prepared=await prepareContextAuthority(new Request("http://localhost/api/context/apply",json(contextBody,headers)),state.env,contextBody,"author");assert.ok(!(prepared instanceof Response));
+  const before=contextEventCount(state,stream);
+  await assert.rejects(commitAuthoringPlan(state.env,prepared.principal,prepared.binding,prepared.shared,preview.previewId,preview.approvalHash,saved.plan,prepared.sourceHead,{sql:predicate,bindings:[]}));
+  assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM event_private_payloads WHERE private_event_id IN(SELECT event_id FROM events WHERE correlation_id=?)").get("authoring:"+prepared.principal.userId+":"+preview.previewId).n,0);
+}));
+
+test("Phase3E Output proposals missing owner-migration event custody is rejected until the existing selected refresh indexes it",()=>withPhase3EOutputProposal("owner-custody",async({state,headers,stream,selected})=>{
+  const source=state.sqlite.prepare("SELECT event_id FROM events WHERE stream_id=? AND json_extract(payload,'$.block_id')='phase3e-source-output'").get(stream);
+  assert.ok(source);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?").get(source.event_id).n,0);
+  const before=contextEventCount(state,stream),denied=await previewContextChanges(state,[selected],headers);assert.equal(denied.status,409);assert.equal((await denied.json()).error,"context_changes_source_custody_changed");
+  assert.equal(contextEventCount(state,stream),before);
+  const refreshed=await state.request("/api/events?after=0&limit=2000&content=0",{headers:state.owner});assert.equal(refreshed.status,200,await refreshed.clone().text());
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?").get(source.event_id).n,1);
+  const preview=await previewContextChanges(state,[selected],headers);assert.equal(preview.status,200,await preview.clone().text());assert.equal(contextEventCount(state,stream),before);
+},{setup:async({state,headers})=>phase3EAppend(state,headers,[phase3EOutputCreation()])}));
+
+for(const mode of ["owner-custody","selected"])test("Phase3E Output proposals a used reference losing resource custody during the lease cannot commit: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json(),before=contextEventCount(state,stream);
+  state.controls.afterAuthoringClaim=async()=>{state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='reference' AND resource_id='phase3e-owned-reference'").run(state.projectAccessId);};
+  const rejected=await applyContextChanges(state,preview,headers);assert.notEqual(rejected.status,200,await rejected.clone().text());assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+},{setup:async({state,headers,stream})=>{appendFixtureEvents(state.sqlite,stream,[
+  ["ReferenceIngested",{project_id:contextBody.projectId,document_id:contextBody.documentId,reference_id:"phase3e-owned-reference",rights_class:"owned",source_type:"text",source_ref:""}],
+  ["BlockPropertyEdited",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:contextBody.blockId,property_path:"reference_id",old_value:null,new_value:"phase3e-owned-reference"}]
+]);const refreshed=await state.request("/api/events?after=0&limit=2000&content=0",{headers:state.owner??headers});assert.equal(refreshed.status,200);}}));
+
+
+for(const mode of ["personal","owner-custody","selected"])for(const source of ["block","reference"])test("Phase3E Output proposals license expiration is checked against database time at the final receipt: "+mode+"/"+source,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,selected})=>{
+  const response=await previewContextChanges(state,[selected],headers);assert.equal(response.status,200,await response.clone().text());const{preview}=await response.json(),before=contextEventCount(state,stream);
+  const clock=new DatabaseSync(":memory:");state.phase3ECleanup=()=>clock.close();let reached=false;
+  try{
+    state.controls.afterAuthoringClaim=async()=>{
+      reached=true;assert.ok(Date.now()<Date.parse(state.phase3ELicenseDeadline),"JavaScript's earlier source read still sees the license as live");
+      const databaseNow=new Date(Date.parse(state.phase3ELicenseDeadline)+30_000).toISOString();
+      // A deterministic SQLite clock boundary: the lease and preview are still live,
+      // while the exact source license has expired. No source/event byte is changed.
+      state.sqlite.function("strftime",{varargs:true},(...args)=>clock.prepare("SELECT strftime("+args.map(()=>"?").join(",")+") AS value").get(...args.map((arg,index)=>index===1&&arg==="now"?databaseNow:arg)).value);
+      const observed=state.sqlite.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS now").get().now;
+      assert.ok(observed>state.phase3ELicenseDeadline);
+      const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);
+      assert.ok(saved.leaseExpiresAt>observed);assert.ok(saved.plan.expiresAt>observed);
+    };
+    const denied=await applyContextChanges(state,preview,headers);assert.equal(reached,true);assert.notEqual(denied.status,200,await denied.clone().text());
+    assert.equal(contextEventCount(state,stream),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  }finally{
+    // Keep the fixture's DB callable for its final background/read-proof checks.
+    state.sqlite.function("strftime",{varargs:true},(...args)=>clock.prepare("SELECT strftime("+args.map(()=>"?").join(",")+") AS value").get(...args).value);
+  }
+},{setup:async({state,headers,stream})=>{
+  state.phase3ELicenseDeadline=new Date(Date.now()+60_000).toISOString();
+  if(source==="block")await phase3EAppend(state,state.owner??headers,[{type:"BlockPropertyEdited",payload:{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:contextBody.blockId,property_path:"license_expires_at",old_value:null,new_value:state.phase3ELicenseDeadline}}]);
+  else{
+    appendFixtureEvents(state.sqlite,stream,[["ReferenceIngested",{project_id:contextBody.projectId,document_id:contextBody.documentId,reference_id:"phase3e-time-reference",rights_class:"owned_or_licensed",source_type:"text",source_ref:"",license_expires_at:state.phase3ELicenseDeadline}],["BlockPropertyEdited",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:contextBody.blockId,property_path:"reference_id",old_value:null,new_value:"phase3e-time-reference"}]]);
+    const refreshed=await state.request("/api/events?after=0&limit=2000&content=0",{headers:state.owner??headers});assert.equal(refreshed.status,200);
+  }
+}}));
+
+for(const mode of ["personal","owner-custody","selected"])for(const complete of [false,true])test("Phase3E model-to-Worker retained research Output copies preserve exact partial/complete source scope: "+mode+"/"+complete,()=>withPhase3EOutputProposal(mode,async({state,headers,stream})=>{
+  const {prepareContextAuthority}=await import("../worker/context-authoring-authority.ts"),{storeAuthoringPreview}=await import("../worker/authoring-commits.ts"),{buildContextApplicationPlan}=await import("../src/model/context-proposal-application.ts"),{prepareOutputRequirementClientEvents,outputAuthoringBlocksFromEvents}=await import("../worker/output-requirement-event-guards.ts");
+  const prepared=await prepareContextAuthority(new Request("http://localhost/api/context/apply",json(contextBody,headers)),state.env,contextBody,"author");assert.ok(!(prepared instanceof Response));
+  const original=prepared.projection.libraryBlocks.find(block=>block.id==="phase3e-research-output");assert.ok(original);
+  const planned=buildContextApplicationPlan({projection:prepared.projection,target:prepared.target,proposals:[{key:"retained-research:output",executionId:"retained-research",proposalId:"output",research:{id:"output",area:"related",blockId:original.id,type:"output",subtype:"Executive summary",label:"Saved Output requirements",text:original.properties.text,reason:"Reviewed related source",scope:"project",distance:1,sourceUrl:null,imageUrl:null,license:null,attribution:null}}]});
+  const normalized=prepareOutputRequirementClientEvents(planned.events,outputAuthoringBlocksFromEvents(prepared.events));assert.equal(normalized.ok,true);
+  const plan={operation:"context-proposal",binding:prepared.binding,sourceHead:prepared.sourceHead,events:normalized.events,changes:planned.changes,result:{blockIds:planned.blockIds,relationCount:planned.relationCount},expiresAt:new Date(Date.now()+600_000).toISOString()};
+  const preview=await storeAuthoringPreview(state.env,prepared.principal,plan),before=contextEventCount(state,stream);
+  const copied=preview.events.filter(event=>event.type==="BlockCreated"),output=copied.find(event=>event.payload.type==="output"),ids=new Map(copied.map(event=>[event.payload.properties.copied_from_block_id,event.payload.block_id]));
+  assert.equal(copied.length,complete?3:2);assert.equal(output.payload.properties.output_spec.id,output.payload.block_id);assert.notEqual(output.payload.block_id,original.id);
+  if(complete)assert.deepEqual(output.payload.properties.output_spec.deliverables[0].source_scope,{kind:"blocks",block_ids:[ids.get("phase3e-research-a"),ids.get("phase3e-research-b")]});
+  else assert.equal(output.payload.properties.output_spec.deliverables[0].source_scope.kind,"unknown");
+  assert.ok(copied.every(event=>event.payload.document_id===contextBody.documentId));assert.ok(preview.events.every(event=>!event.type.startsWith("Output")));
+  const committed=await applyContextChanges(state,preview,headers);assert.equal(committed.status,200,await committed.clone().text());assert.equal(contextEventCount(state,stream),before+preview.events.length);
+  const rows=state.sqlite.prepare("SELECT event.type,secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.correlation_id=? ORDER BY event.sequence").all("authoring:"+prepared.principal.userId+":"+preview.previewId);
+  assert.deepEqual(rows.map(row=>({type:row.type,payload:JSON.parse(row.private_json)})),preview.events);
+  const saved=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(preview.previewId).content);assert.equal(saved.approvalHash,preview.approvalHash);assert.deepEqual(saved.plan,plan);
+},{paid:false,setup:async({state,headers})=>{
+  const {parseOutputRequirement}=await import("../src/model/output-requirements.ts"),documentId="phase3e-research-doc",spec=parseOutputRequirement({id:"phase3e-research-output",type:"output",subtype:"Executive summary",content:"1 slideshow with 5 slides outlining the document."}).spec;
+  spec.deliverables[0].source_scope={kind:"blocks",block_ids:["phase3e-research-a","phase3e-research-b"]};
+  const scope={project_id:contextBody.projectId,document_id:documentId,scope:"document"};
+  const events=[{type:"DocumentCreated",payload:{project_id:contextBody.projectId,document_id:documentId,title:"Research source",handle:"research-source"}},phase3EOutputCreation("phase3e-research-output",documentId,{output_spec:spec}),
+    ...["a","b"].map(id=>({type:"BlockCreated",payload:{...scope,block_id:"phase3e-research-"+id,type:"subject",handle:"subject/research-"+id,position:"a-"+id,properties:{label:"Source "+id,text:"Exact retained "+id}}})),
+    ...["a",...(complete?["b"]:[])].map(id=>({type:"BlockRelationAdded",payload:{...scope,relation_id:"phase3e-research-link-"+id,from_block_id:"phase3e-research-output",to_block_id:"phase3e-research-"+id,kind:"visual_evidence",properties:{}}}))];
+  await phase3EAppend(state,state.owner??headers,events);
+}}));
+
+
+for(const mode of ["personal","owner-custody","selected"])test("Phase3E Output proposals all 48 selected new Output drafts commit atomically within the existing request budget: "+mode,()=>withPhase3EOutputProposal(mode,async({state,headers,stream,profiles})=>{
+  const {prepareContextAuthority}=await import("../worker/context-authoring-authority.ts"),{storeAuthoringPreview}=await import("../worker/authoring-commits.ts"),{buildContextApplicationPlan}=await import("../src/model/context-proposal-application.ts"),{prepareOutputRequirementClientEvents,outputAuthoringBlocksFromEvents}=await import("../worker/output-requirement-event-guards.ts");
+  const prepared=await prepareContextAuthority(new Request("http://localhost/api/context/apply",json(contextBody,headers)),state.env,contextBody,"author");assert.ok(!(prepared instanceof Response));
+  const proposals=Array.from({length:48},(_,index)=>({key:"retained:"+index,executionId:"retained-"+Math.floor(index/24),proposalId:"proposal-"+index,decomposition:{id:"proposal-"+index,type:"emotion",subtype:"Primary affect",label:"Quiet",text:"quiet",sourceExcerpt:"quiet",participants:[],addendum:index>=24},edit:{type:"output",subtype:"Executive summary",label:"Reviewed Output "+index,text:"1 slideshow with 5 slides outlining the document."}}));
+  const planned=buildContextApplicationPlan({projection:prepared.projection,target:prepared.target,proposals}),normalized=prepareOutputRequirementClientEvents(planned.events,outputAuthoringBlocksFromEvents(prepared.events));assert.equal(normalized.ok,true);
+  const plan={operation:"context-proposal",binding:prepared.binding,sourceHead:prepared.sourceHead,events:normalized.events,changes:planned.changes,result:{blockIds:planned.blockIds,relationCount:planned.relationCount},expiresAt:new Date(Date.now()+600_000).toISOString()};
+  assert.equal(plan.result.blockIds.length,48);assert.equal(plan.events.length,97);
+  const preview=await storeAuthoringPreview(state.env,prepared.principal,plan),before=contextEventCount(state,stream);
+  const applied=await applyContextChanges(state,preview,headers);assert.equal(applied.status,200,await applied.clone().text());const receipt=await applied.json();
+  assert.deepEqual(receipt.blockIds,plan.result.blockIds);assert.equal(contextEventCount(state,stream),before+97);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+  assert.ok(profiles.find(profile=>profile.action==="apply").queries<1000);
+  const created=state.sqlite.prepare("SELECT secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.correlation_id=? AND event.type='BlockCreated'").all("authoring:"+prepared.principal.userId+":"+preview.previewId);
+  assert.equal(created.length,48);
+  for(const row of created){const payload=JSON.parse(row.private_json);assert.equal(payload.type,"output");assert.equal(payload.properties.output_spec.id,payload.block_id);}
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type LIKE 'Output%'").get(stream).n,0);
+},{paid:false}));
+
+
+test("Phase3E exact event proof reuses the large escaped-body fallback without truncating canonical/private bytes",()=>withPhase3EOutputProposal("personal",async({state,stream,owner})=>{
+  const {authoringEventProof,authoringEventRowsProof}=await import("../worker/authoring-event-proof.ts"),{makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+  const head=state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head;
+  const event=makeEvent(stream,head+1,"user:"+owner,"phase3e-proof-fixture","large-private-proof","BlockCreated",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:"large-proof",type:"direction",properties:{text:'"'.repeat(500_000)+"EXACT_PRIVATE_TAIL"}});
+  const values=eventWriteBindings(event);assert.ok(Buffer.byteLength(JSON.stringify(values),"utf8")>1_900_000);assert.ok(Buffer.byteLength(values[16],"utf8")<2_000_000);
+  await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+  const proof=authoringEventProof([event]);assert.equal(proof.bindings.length,17,"same Phase6 raw-binding fallback, not a larger platform-bound JSON value");
+  assert.equal((await state.env.DB.prepare("SELECT CASE WHEN "+proof.sql+" THEN 1 ELSE 0 END AS verified").bind(...proof.bindings).first()).verified,1);
+  const changed=[...values];changed[16]=changed[16].replace("EXACT_PRIVATE_TAIL","WRONG_PRIVATE_TAIL");const denied=authoringEventRowsProof([changed]);
+  assert.equal((await state.env.DB.prepare("SELECT CASE WHEN "+denied.sql+" THEN 1 ELSE 0 END AS verified").bind(...denied.bindings).first()).verified,0);
+  const tooLarge=[...values];tooLarge[16]="x".repeat(2_000_001);assert.throws(()=>authoringEventRowsProof([tooLarge]),/authoring_payload_too_large/);
+},{paid:false}));
+test("Phase3E Output proposals use the actual bounded D1 request/statement budget",(t)=>{
+  assert.ok(phase3ED1Profiles.length);
+  for(const profile of phase3ED1Profiles){assert.ok(profile.queries<=1000);assert.ok(profile.maxBindings<=100);assert.ok(profile.maxSqlBytes<=100_000);assert.ok(profile.maxValueBytes<=2_000_000);}
+  const byAction=new Map();for(const profile of phase3ED1Profiles){const key=profile.mode+"/"+profile.action,current=byAction.get(key)??{queries:0,bindings:0,sqlBytes:0,valueBytes:0};for(const[a,b]of[["queries","queries"],["bindings","maxBindings"],["sqlBytes","maxSqlBytes"],["valueBytes","maxValueBytes"]])current[a]=Math.max(current[a],profile[b]);byAction.set(key,current);}
+  t.diagnostic(JSON.stringify({actualD1Requests:Object.fromEntries(byAction)}));
+});
+
+// Main170 generic Output authoring must share the native Worker route and the
+// accepted personal/selected/migrated-owner authority paths.
+async function withMain170Authority(mode, run, { canvas = false } = {}) {
+  const state = mode === "personal" ? await fixture() : await sharedProjectFixture();
+  if (canvas && mode !== "personal") {
+    const { IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE: evidence } = await import("../worker/image-adapter-evaluation-evidence.ts");
+    const now = new Date().toISOString(), approval = state.sqlite.prepare("INSERT INTO canvas_governance_requirements(requirement_id,status,evidence_ref,details_json,updated_at) VALUES(?,?,?,?,?)");
+    approval.run("trust_safety", "approved", "fixture/trust-safety", "{}", now);
+    approval.run("counsel", "approved", "fixture/counsel", "{}", now);
+    approval.run("second_image_adapter", "approved", evidence.evaluationRef, JSON.stringify({
+      adapter_id: evidence.adapterId, contract_version: evidence.adapterVersion, corpus_version: evidence.corpusVersion,
+      evaluation_ref: evidence.evaluationRef, evaluation_passed: true,
+    }), now);
+  }
+  await state.drainBackground();
+  const headers = mode === "personal" ? {} : mode === "selected" ? state.owner
+    : Object.fromEntries(Object.entries(state.owner).filter(([key]) => key !== "cookie"));
+  const owner = mode === "personal" ? "dev-local-creative" : "assistant-owner", stream = "creative:" + owner;
+  const depth = enforceD1ExpressionDepth(state), originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new Error("main170_authority_must_not_use_network"); };
+  try {
+    if (canvas) {
+      const created = await main170AuthorityWrite(state, headers, { type: "CanvasCreated", payload: { project_id: "project-atmosphere", canvas_id: "main170-board", name: "Output board", slug: "output-board" } });
+      assert.equal(created.status, 200, await created.clone().text());
+    }
+    await run({ state, headers, owner, stream, depth }); assert.equal(calls, 0);
+  }
+  finally { await state.drainBackground(); depth.assertVerified(); depth.restore(); globalThis.fetch = originalFetch; state.sqlite.close(); }
+}
+const main170AuthorityScope = { project_id: "project-atmosphere", document_id: "doc-atmosphere" };
+const main170AuthorityOutput = (id = "main170-output", extra = {}) => ({
+  type: "BlockCreated", payload: { ...main170AuthorityScope, block_id: id, position: "c0", type: "OUtput",
+    properties: { text: 'Output images at aspect ratios "1:1" and "4:5".', subtype: "Social media image",
+      weight: 0.8, intent: "avoid", influence: 1, effect: "must_not_include" }, ...extra },
+});
+const main170AuthorityWrite = (state, headers, event, extra = {}) => state.request("/api/events", json({ action: "append", event, ...extra }, headers));
+const main170AuthorityEventCount = (state, stream) => state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=?").get(stream).n;
+const main170AuthorityBudgetState = state => Object.fromEntries([
+  "document_jobs", "budget_reservations", "cost_budget_reservations", "output_plan_revisions", "output_execution_grants",
+  "output_operation_slots", "output_provider_calls", "output_target_acceptances",
+].map(name => [name, state.sqlite.prepare("SELECT COUNT(*) AS n FROM " + name).get().n]));
+async function main170AuthorityCreate(state, headers, id = "main170-output", extra = {}) {
+  const response = await main170AuthorityWrite(state, headers, main170AuthorityOutput(id, extra));
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json(); assert.equal(body.appended.length, 1); return body.appended[0];
+}
+
+for (const mode of ["personal", "selected", "owner-custody"]) {
+  test("main170 authority union: native Output creation remains a free draft: " + mode, () => withMain170Authority(mode, async ({ state, headers, stream }) => {
+    const before = main170AuthorityBudgetState(state), created = await main170AuthorityCreate(state, headers);
+    const { inspectOutputRequirement } = await import("../src/model/output-requirements.ts");
+    assert.equal(created.type, "BlockCreated"); assert.equal(created.payload.type, "output");
+    const properties = created.payload.properties;
+    assert.equal(inspectOutputRequirement(properties.output_spec).status, "valid");
+    assert.equal(properties.output_spec.id, "main170-output");
+    assert.equal(properties.output_spec.deliverables[0].format_variants.length, 2);
+    for (const key of ["weight", "intent", "influence", "effect", "confirmed", "output_grant_id"]) assert.equal(Object.hasOwn(properties, key), false, key);
+    assert.deepEqual(main170AuthorityBudgetState(state), before);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type LIKE 'Output%'").get(stream).n, 0);
+    if (mode === "owner-custody") {
+      const unselected = await state.request("/api/output-requirements?documentId=doc-atmosphere", { headers });
+      assert.equal(unselected.status, 403); assert.equal((await unselected.json()).errorCode, "project_context_required");
+      const refresh = await state.request("/api/events?after=0&limit=2000&content=0", { headers: state.owner }); assert.equal(refresh.status, 200);
+    }
+    const read = await state.request("/api/output-requirements?documentId=doc-atmosphere", { headers: mode === "owner-custody" ? state.owner : headers });
+    assert.equal(read.status, 200, await read.clone().text());
+    const snapshot = await read.json(); assert.equal(snapshot.requirements.length, 1);
+    assert.equal(snapshot.requirements[0].blockId, "main170-output");
+    assert.deepEqual(main170AuthorityBudgetState(state), before);
+  }));
+
+  test("main170 authority union: generic edits cannot confer Output authority or partially apply a batch: " + mode, () => withMain170Authority(mode, async ({ state, headers, stream }) => {
+    await main170AuthorityCreate(state, headers);
+    const before = main170AuthorityEventCount(state, stream), finances = main170AuthorityBudgetState(state);
+    const edit = (property_path, new_value) => ({ type: "BlockPropertyEdited", payload: { ...main170AuthorityScope, block_id: "main170-output", property_path, new_value } });
+    const prohibited = [
+      edit("text", "A stale rewrite"), edit("output_spec", {}), edit("type", "format"), edit("weight", 1),
+      { type: "BlockRemoved", payload: { ...main170AuthorityScope, block_id: "main170-output" } },
+      { type: "BlockRenamed", payload: { ...main170AuthorityScope, block_id: "main170-output", name: "No confirmation" } },
+      { type: "OutputPlanConfirmed", payload: { ...main170AuthorityScope, plan_id: "not-a-confirmed-plan" } },
+      { type: "OutputExecutionAuthorized", payload: { ...main170AuthorityScope, grant_id: "not-a-grant" } },
+      main170AuthorityOutput("main170-output"),
+      main170AuthorityOutput("status-injected", { properties: { text: "Draft only", output_grant_id: "not-a-grant" } }),
+    ];
+    for (const event of prohibited) {
+      const response = await main170AuthorityWrite(state, headers, event);
+      assert.ok(response.status >= 400, event.type + ": " + await response.clone().text());
+      assert.equal(main170AuthorityEventCount(state, stream), before, event.type);
+    }
+    const response = await state.request("/api/events", json({ action: "batch", events: [
+      { type: "BlockCreated", payload: { ...main170AuthorityScope, block_id: "should-not-be-partially-created", type: "direction", properties: { text: "Ordinary context" } } },
+      edit("text", "Still requires the Output endpoint"),
+    ] }, headers));
+    assert.ok(response.status >= 400, await response.clone().text());
+    assert.equal(main170AuthorityEventCount(state, stream), before);
+    assert.deepEqual(main170AuthorityBudgetState(state), finances);
+  }));
+
+  test("main170 authority union: removed requirements in non-current Documents retain their generic-edit guard: " + mode, () => withMain170Authority(mode, async ({ state, headers, stream }) => {
+    await main170AuthorityCreate(state, headers);
+    appendFixtureEvents(state.sqlite, stream, [
+      ["BlockRemoved", { ...main170AuthorityScope, block_id: "main170-output" }],
+      ["DocumentCreated", { project_id: "project-atmosphere", document_id: "main170-other-doc", title: "Other document" }],
+      ["DocumentOpened", { project_id: "project-atmosphere", document_id: "main170-other-doc" }],
+    ]);
+    const before = main170AuthorityEventCount(state, stream);
+    for (const event of [
+      { type: "BlockRestored", payload: { ...main170AuthorityScope, block_id: "main170-output" } },
+      { type: "BlockPropertyEdited", payload: { ...main170AuthorityScope, block_id: "main170-output", property_path: "text", new_value: "Removed does not mean ungoverned" } },
+    ]) {
+      const response = await main170AuthorityWrite(state, headers, event), body = await response.json();
+      assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.error, "output_requirement_endpoint_required");
+      assert.equal(main170AuthorityEventCount(state, stream), before);
+    }
+  }));
+
+  test("main170 authority union: Canvas receipt retry preserves the original Output position event: " + mode, () => withMain170Authority(mode, async ({ state, headers, owner, stream }) => {
+    const created = await main170AuthorityCreate(state, headers);
+    const move = { type: "BlockPropertyEdited", payload: { ...main170AuthorityScope, block_id: "main170-output", property_path: "position",
+      old_value: "c0", new_value: "d0", canvas_id: "main170-board", client_event_id: "main170-canvas-position", history_owner_id: owner } };
+    const first = await main170AuthorityWrite(state, headers, move, { action: "canvas_sync" });
+    assert.equal(first.status, 200, await first.clone().text()); const written = await first.json();
+    assert.equal(written.appended.length, 1); assert.equal(written.appended[0].payload.new_value, "d0");
+    const count = main170AuthorityEventCount(state, stream);
+    const again = await main170AuthorityWrite(state, headers, move, { action: "canvas_sync" });
+    assert.equal(again.status, 200, await again.clone().text()); assert.equal((await again.json()).appended[0].eventId, written.appended[0].eventId);
+    assert.equal(main170AuthorityEventCount(state, stream), count);
+    const stale = await main170AuthorityWrite(state, headers, { ...move, payload: { ...move.payload, client_event_id: "new-stale-position", new_value: "e0" } }, { action: "canvas_sync" });
+    assert.equal(stale.status, 409, await stale.clone().text()); assert.equal(main170AuthorityEventCount(state, stream), count);
+    const { foldEvents } = await import("../src/model/events.ts"), { readEvents } = await import("../worker/runtime.ts");
+    const projected = foldEvents(await readEvents(state.env, stream), Number.POSITIVE_INFINITY, "doc-atmosphere", "project-atmosphere");
+    const output = projected.blocks.find(block => block.id === "main170-output");
+    assert.equal(output.position, "d0"); assert.deepEqual(output.properties, created.payload.properties);
+  }, { canvas: true }));
+
+  for (const action of ["append", "canvas_sync"]) for (const changedSource of ["position", "unrelated-head"]) test("main170 authority union: final owner-head guard rejects a newer Output position: " + mode + "/" + action + "/" + changedSource, () => withMain170Authority(mode, async ({ state, headers, owner, stream }) => {
+    await main170AuthorityCreate(state, headers);
+    const before = main170AuthorityEventCount(state, stream), batch = state.env.DB.batch;
+    let injected = 0;
+    state.env.DB.batch = async function (statements) {
+      if (!injected && statements.some(statement => /^\s*INSERT INTO event_write_stage/iu.test(statement.sql) && statement.values.includes("main170-older-position"))) {
+        injected++; appendFixtureEvents(state.sqlite, stream, changedSource === "position" ? [["BlockPropertyEdited", { ...main170AuthorityScope, block_id: "main170-output",
+          property_path: "position", old_value: "c0", new_value: "d0" }]] : [["DocumentOpened", main170AuthorityScope]]);
+      }
+      return batch.call(this, statements);
+    };
+    try {
+      const response = await main170AuthorityWrite(state, headers, { type: "BlockPropertyEdited", payload: {
+        ...main170AuthorityScope, block_id: "main170-output", property_path: "position", old_value: "c0", new_value: "e0",
+        ...(action === "canvas_sync" ? { canvas_id: "main170-board", client_event_id: "main170-older-position", history_owner_id: owner } : {}),
+      } }, { action, correlationId: "main170-older-position" });
+      assert.equal(injected, 1); assert.equal(response.status, 409, await response.clone().text());
+      assert.equal(main170AuthorityEventCount(state, stream), before + 1);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE correlation_id='main170-older-position'").get().n, 0);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM event_client_receipts WHERE client_event_id='main170-older-position'").get().n, 0);
+    } finally { state.env.DB.batch = batch; }
+  }, { canvas: action === "canvas_sync" }));
+}
+
+test("main170 authority union: native shared Output reads refuse a stale source without repairing it", () => withMain170Authority("selected", async ({ state, headers, stream }) => {
+  await main170AuthorityCreate(state, headers);
+  const initial = await state.request("/api/output-requirements?documentId=doc-atmosphere", { headers });
+  assert.equal(initial.status, 200, await initial.clone().text());
+  const indexed = state.sqlite.prepare("SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?").get(state.projectAccessId).last_owner_sequence;
+  appendFixtureEvents(state.sqlite, stream, [["DocumentOpened", main170AuthorityScope]]);
+  const before = state.sqlite.prepare("SELECT total_changes() AS n").get().n;
+  const stale = await state.request("/api/output-requirements?documentId=doc-atmosphere", { headers });
+  assert.equal(stale.status, 409, await stale.clone().text()); assert.equal((await stale.json()).errorCode, "output_target_source_projection_stale");
+  assert.equal(state.sqlite.prepare("SELECT total_changes() AS n").get().n, before);
+  assert.equal(state.sqlite.prepare("SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?").get(state.projectAccessId).last_owner_sequence, indexed);
+  const refreshed = await state.request("/api/events?after=0&limit=2000&content=0", { headers }); assert.equal(refreshed.status, 200);
+  const current = await state.request("/api/output-requirements?documentId=doc-atmosphere", { headers }); assert.equal(current.status, 200, await current.clone().text());
+}));
+
+test("main170 authority union: shared source quarantine at the exact Output read keeps the response private", () => withMain170Authority("selected", async ({ state, headers, stream }) => {
+  await main170AuthorityCreate(state, headers);
+  const count = main170AuthorityEventCount(state, stream), batch = state.env.DB.batch;
+  let changed = false;
+  state.env.DB.batch = async function (statements) {
+    if (!changed && statements.some(statement => statement.sql.includes("AS projection_current"))) {
+      changed = true; state.sqlite.prepare("UPDATE project_migration_states SET status='disabled' WHERE project_access_id=?").run(state.projectAccessId);
+    }
+    return batch.call(this, statements);
+  };
+  try {
+    const read = await state.request("/api/output-requirements?documentId=doc-atmosphere", { headers });
+    assert.equal(changed, true); assert.equal(read.status, 403, await read.clone().text());
+    assert.equal((await read.json()).errorCode, "output_execution_authority_revoked");
+    assert.equal(main170AuthorityEventCount(state, stream), count);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM output_atomic_assertions").get().n, 0);
+  } finally { state.env.DB.batch = batch; }
+}));
+
+test("main170 authority union: viewer and revoked selected sessions cannot author Output requirements", () => withMain170Authority("selected", async ({ state, headers, stream }) => {
+  const before = main170AuthorityEventCount(state, stream), finances = main170AuthorityBudgetState(state);
+  const reader = await main170AuthorityWrite(state, state.viewer, main170AuthorityOutput("viewer-output"));
+  assert.equal(reader.status, 403, await reader.clone().text());
+  state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE project_access_id=? AND principal_user_id='assistant-owner'").run(new Date().toISOString(), state.projectAccessId);
+  const revoked = await main170AuthorityWrite(state, headers, main170AuthorityOutput("revoked-output"));
+  assert.equal(revoked.status, 403, await revoked.clone().text());
+  assert.equal(main170AuthorityEventCount(state, stream), before);
+  assert.deepEqual(main170AuthorityBudgetState(state), finances);
+}));
+
+
+for (const mode of ["personal", "selected", "owner-custody"]) {
+  test("main170 authority union: ordinary Canvas rebase behavior is unchanged: " + mode, () => withMain170Authority(mode, async ({ state, headers, owner, stream }) => {
+    await main170AuthorityCreate(state, headers, "ordinary-direction", { type: "direction", properties: { text: "Ordinary source direction", weight: 1 } });
+    const before = main170AuthorityEventCount(state, stream), batch = state.env.DB.batch;
+    let injected = false;
+    state.env.DB.batch = async function (statements) {
+      if (!injected && statements.some(statement => /^\s*INSERT INTO event_write_stage/iu.test(statement.sql) && statement.values.includes("main170-ordinary-position"))) {
+        injected = true; appendFixtureEvents(state.sqlite, stream, [["DocumentOpened", main170AuthorityScope]]);
+      }
+      return batch.call(this, statements);
+    };
+    try {
+      const response = await main170AuthorityWrite(state, headers, { type: "BlockPropertyEdited", payload: {
+        ...main170AuthorityScope, block_id: "ordinary-direction", property_path: "position", old_value: "c0", new_value: "d0",
+        canvas_id: "main170-board", client_event_id: "main170-ordinary-position", history_owner_id: owner,
+      } }, { action: "canvas_sync", correlationId: "main170-ordinary-position" });
+      assert.equal(injected, true);
+      // Selected-project appends already reject an owner-head change. The
+      // account Canvas helper retains its ordinary commutative retry behavior.
+      assert.equal(response.status, mode === "selected" ? 409 : 200, await response.clone().text());
+      assert.equal(main170AuthorityEventCount(state, stream), before + (mode === "selected" ? 1 : 2));
+    } finally { state.env.DB.batch = batch; }
+  }, { canvas: true }));
+
+  for (const output of [true, false]) test("main170 authority union: exact Canvas receipt recovery survives a lost acknowledgement: " + mode + "/" + (output ? "Output" : "ordinary"), () => withMain170Authority(mode, async ({ state, headers, owner, stream }) => {
+    const blockId = output ? "main170-output" : "ordinary-direction";
+    await main170AuthorityCreate(state, headers, blockId, output ? {} : { type: "direction", properties: { text: "Ordinary source direction", weight: 1 } });
+    const count = main170AuthorityEventCount(state, stream), batch = state.env.DB.batch;
+    let lost = false;
+    state.env.DB.batch = async function (statements) {
+      const result = await batch.call(this, statements);
+      if (!lost && statements.some(statement => /^\s*INSERT INTO event_write_stage/iu.test(statement.sql) && statement.values.includes("main170-lost-move"))) {
+        lost = true; throw new Error("mock_lost_write_acknowledgement");
+      }
+      return result;
+    };
+    const move = { type: "BlockPropertyEdited", payload: { ...main170AuthorityScope, block_id: blockId,
+      property_path: "position", old_value: "c0", new_value: "d0", canvas_id: "main170-board",
+      client_event_id: "main170-lost-move", history_owner_id: owner } };
+    try {
+      const response = await main170AuthorityWrite(state, headers, move, { action: "canvas_sync", correlationId: "main170-lost-move" });
+      assert.equal(lost, true);
+      assert.equal(response.status, mode === "selected" ? 409 : 200, await response.clone().text());
+      const committed = state.sqlite.prepare("SELECT event_id FROM events WHERE stream_id=? AND correlation_id='main170-lost-move'").all(stream);
+      assert.equal(committed.length, 1); assert.equal(main170AuthorityEventCount(state, stream), count + 1);
+      const retry = await main170AuthorityWrite(state, headers, move, { action: "canvas_sync", correlationId: "main170-lost-move" });
+      assert.equal(retry.status, 200, await retry.clone().text());
+      const recovered = await retry.json(); assert.equal(recovered.appended.length, 1); assert.equal(recovered.appended[0].eventId, committed[0].event_id);
+      assert.equal(main170AuthorityEventCount(state, stream), count + 1);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM event_client_receipts WHERE event_id=?").get(committed[0].event_id).n, 1);
+    } finally { state.env.DB.batch = batch; }
+  }, { canvas: true }));
 }

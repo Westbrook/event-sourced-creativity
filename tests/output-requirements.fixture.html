@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Forma</title>
+    <link rel="stylesheet" href="/src/styles.css">
+    <link rel="stylesheet" href="/src/design-system.css">
+    <style>
+      body { margin: 0; }
+      main { display: grid; gap: 1.25rem; inline-size: min(100%, 78rem); margin-inline: auto; padding: 1rem; }
+      main > header { display: grid; gap: .75rem; }
+      main h1 { font-size: 1.5rem; line-height: 1.3; }
+      #fixture-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
+      #fixture-controls label { display: grid; gap: .35rem; }
+      #fixture-controls label:has(input[type="checkbox"]) { display: flex; align-items: center; min-block-size: 2.75rem; }
+      #fixture-controls :is(button, select) { min-block-size: 2.75rem; padding: .5rem .75rem; }
+      #fixture-cards { display: grid; gap: 1rem; inline-size: 100%; min-inline-size: 0; }
+      #fixture-cards[data-narrow="true"] { inline-size: min(100%, 320px); }
+      #fixture-log { overflow-wrap: anywhere; white-space: pre-wrap; padding: 1rem; border: 1px solid var(--forma-color-border-strong); max-block-size: 30rem; overflow: auto; }
+      #fixture-log-heading { font-size: 1.1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><h1 data-message="fixtureTitle"></h1><p data-message="fixtureNotice"></p></header>
+      <form id="fixture-controls">
+        <label for="fixture-example"><span data-message="fixtureScenario"></span><select id="fixture-example" name="example"><option value="executive" data-message="executiveSummary"></option><option value="image" data-message="socialImage"></option><option value="video" data-message="socialVideo"></option></select></label>
+        <label for="fixture-locale"><span data-message="fixtureLocale"></span><select id="fixture-locale" name="locale"><option value="en">English</option><option value="fr">Français</option><option value="ar">العربية</option><option value="ja">日本語</option></select></label>
+        <label for="fixture-narrow"><input id="fixture-narrow" name="narrow" type="checkbox"><span data-message="fixtureWidth"></span></label>
+        <button type="button" id="fixture-ready" data-message="fixtureReady"></button>
+        <button type="button" id="fixture-loading" data-message="fixtureLoading"></button>
+        <button type="button" id="fixture-conflict" data-message="fixtureConflict"></button>
+        <button type="button" id="fixture-unavailable" data-message="fixtureUnavailable"></button>
+        <button type="button" id="fixture-permission" data-message="fixturePermission"></button>
+        <button type="button" id="fixture-late" data-message="fixtureLate"></button>
+        <button type="button" id="fixture-partial" data-message="fixturePartial"></button>
+        <button type="button" id="fixture-unsupported" data-message="fixtureUnsupported"></button>
+        <button type="button" id="fixture-clear-log" data-message="fixtureClearLog"></button>
+      </form>
+      <section id="fixture-cards">
+        <forma-output-requirement-card id="fixture-full"></forma-output-requirement-card>
+        <forma-output-requirement-card id="fixture-compact"></forma-output-requirement-card>
+      </section>
+      <section aria-labelledby="fixture-log-heading"><h2 id="fixture-log-heading" data-message="fixtureLog"></h2><pre id="fixture-log"></pre></section>
+    </main>
+    <script type="module" src="/tests/output-requirements.fixture.mjs"></script>
+  </body>
+</html>

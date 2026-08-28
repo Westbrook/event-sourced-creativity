@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check, unique } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check, unique, foreignKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "./event-predicates.ts";
 
@@ -1166,4 +1166,403 @@ export const canvasGovernanceRequirements = sqliteTable(
     detailsJson: text("details_json").notNull().default("{}"),
     updatedAt: text("updated_at").notNull(),
   },
+);
+
+/** Output requirements: private event bodies plus scoped projections and durable admission authority. */
+
+export const outputAtomicAssertions = sqliteTable(
+  "output_atomic_assertions",
+  {
+    token: text("token").primaryKey().notNull(),
+    passed: integer("passed").notNull(),
+  },
+  (table) => [
+    check("output_atomic_assertions_check_1", sql.raw("passed=1")),
+  ],
+);
+
+export const outputCommands = sqliteTable(
+  "output_commands",
+  {
+    scopeKey: text("scope_key").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    commandKey: text("command_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    action: text("action").notNull(),
+    eventId: text("event_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.actorUserId, table.commandKey] }),
+    foreignKey({ columns: [table.eventId], foreignColumns: [events.eventId] }),
+  ],
+);
+
+export const outputPlanRevisions = sqliteTable(
+  "output_plan_revisions",
+  {
+    scopeKey: text("scope_key").notNull(),
+    scopeKind: text("scope_kind").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    planRevisionId: text("plan_revision_id").notNull(),
+    planId: text("plan_id").notNull(),
+    revision: integer("revision").notNull(),
+    confirmedEventId: text("confirmed_event_id").notNull(),
+    requirementsDigest: text("requirements_digest").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    resolverVersion: text("resolver_version").notNull(),
+    sourceHead: integer("source_head").notNull(),
+    targetCount: integer("target_count").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.planRevisionId] }),
+    foreignKey({ columns: [table.confirmedEventId], foreignColumns: [events.eventId] }),
+    check("output_plan_revisions_check_1", sql.raw("scope_kind IN('personal','project')")),
+    check("output_plan_revisions_check_2", sql.raw("typeof(revision)='integer' AND revision>0")),
+    check("output_plan_revisions_check_3", sql.raw("typeof(source_head)='integer' AND source_head>=0")),
+    check("output_plan_revisions_check_4", sql.raw("typeof(target_count)='integer' AND target_count>=0 AND target_count<=1000")),
+    check("output_plan_revisions_check_5", sql.raw("(scope_kind='personal' AND organization_id IS NULL AND project_access_id IS NULL) OR (scope_kind='project' AND organization_id IS NOT NULL AND project_access_id IS NOT NULL)")),
+    index("idx_output_plans_document").on(table.scopeKey, table.documentId, sql`${table.revision} DESC`),
+    uniqueIndex("idx_output_plan_revisions_unique_1").on(table.scopeKey, table.planId, table.revision),
+  ],
+);
+
+export const outputPlanTargets = sqliteTable(
+  "output_plan_targets",
+  {
+    scopeKey: text("scope_key").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    targetId: text("target_id").notNull(),
+    targetContractDigest: text("target_contract_digest").notNull(),
+    mediaKind: text("media_kind").notNull(),
+    required: integer("required").notNull(),
+    selected: integer("selected").notNull(),
+    ordinal: integer("ordinal").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId], foreignColumns: [outputPlanRevisions.scopeKey, outputPlanRevisions.planRevisionId] }),
+    check("output_plan_targets_check_1", sql.raw("media_kind IN('image','slides','audio','video','document','unknown')")),
+    check("output_plan_targets_check_2", sql.raw("required IN(0,1)")),
+    check("output_plan_targets_check_3", sql.raw("selected IN(0,1)")),
+    check("output_plan_targets_check_4", sql.raw("typeof(ordinal)='integer' AND ordinal>=0")),
+  ],
+);
+
+export const outputPreflights = sqliteTable(
+  "output_preflights",
+  {
+    scopeKey: text("scope_key").notNull(),
+    preflightId: text("preflight_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    termsDigest: text("terms_digest").notNull(),
+    eventId: text("event_id").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.preflightId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId], foreignColumns: [outputPlanRevisions.scopeKey, outputPlanRevisions.planRevisionId] }),
+    foreignKey({ columns: [table.eventId], foreignColumns: [events.eventId] }),
+  ],
+);
+
+export const outputExecutionGrants = sqliteTable(
+  "output_execution_grants",
+  {
+    scopeKey: text("scope_key").notNull(),
+    grantId: text("grant_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    payerUserId: text("payer_user_id").notNull(),
+    contextId: text("context_id"),
+    preflightId: text("preflight_id").notNull(),
+    authorizationEventId: text("authorization_event_id").notNull(),
+    maximumMicrousd: integer("maximum_microusd").notNull(),
+    maximumCalls: integer("maximum_calls").notNull(),
+    status: text("status").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.grantId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId], foreignColumns: [outputPlanRevisions.scopeKey, outputPlanRevisions.planRevisionId] }),
+    foreignKey({ columns: [table.scopeKey, table.preflightId], foreignColumns: [outputPreflights.scopeKey, outputPreflights.preflightId] }),
+    foreignKey({ columns: [table.authorizationEventId], foreignColumns: [events.eventId] }),
+    check("output_execution_grants_check_1", sql.raw("typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000")),
+    check("output_execution_grants_check_2", sql.raw("typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=10000")),
+    check("output_execution_grants_check_3", sql.raw("status IN('authorized','active','completed','revoked','exceeded')")),
+    uniqueIndex("idx_output_execution_grants_unique_1").on(table.scopeKey, table.preflightId),
+  ],
+);
+
+export const outputOperationSlots = sqliteTable(
+  "output_operation_slots",
+  {
+    scopeKey: text("scope_key").notNull(),
+    slotId: text("slot_id").notNull(),
+    grantId: text("grant_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    targetId: text("target_id").notNull(),
+    targetContractDigest: text("target_contract_digest").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    routeDigest: text("route_digest").notNull(),
+    jobId: text("job_id").notNull(),
+    costReservationId: text("cost_reservation_id").notNull(),
+    tokenReservationId: text("token_reservation_id").notNull(),
+    maximumMicrousd: integer("maximum_microusd").notNull(),
+    maximumCalls: integer("maximum_calls").notNull(),
+    maximumTokens: integer("maximum_tokens").notNull(),
+    attemptOrdinal: integer("attempt_ordinal").notNull().default(0),
+    previousSlotId: text("previous_slot_id"),
+    status: text("status").notNull(),
+    outcomeEventId: text("outcome_event_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.slotId] }),
+    foreignKey({ columns: [table.scopeKey, table.grantId], foreignColumns: [outputExecutionGrants.scopeKey, outputExecutionGrants.grantId] }),
+    foreignKey({ columns: [table.scopeKey, table.previousSlotId], foreignColumns: [table.scopeKey, table.slotId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId], foreignColumns: [outputPlanTargets.scopeKey, outputPlanTargets.planRevisionId, outputPlanTargets.targetId] }),
+    check("output_operation_slots_check_1", sql.raw("typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000")),
+    check("output_operation_slots_check_2", sql.raw("typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000")),
+    check("output_operation_slots_check_3", sql.raw("typeof(maximum_tokens)='integer' AND maximum_tokens>0")),
+    check("output_operation_slots_check_4", sql.raw("typeof(attempt_ordinal)='integer' AND attempt_ordinal>=0")),
+    check("output_operation_slots_check_5", sql.raw("status IN('authorized','queued','running','succeeded','failed','cancelled','unavailable','uncertain')")),
+    check("output_operation_slots_check_6", sql.raw("(attempt_ordinal=0 AND previous_slot_id IS NULL) OR (attempt_ordinal>0 AND previous_slot_id IS NOT NULL)")),
+    uniqueIndex("idx_output_operation_slots_unique_1").on(table.scopeKey, table.grantId, table.targetId),
+    uniqueIndex("idx_output_operation_slots_unique_2").on(table.scopeKey, table.targetId, table.targetContractDigest, table.attemptOrdinal),
+    uniqueIndex("idx_output_operation_slots_unique_3").on(table.jobId),
+    uniqueIndex("idx_output_operation_slots_unique_4").on(table.costReservationId),
+    uniqueIndex("idx_output_operation_slots_unique_5").on(table.tokenReservationId),
+  ],
+);
+
+export const outputOperationRoutes = sqliteTable(
+  "output_operation_routes",
+  {
+    scopeKey: text("scope_key").notNull(),
+    slotId: text("slot_id").notNull(),
+    stageKey: text("stage_key").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    maximumCalls: integer("maximum_calls").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.slotId, table.stageKey] }),
+    foreignKey({ columns: [table.scopeKey, table.slotId], foreignColumns: [outputOperationSlots.scopeKey, outputOperationSlots.slotId] }),
+    check("output_operation_routes_check_1", sql.raw("typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000")),
+  ],
+);
+
+export const outputProviderCalls = sqliteTable(
+  "output_provider_calls",
+  {
+    scopeKey: text("scope_key").notNull(),
+    slotId: text("slot_id").notNull(),
+    callKey: text("call_key").notNull(),
+    clientRequestId: text("client_request_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    stageKey: text("stage_key").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    reservedMicrousd: integer("reserved_microusd").notNull(),
+    usedMicrousd: integer("used_microusd"),
+    status: text("status").notNull(),
+    providerResponseId: text("provider_response_id"),
+    createdAt: text("created_at").notNull(),
+    settledAt: text("settled_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.slotId, table.callKey] }),
+    foreignKey({ columns: [table.scopeKey, table.slotId, table.stageKey], foreignColumns: [outputOperationRoutes.scopeKey, outputOperationRoutes.slotId, outputOperationRoutes.stageKey] }),
+    check("output_provider_calls_check_1", sql.raw("typeof(reserved_microusd)='integer' AND reserved_microusd>0")),
+    check("output_provider_calls_check_2", sql.raw("used_microusd IS NULL OR typeof(used_microusd)='integer' AND used_microusd>=0")),
+    check("output_provider_calls_check_3", sql.raw("status IN('pending','uncertain','settled','rejected')")),
+    uniqueIndex("idx_output_provider_calls_unique_1").on(table.clientRequestId),
+  ],
+);
+
+export const outputAssets = sqliteTable(
+  "output_assets",
+  {
+    scopeKey: text("scope_key").notNull(),
+    assetId: text("asset_id").notNull(),
+    documentId: text("document_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    createdByUserId: text("created_by_user_id").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    storageKey: text("storage_key").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    mimeType: text("mime_type").notNull(),
+    mediaKind: text("media_kind").notNull(),
+    createdEventId: text("created_event_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    redactedAt: text("redacted_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.assetId] }),
+    foreignKey({ columns: [table.createdEventId], foreignColumns: [events.eventId] }),
+    check("output_assets_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0")),
+    check("output_assets_check_2", sql.raw("media_kind IN('image','slides','audio','video','document')")),
+    uniqueIndex("idx_output_assets_unique_1").on(table.storageKey),
+  ],
+);
+
+export const outputNativeStorageWrites = sqliteTable(
+  "output_native_storage_writes",
+  {
+    scopeKey: text("scope_key").notNull(),
+    slotId: text("slot_id").notNull(),
+    storageKey: text("storage_key").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    status: text("status").notNull(),
+    writeAcknowledged: integer("write_acknowledged").notNull().default(0),
+    publicationEventId: text("publication_event_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.slotId, table.storageKey] }),
+    foreignKey({ columns: [table.scopeKey, table.slotId], foreignColumns: [outputOperationSlots.scopeKey, outputOperationSlots.slotId] }),
+    foreignKey({ columns: [table.publicationEventId], foreignColumns: [events.eventId] }),
+    check("output_native_storage_writes_check_1", sql.raw("status IN('writing','written','cleanup_pending','deleted')")),
+    check("output_native_storage_writes_check_2", sql.raw("write_acknowledged IN(0,1)")),
+    uniqueIndex("idx_output_native_storage_writes_unique_1").on(table.storageKey),
+  ],
+);
+
+export const outputAssetStorageWrites = sqliteTable(
+  "output_asset_storage_writes",
+  {
+    scopeKey: text("scope_key").notNull(),
+    assetId: text("asset_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    contextId: text("context_id"),
+    commandKey: text("command_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    storageKey: text("storage_key").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    status: text("status").notNull(),
+    writeAcknowledged: integer("write_acknowledged").notNull().default(0),
+    publicationEventId: text("publication_event_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.assetId] }),
+    foreignKey({ columns: [table.publicationEventId], foreignColumns: [events.eventId] }),
+    check("output_asset_storage_writes_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=24000000")),
+    check("output_asset_storage_writes_check_2", sql.raw("status IN('writing','written','cleanup_pending','deleted')")),
+    check("output_asset_storage_writes_check_3", sql.raw("write_acknowledged IN(0,1)")),
+    check("output_asset_storage_writes_check_4", sql.raw("(organization_id IS NULL AND project_access_id IS NULL AND context_id IS NULL) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND context_id IS NOT NULL)")),
+    uniqueIndex("idx_output_asset_storage_writes_unique_1").on(table.scopeKey, table.actorUserId, table.commandKey),
+    uniqueIndex("idx_output_asset_storage_writes_unique_2").on(table.storageKey),
+  ],
+);
+
+export const outputResults = sqliteTable(
+  "output_results",
+  {
+    scopeKey: text("scope_key").notNull(),
+    resultId: text("result_id").notNull(),
+    documentId: text("document_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    targetId: text("target_id").notNull(),
+    targetContractDigest: text("target_contract_digest").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    assetId: text("asset_id").notNull(),
+    resultRevision: text("result_revision").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    validationPolicy: text("validation_policy").notNull(),
+    checksStatus: text("checks_status").notNull(),
+    createdByUserId: text("created_by_user_id").notNull(),
+    boundEventId: text("bound_event_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.resultId] }),
+    foreignKey({ columns: [table.scopeKey, table.assetId], foreignColumns: [outputAssets.scopeKey, outputAssets.assetId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId], foreignColumns: [outputPlanTargets.scopeKey, outputPlanTargets.planRevisionId, outputPlanTargets.targetId] }),
+    foreignKey({ columns: [table.boundEventId], foreignColumns: [events.eventId] }),
+    check("output_results_check_1", sql.raw("checks_status IN('passed','failed','unavailable')")),
+  ],
+);
+
+export const outputTargetAcceptances = sqliteTable(
+  "output_target_acceptances",
+  {
+    scopeKey: text("scope_key").notNull(),
+    acceptanceId: text("acceptance_id").notNull(),
+    targetId: text("target_id").notNull(),
+    targetContractDigest: text("target_contract_digest").notNull(),
+    resultId: text("result_id").notNull(),
+    resultRevision: text("result_revision").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    validationPolicy: text("validation_policy").notNull(),
+    reviewerUserId: text("reviewer_user_id").notNull(),
+    approvalEventId: text("approval_event_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.acceptanceId] }),
+    foreignKey({ columns: [table.scopeKey, table.resultId], foreignColumns: [outputResults.scopeKey, outputResults.resultId] }),
+    foreignKey({ columns: [table.approvalEventId], foreignColumns: [events.eventId] }),
+  ],
+);
+
+export const outputPlanFulfillments = sqliteTable(
+  "output_plan_fulfillments",
+  {
+    scopeKey: text("scope_key").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    targetId: text("target_id").notNull(),
+    acceptanceId: text("acceptance_id").notNull(),
+    eligibilityEventId: text("eligibility_event_id").notNull(),
+    checkedAt: text("checked_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId], foreignColumns: [outputPlanTargets.scopeKey, outputPlanTargets.planRevisionId, outputPlanTargets.targetId] }),
+    foreignKey({ columns: [table.scopeKey, table.acceptanceId], foreignColumns: [outputTargetAcceptances.scopeKey, outputTargetAcceptances.acceptanceId] }),
+    foreignKey({ columns: [table.eligibilityEventId], foreignColumns: [events.eventId] }),
+  ],
+);
+
+export const outputDeliveryManifests = sqliteTable(
+  "output_delivery_manifests",
+  {
+    scopeKey: text("scope_key").notNull(),
+    manifestId: text("manifest_id").notNull(),
+    documentId: text("document_id").notNull(),
+    planRevisionId: text("plan_revision_id").notNull(),
+    createdByUserId: text("created_by_user_id").notNull(),
+    eventId: text("event_id").notNull(),
+    isPartial: integer("is_partial").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scopeKey, table.manifestId] }),
+    foreignKey({ columns: [table.scopeKey, table.planRevisionId], foreignColumns: [outputPlanRevisions.scopeKey, outputPlanRevisions.planRevisionId] }),
+    foreignKey({ columns: [table.eventId], foreignColumns: [events.eventId] }),
+    check("output_delivery_manifests_check_1", sql.raw("is_partial IN(0,1)")),
+  ],
 );

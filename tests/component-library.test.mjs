@@ -357,7 +357,7 @@ test("human reference and manifest describe the same atomic component taxonomy",
 
 test("every application pattern has an isolated, truthful, accessible production-primitive demonstration", () => {
   const applicationPatterns = componentCatalog.filter((entry) => entry.level === "application");
-  assert.equal(applicationPatterns.length, 14);
+  assert.equal(applicationPatterns.length, 15);
   assert.equal(elements.filter((element) => element["x-forma"].demonstration === "isolated-composition").length, applicationPatterns.length);
 
   for (const entry of applicationPatterns) {

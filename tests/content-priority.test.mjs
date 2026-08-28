@@ -336,7 +336,7 @@ test("project document-card results cover their complete preview without inherit
 });
 
 test("alternative creator lenses mount their real task before explanatory readiness and inherited navigation", () => {
-  assert.match(alternatives, /class="studio-subpage-body">\s*\$\{body\}\s*<forma-studio-navigator/);
+  assert.match(alternatives, /class="studio-subpage-body">\s*\$\{body\}\s*<forma-output-requirements\s+\.documentId=\$\{projection\.documentId\}><\/forma-output-requirements>\s*<forma-studio-navigator/);
   assert.match(alternatives, /const body = html`\s*<div class="context-board" data-forma-content="primary">[\s\S]*?\$\{capture\}\s*\$\{readiness\}`/);
   assert.match(alternatives, /const body = html`\s*<form id=\$\{guidedFormId\}[\s\S]*?<section class="guided-brief guided-brief--focused">[\s\S]*?\$\{steps\}\s*\$\{readiness\}/);
   assert.match(editorAlternatives, /const body = html`\s*<div class="reality-editor" data-forma-content="primary">[\s\S]*?<\/div>\s*\$\{readiness\}/);

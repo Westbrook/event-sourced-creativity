@@ -15,6 +15,7 @@ function actualMethod(name) {
 }
 
 const harnessSource = `
+import { resolvePresentationCountRequest } from ${JSON.stringify(new URL("../src/model/presentation-count-policy.ts", import.meta.url).href)};
 const MAX_MANAGED_PRESENTATION_SLIDES = 100;
 const generationRevisionFor = (value) => {
   let hash = 0x811c9dc5;
@@ -234,11 +235,22 @@ test("normalizes both count aliases without leaking slideshow-only settings into
   }
 });
 
+test("stores flexible acceptance separately from the attempt aim without an implicit exact slide count", async () => {
+  const harness = new PresentationStoreHarness();
+  const slideCountPolicy = { kind: "flexible", unit: "slide", min: 5, max: 15, aim: 8 };
+  assert.equal(await harness.renderDocumentArtifact("slides", { productionMode: "manual", itemCount: 8, slideCountPolicy }), true);
+  const payload = harness.requests[0].body.payload;
+  assert.deepEqual(payload.slideCountPolicy, slideCountPolicy);
+  assert.equal(payload.itemCount, 8);
+  assert.equal(Object.hasOwn(payload, "requestedSlideCount"), false);
+  assert.equal(harness.budgetChecks.length, 1);
+});
+
 test("rejects conflicting and unsupported counts before budget authorization or provider submission", async () => {
   const harness = new PresentationStoreHarness();
   const invalid = [
     { itemCount: 12, requestedSlideCount: 23, productionMode: "managed" },
-    { requestedSlideCount: 13, productionMode: "manual" },
+    { requestedSlideCount: 16, productionMode: "manual" },
     { requestedSlideCount: 101, productionMode: "managed" },
     { requestedSlideCount: 0, productionMode: "managed" },
     { requestedSlideCount: 1.5, productionMode: "managed" },
@@ -249,7 +261,7 @@ test("rejects conflicting and unsupported counts before budget authorization or 
   assert.equal(harness.requests.length, 0);
   assert.equal(harness.budgetChecks.length, 0);
   assert.ok(harness.messages.some((message) => /does not match/.test(message)));
-  assert.ok(harness.messages.some((message) => /Manual presentations support between 1 and 12 slides/.test(message)));
+  assert.ok(harness.messages.some((message) => /Manual presentations support between 1 and 15 slides/.test(message)));
   assert.ok(harness.messages.some((message) => /Managed presentations support between 1 and 100 slides/.test(message)));
 
   assert.equal(await harness.renderDocumentArtifact("slides", { requestedSlideCount: 12, productionMode: "manual" }), true);

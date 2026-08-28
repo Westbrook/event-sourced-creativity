@@ -4,6 +4,8 @@
  * contract; `providerFacingPresentationSourceContract` exposes opaque aliases.
  */
 
+import { isOutputContextBlock } from "./output-source-policy.ts";
+import { readSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "./presentation-count-policy.ts";
 import { combinedContextGroups } from "./combined-context.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
 
@@ -126,6 +128,7 @@ export type PresentationStyleContract = {
 
 export type PresentationSourceOptions = {
   requestedSlideCount?: number;
+  slideCountPolicy?: SlideCountPolicy;
   itemCount?: number;
   contextGroups?: readonly unknown[];
   sourceAliases?: readonly PresentationSourceAlias[];
@@ -142,6 +145,7 @@ export type PresentationSourceContract = {
   numberedOutline: PresentationSourceSlide[];
   authoredSlideCount: number | null;
   requestedSlideCount: number | null;
+  slideCountPolicy?: SlideCountPolicy;
   predictedSlideCount: number | null;
   slideCountMismatch: boolean;
   protectedFacts: ProtectedPresentationFact[];
@@ -305,7 +309,7 @@ function sourceBlocks(input: PresentationSourceInput): SourceBlock[] {
   return values.flatMap((candidate, index): SourceBlock[] => {
     const block = asRecord(candidate);
     const properties = asRecord(block.properties);
-    if (block.removed === true || block.deleted === true || block.active === false || properties.active === false || properties.weight !== undefined && !(Number(properties.weight) > 0) || clean(block.status).toLowerCase() === "inactive") return [];
+    if (isOutputContextBlock(block) || block.removed === true || block.deleted === true || block.active === false || properties.active === false || properties.weight !== undefined && !(Number(properties.weight) > 0) || clean(block.status).toLowerCase() === "inactive") return [];
     if ([block.intent, block.effect, block.polarity, block.type, block.role, properties.intent, properties.effect, properties.polarity, properties.type, properties.role]
       .some((value) => negativeSourceIntents.has(clean(value).toLowerCase()))) return [];
     const text = sourceBlockText(block);
@@ -521,6 +525,7 @@ export function scopePresentationSourceSnapshot(snapshot: Record<string, unknown
   const projections = new Map(original.flatMap((block) => block.id ? [[block.id, presentationBlockProjection(block).block] as const] : []));
   const scope = (candidate: unknown) => {
     const value = asRecord(candidate), properties = asRecord(value.properties);
+    if (isOutputContextBlock(value)) return [];
     const id = clean(value.block_id ?? value.blockId ?? value.id ?? properties.block_id);
     const projected = projections.get(id);
     if (!projected) return [candidate]; // Negative guardrails remain intact.
@@ -1009,11 +1014,17 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
   }
   for (const slide of outline.slides) slide.sourceAlias = sourceAliasFor(sources, slide.sourceBlockId);
   const evidence = bindPresentationEvidence(input, blocks, outline, sources);
-  const requestedRaw = Number(options.requestedSlideCount ?? options.itemCount ?? 0);
-  const requestedSlideCount = Number.isSafeInteger(requestedRaw) && requestedRaw > 0 && requestedRaw <= 100 ? requestedRaw : null;
-  if (requestedSlideCount !== null && outline.authoredSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount && outline.slides.some((slide) => slide.sourceMode === "outline")) evidence.sourceIssues.push({
+  const slideCountPolicy = options.slideCountPolicy === undefined ? undefined : readSlideCountPolicy(options.slideCountPolicy);
+  if (slideCountPolicy?.kind === "flexible" && options.requestedSlideCount !== undefined) throw new RangeError("A flexible slide policy cannot be replaced by an exact requested count.");
+  const requestedRaw = Number(options.requestedSlideCount ?? (slideCountPolicy?.kind === "exact" ? slideCountPolicy.value : options.itemCount) ?? 0);
+  const requestedSlideCount = slideCountPolicy?.kind === "flexible" ? null : Number.isSafeInteger(requestedRaw) && requestedRaw > 0 && requestedRaw <= 100 ? requestedRaw : null;
+  const predictedSlideCount = slideCountPolicy?.kind === "flexible"
+    ? outline.slides.some((slide) => slide.sourceMode === "outline") ? outline.authoredSlideCount : options.itemCount ?? slideCountPolicy.aim ?? slideCountPolicy.min
+    : requestedSlideCount ?? outline.authoredSlideCount;
+  if (outline.authoredSlideCount !== null && outline.slides.some((slide) => slide.sourceMode === "outline")
+    && (slideCountPolicy ? !slideCountAccepted(outline.authoredSlideCount, slideCountPolicy) : requestedSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount)) evidence.sourceIssues.push({
     code: "outline_slide_count_conflict", path: "presentation_source.outline", message: "A research-backed outline needs explicit coverage for every requested slide. Match its numbered positions or author the added requirements before generating.",
-    parameters: { requestedSlideCount, authoredSlideCount: outline.authoredSlideCount },
+    parameters: { ...(requestedSlideCount === null ? {} : { requestedSlideCount }), authoredSlideCount: outline.authoredSlideCount },
   });
   return {
     schemaVersion: 2,
@@ -1021,11 +1032,12 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
     numberedOutline: outline.slides,
     authoredSlideCount: outline.authoredSlideCount,
     requestedSlideCount,
-    predictedSlideCount: requestedSlideCount ?? outline.authoredSlideCount,
-    slideCountMismatch: requestedSlideCount !== null && outline.authoredSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount,
+    ...(slideCountPolicy ? { slideCountPolicy } : {}),
+    predictedSlideCount,
+    slideCountMismatch: outline.authoredSlideCount !== null && (slideCountPolicy ? !slideCountAccepted(outline.authoredSlideCount, slideCountPolicy) : requestedSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount),
     protectedFacts: extractProtectedFacts(blocks, outline, sources),
     protectedQuotes: extractProtectedQuotes(blocks, outline, sources),
-    protectedMessages: extractProtectedMessages(blocks, outline, sources, requestedSlideCount ?? outline.authoredSlideCount, authoredSlideNumbers),
+    protectedMessages: extractProtectedMessages(blocks, outline, sources, predictedSlideCount, authoredSlideNumbers),
     protectedTerminology: extractProtectedTerminology(blocks, sources),
     roadmaps: extractRoadmaps(blocks, outline, sources),
     style: inferPresentationStyleContract(input, options),
@@ -1047,6 +1059,7 @@ export function providerFacingPresentationSourceContract(contract: PresentationS
     schemaVersion: contract.schemaVersion,
     authoredSlideCount: contract.authoredSlideCount,
     requestedSlideCount: contract.requestedSlideCount,
+    ...(contract.slideCountPolicy ? { slideCountPolicy: contract.slideCountPolicy } : {}),
     predictedSlideCount: contract.predictedSlideCount,
     slideCountMismatch: contract.slideCountMismatch,
     fidelity: contract.fidelity,
@@ -1058,7 +1071,7 @@ export function providerFacingPresentationSourceContract(contract: PresentationS
     sections: contract.outline.sections.map((section) => ({ title: section.title, slideNumbers: [...section.slideNumbers] })),
     protectedFacts: contract.protectedFacts.map(omitSourceBlockId),
     protectedQuotes: contract.protectedQuotes.map(omitSourceBlockId),
-    protectedMessages: contract.protectedMessages.map(omitSourceBlockId),
+    protectedMessages: contract.protectedMessages.map((message) => ({ ...omitSourceBlockId(message), ...(contract.slideCountPolicy?.kind === "flexible" && !contract.numberedOutline.length && message.placement === "closing" ? { slideNumber: null, position: "last_slide" } : {}) })),
     protectedTerminology: contract.protectedTerminology.map(omitSourceBlockId),
     roadmaps: contract.roadmaps.map(omitSourceBlockId),
     style: contract.style,
@@ -1308,7 +1321,8 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   const citationChecks = presentationCitationEvidenceChecks(values, contract, { pageStart, pageSize });
 
   const requiredCount = contract.requestedSlideCount ?? contract.predictedSlideCount ?? contract.authoredSlideCount;
-  if (complete && requiredCount !== null && items.length !== requiredCount) add("slide_count_mismatch", "items", `The planned presentation contains ${requiredCount} slides, but the generated deck contains ${items.length}.`);
+  if (complete && !slideCountAccepted(items.length, contract.slideCountPolicy, requiredCount)) add("slide_count_mismatch", "items", contract.slideCountPolicy?.kind === "flexible" ? `The accepted presentation range is ${contract.slideCountPolicy.min}–${contract.slideCountPolicy.max} slides, but the generated deck contains ${items.length}.` : `The planned presentation contains ${requiredCount} slides, but the generated deck contains ${items.length}.`);
+  if (complete && contract.slideCountPolicy?.kind === "flexible" && contract.numberedOutline.some((slide) => slide.sourceMode === "outline") && items.length !== contract.authoredSlideCount) add("outline_slide_count_conflict", "items", "Every research-backed outline position needs its authored evidence assignment; a count range cannot authorize added or omitted outline positions.");
 
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]!;
@@ -1409,12 +1423,13 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   }
 
   for (const message of contract.protectedMessages) {
-    const authoredIndex = contract.numberedOutline.find((slide) => slide.number === message.slideNumber)?.index ?? message.slideNumber - 1;
+    const relativeClosing = contract.slideCountPolicy?.kind === "flexible" && !contract.numberedOutline.length && message.placement === "closing";
+    const authoredIndex = relativeClosing ? items.length - 1 + pageStart : contract.numberedOutline.find((slide) => slide.number === message.slideNumber)?.index ?? message.slideNumber - 1;
     const index = authoredIndex - pageStart;
     if (index < 0 || index >= items.length) continue;
     if (!(visible[index] ?? "").includes(message.text)) {
       const elsewhere = visible.some((content, position) => position !== index && content.includes(message.text));
-      add(elsewhere ? "misplaced_protected_message" : "missing_protected_message", `items.${index}.body`, `The exact authored ${message.placement} message must appear in audience-facing content on slide ${message.slideNumber}.`);
+      add(elsewhere ? "misplaced_protected_message" : "missing_protected_message", `items.${index}.body`, `The exact authored ${message.placement} message must appear in audience-facing content on slide ${relativeClosing ? items.length : message.slideNumber}.`);
     }
   }
 

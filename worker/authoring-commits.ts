@@ -1,9 +1,10 @@
 import type { ApprovedContextProposal, ContextChange, ContextProposalSelection } from "../src/model/context-proposal-application.ts";
 import type { EventInput } from "../src/model/events.ts";
-import { consentHash, executionAdmissionGuard, executionAuthorityCurrent, type ConsequentialBinding } from "./consequential-consent.ts";
-import { storePrivateContent, type PilotUser } from "./pilot-policy.ts";
+import { canonicalConsent, consentHash, executionAdmissionGuard, executionAuthorityCurrent, executionContentCustodyGuard, type ConsequentialBinding } from "./consequential-consent.ts";
+import { storePrivateContent, type BudgetReservationGuard, type PilotUser } from "./pilot-policy.ts";
 import { appendProjectEvents, type ProjectRequestContext } from "./project-access.ts";
-import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, type WorkerEnv } from "./runtime.ts";
+import { authoringEventProof } from "./authoring-event-proof.ts";
+import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, type EventRow, type WorkerEnv } from "./runtime.ts";
 
 export type AuthoringPlan={operation:"context-proposal"|"document-duplicate";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};result:{blockIds:string[];relationCount:number;documentId?:string};expiresAt:string};
 export type AuthoringPreview={previewId:string;approvalHash:string;sourceHash:string;projectId:string;documentId:string;canvasId:string|null;blockId:string;changes:ContextChange[];events:EventInput[];review?:AuthoringPlan["review"];blockCount:number;relationCount:number;expiresAt:string};
@@ -13,8 +14,8 @@ const correlationFor=(userId:string,id:string)=>`authoring:${userId}:${id}`;
 // when SQLite reorders filters; erased previews are never reconstructed or modified.
 const privateJson = "CASE WHEN redacted_at IS NULL AND json_valid(content) THEN content ELSE '{}' END";
 
-export async function storeAuthoringPreview(env:WorkerEnv,user:PilotUser,plan:AuthoringPlan):Promise<AuthoringPreview>{
-  const approvalHash=await consentHash(plan),saved=await storePrivateContent(env,user.userId,"authoring-preview",JSON.stringify({plan,approvalHash,state:"review"}),plan.binding.scope??undefined);
+export async function storeAuthoringPreview(env:WorkerEnv,user:PilotUser,plan:AuthoringPlan,additional?:BudgetReservationGuard):Promise<AuthoringPreview>{
+  const approvalHash=await consentHash(plan),saved=await storePrivateContent(env,user.userId,"authoring-preview",JSON.stringify({plan,approvalHash,state:"review"}),plan.binding.scope??undefined,additional);
   const guard=executionAdmissionGuard(user,plan.binding,null);
   await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','dismissed') WHERE owner_id=? AND kind='authoring-preview' AND rowid<(SELECT rowid FROM private_content WHERE content_id=?)
     AND COALESCE(json_extract(${privateJson},'$.state'),'review')='review' AND json_extract(${privateJson},'$.plan.operation')=?
@@ -96,31 +97,58 @@ export async function dismissAuthoringPreview(env:WorkerEnv,user:PilotUser,bindi
 }
 
 /** The final CHECK receipt rolls back every preceding event if any admission or event write failed. */
-export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:ConsequentialBinding,shared:ProjectRequestContext|null|undefined,previewId:string,approvalHash:string,plan:AuthoringPlan,writeHead=plan.sourceHead){
-  if(plan.binding.actorUserId!==user.userId||plan.binding.sourceHash!==current.sourceHash||plan.binding.permissionEpoch!==current.permissionEpoch
+export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:ConsequentialBinding,shared:ProjectRequestContext|null|undefined,previewId:string,approvalHash:string,plan:AuthoringPlan,writeHead=plan.sourceHead,additional:BudgetReservationGuard={sql:"1",bindings:[]}){
+  const identity=(binding:ConsequentialBinding)=>canonicalConsent({operation:binding.operation,actor:binding.actorUserId,stream:binding.streamId,project:binding.projectId,document:binding.documentId,block:binding.blockId,canvas:binding.canvasId,scope:binding.scope,intent:binding.intentHash});
+  if(!plan.events.length||plan.events.length>512||plan.operation!==current.operation||identity(plan.binding)!==identity(current)
+    ||plan.binding.actorUserId!==user.userId||plan.binding.sourceHash!==current.sourceHash||plan.binding.permissionEpoch!==current.permissionEpoch
     ||plan.binding.contextSessionId!==current.contextSessionId||plan.expiresAt<=new Date().toISOString()||await consentHash(plan)!==approvalHash)throw new Error("authoring_preview_stale");
-  const guard=executionAdmissionGuard(user,current,null),now=new Date().toISOString(),streamId=current.streamId,correlation=correlationFor(user.userId,previewId);
+  const approvedPlanJson=JSON.stringify(plan);
+  const guard=executionAdmissionGuard(user,current,null),custody=executionContentCustodyGuard(current),now=new Date().toISOString(),streamId=current.streamId,correlation=correlationFor(user.userId,previewId);
   const leaseId=crypto.randomUUID(),leaseExpiresAt=new Date(Date.now()+120_000).toISOString();
   const claimed=await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','applying','$.leaseId',?,'$.leaseExpiresAt',?)
     WHERE content_id=? AND owner_id=? AND kind='authoring-preview' AND redacted_at IS NULL AND expires_at>?
-      AND json_extract(${privateJson},'$.approvalHash')=? AND COALESCE(json_extract(${privateJson},'$.state'),'review')='review' AND ${guard.sql}`)
-    .bind(leaseId,leaseExpiresAt,previewId,user.userId,now,approvalHash,...guard.bindings).run();
+      AND json_extract(${privateJson},'$.approvalHash')=? AND COALESCE(json_extract(${privateJson},'$.state'),'review')='review' AND ${custody.sql} AND ${guard.sql}`)
+    .bind(leaseId,leaseExpiresAt,previewId,user.userId,now,approvalHash,...custody.bindings,...guard.bindings).run();
   if(Number(claimed.meta.changes??0)!==1)throw new Error("authoring_save_in_progress");
-  const privateGuard=`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='authoring-preview' AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_extract(${privateJson},'$.plan.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_extract(${privateJson},'$.state')='applying' AND json_extract(${privateJson},'$.leaseId')=? AND json_extract(${privateJson},'$.leaseExpiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
-  const fullGuard=`(${guard.sql}) AND ${privateGuard}`,bindings=[...guard.bindings,previewId,user.userId,now,leaseId];
-  const finalize=(lastEventId:string)=>env.DB.prepare(`INSERT INTO authoring_commits(preview_id,actor_user_id,operation,project_id,document_id,block_id,canvas_id,organization_id,project_access_id,approval_hash,result_json,last_event_id,verified,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ${fullGuard}
-      AND(SELECT COUNT(*) FROM events WHERE stream_id=? AND correlation_id=? AND actor=?)=?
-      AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=? AND correlation_id=?) THEN 1 ELSE 0 END,?)`)
+  const privateGuard=`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='authoring-preview' AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_extract(${privateJson},'$.plan.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_extract(${privateJson},'$.state')='applying' AND json_extract(${privateJson},'$.leaseId')=? AND json_extract(${privateJson},'$.leaseExpiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    AND json_extract(${privateJson},'$.approvalHash')=? AND ${custody.sql}
+    ${current.scope?`AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+      LEFT JOIN organization_retention_policies policy ON policy.organization_id=retention.organization_id
+      WHERE retention.content_id=private_content.content_id AND retention.classification='governed-evidence'
+        AND retention.policy_version=COALESCE(policy.version,0) AND retention.assigned_expires_at=private_content.expires_at)`:""})`;
+  const fullGuard=`(${guard.sql}) AND ${privateGuard}`,bindings=[...guard.bindings,previewId,user.userId,now,leaseId,approvalHash,...custody.bindings];
+  const finalize=(events:readonly EventRow[],writeProof:BudgetReservationGuard=authoringEventProof(events))=>{
+  if(!events.length||events.length!==plan.events.length)throw new Error("authoring_write_proof_required");
+  if(JSON.stringify(plan)!==approvedPlanJson)throw new Error("authoring_preview_stale");
+  const lastEventId=events.at(-1)!.eventId,finalSource=additional;
+  // Large source snapshots appear once in the final CHECK, not once per copied event.
+  const finalGuard=`(${finalSource.sql}) AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND json_extract(${privateJson},'$.plan')=json(?))`;
+  const finalBindings=[...finalSource.bindings,previewId,user.userId,approvedPlanJson];
+  return env.DB.prepare(`INSERT INTO authoring_commits(preview_id,actor_user_id,operation,project_id,document_id,block_id,canvas_id,organization_id,project_access_id,approval_hash,result_json,last_event_id,verified,created_at)
+    -- Keep one row even on denial: verified=0 must reach the existing CHECK and roll back.
+    -- Filtering away a denied proof could omit the receipt and leave earlier writes committed.
+    WITH receipt_input(preview_id,actor_user_id,operation,project_id,document_id,block_id,canvas_id,organization_id,project_access_id,approval_hash,result_json,last_event_id)
+      AS MATERIALIZED(VALUES(?,?,?,?,?,?,?,?,?,?,?,?)),
+    receipt_admission(verified) AS MATERIALIZED(SELECT CASE WHEN ${fullGuard} THEN 1 ELSE 0 END),
+    receipt_source(verified) AS MATERIALIZED(SELECT CASE WHEN ${finalGuard} THEN 1 ELSE 0 END),
+    receipt_writes(verified) AS MATERIALIZED(SELECT CASE WHEN ${writeProof.sql} THEN 1 ELSE 0 END),
+    receipt_tail(verified) AS MATERIALIZED(SELECT CASE WHEN
+      (SELECT COUNT(*) FROM events WHERE stream_id=? AND correlation_id=? AND actor=?)=?
+      AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=? AND correlation_id=?)
+      AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? THEN 1 ELSE 0 END)
+    SELECT receipt_input.*,CASE WHEN receipt_admission.verified AND receipt_source.verified
+      AND receipt_writes.verified AND receipt_tail.verified THEN 1 ELSE 0 END,?
+    FROM receipt_input CROSS JOIN receipt_admission CROSS JOIN receipt_source CROSS JOIN receipt_writes CROSS JOIN receipt_tail`)
     .bind(previewId,user.userId,plan.operation,current.projectId,current.documentId,current.blockId,current.canvasId,current.scope?.organizationId??null,current.scope?.projectAccessId??null,approvalHash,JSON.stringify(plan.result),lastEventId,
-      ...bindings,streamId,correlation,`user:${user.userId}`,plan.events.length,lastEventId,streamId,writeHead+plan.events.length,correlation,now);
+      ...bindings,...finalBindings,...writeProof.bindings,streamId,correlation,`user:${user.userId}`,plan.events.length,lastEventId,streamId,writeHead+plan.events.length,correlation,streamId,writeHead+plan.events.length,now);
+  };
   const completed=()=>env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','applied') WHERE content_id=? AND owner_id=? AND json_extract(${privateJson},'$.leaseId')=? AND EXISTS(SELECT 1 FROM authoring_commits WHERE preview_id=?)`).bind(previewId,user.userId,leaseId,previewId);
   try{
   if(current.scope){
     // Owner custody without a selected cookie is explicit and still checked by the same live tenant guard.
     const context=shared??{contextId:"",organizationId:current.scope.organizationId,projectAccessId:current.scope.projectAccessId,projectId:current.projectId,ownerUserId:current.scope.ownerUserId,principalUserId:user.userId,role:user.role,permissions:user.access.capabilities,expiresAt:plan.expiresAt};
     const response=await appendProjectEvents(env,context,user,{action:"batch",events:plan.events,clientId:"web:context-approval",correlationId:correlation},undefined,
-      {preserveGovernance:true,authoringOperation:plan.operation,expectedOwnerHead:writeHead,guardSql:fullGuard,guardBindings:bindings,buildStatements:(lastEventId)=>[finalize(lastEventId),completed()]});
+      {preserveGovernance:true,authoringOperation:plan.operation,expectedOwnerHead:writeHead,guardSql:fullGuard,guardBindings:bindings,buildStatements:(lastEventId,writeProof,events)=>{if(!events?.length||events.at(-1)!.eventId!==lastEventId)throw new Error("authoring_write_proof_required");return[finalize(events,writeProof),completed()];}});
     if(!response.ok)throw new Error(String((await response.json() as {error?:string}).error??"authoring_commit_unavailable"));
   }else{
     // Activity may advance the stream without changing any approved source. The exact plan is unchanged;
@@ -129,7 +157,7 @@ export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:C
     const placeholders=EVENT_WRITE_COLUMNS.split(",").map(()=>"?").join(",");
     await env.DB.batch([...events.map((event,index)=>env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${placeholders}
       WHERE(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${fullGuard}`)
-      .bind(...eventWriteBindings(event),streamId,writeHead+index,...bindings)),finalize(events.at(-1)!.eventId),completed()]);
+      .bind(...eventWriteBindings(event),streamId,writeHead+index,...bindings)),finalize(events),completed()]);
   }
   }catch(error){
     // Either the complete receipt already exists, or changing this lease atomically prevents any late commit.

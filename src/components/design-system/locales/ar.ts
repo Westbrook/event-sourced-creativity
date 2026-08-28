@@ -1,3 +1,5 @@
+import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./output-delivery-messages.ts";
+import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages.ts";
 import systemMessages from "./system-ar.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
@@ -5,6 +7,8 @@ import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
 const messages: Record<string, string> = {
   ...FORMA_NEXT_ACTION_MESSAGES.ar,
   ...FORMA_RESPONSIVE_MESSAGES.ar,
+  ...FORMA_OUTPUT_DELIVERY_MESSAGES.ar,
+  ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ar,
   "presentation.planning.outlineEvidence": "تحدد المخططات الموجزة عناوين الشرائح ومتطلبات التغطية. تُسند الأبحاث الداعمة بشكل منفصل، وتكون الأولوية لمجموعات المصادر المحددة صراحةً. يمنع نطاق المصادر غير المحسوم التوليد قبل أي إنفاق. تُستبعد مواصفات المشهد والمخرجات الأخرى من الشرائح.",
   "scene.provider.disclosure": "مزود المشهد المدفوع ونقل المصادر والتكلفة",
   "scene.provider.identity": "مزود مدفوع · OpenAI Responses · {model}",

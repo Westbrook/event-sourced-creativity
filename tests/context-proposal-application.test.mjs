@@ -131,3 +131,65 @@ test("human context learned Research Actions use full participant identities and
     assert.throws(()=>plan(text,[elodie,{...elodie,id:"other",handle:"subject/Elodie"}]),/participant_unresolved/);
   }
 });
+
+
+test("Phase3E context research copies renew every Output identity after the complete dependency map is known",async()=>{
+  const {parseOutputRequirement,inspectOutputRequirement}=await import("../src/model/output-requirements.ts");
+  const spec=parseOutputRequirement({id:"output-original",type:"Output",subtype:"Executive summary",content:"1 slideshow with 5-15 slides, one podcast episode outlining the document, a series of TikTok style videos outlining the various parts of the document."}).spec;
+  spec.deliverables[0].source_scope={kind:"blocks",block_ids:["source-a","source-b"]};
+  spec.deliverables[0].format_variants=[{id:"landscape-original",label:"Landscape",required:true,aspect_ratio:{width:16,height:9},quantity:{kind:"exact",unit:"presentation",value:1},placements:["opening"],original_text:"Landscape opening",value_origins:{}}];
+  spec.deliverables[2].series={state:"resolved",description:"Reviewed order",members:["Élodie","東京"].map((label,index)=>({id:"member-original-"+index,label,required:true,source_scope:{kind:"blocks",block_ids:[index?"source-b":"source-a"]},coverage:{kind:"topics",topics:[label]},quantity:{kind:"exact",unit:"video",value:1},original_text:label+" — exact",value_origins:{}}))};
+  assert.equal(inspectOutputRequirement(spec).status,"valid");
+  const original=structuredClone(spec),target=block("target"),output={...block("output-original","doc-b",{text:spec.original_text,output_spec:spec,output_grant_id:"old-grant",output_acceptance_id:"old-acceptance",output_status:"complete",grant_id:"old-grant",result_id:"old-result",weight:.8,influence:1,intent:"include",effect:"positive"}),type:"Output"};
+  const projection={libraryBlocks:[target,output,block("source-a","doc-b"),block("source-b","doc-b")],libraryBlockRelations:[relation("part-a",output.id,"source-a"),relation("part-b",output.id,"source-b")]};
+  let sequence=0;const planned=buildContextApplicationPlan({projection,target,proposals:[suggestion(output.id)],createId:()=>"new-"+(++sequence)});
+  const created=planned.events.filter(event=>event.type==="BlockCreated"),copied=created.find(event=>event.payload.properties.copied_from_block_id===output.id),copiedIds=new Map(created.map(event=>[event.payload.properties.copied_from_block_id,event.payload.block_id]));
+  const allIds=value=>[value.id,...value.deliverables.flatMap(entry=>[entry.id,...(entry.format_variants??[]).map(variant=>variant.id),...(entry.series?.members??[]).map(member=>member.id)])];
+  const renewed=copied.payload.properties.output_spec;
+  assert.equal(copied.payload.type,"output");assert.equal(renewed.id,copied.payload.block_id);
+  assert.equal(inspectOutputRequirement(renewed).status,"valid");
+  assert.ok(allIds(renewed).every(id=>!allIds(original).includes(id)));assert.equal(new Set(allIds(renewed)).size,allIds(renewed).length);
+  assert.deepEqual(renewed.deliverables[0].source_scope,{kind:"blocks",block_ids:[copiedIds.get("source-a"),copiedIds.get("source-b")]});
+  assert.deepEqual(renewed.deliverables[2].series.members.map(member=>member.source_scope),[{kind:"blocks",block_ids:[copiedIds.get("source-a")]},{kind:"blocks",block_ids:[copiedIds.get("source-b")]}]);
+  assert.equal(renewed.original_text,original.original_text);
+  assert.deepEqual(renewed.deliverables.map(entry=>entry.quantity),original.deliverables.map(entry=>entry.quantity));
+  assert.deepEqual(renewed.deliverables[0].content_quantity,{kind:"range",unit:"slide",min:5,max:15});
+  assert.deepEqual(renewed.deliverables[2].series.members.map(({id,source_scope,...member})=>member),original.deliverables[2].series.members.map(({id,source_scope,...member})=>member));
+  for(const key of ["output_grant_id","output_acceptance_id","output_status","grant_id","result_id","weight","intent","influence","effect"])assert.equal(Object.hasOwn(copied.payload.properties,key),false,key);
+  assert.ok(planned.events.every(event=>!event.type.startsWith("Output")));
+  assert.deepEqual(spec,original,"copy never rewrites the source requirement");
+});
+
+test("Phase3E context research partial Output copies preserve unknown complete source coverage instead of narrowing it",async()=>{
+  const {parseOutputRequirement}=await import("../src/model/output-requirements.ts");
+  const spec=parseOutputRequirement({id:"output-original",type:"output",subtype:"Executive summary",content:"1 slideshow with 5 slides, one podcast episode outlining the document."}).spec;
+  spec.deliverables[0].source_scope={kind:"blocks",block_ids:["source-a","source-b"]};
+  const target=block("target"),output={...block("output-original","doc-b",{text:spec.original_text,output_spec:spec}),type:"output"};
+  const projection={libraryBlocks:[target,output,block("source-a","doc-b"),block("source-b","doc-b")],libraryBlockRelations:[relation("only-a",output.id,"source-a")]};
+  const plan=buildContextApplicationPlan({projection,target,proposals:[suggestion(output.id)]}),created=plan.events.filter(event=>event.type==="BlockCreated"),copy=created.find(event=>event.payload.type==="output");
+  assert.equal(created.length,2,"an Output scope is not an implicit new copy grant");
+  assert.equal(copy.payload.properties.output_spec.deliverables[0].source_scope.kind,"unknown");
+  assert.match(copy.payload.properties.output_spec.deliverables[0].source_scope.reason,/not been narrowed automatically/);
+  assert.equal(copy.payload.properties.output_spec.deliverables[1].source_scope.kind,"unknown","cross-document library subset is not a whole-Document duplicate");
+  assert.ok(!created.some(event=>event.payload.properties.copied_from_block_id==="source-b"));
+  assert.deepEqual(spec.deliverables[0].source_scope,{kind:"blocks",block_ids:["source-a","source-b"]});
+});
+
+test("Phase3E context research keeps future Output schemas opaque and non-executable without copying fulfillment",async()=>{
+  const {inspectOutputRequirement}=await import("../src/model/output-requirements.ts"),unknown={schema_version:19,id:"future-original",unknown_constraint:"preserve exactly"};
+  const target=block("target"),source={...block("future-block","doc-b",{text:"Future intent",output_spec:unknown,output_status:"complete",output_grant_id:"never-copy"}),type:"OUtput"};
+  const plan=buildContextApplicationPlan({projection:{libraryBlocks:[target,source],libraryBlockRelations:[]},target,proposals:[suggestion(source.id)]});
+  const copy=plan.events.find(event=>event.type==="BlockCreated");
+  assert.notEqual(copy.payload.block_id,source.id);assert.equal(copy.payload.type,"output");
+  assert.deepEqual(copy.payload.properties.output_spec,unknown);assert.equal(inspectOutputRequirement(copy.payload.properties.output_spec).status,"unsupported");
+  assert.equal(Object.hasOwn(copy.payload.properties,"output_status"),false);assert.equal(Object.hasOwn(copy.payload.properties,"output_grant_id"),false);
+  assert.equal(copy.payload.properties.copied_from_block_id,source.id);assert.ok(plan.events.every(event=>!event.type.startsWith("Output")));
+});
+
+test("Phase3E context research retains the original locked, licensed and cross-project copy protections for Outputs",async()=>{
+  const {parseOutputRequirement}=await import("../src/model/output-requirements.ts"),target=block("target");
+  const source={...block("output-original","doc-b",{text:"One slideshow",output_spec:parseOutputRequirement({id:"output-original",type:"output",content:"1 slideshow with 5 slides."}).spec}),type:"output"};
+  for(const protectedSource of [{...source,locked:true},{...source,properties:{...source.properties,rights_revoked:true}},{...source,projectId:"foreign-project"}]){
+    assert.throws(()=>buildContextApplicationPlan({projection:{libraryBlocks:[target,protectedSource],libraryBlockRelations:[]},target,proposals:[suggestion(source.id)]}),/source_protected/);
+  }
+});

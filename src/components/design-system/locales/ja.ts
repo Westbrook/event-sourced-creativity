@@ -1,3 +1,5 @@
+import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./output-delivery-messages.ts";
+import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages.ts";
 import systemMessages from "./system-ja.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
@@ -5,6 +7,8 @@ import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
 const messages: Record<string, string> = {
   ...FORMA_NEXT_ACTION_MESSAGES.ja,
   ...FORMA_RESPONSIVE_MESSAGES.ja,
+  ...FORMA_OUTPUT_DELIVERY_MESSAGES.ja,
+  ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ja,
   "presentation.planning.outlineEvidence": "短いアウトラインはスライドのタイトルと取り上げる内容を指定します。裏付けとなる調査資料は別に割り当てられ、明示的なソースグループが優先されます。ソースの範囲が未確定の場合は、費用が発生する前に生成を停止します。シーンや他の成果物の仕様はスライドから除外されます。",
   "scene.provider.disclosure": "有料シーン生成のプロバイダー、ソース送信、費用",
   "scene.provider.identity": "有料プロバイダー · OpenAI Responses · {model}",

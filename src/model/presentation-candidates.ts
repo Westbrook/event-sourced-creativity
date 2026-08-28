@@ -1,5 +1,6 @@
 import { generationExecutionSummary } from "./generation-execution-evidence.ts";
 import { hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, providerSubmissions } from "./provider-submission.ts";
+import type { SlideCountPolicy } from "./presentation-count-policy.ts";
 import type { DocumentArtifactDraftItem, DocumentArtifactValidationIssue, SlidePresentation, SlideVisualData } from "./document-artifacts.ts";
 
 export type PresentationCandidateIssueCategory =
@@ -38,7 +39,8 @@ export type PresentationCandidateSummary = {
   pageCount: number;
   globalStartIndex: number;
   generatedSlideCount: number;
-  requestedSlideCount: number;
+  requestedSlideCount: number | null;
+  slideCountPolicy?: SlideCountPolicy;
   plannedSlideCount: number;
   providerBatchCount: number;
   providerCalls: number;

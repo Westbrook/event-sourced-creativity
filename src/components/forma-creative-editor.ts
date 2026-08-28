@@ -1,3 +1,4 @@
+import { copyOutputRequirementBlock } from "../model/output-requirement-copy.ts";
 import { html, nothing } from "lit";
 import { generationHistoryItemIsDraft, generationHistoryItems, isDraftOutput, outputQualityLabel, type CreativeBlock, type EventInput } from "../model/events";
 import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, isNegativeIntent, suggestedSubtype, type BlockIntent, type BlockKind } from "../model/block-types";
@@ -40,7 +41,7 @@ const EDITOR_SECTIONS: readonly EditorSection[] = [
   { id: "brief", label: "The brief", description: "What this needs to achieve and who it is for", types: ["direction", "audience", "message", "emotion"], starter: "direction" },
   { id: "picture", label: "The picture", description: "What appears, where it happens, and how it moves", types: ["subject", "environment", "action", "motion", "scale"], starter: "subject" },
   { id: "look", label: "The look", description: "How the work should be framed, lit, and styled", types: ["composition", "camera", "lighting", "style", "material", "palette", "typography", "audio"], starter: "style" },
-  { id: "delivery", label: "The guardrails", description: "Where it goes and what it must protect or avoid", types: ["format", "brand", "exclusion", "accessibility"], starter: "format" },
+  { id: "delivery", label: "The guardrails", description: "Where it goes, what it owes, and what it must protect or avoid", types: ["format", "output", "brand", "exclusion", "accessibility"], starter: "format" },
   { id: "references", label: "Visual references", description: "Images that make the direction easier to see", types: ["reference"], starter: "reference" },
 ] as const;
 
@@ -63,6 +64,7 @@ const FRIENDLY_LABELS: Record<BlockKind, string> = {
   typography: "Type",
   audio: "Audio",
   format: "Format",
+  output: "Output",
   brand: "Brand behavior",
   exclusion: "General constraint",
   accessibility: "Accessibility",
@@ -195,12 +197,11 @@ export class FormaCreativeEditor extends AlternativeStudio {
         properties: {
           text,
           subtype: suggestedSubtype(this.#newType),
-          weight: weightFor(this.#newStrength),
-          intent: this.#newIntent,
+          ...(this.#newType === "output" ? {} : {weight: weightFor(this.#newStrength), intent: this.#newIntent}),
           authority: "authored",
           created_from: "creative-editor",
           ...(this.#newType==="audio"?{audio_role:"score",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false}:{}),
-          ...(isNegativeIntent(this.#newIntent) ? { semantic_role: "negative_constraint" } : {}),
+          ...(this.#newType!=="output"&&isNegativeIntent(this.#newIntent) ? { semantic_role: "negative_constraint" } : {}),
         },
       },
     });
@@ -263,15 +264,16 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const projection = this.store.projection.get();
     if(item.properties.source_artifact_id){if(item.properties.source_artifact_item_id){this.store.toast(item.properties.source_artifact_kind==="video"?"Copy the complete video to keep every scene connected.":"Copy the complete storyboard to keep every frame connected.");return;}const copied=await this.store.copyLibraryBlockSet(item.id,projection.documentId,"creative-editor");if(copied){this.#selectedId=copied.rootBlockId;this.requestUpdate();}return;}
     const id = crypto.randomUUID();
+    const copied=copyOutputRequirementBlock(item,id,new Map([[item.id,id]]));
     const appended = await this.store.append({
       type: "BlockCreated",
       payload: {
         block_id: id,
         document_id: projection.documentId,
-        type: item.type,
-        handle: `${item.type}/${slug(textFor(item), id)}-copy`,
+        type: copied.type,
+        handle: `${copied.type}/${slug(textFor(item), id)}-copy`,
         position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`,
-        properties: { ...item.properties, authority: "authored", copied_from_block_id: item.id, created_from: "creative-editor" },
+        properties: { ...copied.properties, authority: "authored", copied_from_block_id: item.id, created_from: "creative-editor" },
       },
     });
     if (appended.length) this.#selectedId = id;
@@ -358,7 +360,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         <span><b>${intent==="include"?this.i18n.system(itemLabel):this.i18n.system("{intent} {type}",{intent:this.i18n.system(intentCopy(intent)),type:this.i18n.system(itemLabel).toLocaleLowerCase(this.i18n.locale)})}</b><small>${negativeConstraint ? this.i18n.system("Must not include: {value}", { value: textFor(item) }) : textFor(item)}</small><small class="creative-editor-item-scope">${localizedSpatialScopeLabel(item.properties.spatial_scope,this.i18n)}</small></span>
         ${item.locked ? html`<em>Protected</em>` : intent !== "include" ? html`<em>${this.i18n.system(intentCopy(intent))}</em>` : nothing}
       </button>
-      <button class="creative-editor-item-toggle" aria-pressed=${included} title=${included ? this.i18n.system("Leave out of the next preview") : this.i18n.system("Use in the next preview")} @click=${() => this.#toggle(item)}>${included ? this.i18n.system("On") : this.i18n.system("Off")}</button>
+      ${kind==="output"?nothing:html`<button class="creative-editor-item-toggle" aria-pressed=${included} title=${included ? this.i18n.system("Leave out of the next preview") : this.i18n.system("Use in the next preview")} @click=${() => this.#toggle(item)}>${included ? this.i18n.system("On") : this.i18n.system("Off")}</button>`}
     </article>`;
   }
 
@@ -436,7 +438,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           </main>
 
           <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
-            ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();const form=event.currentTarget as HTMLFormElement;form.querySelector("forma-output-input-editor")?.reset();const rich=form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]');if(rich){rich.value=textFor(selected);const textarea=rich.querySelector("textarea");if(textarea)textarea.value=textFor(selected);rich.requestUpdate();}const textarea=form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');if(textarea)textarea.value=textFor(selected);const type=form.querySelector<HTMLSelectElement>('select[name="item-type"]'),intent=form.querySelector<HTMLSelectElement>('select[name="item-intent"]');if(type)type.value=selected.type;if(intent)intent.value=blockIntentFor(selected.type,selected.properties);for(const radio of form.querySelectorAll<HTMLInputElement>('input[name="strength"]'))radio.checked=radio.value===strengthFor(Number(selected.properties.weight??.65));this.#selectedId=selected.id;this.store.patchUi({focusBlockId:selected.id,editingBlockId:""});this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".creative-editor-item.selected .creative-editor-item-main")?.focus({preventScroll:true}));}}}>
+            ${selected?.type.toLowerCase()==="output" ? html`<forma-context-block .block=${selected}></forma-context-block>` : selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();const form=event.currentTarget as HTMLFormElement;form.querySelector("forma-output-input-editor")?.reset();const rich=form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]');if(rich){rich.value=textFor(selected);const textarea=rich.querySelector("textarea");if(textarea)textarea.value=textFor(selected);rich.requestUpdate();}const textarea=form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');if(textarea)textarea.value=textFor(selected);const type=form.querySelector<HTMLSelectElement>('select[name="item-type"]'),intent=form.querySelector<HTMLSelectElement>('select[name="item-intent"]');if(type)type.value=selected.type;if(intent)intent.value=blockIntentFor(selected.type,selected.properties);for(const radio of form.querySelectorAll<HTMLInputElement>('input[name="strength"]'))radio.checked=radio.value===strengthFor(Number(selected.properties.weight??.65));this.#selectedId=selected.id;this.store.patchUi({focusBlockId:selected.id,editingBlockId:""});this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".creative-editor-item.selected .creative-editor-item-main")?.focus({preventScroll:true}));}}}>
               <header><span>${selectedIsExclusion ? this.i18n.system("Guardrail selected") : this.i18n.system("Selected")}</span><h2>${selectedIntent==="include"?this.i18n.system(selectedLabel):this.i18n.system("{intent} {type}",{intent:this.i18n.system(intentCopy(selectedIntent)),type:this.i18n.system(selectedLabel).toLocaleLowerCase(this.i18n.locale)})}</h2><p>${selectedIsExclusion ? this.i18n.system("This is a negative {value} constraint. It tells the preview what must not appear; it never becomes a positive focus.", { value: this.i18n.system(selectedLabel).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Change the role, intent, wording, and influence of this decision.")}</p></header>
               ${selected.type === "reference" && isImageReference(selected.properties) && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)} .targetId=${selected.id} .referenceId=${String(selected.properties.reference_id??"")} .focalPoint=${selected.properties.focal_point}></forma-reference-image>` : nothing}
               ${selected.type === "reference" && !isImageReference(selected.properties) ? html`<div class="creative-inspector-source" data-reference-medium=${referenceMedium(selected.properties)}><span>${icon(referenceMedium(selected.properties)==="audio"?"audio":referenceMedium(selected.properties)==="video"?"video":"document")}</span><blockquote>${String(selected.properties.source_excerpt??selected.properties.text??selected.properties.description??selected.properties.label??"")}</blockquote></div>` : nothing}
@@ -467,9 +469,9 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <button type="button" class="icon-button modal-close" aria-label="Close" @click=${this.#closeCreate}>${icon("close")}</button>
           <h2 id="creative-add-title">Add context</h2><p>${isNegativeIntent(this.#newIntent) ? this.i18n.system("Choose what kind of decision this is, then name what must stay out. The role remains explicit while the intent compiles as a negative guardrail.") : this.i18n.system("Choose what the instruction concerns and how the plan should treat it. You can change both later.")}</p>
           <label><span>Role in the plan</span><select @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type} ?selected=${item.type === this.#newType}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
-          <label><span>Intent</span><select @change=${(event: Event) => { this.#newIntent = (event.target as HTMLSelectElement).value as BlockIntent; this.requestUpdate(); }}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === this.#newIntent}>${this.i18n.system(intent.label)} · ${this.i18n.system(intent.description)}</option>`)}</select></label>
+          ${this.#newType==="output"?nothing:html`<label><span>Intent</span><select @change=${(event: Event) => { this.#newIntent = (event.target as HTMLSelectElement).value as BlockIntent; this.requestUpdate(); }}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === this.#newIntent}>${this.i18n.system(intent.label)} · ${this.i18n.system(intent.description)}</option>`)}</select></label>`}
           <label><span>${isNegativeIntent(this.#newIntent) ? this.i18n.system("What {value} must be excluded?", { value: this.i18n.system(FRIENDLY_LABELS[this.#newType]).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Your instruction")}</span><textarea autofocus required rows="4" placeholder=${isNegativeIntent(this.#newIntent) ? this.#newType==="subject"?this.i18n.system("For example: people under 20 years old"):this.i18n.system("For example: an unwanted {type}",{type:this.i18n.system(FRIENDLY_LABELS[this.#newType]).toLocaleLowerCase(this.i18n.locale)}) : this.i18n.system(blockTypeDefinition(this.#newType)?.prompt ?? "")} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
-          <fieldset><legend>${isNegativeIntent(this.#newIntent) ? this.i18n.system("How strongly should this guardrail apply?") : this.i18n.system("How much should it lead?")}</legend>${(isNegativeIntent(this.#newIntent) ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${this.i18n.system(label)}</span></label>`)}</fieldset>
+          ${this.#newType==="output"?nothing:html`<fieldset><legend>${isNegativeIntent(this.#newIntent) ? this.i18n.system("How strongly should this guardrail apply?") : this.i18n.system("How much should it lead?")}</legend>${(isNegativeIntent(this.#newIntent) ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${this.i18n.system(label)}</span></label>`)}</fieldset>`}
           <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add context</button></footer>
         </form>
       </dialog>` : nothing}

@@ -10,6 +10,7 @@ import { requestDialogText } from "./modal-dialog";
 import { documentArtifactDefinition, isDocumentArtifactKind } from "../model/document-artifacts";
 import { inferDocumentArtifactKind } from "../model/document-output-intent";
 import { outputInputDraft } from "../model/output-authoring";
+import "./forma-output-requirements";
 import { localizedSourceAnchor } from "../model/source-anchor";
 import { referenceMedium, type ReferenceMedium } from "../model/reference-media";
 import { renderVideoReel } from "./video-reel";
@@ -444,6 +445,7 @@ export class ContextBlock extends FormaElement {
 
   override render() {
     if (!this.block) return nothing;
+    if (this.block.type.toLowerCase() === "output") return html`<forma-output-requirements .documentId=${this.block.documentId} .blockId=${this.block.id}></forma-output-requirements>`;
     const p = this.block.properties; const memberships=combinedContextMemberships(p); const definition=blockTypeDefinition(this.block.type); const sourceKind=isDocumentArtifactKind(p.source_artifact_kind)&&!p.source_artifact_item_id?p.source_artifact_kind:null; const readableType=sourceKind?`${this.i18n.system(documentArtifactDefinition(sourceKind).label)} ${this.i18n.system("input")}`:definition?this.i18n.system(definition.label):this.block.type; const subtypes=definition?[...new Set([String(p.subtype??""),...definition.subtypes].filter(Boolean))]:[]; const intent=blockIntentFor(this.block.type,p); const intentLabel=this.i18n.system(BLOCK_INTENTS.find((option)=>option.id===intent)?.label??intent); const authority = String(p.authority ?? "authored"); const confidence = Number(p.confidence ?? 1); const colors = Array.isArray(p.colors) ? p.colors as string[] : []; const dimensions = p.dimensions && typeof p.dimensions === "object" ? p.dimensions as Record<string, unknown> : null; const extractionStatus = String(p.extraction_status ?? "");
     const medium = this.block.type === "reference" ? referenceMedium(p) : null;
     const symbol = this.block.type !== "reference" ? blockIconName(this.block.type) : medium === "image" ? "image" : medium === "audio" ? "audio" : medium === "video" ? "video" : medium === "unknown" ? "info" : "document";

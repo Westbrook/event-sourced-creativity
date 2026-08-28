@@ -43,6 +43,13 @@ export function sourceRightsDispatchGuard(validity:Pick<SourceRightsValidity,"di
 }
 const earlierRightsDeadline=(left:string|null,right:string|null)=>left===null?right:right===null?left:Date.parse(left)<=Date.parse(right)?left:right;
 
+/** The same licensed-source predicate is used by prechecks and transactional Output assertions. */
+export function licensedPackageSourceBlocks<T extends {type:string;properties:Record<string,unknown>;rightsExpiresAt?:string|null;source?:unknown}>(blocks:readonly T[]):T[]{
+  return blocks.filter((block)=>Boolean(block.source)||block.type==="reference"||Boolean(block.rightsExpiresAt)
+    ||["reference_id","source_expires_at","license_expires_at","rights_expires_at","rights_revoked","source_rights_revoked","rights_class","rights_status","source_evidence_hash"]
+      .some((field)=>block.properties[field]!==undefined&&block.properties[field]!==null&&block.properties[field]!==""));
+}
+
 /** Organizational custody never turns a subsequently revoked source license into a new license. */
 export async function packageSourceRightsValidity(env:WorkerEnv,organizationId:string,snapshot:GovernedSnapshot,refreshSourceIndex?:SourceRightsIndexRefresher):Promise<SourceRightsValidity>{
   let validUntil:string|null=null;
@@ -51,9 +58,7 @@ export async function packageSourceRightsValidity(env:WorkerEnv,organizationId:s
     if(properties.issue||snapshotDeadline.issue)return{current:false,validUntil:null};
     validUntil=earlierRightsDeadline(validUntil,earlierRightsDeadline(properties.validUntil,snapshotDeadline.validUntil));
   }
-  const licensed=snapshot.blocks.filter((block)=>Boolean(block.source)||block.type==="reference"||Boolean(block.rightsExpiresAt)
-    ||["reference_id","source_expires_at","license_expires_at","rights_expires_at","rights_revoked","source_rights_revoked","rights_class","rights_status","source_evidence_hash"]
-      .some((field)=>block.properties[field]!==undefined&&block.properties[field]!==null&&block.properties[field]!==""));
+  const licensed=licensedPackageSourceBlocks(snapshot.blocks);
   if(!licensed.length)return{current:true,validUntil};
   // Capture before the event read; refresh a stale derived index only for callers that request it.
   const readOrigin=()=>env.DB.prepare(`SELECT project.project_id,project.owner_user_id,migration.last_owner_sequence AS indexed_head,

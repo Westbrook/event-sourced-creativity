@@ -26,6 +26,7 @@ const blockIcons: Readonly<Record<BlockKind, FormaIconName>> = {
   typography: "edit",
   audio: "audio",
   format: "grid",
+  output: "share",
   brand: "pin",
   exclusion: "warning",
   accessibility: "eye",

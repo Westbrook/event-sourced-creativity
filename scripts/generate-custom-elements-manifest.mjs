@@ -61,6 +61,7 @@ const registrations = new Map();
 const registrationByConstructor = new Map();
 const explicitRegistrationLocations = new Map();
 const catalogedApplicationPatterns = new Set();
+const catalogedComponents = new Set();
 
 for (const source of sources) {
   const visit = (node) => {
@@ -73,6 +74,7 @@ for (const source of sources) {
           : "";
       };
       const tag = value("tag");
+      if (tag) catalogedComponents.add(tag);
       if (tag && value("level") === "application") catalogedApplicationPatterns.add(tag);
     }
     ts.forEachChild(node, visit);
@@ -448,7 +450,7 @@ function slotsOf(node) {
 }
 
 function categoryFor(name, file) {
-  if (name === "forma-component-catalog") return "organism";
+  if (name === "forma-component-catalog" || name === "forma-output-requirement-card") return "organism";
   if (name === "forma-ui-theme" || name === "forma-ui-locale") return "foundation";
   if (["forma-ui-empty-state", "forma-ui-dialog", "forma-ui-page-header", "forma-ui-popover", "forma-ui-card", "forma-ui-workspace-switcher"].includes(name)) return "organism";
   if (["forma-ui-button", "forma-ui-badge", "forma-ui-link"].includes(name) || file.endsWith("/atoms.ts")) return "atom";
@@ -532,12 +534,12 @@ for (const registration of [...registrations.values()].sort((left, right) => com
   if (events.length) declaration.events = events;
   if (cssProperties.length) declaration.cssProperties = cssProperties;
   if (slots.length) declaration.slots = slots;
-  if (registration.name.startsWith("forma-ui-") || applicationDemonstration) declaration.demos = [{ url: `/knowledge/design-system#${registration.name}` }];
+  if (registration.name.startsWith("forma-ui-") || catalogedComponents.has(registration.name)) declaration.demos = [{ url: `/knowledge/design-system#${registration.name}` }];
   else if (registration.name === "forma-component-catalog") declaration.demos = [{ url: "/knowledge/design-system" }];
   const optionCollections = ["options", "items", "actions", "destinations"].filter((name) => members.some((member) => member.kind === "field" && member.name === name));
   const localizedAttributes = attributes.filter((attribute) => authorTextAttributes.has(attribute.name) || registration.name === "forma-ui-avatar" && attribute.name === "name").map((attribute) => attribute.name);
   const stableValues = [...optionCollections.flatMap((name) => name === "destinations" ? [`${name}[].value`, `${name}[].href`] : [`${name}[].value`]), ...(invariantValueElements.has(registration.name) && members.some((member) => member.name === "value") ? ["value"] : [])];
-  const localization = registration.name.startsWith("forma-ui-") || applicationDemonstration || registration.name === "forma-component-catalog"
+  const localization = registration.name.startsWith("forma-ui-") || catalogedComponents.has(registration.name) || registration.name === "forma-component-catalog"
     ? {
       documentationIdPrefix: `component.${registration.name}`,
       authorTextAttributes: localizedAttributes,

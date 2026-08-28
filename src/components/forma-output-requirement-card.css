@@ -1,0 +1,127 @@
+forma-output-requirement-card {
+  display: block;
+  min-inline-size: 0;
+  container: output-requirement / inline-size;
+  color: var(--forma-color-text, CanvasText);
+  font-family: var(--forma-font-family, sans-serif);
+}
+forma-output-requirement-card *,
+forma-output-requirement-card *::before,
+forma-output-requirement-card *::after { box-sizing: border-box; }
+forma-output-requirement-card .output-requirement-card {
+  display: grid;
+  gap: var(--forma-space-4, 1rem);
+  min-inline-size: 0;
+  padding: var(--forma-space-5, 1.25rem);
+  border: 1px solid var(--forma-color-border-strong, GrayText);
+  border-radius: var(--forma-radius-medium, .75rem);
+  background: var(--forma-color-surface, Canvas);
+  font-size: var(--forma-font-size-body, 1rem);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+forma-output-requirement-card :is(h2, h3, h4, h5, p, ul, ol, fieldset) { min-inline-size: 0; margin: 0; }
+forma-output-requirement-card :is(h2, h3, h4, h5) { color: inherit; line-height: 1.35; letter-spacing: normal; }
+forma-output-requirement-card h2 { font-size: 1.2rem; }
+forma-output-requirement-card h3 { font-size: 1.1rem; }
+forma-output-requirement-card :is(h4, h5) { font-size: 1rem; }
+forma-output-requirement-card :is(small, .output-requirement-header > div > span) { color: var(--forma-color-text-muted, GrayText); font-size: var(--forma-font-size-supporting, .875rem); }
+forma-output-requirement-card .output-requirement-header,
+forma-output-requirement-card .output-requirement-group > header,
+forma-output-requirement-card .output-requirement-results > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--forma-space-3, .75rem);
+}
+forma-output-requirement-card .output-requirement-header > div,
+forma-output-requirement-card .output-requirement-results > li > div { min-inline-size: 0; }
+forma-output-requirement-card .output-requirement-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--forma-space-2, .5rem); }
+forma-output-requirement-card button,
+forma-output-requirement-card summary {
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  max-inline-size: 100%;
+  padding: var(--forma-space-2, .5rem) var(--forma-space-3, .75rem);
+  border: 1px solid var(--forma-color-border-strong, GrayText);
+  border-radius: var(--forma-radius-small, .375rem);
+  color: var(--forma-color-text, CanvasText);
+  background: var(--forma-color-surface, Canvas);
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  white-space: normal;
+  cursor: pointer;
+}
+forma-output-requirement-card button[type="submit"] { color: var(--forma-color-on-accent, HighlightText); background: var(--forma-color-accent, Highlight); border-color: var(--forma-color-accent, Highlight); }
+forma-output-requirement-card button:disabled { color: var(--forma-color-text-muted, GrayText); background: var(--forma-color-surface-subtle, Canvas); cursor: not-allowed; opacity: 1; }
+forma-output-requirement-card :is(button, input, select, textarea, summary, [tabindex]):focus-visible { outline: var(--forma-focus-ring-width, 3px) solid var(--forma-focus-ring-color, Highlight); outline-offset: 3px; }
+forma-output-requirement-card .output-requirement-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--forma-space-3, .75rem); }
+forma-output-requirement-card .output-requirement-field { display: grid; align-content: start; gap: var(--forma-space-2, .5rem); min-inline-size: 0; margin: 0; font-size: inherit; }
+forma-output-requirement-card .output-requirement-field > span { font-weight: 600; }
+forma-output-requirement-card :is(input:not([type="checkbox"]), select, textarea) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  padding: var(--forma-space-2, .5rem) var(--forma-space-3, .75rem);
+  color: var(--forma-color-text, CanvasText);
+  background: var(--forma-color-surface, Canvas);
+  border: 1px solid var(--forma-color-border-strong, GrayText);
+  border-radius: var(--forma-radius-small, .375rem);
+  font: inherit;
+}
+forma-output-requirement-card textarea { resize: vertical; line-height: 1.55; }
+forma-output-requirement-card :is(input, textarea)[aria-invalid="true"] { border: 2px solid var(--forma-color-danger-text, CanvasText); }
+forma-output-requirement-card input[type="checkbox"] { flex: none; inline-size: 1.15rem; block-size: 1.15rem; margin: .25rem 0; accent-color: var(--forma-color-accent, Highlight); }
+forma-output-requirement-card .output-requirement-choice { display: flex; min-block-size: var(--forma-control-min-size, 2.75rem); align-items: start; gap: var(--forma-space-3, .75rem); margin: 0; cursor: pointer; }
+forma-output-requirement-card .output-requirement-choice > span { display: grid; min-inline-size: 0; gap: var(--forma-space-1, .25rem); }
+forma-output-requirement-card .output-requirement-form,
+forma-output-requirement-card .output-requirement-group,
+forma-output-requirement-card .output-requirement-subrow,
+forma-output-requirement-card .output-requirement-coverage,
+forma-output-requirement-card .output-requirement-series,
+forma-output-requirement-card .output-requirement-formats,
+forma-output-requirement-card .output-requirement-form-footer { display: grid; min-inline-size: 0; gap: var(--forma-space-4, 1rem); }
+forma-output-requirement-card .output-requirement-form > button,
+forma-output-requirement-card .output-requirement-group > button,
+forma-output-requirement-card .output-requirement-subrow > button,
+forma-output-requirement-card .output-requirement-formats > button { justify-self: start; }
+forma-output-requirement-card :is(.output-requirement-groups, .output-requirement-subrows, .output-requirement-results, .output-requirement-summary-groups) { display: grid; gap: var(--forma-space-4, 1rem); list-style: none; padding: 0; }
+forma-output-requirement-card .output-requirement-group { padding: var(--forma-space-4, 1rem); border: 1px solid var(--forma-color-border-strong, GrayText); border-radius: var(--forma-radius-medium, .75rem); }
+forma-output-requirement-card .output-requirement-subrow { padding: var(--forma-space-3, .75rem); border: 1px solid var(--forma-color-border, GrayText); border-radius: var(--forma-radius-small, .375rem); }
+forma-output-requirement-card fieldset { display: grid; gap: var(--forma-space-3, .75rem); padding: var(--forma-space-3, .75rem); border: 1px solid var(--forma-color-border, GrayText); border-radius: var(--forma-radius-small, .375rem); }
+forma-output-requirement-card legend { max-inline-size: 100%; padding-inline: var(--forma-space-1, .25rem); font-weight: 600; }
+forma-output-requirement-card legend > span { font-weight: 400; }
+forma-output-requirement-card .output-requirement-policy { background: var(--forma-color-surface-subtle, Canvas); }
+forma-output-requirement-card .output-requirement-saved-status { display: grid; gap: var(--forma-space-2, .5rem); padding: var(--forma-space-3, .75rem); border: 1px solid var(--forma-color-border, GrayText); border-radius: var(--forma-radius-small, .375rem); }
+forma-output-requirement-card .output-requirement-totals { display: flex; flex-wrap: wrap; gap: var(--forma-space-2, .5rem) var(--forma-space-4, 1rem); list-style: none; padding: 0; font-size: var(--forma-font-size-supporting, .875rem); }
+forma-output-requirement-card .output-requirement-note,
+forma-output-requirement-card .output-requirement-warning { display: grid; gap: var(--forma-space-3, .75rem); padding: var(--forma-space-3, .75rem); border: 1px solid var(--forma-color-border-strong, GrayText); border-radius: var(--forma-radius-small, .375rem); background: var(--forma-color-surface-subtle, Canvas); }
+forma-output-requirement-card .output-requirement-warning { border-color: var(--forma-color-warning-text, CanvasText); }
+forma-output-requirement-card .output-requirement-error { color: var(--forma-color-danger-text, CanvasText); font-weight: 600; }
+forma-output-requirement-card details { min-inline-size: 0; }
+forma-output-requirement-card details[open] > :not(summary) { margin-block-start: var(--forma-space-3, .75rem); }
+forma-output-requirement-card .output-requirement-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+forma-output-requirement-card .output-requirement-summary-groups > li { display: grid; gap: var(--forma-space-1, .25rem); padding-block: var(--forma-space-2, .5rem); border-block-end: 1px solid var(--forma-color-border, GrayText); }
+forma-output-requirement-card .output-requirement-summary-groups > li > div,
+forma-output-requirement-card .output-requirement-results > li > div { display: grid; gap: var(--forma-space-1, .25rem); }
+forma-output-requirement-card .output-requirement-summary-groups > li > ul { padding-inline-start: var(--forma-space-5, 1.25rem); }
+forma-output-requirement-card .output-requirement-live { min-block-size: 1.5em; }
+forma-output-requirement-card .output-requirement-live:empty { min-block-size: 0; }
+forma-output-requirement-card [data-presentation="compact"] { padding: var(--forma-space-3, .75rem); }
+@container output-requirement (max-width: 34rem) {
+  forma-output-requirement-card .output-requirement-card { padding: var(--forma-space-3, .75rem); }
+  forma-output-requirement-card .output-requirement-fields { grid-template-columns: minmax(0, 1fr); }
+  forma-output-requirement-card .output-requirement-header { display: grid; }
+  forma-output-requirement-card .output-requirement-actions { align-items: stretch; }
+  forma-output-requirement-card .output-requirement-actions > button { flex: 1 1 11rem; }
+  forma-output-requirement-card .output-requirement-group { padding: var(--forma-space-3, .75rem); }
+}
+@media (forced-colors: active) {
+  forma-output-requirement-card :is(.output-requirement-note, .output-requirement-warning, .output-requirement-saved-status, .output-requirement-group) { border-color: CanvasText; }
+  forma-output-requirement-card button:disabled { color: GrayText; border-color: GrayText; }
+}
+@media (prefers-reduced-motion: reduce) {
+  forma-output-requirement-card * { scroll-behavior: auto; transition: none; animation: none; }
+}

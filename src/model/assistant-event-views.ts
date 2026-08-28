@@ -1,5 +1,8 @@
+import { OUTPUT_REQUIREMENT_EVENT_TYPES } from "./output-requirement-events.ts";
+
 /** Semantic state needed to reconstruct an exact creative resource; activity noise is a separate view. */
 export const ASSISTANT_STATE_EVENT_TYPES = [
+  ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
   "DocumentCreated", "DocumentForked", "DocumentRenamed", "DocumentRemoved", "DocumentRestored", "DocumentProductionWorkflowConfigured",
   "BlockCreated", "BlockRenamed", "BlockPropertyEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRemoved", "BlockRestored", "BlockRehomed",

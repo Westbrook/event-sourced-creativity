@@ -1,4 +1,5 @@
 import { blockTypeDefinition, isBlockKind } from "./block-types.ts";
+import { copyOutputRequirementBlock } from "./output-requirement-copy.ts";
 import { ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, CONTEXT_CONTAINS_RELATION, combinedContextMemberships, combinedContextRoleForBlockType, isContextCompositionRelation, normalizeActionBlockReferences, validateContextCompositionGraph } from "./combined-context.ts";
 import { creativeContextRightsIssue } from "./context-health.ts";
 import { researchBlockText, type ContextResearchSuggestion, type DecompositionProposal } from "./context-intelligence.ts";
@@ -74,7 +75,8 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
   const contextIds=new Map<string,string>(),contextId=(value:unknown)=>{if(typeof value!=="string"||!value)return value;if(!contextIds.has(value))contextIds.set(value,createId());return contextIds.get(value);};
   const deferred:EventInput[]=[];
   for(const [sourceId,id]of copied){
-    const source=available.get(sourceId)!,properties:Record<string,unknown>={...source.properties,authority:"authored",copied_from_block_id:sourceId};
+    const source=available.get(sourceId)!,copiedBlock=copyOutputRequirementBlock(source,id,copied);
+    const properties:Record<string,unknown>={...copiedBlock.properties,authority:"authored",copied_from_block_id:sourceId};
     for(const key of ["context_set_id","reference_set_id"])if(properties[key])properties[key]=contextId(properties[key]);
     if(typeof properties.context_set_root_id==="string"){
       const root=copied.get(properties.context_set_root_id);if(!root)throw new Error("context_changes_dependency_unavailable");properties.context_set_root_id=root;
@@ -85,7 +87,7 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
     const references=normalizeActionBlockReferences(properties.block_references).map((reference)=>({...reference,block_id:copied.get(reference.block_id)!}));
     if(references.some((reference)=>!reference.block_id))throw new Error("context_changes_dependency_unavailable");
     if(references.length){properties.block_references=[];deferred.push({type:"BlockPropertyEdited",payload:{...scope,block_id:id,property_path:"block_references",old_value:[],new_value:references,source_surface:"approved-context-proposal"}});}
-    events.push({type:"BlockCreated",payload:{...scope,block_id:id,type:source.type,handle:`${source.handle}-copy-${id.slice(0,6)}`,position:position(),properties,source_surface:"approved-context-proposal"}});blockIds.push(id);
+    events.push({type:"BlockCreated",payload:{...scope,block_id:id,type:copiedBlock.type,handle:`${source.handle}-copy-${id.slice(0,6)}`,position:position(),properties,source_surface:"approved-context-proposal"}});blockIds.push(id);
     changes.push({kind:"copy",label:labelOf(source),text:researchBlockText(source),type:source.type,sourceId,targetId:id});
   }
   for(const relation of liveRelations)if(copied.has(relation.fromBlockId)&&copied.has(relation.toBlockId)){

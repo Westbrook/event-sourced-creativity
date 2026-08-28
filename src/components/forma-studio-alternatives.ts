@@ -42,6 +42,7 @@ export abstract class AlternativeStudio extends FormaElement {
         </div>
         <div class="studio-subpage-body">
           ${body}
+          <forma-output-requirements .documentId=${projection.documentId}></forma-output-requirements>
           <forma-studio-navigator destination=${destination}></forma-studio-navigator>
           ${options.continuity === false ? nothing : html`<forma-document-continuity view=${active}></forma-document-continuity>`}
           ${active === "board" ? html`<forma-document-generations view=${active}></forma-document-generations>` : nothing}

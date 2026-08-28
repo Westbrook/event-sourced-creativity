@@ -444,10 +444,11 @@ export function authorizedGenerationFailureRemediation(
   return allowed ? { href: destination, label: guidance.actionLabel, external: destination.startsWith("https://") } : null;
 }
 
-export function documentJobIsStale(job: Pick<DocumentJob, "status" | "leaseExpiresAt" | "updatedAt">, now = Date.now()) {
+export function documentJobIsStale(job: Pick<DocumentJob, "status" | "leaseExpiresAt" | "updatedAt"> & Partial<Pick<DocumentJob,"sourceSurface">>, now = Date.now()) {
   if (job.status !== "running" && job.status !== "committing") return false;
   const leaseExpires = Date.parse(job.leaseExpiresAt ?? "");
   const updated = Date.parse(job.updatedAt);
+  if(job.sourceSurface==="outputs"&&Number.isFinite(leaseExpires))return leaseExpires<=now;
   return Number.isFinite(leaseExpires) && leaseExpires <= now || Number.isFinite(updated) && updated <= now - DOCUMENT_JOB_STALE_AFTER_MS;
 }
 

@@ -1,3 +1,4 @@
+import { MAX_MANUAL_PRESENTATION_SLIDES, manualPresentationMaximumOutputTokens, presentationCountInstruction, resolvePresentationCountRequest, slideCountBounds, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { ApiError, createFalClient } from "@fal-ai/client";
 import { BLOCK_TYPES, sendsReferencePixels, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
@@ -42,6 +43,11 @@ export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: st
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type CreativeImagePartial = { bytes: Uint8Array; index: number; mimeType: string; width: number; height: number };
 export type CreativeImageOptions = {
+  onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;
+  onBeforeSourceTransmission?:()=>void|Promise<void>;
+  onBeforeProviderDispatch?:(clientRequestId:string)=>void;
+  outputImageFormat?:import("../src/model/image-format").ImageFormat;
+  outputTargetInstructions?:string;
   onProviderSubmission?: PaidProviderSubmissionObserver;
   providerClientRequestId?: string;
   quality?: "low" | "medium" | "high";
@@ -87,8 +93,8 @@ export type ProviderAttemptReceipt = { model:string; responseId:string; response
 export const PRESENTATION_ADAPTER_VERSION="2026-08-27-output-outline-evidence-v6";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
 export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string};
-export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string};
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|Promise<void>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:()=>void };
+export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string;logicalCallKey?:string;requestDigest?:string};
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; slideCountPolicy?:SlideCountPolicy; outputTargetInstructions?:string; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|Promise<void>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void };
 export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; contextGroups?:Array<{id:string;name:string;target:string;role:string;application:string;relativity:number}>; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type VideoAudioReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; durationSeconds:number; rightsClass:string };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
@@ -169,12 +175,13 @@ const slideVisualSchema={
     },
   },
 };
-const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId,expectedItemCount?:number,audioConstraints?:ReturnType<typeof audioPreparationConstraints>|null)=>{
+const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId,expectedItemCount?:number,audioConstraints?:ReturnType<typeof audioPreparationConstraints>|null,slideCountPolicy?:SlideCountPolicy)=>{
   const itemProperties:Record<string,unknown>={title:{type:"string",...(kind==="slides"?{minLength:1}:{})},body:{type:"string"},notes:{type:"string"},image_prompt:{type:"string"},context_group_ids:{type:"array",maxItems:24,items:{type:"string"}}};
   const itemRequired=["title","body","notes","image_prompt","context_group_ids"];
   if(kind==="slides"){itemProperties.slide=slideVisualSchema;itemRequired.push("slide");}
   const exactCount=kind==="slides"&&Number.isSafeInteger(expectedItemCount)&&Number(expectedItemCount)>0?Number(expectedItemCount):null;
-  const properties:Record<string,unknown>={title:{type:"string",...(kind==="slides"?{minLength:1}:{})},summary:{type:"string"},content_markdown:{type:"string",...(kind==="slides"?{minLength:1}:{})},items:{type:"array",minItems:exactCount??1,maxItems:exactCount??12,items:{type:"object",additionalProperties:false,required:itemRequired,properties:itemProperties}}};
+  const countBounds=kind==="slides"&&slideCountPolicy?slideCountBounds(slideCountPolicy):null;
+  const properties:Record<string,unknown>={title:{type:"string",...(kind==="slides"?{minLength:1}:{})},summary:{type:"string"},content_markdown:{type:"string",...(kind==="slides"?{minLength:1}:{})},items:{type:"array",minItems:countBounds?.minimum??exactCount??1,maxItems:countBounds?.maximum??exactCount??12,items:{type:"object",additionalProperties:false,required:itemRequired,properties:itemProperties}}};
   const required=["title","summary","content_markdown","items"];
   if(kind==="audio"&&audioConstraints){
     properties.content_markdown=audioConstraints.approved_script_present?{type:"string",enum:[""]}:{type:"string",minLength:1,maxLength:audioConstraints.maximum_content_characters};
@@ -365,29 +372,23 @@ export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:st
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal, locale?: string, onProviderSubmission?: PaidProviderSubmissionObserver) {
+export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal, locale?: string, onProviderSubmission?: PaidProviderSubmissionObserver, executionOptions?:{onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void;outputTargetInstructions?:string}) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const started = Date.now();
   const responseLocale=assistantResponseLocale(locale);
   const instructions = `You are Forma's creative-direction adapter. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, palette values, or structured field names. Interpret every field of the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each supplied fact is active and has an independent semantic role and intent. Every fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions. A fact's properties.spatial_scope limits where that fact applies. Preserve its named region, rectangle, subject relationship, or custom path in the scene and rationale; do not silently promote a local decision into a whole-image instruction. Combined-context plans are binding semantic isolation boundaries: their members jointly define only the named character, location, object, sequence, scene, message, slide chapter, or visual system. Respect group relativity and never spread a member's wardrobe, palette, material, behavior, or reference identity to an unrelated target. ${creativePromptGuardrails()}`;
   const {plan} = providerFacingCombinedContextPlan(snapshot);
-  const plannerInput = JSON.stringify({...providerFacingRenderingContext(snapshot) as Record<string,unknown>,...(plan.length?{combined_context_plan:plan}:{})});
+  const plannerInput = JSON.stringify({...providerFacingRenderingContext(snapshot) as Record<string,unknown>,...(plan.length?{combined_context_plan:plan}:{}),...(executionOptions?.outputTargetInstructions?{output_requirements:{instructions:executionOptions.outputTargetInstructions,citable:false}}:{})});
   const submission:PaidProviderSubmission={clientRequestId:`forma-direction-${crypto.randomUUID()}`,provider:"openai",operation:"planning",model:env.OPENAI_MODEL??"gpt-5.6-terra",status:"pending"};
   const identifier=await safetyIdentifier(userId);
+  const requestBody=JSON.stringify({model:env.OPENAI_MODEL??"gpt-5.6-terra",instructions,input:plannerInput,
+    text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_direction",strict:true,schema:outputSchema}},
+    reasoning:{effort:"low"},max_output_tokens:1200,store:false,safety_identifier:identifier});
+  await executionOptions?.onBeforeProviderAttempt?.({model:submission.model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:1200,
+    clientRequestId:submission.clientRequestId,logicalCallKey:"planning:initial",requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody))});
   await onProviderSubmission?.(submission);
-  const response = await openAIRequest("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},
-    signal,
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL ?? "gpt-5.6-terra",
-      instructions,
-      input: plannerInput,
-      text: { verbosity: "low", format: { type: "json_schema", name: "forma_creative_direction", strict: true, schema: outputSchema } },
-      reasoning: { effort: "low" }, max_output_tokens: 1200, store: false,
-      safety_identifier: identifier,
-    }),
-  });
+  executionOptions?.onBeforeProviderDispatch?.(submission.clientRequestId);
+  const response = await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},signal,body:requestBody});
   if(!response.ok&&definitiveProviderRejection(response.status))await onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
   const body = await response.json() as OpenAIResponse;
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_${response.status}`, `Creative-direction planner instructions:\n${instructions}\n\nPlanner input:\n${plannerInput}`);
@@ -403,7 +404,7 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
 const referenceDescriptors=(references:ImageReference[]):PromptReferenceDescriptor[]=>references.map((reference)=>({blockId:reference.blockId,referenceId:reference.referenceId,label:reference.label,mode:reference.mode,mimeType:reference.mimeType,source:reference.source}));
 export const buildSpatialDirectives=buildSpatialPromptDirectives;
 export const buildPixelReferenceDirectives=(references:ImageReference[])=>buildReferencePromptDirectives(referenceDescriptors(references));
-export const buildCreativeImagePrompt=(snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:ImageReference[] = [],technique:PromptTechnique="prose",options:Pick<CreativeImageOptions,"size"|"quality"|"partialImages">={})=>{
+export const buildCreativeImagePrompt=(snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:ImageReference[] = [],technique:PromptTechnique="prose",options:Pick<CreativeImageOptions,"size"|"quality"|"partialImages"|"outputImageFormat"|"outputTargetInstructions">={})=>{
   const prepared=buildBoundedPromptRepresentation(normalizePromptTechnique(technique),snapshot,direction,referenceDescriptors(references),options);
   if(!prepared.fits)throw new ProviderRequestError({code:"image_prompt_too_long",category:"provider",scope:"request",action:"edit_request",message:`The creative context is still ${prepared.finalLength.toLocaleString()} characters after safe compaction; the image provider accepts at most ${prepared.limit.toLocaleString()}. Shorten unusually long block instructions or split this work into a smaller document.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   return prepared.prompt;
@@ -450,9 +451,11 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
     const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
     references.forEach((reference,index)=>{const buffer=reference.bytes.buffer.slice(reference.bytes.byteOffset,reference.bytes.byteOffset+reference.bytes.byteLength) as ArrayBuffer;const extension=reference.mimeType==="image/jpeg"?"jpg":reference.mimeType==="image/webp"?"webp":"png";form.append("image[]",new Blob([buffer],{type:reference.mimeType}),`${reference.source}-${index+1}.${extension}`);});
     await options.onStage?.("provider-submit","Submitting the approved image request.");
+    options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
     try{response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:{...openAIAuthHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:form,signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }else{
     await options.onStage?.("provider-submit","Submitting the approved image request.");
+    options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
     try{response=await openAIRequest("https://api.openai.com/v1/images/generations",{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }
   if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt);}
@@ -899,22 +902,29 @@ function locallyRepairedSlideIssues(raw:string,output:DocumentArtifactDraft|null
 }
 
 /** Build live, retained, and managed-page evidence from the same server-derived source rules. */
-export function buildDocumentPresentationSourceContract(snapshot:Record<string,unknown>,options:Pick<DocumentArtifactOptions,"itemCount"|"presentationStyle"|"presentationFidelity"|"requestedSlideCount"|"productionPage">={}):PresentationSourceContract{
-  const itemCount=Math.max(1,Math.min(12,Math.floor(Number(options.itemCount??7))));
+export function buildDocumentPresentationSourceContract(snapshot:Record<string,unknown>,options:Pick<DocumentArtifactOptions,"itemCount"|"presentationStyle"|"presentationFidelity"|"requestedSlideCount"|"slideCountPolicy"|"productionMode"|"productionPage">={}):PresentationSourceContract{
   const page=options.productionPage;
+  if(page&&options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
+  const countRequest=page?undefined:resolvePresentationCountRequest(options);
+  const itemCount=countRequest?.itemCount??Math.max(1,Math.min(MAX_MANUAL_PRESENTATION_SLIDES,Math.floor(Number(options.itemCount??7))));
+  const slideCountPolicy=countRequest?.slideCountPolicy;
   const {groups}=providerFacingCombinedContextPlan(snapshot,"slides");
   const requestedStyle=SLIDE_STYLE_PRESET_IDS.includes(options.presentationStyle as SlideStylePresetId)?options.presentationStyle:undefined;
   return buildPresentationSourceContract(snapshot,{
-    requestedSlideCount:page?.totalItems??options.requestedSlideCount??itemCount,
+    ...(slideCountPolicy?.kind==="flexible"?{}:{requestedSlideCount:page?.totalItems??options.requestedSlideCount??itemCount}),
+    ...(slideCountPolicy?{slideCountPolicy}:{}),
     itemCount,contextGroups:groups,presentationStyle:requestedStyle,fidelity:options.presentationFidelity,
     authoredSlideNumbers:page?.authoredSlideNumbers,
   });
 }
 
 /** Reapply the complete current source/alias contract to a retained paid response without contacting a provider. */
-export function assessStoredPresentationCandidate(raw:string,snapshot:Record<string,unknown>,options:Pick<DocumentArtifactOptions,"itemCount"|"presentationStyle"|"presentationFidelity"|"requestedSlideCount"|"productionScenes"|"productionPage">={}){
-  const itemCount=Math.max(1,Math.min(12,Math.floor(Number(options.itemCount??7))));
+export function assessStoredPresentationCandidate(raw:string,snapshot:Record<string,unknown>,options:Pick<DocumentArtifactOptions,"itemCount"|"presentationStyle"|"presentationFidelity"|"requestedSlideCount"|"slideCountPolicy"|"productionScenes"|"productionPage">={}){
   const page=options.productionPage;
+  if(page&&options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
+  const countRequest=page?undefined:resolvePresentationCountRequest(options);
+  const itemCount=countRequest?.itemCount??Math.max(1,Math.min(12,Math.floor(Number(options.itemCount??7))));
+  const slideCountPolicy=countRequest?.slideCountPolicy;
   const {groups}=providerFacingCombinedContextPlan(snapshot,"slides");
   const groupContracts:DocumentArtifactContextGroupContract[]=groups.map((group,index)=>({id:group.id,alias:`context_group_${index+1}`}));
   const requestedStyle=SLIDE_STYLE_PRESET_IDS.includes(options.presentationStyle as SlideStylePresetId)?options.presentationStyle:undefined;
@@ -922,7 +932,7 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
   const groupResolution=resolveDocumentArtifactContextGroups(parseDocumentArtifactContent(raw),groupContracts);
   const sourceResolution=resolveProviderPresentationSources(groupResolution.output,sourceContract,options.productionScenes??[],page?.globalStartIndex??0);
   const output=sourceResolution.output;
-  const complete=Boolean((!page||page.pageCount===1)&&(!sourceContract.authoredSlideCount||sourceContract.authoredSlideCount===itemCount));
+  const complete=Boolean((!page||page.pageCount===1)&&(slideCountPolicy?.kind==="flexible"||!sourceContract.authoredSlideCount||sourceContract.authoredSlideCount===itemCount));
   const issues=documentArtifactValidationIssues("slides",output,{
     itemCount,
     contextGroupIds:groups.map((group)=>group.id),
@@ -930,7 +940,7 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
     rawContextGroupAssignments:groupResolution.receipt.rawAssignments,
     sourceContract,
     sourcePageStart:page?.globalStartIndex??0,
-    sourcePageSize:itemCount,
+    sourcePageSize:slideCountPolicy?.kind==="flexible"?output?.items.length??itemCount:itemCount,
     requireSourceGrounding:sourceContract.sources.some((source)=>source.sourceKind==="block"),
     requireAllProtectedContent:complete,
   });
@@ -942,7 +952,10 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
 export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
-  const itemCount=Math.max(1,Math.min(12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
+  if(kind==="slides"&&input.options?.productionPage&&input.options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
+  const countRequest=kind==="slides"&&!input.options?.productionPage?resolvePresentationCountRequest(input.options??{}):undefined;
+  const slideCountPolicy=countRequest?.slideCountPolicy;
+  const itemCount=countRequest?.itemCount??Math.max(1,Math.min(kind==="slides"?MAX_MANUAL_PRESENTATION_SLIDES:12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
   if(kind==="video")resolveVideoAudioPolicy({snapshot:input.snapshot,audioMode:input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode});
   const videoSourceScope=kind==="video"?videoOutputScopedContext(input.snapshot):null;
   const {groups,plan:providerGroups}=providerFacingCombinedContextPlan(videoSourceScope?.snapshot??input.snapshot,kind);
@@ -990,7 +1003,9 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ? ` Each assigned scene is a separate ${VIDEO_ADAPTER_CONTRACT.supportedDurations[0]}–${VIDEO_ADAPTER_CONTRACT.supportedDurations.at(-1)} second provider generation in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}; the complete production may be much longer. Respect the assigned per-scene duration and chronological source beat. Do not compress the complete narrative into one clip. ${audioMode==="original_ambient"?"Only original nonmelodic environmental ambience is allowed.":"Every clip is silent; communicate rhythm through visible action and light."}`
     : ` The requested output is exactly ${input.options?.videoSeconds??4} seconds in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}. The motion prompt must fit that duration; do not claim or imply a different runtime. Preserve every ordered storyboard shot as chronology, including description-only frames, compressing their beats into the available runtime without dropping named subjects or continuity. ${audioMode==="original_ambient"?"Original nonmelodic, in-scene environmental ambience is explicitly allowed; describe it only as visible natural sources, never as music, dialogue, voices, or a recorded work.":"This is a picture-only silent render. Do not invent or request any soundtrack, score, music, voice, dialogue, or other audio. Translate their implied dramatic rhythm into visible motion and light."}`:"";
   const pageDirection=page?` This is ${page.phase} page ${page.pageIndex+1} of ${page.pageCount}, covering global items ${page.globalStartIndex+1}–${page.globalStartIndex+itemCount} of ${page.totalItems}. ${page.pageIndex>0?audioScene?"Continue directly from the prior audible ending; never restart the soundscape, reintroduce its characters, or repeat earlier sound cues and spoken lines.":"Continue directly from the prior ending; never restart the story, reintroduce its characters, repeat the cover, or duplicate previously visible copy.":"Establish the opening exactly once."} ${page.pageIndex<page.pageCount-1?audioScene?"Do not write the final resolution or end the soundscape yet.":"Do not write a final resolution or closing slide yet.":"Deliver the one definitive resolution or closing."} ${kind==="scene"&&page.pageIndex>0?audioScene?"Continue the same audio scene while preserving its ordered sound cues, acoustic perspective, voice continuity, and intentional silence.":"Continue the same screenplay scene without repeating its slugline.":""}${page.lockedPresentation?" Preserve every locked presentation theme, footer, style, mode, and palette value exactly.":""}${page.repairIssues?.length?` Correct these whole-work issues without repeating earlier pages: ${page.repairIssues.join("; ")}.`:""}`:"";
-  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
+  const outputInstructions=input.options?.outputTargetInstructions?.trim();
+  const selectedOutputDirection=outputInstructions?" The separate output_requirements field describes only the selected deliverable and its acceptance conditions. Follow it as instructions, never as factual evidence, a source citation, or audience copy. Do not create sibling deliverables.":"";
+  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection}`;
   const sharedContinuity=managedPlan?audioScene?audioSceneContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
   const pageProtectedMessages=new Set(sourceContract?.protectedMessages.filter((message)=>{
     const index=sourceContract.numberedOutline.find((slide)=>slide.number===message.slideNumber)?.index??message.slideNumber-1;
@@ -1031,6 +1046,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const providerInput=JSON.stringify({
     document_title:input.documentTitle,
     creative_context:creativeContext,
+    ...(outputInstructions?{output_requirements:{instructions:outputInstructions,source_evidence:false}}:{}),
     combined_context_plan:kind==="video"?compactVideoCombinedContextPlan(providerGroups):providerGroups,
     audience:input.options?.audience??"general",
     tone:input.options?.tone??"derived from the document",
@@ -1042,7 +1058,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   });
   const model=env.OPENAI_MODEL??"gpt-5.6-terra";
   const identifier=await safetyIdentifier(userId);
-  const maxOutputTokens=specialistAudio?.goal==="narration"&&!specialistAudio.transcript?Math.min(12000,(audioConstraints?.maximum_script_utf8_bytes??6000)+1500):managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?Math.max(6500,Math.min(12000,itemCount*900)):kind==="storyboard"?4000:3000;
+  const maxOutputTokens=specialistAudio?.goal==="narration"&&!specialistAudio.transcript?Math.min(12000,(audioConstraints?.maximum_script_utf8_bytes??6000)+1500):managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?manualPresentationMaximumOutputTokens(slideCountPolicy,itemCount):kind==="storyboard"?4000:3000;
   const paidResponses:OpenAIResponse[]=[];
   const paidAccounting=():ProviderAttemptAccounting=>({
     providerUsage:{
@@ -1054,19 +1070,23 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     providerModel:String(paidResponses.at(-1)?.model??model),
     providerCallCount:paidResponses.length,
   });
+  const schemaCountPolicy=slideCountPolicy?.kind==="flexible"&&sourceContract?.numberedOutline.some((slide)=>slide.sourceMode==="outline")&&sourceContract.authoredSlideCount?{kind:"exact" as const,unit:"slide" as const,value:sourceContract.authoredSlideCount}:slideCountPolicy;
   const run=async(requestInstructions:string,requestInput:string,name:string)=>{
+    let localDispatchStop=false;
     try{
-      const requestBody=JSON.stringify({model,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints)}},reasoning:{effort:"low"},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier});
+      const requestBody=JSON.stringify({model,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy)}},reasoning:{effort:"low"},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier});
       const clientRequestId=`forma-${kind}-${crypto.randomUUID()}`;
-      await input.options?.onBeforeProviderAttempt?.({model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId});
-      const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model,status:"pending"};
+      const logicalCallKey=`planning:${page?.pageIndex??0}:${name.endsWith("_repair")?"repair":"initial"}`;
+      await input.options?.onBeforeProviderAttempt?.({model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId,logicalCallKey,requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody))});
+      const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model,status:"pending",...(kind==="scene"?{}:{unitId:logicalCallKey})};
       await input.options?.onProviderSubmission?.(submission);
       try{
-        // Synchronous by contract: the awaited checkpoint above can outlive a Scene source/license deadline.
-        input.options?.onBeforeProviderDispatch?.();
+        // Synchronous by contract: the awaited checkpoint above can outlive its source/authority deadline.
+        input.options?.onBeforeProviderDispatch?.(clientRequestId);
       }catch(error){
-        // No provider call has occurred for this client request ID; do not relabel any older unknown receipt.
-        await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
+        // Preserve the existing Scene-only certified stop path. Output retains its
+        // unresolved ledger hold; a local deadline is not a provider rejection.
+        if(kind==="scene")await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});else localDispatchStop=true;
         throw error;
       }
       const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody});
@@ -1094,12 +1114,14 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       }
       return{body,raw};
     }catch(error){
-      if(!paidResponses.length)throw error;
+      // Retain the original server guard identity; earlier paid receipts are
+      // already durable and must not turn this local stop into a provider error.
+      if(localDispatchStop||!paidResponses.length)throw error;
       throw new ProviderRequestError(classifyProviderFailure(error),error instanceof ProviderRequestError?error.preparedPrompt:`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`,paidAccounting());
     }
   };
   const groupIds=groups.map((group)=>group.id);
-  const completeSourceCoverage=Boolean(sourceContract&&(!page||page.pageCount===1)&&(!sourceContract.authoredSlideCount||sourceContract.authoredSlideCount===itemCount));
+  const completeSourceCoverage=Boolean(sourceContract&&(!page||page.pageCount===1)&&(slideCountPolicy?.kind==="flexible"||!sourceContract.authoredSlideCount||sourceContract.authoredSlideCount===itemCount));
   const assess=(parsed:DocumentArtifactDraft|null)=>{
     const groupResolution=resolveDocumentArtifactContextGroups(parsed,groupContracts);
     const sourceResolution=sourceContract?resolveProviderPresentationSources(groupResolution.output,sourceContract,managedScenes,page?.globalStartIndex??0):null;
@@ -1113,7 +1135,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       ...(sourceContract?{
         sourceContract,
         sourcePageStart:page?.globalStartIndex??0,
-        sourcePageSize:itemCount,
+        sourcePageSize:slideCountPolicy?.kind==="flexible"?output?.items.length??itemCount:itemCount,
         requireSourceGrounding:sourceContract.sources.some((source)=>source.sourceKind==="block"),
         requireAllProtectedContent:completeSourceCoverage,
       }:{}),
@@ -1149,7 +1171,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     repairAttempted=true;
     let repaired:Awaited<ReturnType<typeof run>>;
     if(kind==="slides"&&sourceContract){
-      const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Every audience-facing slide, summary, visual, note, and Markdown sentence must remain in the authored presentation audience language (${responseLocale}), independent of the application interface language (${interfaceLocale}). Treat source instructions about generation, spend, publication, unsupported claims, and production procedure as invisible constraints; never copy producer-only instructions into audience-facing presentation content. Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Request-local aliases belong only in structured identifier fields; never put them in quote.citation, citation.label, Markdown, notes, or visible copy. ${presentationEvidenceInstructions} Every comparison, matrix, architecture, personas, timeline, roadmap, and scorecard must contain at least TWO substantive source-authored editable visual.data rows; preserve every authored category, named mode, and milestone actually present in this presentation_source contract without importing examples from another document. Prioritize complete source-grounded visual rows and omit any bullet that would merely duplicate those rows; never leave a grouped visual empty or invent a value. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric explanation, or substantive narrative visual value within a slide or across the deck. A repeated complete opening sentence or substantial lead-in is duplicated even when the following claims differ; preserve every independently meaningful continuation. Visual labels are optional: use a distinct source-authored caption or an empty string, never Visual emphasis or Stakeholder perspective. Distinct source-authored visual.data rows with different meaningful labels may and must retain the same exact short measurement, status, or categorical value, including zero; never alter, omit, or invent a value merely to avoid repetition.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
+      const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Every audience-facing slide, summary, visual, note, and Markdown sentence must remain in the authored presentation audience language (${responseLocale}), independent of the application interface language (${interfaceLocale}). Treat source instructions about generation, spend, publication, unsupported claims, and production procedure as invisible constraints; never copy producer-only instructions into audience-facing presentation content. Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Request-local aliases belong only in structured identifier fields; never put them in quote.citation, citation.label, Markdown, notes, or visible copy. ${presentationEvidenceInstructions} Every comparison, matrix, architecture, personas, timeline, roadmap, and scorecard must contain at least TWO substantive source-authored editable visual.data rows; preserve every authored category, named mode, and milestone actually present in this presentation_source contract without importing examples from another document. Prioritize complete source-grounded visual rows and omit any bullet that would merely duplicate those rows; never leave a grouped visual empty or invent a value. Return a complete artifact, not a patch. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection} Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric explanation, or substantive narrative visual value within a slide or across the deck. A repeated complete opening sentence or substantial lead-in is duplicated even when the following claims differ; preserve every independently meaningful continuation. Visual labels are optional: use a distinct source-authored caption or an empty string, never Visual emphasis or Stakeholder perspective. Distinct source-authored visual.data rows with different meaningful labels may and must retain the same exact short measurement, status, or categorical value, including zero; never alter, omit, or invent a value merely to avoid repetition.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
       const knownIdentifiers=[...groupContracts.map((contract)=>({id:contract.id,alias:contract.alias})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:source.alias}))];
       const providerIssues=initialIssues.map((issue)=>({...issue,message:knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}));
       const invalidReferences=uniquePresentationReferences([...(initialSourceResolution?.unknownAssignments??[]),...initialResolution.unknownAssignments]);
@@ -1161,6 +1183,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         validation_issues:providerIssues,
         required_context_groups:providerGroups,
         original_creative_context:providerFacingRenderingContext(presentationSnapshot,sourceContract.sources),
+        ...(outputInstructions?{output_requirements:{instructions:outputInstructions,source_evidence:false}}:{}),
         presentation_source:sourceFacing,
         ...(providerPage?{production:{page:providerPage,assigned_scenes:providerScenes}}:{}),
       });

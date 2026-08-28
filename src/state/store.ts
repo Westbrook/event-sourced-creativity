@@ -1,3 +1,10 @@
+import type { OutputNavigationFocusLease } from "../components/output-navigation-focus";
+import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
+import { OutputRequirementsClient } from "./output-requirements-client";
+import type { OutputCommandResponse, OutputRequirementCommand, OutputRequirementsSnapshot } from "../model/output-delivery-contract";
+import { isOutputContextBlock } from "../model/output-source-policy";
+import { outputRequirementEditableDraft } from "../model/output-requirements";
+import { resolvePresentationCountRequest, type SlideCountPolicy } from "../model/presentation-count-policy";
 import { Signal } from "signal-polyfill";
 import { adaptiveRequestKey, adaptiveJobMatchesRequest } from "../model/adaptive-request";
 import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
@@ -44,6 +51,8 @@ import { applicationIdFromRoute, type ApplicationId } from "../platform/applicat
 import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
 import type { PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
 
+type WorkspaceNavigationOptions = { replace?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease };
+const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options.current||options.current())&&(!options.focus||options.focus.current());
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
 export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index?:number;type?:string;reason:string}>; head:number; retryable:boolean; error:string };
@@ -95,7 +104,122 @@ function sceneCostJobMatches(value:unknown,requestId:string,documentId:string):v
 /** An ephemeral navigation handle, never a cached plan, financial receipt, or new request. */
 export type PlanningRecoveryIdentity=Pick<DocumentJob,"jobId"|"documentId"|"canvasId"|"planningExecutionId"|"planningProjectScope"|"planningLocale">&{kind:"structure_adaptive";sourceSurface?:string;requestKey?:string};
 
+
+/** Check transport shape before private certification; business/readiness rules remain in their existing models. */
+function outputSnapshotRenderable(value: unknown): value is OutputRequirementsSnapshot {
+  const record = (entry: unknown): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry);
+  const text = (entry: unknown): entry is string => typeof entry === "string";
+  const number = (entry: unknown) => typeof entry === "number" && Number.isFinite(entry);
+  const boolean = (entry: unknown) => typeof entry === "boolean";
+  const list = (entry: unknown, accepts: (item: unknown) => boolean) => Array.isArray(entry) && entry.every(accepts);
+  const texts = (entry: unknown) => list(entry, text);
+  const optional = (entry: unknown, accepts: (item: unknown) => boolean) => entry === undefined || entry === null || accepts(entry);
+  const fields = (entry: Record<string, unknown>, names: readonly string[], accepts: (item: unknown) => boolean) => names.every(name => accepts(entry[name]));
+  const values = (entry: unknown, accepts: (item: unknown) => boolean) => record(entry) && Object.values(entry).every(accepts);
+  const issue = (entry: unknown) => record(entry) && fields(entry, ["code", "path", "message"], text);
+  const quantity = (entry: unknown) => record(entry) && text(entry.unit) && (entry.kind === "unknown" && optional(entry.reason, text)
+    || entry.kind === "exact" && number(entry.value) || entry.kind === "range" && fields(entry, ["min", "max"], number));
+  const policy = (entry: unknown) => record(entry) && text(entry.unit) && (entry.kind === "exact" && number(entry.value)
+    || entry.kind === "flexible" && fields(entry, ["min", "max"], number) && optional(entry.aim, number));
+  const options = (entry: unknown) => record(entry) && optional(entry.selected_optional_ids, texts) && optional(entry.selected_target_ids, texts)
+    && optional(entry.count_policies, item => values(item, policy)) && optional(entry.suggested_counts, item => values(item, number));
+  const source = (entry: unknown) => record(entry) && (entry.kind === "document" || entry.kind === "blocks" && texts(entry.block_ids)
+    || entry.kind === "unknown" && text(entry.reason));
+  const coverage = (entry: unknown) => record(entry) && (entry.kind === "document_context" || entry.kind === "document_outline"
+    || entry.kind === "topics" && texts(entry.topics) || entry.kind === "unresolved" && text(entry.description));
+  const requirement = (entry: unknown) => record(entry) && fields(entry, ["blockId", "subtype", "content"], text) && boolean(entry.locked)
+    && text(entry.status) && ["valid", "invalid", "unsupported", "draft"].includes(entry.status)
+    // The established editable-draft validator preserves label-only errors. Invalid/unsupported
+    // requirements keep their null spec and uninterpreted preserved body for the existing editor.
+    && (entry.spec === null || outputRequirementEditableDraft(entry.spec) !== null)
+    && list(entry.issues, issue) && optional(entry.planSuggestions, options);
+  const target = (entry: unknown) => record(entry)
+    && fields(entry, ["id", "requirement_id", "deliverable_id", "obligation_id", "label", "media_kind", "instruction_text", "source_revision", "requirement_revision"], text)
+    && fields(entry, ["required", "selected"], boolean) && number(entry.ordinal)
+    && fields(entry, ["variant_id", "member_id"], item => optional(item, text)) && quantity(entry.quantity)
+    && optional(entry.aspect_ratio, item => record(item) && fields(item, ["width", "height"], number))
+    && source(entry.source_scope) && coverage(entry.coverage) && optional(entry.content_quantity, quantity)
+    && optional(entry.count_policy, policy) && optional(entry.suggested_count, number) && list(entry.blocking_issues, issue);
+  const plan = (entry: unknown) => record(entry) && entry.schema_version === 1 && fields(entry, ["document_id", "source_revision", "requirement_revision"], text)
+    && list(entry.groups, item => record(item) && fields(item, ["id", "requirement_id", "label", "media_kind"], text) && boolean(item.required) && texts(item.obligation_ids))
+    && list(entry.obligations, item => record(item) && fields(item, ["id", "requirement_id", "deliverable_id", "label", "media_kind", "resolution"], text)
+      && fields(item, ["variant_id", "member_id"], child => optional(child, text)) && fields(item, ["required", "selected"], boolean)
+      && quantity(item.quantity) && optional(item.quantity_policy, policy) && texts(item.target_ids))
+    && list(entry.targets, target)
+    && list(entry.unresolved_groups, item => record(item) && fields(item, ["id", "requirement_id", "label"], text)
+      && fields(item, ["deliverable_id", "obligation_id"], child => optional(child, text)) && fields(item, ["required", "selected"], boolean) && list(item.issues, issue))
+    && list(entry.issues, issue);
+  const confirmed = (entry: unknown) => record(entry) && fields(entry, ["id", "revisionId", "confirmedAt", "requirementsDigest", "sourceDigest"], text)
+    && number(entry.revision) && plan(entry.plan)
+    // These legacy/partial contracts already disable the exact paid/review controls; missing is not a malformed body.
+    && optional(entry.targetContractDigests, item => values(item, text)) && optional(entry.confirmationOptions, options);
+  const targetState = (entry: unknown) => record(entry)
+    && fields(entry, ["target_id", "execution", "checks", "review", "freshness", "availability", "capability", "source_revision", "requirement_revision"], text)
+    && boolean(entry.export_available) && optional(entry.result_id, text);
+  const summary = (entry: unknown) => record(entry) && fields(entry, ["completion", "headline"], text) && fields(entry, ["scope_known", "delivery_ready"], boolean)
+    && fields(entry, ["required_groups", "fulfilled_required_groups", "required_obligations", "optional_obligations", "selected_optional_obligations",
+      "fulfilled_required_obligations", "fulfilled_selected_optional_obligations", "required_targets", "optional_targets", "selected_targets", "fulfilled_targets",
+      "unresolved_required_groups", "unresolved_selected_optional_groups", "unknown_target_states"], number)
+    && texts(entry.reasons) && list(entry.next_actions, item => record(item) && fields(item, ["kind", "label", "reason"], text)
+      && optional(item.target_id, text) && optional(item.group_id, text));
+  const inspection = (entry: unknown) => record(entry) && text(entry.status) && fields(entry, ["kind", "mimeType", "extension", "sha256"], item => optional(item, text))
+    && number(entry.byteLength) && record(entry.facts)
+    && fields(entry, ["checks", "limitations", "errors"], texts) && optional(entry.limitationCodes, texts)
+    && fields(entry.facts, ["width", "height", "codedWidth", "codedHeight", "durationSeconds", "sampleRate", "channels", "sampleCount", "frameCount",
+      "slideCount", "hiddenSlideCount", "slideWidthEmu", "slideHeightEmu", "rotationDegrees", "externalHyperlinkCount"], item => optional(item, number))
+    && fields(entry.facts, ["durationBasis", "codec", "audioCodec"], item => optional(item, text));
+  const asset = (entry: unknown) => record(entry) && fields(entry, ["id", "name", "mimeType", "mediaKind", "sha256", "sourceDigest", "createdByUserId", "createdAt", "downloadUrl"], text)
+    && number(entry.byteLength) && boolean(entry.available) && inspection(entry.inspection);
+  const result = (entry: unknown) => record(entry)
+    && fields(entry, ["id", "targetId", "planRevisionId", "assetId", "resultRevision", "targetContractDigest", "sourceDigest", "sha256", "checksStatus", "createdByUserId", "createdAt", "review"], text)
+    && texts(entry.checks) && texts(entry.problems) && optional(entry.acceptanceId, text)
+    && optional(entry.reviewAllowed, boolean) && optional(entry.independentReviewBlocked, boolean);
+  // Missing/unknown historical accounting is not zero. Keep primitive values untouched for
+  // the existing strict accounting/recovery helpers; never let an arbitrary object render as a receipt.
+  const accounting = (entry: Record<string, unknown>) => fields(entry, ["maximumMicrousd", "maximumCalls", "usedMicrousd", "exposedMicrousd", "usedCalls", "pendingCalls"],
+    item => item === undefined || item === null || ["number", "string", "boolean"].includes(typeof item));
+  const offered = (entry: unknown) => record(entry) && text(entry.targetId) && optional(entry.available, boolean)
+    && fields(entry, ["reason", "reasonCode", "transferCode", "provider", "model", "route", "transferDescription"], item => optional(item, text))
+    && optional(entry.reasonValues, item => values(item, child => text(child) || number(child))) && optional(entry.settings, record) && accounting(entry);
+  const disclosure = (entry: unknown) => record(entry) && list(entry.targets, offered)
+    && fields(entry, ["id", "planRevisionId", "termsDigest", "sourceDigest", "requirementsDigest", "expiresAt", "createdAt"], item => optional(item, text))
+    && accounting(entry) && optional(entry.operationAttempts, item => values(item, child => record(child) && number(child.ordinal) && optional(child.previousSlotId, text)));
+  const grant = (entry: unknown) => record(entry) && fields(entry, ["id", "planRevisionId", "actorUserId", "status"], text)
+    && optional(entry.payerUserId, text) && optional(entry.expiresAt, text) && accounting(entry) && optional(entry.disclosure, disclosure)
+    && list(entry.operations, item => record(item) && fields(item, ["id", "targetId", "jobId", "status"], text) && optional(item.targetLabel, text) && accounting(item));
+  const amendment = (entry: unknown) => record(entry) && fields(entry, ["eventId", "previousPlanRevisionId", "planRevisionId", "actorUserId", "occurredAt", "reason"], text)
+    && texts(entry.withdrawnTargetIds) && texts(entry.withdrawnObligationIds);
+  return record(value) && value.schemaVersion === 1 && fields(value, ["documentId", "projectId", "revision", "requirementRevision", "sourceRevision"], text)
+    && record(value.scope) && text(value.scope.kind) && ["personal", "project"].includes(value.scope.kind) && text(value.scope.actorUserId)
+    && fields(value.scope, ["organizationId", "projectAccessId"], item => optional(item, text))
+    && record(value.permissions) && fields(value.permissions, ["canAuthor", "canRequest", "canReview", "canDownload", "independentReview"], boolean)
+    && record(value.capabilities) && fields(value.capabilities, ["nativeGeneration", "ownedFileAdoption"], boolean)
+    && fields(value.capabilities, ["supportedFileExtensions", "limitations"], texts) && optional(value.capabilities.limitationCodes, texts)
+    && list(value.requirements, requirement) && (value.confirmedPlan === null || confirmed(value.confirmedPlan))
+    && list(value.targetStates, targetState) && (value.summary === null || summary(value.summary))
+    && optional(value.requirementSummaries, item => values(item, child => child === null || summary(child)))
+    && optional(value.requirementFileCounts, item => values(item, child => child === null || number(child)))
+    && list(value.assets, asset) && list(value.results, result) && list(value.grants, grant) && optional(value.scopeAmendments, item => list(item, amendment));
+}
+
 export class FormaStore {
+  readonly outputRequirements = new OutputRequirementsClient<OutputRequirementsSnapshot>({
+    captureScope: () => {
+      const scope = this.captureAuthorizationScope();
+      return scope ? { key: scope.key, projectId: this.projection.get().projectId || null } : null;
+    },
+    scopeActive: (scope) => this.captureAuthorizationScope()?.key === scope.key && (this.projection.get().projectId || null) === scope.projectId,
+    fetch: (input, init, action) => this.guardedFetch(input, init, action),
+    isSnapshot: (value, documentId, scope): value is OutputRequirementsSnapshot => {
+      if (!outputSnapshotRenderable(value)) return false;
+      const candidate = value;
+      return candidate.schemaVersion === 1 && candidate.documentId === documentId && candidate.projectId === scope.projectId
+        && typeof candidate.revision === "string" && Array.isArray(candidate.requirements)
+        && candidate.scope?.actorUserId === this.session.get()?.user.userId
+        && candidate.scope?.projectAccessId === (this.session.get()?.projectContext?.projectAccessId ?? null);
+    },
+    notify: () => this.notify(),
+  });
   readonly events = new Signal.State<CreativeEvent[]>([]);
   readonly optimisticEvents = new Signal.State<CreativeEvent[]>([]);
   readonly eventView = new Signal.Computed<CreativeEvent[]>(() => [...this.events.get(),...this.optimisticEvents.get()]);
@@ -139,6 +263,13 @@ export class FormaStore {
   #appendPipeline:Promise<void> = Promise.resolve();
   #navigationCommit:Promise<boolean>|null=null;
   #workspaceTransition=0;
+  #workspaceNavigationFocus: { route:string; focus:OutputNavigationFocusLease } | null = null;
+
+  captureWorkspaceNavigationFocus(route:string,expected?:OutputNavigationFocusLease) {
+    const owner=this.#workspaceNavigationFocus;
+    if(!owner||owner.route!==route||(expected&&owner.focus!==expected))return null;
+    return {focus:owner.focus,current:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&owner.focus.current()};
+  }
   #loadRevision=0;
   #sessionRevision=0;
   #focalInFlight = new Set<string>();
@@ -209,6 +340,7 @@ export class FormaStore {
   }
   #publishAppended(events:CreativeEvent[]){
     if(!events.length)return;
+    if (events.some((event) => event.type.startsWith("Output") || /^(?:Block|Document|Rights|Artifact|GenerationCompleted)/.test(event.type))) this.outputRequirements.invalidate();
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
     if(session?.projectContext&&events.some((event)=>["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","DocumentArtifactEdited","DocumentRenderCompleted","BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","RightsAsserted"].includes(event.type))){void this.syncProjectNotifications();void this.syncReviewInbox();}
     else if(session?.projectContext&&events.some((event)=>event.type==="OutputRenamed"))void this.syncReviewInbox();
@@ -243,8 +375,9 @@ export class FormaStore {
       for(const block of documentBlocks)if(block.type==="exclusion"||blockIntentFor(block.type,block.properties)==="prohibit")selected.add(block.id);
       blocks=documentBlocks.filter((block)=>selected.has(block.id));
     }
-    const blockIds=new Set(blocks.map((block)=>block.id));const relations=projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId));const outputs=projection.libraryOutputs.filter((output)=>output.documentId===documentId);
-    const facts=blocks.map((b)=>({block_id:b.id,document_id:b.documentId,type: b.type,role:b.type,intent: blockIntentFor(b.type, b.properties),handle:b.handle,position:b.position,locked:b.locked,active:Number(b.properties.weight??.5)>0,effect: blockEffectFor(b.type, b.properties),properties:{...b.properties,spatial_scope: normalizeSpatialScope(b.properties.spatial_scope)},authority:b.properties.authority??"authored",source_event_refs:b.sourceEvents}));
+    const factBlocks=blocks.filter((block)=>!isOutputContextBlock(block));
+    const blockIds=new Set(factBlocks.map((block)=>block.id));const relations=projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId));const outputs=projection.libraryOutputs.filter((output)=>output.documentId===documentId);
+    const facts=factBlocks.map((b)=>({block_id:b.id,document_id:b.documentId,type: b.type,role:b.type,intent: blockIntentFor(b.type, b.properties),handle:b.handle,position:b.position,locked:b.locked,active:Number(b.properties.weight??.5)>0,effect: blockEffectFor(b.type, b.properties),properties:{...b.properties,spatial_scope: normalizeSpatialScope(b.properties.spatial_scope)},authority:b.properties.authority??"authored",source_event_refs:b.sourceEvents}));
     const relationships=relations.map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents}));
     const context={
       snapshot:{facts,relationships,context_groups:combinedContextGroups({facts,relationships}),pins:outputs.filter((output)=>output.pinned&&(!contextRootBlockId||blocks.some((block)=>String(block.properties.source_output_id??"")===output.id))).map((output)=>output.id),...(contextRootBlockId?{context_scope:{kind:"character",root_block_id:contextRootBlockId,output_kind:characterOutputKind},character_study:{format:characterOutputKind,instruction:characterOutputKind==="character_sheet"?"Create one cohesive character sheet showing multiple consistent views of exactly this authored character.":"Create one shoulder-up headshot of exactly this authored character; preserve every specified facial and identity detail."}}:{}),tail:[]},
@@ -913,6 +1046,136 @@ export class FormaStore {
   captureAuthorizationScope():CapturedAuthorizationScope|null{const session=this.session.get();return session?{key:this.#authorizationScope(session),shared:Boolean(session.projectContext)}:null;}
   authorizationScopeActive(scope:CapturedAuthorizationScope|null){return Boolean(scope&&this.#scopeStillActive(scope.key)&&Boolean(this.session.get()?.projectContext)===scope.shared);}
 
+
+  /** Free exact inspection; never hydrates private inputs, changes the recent feed, or drives a job. */
+  async inspectOutputNativeJob(documentId: string, jobId: string, current: () => boolean): Promise<
+    { status: "found"; job: DocumentJob; current: () => boolean }
+    | { status: "unavailable" | "superseded"; job: null }
+  > {
+    const authorization = this.captureAuthorizationScope(), projectId = this.projection.get().projectId, route = this.route.get();
+    const authorityCurrent = () => this.authorizationScopeActive(authorization) && this.projection.get().projectId === projectId;
+    const scopeCurrent = () => authorityCurrent() && this.route.get() === route && this.#canReadProjectJobs()
+      && (!this.session.get()?.projectContext || this.session.get()!.projectContext!.permissions.includes("project.output.request"))
+      && (!this.session.get()?.projectContext || Date.parse(this.session.get()!.projectContext!.expiresAt) > Date.now()) && current();
+    const snapshot = this.outputRequirements.resource(documentId).snapshot;
+    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/u.test(jobId) || !scopeCurrent()
+      || snapshot?.documentId !== documentId || snapshot.projectId !== projectId
+      || !snapshot.grants.some((grant) => grant.actorUserId === this.session.get()?.user.userId && grant.operations.some((operation) => operation.jobId === jobId)))
+      return { status: "unavailable", job: null };
+    const read = this.outputRequirements.beginExternalRead(documentId, jobId);
+    const active = () => Boolean(read?.current() && scopeCurrent());
+    if (!read || !active()) return { status: "superseded", job: null };
+    try {
+      const response = await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`, { cache: "no-store" });
+      if (!read.scopeCurrent() || !authorityCurrent()) return { status: "superseded", job: null };
+      if ([401, 403, 404, 410].includes(response.status)) {
+        // A missing original job is private evidence retirement, not project membership revocation.
+        return { status: read.withdraw(response.status === 404 ? 410 : response.status) ? "unavailable" : "superseded", job: null };
+      }
+      if (!active()) return { status: "superseded", job: null };
+      const observed = read.observeHeaders();
+      const body = await response.json() as { job?: DocumentJob };
+      if (!active() || !observed.current()) return { status: "superseded", job: null };
+      const job = body?.job;
+      if (!response.ok || !job || job.jobId !== jobId || job.documentId !== documentId || job.sourceSurface !== "outputs"
+        || !["generate", "render_document"].includes(job.kind) || !["queued", "running", "committing", "completed", "partial", "failed", "canceled"].includes(job.status)
+        || typeof job.updatedAt !== "string" || !Number.isFinite(Date.parse(job.updatedAt)))
+        return { status: "unavailable", job: null };
+      if (!observed.certifyInspection()) return { status: "superseded", job: null };
+      return { status: "found", job, current: () => active() && observed.current() };
+    } catch { return { status: active() ? "unavailable" : "superseded", job: null }; }
+  }
+
+  async reconcileOutputOperationReceipt(documentId: string, grantId: string, slotId: string, jobId: string): Promise<
+    { status: "known" | "uncertain" | "not_needed"; reconciled: boolean; refreshed: boolean }
+    | { status: "forbidden" | "unavailable" | "invalid"; errorCode: string }
+  > {
+    const authorization = this.captureAuthorizationScope();
+    const projectId = this.projection.get().projectId;
+    const active = () => this.authorizationScopeActive(authorization) && this.projection.get().projectId === projectId;
+    const forbidden = () => ({ status: "forbidden" as const, errorCode: "output_receipt_scope_changed" });
+    const resource = this.outputRequirements.resource(documentId);
+    const snapshot = resource.snapshot;
+    const grant = snapshot?.grants.find((candidate) => candidate.id === grantId);
+    const slot = grant?.operations.find((candidate) => candidate.id === slotId && candidate.jobId === jobId);
+    if (!active() || !snapshot || resource.state !== "ready" || snapshot.documentId !== documentId || snapshot.projectId !== projectId
+      || !grant || !slot || grant.actorUserId !== this.session.get()?.user.userId || this.session.get()?.impersonation) return forbidden();
+    const read = this.outputRequirements.beginExternalRead(documentId);
+    const unavailable = () => ({ status: "unavailable" as const, errorCode: "output_receipt_check_failed" });
+    if (!read?.current()) return forbidden();
+    try {
+      const response = await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/reconcile-output`, { method: "POST" }, "check the saved Output operation receipt without a provider request");
+      if (!active()) return forbidden();
+      if (!response.ok && [401, 403, 404, 410].includes(response.status)) {
+        const retired = read.withdraw(response.status);
+        return retired && response.status !== 410 ? forbidden() : unavailable();
+      }
+      if (!read.current()) return unavailable();
+      if (!response.ok) {
+        return { status: response.status >= 500 ? "unavailable" : "invalid", errorCode: "output_receipt_check_failed" };
+      }
+      const observed = read.observeHeaders();
+      const body = await response.json() as { job?: DocumentJob; reconciliation?: { documentId?: string; grantId?: string; slotId?: string; jobId?: string; status?: string; reconciled?: boolean }; error?: string };
+      if (!active()) return forbidden();
+      if (!read.current() || !observed.current()) return unavailable();
+
+      const receipt = body.reconciliation;
+      if (!body.job || body.job.jobId !== jobId || body.job.documentId !== documentId || !["generate", "render_document"].includes(body.job.kind)
+        || !["completed", "partial", "failed", "canceled"].includes(body.job.status)
+        || !receipt || receipt.documentId !== documentId || receipt.grantId !== grantId || receipt.slotId !== slotId || receipt.jobId !== jobId
+        || !["known", "uncertain", "not_needed"].includes(String(receipt.status)) || typeof receipt.reconciled !== "boolean") return { status: "invalid", errorCode: "output_receipt_response_mismatch" };
+      // Refresh only the read-only Output projection. Never invoke the job queue driver or a provider status lookup here.
+      const current = await read.refresh();
+      if (!active()) return forbidden();
+      if (this.outputRequirements.resource(documentId).accessLost) return forbidden();
+      if (current?.state === "ready" && read.current() && observed.current()) {
+        const currentGrant = current.snapshot?.grants.find((candidate) => candidate.id === grantId);
+        if (current.snapshot?.documentId !== documentId || current.snapshot.projectId !== projectId || !currentGrant?.operations.some((candidate) => candidate.id === slotId && candidate.jobId === jobId)) return { status: "invalid", errorCode: "output_receipt_response_mismatch" };
+        this.#jobDetails.delete(jobId);
+        this.documentJobs.set([body.job, ...this.documentJobs.get().filter((candidate) => candidate.jobId !== jobId)]);
+        this.notify();
+      }
+      return { status: receipt.status as "known" | "uncertain" | "not_needed", reconciled: receipt.reconciled, refreshed: current?.state === "ready" && read.current() };
+    } catch { return active() ? { status: "unavailable", errorCode: "output_receipt_check_failed" } : forbidden(); }
+  }
+
+  async outputRequirementCommand(command: OutputRequirementCommand) {
+    const authorization = this.captureAuthorizationScope();
+    const result = await this.outputRequirements.command<OutputCommandResponse>(command.documentId, command, "update Output requirements");
+    if ((result.status === "saved" || result.status === "conflict") && this.authorizationScopeActive(authorization)) {
+      if (result.status === "saved") {
+        try { await this.refreshEvents(); }
+        catch { /* The mutation receipt is already committed. Hydration must not turn it into a retry. */ }
+      }
+      if (this.authorizationScopeActive(authorization)) await this.outputRequirements.ensure(command.documentId, { force: true });
+    }
+    if (!this.authorizationScopeActive(authorization)) return { status: "forbidden" as const, body: null, error: "The active workspace changed. The previous result was discarded." };
+    if (this.outputRequirements.resource(command.documentId).accessLost || this.outputRequirements.resource(command.documentId).privateUnavailable) return this.outputRequirements.withholdCommandBody(command.documentId, result, { clientMutationId: command.clientMutationId, action: command.action });
+    return result;
+  }
+
+  async uploadOutputAsset(documentId: string, file: File, expectedRevision: string, clientMutationId: string, rightsConfirmed: boolean) {
+    if (!rightsConfirmed) return { status: "invalid" as const, body: null, error: "Confirm that you own or have permission to use this file." };
+    const authorization = this.captureAuthorizationScope();
+    const result = await this.outputRequirements.upload<OutputCommandResponse>(documentId, file, {
+      "content-type": "application/octet-stream",
+      "x-output-filename": encodeURIComponent(file.name),
+      "x-output-expected-revision": expectedRevision,
+      "x-output-client-mutation-id": clientMutationId,
+      "x-output-rights-confirmed": "true",
+    });
+    if ((result.status === "saved" || result.status === "conflict") && this.authorizationScopeActive(authorization)) {
+      if (result.status === "saved") {
+        try { await this.refreshEvents(); }
+        catch { /* Keep the committed upload receipt; recover the view without uploading a second file. */ }
+      }
+      if (this.authorizationScopeActive(authorization)) await this.outputRequirements.ensure(documentId, { force: true });
+    }
+    if (!this.authorizationScopeActive(authorization)) return { status: "forbidden" as const, body: null, error: "The active workspace changed. The previous result was discarded." };
+    if (this.outputRequirements.resource(documentId).accessLost || this.outputRequirements.resource(documentId).privateUnavailable) return this.outputRequirements.withholdCommandBody(documentId, result, { clientMutationId, action: "adopt" });
+    return result;
+  }
+
   async #upgradeHistory(profile:AccountSnapshotProfile){
     const authorization=this.#activeAuthorizationScope();
     if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
@@ -993,6 +1256,45 @@ export class FormaStore {
   }
   async #refreshEvents(){const authorization=this.#activeAuthorizationScope(),previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);this.#assertAuthorizationScope(authorization);if(body.head<after){body=await this.#readEventPages(0);this.#assertAuthorizationScope(authorization);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.#assertAuthorizationScope(authorization);this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
+
+  /** Recheck only the selected project's existing source index; never hydrate, author, or select another context. */
+  async refreshOutputSource(target: { authorization: CapturedAuthorizationScope | null; projectId: string; documentId: string;
+    currentDocumentId: string; route: string; organizationId: string | null; projectAccessId: string | null },
+    controls: { current?: () => boolean } = {}): Promise<{ status: "refreshed" | "denied" | "unavailable" | "superseded" }> {
+    const current = () => {
+      const projection = this.projection.get(), context = this.session.get()?.projectContext;
+      return this.authorizationScopeActive(target.authorization) && Boolean(context?.permissions.includes("project.read"))
+        && context?.organizationId === target.organizationId && context?.projectAccessId === target.projectAccessId
+        && context?.projectId === target.projectId && projection.projectId === target.projectId
+        && projection.documentId === target.currentDocumentId && this.route.get() === target.route
+        && projection.documents.some(document => document.id === target.documentId && document.projectId === target.projectId && !document.removed)
+        && (!controls.current || controls.current());
+    };
+    if (!target.organizationId || !target.projectAccessId || !current()) return { status: "superseded" };
+    if (this.outputRequirements.resource(target.documentId).errorCode !== "output_target_source_projection_stale") return { status: "superseded" };
+    const after = this.head.get();
+    if (!Number.isSafeInteger(after) || after < 0) return { status: "unavailable" };
+    const read = this.outputRequirements.beginExternalRead(target.documentId);
+    if (!read || !read.current() || !current()) return { status: "superseded" };
+    try {
+      const response = await this.guardedFetch(`/api/workspaces/${encodeURIComponent(target.organizationId)}/projects/${encodeURIComponent(target.projectAccessId)}/events?after=${after}&limit=1&content=0`,
+        { method: "GET", credentials: "same-origin", cache: "no-store" }, "refresh the selected project's source index without authoring or generation",
+        { current: () => this.authorizationScopeActive(target.authorization) && read.scopeCurrent() });
+      if (!this.authorizationScopeActive(target.authorization) || !read.scopeCurrent()) return { status: "superseded" };
+      // A current denial retires this exact cache even if its presentation moved.
+      // Successful refresh/handoff still requires the original current view.
+      if ([401, 403, 404, 410].includes(response.status)) return { status: read.withdraw(response.status) ? "denied" : "superseded" };
+      if (!read.current() || !current()) return { status: "superseded" };
+      if (!response.ok) return { status: "unavailable" };
+      // The existing route completed its authorized index refresh before headers.
+      // Its event bodies are not imported into this recovery operation.
+      void response.body?.cancel().catch(() => {});
+      const refreshed = await read.refresh();
+      if (!current()) return { status: "superseded" };
+      if (!refreshed) return { status: "superseded" };
+      return { status: refreshed.state === "ready" ? "refreshed" : "unavailable" };
+    } catch { return { status: current() && read.current() ? "unavailable" : "superseded" }; }
+  }
   #canRequestProjectOutputs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.output.request");}
   #canReadProjectJobs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.read")||permissions.includes("project.output.request");}
   canPreparePlanning(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.author")&&permissions.includes("project.output.request");}
@@ -1270,7 +1572,8 @@ async syncDocumentJobs(){
     const response=await fetch("/api/impersonation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({personaId,confirmation:"I understand, continue"})});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"The fictional account could not be opened");window.location.assign(body.route??route);
   }
   async stopImpersonating(){const response=await fetch("/api/impersonation",{method:"DELETE"});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"Your regular account could not be restored");window.location.assign(body.route??"/laboratory/replay");}
-  setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
+  setRoute(path: string, options: WorkspaceNavigationOptions = {}) {
+    if(!workspaceNavigationCurrent(options))return;
     const current=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
     if(current!==destination){
       if(!["creative","canvas"].includes(current)||!["creative","canvas"].includes(destination)){location.assign(path);return;}
@@ -1280,28 +1583,37 @@ async syncDocumentJobs(){
     this.#commitRoute(path,options);
   }
 
-  async transitionWorkspace(path:string,options:{replace?:boolean;documentFocus?:boolean}={}){
+  async transitionWorkspace(path:string,options:WorkspaceNavigationOptions={}){
+    if(!workspaceNavigationCurrent(options))return false;
+    const guarded=Boolean(options.current||options.focus),navigationScope=guarded?this.captureAuthorizationScope():null;
     const source=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
     if(source===destination){this.#commitRoute(path,options);return true;}
     if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)){location.assign(path);return true;}
     const previous=this.session.get(),attempt=++this.#workspaceTransition;
     try{
       const response=await fetch(`/api/session?audience=${encodeURIComponent(destination)}`,{cache:"no-store",credentials:"same-origin"});
+      const ownsHeaders=workspaceNavigationCurrent(options);
       const current=await response.json() as PilotSession&{error?:string};
+      const ownsBody=workspaceNavigationCurrent(options);
       if(!response.ok)throw new Error(current.error??"The selected workspace is no longer available.");
       if(attempt!==this.#workspaceTransition||applicationIdFromRoute(this.route.get())!==source)return false;
+      // A stale navigation may still retire permissions for its original actor,
+      // but must never restore another account or silently move a newer view.
+      if(guarded&&!this.authorizationScopeActive(navigationScope))return false;
       if(!workspaceTransitionAuthorized(previous,current,destination)){
         if(previous&&previous.user.userId===current.user.userId)this.#applySession({...current,audience:previous.audience});
         this.toast(destination==="canvas"?"Canvas is no longer available for this account or project.":"Your workspace authorization has changed. Reload your current project.");
         return false;
       }
       this.#applySession({...current,audience:previous?.audience});
+      if(!ownsHeaders||!ownsBody||!workspaceNavigationCurrent(options))return false;
       this.#commitRoute(path,options);
       return true;
     }catch(error){if(attempt===this.#workspaceTransition)this.toast(error instanceof Error?error.message:"The selected workspace could not be authorized.");return false;}
   }
 
-  #commitRoute(path:string,options:{replace?:boolean;documentFocus?:boolean}={}){
+  #commitRoute(path:string,options:WorkspaceNavigationOptions={}){
+    if(!workspaceNavigationCurrent(options))return;
     const projection = this.projection.get();
     const requestedFocus = options.documentFocus ?? (documentFocusFromRoute(path) || documentFocusFromRoute(this.route.get()));
     const focusAwarePath = isDocumentViewRoute(path) ? withDocumentFocusInRoute(path, requestedFocus) : path;
@@ -1320,6 +1632,7 @@ async syncDocumentJobs(){
         recordPopulationSource("memory",this.events.get().length);
       }
     }
+    this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus}:null;
     this.route.set(routedPath);if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
     const required=this.#profileForRoute(routedPath);
     if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
@@ -1353,7 +1666,7 @@ async syncDocumentJobs(){
   setAttentionCapture(enabled:boolean){if(this.session.get()?.impersonation){this.patchUi({attentionCapture:false,attentionPaused:true});this.toast("Attention capture stays off while you experience a fictional account.");return;}writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
   async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const session=this.session.get();let appended:CreativeEvent[]=[];if(session?.projectContext){const authorization=this.#authorizationScope(session),response=await fetch("/api/privacy/attention",{method:"POST"}),body=await response.json() as {appended?:CreativeEvent[];error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok){this.toast(body.error??"Your personal attention data could not be forgotten.");return[];}appended=body.appended??[];}else appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const active=this.session.get();if(active)await clearAnalyticsSnapshots(this.#snapshotIdentity(active),true);this.toast("Your personal attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
-  async erasePersonalAuthoredContext(){const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);this.#assertAuthorizationScope(authorization);this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0}));this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");return false;}}
+  async erasePersonalAuthoredContext(){const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number;outputReservationReconciliationPending?:boolean;outputProviderReconciliationPending?:number;outputStorageCleanupPending?:number;outputReconciliationCheckFailed?:boolean};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);this.#assertAuthorizationScope(authorization);this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);await this.#refreshEvents();this.#assertAuthorizationScope(authorization);const outputPending=Boolean(result.outputReservationReconciliationPending||result.outputProviderReconciliationPending||result.outputStorageCleanupPending||result.outputReconciliationCheckFailed);this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0})+(outputPending?" "+this.#systemNotice("Some Output file cleanup or provider accounting is still pending. No new generation was authorized."):""));this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");return false;}}
   async migrateHistoricalEventPrivacy(){const session=this.session.get();if(!session||session.user.role!=="admin"||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"migrate-historical-events",confirmation:"MIGRATE_HISTORICAL_EVENT_CONTENT"})},"migrate historical event privacy");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;migratedEvents?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Historical event migration failed.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session))]);this.toast(this.#systemNotice("{count} historical event bodies moved into erasable owner-scoped storage. Existing backups and other devices still require separate handling.",{count:result.migratedEvents??0}));return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Historical event migration failed.");return false;}}
 
   async load() {
@@ -1421,7 +1734,7 @@ async syncDocumentJobs(){
     const previous=this.session.get(),previousUserId=previous?.user.userId;
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
       this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
-      this.documentJobs.set([]);this.generationReadiness.set({});this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
+      this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
       this.#adaptiveStructureJobIds.clear();this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
       this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#readinessAcknowledgements.clear();this.#dismissedAdaptiveSuggestions.clear();this.#readinessInFlight.clear();this.#jobStarts.clear();this.#jobsDriving.clear();this.#presentationRecoveryAttempts.clear();this.#focalInFlight.clear();
       this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";this.#historyProfile="full";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
@@ -1703,7 +2016,7 @@ async syncDocumentJobs(){
     const legacyGroups=new Map<string,string>();for(const block of blocks)for(const membership of combinedContextMemberships(block.properties))if(!legacyGroups.has(membership.contextSetId))legacyGroups.set(membership.contextSetId,crypto.randomUUID());
     const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>{const authoredMemberships=combinedContextMemberships(block.properties);return{type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,...(block.type==="action"?{block_references:normalizeActionBlockReferences(block.properties.block_references).flatMap((reference)=>ids.has(reference.block_id)?[{...reference,block_id:ids.get(reference.block_id)!}]:[])}:{}),authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:normalized?null:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:authoredMemberships.length?authoredMemberships.map((membership)=>({...membership,contextSetId:normalized?legacyGroups.get(membership.contextSetId)??contextSetId:contextSetId,memberOrder:normalized?membership.memberOrder:index,sourceCanvasId:""})):blocks.length>1&&!normalized?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}};}).sort((left,right)=>Number(left.payload.type==="action")-Number(right.payload.type==="action"));
     for(const relation of projection.libraryBlockRelations){const from=ids.get(relation.fromBlockId);const to=ids.get(relation.toBlockId);if(!from||!to)continue;const{context_set_id:sourceContextId,...properties}=relation.properties;events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:from,to_block_id:to,kind:relation.kind,properties:{...properties,copied_from_relation_id:relation.id,...(normalized&&relation.kind===CONTEXT_CONTAINS_RELATION?{}:{context_set_id:normalized?legacyGroups.get(String(sourceContextId??""))??contextSetId:contextSetId})},source_surface:sourceSurface}});}
-    const appended=await this.appendBatch(events);if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":this.#systemNotice("{count} connected blocks added as one context set.",{count:blocks.length}));return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
+    const appended=await this.appendBatch(copyOutputRequirementCreationEvents(events,ids));if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":this.#systemNotice("{count} connected blocks added as one context set.",{count:blocks.length}));return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
   }
 
   #relatedOutputBlocks(blockId:string){
@@ -1900,7 +2213,8 @@ async syncDocumentJobs(){
     for(const documentId of [...contextSet.documentIds,...selectedDocumentIds])for(const block of projection.libraryBlocks)if(block.documentId===documentId)blockIds.add(block.id);
     let expanded=true;while(expanded){expanded=false;for(const relation of projection.libraryBlockRelations)if((relation.kind==="artifact_contains"||isContextCompositionRelation(relation.kind))&&blockIds.has(relation.fromBlockId)&&!blockIds.has(relation.toBlockId)){blockIds.add(relation.toBlockId);expanded=true;}}
     const blocks=projection.libraryBlocks.filter((block)=>blockIds.has(block.id));const selectedBySource=new Map(selectedItems.map((item)=>[item.sourceId,item]));
-    const facts=blocks.map((block)=>{const item=selectedBySource.get(block.id)??selectedBySource.get(String(block.properties.source_output_id??block.properties.source_artifact_id??""));return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const relationships=projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents}));const snapshot={facts,relationships,context_groups:combinedContextGroups({facts,relationships}),pins:[...new Set([...contextSet.outputIds,...selectedItems.filter((item)=>item.sourceKind==="output").map((item)=>item.sourceId),...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
+    const factBlocks=blocks.filter((block)=>!isOutputContextBlock(block));const factBlockIds=new Set(factBlocks.map((block)=>block.id));
+    const facts=factBlocks.map((block)=>{const item=selectedBySource.get(block.id)??selectedBySource.get(String(block.properties.source_output_id??block.properties.source_artifact_id??""));return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const relationships=projection.libraryBlockRelations.filter((relation)=>factBlockIds.has(relation.fromBlockId)&&factBlockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents}));const snapshot={facts,relationships,context_groups:combinedContextGroups({facts,relationships}),pins:[...new Set([...contextSet.outputIds,...selectedItems.filter((item)=>item.sourceKind==="output").map((item)=>item.sourceId),...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
     const context={snapshot,sourceBlockVersions:blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:anchorDocumentId,canvasId:contextSet.canvasId,contextSetId:contextSet.id};const documentRevision=generationRevisionFor(context);const filed=projection.membership[anchorDocumentId];const technique=effectivePromptPreference(projection.preferences,{documentId:anchorDocumentId,collectionIds:filed?[filed.collectionId]:[],projectId:projection.projectId,accountId:this.session.get()?.user.userId}).technique;const fan=kind.endsWith("_fan");const fanKind=kind.startsWith("preview")?"preview":"generate";const jobKind:"preview"|"generate"|"prompt_fan"=fan?"prompt_fan":fanKind;const promptFanId=fan?crypto.randomUUID():undefined;const requestKey=fan?`canvas:prompt-fan:${fanKind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`:`canvas:${kind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`;
     try{const {reused}=await this.#startDocumentJob(jobKind,{...context,documentRevision,requestKey,promptTechnique:technique,sourcePreviewId,...(fan?{fanKind,promptFanId}:{})},"canvas",anchorDocumentId);const quality=fanKind==="preview"?"Draft":"Full-quality";this.toast(reused?"This exact Canvas generation is already queued.":fan?this.#systemNotice("{quality} fan queued as one four-image comparison for {name}.",{quality:this.#systemNotice(quality),name:contextSet.name}):this.#systemNotice("{quality} Canvas generation queued from {name}.",{quality:this.#systemNotice(quality),name:contextSet.name}));return true;}catch(error){this.toast(error instanceof Error?error.message:"Canvas generation could not be started.");return false;}
   }
@@ -2130,7 +2444,7 @@ async syncDocumentJobs(){
     }
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
     if(kind==="scene"){
       const documentId=options.documentId??this.projection.get().documentId,session=this.session.get(),authorization=this.#activeAuthorizationScope();
       const request:SceneCostRequest={documentId,requestId:options.sceneRequestId??"",sceneMedium:isSceneMedium(options.sceneMedium)?options.sceneMedium:"visual",
@@ -2169,9 +2483,10 @@ async syncDocumentJobs(){
       }
     }
 
-    const productionMode=options.productionMode??"manual";const requestedSlideCount=kind==="slides"?options.requestedSlideCount??options.itemCount:undefined;const itemCount=kind==="slides"?requestedSlideCount:options.itemCount;
-    if(kind==="slides"){if(options.itemCount!==undefined&&options.requestedSlideCount!==undefined&&options.itemCount!==options.requestedSlideCount){this.toast("The selected slide count does not match the requested presentation size.");return false;}const maximumSlideCount=productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;if(requestedSlideCount!==undefined&&(!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1||requestedSlideCount>maximumSlideCount)){this.toast(this.#systemNotice("{mode} presentations support between 1 and {maximum} slides. The request was not started.",{mode:this.#systemNotice(productionMode==="managed"?"Managed":"Manual"),maximum:maximumSlideCount}));return false;}}
-    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}${audioIdentity}${workflowIdentity}`;
+    const productionMode=options.productionMode??"manual";let requestedSlideCount=kind==="slides"?options.requestedSlideCount??options.itemCount:undefined;let itemCount=kind==="slides"?requestedSlideCount:options.itemCount;
+    if(kind==="slides"&&options.slideCountPolicy!==undefined){try{const count=resolvePresentationCountRequest({...options,productionMode});requestedSlideCount=count.requestedSlideCount;itemCount=count.itemCount;}catch(error){this.toast(error instanceof Error?error.message:"Invalid presentation count policy");return false;}}
+    if(kind==="slides"){if(options.itemCount!==undefined&&options.requestedSlideCount!==undefined&&options.itemCount!==options.requestedSlideCount){this.toast("The selected slide count does not match the requested presentation size.");return false;}const maximumSlideCount=productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:15;if(requestedSlideCount!==undefined&&(!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1||requestedSlideCount>maximumSlideCount)){this.toast(this.#systemNotice("{mode} presentations support between 1 and {maximum} slides. The request was not started.",{mode:this.#systemNotice(productionMode==="managed"?"Managed":"Manual"),maximum:maximumSlideCount}));return false;}}
+    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,...(options.slideCountPolicy?{slideCountPolicy:options.slideCountPolicy}:{}),authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}${options.slideCountPolicy?`:policy:${generationRevisionFor(options.slideCountPolicy)}`:""}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}${audioIdentity}${workflowIdentity}`;
     try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId);this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
@@ -2190,13 +2505,14 @@ async syncDocumentJobs(){
     this.notify();this.toast(this.#systemNotice("{name} opened in {workspace}.",{name:target.name,workspace:this.#systemNotice(canvasDestination?"Canvas":"Creator Workspace")}));return true;
   }
 
-  async openDocument(documentId: string, destination="/", sourceSurface?: string) {
+  async openDocument(documentId: string, destination="/", sourceSurface?: string, options:Pick<WorkspaceNavigationOptions,"current"|"focus">={}) {
+    if(!workspaceNavigationCurrent(options))return false;
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withDocumentInRoute(destination, documentId, target?.title ?? "");
-    if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination);return true;}
+    if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination,options);return true;}
     if(!target){this.toast("That document is no longer available.");return false;}
-    if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination);return true;}
+    if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination,options);return true;}
     const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
-    const persisted=this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination);
+    const persisted=this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination,options);
     const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
     if(appended.length)this.toast("Document opened.");return true;
   }

@@ -1,3 +1,5 @@
+import { isOutputContextBlock } from "./output-source-policy.ts";
+
 /** Durable platform terminology must never become model-facing creative copy. */
 const INTERNAL_CREATIVE_KEYS = new Set([
   "combined_context",
@@ -213,7 +215,7 @@ function hasAudioReferenceMetadata(value: unknown): boolean {
 /** One deterministic definition of whether a retained decision can influence an output. */
 export function promptFactIsActive(value: unknown): boolean {
   if (!isRecord(value)) return true;
-  if (value.active === false || value.removed === true) return false;
+  if (isOutputContextBlock(value) || value.active === false || value.removed === true) return false;
   const properties = isRecord(value.properties) ? value.properties : null;
   if (properties?.active === false) return false;
   const audioSource=value.type==="audio"||value.role==="audio"

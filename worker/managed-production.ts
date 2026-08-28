@@ -432,6 +432,7 @@ export async function generateManagedArtifactDraft(
   const pageCount = Math.ceil(input.production.scenes.length / pageSize);
   const presentationSources = kind === "slides"
     ? buildDocumentPresentationSourceContract(input.snapshot, {
+      productionMode: "managed",
       itemCount: input.production.scenes.length,
       requestedSlideCount: input.production.scenes.length,
       presentationStyle: input.presentationStyle,

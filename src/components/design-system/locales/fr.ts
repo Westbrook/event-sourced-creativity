@@ -1,3 +1,5 @@
+import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./output-delivery-messages.ts";
+import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages.ts";
 import systemMessages from "./system-fr.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
@@ -5,6 +7,8 @@ import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
 const messages: Record<string, string> = {
   ...FORMA_NEXT_ACTION_MESSAGES.fr,
   ...FORMA_RESPONSIVE_MESSAGES.fr,
+  ...FORMA_OUTPUT_DELIVERY_MESSAGES.fr,
+  ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.fr,
   "presentation.planning.outlineEvidence": "Les plans courts définissent les titres des diapositives et les sujets à couvrir. Les recherches justificatives sont attribuées séparément ; les groupes de sources explicites sont prioritaires. Un périmètre de sources non résolu bloque la génération avant toute dépense. Les spécifications de scène et des autres livrables sont exclues des diapositives.",
   "scene.provider.disclosure": "Fournisseur payant de scène, transmission des sources et coût",
   "scene.provider.identity": "Fournisseur payant · OpenAI Responses · {model}",
