@@ -66,16 +66,17 @@ test("image opening fails closed after authority changes during viewer update",a
 const artifactSource=readFileSync(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8");
 const generationSource=readFileSync(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8");
 function configurationMember(text,from,to){const begin=text.indexOf(from),end=text.indexOf(to,begin+from.length);assert.ok(begin>=0&&end>begin,"Production configuration boundaries changed: "+from);return text.slice(begin,end).replaceAll("#","_");}
-const artifactConfigurationMethods=[configurationMember(artifactSource,"  protected override willUpdate(","  protected override updated("),configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage("),configurationMember(artifactSource,"  #openCreate=","  async #revealWorkbenchPane("),configurationMember(artifactSource,"  async #revealWorkbenchPane(","  async openRender("),configurationMember(artifactSource,"  async openRender(","  async openArtifactById(")].join("\n");
+const artifactConfigurationMethods=[configurationMember(artifactSource,"  #closeViewerPopovers(","  #clearCreationDraft("),configurationMember(artifactSource,"  protected override willUpdate(","  protected override updated("),configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage("),configurationMember(artifactSource,"  #openCreate=","  async #revealWorkbenchPane("),configurationMember(artifactSource,"  async #revealWorkbenchPane(","  async openRender("),configurationMember(artifactSource,"  async openRender(","  async openArtifactById(")].join("\n");
 const imageConfigurationMethods=[configurationMember(generationSource,"  async openConfiguration(","  #budgetGuidance("),configurationMember(generationSource,"  protected override updated(","  override connectedCallback("),configurationMember(generationSource,"  #closeDetails(","  #closeFailures(")].join("\n");
 
 // Execute production lifecycle methods before each mocked update resolves. A stale
 // modal opening even transiently is a failure, not a success because it later closes.
 function configurationHost(kind,{changeAt=0,change=null}={}){
-  const state={facts:makeFacts(),required:true},trace=[];let host,awaits=0;
+  const state={facts:makeFacts(),required:true,route:"/document/A"},trace=[];let host,awaits=0;
   const document={documentElement:{dataset:{}}},window={clearTimeout(){}},nextActionFacts=()=>state.facts;
   const fetch=()=>assert.fail("Free configuration must not dispatch a request");
-  const store=new Proxy({session:{get:()=>({projectContext:null})},projection:{get:()=>state.facts},canvasProjection:{get:()=>({selectedCanvasId:state.facts.canvasId})},routeDataReady:()=>false},{get(target,key){assert.ok(key in target,"Unexpected configuration store operation: "+String(key));return target[key];}});
+  const store=new Proxy({captureAuthorizationScope:()=>({key:state.facts.authorityKey}),route:{get:()=>state.route},session:{get:()=>({projectContext:null})},projection:{get:()=>state.facts},canvasProjection:{get:()=>({selectedCanvasId:state.facts.canvasId})},routeDataReady:()=>false},{get(target,key){assert.ok(key in target,"Unexpected configuration store operation: "+String(key));return target[key];}});
+  const popovers=[{open:true,close(){this.open=false;trace.push("popover-close");}}];
   const dialog={open:false,close(){this.open=false;trace.push("close");}},ensureModalDialog=value=>{if(!value)return false;if(!value.open){value.open=true;trace.push("show:"+state.facts.documentId);}return true;};
   function invalidate(reason){
     if(reason==="document"){const previous=host.documentId;state.facts=makeFacts("B");host.documentId="B";host.willUpdate?.(new Map([["documentId",previous]]));}
@@ -86,15 +87,16 @@ function configurationHost(kind,{changeAt=0,change=null}={}){
   async function tick(label){const at=++awaits;trace.push("await:"+label);await Promise.resolve();if(at===changeAt)invalidate(change);host.updated();return true;}
   const members=kind==="artifact"?artifactConfigurationMethods:imageConfigurationMethods;
   const Probe=eval(stripTypeScriptTypes(`(class extends Object {
-    documentId="A";source="document";store=store;_configurationCurrent=null;_viewerCurrent=null;_createOpen=false;_activeId="";
+    documentId="A";source="document";store=store;_configurationCurrent=null;_viewerCurrent=null;_createOpen=false;_activeId="";_viewerPopoverScope="";
     _kind="slides";_activeWorkflowStageId="";_detailsOpen=false;_queueOpen=false;_failuresOpen=false;_safetyDiagnosticOpen=false;_readinessTimer=0;_readinessSignature="";
     requestUpdate(){trace.push("request-update");}get updateComplete(){return tick("child");}_targetDocumentId(){return this.documentId;}
     _selectArtifactKind(value){this._kind=value;}_resetPresentationCount(){}_createDialog(){return dialog;}_viewDialog(){return null;}_bindCompletedWorkflowStage(){}
     querySelector(selector){return selector===".generation-details-dialog"?dialog:null;}
+    querySelectorAll(selector){assert.equal(selector,"forma-ui-popover");return popovers;}
     closest(selector){assert.equal(selector,"forma-workspace");return{updateComplete:tick("workspace")};}
     dispatchEvent(event){trace.push("event:"+event.type);return true;}${members}
   })`));
-  host=new Probe();return{host,state,trace,dialog,invalidate,open:()=>kind==="artifact"?host.openRender("slides","A",{current:()=>state.required}):host.openConfiguration(()=>state.required),steps:()=>awaits};
+  host=new Probe();return{host,state,trace,dialog,popovers,invalidate,open:()=>kind==="artifact"?host.openRender("slides","A",{current:()=>state.required}):host.openConfiguration(()=>state.required),steps:()=>awaits};
 }
 for(const kind of ["artifact","image"]){
   test("real "+kind+" configuration opens unchanged A only, through its updated auto-open path",async()=>{const f=configurationHost(kind);assert.equal(await f.open(),true);assert.equal(f.dialog.open,true);assert.deepEqual(f.trace.filter(event=>event.startsWith("show:")),["show:A"]);assert.equal(f.steps(),kind==="artifact"?3:1);});
@@ -105,6 +107,20 @@ for(const kind of ["artifact","image"]){
   }
   test("real "+kind+" configuration remains usable after a same-document settings edit without authorizing work",async()=>{const f=configurationHost(kind);assert.equal(await f.open(),true);f.trace.length=0;f.invalidate("source");f.host.updated();f.host.updated();assert.equal(f.dialog.open,true);assert.ok(!f.trace.includes("close"));assert.deepEqual(f.trace.filter(event=>event.startsWith("show:")),[]);f.invalidate("authority");f.host.updated();assert.equal(f.dialog.open,false);});
 }
+for(const change of ["document","authority","artifact","route"])test("real configuration popover lifecycle closes on "+change+" rebinding, not an unchanged update",()=>{
+  const f=configurationHost("artifact");
+  f.host._syncViewerPopovers();
+  assert.equal(f.popovers[0].open,false);
+  f.popovers[0].open=true;f.trace.length=0;
+  f.host._syncViewerPopovers();
+  assert.equal(f.popovers[0].open,true);assert.deepEqual(f.trace,[]);
+  if(change==="document")f.host.documentId="B";
+  else if(change==="authority")f.state.facts={...f.state.facts,authorityKey:"actor:changed-scope"};
+  else if(change==="artifact")f.host._activeId="different-artifact";
+  else f.state.route="/canvas/board";
+  f.host._syncViewerPopovers();
+  assert.equal(f.popovers[0].open,false);assert.deepEqual(f.trace,["popover-close"]);
+});
 for(const medium of ["slides","image"])test("warm chooser surfaces an unavailable result when the "+medium+" child handoff declines",async()=>{const f=warm(),lookup=f.host.querySelector.bind(f.host);f.host.querySelector=selector=>selector==="forma-document-artifacts"?{openRender:async()=>false}:selector==="forma-generation-actions"?{openConfiguration:async()=>false}:lookup(selector);await f.host.prepare(f.target());f.trace.length=0;await f.host.choose(medium);assert.ok(f.trace.includes("toast:unavailable"));assert.deepEqual(f.routes,[]);});
 
 function artifactHost(changeOnUpdate=false){

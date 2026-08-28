@@ -22,6 +22,8 @@ fixtureModule=fixtureModule.replace("configurePresentationForTest(mode: Producti
 fixtureModule+="\nexport { fixture, DocumentArtifacts, FormaLocaleController, FORMA_DEFAULT_MESSAGES, localeCatalogs };\n";
 const {fixture,DocumentArtifacts,FormaLocaleController,FORMA_DEFAULT_MESSAGES,localeCatalogs}=await import("data:text/javascript;base64,"+Buffer.from(fixtureModule).toString("base64"));
 const sceneJobs=["queued","running","committing","completed","failed","partial","canceled"];
+const sceneTypeLabels={"en":"Scene type","fr":"Type de scène","ar":"نوع المشهد","ja":"シーンの種類"};
+const sceneSingularPlans={"en":"{count} planned written scene · {medium} · {mode}","fr":"{count} scène écrite prévue · {medium} · {mode}","ar":"{count} مشهد مكتوب مخطط له · {medium} · {mode}","ja":"予定された文章シーン{count}件 · {medium} · {mode}"};
 
 function localeFor(f,locale){
   const previous=f.i18n;
@@ -102,9 +104,13 @@ for(const locale of ["en","fr","ar","ja"])for(const medium of ["visual","audio"]
   for(const count of [1,9,17]){
     const f=await createSceneComposer(t,{locale,medium,count});await f.openScene();
     assert.equal(enabled(createButton(f)),false);assert.ok(f.visible().includes(f.i18n.t("scene.cost.priceUnavailable")));
+    const mediumField=f.renderer.ownNodes(f.host,"fieldset").find(node=>node.attributes.class==="artifact-scene-medium");
+    assert.equal(mediumField?.attributes["aria-label"],sceneTypeLabels[locale]);
+    assert.ok(f.renderer.markup.includes("<legend>"+sceneTypeLabels[locale]+"</legend>"));
     assert.equal(f.calls.length,0);await f.check();
     assert.equal(f.calls.length,1);assert.equal(f.calls[0].request.itemCount,undefined);
-    assert.ok(f.visible().includes(f.i18n.t("scene.cost.plan","",{count:f.i18n.number(count),medium:f.i18n.t("scene.medium."+medium),mode:f.i18n.t("scene.cost.managed")})));
+    assert.ok(f.visible().includes(f.i18n.t(count===1?"scene.cost.planOne":"scene.cost.plan","",{count:f.i18n.number(count),medium:f.i18n.t("scene.medium."+medium),mode:f.i18n.t("scene.cost.managed")})));
+    if(count===1)assert.ok(f.visible().includes(sceneSingularPlans[locale].replace("{count}",f.i18n.number(count)).replace("{medium}",f.i18n.t("scene.medium."+medium)).replace("{mode}",f.i18n.t("scene.cost.managed"))));
     assert.ok(f.visible().includes(f.i18n.number(Math.ceil(count/8),{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:6})));
     assert.equal(enabled(createButton(f)),true);
     await f.submit();await settle(f);
@@ -370,12 +376,40 @@ test("Scene composer: malformed or wrong-scope replies never become approval, an
 });
 test("Scene composer: withdrawn personal purchase permission invalidates approval and retains its handle for fresh authorized reopening",async t=>{
   const f=await createSceneComposer(t);await f.openScene();await f.check();const original=f.calls[0].request.requestId;
+  const oldSubmit=f.renderer.handler(f.host,"form",node=>node.attributes.class==="document-artifact-dialog","submit");
+  const oldCheck=action(f,"scene.cost.check")??action(f,"scene.cost.inspect");assert.ok(oldCheck);
   f.state.canRequest=false;f.draw();
-  assert.equal(enabled(createButton(f)),false);await f.submit();assert.equal(f.calls.filter(call=>call.action==="submit").length,0);
+  assert.equal(f.renderer.ownNodes(f.host,"form").some(node=>node.attributes.class==="document-artifact-dialog"),false,"Phase4 removes the inactive creation form after permission invalidation");
+  assert.equal(enabled(createButton(f)),false);await oldSubmit();assert.equal(f.calls.filter(call=>call.action==="submit").length,0);
   f.scene.lookup=async request=>({requestId:request.requestId,preview:await f.previewFor(request),job:syntheticJob(request,"completed")});
-  await f.check();assert.equal(action(f,"scene.cost.new"),undefined);assert.equal(f.calls.filter(call=>call.action==="submit").length,0);
-  await f.closeScene();f.state.canRequest=true;await f.openScene();await f.check();
+  await invoke(f,oldCheck);assert.equal(action(f,"scene.cost.new"),undefined);assert.equal(f.calls.filter(call=>call.action==="submit").length,0);
+  assert.equal(f.calls.filter(call=>call.action==="quote").length,1,"a detached old Check cannot restart the closed configuration");
+  assert.equal(f.renderer.ownNodes(f.host,"dialog").some(node=>node.attributes.class==="document-artifact-create"),false);
+  f.state.canRequest=true;await f.openScene();await f.check();
   assert.equal(f.calls.at(-1).request.requestId,original);assert.ok(action(f,"scene.cost.receipt"));assert.ok(action(f,"scene.cost.new"));
+});
+
+for(const locale of ["en","fr","ar","ja"])test(`Scene type label ${locale}: the actual workflow selector uses the same scoped term without changing generic Medium`,async t=>{
+  t.mock.method(globalThis,"fetch",async()=>assert.fail("No provider or external network is permitted"));
+  const h=await createSceneStoreHost({count:1});t.after(()=>h.close());
+  const f=await createSceneComposer(t,{locale,storeHost:h,workflow:true});
+  f.host.launcherOnly=false;f.draw();
+  assert.ok(f.renderer.markup.includes('<label class="production-workflow-source production-workflow-scene-medium"><span>'+sceneTypeLabels[locale]+"</span>"));
+  if(locale==="fr")assert.equal(f.i18n.t("evaluation.preview.medium"),"Moyenne","generic evaluation Medium is unchanged");
+  assert.equal(h.requests.filter(request=>request.body?.payload?.sceneCostConsent||request.body?.payload?.sceneCostPreview).length,0);
+  assert.equal(h.worker.counts().document_jobs,0);assert.equal(h.worker.counts().budget_reservations,0);assert.equal(h.worker.counts().cost_budget_reservations,0);
+});
+
+for(const locale of ["en","fr","ar","ja"])test(`Scene plan grammar ${locale}: original 1/9/17 descriptors remain read-only receipts`,async t=>{
+  for(const count of [1,9,17]){
+    const f=await createSceneComposer(t,{locale,count});await f.openScene();
+    f.scene.lookup=async request=>({requestId:request.requestId,preview:await f.previewFor(request),job:syntheticJob(request,"running")});
+    await f.check();
+    assert.ok(f.visible().includes(f.i18n.t("scene.cost.original")));
+    assert.ok(f.visible().includes(f.i18n.t(count===1?"scene.cost.planOne":"scene.cost.plan","",{count:f.i18n.number(count),medium:f.i18n.t("scene.medium.visual"),mode:f.i18n.t("scene.cost.managed")})));
+    assert.equal(enabled(createButton(f)),false);assert.equal(action(f,"scene.cost.new"),undefined);
+    await f.submit();assert.equal(f.calls.filter(call=>call.action==="submit").length,0);
+  }
 });
 
 test("Scene composer normal completion: Arabic shared nine-part check waits for its actual free response",async t=>{

@@ -277,7 +277,13 @@ test("safe-area gutters, scroll focus, and analytics separators adapt correctly 
   assert.match(winning(".application-creative .composer-dock", "inset-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
   assert.match(winning(chatResult, "inset-inline-start", landscape)?.value ?? "", /--forma-landscape-rail-width/);
   assert.match(winning(chatResult, "inset-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
-  assert.equal(winning(".application-canvas :is(.canvas-intent-dock, .canvas-organize-menu)", "inset-inline-start", landscape)?.value, "auto");
+  assert.equal(winning(".application-canvas .canvas-intent-dock", "inset-inline-start", landscape)?.value, "auto");
+  for(const viewport of viewports){
+    assert.equal(winning(".canvas-organize-menu", "position", viewport)?.value, undefined, "Organize content no longer creates an independent overlay");
+    assert.equal(winning(".ui-popover-panel[popover]", "position", viewport)?.value, "fixed");
+    assert.match(winning(".canvas-organize-control .ui-popover-panel", "max-inline-size", viewport)?.value ?? "", /--forma-popover-max-width/);
+    assert.match(winning(".canvas-organize-control .ui-popover-panel", "max-block-size", viewport)?.value ?? "", /--forma-popover-max-height/);
+  }
   assert.equal(winning(".application-canvas .canvas-intent-stack", "inset-inline-end", landscape)?.value, "auto");
   assert.match(winning(".application-canvas .canvas-zoom-hud", "inset-inline-start", landscape)?.value ?? "", /--forma-safe-inline-start/);
 });
@@ -472,7 +478,9 @@ test("the final responsive cascade keeps Search, Ask, and every collection acces
   }
   assert.match(responsive, /data-nav-posture="compact"/);
   assert.match(responsive, /data-nav-posture="rail"\]\[data-short-height="true"/);
-  assert.match(responsive, /\.project-rail\.expanded \.rail-content\s*\{[^}]*position:\s*absolute/s);
+  assert.doesNotMatch(responsive, /\.project-rail\.expanded \.rail-content\s*\{[^}]*position:\s*absolute/s, "overlaid navigation uses the existing native top layer, not a body-relative float");
+  assert.match(projectRail, /popover=\$\{this\.#nativePanel\?"auto":nothing\}/);
+  assert.match(projectRail, /popovertarget=\$\{this\.#nativePanel\?this\.#contentId:nothing\}/);
 });
 
 test("the collapsed document rail stays coherent across the 760–768px compact-posture seam", () => {
@@ -522,9 +530,11 @@ test("the collapsed document rail stays coherent across the 760–768px compact-
     assert.equal(winning(composer, "inset-inline-start", viewport)?.value, compact ? "0" : "var(--forma-nav-rail-width)", `${viewport.name}: composer starts at the correct logical edge`);
 
     if (compact) {
-      const overlay = [".application-creative .project-rail.expanded .rail-content", '.application-creative[data-nav-posture="compact"] .project-rail.expanded .rail-content'];
-      assert.equal(winning(overlay, "position", viewport)?.value, "absolute", `${viewport.name}: expanded project navigation remains usable`);
+      const overlay = [".ui-popover-panel[popover]", ".project-rail .rail-content[popover]"];
+      assert.equal(winning(overlay, "position", viewport)?.value, "fixed", `${viewport.name}: expanded project navigation uses shared native positioning`);
       assert.equal(winning(overlay, "overflow-y", viewport)?.value, "auto");
+      assert.match(winning(overlay, "max-block-size", viewport)?.value??"", /--forma-popover-max-height/);
+      assert.equal(winning(".ui-popover-panel[popover]:not(:popover-open)", "display", viewport)?.value, "none", `${viewport.name}: closed native navigation does not leak into body layout`);
       assert.equal(winning('.application-creative[data-nav-posture="compact"] .composer-dock', "inset-inline", viewport)?.value, "0", `${viewport.name}: expanding the project rail never reintroduces a desktop composer offset`);
     }
   }
@@ -772,4 +782,39 @@ test("two-finger Canvas navigation preserves its world anchor without generating
   assert.match(responsive, /@container chat/);
   assert.match(canvasApplication,/!target\.closest\("\.canvas-resize-handle"\)/);
   assert.match(canvasApplication,/this\.i18n\.t\("canvas\.touchSelectionHint"/);
+});
+
+test("native overlay panels retain closed-state hiding and one RTL-safe positioning owner",()=>{
+  const closed=[".ui-popover-panel[popover]:not(:popover-open)",".tree-menu[popover]:not(:popover-open)",".presentation-deck-export-menu[popover]:not(:popover-open)"];
+  for(const viewport of viewports){
+    for(const selector of closed)assert.equal(winning(selector,"display",viewport)?.value,"none");
+    assert.equal(winning(".ui-popover-panel[popover]","position",viewport)?.value,"fixed");
+    assert.equal(winning(".ui-popover-panel[popover]","inset",viewport)?.value,"auto");
+    assert.match(winning(".ui-popover-panel[popover]","left",viewport)?.value??"",/--forma-popover-left/);
+    assert.match(winning(".ui-popover-panel[popover]","max-inline-size",viewport)?.value??"",/--forma-popover-max-width/);
+    assert.match(winning(".ui-popover-panel[popover]","max-block-size",viewport)?.value??"",/--forma-popover-max-height/);
+  }
+  for(const sheet of sheets)sheet.root.walkRules(rule=>{
+    if(!rule.selector.includes("canvas-view-menu")||!rule.selector.includes("ui-popover-panel"))return;
+    rule.walkDecls(decl=>assert.equal(/^(?:right|left|inset|inset-inline(?:-start|-end)?|position)$/.test(decl.prop),false,"View must not override the common finite RTL-aware position: "+decl.toString()));
+  });
+});
+
+test("Slides More actions remain visible at every viewport while their panel is native",()=>{
+  const trigger=".artifact-viewer-actions-popover .ui-popover-trigger";
+  for(const viewport of viewports){
+    assert.equal(winning(trigger,"display",viewport)?.value,"inline-flex",viewport.name);
+    assert.match(winning(trigger,"min-block-size",viewport)?.value??"",/2\.75rem/);
+    assert.match(winning(trigger,"min-inline-size",viewport)?.value??"",/2\.75rem/);
+  }
+  assert.doesNotMatch(responsive,/footer\[data-actions-open="false"\] > div|artifact-viewer-actions-toggle/,"obsolete floating-footer toggles cannot hide the only native invoker");
+});
+
+test("the final slide-toolbar cascade keeps its genuine inline disclosure even in wide short landscape",()=>{
+  const selectors=[".presentation-deck-toolbar",':is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar',':is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar'];
+  for(const width of [320,844,1280]){
+    const viewport={width,height:390,pointer:"fine"},container={name:"presentation-deck-host",width};
+    assert.equal(winning(selectors,"position",viewport,container)?.value,"relative");
+    assert.equal(winning(selectors,"inset",viewport,container)?.value,"auto");
+  }
 });

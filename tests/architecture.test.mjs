@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { createRequire, registerHooks } from "node:module";
+import ts from "typescript";
+import { libraryBlockEditorRoute } from "../src/model/routes.ts";
 import test from "node:test";
 import { exportArchive, importArchive } from "../src/model/archive.ts";
 import { buildReplayScenario, buildScenario, explainReplayEvent, REPLAY_SCENARIOS, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
@@ -310,7 +312,9 @@ test("edits project-scoped reusable blocks through the Library and shared projec
   assert.match(editor,/BlockPropertyEdited/);assert.match(editor,/BlockWeightSet/);assert.match(editor,/BlockRemoved/);assert.match(editor,/BlockLocked/);
   assert.match(editor,/Related reference images/);assert.match(editor,/BlockRelationAdded/);assert.match(editor,/BlockRelationRemoved/);assert.match(editor,/subject_reference/);assert.doesNotMatch(editor,/<legend>Block identity|<legend>Reusable content/);
   assert.match(editor,/CollectionItemAdded/);assert.match(editor,/item_ref:\{block_id:id\}/);assert.match(editor,/forma-collection-tree/);
-  assert.match(library,/forma-library-block-editor/);assert.match(library,/New reusable block/);assert.match(library,/Fork & edit/);
+  assert.match(library,/forma-library-block-editor/);assert.match(library,/New reusable block/);assert.match(library,/data-context-controls-id=\$\{block\.id\} @click=\$\{\(\)=>this\.#openEditor\(block\.id\)\}/);
+  assert.match(editor,/@click=\$\{\(\)=>void this\.#fork\(block\)\}>\$\{this\.i18n\.t\("context\.controls\.fork","Fork as reusable block"\)\}/);
+  assert.match(editor,/if\(!this\.isConnected\|\|!this\.#canAuthor\(\)\)return/);
   assert.match(tree,/itemKind/);assert.match(tree,/block_id:id/);assert.match(worker,/ref\.block_id/);
   assert.match(projects,/Independent project context/);assert.match(projects,/block\.scope==="library"/);
   assert.match(events,/scope: "document" \| "library"/);assert.match(events,/b\.projectId===state\.projectId/);
@@ -597,7 +601,9 @@ test("connects the final Library and Studio affordances to explicit destinations
     readFile(new URL("../src/model/block-types.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Created using this decision/);assert.match(library,/Open family lightbox/);
+  assert.match(library,/@click=\$\{\(\)=>this\.store\.addArtifactAsContext\(artifact\.id,projection\.documentId,"library"\)\}>\$\{this\.#inputLabel\(adopted\)\}/);
+  assert.match(library,/aria-label=\$\{this\.#inputAction\(adopted,artifact\.title\)\}/);
+  assert.match(library,/aria-label=\$\{this\.#libraryAction\(artifact\.library,name\)\}/);assert.match(library,/focused preview/i);assert.match(library,/Created using this decision/);assert.match(library,/Open family lightbox/);
   assert.match(library,/Keep for reuse/);assert.match(library,/A four-image fan remains one result/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
   assert.match(contents,/Project contents/);assert.match(contents,/>Open \$\{icon\("arrow"\)\}/);assert.match(contents,/openDocument/);
   assert.match(eventsModel,/DocumentOpened/);assert.match(eventsApi,/DocumentOpened/);assert.match(store,/openDocument/);assert.match(classification,/DocumentOpened,behavioral/);
@@ -720,4 +726,143 @@ test("uses one edge rail and one header vocabulary without Library overflow trap
   assert.match(styles,/\.page-header--library,\.page-header--document \{ position: sticky/);assert.match(styles,/\.page-header--library h1,\.page-header--document h1/);
   assert.match(styles,/\.context-block \{[^}]*container-type: inline-size/);assert.match(styles,/@container \(max-width: 520px\)/);assert.match(styles,/@container \(max-width: 370px\)/);
   assert.match(contextBlock,/class="meta-short"/);assert.match(contextBlock,/aria-label="Block influence"/);assert.match(contextBlock,/aria-label="Remove block"/);
+});
+
+// Reuse the existing actual Library/editor renderers and deterministic application
+// ports, without registering unrelated host tests or replacing production methods.
+const libraryFixtureUrl = new URL("./context-controls-host.test.mjs", import.meta.url);
+const libraryFixtureSource = await readFile(libraryFixtureUrl, "utf8");
+const libraryFixtureTree = ts.createSourceFile(libraryFixtureUrl.pathname, libraryFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const firstLibraryFixtureTest = libraryFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(libraryFixtureTree) === "test");
+assert.ok(firstLibraryFixtureTest, "the existing actual Library fixture precedes its tests");
+const libraryFixtureModuleUrl = new URL(libraryFixtureUrl);
+libraryFixtureModuleUrl.searchParams.set("library-architecture-contract", "1");
+const libraryFixtureHook = registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === libraryFixtureModuleUrl.href) return { url: specifier, shortCircuit: true };
+    return next(specifier, context);
+  },
+  load(url, context, next) {
+    if (url === libraryFixtureModuleUrl.href) return {
+      format: "module",
+      source: libraryFixtureSource.slice(0, firstLibraryFixtureTest.getFullStart()) + "\nexport { localeCatalogs, FORMA_DEFAULT_MESSAGES };\nexport function libraryFixture(locale,route){const f=fixture(locale);f.state.route=route;activeFixture=f;f.host=new FormaLibrary();f.draw();return f;}\n",
+      shortCircuit: true,
+    };
+    return next(url, context);
+  },
+});
+let libraryPorts;
+try { libraryPorts = await import(libraryFixtureModuleUrl.href); }
+finally { libraryFixtureHook.deregister(); }
+
+const libraryMessage = (locale, key) => {
+  const catalog = locale === "en" ? libraryPorts.FORMA_DEFAULT_MESSAGES : libraryPorts.localeCatalogs[locale];
+  assert.equal(typeof catalog[key], "string", locale + " has an explicit catalog entry for " + key);
+  return catalog[key];
+};
+const libraryButtonText = (f, button) => {
+  const offset = f.renderer.markup.indexOf(button.full);
+  assert.ok(offset >= 0, "the exact handler's button is in the actual rendered Library");
+  return f.renderer.markup.slice(offset + button.full.length).split("</button>")[0].replace(/<[^>]*>/gu, "").replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">");
+};
+const closeLibraryFixture = f => {
+  for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
+  f.host.disconnectedCallback();
+  f.i18n.hostDisconnected();
+};
+
+test("localized Library controls preserve the independent fork destination and authorized document-copy action", async () => {
+  assert.equal(libraryMessage("en", "projects.useDocument"), "Use in open document");
+  assert.equal(libraryMessage("en", "context.controls.fork"), "Fork as reusable block");
+  for (const locale of ["en", "fr", "ar", "ja"]) {
+    const f = libraryPorts.libraryFixture(locale, "/library");
+    try {
+      const source = structuredClone(f.store.projection.get().libraryBlocks.find(block => block.id === "decision-0"));
+      const controls = f.renderer.ownNodes(f.host, "button").find(node => node.attributes["data-context-controls-id"] === source.id);
+      assert.ok(controls, locale + " exposes the source's named Controls entry");
+      await controls.handlers.click.call(f.host, {});
+      assert.equal(f.state.route, libraryBlockEditorRoute(source.id, "/library"));
+      f.draw();
+      const editor = f.renderer.component("forma-library-block-editor", source.id);
+      const fork = f.renderer.ownNodes(editor, "button").find(node => node.handlers.click?.toString().includes("#fork"));
+      const use = f.renderer.ownNodes(editor, "button").find(node => node.handlers.click?.toString().includes("#useCopy"));
+      assert.ok(fork && use, "the actual editor retains both distinct executors");
+      assert.equal(libraryButtonText(f, fork), libraryMessage(locale, "context.controls.fork"));
+      assert.equal(libraryButtonText(f, use), libraryMessage(locale, "projects.useDocument"));
+      const before = f.state.events.length;
+      await fork.handlers.click.call(editor, {});
+      await new Promise(setImmediate);
+      const created = f.state.events.slice(before);
+      assert.equal(created.length, 1, "a plain document decision creates one independent reusable block");
+      assert.equal(created[0].type, "BlockCreated");
+      const payload = created[0].payload;
+      assert.notEqual(payload.block_id, source.id);
+      assert.equal(payload.project_id, source.projectId);
+      assert.equal(payload.scope, "library");
+      assert.equal(payload.properties.forked_from_block_id, source.id);
+      assert.equal(payload.properties.source_document_id, source.documentId);
+      assert.equal(payload.properties.text, source.properties.text);
+      assert.deepEqual(f.store.projection.get().libraryBlocks.find(block => block.id === source.id), source, "forking leaves the entire original document decision unchanged");
+      assert.equal(f.state.route, libraryBlockEditorRoute(payload.block_id, "/library"), "the fork opens its own editable Library identity");
+      f.draw();
+      assert.ok(f.renderer.component("forma-library-block-editor", payload.block_id));
+      assert.equal(f.state.requests.length, 0, "forking never invokes a model");
+    } finally { closeLibraryFixture(f); }
+
+    const copy = libraryPorts.libraryFixture(locale, libraryBlockEditorRoute("decision-0", "/library"));
+    try {
+      const editor = copy.renderer.component("forma-library-block-editor", "decision-0");
+      const use = copy.renderer.ownNodes(editor, "button").find(node => node.handlers.click?.toString().includes("#useCopy"));
+      assert.ok(use);
+      await use.handlers.click.call(editor, {});
+      await new Promise(setImmediate);
+      assert.deepEqual(copy.trace.filter(value => value.startsWith("copy:")), ["copy:decision-0"]);
+      assert.equal(copy.state.route, "/", "the existing copy executor returns to the open document");
+      copy.state.viewer = true;
+      await use.handlers.click.call(editor, {});
+      await new Promise(setImmediate);
+      assert.deepEqual(copy.trace.filter(value => value.startsWith("copy:")), ["copy:decision-0"], "the same retained handler cannot copy after authoring is withdrawn");
+      assert.equal(copy.state.requests.length, 0);
+    } finally { closeLibraryFixture(copy); }
+  }
+});
+
+test("localized Library artifact labels map every destination, adoption, and kept state to the exact original action", async () => {
+  for (const locale of ["en", "fr", "ar", "ja"]) for (const route of ["/library", "/canvas/library"]) for (const adopted of [false, true]) for (const kept of [false, true]) {
+    const f = libraryPorts.libraryFixture(locale, route);
+    try {
+      const id = "artifact-exact", title = "Original مثال 日本語", name = "\u2068" + title + "\u2069";
+      await f.store.append({ type: "DocumentRenderCompleted", payload: { project_id: "project-a", document_id: "document-a", artifact_id: id, artifact_kind: "short_story", title, summary: "Exact retained result", content_ref: "exact-content", item_count: 0, items: [], requested_by_user_id: "owner" } });
+      if (adopted) f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === "decision-0").payload.properties.source_artifact_id = id;
+      if (kept) await f.store.append({ type: "AddedToLibrary", payload: { object_id: id, item_id: id, document_id: "document-a", meaning: "personal-reusable-output" } });
+      const inputCalls = [];
+      f.store.addArtifactAsContext = async (...args) => { inputCalls.push(args); return true; };
+      f.store.patchUi({ libraryView: "outputs" });
+      f.draw();
+      const input = f.renderer.ownNodes(f.host, "button").find(node => node.handlers.click?.toString().includes("addArtifactAsContext"));
+      const keep = f.renderer.ownNodes(f.host, "button").find(node => node.handlers.click?.toString().includes("#toggleLibrary"));
+      assert.ok(input && keep, "the actual author view renders both semantic actions");
+      const canvas = route === "/canvas/library";
+      const labelKey = canvas ? adopted ? "projects.editCreator" : "projects.useEditCreator" : adopted ? "projects.editInput" : "projects.useEdit";
+      const namedKey = adopted ? "projects.editInputNamed" : "projects.useEditNamed";
+      const keepKey = kept ? "projects.removeKept" : "projects.keepReuse";
+      const keepNamedKey = kept ? "projects.removeKeptNamed" : "projects.keepReuseNamed";
+      assert.equal(libraryButtonText(f, input), libraryMessage(locale, labelKey));
+      assert.equal(input.attributes["aria-label"], canvas ? libraryMessage(locale, labelKey) + ": " + name : libraryMessage(locale, namedKey).replace("{name}", name));
+      assert.equal(libraryButtonText(f, keep), libraryMessage(locale, keepKey));
+      assert.equal(keep.attributes["aria-label"], libraryMessage(locale, keepNamedKey).replace("{name}", name));
+      assert.equal(keep.attributes["aria-pressed"], kept);
+      await input.handlers.click.call(f.host, {});
+      assert.deepEqual(inputCalls, [[id, "document-a", "library"]], "localized wording cannot change the artifact, open document, or source surface");
+      const before = f.state.events.length;
+      await keep.handlers.click.call(f.host, {});
+      const changes = f.state.events.slice(before);
+      assert.equal(changes.length, 1);
+      assert.equal(changes[0].type, kept ? "RemovedFromLibrary" : "AddedToLibrary");
+      assert.deepEqual(changes[0].payload, { object_id: id, item_id: id, document_id: "document-a", meaning: "personal-reusable-output" });
+      f.state.viewer = true; f.draw();
+      assert.equal(f.renderer.ownNodes(f.host, "button").some(node => node.handlers.click?.toString().includes("addArtifactAsContext") || node.handlers.click?.toString().includes("#toggleLibrary")), false, "read-only inspection exposes neither authoring action");
+      assert.equal(f.state.requests.length, 0);
+    } finally { closeLibraryFixture(f); }
+  }
 });

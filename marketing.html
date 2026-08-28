@@ -35,15 +35,15 @@
       </nav>
       <div class="marketing-header__actions">
         <div class="marketing-language" data-language-picker>
-          <details class="marketing-language__fallback">
-            <summary data-copy="languageLabel">Language</summary>
-            <nav aria-label="Language" data-copy-aria="languageLabel">
+          <div class="marketing-language__fallback">
+            <button type="button" class="marketing-language__trigger" popovertarget="marketing-language-menu" data-copy="languageLabel">Language</button>
+            <nav id="marketing-language-menu" popover="auto" aria-label="Language" data-copy-aria="languageLabel">
               <a href="/welcome/en" lang="en" hreflang="en" dir="ltr">English</a>
               <a href="/welcome/fr" lang="fr" hreflang="fr" dir="ltr">Français</a>
               <a href="/welcome/ar" lang="ar" hreflang="ar" dir="rtl">العربية</a>
               <a href="/welcome/ja" lang="ja" hreflang="ja" dir="ltr">日本語</a>
             </nav>
-          </details>
+          </div>
         </div>
         <span class="marketing-screen-reader" role="status" aria-live="polite" data-language-announcement></span>
         <a class="marketing-button marketing-button--header" href="/projects" data-copy="openForma">Open Forma</a>

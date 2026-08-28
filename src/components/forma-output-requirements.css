@@ -13,6 +13,8 @@ forma-output-requirements { display:block; min-inline-size:0; }
 .output-requirements select, .output-requirements textarea, .output-requirements input[type="number"], .output-requirements input[type="file"] { max-inline-size:100%; min-inline-size:0; font:inherit; color:inherit; }
 .output-requirements select, .output-requirements textarea, .output-requirements input[type="number"] { inline-size:100%; border:1px solid var(--forma-color-border-strong, GrayText); background:var(--forma-color-surface, Canvas); border-radius:.4rem; padding:.6rem; }
 .output-requirements button, .output-card-host button { min-block-size:2.75rem; white-space:normal; }
+forma-output-requirements summary { min-block-size:var(--forma-control-min-size,2.75rem); min-inline-size:var(--forma-control-min-size,2.75rem); max-inline-size:100%; padding-block:.5rem; padding-inline:.5rem; box-sizing:border-box; align-content:center; overflow-wrap:anywhere; cursor:pointer; }
+forma-output-requirements summary:focus-visible { outline:3px solid var(--forma-focus-ring-color,Highlight); outline-offset:3px; }
 .output-requirements :focus-visible, .output-card-host :focus-visible { outline:3px solid var(--forma-focus-ring-color, Highlight); outline-offset:3px; }
 .output-targets { display:grid; gap:1rem; margin-block:1.3rem; }
 .output-target { border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; padding:1rem; min-inline-size:0; }

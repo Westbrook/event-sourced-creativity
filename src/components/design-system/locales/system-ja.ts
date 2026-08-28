@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.e7k4f4.75": "表示されたアクションが現在の表示に属するかを確認する任意のチェックです。権限を付与するものではありません。",
   "system.auto.1we72vb.8": "拒否",
   "system.auto.sq78o8.8": "準備済み",
   "system.auto.144hcr3.9": "準備中",
@@ -3344,6 +3345,9 @@ const messages: Record<string, string> = {
   "system.auto.5jwhed.64": "読みやすいイニシャルを代替表示できる、名前付きの人物画像またはワークスペース画像。",
   "system.auto.1a03s7o.76": "実際のナビゲーションと名前付きの外部リンク先に対応するネイティブアンカー。",
   "system.auto.1gsoux0.73": "フォーカス可能な通常のアクションボタンを含む、自動で閉じるネイティブのポップオーバー。",
+  "system.auto.sdugcl.75": "作成したライトDOMのコントロールは、ネイティブのセマンティクスとイベントハンドラーを保持します。",
+  "system.auto.odn5hq.75": "アクションを引き渡す前に閉じてください。後から開いた画面からフォーカスを奪う処理をキューに登録しないでください。",
+  "system.auto.r3tqr0.71": "ナビゲーションの範囲またはパネルの表示モードが変わったときに、レールのポップオーバーを閉じます。",
   "system.auto.18lh15l.69": "常に表示されるラベルを備えた、ネイティブのチェックボックスベースのオン／オフコントロール。",
   "system.auto.1x7mqrt.96": "作成者が指定した要約テキスト、リッチコンテンツ、ブラウザー標準のキーボード操作を備えたネイティブの開閉要素。",
   "system.auto.17tv4ee.72": "ブラウザー標準の矢印キー操作に対応した、ネイティブの fieldset とラジオボタングループ。",

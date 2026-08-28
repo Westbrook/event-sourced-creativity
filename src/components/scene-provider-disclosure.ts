@@ -20,7 +20,7 @@ export function renderSceneProviderDisclosure(locale: SceneProviderLocale, optio
   return html`<aside class="artifact-cost-confirm artifact-scene-provider-disclosure" aria-label=${locale.t("scene.provider.disclosure", "Paid Scene provider, source transmission, and cost")} aria-live="polite"><span>
     ${options.existing ? html`<b>${locale.t("scene.cost.original", "Original Scene request — not the current draft")}</b>` : nothing}
     <b>${locale.t("scene.provider.identity", "Paid provider · OpenAI Responses · {model}", { model })}</b>
-    <small>${locale.t("scene.cost.plan", "{count} planned written scenes · {medium} · {mode}", { count: locale.number(preview.itemCount),
+    <small>${locale.t(preview.itemCount === 1 ? "scene.cost.planOne" : "scene.cost.plan", preview.itemCount === 1 ? "{count} planned written scene · {medium} · {mode}" : "{count} planned written scenes · {medium} · {mode}", { count: locale.number(preview.itemCount),
       medium: locale.t(preview.sceneMedium === "audio" ? "scene.medium.audio" : "scene.medium.visual", preview.sceneMedium),
       mode: locale.t(preview.productionMode === "managed" ? "scene.cost.managed" : "scene.cost.manual", preview.productionMode),
     })}</small>

@@ -4701,14 +4701,20 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-link { display: inline-flex; min-inline-size: var(--forma-control-min-size,2.75rem); min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; color: var(--forma-color-accent-text,var(--accent-strong)); text-decoration: underline; text-underline-offset: .2em; }
 
 .ui-popover { display: inline-block; }
-.ui-popover-panel[popover] { min-inline-size: min(18rem,calc(100vw - 2rem)); max-inline-size: min(24rem,calc(100vw - 2rem)); max-block-size: min(24rem,calc(100dvh - 2rem)); overflow: auto; padding: var(--forma-space-4,var(--space-4)); color: var(--forma-color-text,var(--ink)); background: var(--forma-color-surface,var(--panel)); border: 1px solid var(--forma-color-border-strong,var(--line-strong)); border-radius: var(--forma-radius-medium,var(--radius-medium)); box-shadow: var(--shadow); }
+.ui-popover-panel[popover],.tree-menu[popover],.presentation-deck-export-menu[popover] {
+  --forma-popover-safe-left:env(safe-area-inset-left,0px); --forma-popover-safe-right:env(safe-area-inset-right,0px);
+  --forma-popover-safe-top:env(safe-area-inset-top,0px); --forma-popover-safe-bottom:env(safe-area-inset-bottom,0px);
+}
+.ui-popover-panel[popover] { box-sizing:border-box; position:fixed; inset:auto; top:var(--forma-popover-top,.5rem); bottom:var(--forma-popover-bottom,auto); left:var(--forma-popover-left,.5rem); margin:0; min-inline-size: min(18rem,var(--forma-popover-max-width,calc(100vw - 2rem))); max-inline-size: min(24rem,var(--forma-popover-max-width,calc(100vw - 2rem))); max-block-size: min(24rem,var(--forma-popover-max-height,calc(100dvh - 1rem))); overflow: auto; overscroll-behavior:contain; scrollbar-gutter:auto; scroll-padding:.25rem; padding: var(--forma-space-4,var(--space-4)); color: var(--forma-color-text,var(--ink)); background: var(--forma-color-surface,var(--panel)); border: 1px solid var(--forma-color-border-strong,var(--line-strong)); border-radius: var(--forma-radius-medium,var(--radius-medium)); box-shadow: var(--shadow); }
+.ui-popover-panel[popover]:not(:popover-open),.tree-menu[popover]:not(:popover-open),.presentation-deck-export-menu[popover]:not(:popover-open) { display:none; }
+.ui-popover-trigger { min-inline-size:var(--forma-control-min-size,2.75rem); min-block-size:var(--forma-control-min-size,2.75rem); }
 .ui-popover-panel h3 { margin: 0 0 var(--forma-space-2,var(--space-2)); font-size: var(--forma-font-size-body,var(--type-body)); }
 .ui-popover-panel p { margin: 0 0 var(--forma-space-3,var(--space-3)); color: var(--forma-color-text-muted,var(--muted)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
 .ui-popover-panel > button { display: flex; inline-size: 100%; min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; padding-inline: var(--forma-space-2,var(--space-2)); text-align: start; }
 @supports (anchor-name: --forma-control) {
   forma-ui-popover,forma-ui-workspace-switcher { anchor-scope: --forma-popover-trigger; }
   .ui-popover-trigger { anchor-name: --forma-popover-trigger; }
-  .ui-popover-panel[popover] { position: fixed; position-anchor: --forma-popover-trigger; position-area: block-end; position-try-fallbacks: flip-block,flip-inline; margin-block-start: var(--forma-space-2,var(--space-2)); }
+  .ui-popover-panel[popover]:not([data-forma-popover-positioned]) { inset:auto; position: fixed; position-anchor: --forma-popover-trigger; position-area: block-end; position-try-fallbacks: flip-block,flip-inline; margin-block-start: var(--forma-space-2,var(--space-2)); }
 }
 .ui-dialog-card { display: grid; inline-size: min(32rem,calc(100vw - 2rem)); max-inline-size: 100%; gap: var(--forma-space-5,var(--space-5)); padding: var(--forma-space-6,var(--space-6)); color: var(--forma-color-text,var(--ink)); background: var(--forma-color-surface,var(--panel)); border-radius: var(--forma-radius-large,var(--radius-large)); }
 .ui-dialog-card > header,.ui-dialog-card > footer { display: flex; align-items: center; justify-content: space-between; gap: var(--forma-space-3,var(--space-3)); }

@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.e7k4f4.75": "Vérification facultative de l’appartenance des actions affichées à l’ouverture actuelle ; ne constitue jamais une autorisation.",
   "system.auto.1we72vb.8": "refusé",
   "system.auto.sq78o8.8": "préparé",
   "system.auto.144hcr3.9": "en préparation",
@@ -3344,6 +3345,9 @@ const messages: Record<string, string> = {
   "system.auto.5jwhed.64": "Image nommée d’une personne ou d’un espace de travail, avec initiales lisibles en remplacement.",
   "system.auto.1a03s7o.76": "Lien natif permettant une navigation réelle et des destinations externes nommées.",
   "system.auto.1gsoux0.73": "Fenêtre contextuelle native à fermeture automatique contenant des boutons d’action ordinaires accessibles au focus.",
+  "system.auto.sdugcl.75": "Les contrôles fournis dans le DOM léger conservent leur sémantique native et leurs gestionnaires d’événements.",
+  "system.auto.odn5hq.75": "Fermez avant de transmettre une action ; ne programmez jamais un déplacement du focus qui empiète sur une interface plus récente.",
+  "system.auto.r3tqr0.71": "Ferme la fenêtre contextuelle du volet de navigation lorsque son périmètre de navigation ou son mode d’affichage change.",
   "system.auto.18lh15l.69": "Interrupteur natif basé sur une case à cocher, avec un libellé visible en permanence.",
   "system.auto.1x7mqrt.96": "Élément natif à déploiement avec résumé fourni par l’auteur, contenu enrichi et comportement clavier géré par le navigateur.",
   "system.auto.17tv4ee.72": "Élément fieldset natif et groupe de boutons radio avec navigation par flèches gérée par le navigateur.",

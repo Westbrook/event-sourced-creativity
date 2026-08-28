@@ -3,9 +3,11 @@ import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages
 import systemMessages from "./system-ja.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
+import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
 
 const messages: Record<string, string> = {
   ...FORMA_NEXT_ACTION_MESSAGES.ja,
+  ...FORMA_CONTEXT_CONTROL_MESSAGES.ja,
   ...FORMA_RESPONSIVE_MESSAGES.ja,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.ja,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ja,

@@ -1171,22 +1171,17 @@ html[data-document-focus] .studio-subpage-body {
   clip: auto;
 }
 
+.project-rail .rail-content[popover] {
+  /* Shared native panel positioning owns the top layer and safe-area bounds. */
+  block-size: auto;
+  max-block-size: min(24rem, var(--forma-popover-max-height, calc(100dvb - 1rem)));
+  overflow-y: auto;
+}
+
 .application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-dock {
   display: none;
 }
 
-.application-creative[data-nav-posture="compact"] .project-rail.expanded .rail-content {
-  position: absolute;
-  z-index: 37;
-  inset-block-start: 100%;
-  inset-inline: 0;
-  max-block-size: calc(70dvb - var(--forma-bottom-nav-size));
-  overflow-y: auto;
-  background: var(--forma-color-surface);
-  border-block-end: 1px solid var(--forma-color-border);
-  box-shadow: var(--shadow);
-  overscroll-behavior: contain;
-}
 
 .application-creative[data-nav-posture="compact"] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) > .composer-dock {
   inset-inline-start: 0;
@@ -2475,18 +2470,6 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     display: none;
   }
 
-  .application-creative .project-rail.expanded .rail-content {
-    position: absolute;
-    z-index: 37;
-    inset-block-start: 100%;
-    inset-inline: 0;
-    max-block-size: calc(70dvb - var(--forma-bottom-nav-size));
-    overflow-y: auto;
-    background: var(--forma-color-surface);
-    border-block-end: 1px solid var(--forma-color-border);
-    box-shadow: var(--shadow);
-    overscroll-behavior: contain;
-  }
 
   .project-rail .collection-tree {
     display: grid;
@@ -3397,9 +3380,7 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   display: none;
 }
 
-.presentation-deck-jump--compact,
-.artifact-viewer-actions-toggle,
-.artifact-viewer-actions-toggle[hidden] {
+.presentation-deck-jump--compact {
   display: none;
 }
 
@@ -3408,10 +3389,6 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   gap: .375rem;
   padding-block: .375rem;
   padding-inline: clamp(.25rem, .8vi, .625rem);
-}
-
-:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) {
-  margin-block: 0;
 }
 
 @media (min-width: 48rem) and (max-width: 75rem) and (orientation: landscape) {
@@ -3530,32 +3507,8 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   }
 
   .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > span,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > span,
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="false"] > div,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="false"] > div {
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > span {
     display: none;
-  }
-
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > .artifact-viewer-actions-toggle,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > .artifact-viewer-actions-toggle {
-    display: inline-flex;
-    min-inline-size: var(--forma-hit-target);
-    min-block-size: var(--forma-hit-target);
-    flex: 0 0 auto;
-  }
-
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="true"] > div,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="true"] > div {
-    display: flex;
-    max-inline-size: calc(100dvi - 5rem);
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
-
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="true"] > div > .button,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="true"] > div > .button {
-    flex: 0 0 auto;
-    white-space: nowrap;
   }
 
   :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow {
@@ -3676,44 +3629,6 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
     overflow: visible;
   }
 
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) {
-    inline-size: var(--forma-hit-target);
-    min-inline-size: var(--forma-hit-target);
-    padding: 0;
-    border: 1px solid var(--forma-color-border);
-    border-radius: .375rem;
-    background: var(--forma-color-surface);
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) > summary {
-    display: grid;
-    inline-size: var(--forma-hit-target);
-    min-block-size: var(--forma-hit-target);
-    place-items: center;
-    padding: 0;
-    font-size: 0;
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > .presentation-deck-notes > summary::before {
-    content: "N";
-    font-size: var(--type-small);
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > .presentation-deck-reader > summary::before {
-    content: "Aa";
-    font-size: var(--type-small);
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader)[open] {
-    position: absolute;
-    inset-block-end: 0;
-    inset-inline-start: 0;
-    inline-size: min(32rem, calc(100dvi - 1rem));
-    max-block-size: min(75dvb, 28rem);
-    overflow: auto;
-    padding: .5rem;
-  }
-
   .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-identity {
     display: flex;
     min-inline-size: 0;
@@ -3817,25 +3732,6 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
     inset-inline-start: max(.25rem, var(--forma-safe-inline-start));
     inline-size: var(--forma-hit-target);
     padding: 0;
-  }
-
-  .shared-presentation-dialog .shared-presentation-reader > summary {
-    display: grid;
-    min-inline-size: var(--forma-hit-target);
-    min-block-size: var(--forma-hit-target);
-    place-items: center;
-    font-size: 0;
-  }
-
-  .shared-presentation-dialog .shared-presentation-reader > summary::before {
-    content: "Aa";
-    font-size: var(--type-small);
-  }
-
-  .shared-presentation-dialog .shared-presentation-reader[open] {
-    inline-size: min(32rem, calc(100dvi - 1rem));
-    max-block-size: min(75dvb, 28rem);
-    padding: .5rem;
   }
 
   .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] > .document-artifact-reader,

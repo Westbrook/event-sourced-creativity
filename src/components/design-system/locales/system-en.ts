@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.e7k4f4.75": "Optional opening-ownership check for rendered actions; never authorization.",
   "system.auto.1we72vb.8": "rejected",
   "system.auto.sq78o8.8": "prepared",
   "system.auto.144hcr3.9": "preparing",
@@ -3344,6 +3345,9 @@ const messages: Record<string, string> = {
   "system.auto.5jwhed.64": "Named person or workspace image with readable initials fallback.",
   "system.auto.1a03s7o.76": "Native anchor that supports real navigation and named external destinations.",
   "system.auto.1gsoux0.73": "Native auto-dismiss popover containing ordinary focusable action buttons.",
+  "system.auto.sdugcl.75": "Authored light-DOM controls keep their native semantics and event handlers.",
+  "system.auto.odn5hq.75": "Close before handing off an action; never queue focus over a newer surface.",
+  "system.auto.r3tqr0.71": "Close the rail popover when its navigation scope or panel mode changes.",
   "system.auto.18lh15l.69": "Native checkbox-based on/off control with a visible persistent label.",
   "system.auto.1x7mqrt.96": "Native disclosure with authored summary text, rich content, and browser-owned keyboard behavior.",
   "system.auto.17tv4ee.72": "Native fieldset and radio group with browser-owned arrow-key navigation.",

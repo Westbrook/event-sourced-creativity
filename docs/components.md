@@ -157,6 +157,48 @@ guidance-only; public share pages never mount an assistant. Authored session
 intentions, individual creative decisions, sources, reviews, and search remain
 distinct nonconversational forms.
 
+## Selection-scoped context controls
+
+Document decisions keep their complete authored wording, protected phrases, type,
+intent, and lock state in the reading surface. `forma-context-block` uses the
+existing focused decision and a native radio group; **Controls for {decision}**
+appears only for the selected decision and reveals its full editor, including the
+editable text or adopted input without a third navigation choice. No first
+decision is automatically selected. Escape closes these controls and restores their trigger without
+discarding unfinished edits. Explicit Cancel inside a form retains its existing
+discard behavior. Read-only consumers use the `read-only` attribute and receive
+named inspection without authoring or paid actions.
+
+Document lists use keyed decision identity. The editor template is retained with
+Lit’s `cache` directive outside the connected DOM, so inactive buttons and
+selects do not contribute to the page. Identity includes the current
+authorization scope; a changed actor, project, document, or role cannot reuse a
+retained private editor. Context intelligence, spatial scope, and palette controls
+expose `suspendControls()` to leave their owned native top layer before detachment
+while retaining unfinished drafts and the original request identity. Closing an
+intelligence review with its close button, backdrop, or Escape suspends it;
+explicit Cancel and server Dismiss/Done keep their existing discard semantics.
+A guarded review lookup can finish while suspended without restarting its quote.
+Re-entry does not approve or submit work. Nested context and character settings
+start expanded inside the selected editor, keeping their controls within the
+same disclosure.
+
+Library uses the same inspection organism and keeps its existing
+`forma-library-block-editor` for reusable authoring and document-owned forks.
+The property-only `blockId` pins a retained editor to its exact decision;
+`null` addresses the existing new-block form and `undefined` follows the route.
+Its bubbling `library-use-copy` event carries `{ blockId }` to the Library host,
+which executes the same permission-checked copy operation. Closing and switching
+Library editors retain their native fields and child editor instances within the
+current authorization scope. Viewer routes never mount disabled authoring forms. A selected read-only decision
+has one **Inspect saved review** action. It uses the existing actor-private
+`resume`, `retrieve`, and `dismiss` authoring-review operations; it cannot quote,
+buy, preview project changes, or apply them. Authorization changes scrub the
+old cached review before a fresh read. Personal surfaces use server-issued
+session capabilities, not the absence of a shared-project context. An author
+without generation permission can still inspect and save an already-retained
+review through the existing free human-authoring path.
+
 ## Shared native dialog foundation
 
 `ensureNativeModalDialog` in `src/components/design-system/native-dialog.ts`
@@ -382,7 +424,24 @@ and account-partitioned offline work.
 - Prefer native anchors, ordinary keyboard navigation, browser-managed
   popovers/dialogs, and real forms. Reserve `<details>/<summary>` for persistent
   supporting information, such as evidence, receipts, and technical details;
-  do not use it as the transient cross-workspace navigation picker.
+  do not use it as a floating menu, language picker, or floating control panel.
+- Reuse `forma-ui-popover` for native auto-dismiss action groups and rich controls.
+  Its property-only `content` accepts a Lit template in light DOM; authored form,
+  link, audio, and disclosure semantics remain unchanged. `triggerId` is an
+  optional host-owned stable unique invoker ID; the panel always receives its
+  own instance-unique target. Use native buttons with `popovertarget`, ordinary
+  group or navigation semantics, and `:popover-open`-gated layout. Do not declare
+  an ARIA menu without implementing its full keyboard contract.
+  Its optional property-only `actionCurrent(value)` checks current opening and
+  target ownership before an action closes, focuses, or emits. It is not an
+  authorization check; the existing action executor retains that responsibility.
+  Call `close(true)` before handing off an action and `close()` on authority,
+  route, or lifetime teardown; never queue focus after the destination opens.
+  The framework-free native-popover helper only positions an already native
+  surface, using RTL, visual-viewport and safe-area bounds. It cannot authorize,
+  submit, open, or persist work. Browser light-dismiss and Escape own closure.
+  Public language fallback links use the same native attributes without JavaScript;
+  the existing language-picker enhancement continues to use a native select.
 - Bound account menus and floating panels to the dynamic viewport minus their
   trigger offset and bottom safe-area inset. Keep excess content independently
   scrollable, contain scroll chaining, and preserve visible keyboard focus so

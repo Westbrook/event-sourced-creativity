@@ -1,8 +1,8 @@
 forma-context-intelligence{display:block;min-inline-size:0}
 .context-intelligence-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.3rem;margin-block:.55rem}
-.context-intelligence-actions .button{display:inline-flex;min-block-size:2.4rem;align-items:center;gap:.3rem}
+.context-intelligence-actions .button{display:inline-flex;min-inline-size:44px;min-block-size:44px;align-items:center;gap:.3rem}
 .context-intelligence-actions.compact{margin-block:.1rem}
-.context-intelligence-actions.compact .button{min-block-size:2rem;padding-inline:.45rem;font-size:var(--type-micro)}
+.context-intelligence-actions.compact .button{min-block-size:44px;padding-inline:.45rem;font-size:var(--type-micro)}
 .context-intelligence-dialog{inline-size:min(48rem,calc(100vw - 2rem));max-block-size:min(88vh,58rem);padding:0;overflow:hidden;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:.8rem;box-shadow:0 24px 90px rgb(0 0 0 / .18)}
 .context-intelligence-dialog::backdrop{background:rgb(15 25 20 / .42)}
 .context-intelligence-dialog>article{display:grid;max-block-size:min(88vh,58rem);grid-template-rows:auto minmax(0,1fr) auto}
@@ -61,3 +61,10 @@ forma-context-intelligence{display:block;min-inline-size:0}
 .context-intelligence-error{color:var(--danger)}
 .context-intelligence-dialog>article>footer{display:flex;justify-content:flex-end;gap:.5rem;padding:.85rem 1.35rem;border-block-start:1px solid var(--line)}
 @media(max-width:600px){.context-intelligence-dialog{inline-size:calc(100vw - 1rem);max-block-size:92vh}.context-intelligence-dialog>article{max-block-size:92vh}.context-intelligence-dialog-header,.context-intelligence-body{padding-inline:.9rem}.context-intelligence-fields,.context-intelligence-add,.context-participant-row{grid-template-columns:1fr}.context-intelligence-dialog>article>footer{flex-wrap:wrap;padding-inline:.9rem}}
+
+.context-intelligence-read-only-proposal :is(p,small,dd),.context-intelligence-dialog[data-read-only] :is(.context-intelligence-source>p,.context-intelligence-research-item>p,.context-change-preview li p){white-space:pre-wrap;overflow-wrap:anywhere}
+.context-intelligence-read-only-proposal dl{display:grid;gap:.4rem;margin:0;min-inline-size:0}
+.context-intelligence-read-only-proposal dl>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:.7rem}
+.context-intelligence-read-only-proposal :is(dt,dd){margin:0;min-inline-size:0;overflow-wrap:anywhere}
+.context-intelligence-actions .button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(forced-colors:active){.context-intelligence-actions .button:focus-visible{outline-color:Highlight}.context-intelligence-read-only-proposal{border-color:CanvasText}}

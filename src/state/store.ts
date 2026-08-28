@@ -1,4 +1,4 @@
-import type { OutputNavigationFocusLease } from "../components/output-navigation-focus";
+import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
 import { OutputRequirementsClient } from "./output-requirements-client";
 import type { OutputCommandResponse, OutputRequirementCommand, OutputRequirementsSnapshot } from "../model/output-delivery-contract";
@@ -14,7 +14,7 @@ import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInpu
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
 import { adaptiveSuggestionsForCanvas, blockEffectFor, blockIntentFor, type AdaptiveStructure, type AdaptiveSuggestionSet } from "../model/block-types";
-import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
+import { documentContextBlockRoute, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { normalizeSpatialScope } from "../model/spatial-scope";
 import { CURRENT_FOCAL_POINT_METHOD, normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
@@ -264,6 +264,7 @@ export class FormaStore {
   #navigationCommit:Promise<boolean>|null=null;
   #workspaceTransition=0;
   #workspaceNavigationFocus: { route:string; focus:OutputNavigationFocusLease } | null = null;
+  #outputInputReveal:{cancel:()=>void}|null=null;
 
   captureWorkspaceNavigationFocus(route:string,expected?:OutputNavigationFocusLease) {
     const owner=this.#workspaceNavigationFocus;
@@ -2064,13 +2065,172 @@ async syncDocumentJobs(){
   }
 
   async revealOutputInput(blockId:string,destinationDocumentId=this.projection.get().documentId){
-    if(!blockId)return false;
-    const projection=this.projection.get(),targetDocument=projection.documents.find((item)=>item.id===destinationDocumentId);if(!targetDocument)return false;
-    if(!isDocumentViewRoute(this.route.get())||projection.documentId!==destinationDocumentId||documentViewFromRoute(this.route.get())!=="document"){
-      const opened=await this.openDocument(destinationDocumentId,withDocumentInRoute("/",destinationDocumentId,targetDocument.title),"output-input");if(!opened)return false;
-    }
-    this.patchUi({focusBlockId:blockId,editingBlockId:blockId});
-    let attempts=0;const focus=()=>{const block=document.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(blockId)}"]`),field=block?.querySelector<HTMLTextAreaElement>("forma-ui-rich-text textarea")??block?.querySelector<HTMLTextAreaElement>("textarea");if(field&&!document.querySelector("dialog[open]")){const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;block?.scrollIntoView({block:"center",behavior:reduced?"instant":"smooth"});field.focus({preventScroll:true});return;}if(attempts++<24)window.requestAnimationFrame(focus);};window.requestAnimationFrame(focus);return true;
+    this.#outputInputReveal?.cancel();
+    const projection=this.projection.get(),sourceRoute=this.route.get(),authorization=this.captureAuthorizationScope();
+    const targetDocument=projection.documents.find(item=>item.id===destinationDocumentId&&!item.removed);
+    const targetBlock=projection.libraryBlocks.find(item=>item.id===blockId&&item.documentId===destinationDocumentId&&!item.removed);
+    const sessionDetails=()=>{
+      const session=this.session.get(),context=session?.projectContext;
+      return JSON.stringify([context??null,session?.capabilities??[],session?.impersonation?.expiresAt??null]);
+    };
+    const authorityDetails=sessionDetails(),projectId=projection.projectId;
+    if(!blockId||!authorization||!targetDocument||!targetBlock||targetDocument.projectId!==projectId||targetBlock.projectId!==projectId)return false;
+    const destination=documentContextBlockRoute(destinationDocumentId,targetDocument.title,blockId);
+    const sourceNavigation=this.#workspaceNavigationFocus;
+    let navigation:{route:string;focus:OutputNavigationFocusLease}|null=null,transition=this.#workspaceTransition;
+    let closed=false,opening=true,requiresNavigation=true,frame=0,timeout=0,attempts=0,sessionWrites=0,linkedSelection=false;
+    let expectedFocus=this.ui.focusBlockId,expectedEdit=this.ui.editingBlockId;
+    let ownFocus:string|undefined,ownEdit:string|undefined;
+    const pendingWorkspace=()=>!navigation&&applicationIdFromRoute(sourceRoute)!==applicationIdFromRoute(destination);
+    const cleanups:Array<()=>void>=[];
+    const owner={cancel:()=>{
+      if(closed)return;closed=true;
+      if(frame)window.cancelAnimationFrame(frame);if(timeout)window.clearTimeout(timeout);
+      focus?.dispose();for(const cleanup of cleanups.splice(0))cleanup();
+      if(this.#outputInputReveal===owner)this.#outputInputReveal=null;
+    }};
+    this.#outputInputReveal=owner;
+    const acceptNavigation=()=>{
+      const candidate=this.#workspaceNavigationFocus;
+      if(!navigation&&candidate!==sourceNavigation&&candidate?.focus===focus){navigation=candidate;transition=this.#workspaceTransition;linkedSelection=true;}
+      return navigation;
+    };
+    const identityCurrent=()=>{
+      const current=this.projection.get(),session=this.session.get(),context=session?.projectContext;
+      const permissions=context?.permissions??session?.capabilities??[];
+      const document=current.documents.find(item=>item.id===destinationDocumentId&&!item.removed);
+      const block=current.libraryBlocks.find(item=>item.id===blockId&&item.documentId===destinationDocumentId&&!item.removed);
+      return !closed&&this.#outputInputReveal===owner&&this.authorizationScopeActive(authorization)&&sessionDetails()===authorityDetails
+        &&permissions.includes("project.read")&&permissions.includes("project.author")
+        &&(!context||context.projectId===projectId&&Date.parse(context.expiresAt)>Date.now())
+        &&(!session?.impersonation||Date.parse(session.impersonation.expiresAt)>Date.now())
+        &&current.projectId===projectId&&document?.projectId===projectId&&block?.projectId===projectId
+        &&block.type===targetBlock.type&&block.scope===targetBlock.scope&&!block.locked&&!block.properties.source_evidence_hash;
+    };
+    const stateCurrent=()=>{
+      const arrived=acceptNavigation();
+      return identityCurrent()&&this.#workspaceTransition===transition
+        &&(arrived?this.#workspaceNavigationFocus===arrived&&this.route.get()===arrived.route
+          &&isDocumentViewRoute(arrived.route)&&documentIdFromRoute(arrived.route)===destinationDocumentId
+          &&documentViewFromRoute(arrived.route)==="document"&&this.projection.get().documentId===destinationDocumentId
+          :this.#workspaceNavigationFocus===sourceNavigation&&this.route.get()===sourceRoute)
+        &&this.ui.focusBlockId===expectedFocus&&this.ui.editingBlockId===expectedEdit
+        &&!document.querySelector("dialog[open]");
+    };
+    const current=()=>{
+      if(!stateCurrent()||!focus.current()){owner.cancel();return false;}
+      sessionWrites=0;return true;
+    };
+    const focus=captureOutputNavigationFocus(document,{
+      ownedRouteFocus:outputNavigationOwnedRouteFocus(document,this,{documentId:destinationDocumentId,blockId},stateCurrent),
+    });
+    // State notifications cannot read or write signals. Watch the existing
+    // underlying states, including SignalObject's field states, so ABA writes
+    // cannot disappear before a later renderer notification.
+    const observe=(read:()=>unknown,changed:()=>void)=>{
+      const dependency=new Signal.Computed(read);dependency.get();
+      const sources=Signal.subtle.introspectSources(dependency);
+      const watcher=new Signal.subtle.Watcher(()=>{changed();if(!closed)watcher.watch();});
+      watcher.watch(...sources);cleanups.push(()=>watcher.unwatch(...sources));
+    };
+    observe(()=>this.route.get(),()=>{
+      const candidate=this.#workspaceNavigationFocus;
+      if(!navigation&&candidate!==sourceNavigation&&candidate?.focus===focus){navigation=candidate;transition=this.#workspaceTransition;linkedSelection=true;}
+      else owner.cancel();
+    });
+    observe(()=>this.ui.focusBlockId,()=>{
+      if(ownFocus!==undefined){expectedFocus=ownFocus;ownFocus=undefined;}
+      else if(linkedSelection&&navigation&&this.#workspaceNavigationFocus===navigation){expectedFocus=blockId;linkedSelection=false;}
+      else owner.cancel();
+    });
+    observe(()=>this.ui.editingBlockId,()=>{
+      if(ownEdit!==undefined){expectedEdit=ownEdit;ownEdit=undefined;}else owner.cancel();
+    });
+    observe(()=>this.session.get(),()=>{
+      // The existing cross-workspace transition republishes its verified,
+      // same-scope session before committing its lease-owned route. Recheck
+      // that one write outside notify; two unvalidated writes are an ABA.
+      if(!pendingWorkspace()||++sessionWrites>1)owner.cancel();
+      else queueMicrotask(()=>{if(!closed)current();});
+    });
+    observe(()=>this.asOf.get(),()=>owner.cancel());
+    cleanups.push(this.subscribe(()=>{if(!closed)current();}));
+    if(!current())return false;
+    const visible=(element:HTMLElement)=>{
+      if(!element.isConnected||!element.getClientRects().length||element.closest("[hidden], [inert], [aria-hidden=\"true\"]"))return false;
+      const style=window.getComputedStyle(element);
+      return style.display!=="none"&&style.visibility!=="hidden"&&style.visibility!=="collapse";
+    };
+    const workspaces=[...document.querySelectorAll<HTMLElement&{store:FormaStore}>("forma-workspace")].filter(element=>element.isConnected&&element.store===this);
+    const writePanel=workspaces.length===1?workspaces[0].querySelector<HTMLElement>("#document-context-panel"):null;
+    requiresNavigation=!isDocumentViewRoute(sourceRoute)||documentViewFromRoute(sourceRoute)!=="document"
+      ||projection.documentId!==destinationDocumentId||!writePanel||writePanel.closest<HTMLElement>("forma-workspace")!==workspaces[0]||!visible(writePanel);
+    const publishEditing=()=>{
+      if(expectedFocus===blockId&&expectedEdit===blockId)return;
+      ownFocus=blockId;ownEdit=blockId;
+      try{this.patchUi({focusBlockId:blockId,editingBlockId:blockId});}finally{ownFocus=ownEdit=undefined;}
+    };
+    type InputOwner=HTMLElement&{store:FormaStore;block:CreativeProjection["blocks"][number];surface:string;readOnly:boolean};
+    const target=()=>{
+      const owners=[...document.querySelectorAll<InputOwner>("forma-context-block")].filter(element=>element.isConnected
+        &&element.store===this&&element.block?.id===blockId&&element.block.documentId===destinationDocumentId
+        &&element.block.projectId===projectId&&element.surface==="document");
+      if(!owners.length)return undefined;
+      if(owners.length!==1)return null;
+      const element=owners[0];
+      if(element.readOnly||element.block.locked||element.block.properties.source_evidence_hash||!visible(element))return null;
+      const anchors=[...element.querySelectorAll<HTMLElement>("[data-block-id]")].filter(anchor=>
+        anchor.tagName==="ARTICLE"&&anchor.getAttribute("data-block-id")===blockId&&anchor.closest<HTMLElement>("forma-context-block")===element);
+      const editors=[...element.querySelectorAll<HTMLElement>(".block-editor")].filter(editor=>editor.closest<HTMLElement>("forma-context-block")===element);
+      if(!anchors.length||!editors.length)return undefined;
+      if(anchors.length!==1||editors.length!==1||!visible(anchors[0])||!visible(editors[0]))return null;
+      const fields=[...editors[0].querySelectorAll<HTMLTextAreaElement>("textarea")].filter(input=>
+        input.tagName==="TEXTAREA"&&input.closest<HTMLElement>("forma-context-block")===element&&input.closest(".block-editor")===editors[0]);
+      const field=fields.find(input=>input.closest("forma-ui-rich-text"))??fields[0];
+      if(!field)return undefined;
+      return visible(field)&&!field.disabled&&!field.readOnly&&!field.matches(":disabled")?{anchor:anchors[0],field}:null;
+    };
+    const schedule=()=>{frame=window.requestAnimationFrame(reveal);};
+    const reveal=()=>{
+      frame=0;let again=false;
+      try{
+        if(!current())return;
+        if(opening||requiresNavigation&&!navigation){again=true;return;}
+        publishEditing();if(!current())return;
+        const destination=target();
+        if(!destination){again=destination===undefined&&attempts++<24;return;}
+        focus.run(destination.field,()=>{
+          if(!current()||target()?.field!==destination.field)return false;
+          const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          destination.anchor.scrollIntoView({block:"center",behavior:reduced?"instant":"smooth"});
+          if(!current()||target()?.field!==destination.field)return false;
+          destination.field.focus({preventScroll:true});return true;
+        });
+      }finally{if(again&&!closed)schedule();else owner.cancel();}
+    };
+    // This bounds presentation ownership even if a navigation/read never
+    // completes or animation frames stop in a background document.
+    timeout=window.setTimeout(()=>owner.cancel(),10_000);
+    schedule();
+    try{
+      if(!requiresNavigation){
+        // Same-document visible Write keeps the original synchronous editor
+        // publication and route/history bytes; no navigation slot is forged.
+        opening=false;publishEditing();return current();
+      }
+      // Preserve the existing DocumentOpened/history path. Only the opening
+      // gesture and its exact destination are carried through its awaits.
+      ownFocus="";
+      let pending:Promise<boolean>;
+      try{
+        pending=this.openDocument(destinationDocumentId,destination,"output-input",{current,focus});
+        transition=this.#workspaceTransition;
+      }finally{ownFocus=undefined;}
+      const opened=await pending;opening=false;
+      if(!opened||!current()){owner.cancel();return false;}
+      if(navigation)publishEditing();
+      return current();
+    }catch{owner.cancel();return false;}
   }
 
   async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer",options:{reveal?:boolean;presentation?:SlidePresentation|null}={}){

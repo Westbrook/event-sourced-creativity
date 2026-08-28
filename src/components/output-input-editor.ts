@@ -15,6 +15,7 @@ export class OutputInputEditor extends FormaElement {
   standalone = false;
   source = "output-input-editor";
   #loaded = "";
+  #edited = false;
   #draft: OutputInputDraft | null = null;
   #saving = false;
   #error = "";
@@ -22,16 +23,21 @@ export class OutputInputEditor extends FormaElement {
 
   get draft() { return this.#draft ? structuredClone(this.#draft) : null; }
 
-  reset(){this.#loaded="";this.#draft=null;this.#error="";this.#load();this.requestUpdate();}
+  reset(){this.#loaded="";this.#draft=null;this.#edited=false;this.#error="";this.#load();this.requestUpdate();}
 
   #load() {
-    if (!this.block || this.#loaded === this.block.id) return;
-    this.#loaded = this.block.id;
-    this.#draft = outputInputDraft(this.block);
+    if (!this.block) return;
+    const draft = outputInputDraft(this.block);
+    const identity = JSON.stringify([this.block.projectId, this.block.documentId, this.block.id, this.block.properties.source_artifact_id ?? null, draft?.kind ?? null]);
+    if (this.#loaded === identity && (!this.standalone || this.#edited || JSON.stringify(this.#draft) === JSON.stringify(draft))) return;
+    this.#loaded = identity;
+    this.#draft = draft;
+    this.#edited = false;
     this.#error = "";
   }
 
   #change(next: OutputInputDraft) {
+    this.#edited = true;
     this.#draft = next;
     this.#error = "";
     this.dispatchEvent(new CustomEvent("output-input-change", { detail: { blockId: this.block.id, draft: structuredClone(next) }, bubbles: true, composed: true }));

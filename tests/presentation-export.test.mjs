@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { registerHooks } from "node:module";
+import ts from "typescript";
 
 import { FORMA_RESPONSIVE_MESSAGES } from "../src/components/design-system/locales/responsive-messages.ts";
 import { defaultSlidePresentation } from "../src/model/document-artifacts.ts";
@@ -85,7 +87,7 @@ test("one accessible export menu separates audience-safe delivery from explicitl
   assert.equal((deck.match(/class="button secondary compact presentation-deck-export"/gu) ?? []).length, 1);
   assert.match(deck, /popovertarget=\$\{this\.#exportMenuId\} aria-controls=\$\{this\.#exportMenuId\} aria-expanded=\$\{this\.#exportMenuOpen\}/u);
   assert.match(deck, /class="presentation-deck-export-menu" popover="auto" role="group"/u);
-  assert.match(deck, /#toggleExportMenu\(event:ToggleEvent\)\{this\.#exportMenuOpen=event\.newState==="open"/u);
+  assert.match(deck, /#toggleExportMenu\(event:ToggleEvent\)\{\s*const panel=event\.currentTarget as HTMLElement;\s*this\.#exportMenuOpen=this\.isConnected&&panel\.matches\(":popover-open"\);/u, "aria-expanded follows current native state, not a stale queued toggle detail");
   assert.match(deck, /menu\.hidePopover\(\);this\.querySelector<HTMLButtonElement>\("\.presentation-deck-export"\)\?\.focus\(\{preventScroll:true\}\)/u);
   assert.match(deck, /#exportFromMenu\("pdf",items,presentation\)/u);
   assert.match(deck, /#exportFromMenu\("powerpoint",items,presentation\)/u);
@@ -99,7 +101,7 @@ test("one accessible export menu separates audience-safe delivery from explicitl
   assert.match(deck, /this\.i18n\.system\("Download PDF"\)/u);
   assert.match(deck, /this\.i18n\.t\("presentation\.export\.powerpoint"\)/u);
 
-  assert.match(styles, /\.presentation-deck-export-menu\[popover\]\s*\{[^}]*position:\s*fixed;[^}]*inline-size:\s*min\(24rem,calc\(100dvw - 1rem\)\)/u);
+  assert.match(styles, /\.presentation-deck-export-menu\[popover\]\s*\{[^}]*position:\s*fixed;[^}]*inline-size:\s*min\(24rem,var\(--forma-popover-max-width,calc\(100dvw - 1rem\)\)\);[^}]*max-block-size:\s*var\(--forma-popover-max-height,calc\(100dvh - 1rem\)\);[^}]*overflow:\s*auto/u, "native positioning preserves explicit viewport bounds and scrolling, including the CSS fallback");
   assert.match(styles, /\.presentation-deck-export-menu button\s*\{[^}]*min-block-size:\s*var\(--forma-control-min-size,2\.75rem\)/u);
   assert.equal((visualHarness.match(/page\.getByRole\("button",\{name:"Export"\}\)\.click\(\)/gu) ?? []).length, 2);
   assert.match(visualHarness,/presentation-deck-export-status\[data-export-stage="failed"\]/u,"the browser fidelity harness verifies the persistent export failure state");
@@ -122,7 +124,7 @@ test("presentation exports communicate staged progress, accessible completion co
   assert.match(deck, /this\.i18n\.t\("job\.progress\.downloading"\)/u);
   assert.match(deck, /aria-describedby=\$\{this\.#exportProgress\?`\$\{this\.#exportMenuId\}-status`:nothing\} aria-busy=\$\{String\(this\.#exporting\)\}/u);
   assert.match(deck, /#exportAbort\?:AbortController/u);
-  assert.match(deck, /override disconnectedCallback\(\)\{this\.#exportAbort\?\.abort\(\)/u,"leaving the presentation cancels any unfinished export");
+  assert.match(deck, /override disconnectedCallback\(\)\{this\.#closeDeckPopovers\(\);this\.#exportAbort\?\.abort\(\)/u,"leaving the presentation closes native menus and cancels any unfinished export synchronously");
   assert.match(deck, /const result=await renderPresentationPdf\(items,presentation,options\)/u);
   assert.match(deck, /const bytes=await createPowerPointDocumentAsync\(items,presentation,/u,"large editable exports use the same cooperative asynchronous pipeline");
   assert.ok((deck.match(/onProgress,signal:controller\.signal/gu)??[]).length>=2,"PDF and editable presentations both stream real slide progress and honor cancellation");
@@ -199,3 +201,96 @@ test("production workspace and Canvas routes never eagerly preload PDF or Office
   assert.ok(entries.some(([, entry]) => entry.dynamicImports?.includes(office[0])), "Office is reachable through a dynamic import");
   assert.ok(entries.some(([, entry]) => entry.dynamicImports?.includes(pdf[0])), "PDF is reachable through a dynamic import");
 });
+
+
+// Reuse the complete actual component/native-port fixture. Only test registration
+// is omitted. Its two lazy converter dependencies are the real modules; no export,
+// cancellation, authorization, or native-popover production method is replaced.
+const exportFixtureUrl = new URL("./inactive-generation-dialog-host.test.mjs", import.meta.url);
+const exportFixtureSource = await readFile(exportFixtureUrl, "utf8");
+const exportFixtureTree = ts.createSourceFile(exportFixtureUrl.pathname, exportFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const exportFixtureFirstTest = exportFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(exportFixtureTree) === "test");
+assert.ok(exportFixtureFirstTest);
+let exportFixtureModule = exportFixtureSource.slice(0, exportFixtureFirstTest.getFullStart());
+const exportDependencySeam = "  const code = ts.transpileModule(sourceText(relative),";
+assert.equal(exportFixtureModule.split(exportDependencySeam).length, 2);
+exportFixtureModule = 'import * as actualOfficeExport from "../src/model/office-documents.ts";\nimport * as actualPdfExport from "../src/components/presentation-pdf-export.ts";\n' + exportFixtureModule.replace(exportDependencySeam,
+  '  if (relative === "src/components/presentation-deck.ts") { dependencies.set("../model/office-documents", actualOfficeExport); dependencies.set("./presentation-pdf-export", actualPdfExport); }\n' + exportDependencySeam);
+exportFixtureModule += "\nexport { fixture as nativePresentationExportFixture };\n";
+const exportFixtureModuleUrl = new URL(exportFixtureUrl);
+exportFixtureModuleUrl.search = "?presentation-export-compat";
+const exportFixtureHook = registerHooks({ load(url, context, next) {
+  return url === exportFixtureModuleUrl.href ? { format: "module", source: exportFixtureModule, shortCircuit: true } : next(url, context);
+} });
+let nativePresentationExportFixture;
+try { ({ nativePresentationExportFixture } = await import(exportFixtureModuleUrl.href)); }
+finally { exportFixtureHook.deregister(); }
+
+async function nativeExportFixture(t, locale) {
+  t.mock.method(globalThis, "fetch", async () => assert.fail("No application or provider network is permitted in native export compatibility tests"));
+  const f = nativePresentationExportFixture("create", { artifact: true, locale });
+  t.after(() => {
+    for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
+    f.host.disconnectedCallback(); f.i18n.hostDisconnected();
+  });
+  const completed = f.state.events.find(event => event.type === "DocumentRenderCompleted");
+  const items = [{ id: "export-slide-a", title: "Exact audience title", body: "Exact audience evidence", notes: "Private presenter notes", image_prompt: "", context_group_ids: [] }];
+  completed.payload.artifact_kind = "slides"; completed.payload.items = items; completed.payload.item_count = 1;
+  f.state.content["content-A"] = JSON.stringify({ ...JSON.parse(f.state.content["content-A"]), items });
+  assert.equal(await f.host.openArtifactById("artifact-A"), true); await f.flush();
+  const deck = f.renderer.query(f.host, "forma-presentation-deck")[0];
+  assert.ok(deck, "the actual artifact viewer mounts the complete production deck");
+  const trigger = () => f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-export"));
+  const panel = () => f.renderer.ownNodes(deck, "div").find(node => node.attributes.id === trigger()?.attributes.popovertarget);
+  assert.ok(trigger() && panel());
+  assert.equal(panel().attributes.popover, "auto"); assert.equal(panel().attributes.role, "group");
+  assert.equal(Object.hasOwn(trigger().attributes, "disabled"), false);
+  f.store.authorizeProjectExport = async () => assert.fail("Canceled conversion cannot authorize release or append an export receipt");
+  return { f, deck, trigger, panel };
+}
+
+for (const locale of ["en", "fr", "ar", "ja"]) {
+  test("native export " + locale + ": current popover state owns aria-expanded despite queued toggle detail", async t => {
+    const { f, deck, trigger, panel } = await nativeExportFixture(t, locale);
+    const original = structuredClone(f.state.events), content = structuredClone(f.state.content);
+    assert.equal(trigger().attributes["aria-expanded"], false);
+    trigger().click(); f.draw();
+    assert.equal(panel().matches(":popover-open"), true); assert.equal(trigger().attributes["aria-expanded"], true);
+    panel().handlers.toggle.call(deck, { currentTarget: panel(), newState: "closed" }); f.draw();
+    assert.equal(panel().matches(":popover-open"), true);
+    assert.equal(trigger().attributes["aria-expanded"], true, "an older queued closed detail cannot hide the current open state");
+    panel().hidePopover(); f.draw();
+    panel().handlers.toggle.call(deck, { currentTarget: panel(), newState: "open" }); f.draw();
+    assert.equal(panel().matches(":popover-open"), false);
+    assert.equal(trigger().attributes["aria-expanded"], false, "an older queued open detail cannot claim that a closed panel is open");
+    assert.equal(f.state.requests.length, 0); assert.deepEqual(f.state.events, original); assert.deepEqual(f.state.content, content);
+  });
+
+  for (const format of ["pdf", "powerpoint"]) test("native export " + locale + " / " + format + ": leaving the real viewer aborts an unfinished export before its lazy converter runs", async t => {
+    const { f, deck, trigger, panel } = await nativeExportFixture(t, locale);
+    const original = structuredClone(f.state.events), content = structuredClone(f.state.content), aborted = [];
+    const nativeAbort = AbortController.prototype.abort;
+    t.mock.method(AbortController.prototype, "abort", function(reason) { aborted.push(this); return nativeAbort.call(this, reason); });
+    trigger().click(); f.draw();
+    const action = f.renderer.ownNodes(deck, "button").find(node => typeof node.handlers.click === "function" && node.handlers.click.toString().includes('#exportFromMenu("' + format + '",'));
+    assert.ok(action, "the actual " + format + " menu action remains reachable");
+    assert.equal(Object.hasOwn(action.attributes, "disabled"), false);
+    action.click();
+    assert.equal(panel().matches(":popover-open"), false, "the native menu closes before conversion handoff");
+    f.draw();
+    const progress = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "preparing");
+    assert.ok(progress, "the unchanged async export has actually started, with visible preparing progress");
+    assert.equal(progress.attributes.role, "status"); assert.equal(progress.attributes["aria-live"], "polite");
+    assert.equal(String(trigger().attributes["aria-busy"]), "true");
+    assert.equal(aborted.length, 0);
+    const close = f.renderer.ownNodes(f.host, "button").find(node => node.attributes["aria-label"] === f.i18n.t("action.close", "Close"));
+    assert.ok(close, "the actual viewer exposes its existing close action");
+    close.click(); f.draw();
+    assert.equal(deck.isConnected, false, "closing the parent actually detaches the deck");
+    assert.equal(aborted.length, 1); assert.equal(aborted[0].signal.aborted, true, "the native abort signal is canceled synchronously during disconnection");
+    await new Promise(setImmediate);
+    assert.equal(f.renderer.query(f.host, "forma-presentation-deck").length, 0);
+    assert.equal(f.state.requests.length, 0); assert.deepEqual(f.state.events, original); assert.deepEqual(f.state.content, content);
+    assert.equal(f.trace.some(value => value.startsWith("toast:")), false, "canceling cannot claim a completed download");
+  });
+}

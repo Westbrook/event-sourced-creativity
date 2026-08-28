@@ -31,6 +31,8 @@ const [base, design, responsive, canvasCss, shell, workspace, artifacts, canvas,
   read("../src/performance.ts"),
 ]);
 
+const feedback = await read("../src/components/design-system/feedback.ts");
+
 const sheets = [
   ["styles.css", base],
   ["design-system.css", design],
@@ -390,9 +392,18 @@ test("slide tools, source reading, direct jump, authorization and 44px controls 
   assert.match(deck, /aria-label=\$\{this\.i18n\.system\("Next"\)\}[\s\S]*?aria-keyshortcuts=/);
   assert.match(deck, /presentation-deck-reader-content[\s\S]*?Authorized source evidence/);
   assert.match(deck, /!this\.releaseAllowed/);
-  assert.match(artifacts, /artifact-viewer-actions-toggle" aria-label=\$\{this\.i18n\.t\("action\.more","More actions"\)\} aria-expanded=\$\{String\(this\.#viewerActionsOpen\)\} aria-controls=\$\{actionsPanelId\}/);
-  assert.match(canvas, /artifact-viewer-actions-toggle" aria-label=\$\{this\.i18n\.t\("action\.more","More actions"\)\} aria-expanded=\$\{String\(this\.#viewerActionsOpen\)\} aria-controls=\$\{actionsPanelId\}/);
-  assert.equal(winning(".artifact-viewer-actions-toggle[hidden]", "display", portrait)?.value, "none");
+  for (const viewer of [artifacts, canvas]) {
+    const popover = viewer.match(/<forma-ui-popover class="artifact-viewer-actions-popover"[\s\S]*?<\/forma-ui-popover>/)?.[0];
+    assert.ok(popover, "More actions remains in the shared native popover");
+    assert.match(popover, /\.label=\$\{this\.i18n\.t\("action\.more","More actions"\)\}/);
+    assert.match(popover, /\.content=\$\{viewerActions\}/);
+    assert.match(popover, /@forma-toggle=[\s\S]*this\.#viewerActionsOpen=event\.detail\.open/);
+    assert.match(viewer, /class="artifact-viewer-actions-body"/);
+  }
+  assert.match(feedback, /class="button secondary ui-popover-trigger" popovertarget=\$\{this\.#id\} aria-controls=\$\{this\.#id\} aria-expanded=\$\{String\(this\.#open\)\}/, "the native trigger owns the same expanded panel ID");
+  assert.match(feedback, /<section id=\$\{this\.#id\} class="ui-popover-panel" popover="auto" aria-label=\$\{this\.heading \|\| label\}/, "the browser-owned panel keeps an accessible name");
+  assert.equal(winning(".ui-popover-panel[popover]:not(:popover-open)", "display", portrait)?.value, "none");
+  for (const property of ["min-inline-size", "min-block-size"]) assert.equal(winning(".ui-popover-trigger", property, landscape)?.value, "var(--forma-control-min-size,2.75rem)", "native actions retain a 44px floor");
 });
 
 test("focused private and Canvas presentations retain a visible, readable, correctly scoped independent-review state", () => {

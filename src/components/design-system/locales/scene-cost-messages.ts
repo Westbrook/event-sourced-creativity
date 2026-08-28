@@ -1,4 +1,5 @@
 const en = {
+  "scene.medium.label": "Scene type",
   "scene.cost.review": "Scene cost and request status",
   "scene.cost.original": "Original Scene request — not the current draft",
   "scene.cost.ready": "Verified Scene plan — approval required",
@@ -17,6 +18,7 @@ const en = {
   "scene.cost.receipt": "Inspect original Scene inputs",
   "scene.cost.new": "New Scene request",
   "scene.cost.priceUnavailable": "Provider calls and spending ceiling are not verified for the current draft. Check the exact Scene plan before approving paid work.",
+  "scene.cost.planOne": "{count} planned written scene · {medium} · {mode}",
   "scene.cost.plan": "{count} planned written scenes · {medium} · {mode}",
   "scene.cost.reuse": "{count} reused source items included in this verified plan.",
   "scene.cost.managed": "Structured workflow",
@@ -32,6 +34,7 @@ const en = {
 };
 
 const fr: Record<keyof typeof en, string> = {
+  "scene.medium.label": "Type de scène",
   "scene.cost.review": "Coût et état de la demande de scène",
   "scene.cost.original": "Demande de scène d’origine — pas le brouillon actuel",
   "scene.cost.ready": "Plan de scène vérifié — approbation requise",
@@ -50,6 +53,7 @@ const fr: Record<keyof typeof en, string> = {
   "scene.cost.receipt": "Examiner les entrées de scène d’origine",
   "scene.cost.new": "Nouvelle demande de scène",
   "scene.cost.priceUnavailable": "Les appels fournisseur et le plafond de dépenses du brouillon actuel ne sont pas vérifiés. Vérifiez le plan de scène exact avant d’approuver un travail payant.",
+  "scene.cost.planOne": "{count} scène écrite prévue · {medium} · {mode}",
   "scene.cost.plan": "{count} scènes écrites prévues · {medium} · {mode}",
   "scene.cost.reuse": "{count} éléments sources réutilisés inclus dans ce plan vérifié.",
   "scene.cost.managed": "Processus structuré",
@@ -65,6 +69,7 @@ const fr: Record<keyof typeof en, string> = {
 };
 
 const ar: Record<keyof typeof en, string> = {
+  "scene.medium.label": "نوع المشهد",
   "scene.cost.review": "تكلفة المشهد وحالة الطلب",
   "scene.cost.original": "طلب المشهد الأصلي — وليس المسودة الحالية",
   "scene.cost.ready": "خطة مشهد تم التحقق منها — تتطلب موافقة",
@@ -83,6 +88,7 @@ const ar: Record<keyof typeof en, string> = {
   "scene.cost.receipt": "فحص مدخلات المشهد الأصلية",
   "scene.cost.new": "طلب مشهد جديد",
   "scene.cost.priceUnavailable": "لم يُتحقق من استدعاءات المزود وسقف الإنفاق للمسودة الحالية. تحقّق من خطة المشهد المحددة قبل الموافقة على عمل مدفوع.",
+  "scene.cost.planOne": "{count} مشهد مكتوب مخطط له · {medium} · {mode}",
   "scene.cost.plan": "{count} مشاهد مكتوبة مخططة · {medium} · {mode}",
   "scene.cost.reuse": "تتضمن هذه الخطة المتحقق منها {count} عناصر مصدر معاد استخدامها.",
   "scene.cost.managed": "سير عمل منظم",
@@ -98,6 +104,7 @@ const ar: Record<keyof typeof en, string> = {
 };
 
 const ja: Record<keyof typeof en, string> = {
+  "scene.medium.label": "シーンの種類",
   "scene.cost.review": "シーンの費用とリクエスト状況",
   "scene.cost.original": "元のシーンリクエスト — 現在のドラフトではありません",
   "scene.cost.ready": "シーン計画を確認済み — 承認が必要です",
@@ -116,6 +123,7 @@ const ja: Record<keyof typeof en, string> = {
   "scene.cost.receipt": "元のシーン入力を確認",
   "scene.cost.new": "新しいシーンリクエスト",
   "scene.cost.priceUnavailable": "現在のドラフトのプロバイダー呼び出し回数と支出上限は未確認です。有料作業を承認する前に、正確なシーン計画を確認してください。",
+  "scene.cost.planOne": "予定された文章シーン{count}件 · {medium} · {mode}",
   "scene.cost.plan": "予定された文章シーン{count}件 · {medium} · {mode}",
   "scene.cost.reuse": "この確認済み計画には再利用するソース項目が{count}件含まれます。",
   "scene.cost.managed": "構造化ワークフロー",

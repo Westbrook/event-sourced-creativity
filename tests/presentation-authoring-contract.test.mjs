@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { registerHooks } from "node:module";
+import ts from "typescript";
 
 import { inferPresentationSourceOutline } from "../src/model/presentation-source.ts";
 import { MAX_MANAGED_PRESENTATION_SLIDES, buildManagedProductionPlan } from "../src/model/managed-production.ts";
@@ -66,7 +68,7 @@ test("presentation authoring names the real paid provider, bounded repair exposu
 test("clears actor-private presentation receipts immediately when authorization changes", () => {
   assert.match(authoringSource, /#actorInputContent:Record<string,string>/);
   const privateCleanup=authoringSource.slice(authoringSource.indexOf("  #clearPrivateGenerationInputs="),authoringSource.indexOf("  override connectedCallback()"));
-  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/, "authorization withdrawal invalidates the owned Scene input read before clearing its quote");
+  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{this\.#closeViewerPopovers\(\);this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/, "authorization withdrawal invalidates the owned Scene input read before clearing its quote");
   assert.match(privateCleanup, /this\.#actorInputContent=\{\};this\.#failedInputJob=null;this\.#runningInputJob=null/);
   assert.doesNotMatch(privateCleanup, /\bawait\b/, "private receipts must be cleared synchronously on authorization withdrawal");
   assert.match(authoringSource, /addEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
@@ -111,4 +113,92 @@ test("managed presentation requests reject unsupported counts, prevent duplicate
   assert.match(authoringSource, /this\.#submitting=true;this\.requestUpdate\(\)/);
   assert.match(authoringSource, /contextGroupIds:content\.items\[index\]\.context_group_ids\?\?receipt\.contextGroupIds\?\?\[\]/);
   assert.match(authoringSource, /context_group_ids:item\.contextGroupIds\?\?\[\]/);
+});
+
+// Reuse the existing actual component/native-port fixture without registering its
+// unrelated tests or changing any production method, authorization guard, or port.
+const nativeFixtureUrl = new URL("./inactive-generation-dialog-host.test.mjs", import.meta.url);
+const nativeFixtureSource = await readFile(nativeFixtureUrl, "utf8");
+const nativeFixtureTree = ts.createSourceFile(nativeFixtureUrl.pathname, nativeFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const firstFixtureTest = nativeFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(nativeFixtureTree) === "test");
+assert.ok(firstFixtureTest, "the existing full-component fixture is separated from its tests");
+const nativeFixtureModuleUrl = new URL(nativeFixtureUrl);
+nativeFixtureModuleUrl.searchParams.set("presentation-native-contract", "1");
+const nativeFixtureHook = registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === nativeFixtureModuleUrl.href) return { url: specifier, shortCircuit: true };
+    return next(specifier, context);
+  },
+  load(url, context, next) {
+    if (url === nativeFixtureModuleUrl.href) return { format: "module", source: nativeFixtureSource.slice(0, firstFixtureTest.getFullStart()) + "\nexport { fixture };\n", shortCircuit: true };
+    return next(url, context);
+  },
+});
+let artifactViewerFixture;
+try { ({ fixture: artifactViewerFixture } = await import(nativeFixtureModuleUrl.href)); }
+finally { nativeFixtureHook.deregister(); }
+
+async function openNativeArtifactActions(t) {
+  const f = artifactViewerFixture("create", { artifact: true });
+  t.after(() => {
+    for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
+    f.host.disconnectedCallback();
+    f.i18n.hostDisconnected();
+  });
+  f.state.events.find(event => event.type === "DocumentRenderCompleted").payload.artifact_kind = "slides";
+  assert.equal(await f.host.openArtifactById("artifact-A"), true);
+  await f.flush();
+  const popover = f.renderer.query(f.host, "forma-ui-popover").find(instance => instance.attributes.class === "artifact-viewer-actions-popover");
+  assert.ok(popover, "the actual Slides footer uses the shared native popover");
+  const panel = f.renderer.ownNodes(popover, "section").find(node => node.attributes.popover === "auto");
+  const trigger = f.renderer.ownNodes(popover, "button").find(node => node.attributes.popovertarget === panel?.attributes.id);
+  assert.ok(panel && trigger, "the actual button controls the actual native panel");
+  trigger.click();
+  assert.equal(panel.matches(":popover-open"), true, "the emitted button's native default opens its panel");
+  return { f, popover, panel };
+}
+
+test("native Slides actions close synchronously before the unchanged private-input handoff", async t => {
+  const { f, popover, panel } = await openNativeArtifactActions(t);
+  const actions = f.renderer.ownNodes(popover, "div").find(node => node.attributes.class === "artifact-viewer-actions-body");
+  const inspect = f.renderer.ownNodes(popover, "button").find(node => typeof node.handlers.click === "function" && node.handlers.click.toString().includes("#inputId"));
+  assert.ok(actions && inspect, "the actual viewer retains its Inspect inputs executor");
+  assert.equal(actions.handlers.click.capture, true, "native menu closure owns the capture phase before the existing executor");
+  // This button is its own closest button in the browser. The shared fixture's
+  // general closest port is intentionally empty, so provide only that exact fact.
+  inspect.closest = selector => selector === "button,a" ? inspect : null;
+  const trace = [];
+  const hidePopover = panel.hidePopover;
+  panel.hidePopover = () => { hidePopover(); trace.push("native-hidden"); };
+  let prevented = false, stopped = false;
+  const event = { target: inspect, currentTarget: actions, preventDefault() { prevented = true; }, stopImmediatePropagation() { stopped = true; } };
+  actions.handlers.click.handleEvent(event);
+  assert.equal(prevented, false);
+  assert.equal(stopped, false);
+  assert.equal(panel.matches(":popover-open"), false, "the native panel is already closed before target dispatch");
+  trace.push("input-handoff");
+  inspect.handlers.click.call(f.host, event);
+  assert.deepEqual(trace, ["native-hidden", "input-handoff"]);
+  await f.flush();
+  const receipt = f.renderer.query(f.host, "forma-generation-input-dialog").find(instance => instance.open);
+  assert.ok(receipt, "the unchanged action opens the actual private receipt component");
+  const retainedInput = JSON.parse(f.state.content["input-A"]);
+  assert.deepEqual(receipt.inspection.receipt, retainedInput, "the entire original private receipt remains unchanged");
+  assert.equal(receipt.inspection.prompt, retainedInput.render.submitted_prompt.trim(), "the existing prompt display normalization is unchanged");
+  assert.equal(f.state.requests.length, 0, "Inspect inputs does not purchase or regenerate");
+});
+
+test("authorization withdrawal closes the native Slides panel before the synchronous cleanup returns", async t => {
+  const { f, panel } = await openNativeArtifactActions(t);
+  const trace = [];
+  const hidePopover = panel.hidePopover;
+  panel.hidePopover = () => { hidePopover(); trace.push("native-hidden"); };
+  f.state.canRead = false;
+  f.emitAuthorization();
+  trace.push("authorization-returned");
+  assert.equal(panel.matches(":popover-open"), false, "authorization withdrawal closes the native panel without an await or redraw");
+  assert.deepEqual(trace, ["native-hidden", "authorization-returned"]);
+  f.draw();
+  assert.equal(f.renderer.query(f.host, "forma-generation-input-dialog").some(instance => instance.open), false);
+  assert.equal(f.state.requests.length, 0);
 });

@@ -94,7 +94,12 @@ async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="appl
   f.draw();f.contextButtons=()=>buttons(f,f.context);
   f.action=label=>{const button=f.contextButtons().find(value=>value.textContent===label);assert.ok(button,"Actual button "+label);return()=>button.handlers.click.call(f.context,{currentTarget:button.node,preventDefault(){},stopPropagation(){}});};
   f.click=async label=>{await f.action(label)();await f.flush();};
-  f.begin=async()=>{await f.click(f.i18n.t("context.intelligence.decompose"));await f.flush();};
+  f.begin=async()=>{
+    // Phase4 readers/authors without generation capability inspect the same
+    // retained review through the real free recovery entry.
+    const inspect=f.contextButtons().some(button=>button.attributes["data-context-review-action"]==="inspect");
+    await f.click(f.i18n.t(inspect?"context.controls.inspectReview":"context.intelligence.decompose"));await f.flush();
+  };
   f.reject=async()=>{await f.begin();if(refusalAt==="apply"){await f.click(f.i18n.t("context.changes.confirm"));await f.flush();}};
   f.drain=async()=>{for(let count=0;f.frames.length&&count<32;count++){f.frames.shift()();await f.flush();}assert.equal(f.frames.length,0,"Bounded focus polling");};
   f.noWork=()=>{assert.equal(f.state.requests.some(request=>request.url!=="/api/context/apply"),false);assert.equal(f.trace.some(item=>/event:forma-output-(?:edit|review-plan|save|show-plan)/u.test(item)),false);};
@@ -185,4 +190,60 @@ test("Output handoff actual Store.openDocument retains the document identity wit
   await f.click(f.i18n.t("output.requirement.edit"));await untilScene(()=>f.frames.length>0);await f.drain();
   assert.equal(f.opened.length,1);assert.equal(h.store.route.get(),documentContextBlockRoute(documentId,h.store.projection.get().documentTitle,"requirement-A"));assert.equal(h.store.ui.focusBlockId,"requirement-A");
   assert.deepEqual(h.store.events.get().map(event=>event.eventId),before);assert.deepEqual(h.worker.counts(),counts);assert.equal(h.requests.length,requests);f.noWork();
+});
+
+async function suspendRefusedOutput(f,via){
+ if(via==="collapse")f.context.suspendControls();
+ else if(via==="escape"){
+  const dialog=f.renderer.ownNodes(f.context,"dialog").find(node=>node.handlers.cancel);assert.ok(dialog);
+  let prevented=false;dialog.handlers.cancel.call(f.context,{currentTarget:dialog,preventDefault(){prevented=true;}});assert.equal(prevented,true);
+ }else{
+  const close=f.contextButtons().find(button=>button.attributes["aria-label"]===f.i18n.t("action.close"));assert.ok(close);
+  close.handlers.click.call(f.context,{currentTarget:close.node});
+ }
+ await f.flush();assert.equal(f.context.markup.includes("<dialog"),false,"the actual review is suspended");
+}
+for(const via of ["escape","close","collapse"])test("Phase4 suspended Output refusal retains its exact current handoff after "+via,async t=>{
+ const f=await handoffFixture(t);await f.reject();
+ const edit=f.i18n.t("output.requirement.edit"),oldClick=f.action(edit),requests=f.state.requests.length;
+ await suspendRefusedOutput(f,via);await oldClick();assert.equal(f.opened.length,0,"closed controls cannot navigate");
+ await f.begin();
+ assert.ok(f.contextButtons().some(button=>button.textContent===edit),"same owned suspended review retains its exact explicit handoff");
+ assert.equal(f.contextButtons().some(button=>button.textContent===f.i18n.t("context.changes.preview")),false);
+ assert.equal(f.state.requests.length,requests,"reopening does not repeat resume or apply");
+ await oldClick();assert.equal(f.opened.length,0,"the old rendered action is not revived when a new dialog opens");
+ await f.click(edit);await f.drain();assert.equal(f.opened.length,1);assert.equal(f.patches.length,1);f.noWork();
+});
+
+for(const via of ["escape","close","collapse"])test("Phase4 late exact Output refusal stays owned while suspended by "+via,async t=>{
+ const f=await handoffFixture(t),gate=deferred(),reply=f.reply;await f.begin();
+ f.reply=body=>body.action==="apply"?gate.promise:reply(body);
+ await f.click(f.i18n.t("context.changes.confirm"));await suspendRefusedOutput(f,via);
+ const requests=f.state.requests.length;
+ gate.resolve(Response.json({error:endpointError,blockId:"requirement-A",status:"not-applied"},{status:409}));await f.flush();
+ assert.equal(f.context.markup.includes("<dialog"),false);assert.equal(f.opened.length,0);assert.equal(f.patches.length,0);
+ await f.begin();const edit=f.i18n.t("output.requirement.edit");
+ assert.ok(f.contextButtons().some(button=>button.textContent===edit),"the exact late refusal is retained without reopening the dialog");
+ assert.equal(f.state.requests.length,requests);await f.click(edit);await f.drain();assert.equal(f.opened.length,1);f.noWork();
+});
+for(const change of ["authorization","route","project","removed","locked","type","read-permission","author-permission"])test("Phase4 suspended Output handoff never revives after "+change+" changes and returns",async t=>{
+ const f=await handoffFixture(t);await f.reject();const edit=f.i18n.t("output.requirement.edit"),old=f.action(edit);await suspendRefusedOutput(f,"collapse");
+ const authorization=f.state.authorization,route=f.state.route,get=f.store.projection.get,canRead=f.state.canRead,author=f.state.author;
+ if(change==="authorization")f.state.authorization="new-authorization";
+ if(change==="route")f.state.route="/library";
+ if(change==="project")f.store.projection.get=()=>({...get(),projectId:"other-project"});
+ if(["removed","locked","type"].includes(change))f.store.projection.get=()=>({...get(),libraryBlocks:get().libraryBlocks.map(block=>({...block,...(change==="type"?{type:"direction"}:{[change]:true})}))});
+ if(change==="read-permission")f.state.canRead=false;
+ if(change==="author-permission")f.state.author=false;
+ await f.flush();
+ f.state.authorization=authorization;f.state.route=route;f.store.projection.get=get;f.state.canRead=canRead;f.state.author=author;await f.flush();
+ await f.begin();assert.equal(f.contextButtons().some(button=>button.textContent===edit),false,"restored authority does not recreate the old refusal");
+ await old();await f.drain();assert.equal(f.opened.length,0);assert.equal(f.patches.length,0);f.noWork();
+});
+test("Phase4 explicit Cancel discards the Output handoff and starts a fresh saved-review check",async t=>{
+ const f=await handoffFixture(t);await f.reject();const old=f.action(f.i18n.t("output.requirement.edit")),requests=f.state.requests.length;
+ await f.click(f.i18n.t("action.cancel"));await f.begin();
+ assert.equal(f.contextButtons().some(button=>button.textContent===f.i18n.t("output.requirement.edit")),false);
+ assert.equal(f.state.requests.length,requests+1);assert.equal(f.state.requests.at(-1).body.action,"resume");
+ await old();assert.equal(f.opened.length,0);f.noWork();
 });

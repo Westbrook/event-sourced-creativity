@@ -1,4 +1,6 @@
 import { html, nothing } from "lit";
+import { repeat } from "lit/directives/repeat.js";
+import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon } from "./forma-element";
 import { blockIconName } from "./icon-semantics";
 import { ensureModalDialog } from "./modal-dialog";
@@ -34,7 +36,7 @@ import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./document-artifacts";
 import { renderNextActionCards } from "./next-action-cards";
-import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus } from "./output-navigation-focus";
+import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 
 type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[]; imageFormat: ImageFormat; outputKind: ReturnType<typeof inferDocumentArtifactKind>; documentId: string; documentTitle: string };
 
@@ -51,6 +53,7 @@ export class FormaWorkspace extends FormaElement {
   #referenceFindingKinds = new Set<ReferenceFindingKind>(DEFAULT_REFERENCE_FINDINGS);
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
   #linkedBlockId="";
+  #linkedBlockNavigation:OutputNavigationFocusLease|null=null;
   #linkedOutputAnchor=false;
   #workbenchInspectorOpen=true;
   #inlineInspectorOpen=true;
@@ -154,15 +157,16 @@ export class FormaWorkspace extends FormaElement {
       this.#inspectorObserver.observe(studio);
       this.#inspectorObserved=studio;
     }
-    const linkedBlockId=documentContextBlockFromRoute(this.store.route.get())??"";
-    if(linkedBlockId&&linkedBlockId!==this.#linkedBlockId){
-      this.#linkedBlockId=linkedBlockId;
+    const linkedRoute=this.store.route.get(),linkedBlockId=documentContextBlockFromRoute(linkedRoute)??"";
+    const navigation=this.store.captureWorkspaceNavigationFocus(linkedRoute);
+    if(linkedBlockId&&(linkedBlockId!==this.#linkedBlockId||Boolean(navigation&&navigation.focus!==this.#linkedBlockNavigation))
+      &&(!navigation||navigation.current())){
+      this.#linkedBlockId=linkedBlockId;this.#linkedBlockNavigation=navigation?.focus??null;
       if(this.#workbenchPane!=="write")this.#selectWorkbenchPane("write");
       this.store.patchUi({focusBlockId:linkedBlockId});
-      const linkedRoute=this.store.route.get(),documentId=this.store.projection.get().documentId;
+      const documentId=this.store.projection.get().documentId;
       const authorization=this.store.captureAuthorizationScope();
       const linkedSource=this.store.projection.get().libraryBlocks.find(block=>block.id===linkedBlockId)?.sourceEvents.join("\u0000");
-      const navigation=this.store.captureWorkspaceNavigationFocus(linkedRoute);
       const routeCurrent=()=>{
         const projection=this.store.projection.get(),session=this.store.session.get();
         return this.isConnected&&this.store.route.get()===linkedRoute&&projection.documentId===documentId
@@ -193,7 +197,7 @@ export class FormaWorkspace extends FormaElement {
           });
         }finally{if(!navigation)focus.dispose();}
       });
-    }else if(!linkedBlockId)this.#linkedBlockId="";
+    }else if(!linkedBlockId){this.#linkedBlockId="";this.#linkedBlockNavigation=null;}
     const linkedOutput=this.store.route.get().includes("#output-title");
     if(linkedOutput&&!this.#linkedOutputAnchor){
       this.#linkedOutputAnchor=true;
@@ -428,6 +432,10 @@ export class FormaWorkspace extends FormaElement {
     return this.i18n.t(`context.health.issue.${family}.${part}`,this.i18n.system(issue[part]),{name});
   }
 
+  #contextBlocks(blocks: readonly CreativeBlock[]) {
+    return keyed(this.store.captureAuthorizationScope()?.key, html`${repeat(blocks, (block) => `${block.projectId}:${block.documentId}:${block.id}`, (block) => html`<forma-context-block .block=${block}></forma-context-block>`)}`);
+  }
+
   override render() {
     const p = this.store.projection.get();const history=generationHistoryItems(p.outputs);const selectedItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const output=selectedItem?.kind==="output"?selectedItem.output:undefined;const previewProgress=this.store.documentPreviewProgress(p.documentId);const canCompare=history.filter((item)=>item.kind==="output").length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const facts=p.blocks.map((block)=>({block_id:block.id,type:block.type,role:block.type,handle:block.handle,active:Number(block.properties.weight??.5)>0,properties:block.properties}));const relationships=p.blockRelations.map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties}));const combinedGroups=combinedContextGroups({facts,relationships});const nestedBlockIds=new Set(p.blockRelations.filter((relation)=>isContextCompositionRelation(relation.kind)).map((relation)=>relation.toBlockId));const rootBlocks=p.blocks.filter((block)=>!nestedBlockIds.has(block.id));const visibleBlocks=rootBlocks.length?rootBlocks:p.blocks;const documentInsight=contextGroups.size>=4?this.i18n.t("workspace.insight.complete","{count} independently editable decisions are working together. Each can still be refined or reused on its own.",{count:this.i18n.number(p.blocks.length)}):this.i18n.t("workspace.insight.partial","This document currently covers {covered} of {total} creative areas. Add another perspective only when it helps the work.",{covered:this.i18n.number(contextGroups.size),total:this.i18n.number(5)});const nextActions=creativeNextActions(nextActionFacts(this.store,p.documentId));
     const projectContext=this.store.session.get()?.projectContext;
@@ -464,7 +472,7 @@ export class FormaWorkspace extends FormaElement {
           <section id="document-context-panel" class="context-column" aria-labelledby="context-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane!=="write"}><div class="section-heading"><div><span class="eyebrow">${p.blocks.length?p.blocks.length===1?this.i18n.system("1 creative decision"):`${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}`:this.i18n.system("Ready when you are")}</span><h2 id="context-title">Creative context</h2></div><span class="health-pill" title=${health.issues.length?health.issues.map((issue)=>this.#healthIssueCopy(issue,"label")).join(" · "):this.i18n.system("Objective, audience, delivery, rights, and evidence are complete")}><i></i> ${this.i18n.number(health.score)}/100</span></div>
             ${assistantActive&&this.#proposal?html`<aside class="document-quick-edit-review" tabindex="-1" aria-live="polite" aria-label=${this.i18n.t("assistant.mode.quickEdit")}>${this.#proposalPreview()}</aside>`:nothing}
             ${blockingIssue?html`<aside class="document-workbench-critical" role="status"><span>${this.#healthIssueCopy(blockingIssue,"label")}</span>${canAuthor?html`<button type="button" class="button secondary compact" @click=${()=>this.#repairContext(blockingIssue)}>${this.i18n.t("context.health.severity.warning","Review")}</button>`:nothing}</aside>`:nothing}
-            ${p.blocks.length ? html`<div class="block-list" data-forma-content="primary">${visibleBlocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>` : this.#blockDraft === null ? html`<div class="blank-context" data-forma-empty-state><span>${icon("plus")}</span><h3>This document is empty</h3><p>${canAuthor?this.i18n.system("Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf."):this.i18n.system("There are no creative decisions in this shared document yet.")}</p>${canAuthor?html`<button class="button primary" @click=${this.#beginBlock}>Add context</button>`:nothing}</div>` : nothing}
+            ${p.blocks.length ? html`<div class="block-list" data-forma-content="primary">${this.#contextBlocks(visibleBlocks)}</div>` : this.#blockDraft === null ? html`<div class="blank-context" data-forma-empty-state><span>${icon("plus")}</span><h3>This document is empty</h3><p>${canAuthor?this.i18n.system("Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf."):this.i18n.system("There are no creative decisions in this shared document yet.")}</p>${canAuthor?html`<button class="button primary" @click=${this.#beginBlock}>Add context</button>`:nothing}</div>` : nothing}
             <forma-output-requirements .documentId=${p.documentId}></forma-output-requirements>
             ${notifications.length?html`<aside class="context-next-actions project-followup-actions" aria-label=${this.i18n.t("notifications.actions","Automatic project follow-up")}>${notifications.map((notification)=>html`<button type="button" @click=${()=>{void this.store.acknowledgeProjectNotification(notification.id);if(notification.artifactId){const artifact=this.querySelector("forma-document-artifacts") as HTMLElement&{openArtifactById?:(id:string)=>Promise<unknown>};void artifact?.openArtifactById?.(notification.artifactId);}}}><span><b>${this.i18n.t(`notifications.${notification.kind}.label`,this.i18n.system(notification.kind.replaceAll("_"," ")))}</b><small>${notification.kind==="changes_requested"&&notification.message?notification.message:this.i18n.t(`notifications.${notification.kind}.detail`,this.i18n.system(notification.message))}</small></span>${icon("arrow")}</button>`)}</aside>`:nothing}
             ${p.blocks.length&&health.issues.length?html`<aside class="context-next-actions context-health-actions" aria-label=${this.i18n.t("context.health.actions","Actionable context health")}>${health.issues.slice(0,3).map((issue)=>html`<button type="button" ?disabled=${!canAuthor} @click=${()=>this.#repairContext(issue)}><span><b>${this.i18n.t(`context.health.severity.${issue.severity}`,issue.severity)} · ${this.#healthIssueCopy(issue,"label")}</b><small>${this.#healthIssueCopy(issue,"detail")}</small></span>${icon("arrow")}</button>`)}</aside>`:nothing}

@@ -2707,7 +2707,11 @@ function liveCapacityCanvasR11(f,saved){
   const value=item=>Array.isArray(item)?item.map(value).join(""):typeof item==="function"?"__capacity_handler_"+(handlers.push(item)-1)+"__":item===nothing?"":String(item??"");
   const html=(parts,...values)=>parts.reduce((result,part,index)=>result+part+(index<values.length?value(values[index]):""),"");
   const icon=()=>"",blockTypeDefinition=type=>({label:type}),store=f.host;
-  const code='(class {store=store;i18n={system:source=>source,t:(key,fallback)=>fallback??key};#intent="";#intentSubmitting=false;#anchorDocumentId(){return saved.request.documentId;}#intentMatches(){return [];}#placeSource(){}#useSuggestion(){}#askIntent(){}render(){return this.#intentDock();}'+member(canvasSyntax,"CanvasApplication","#intentDock")+'})';
+  // Keep the actual disclosure scope and close guards alongside its renderer.
+  // This card-only fixture does not mount Canvas or synthesize an active scope.
+  const dockMembers=["#controlsScope","#currentControlsScope","#canEditCanvas","#closePopovers","#intentDock"]
+    .map(name=>member(canvasSyntax,"CanvasApplication",name)).join("\n");
+  const code='(class {store=store;i18n={system:source=>source,t:(key,fallback)=>fallback??key};#intent="";#intentSubmitting=false;#anchorDocumentId(){return saved.request.documentId;}#intentMatches(){return [];}#placeSource(){}#useSuggestion(){}#askIntent(){}render(){return this.#intentDock();}'+dockMembers+'})';
   const markup=new (eval(stripTypeScriptTypes(code)))().render(),cards=new Map();
   for(const match of markup.matchAll(/<article\b[^>]*data-suggestion-id=([^\s>]+)[^>]*>[\s\S]*?<\/article>/gu)){
     const handler=match[0].match(/<header>[\s\S]*?<button\b[^>]*@click=__capacity_handler_(\d+)__/u);

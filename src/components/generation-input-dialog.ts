@@ -1,4 +1,7 @@
 import { html, nothing } from "lit";
+import { cache } from "lit/directives/cache.js";
+import { keyed } from "lit/directives/keyed.js";
+import { localizeTemplateResult } from "./design-system/localized-template";
 import type { GenerationInputInspection } from "../model/generation-inputs";
 import { isManagedVideoInspection } from "../model/generation-execution-evidence";
 import { savedStoryboardInspection } from "../model/saved-storyboard-inspection";
@@ -8,15 +11,26 @@ import { ensureModalDialog } from "./modal-dialog";
 export class GenerationInputDialog extends FormaElement {
   static properties={open:{type:Boolean},inspection:{attribute:false}};
   open=false;inspection:GenerationInputInspection|null=null;#unavailableFrames=new Set<string>();#titleId=`generation-input-${crypto.randomUUID()}`;
+  #inspectionScope="";
+  protected override willUpdate(){
+    const scope=this.store.captureAuthorizationScope()?.key??"";
+    if((!scope||this.#inspectionScope&&scope!==this.#inspectionScope)&&(this.open||this.inspection))this.#clearPrivatePreview();
+    this.#inspectionScope=scope;
+    if(!this.open||!this.inspection)this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();
+  }
   protected override updated(){const dialog=this.renderRoot.querySelector<HTMLDialogElement>("dialog");if(this.open&&dialog&&!dialog.open)ensureModalDialog(dialog);if(!this.open&&dialog?.open)dialog.close();}
   #close(){this.open=false;this.#unavailableFrames.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
   #clearPrivatePreview=()=>{this.#unavailableFrames.clear();this.inspection=null;this.#close();};
   override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivatePreview);}
-  override disconnectedCallback(){window.removeEventListener("forma-authorization-changed",this.#clearPrivatePreview);this.#unavailableFrames.clear();this.inspection=null;super.disconnectedCallback();}
+  override disconnectedCallback(){window.removeEventListener("forma-authorization-changed",this.#clearPrivatePreview);this.open=false;this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.#unavailableFrames.clear();this.inspection=null;this.#inspectionScope="";super.disconnectedCallback();}
   #frameUnavailable(url:string){this.#unavailableFrames.add(url);this.requestUpdate();}
   #backdrop(event:MouseEvent){if(event.target===event.currentTarget)this.#close();}
   async #copy(value:string,label:string){const copied=await copyTextToClipboard(value);this.store.toast(copied?this.i18n.system("{label} copied.",{label:this.i18n.system(label)}):this.i18n.system("{label} could not be copied.",{label:this.i18n.system(label)}));}
   override render(){
+    if(!this.inspection||!this.store.captureAuthorizationScope())return nothing;
+    return keyed(this.#inspectionScope,cache(this.open?localizeTemplateResult(this.#dialogTemplate(),this.i18n):nothing));
+  }
+  #dialogTemplate(){
     const inspection=this.inspection;if(!inspection)return nothing;
     const failed=inspection.outcome==="failed",running=inspection.outcome==="in_progress";
     const systemHeader=inspection.systemHeader?.format==="scene"&&inspection.outcome?inspection.systemHeader:null;

@@ -52,7 +52,7 @@ for (const medium of ["visual", "audio"]) {
         providerCallCount: production.providerCallCount, maximumProviderCallCount: production.maximumProviderCallCount,
         maximumMicrousd: production.estimatedTotalCostMicrousd, reusedSourceCount: 1 });
       const markup = renderMarkup(renderSceneProviderDisclosure(locale, { preview }));
-      assert.ok(markup.includes(`${count} planned written scenes`));
+      assert.ok(markup.includes(`${count} planned written scene${count===1?"":"s"} ·`));
       assert.ok(markup.includes("1 reused source items included in this verified plan."));
       assert.ok(markup.includes(`${batches} planned provider request${batches === 1 ? "" : "s"}; up to ${batches * 4} total paid requests`));
       assert.ok(markup.includes(`application-enforced spending ceiling: $${batches}.00`));

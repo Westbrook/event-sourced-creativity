@@ -193,7 +193,8 @@ test("the coherent campaign stays discoverable, touch-safe, and truthful across 
   assert.match(enhancement, /import "\.\.\/components\/design-system\/language-picker"/);
   assert.match(enhancement, /document\.createElement\("forma-ui-language-picker"\)/);
   assert.match(enhancement, /languagePicker\.label\s*=\s*messages\.languageLabel/);
-  assert.match(html, /<details class="marketing-language__fallback">[\s\S]*?href="\/welcome\/ar"/);
+  assert.match(html, /<button type="button" class="marketing-language__trigger" popovertarget="marketing-language-menu"/);
+  assert.match(html, /<nav id="marketing-language-menu" popover="auto"[^>]*>[\s\S]*?href="\/welcome\/ar"/);
   assert.match(pickerStyles, /min-block-size:\s*var\(--forma-control-min-size,\s*2\.75rem\)/);
 
   assert.match(styles, /--marketing-line-strong:\s*light-dark\(#8a8a84,\s*#777873\)/);

@@ -1194,6 +1194,16 @@
             },
             {
               "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights.",
+              "attribute": "read-only"
+            },
+            {
+              "kind": "field",
               "name": "surface",
               "type": {
                 "text": "string"
@@ -1203,6 +1213,15 @@
             }
           ],
           "attributes": [
+            {
+              "name": "read-only",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights."
+            },
             {
               "name": "surface",
               "fieldName": "surface",
@@ -1273,12 +1292,32 @@
             },
             {
               "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights.",
+              "attribute": "read-only"
+            },
+            {
+              "kind": "field",
               "name": "surface",
               "type": {
                 "text": "string"
               },
               "default": "\"document\"",
               "attribute": "surface"
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Close the owned top layer without discarding an unfinished review or receipt."
             }
           ],
           "attributes": [
@@ -1290,6 +1329,15 @@
               },
               "default": "false",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "read-only",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights."
             },
             {
               "name": "surface",
@@ -5887,12 +5935,47 @@
           "members": [
             {
               "kind": "field",
+              "name": "actionCurrent",
+              "type": {
+                "text": "((value: string) => boolean) | undefined"
+              },
+              "description": "Optional opening-ownership check for rendered actions; never authorization."
+            },
+            {
+              "kind": "field",
               "name": "actions",
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
               "default": "[]",
               "description": "Property-only actions with author-localized labels and descriptions and locale-invariant values."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "parameters": [
+                {
+                  "name": "returnFocus",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Close before handing off an action; never queue focus over a newer surface."
+            },
+            {
+              "kind": "field",
+              "name": "content",
+              "type": {
+                "text": "typeof nothing | TemplateResult"
+              },
+              "default": "nothing",
+              "description": "Authored light-DOM controls keep their native semantics and event handlers."
             },
             {
               "kind": "field",
@@ -5923,6 +6006,14 @@
               "default": "\"\"",
               "attribute": "label",
               "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "triggerId",
+              "type": {
+                "text": "string"
+              },
+              "default": "`${this.#id}-trigger`"
             }
           ],
           "attributes": [
@@ -12842,6 +12933,36 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "field",
+              "name": "blockId",
+              "type": {
+                "text": "string | null | undefined"
+              },
+              "default": "undefined",
+              "description": "Pin a retained form to its original decision; undefined uses the current route."
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Suspend owned modal layers while retaining native fields and child editors."
+            }
+          ],
+          "events": [
+            {
+              "name": "library-use-copy",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -13671,6 +13792,18 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "willUpdate",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Close the rail popover when its navigation scope or panel mode changes."
+            }
+          ],
           "events": [
             {
               "name": "edit-project",
@@ -14168,6 +14301,15 @@
               "attribute": "mediaurl"
             },
             {
+              "kind": "method",
+              "name": "openControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "referenceBlockId",
               "type": {
@@ -14184,6 +14326,16 @@
               },
               "default": "\"\"",
               "attribute": "referenceid"
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Retain sampled colors while leaving the native top layer."
             }
           ],
           "attributes": [
@@ -14358,6 +14510,16 @@
               "type": {
                 "text": "CreativeBlock"
               }
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Keep uncommitted scope geometry while the containing controls are detached."
             }
           ],
           "x-forma": {
