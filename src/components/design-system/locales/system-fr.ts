@@ -1,6 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1dlpcpe.28": "La file de cet appareil n’a pas encore été vérifiée",
+  "system.auto.1ssjjvw.195": "La synchronisation du Canvas est en pause sur cette page pendant que le stockage de l’appareil retire le contenu privé des brouillons et enregistre les références d’origine. Le maintien de la pause après rechargement n’est pas encore confirmé. Ne renvoyez pas les modifications d’origine.",
+  "system.auto.1yofwuk.49": "Synchronisation du Canvas en pause · références d’origine conservées",
+  "system.auto.1w0ppjw.143": "Le contenu privé des brouillons du Canvas a été retiré de la file de cet appareil. Les références des lots d’origine sont conservées ; les modifications non confirmées ne sont pas renvoyées.",
+  "system.auto.1lzk80v.175": "La synchronisation du Canvas est en pause sur cette page. Le stockage de l’appareil n’a pas pu confirmer le retrait du contenu privé des brouillons ni le maintien de la pause après rechargement. Ne renvoyez pas les modifications d’origine.",
   "system.auto.e7k4f4.75": "Vérification facultative de l’appartenance des actions affichées à l’ouverture actuelle ; ne constitue jamais une autorisation.",
+  "system.auto.1lv00pf.71": "Identité uniquement : le brouillon lui-même reste sous la responsabilité de cet éditeur connecté.",
   "system.auto.1we72vb.8": "refusé",
   "system.auto.sq78o8.8": "préparé",
   "system.auto.144hcr3.9": "en préparation",
@@ -6070,6 +6076,12 @@ Object.assign(messages, {
   "system.auto.1eape3u.21": "La planification a été arrêtée.",
   "system.auto.1hytdg0.74": "La demande existante au fournisseur peut encore être facturée ; sa réserve est maintenue.",
   "system.auto.ayjo92.48": "La planification a été arrêtée avant l’envoi au fournisseur.",
+  "system.auto.1rrda77.69": "Trop de modifications attendent une confirmation. Aucune nouvelle modification n’a été envoyée.",
+  "system.auto.1cr0pj7.77": "Le serveur a confirmé la modification initiale. Sa vue privée n’est pas disponible.",
+  "system.auto.1p6ks6n.64": "Le résultat de la modification initiale n’est pas confirmé. Elle n’a pas été renvoyée.",
+  "system.auto.108waw7.63": "Cette tentative n’a pas été envoyée, car la source n’est pas disponible.",
+  "system.auto.s84qun.90": "La modification initiale du livrable n’est que partiellement confirmée. Elle n’a pas été répétée.",
+  "system.auto.1ijg7qv.78": "Seule une partie de la modification initiale est confirmée. Elle n’a pas été renvoyée.",
 });
 
 export default messages;

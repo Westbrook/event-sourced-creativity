@@ -11,6 +11,29 @@ const executiveFixture = JSON.parse(await readFile(new URL("./fixtures/presentat
 const authoringSource = await readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8");
 const rejectedDraftSource = await readFile(new URL("../src/components/presentation-rejected-drafts.ts", import.meta.url), "utf8");
 
+
+function presentationContractMember(source, className, name) {
+  const tree=ts.createSourceFile("presentation-contract.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+  const owner=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text===className);
+  const member=owner?.members.find(node=>node.name?.getText(tree)===name);
+  assert.ok(member,"the actual "+className+"."+name+" contract remains present");
+  return member.getText(tree);
+}
+function assertPresentationDraftReadOwnership(source) {
+  const member=name=>presentationContractMember(source,"PresentationRejectedDrafts",name);
+  const opened=member("#openDrafts"),selected=member("#selectCandidate"),preserved=member("#preserveCandidate");
+  assert.match(opened,/const source=this\.store\.captureSourceOwnership\(\),documentId=this\.documentId;/u);
+  assert.match(opened,/const revision=\+\+this\.#privateRevision;/u);
+  assert.match(opened,/if\(!known\)return;/u,"only the exact known job/document can open");
+  for(const read of[opened,selected,preserved])assert.match(read,/const current=\(\)=>this\.isConnected&&this\.store\.sourceOwnershipActive\(source\)&&revision===this\.#privateRevision&&this\.#jobId===jobId&&this\.documentId===documentId;/u);
+  assert.match(opened,/await this\.store\.loadPresentationCandidates\(jobId, documentId\);\s*if \(!current\(\)\) return;\s*this\.#candidates = listing\.candidates;/u);
+  assert.match(selected,/jobId=this\.#jobId,documentId=this\.#jobDocumentId,revision=this\.#privateRevision;/u);
+  assert.match(selected,/await this\.store\.loadPresentationCandidate\(jobId, responseId, documentId\);\s*if \(!current\(\)\|\|detail\.jobId!==jobId\|\|detail\.documentId!==documentId\|\|detail\.responseId!==responseId\) return;\s*this\.#details\.set\(responseId, detail\);/u);
+  assert.match(preserved,/jobId=this\.#jobId,documentId=this\.#jobDocumentId,revision=this\.#privateRevision,referenceRevision=this\.#referenceRevision;/u);
+  assert.match(preserved,/await this\.store\.preservePresentationCandidate\(jobId, responseId, documentId\);\s*if\(referenceRevision!==this\.#referenceRevision\|\|!this\.store\.sourceOwnershipScopeActive\(source\)\|\|preserved\.jobId!==jobId\|\|preserved\.documentId!==documentId\|\|preserved\.responseId!==responseId\)return;/u);
+  assert.match(preserved,/this\.#rememberJob\(jobId,documentId,source\);this\.requestUpdate\(\);\s*if\(!current\(\)\)return;\s*this\.#candidates =/u,"an original preservation acknowledgment is not permission to publish private material");
+}
+
 test("the real executive document exposes all twelve inline authored slides before generation", () => {
   const outline = inferPresentationSourceOutline(executiveFixture.snapshot);
 
@@ -68,7 +91,8 @@ test("presentation authoring names the real paid provider, bounded repair exposu
 test("clears actor-private presentation receipts immediately when authorization changes", () => {
   assert.match(authoringSource, /#actorInputContent:Record<string,string>/);
   const privateCleanup=authoringSource.slice(authoringSource.indexOf("  #clearPrivateGenerationInputs="),authoringSource.indexOf("  override connectedCallback()"));
-  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{this\.#closeViewerPopovers\(\);this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/, "authorization withdrawal invalidates the owned Scene input read before clearing its quote");
+  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{\s*this\.#privateSourceRevision\+\+;\s*this\.#closeViewerPopovers\(\);this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/u, "authorization withdrawal invalidates the owned Scene input read before clearing its quote");
+  assert.match(presentationContractMember(authoringSource,"DocumentArtifacts","#privateSourceCurrent"),/return\(\)=>this\.isConnected&&revision===this\.#privateSourceRevision&&this\.store\.sourceOwnershipActive\(source\);/u);
   assert.match(privateCleanup, /this\.#actorInputContent=\{\};this\.#failedInputJob=null;this\.#runningInputJob=null/);
   assert.doesNotMatch(privateCleanup, /\bawait\b/, "private receipts must be cleared synchronously on authorization withdrawal");
   assert.match(authoringSource, /addEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
@@ -82,11 +106,12 @@ test("rejected presentation drafts remain private, read-only, and available afte
   assert.match(rejectedDraftSource,/Rejected drafts · private/u);
   assert.match(rejectedDraftSource,/Only you can see this material\. It cannot be shared, exported, or promoted/u);
   assert.match(rejectedDraftSource,/loadPreservedPresentationCandidateJobs\(documentId\)/u,"governed drafts remain discoverable after transient job history expires");
-  assert.match(rejectedDraftSource,/loadPresentationCandidates\(jobId, this\.documentId\)/u);
+  assert.match(presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#openDrafts"),/loadPresentationCandidates\(jobId, documentId\)/u);
   assert.match(rejectedDraftSource,/Number\(right\.complete\) - Number\(left\.complete\)/u,"review prioritizes the best fully validated retained provider response");
   assert.match(rejectedDraftSource,/right\.providerAttempt - left\.providerAttempt/u,"later repairs win when candidate quality is otherwise identical");
-  assert.match(rejectedDraftSource,/loadPresentationCandidate\(this\.#jobId, responseId, this\.documentId\)/u);
-  assert.match(rejectedDraftSource,/preservePresentationCandidate\(this\.#jobId, responseId, this\.documentId\)/u);
+  assert.match(presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#selectCandidate"),/loadPresentationCandidate\(jobId, responseId, documentId\)/u);
+  assert.match(presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#preserveCandidate"),/preservePresentationCandidate\(jobId, responseId, documentId\)/u);
+  assertPresentationDraftReadOwnership(rejectedDraftSource);
   assert.match(rejectedDraftSource,/addEventListener\("forma-authorization-changed", this\.#clearAuthorizedDrafts\)/u);
   assert.match(rejectedDraftSource,/removeEventListener\("forma-authorization-changed", this\.#clearAuthorizedDrafts\)/u);
   assert.match(rejectedDraftSource,/<forma-presentation-slide /u);
@@ -122,6 +147,16 @@ const nativeFixtureSource = await readFile(nativeFixtureUrl, "utf8");
 const nativeFixtureTree = ts.createSourceFile(nativeFixtureUrl.pathname, nativeFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const firstFixtureTest = nativeFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(nativeFixtureTree) === "test");
 assert.ok(firstFixtureTest, "the existing full-component fixture is separated from its tests");
+const nativeFixtureHasExport = nativeFixtureTree.statements
+  .slice(0, nativeFixtureTree.statements.indexOf(firstFixtureTest))
+  .some(node => (
+    ts.isFunctionDeclaration(node) && node.name?.text === "fixture"
+      && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      && !node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+  ) || (
+    ts.isExportDeclaration(node) && !node.moduleSpecifier && node.exportClause && ts.isNamedExports(node.exportClause)
+      && node.exportClause.elements.some(entry => entry.name.text === "fixture" && (entry.propertyName?.text ?? entry.name.text) === "fixture")
+  ));
 const nativeFixtureModuleUrl = new URL(nativeFixtureUrl);
 nativeFixtureModuleUrl.searchParams.set("presentation-native-contract", "1");
 const nativeFixtureHook = registerHooks({
@@ -130,7 +165,7 @@ const nativeFixtureHook = registerHooks({
     return next(specifier, context);
   },
   load(url, context, next) {
-    if (url === nativeFixtureModuleUrl.href) return { format: "module", source: nativeFixtureSource.slice(0, firstFixtureTest.getFullStart()) + "\nexport { fixture };\n", shortCircuit: true };
+    if (url === nativeFixtureModuleUrl.href) return { format: "module", source: nativeFixtureSource.slice(0, firstFixtureTest.getFullStart()) + (nativeFixtureHasExport ? "" : "\nexport { fixture };\n"), shortCircuit: true };
     return next(url, context);
   },
 });
@@ -201,4 +236,32 @@ test("authorization withdrawal closes the native Slides panel before the synchro
   f.draw();
   assert.equal(f.renderer.query(f.host, "forma-generation-input-dialog").some(instance => instance.open), false);
   assert.equal(f.state.requests.length, 0);
+});
+
+for(const [label,before,after]of[
+  ["list post-await ownership","if (!current()) return;\n      this.#candidates = listing.candidates;","this.#candidates = listing.candidates;"],
+  ["detail current and exact identity","if (!current()||detail.jobId!==jobId||detail.documentId!==documentId||detail.responseId!==responseId) return;","if (!current()) return;"],
+  ["preserve private-publication ownership","if(!current())return;\n      this.#candidates =","this.#candidates ="],
+])test("presentation read contract rejects a missing "+label+" guard",()=>{
+  assert.ok(rejectedDraftSource.includes(before),"the causal control targets the exact current guard");
+  assert.throws(()=>assertPresentationDraftReadOwnership(rejectedDraftSource.replace(before,after)),assert.AssertionError);
+});
+
+for(const withdrawn of[false,true])test("actual presentation opening "+(withdrawn?"is retired by same-scope synchronous cleanup":"survives its healthy current source"),async t=>{
+  let observed=false;
+  const f=artifactViewerFixture("create",{artifact:true,onUpdate(current,step){
+    if(step!==1||!withdrawn)return;
+    const source=current.store.captureSourceOwnership();
+    current.emitAuthorization();observed=true;
+    assert.equal(current.store.sourceOwnershipActive(source),true,"the simulated Store identity is unchanged; the component's private revision owns this retirement");
+  }});
+  t.after(()=>{
+    for(const {instance}of f.renderer.instances.values())if(instance.isConnected){instance.isConnected=false;instance.disconnectedCallback();}
+    f.host.disconnectedCallback();f.i18n.hostDisconnected();
+  });
+  const opened=await f.host.openArtifactById("artifact-A");await f.flush();
+  assert.equal(observed,withdrawn);assert.equal(opened,!withdrawn);
+  const dialogs=f.renderer.query(f.host,"dialog.document-artifact-view").filter(dialog=>dialog.open);
+  assert.equal(dialogs.length,withdrawn?0:1);
+  assert.equal(f.state.requests.length,0,"an interrupted opening neither purchases nor saves");
 });

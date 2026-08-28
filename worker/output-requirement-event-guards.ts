@@ -1,5 +1,7 @@
 import { hasOutputPackageProvenance, OUTPUT_CONTEXT_PACKAGE_MESSAGE } from "./output-context-package-policy.ts";
-import { inspectOutputRequirement, isOutputContextType, parseOutputRequirement } from "../src/model/output-requirements.ts";
+import { inspectOutputRequirement, isOutputContextType } from "../src/model/output-requirements.ts";
+import { normalizeOutputRequirementCreation } from "../src/model/output-requirement-creation.ts";
+export { normalizeOutputRequirementCreation } from "../src/model/output-requirement-creation.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 export type OutputAuthoringEvent = { type?: string; payload?: Record<string, unknown>; compensatesEventId?: string | null };
@@ -9,7 +11,6 @@ export type OutputAuthoringGuardResult<T extends OutputAuthoringEvent> =
   | { ok: false; status: 400 | 409; error: string; index: number; blockId?: string; message: string };
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
-const influenceProperties = new Set(["weight", "influence", "intent", "effect"]);
 // output_palette is an established generated-image-as-input field and is unrelated to requirements.
 const serverOwnedProperty = (key: string) => /^(?:output_(?:plan|preflight|grant|slot|acceptance|fulfillment|execution|result|asset|delivery|status|confirmed|revision)(?:_|$)|grant_|acceptance_|fulfillment_|execution_)/u.test(key);
 
@@ -47,22 +48,6 @@ export function outputRequirementChatNotice(locale: unknown, existingRequirement
     ja: ["チャットから追加した出力要件は下書きです。出力カードで内容を確認して確定してください。出力の生成やライブプレビューは開始していません。", "既存の出力要件は変更していません。出力カードを開き、現在の版に対して変更案を確認・保存してください。出力の生成やライブプレビューは開始していません。"],
   };
   return (notices[language] ?? notices.en)![existingRequirementUnchanged ? 1 : 0];
-}
-
-/** New prose/imports become drafts only. Unknown versions stay opaque, inspectable and non-executable. */
-export function normalizeOutputRequirementCreation(payload: Record<string, unknown>): Record<string, unknown> {
-  if (!isOutputContextType(payload.type)) return payload;
-  const properties = record(payload.properties) ? { ...payload.properties } : {};
-  for (const key of influenceProperties) delete properties[key];
-  if (!Object.hasOwn(properties, "output_spec")) {
-    const parsed = parseOutputRequirement({
-      id: String(payload.block_id ?? ""), type: "output", content: typeof properties.text === "string" ? properties.text : "",
-      subtype: typeof properties.subtype === "string" ? properties.subtype : "Custom deliverables",
-    });
-    if (parsed.spec) properties.output_spec = parsed.spec;
-  }
-  // Do not normalize an unsupported schema into schema 1 or fabricate confirmation/approval.
-  return { ...payload, type: "output", properties };
 }
 
 /**

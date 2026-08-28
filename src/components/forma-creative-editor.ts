@@ -142,7 +142,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
     this.requestUpdate();
   }
 
-  async #confirmReference() {
+  async #confirmReference() {const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     const file = this.#pendingReference;
     if (!file || !this.#rightsConfirmed || this.#uploading) return;
     this.#uploading = true;
@@ -151,13 +151,16 @@ export class FormaCreativeEditor extends AlternativeStudio {
       const isAudio=Boolean(audioMimeType(file.type));
       let sample;
       if(!isAudio)try { sample = await sampleImageFile(file); } catch { sample = undefined; }
-      const localDuration=isAudio?await browserAudioDuration(file):null;
+      if(!this.store.sourceOwnershipActive(sourceOwner))return;
+      const localDuration=isAudio?await browserAudioDuration(file):null;if(!this.store.sourceOwnershipActive(sourceOwner))return;
       const form = new FormData();
       form.append("file", file);
       form.append("rightsConfirmed", "true");
       form.append("nonSensitiveConfirmed", "true");
-      const response = await this.store.guardedFetch("/api/media", { method: "POST", body: form },"upload this reference image");
+      let dispatched=false;
+      const response = await this.store.guardedFetch("/api/media", { method: "POST", body: form },"upload this reference image",{current:()=>dispatched||this.store.sourceOwnershipActive(sourceOwner),onDispatch:()=>{dispatched=true;}});
       const media = await response.json() as { key?: string; url?: string; contentHash?:string;mimeType?:string;durationSeconds?:number;size?:number;error?: string };
+      if(!this.store.sourceOwnershipActive(sourceOwner))return;
       if (!response.ok || !media.url) throw new Error(media.error ?? "That image could not be added");
       const projection = this.store.projection.get();
       const referenceId = crypto.randomUUID();
@@ -167,20 +170,20 @@ export class FormaCreativeEditor extends AlternativeStudio {
         { type: "RightsAsserted", payload: { reference_id: referenceId, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
         { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: isAudio?"audio":"reference", handle: `${isAudio?"audio":"reference"}/${slug(file.name, itemId)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url,source_mime_type:media.mimeType??file.type,media_type:media.mimeType??file.type,source_content_hash:media.contentHash, subtype:isAudio?"Score":"Mood", weight: .72, authority: "authored",...(isAudio?{audio_role:"score",rights_class:"owned_or_licensed",duration_seconds:media.durationSeconds??localDuration,size_bytes:media.size??file.size,description:"",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false}:{pixel_reference_mode:"context_only",extraction_preferences:DEFAULT_REFERENCE_FINDINGS,extraction_status:sample?"pending":"unavailable"}),created_from: "creative-editor" } } },
       ]);
-      if (appended.length) {
+      if (this.store.sourceOwnershipActive(sourceOwner)&&appended.length) {
         this.#selectedId = itemId;
         if (sample) await this.store.extractReference(itemId, referenceId, sample, DEFAULT_REFERENCE_FINDINGS);
-        this.#cancelReference();
+        if(this.store.sourceOwnershipActive(sourceOwner))this.#cancelReference();
       }
     } catch (error) {
-      this.store.toast(error instanceof Error ? error.message : "That image could not be added");
+      if(this.store.sourceOwnershipActive(sourceOwner))this.store.toast(error instanceof Error ? error.message : "That image could not be added");
     } finally {
       this.#uploading = false;
       this.requestUpdate();
     }
   }
 
-  async #create(event: SubmitEvent) {
+  async #create(event: SubmitEvent) {const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     event.preventDefault();
     const text = this.#newText.trim();
     if (!text) return;
@@ -205,7 +208,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         },
       },
     });
-    if (appended.length) {
+    if (this.store.sourceOwnershipActive(sourceOwner)&&appended.length) {
       this.#selectedId = id;
       this.#closeCreate();
     }
@@ -260,9 +263,9 @@ export class FormaCreativeEditor extends AlternativeStudio {
     await this.store.append({ type: item.locked ? "BlockUnlocked" : "BlockLocked", payload: { block_id: item.id, source_surface: "creative-editor" } });
   }
 
-  async #duplicate(item: CreativeBlock) {
+  async #duplicate(item: CreativeBlock) {const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     const projection = this.store.projection.get();
-    if(item.properties.source_artifact_id){if(item.properties.source_artifact_item_id){this.store.toast(item.properties.source_artifact_kind==="video"?"Copy the complete video to keep every scene connected.":"Copy the complete storyboard to keep every frame connected.");return;}const copied=await this.store.copyLibraryBlockSet(item.id,projection.documentId,"creative-editor");if(copied){this.#selectedId=copied.rootBlockId;this.requestUpdate();}return;}
+    if(item.properties.source_artifact_id){if(item.properties.source_artifact_item_id){this.store.toast(item.properties.source_artifact_kind==="video"?"Copy the complete video to keep every scene connected.":"Copy the complete storyboard to keep every frame connected.");return;}const copied=await this.store.copyLibraryBlockSet(item.id,projection.documentId,"creative-editor");if(copied&&!("publication"in copied)&&this.store.sourceOwnershipActive(sourceOwner)){this.#selectedId=copied.rootBlockId;this.requestUpdate();}return;}
     const id = crypto.randomUUID();
     const copied=copyOutputRequirementBlock(item,id,new Map([[item.id,id]]));
     const appended = await this.store.append({
@@ -276,7 +279,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         properties: { ...copied.properties, authority: "authored", copied_from_block_id: item.id, created_from: "creative-editor" },
       },
     });
-    if (appended.length) this.#selectedId = id;
+    if (this.store.sourceOwnershipActive(sourceOwner)&&appended.length) this.#selectedId = id;
   }
 
   async #remove(item: CreativeBlock) {

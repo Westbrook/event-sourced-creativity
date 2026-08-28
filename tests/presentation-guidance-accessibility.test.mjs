@@ -249,6 +249,8 @@ function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), de
   for (const [index, fact] of facts.entries()) append("BlockCreated", { project_id: "p", document_id: "A", block_id: fact.id,
     type: fact.type, handle: fact.type + "/" + fact.id, position: "a" + index, properties: { text: fact.text, weight: 1, intent: "include" } });
   const projection = () => foldEvents(state.events, Infinity, state.documentId, "p");
+  const sourceOwners=new WeakSet();
+  const sourceScopeActive=source=>Boolean(source&&sourceOwners.has(source)&&state.canRead&&source.authorization.key===state.authorization);
   f.store = {
     ui: { instrumentation: false },
     session: { get: () => ({ user: { userId: "owner", role: "user" },
@@ -256,6 +258,9 @@ function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), de
       capabilities: [...(state.canRead ? ["project.read", "project.author"] : []), ...(state.canRequest ? ["project.output.request"] : [])] }) },
     captureAuthorizationScope: () => state.canRead ? { key: state.authorization, shared: false } : null,
     authorizationScopeActive: scope => state.canRead && scope?.key === state.authorization,
+    captureSourceOwnership:()=>{if(!state.canRead)return null;const source=Object.freeze({authorization:Object.freeze({key:state.authorization,shared:false}),generation:0});sourceOwners.add(source);return source;},
+    sourceOwnershipScopeActive:sourceScopeActive,
+    sourceOwnershipActive:sourceScopeActive,
     projection: { get: projection }, events: { get: () => state.events }, eventView: { get: () => state.events },
     asOf: cell(Infinity), content: cell({}), head: { get: () => state.events.length },
     canvasProjection: cell({ selectedCanvasId: "", canvases: [] }), projectNotifications: cell([]), reviewInbox: cell([]),

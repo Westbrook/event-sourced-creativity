@@ -19,6 +19,15 @@ async function appendOperationWrapper(appendEvents, execution) {
   return new Function("appendEvents", "execution", `${compiled}\nreturn appendOperationEvents;`)(appendEvents, execution);
 }
 
+function storeMemberSource(text, name) {
+  const source = ts.createSourceFile("store.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const store = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaStore");
+  const member = store?.members.find(node => node.name?.getText(source) === name);
+  assert.ok(member, "inspect the actual Store member: " + name);
+  // Structural comparisons only: this whitespace-normalized source is never executed.
+  return member.getText(source).replace(/\s+/gu, "");
+}
+
 test("hot-path appends and generation receipts use the atomic head allocator",async()=>{
   const runtime=await readFile(new URL("../worker/runtime.ts",import.meta.url),"utf8");
   const eventsApi=await readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8");
@@ -83,34 +92,44 @@ test("the client refreshes and rebases authored appends after stale heads",async
     readFile(new URL("../worker/runtime.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(store,/response\.status===409&&body\.error==="stale_sequence"/);
-  assert.match(store,/await this\.#refreshEvents\(\);this\.#assertAuthorizationScope\(authorization\);continue/);
+  const append = storeMemberSource(store,"#appendBatchNow"), pipeline = storeMemberSource(store,"appendBatchWithReceipt"), opening = storeMemberSource(store,"openDocument");
+  assert.match(append,/consterror=body&&typeofbody==="object"&&!Array\.isArray\(body\)\?String\(\(bodyasRecord<string,unknown>\)\.error\?\?""\):""/);
+  assert.match(append,/response\.status===409&&error==="stale_sequence"&&options\.expected===undefined&&attempt<attempts-1/);
+  assert.match(append,/constsource=observation\.source,active=\(\)=>this\.sourceOwnershipActive\(source\)&&!observation\.paused/);
+  assert.match(append,/awaitthis\.#refreshEvents\(\);if\(!active\(\)\)returnthis\.#finishEventWrite\(observation,\{outcome:"unconfirmed",privateUnavailable:true\},\[\],"withheld",options\);continue/, "a stale-head retry cannot cross source retirement");
   assert.match(store,/rebaseAttempts\?\?2/);
   assert.match(store,/action:"canvas_sync"/);
   assert.match(store,/stageOptimisticCanvasEvents/);
   assert.match(store,/#appendPipeline/);
-  assert.match(store,/this\.#appendPipeline\.then\(\(\)=>this\.#scopeStillActive\(authorization\)\?this\.#appendBatchNow\(events,options,authorization\):\[\]\)/);
-  assert.match(store,/const persisted=this\.append\(\{type:"DocumentOpened"/);
-  assert.match(store,/background:true\}\);const committed=persisted\.then\(\(events\)=>events\.length>0,\(\)=>false\);this\.#navigationCommit=committed;this\.setRoute\(routedDestination,options\)/);
+  assert.match(pipeline,/retained=JSON\.parse\(JSON\.stringify\(events\)\)asEventInput\[\]/, "the admitted append owns a copy rather than later caller mutations");
+  assert.match(pipeline,/constadmission=awaitthis\.#admitEventWrite\(retained,retained\.length>1\?"batch":"append",options\.expected\),observation=admission\.observation/);
+  assert.match(pipeline,/constpending=this\.#appendPipeline\.then\(\(\)=>this\.#appendBatchNow\(retained,options,observation\)\)/);
+  assert.match(append,/if\(!active\(\)\)returnthis\.#finishEventWrite\(observation,\{outcome:"not-attempted",privateUnavailable:true\},\[\],"withheld",options\)/);
+  assert.match(opening,/constpersisted=this\.appendWithReceipt\(\{type:"DocumentOpened"/);
+  assert.match(opening,/background:true\}\);constcommitted=persisted\.then\(result=>result\.acknowledgment\.outcome==="observed"&&result\.acknowledgment\.committed\.some\(event=>event\.type==="DocumentOpened"\),\(\)=>false\);this\.#navigationCommit=committed;this\.setRoute\(routedDestination,options\)/, "only the exact observed navigation acknowledgment resolves the commit fence");
   assert.match(runtime,/sequence>\? ORDER BY sequence ASC LIMIT \?/);
   assert.match(runtime,/while\(events\.length<requested\)/);
   assert.match(eventsApi,/readEventPageWithHead\(env,streamId,after,limit\)/);
   assert.match(runtime,/export async function readEventPageWithHead/);
   assert.match(eventsApi,/streamHead\(env,streamId\)/);
-  assert.match(store,/#readEventPages\(after=0\)/);
+  assert.match(storeMemberSource(store,"#readEventPages"),/#readEventPages\(after=0,read\?:EventSourceRead\)\{returnthis\.#readEventStream\(after,"full",after===0,read\);\}/);
   assert.match(store,/hasMore&&next<=cursor/);
 });
 
 test("project navigation remains interactive and commits before competing telemetry or paid work",async()=>{
   const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
 
-  assert.match(store,/const persisted=this\.append\(input,\{rebaseAttempts:6,silent:true,background:true\}\);const committed=persisted\.then/);
+  const opening=storeMemberSource(store,"openProject"),append=storeMemberSource(store,"#appendBatchNow");
+  assert.match(opening,/constpersisted=this\.appendWithReceipt\(input,\{rebaseAttempts:6,silent:true,background:true\}\);constcommitted=persisted\.then/);
+  assert.match(opening,/result\.acknowledgment\.outcome==="observed"&&result\.acknowledgment\.committed\.some\(event=>event\.type==="ProjectOpened"&&event\.clientEventId===clientEventId\)/);
+  assert.match(opening,/this\.optimisticEvents\.set\(\[\.\.\.this\.optimisticEvents\.get\(\),optimistic\]\)/);
   assert.match(store,/if\(!options\.background\)this\.busy\.set\(events\[0\]\?\.type/);
-  assert.match(store,/finally \{if\(this\.#scopeStillActive\(authorization\)\)\{if\(!options\.background\)this\.busy\.set\(""\)/);
+  assert.match(append,/finally\{if\(this\.sourceOwnershipScopeActive\(source\)\)\{if\(!options\.background\)this\.busy\.set\(""\)/, "only the original scope owns foreground busy cleanup");
   assert.match(store,/if\(!options\.keepalive\)await this\.#appendPipeline;/);
   assert.match(store,/this\.#jobStarts\.add\(requestKey\);this\.notify\(\);\}try\{const navigation=this\.#navigationCommit;await this\.#appendPipeline;/);
   assert.match(store,/if\(navigation&&!await navigation\)throw new Error/);
-  assert.match(store,/if\(!appended\.length\)\{this\.setRoute\(previousRoute,\{replace:true\}\)/);
+  assert.match(opening,/if\(!result\.appended\.length\)\{if\(current\(\)\)\{this\.setRoute\(previousRoute,\{replace:true\}\)/, "a late failure cannot roll back newer navigation");
+  assert.match(opening,/constcurrent=\(\)=>this\.sourceOwnershipActive\(sourceOwner\)&&this\.authorizationScopeActive\(authorization\)&&this\.#workspaceTransition===revision&&this\.route\.get\(\)===route&&workspaceNavigationCurrent\(options\)/);
 });
 
 test("document dialogs preserve their target document across background event refreshes",async()=>{
@@ -118,8 +137,11 @@ test("document dialogs preserve their target document across background event re
     readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(store,/const events=this\.eventView\.get\(\)/);
-  assert.match(store,/foldEvents\(events, this\.asOf\.get\(\), isDocumentViewRoute\(route\) \? documentIdFromRoute\(route\)/);
+  const projection=storeMemberSource(store,"projection");
+  assert.match(projection,/constcanvasId=canvasIdFromRoute\(route\)\?\?"",events=this\.eventView\.get\(\)/, "the projection still includes optimistic events");
+  assert.match(projection,/taskDocumentId=projectTaskDocumentIdFromRoute\(route\)/);
+  assert.match(projection,/foldEvents\(events,this\.asOf\.get\(\),isDocumentViewRoute\(route\)\?documentIdFromRoute\(route\)\?\?"":taskDocumentId\?\?"",canvasId\?canvasProjectId\(events,canvasId\):""\)/);
+  assert.match(projection,/if\(!readable\|\|taskDocumentId!==null&&\(!taskDocumentId\|\|projection\.documentId!==taskDocumentId\)\)/, "a claimed task Document cannot silently become another history Document");
   assert.match(workspace,/documentId:projection\.documentId/);
   assert.match(workspace,/document_id:draft\.documentId/);
   assert.match(workspace,/document_id:documentId/);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
 import { OutputRequirementsClient } from "../src/state/output-requirements-client.ts";
 import { controllerFixture, loadStoreMethods, snapshot, startSave, startUpload } from "./output-ui-source-harness.mjs";
@@ -6,7 +7,30 @@ import { controllerFixture, loadStoreMethods, snapshot, startSave, startUpload }
 // Actual client + actual Store method/controller sources, with owned synthetic HTTP bodies.
 // These are not native-browser, live-provider, database-migration, or authorization certification.
 const actualStore = await loadStoreMethods();
-const tick = () => new Promise((resolve) => setImmediate(resolve));
+// Digest preparation is asynchronous. Observe the actual original POST entry,
+// never a guessed delay or a replacement response, before asserting header state.
+const preparingDispatches = new Set();
+const tick = async () => { await Promise.all([...preparingDispatches].map(entry => entry.promise)); await new Promise(resolve => setImmediate(resolve)); };
+function afterOriginalDispatch(state, identity, invoke) {
+  let resolve, reject, entered = false;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  void promise.catch(() => {});
+  const entry = { promise, matches: call => {
+    if (call.method !== "POST" || call.path !== identity.path) return false;
+    if (identity.action === "adopt") return new Headers(call.headers).get("x-output-client-mutation-id") === identity.clientMutationId;
+    const body = JSON.parse(call.body);
+    return body.documentId === "doc-a" && body.action === identity.action && body.clientMutationId === identity.clientMutationId;
+  },
+    enter() { entered = true; resolve(); preparingDispatches.delete(entry); state.dispatchEntries.delete(entry); } };
+  preparingDispatches.add(entry); state.dispatchEntries.add(entry);
+  return Promise.resolve().then(invoke).then(result => {
+    if (!entered) {
+      if (result?.status !== "not-attempted") { const error = new Error("Transport barrier requires the exact POST entry or its terminal not-attempted result"); reject(error); throw error; }
+      resolve();
+    }
+    return result;
+  }, error => { if (!entered) reject(error); throw error; }).finally(() => { preparingDispatches.delete(entry); state.dispatchEntries.delete(entry); });
+}
 const secret = "PRIVATE-OUTPUT-WORDING-NOT-A-RECEIPT";
 const command = { action: "save", expectedRevision: "1", clientMutationId: "original-output-operation", spec: { original_text: secret } };
 const sample = (revision = "1", projectId = "fixture-project") => {
@@ -37,6 +61,7 @@ function fixture() {
       && value.projectId === captured.projectId && value.scope?.actorUserId === "fixture-actor" && typeof value.revision === "string"),
     fetch: async (path, init) => {
       calls.push({ path, method: init?.method ?? "GET", body: init?.body, headers: init?.headers });
+      for (const entry of [...state.dispatchEntries]) if (entry.matches(calls.at(-1))) entry.enter();
       assert.ok(replies.length, "every HTTP request must be explicitly supplied; no automatic retry or provider route");
       const response = replies.shift();
       if (response instanceof Error) throw response;
@@ -45,7 +70,7 @@ function fixture() {
     notify: () => { publications.push(client.resource("doc-a")); state.onNotify?.(); },
   });
   const state = {
-    client, calls, publications, enqueue: (...values) => replies.push(...values), setScope: (next) => { scope = next; },
+    client, calls, publications, dispatchEntries: new Set(), enqueue: (...values) => replies.push(...values), setScope: (next) => { scope = next; },
     warm: async () => { replies.push(Response.json(sample())); await client.ensure("doc-a"); },
   };
   state.store = {
@@ -53,13 +78,14 @@ function fixture() {
     authorizationScopeActive: (captured) => Boolean(captured && captured.key === scope?.key && captured.projectId === scope?.projectId),
     outputRequirements: client, refreshEvents: async () => {},
   };
-  state.store.outputRequirementCommand = (value) => actualStore.outputRequirementCommand.call(state.store, value);
-  state.store.uploadOutputAsset = (...args) => actualStore.uploadOutputAsset.call(state.store, ...args);
+  installSourceOwnershipPort(state.store);
+  state.store.outputRequirementCommand = (value, options) => afterOriginalDispatch(state, { path: "/api/output-requirements", action: value.action, clientMutationId: value.clientMutationId }, () => actualStore.outputRequirementCommand.call(state.store, value, options));
+  state.store.uploadOutputAsset = (...args) => afterOriginalDispatch(state, { path: "/api/output-requirements/assets?documentId=" + encodeURIComponent(args[0]), action: "adopt", clientMutationId: args[3] }, () => actualStore.uploadOutputAsset.call(state.store, ...args));
   return state;
 }
 const start = (state, action) => action === "read" ? state.client.ensure("doc-a", { force: true })
-  : action === "command" ? state.client.command("doc-a", command, "save requirements")
-  : action === "upload" ? state.client.upload("doc-a", new Blob(["owned bytes"]), { "x-output-client-mutation-id": command.clientMutationId })
+  : action === "command" ? afterOriginalDispatch(state, { path: "/api/output-requirements", action: command.action, clientMutationId: command.clientMutationId }, () => state.client.command("doc-a", command, "save requirements"))
+  : action === "upload" ? afterOriginalDispatch(state, { path: "/api/output-requirements/assets?documentId=doc-a", action: "adopt", clientMutationId: command.clientMutationId }, () => state.client.upload("doc-a", new Blob(["owned bytes"]), { "x-output-client-mutation-id": command.clientMutationId }))
   : state.client.download("doc-a", "/api/output-requirements/assets/exact-file?documentId=doc-a");
 const privateError = (status) => ({ error: status === 410 ? "output_private_evidence_unavailable" : "output_action_not_authorized", snapshot: sample(), message: secret });
 const assertHidden = (state, status) => {

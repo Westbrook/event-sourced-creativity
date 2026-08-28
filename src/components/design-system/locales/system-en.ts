@@ -1,6 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1dlpcpe.28": "Device queue not yet checked",
+  "system.auto.1ssjjvw.195": "Canvas sync is paused in this page while device storage removes private draft bodies and saves original references. The pause after reload is not yet confirmed. Do not retry the original changes.",
+  "system.auto.1yofwuk.49": "Canvas sync paused · original references retained",
+  "system.auto.1w0ppjw.143": "Private Canvas draft bodies were withdrawn from this device queue. Original batch references are retained; unconfirmed changes are not retried.",
+  "system.auto.1lzk80v.175": "Canvas sync is paused in this page. Device storage could not confirm removal of private draft bodies or retention of the pause after reload. Do not retry the original changes.",
   "system.auto.e7k4f4.75": "Optional opening-ownership check for rendered actions; never authorization.",
+  "system.auto.1lv00pf.71": "Identity only: the draft itself remains owned by this connected editor.",
   "system.auto.1we72vb.8": "rejected",
   "system.auto.sq78o8.8": "prepared",
   "system.auto.144hcr3.9": "preparing",
@@ -6076,6 +6082,12 @@ Object.assign(messages, {
   "system.auto.1eape3u.21": "Planning was stopped.",
   "system.auto.1hytdg0.74": "The existing provider request may still be billable; its hold is retained.",
   "system.auto.ayjo92.48": "Planning was stopped before provider submission.",
+  "system.auto.1rrda77.69": "Too many original changes await confirmation. No new change was sent.",
+  "system.auto.1cr0pj7.77": "The server acknowledged the original change. Its private view is unavailable.",
+  "system.auto.1p6ks6n.64": "The original change is unconfirmed. It has not been resubmitted.",
+  "system.auto.108waw7.63": "This invocation was not sent because the source is unavailable.",
+  "system.auto.s84qun.90": "The original finished-output change is only partly acknowledged. It has not been repeated.",
+  "system.auto.1ijg7qv.78": "Only part of the original change is acknowledged. It has not been resubmitted.",
 });
 
 export default messages;

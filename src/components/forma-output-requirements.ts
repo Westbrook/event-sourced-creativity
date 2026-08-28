@@ -9,8 +9,9 @@ import { readOutputNativeExecutionPolicy } from "../model/output-execution-polic
 import { OUTPUT_PREFLIGHT_TARGET_MAX_COUNT } from "../model/output-delivery-contract";
 import { OUTPUT_SCOPE_AMENDMENT_REASON_MAX_LENGTH, outputScopeAmendmentReasonIssue } from "../model/output-scope-amendment";
 import type { OutputCommandResponse, OutputConfirmationOptions, OutputPreflight, OutputNativeTargetPreflight, OutputRequirementCommand, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../model/output-delivery-contract";
-import type { OutputCardEditorState, OutputCardPlanSuggestions, OutputRequirementCardSnapshot } from "./forma-output-requirement-card";
-import type { CapturedAuthorizationScope } from "../state/store";
+import type { FormaOutputRequirementCard, OutputCardEditorState, OutputCardPlanSuggestions, OutputRequirementCardSnapshot } from "./forma-output-requirement-card";
+import type { CapturedAuthorizationScope, CapturedSourceOwnership } from "../state/store";
+import type { OutputCommittedReceipt, OutputMutationResult } from "../state/output-requirements-client";
 import type { DocumentJob } from "../model/document-jobs";
 import { FORMA_OUTPUT_DELIVERY_MESSAGES, outputDeliveryLabelKey, outputDeliveryProblemKey, type OutputDeliveryLabelCategory } from "./design-system/locales/output-delivery-messages";
 import "./forma-output-requirement-card";
@@ -29,14 +30,15 @@ type OutputSourceRefreshIntent = {
 type SaveIntent = { scope: { authorizationScopeKey: string; documentId: string }; requirementId: string; expectedRevision: string | number | null; clientMutationId: string; draft: OutputRequirementSpec; planSuggestions: OutputCardPlanSuggestions };
 type PlanIntent = { scope: { authorizationScopeKey: string; documentId: string }; requirementId: string; planSuggestions: OutputCardPlanSuggestions };
 type Command = OutputRequirementCommand extends infer C ? C extends OutputRequirementCommand ? Omit<C, "documentId" | "expectedRevision" | "clientMutationId"> : never : never;
-type OutputNativeIntent = {
-  authorization: CapturedAuthorizationScope | null; documentId: string; epoch: number; requestEpoch: number;
+type OutputPrivateView = { authorization: CapturedAuthorizationScope | null; source: CapturedSourceOwnership | null; documentId: string; epoch: number };
+type OutputNativeIntent = OutputPrivateView & {
+  requestEpoch: number;
   targetIds: string[]; targetScopeKey: string; selectionKey: string; alternativeOfSlotId: string | null;
 };
 
 
 type OutputNativeInspection = {
-  id: number; view: Pick<OutputNativeIntent, "authorization" | "documentId" | "epoch">;
+  id: number; view: OutputPrivateView;
   reference: OutputNativeResultReference; context: string; viewEpoch: number;
   status: "loading" | "ready" | "unavailable"; job: DocumentJob | null; current: (() => boolean) | null;
 };
@@ -56,7 +58,7 @@ export class FormaOutputRequirements extends FormaElement {
   #busy = "";
   #notice = "";
   #noticeKind: "status" | "alert" = "status";
-  #editors = new Map<string, OutputCardEditorState>();
+  #editors = new Map<string, OutputCardEditorState & { sourceRetired?: true; receipt?: OutputCommittedReceipt }>();
   #planning: OutputPlanProposalState | null = null;
   #planOpener: { element: HTMLElement | null; viewKey: string } | null = null;
   #reviewPlan = false;
@@ -78,6 +80,8 @@ export class FormaOutputRequirements extends FormaElement {
   #rightsConfirmed = false;
   #uploadCommandId = "";
   #uploadRevision = "";
+  #uploadSourceRetired = false;
+  #uploadReceipt: OutputCommittedReceipt | null = null;
   #removeId = "";
   #lastScope = "";
   #lastSourceContract = "";
@@ -86,15 +90,47 @@ export class FormaOutputRequirements extends FormaElement {
   #paidActivation = new OutputDirectActivationLatch();
   #uploadFailure: OutputUploadFailure | null = null;
   #downloadUrls = new Set<string>();
-  #uncertainCommand: { signature: string; id: string; expectedRevision: string } | null = null;
+  #uncertainCommand: { signature: string; id: string; expectedRevision: string; sourceRetired?: true; receipt?: OutputCommittedReceipt } | null = null;
   #planRequest = (event: Event) => {
     const detail = (event as CustomEvent<PlanIntent>).detail;
     if (this.blockId || !detail || !this.#intentScopeCurrent(detail.scope)) return;
     this.#openPlan();
   };
 
+  #sourceRetired = (event: Event) => {
+    const detail = (event as CustomEvent<{ source: CapturedSourceOwnership; generation: number; status: number }>).detail;
+    const source = this.store.captureSourceOwnership();
+    if (!this.isConnected || !detail || ![401, 403, 404].includes(detail.status)
+      || !this.store.sourceOwnershipScopeActive(detail.source) || !source || source.generation !== detail.generation
+      || this.store.sourceOwnershipActive(source)) return;
+    // Retire private material, not this controller or its sole original operation owners.
+    this.#viewEpoch += 1; this.#sourceRefreshEpoch += 1;
+    this.#loading = false; this.#sourceRefreshing = false; this.#busy = "";
+    this.#nativeViewEpoch += 1; this.#nativeRequestEpoch += 1; this.#nativeInspection = null;
+    this.#lastSourceContract = ""; this.#lastNativeIntentContract = ""; this.#lastNativeView = "";
+    this.#retirePreflight(); this.#planning = null; this.#planOpener = null; this.#reviewPlan = false;
+    this.#selectedTargets.clear(); this.#planRevision = ""; this.#allowPartial = false; this.#removeId = "";
+    this.#packageParts = []; this.#packageRelease = null;
+    this.#file = null; this.#rightsConfirmed = false;
+    if (this.#uploadCommandId) { this.#uploadSourceRetired = true; if (!this.#uploadReceipt) this.#uploadFailure = { kind: "uncertain", code: null }; }
+    if (this.#uncertainCommand) this.#uncertainCommand = { ...this.#uncertainCommand, sourceRetired: true };
+    this.#editors = new Map([...this.#editors].map(([id, editor]) => [id, { status: editor.receipt ? "saved" : "unavailable",
+      ...(editor.clientMutationId ? { clientMutationId: editor.clientMutationId } : {}), sourceRetired: true,
+      ...(editor.receipt ? { receipt: editor.receipt } : {}) }]));
+    for (const card of this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")) {
+      const previous = card.snapshot; card.snapshot = null; card.resourceState = "unavailable";
+      card.editorState = { status: "unavailable", ...(card.editorState.clientMutationId ? { clientMutationId: card.editorState.clientMutationId } : {}) };
+      card.requestUpdate("snapshot", previous);
+    }
+    for (const field of this.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")) field.value = "";
+    for (const url of this.#downloadUrls) URL.revokeObjectURL(url);
+    this.#downloadUrls.clear();
+    this.#notice = this.#message("output_client_scope_changed"); this.#noticeKind = "alert";
+    this.requestUpdate();
+  };
+
   constructor() { super(); this.documentId = ""; this.documentName = ""; this.blockId = ""; this.surface = "document"; this.inspectionOnly = false; }
-  override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); this.requestUpdate(); }
+  override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.requestUpdate(); }
   override disconnectedCallback() {
     this.#viewEpoch += 1;
     this.#sourceRefreshEpoch += 1; this.#sourceRefreshing = false; this.#sourceRefreshScope = "";
@@ -104,7 +140,13 @@ export class FormaOutputRequirements extends FormaElement {
     this.#preflight = null; this.#authorizationAcknowledged = false; this.#runSelectionCleared = false;
     this.#paidActivation.clear();
     this.#uncertainCommand = null; this.#planning = null; this.#planOpener = null; this.#packageRelease = null;
+    this.#file = null; this.#rightsConfirmed = false; this.#packageParts = []; this.#removeId = ""; this.#notice = "";
+    this.#lastSourceContract = ""; this.#lastNativeIntentContract = ""; this.#selectedTargets.clear();
+    // In-flight identifiers and validated acknowledgments belong to the existing
+    // Store transport. A detached view retains no upload bytes or private editor.
+    this.#uploadCommandId = ""; this.#uploadRevision = ""; this.#uploadReceipt = null; this.#uploadFailure = null;
     window.removeEventListener("forma-output-show-plan", this.#planRequest);
+    window.removeEventListener("forma-event-source-retired", this.#sourceRetired);
     for (const url of this.#downloadUrls) URL.revokeObjectURL(url);
     this.#downloadUrls.clear();
     super.disconnectedCallback();
@@ -122,7 +164,7 @@ export class FormaOutputRequirements extends FormaElement {
       this.#lastSourceContract = "";
       this.#lastNativeIntentContract = "";
       this.#preflight = null; this.#file = null; this.#rightsConfirmed = false;
-      this.#uploadFailure = null; this.#paidActivation.clear();
+      this.#uploadFailure = null; this.#uploadSourceRetired = false; this.#uploadReceipt = null; this.#paidActivation.clear();
       this.#authorizationAcknowledged = false; this.#uploadCommandId = ""; this.#removeId = "";
       this.#reviewPlan = false; this.#allowPartial = false; this.#planRevision = "";
       this.#planning = null; this.#planOpener = null;
@@ -217,6 +259,7 @@ export class FormaOutputRequirements extends FormaElement {
     return this.i18n.t(descriptor.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[descriptor.id], descriptor.values);
   }
   #failure(result: { body?: unknown; error: string; status?: string }) {
+    if (result.status === "not-attempted") return this.#message("output_client_write_not_attempted");
     const body = result.body && typeof result.body === "object" ? result.body as Record<string, unknown> : {};
     return this.#message(typeof body.error === "string" ? body.error : result.status === "unavailable" ? "output_client_response_lost" : result.status === "forbidden" ? "output_client_scope_changed" : "output_client_write_unconfirmed", body);
   }
@@ -238,8 +281,36 @@ export class FormaOutputRequirements extends FormaElement {
     return policy ? this.#message("output_native_execution_window", { maximumExecutionSeconds: policy.maximumMilliseconds / 1000 }) : this.#message("output_native_execution_window_unknown");
   }
   #snapshot() { return this.store.outputRequirements.resource(this.documentId).snapshot; }
-  #captureView() { return { authorization: this.store.captureAuthorizationScope(), documentId: this.documentId, epoch: this.#viewEpoch }; }
-  #viewCurrent(view: { authorization: CapturedAuthorizationScope | null; documentId: string; epoch: number }) { return this.isConnected && view.epoch === this.#viewEpoch && view.documentId === this.documentId && this.store.authorizationScopeActive(view.authorization); }
+  #unresolvedWrite() {
+    const write = this.store.outputRequirements.retainedWrite(this.documentId);
+    return write && write.status !== "acknowledged" ? write : null;
+  }
+  #writeNotAttempted() { this.#announce(this.#message("output_client_write_not_attempted")); }
+  #transportReceipt() {
+    const write = this.store.outputRequirements.retainedWrite(this.documentId);
+    if (!write || write.status === "acknowledged" && !write.sourceRetired) return nothing;
+    const receipt = JSON.stringify({ documentId: this.documentId, ...write }, null, 2);
+    return html`<details class="output-transport-receipt" open><summary aria-label=${this.#controlName(this.#t("operationReceiptIds", "Operation receipt identifiers"))}>${this.#t("operationReceiptIds", "Operation receipt identifiers")}</summary>
+      ${write.status !== "acknowledged" ? html`<p role="status">${this.#message(write.sourceRetired ? "original_command_content_unavailable" : "output_client_write_unconfirmed")}</p>` : nothing}
+      <button type="button" class="button secondary compact" aria-label=${this.#controlName(this.#t("copyOperationReceipt", "Copy technical receipt"))} @click=${() => this.#copyTransportReceipt(write.clientMutationId, write.digest)}>${this.#t("copyOperationReceipt", "Copy technical receipt")}</button>
+      <label>${this.#t("operationReceiptText", "Technical receipt for manual copying")}<textarea aria-label=${this.#controlName(this.#t("operationReceiptText", "Technical receipt for manual copying"))} readonly rows="8" spellcheck="false" lang="en" dir="ltr" .value=${receipt}></textarea></label>
+    </details>`;
+  }
+  async #copyTransportReceipt(clientMutationId: string, digest: string) {
+    const view = this.#captureView(), write = this.store.outputRequirements.retainedWrite(view.documentId);
+    if (!this.#viewScopeCurrent(view) || !write || write.clientMutationId !== clientMutationId || write.digest !== digest) return;
+    const receipt = JSON.stringify({ documentId: view.documentId, ...write }, null, 2), copied = await copyInterfaceText(receipt);
+    const current = this.store.outputRequirements.retainedWrite(view.documentId);
+    if (!this.#viewScopeCurrent(view) || !current || JSON.stringify({ documentId: view.documentId, ...current }, null, 2) !== receipt) return;
+    this.#announce(copied ? this.#t("operationReceiptCopied", "Technical receipt copied. It was not sent to anyone. Share it only with an authorized Forma operator or workspace administrator.")
+      : this.#t("operationReceiptCopyFailed", "Automatic copying was unavailable. Select the technical receipt below and copy it manually."), !copied);
+  }
+  #captureView(): OutputPrivateView { return { authorization: this.store.captureAuthorizationScope(), source: this.store.captureSourceOwnership(), documentId: this.documentId, epoch: this.#viewEpoch }; }
+  #viewScopeCurrent(view: OutputPrivateView) { return this.isConnected && view.documentId === this.documentId && this.store.authorizationScopeActive(view.authorization) && this.store.sourceOwnershipScopeActive(view.source); }
+  #viewCurrent(view: OutputPrivateView) { return this.#viewScopeCurrent(view) && view.epoch === this.#viewEpoch && this.store.sourceOwnershipActive(view.source); }
+  #originalAcknowledgment(view: OutputPrivateView, result: OutputMutationResult<OutputCommandResponse>, clientMutationId: string, action: string) {
+    return this.#viewScopeCurrent(view) ? this.store.outputRequirements.withholdCommandBody(view.documentId, result, { clientMutationId, action }).receipt : undefined;
+  }
   #intentScopeCurrent(scope: { authorizationScopeKey: string; documentId: string }) { return scope.documentId === this.documentId && scope.authorizationScopeKey === this.store.captureAuthorizationScope()?.key; }
   #announce(message: string, error = false) { this.#notice = message; this.#noticeKind = error ? "alert" : "status"; this.requestUpdate(); }
 
@@ -555,12 +626,28 @@ export class FormaOutputRequirements extends FormaElement {
     event.stopPropagation();
     const detail = event.detail;
     if (!this.#intentScopeCurrent(detail.scope) || detail.expectedRevision === null || this.#busy) return;
-    const view = this.#captureView();
+    const view = this.#captureView(), route = this.store.route.get(), previous = this.#editors.get(detail.requirementId);
+    if (!this.#viewCurrent(view) || previous?.sourceRetired && !previous.receipt && previous.clientMutationId !== detail.clientMutationId) return;
+    const original = this.#unresolvedWrite();
+    if (original && (original.status === "pending" || original.sourceRetired || original.clientMutationId !== detail.clientMutationId)) {
+      this.#editors.set(detail.requirementId, { status: "not-attempted", clientMutationId: detail.clientMutationId }); this.#writeNotAttempted(); return;
+    }
     this.#editors.set(detail.requirementId, { status: "saving", clientMutationId: detail.clientMutationId });
     this.#busy = `save:${detail.requirementId}`; this.requestUpdate();
     try {
-      const result = await this.store.outputRequirementCommand({ action: "save", documentId: view.documentId, expectedRevision: String(detail.expectedRevision), clientMutationId: detail.clientMutationId, blockId: detail.requirementId, spec: detail.draft, planSuggestions: { count_policies: detail.planSuggestions.countPolicies, suggested_counts: detail.planSuggestions.suggestedCounts } } as OutputRequirementCommand);
-      if (!this.#viewCurrent(view)) return;
+      const result = await this.store.outputRequirementCommand({ action: "save", documentId: view.documentId, expectedRevision: String(detail.expectedRevision), clientMutationId: detail.clientMutationId, blockId: detail.requirementId, spec: detail.draft, planSuggestions: { count_policies: detail.planSuggestions.countPolicies, suggested_counts: detail.planSuggestions.suggestedCounts } } as OutputRequirementCommand, {
+        current: () => this.#viewCurrent(view) && this.store.route.get() === route && this.#editors.get(detail.requirementId)?.clientMutationId === detail.clientMutationId,
+      });
+      if (!this.#viewCurrent(view)) {
+        const receipt = this.#originalAcknowledgment(view, result, detail.clientMutationId, "save");
+        if (receipt && this.#editors.get(detail.requirementId)?.clientMutationId === detail.clientMutationId) {
+          this.#editors.set(detail.requirementId, { status: "saved", clientMutationId: detail.clientMutationId, sourceRetired: true, receipt }); this.requestUpdate();
+        }
+        return;
+      }
+      if (result.status === "not-attempted") {
+        this.#editors.set(detail.requirementId, { status: "not-attempted", clientMutationId: detail.clientMutationId }); this.#writeNotAttempted(); return;
+      }
       const current = this.#snapshot();
       if (current) this.#observePlanning(current);
       const row = current?.requirements.find((candidate) => candidate.blockId === detail.requirementId);
@@ -578,19 +665,45 @@ export class FormaOutputRequirements extends FormaElement {
       if (!gate.allowed) { this.#preflight = null; this.#authorizationAcknowledged = false; this.#paidActivation.clear(); this.#announce(this.#readinessMessage(gate), true); return null; }
       if (command.action === "preflight") { this.#preflight = null; this.#authorizationAcknowledged = false; this.#paidActivation.clear(); }
     }
-    const view = this.#captureView();
+    const view = this.#captureView(), route = this.store.route.get();
+    if (!this.#viewCurrent(view)) return null;
+    const original = this.#unresolvedWrite();
+    if (original && (original.status === "pending" || original.sourceRetired || original.clientMutationId !== this.#uncertainCommand?.id)) { this.#writeNotAttempted(); return null; }
     if (planCapture && captureOutputPlanProposalBase(snapshot, this.#lastScope).semanticKey !== planCapture.semanticKey) {
       this.#observePlanning(snapshot);
       this.#announce(this.#t("planReviewUpdated", "The planning base changed. Review the updated comparison before confirming."), true);
       return null;
     }
-    const signature = JSON.stringify({ command, ...(planCapture ? { semanticKey: planCapture.semanticKey } : {}) });
-    const receipt = this.#uncertainCommand?.signature === signature ? this.#uncertainCommand : { signature, id: crypto.randomUUID(), expectedRevision: planCapture?.expectedRevision ?? snapshot.revision };
-    this.#uncertainCommand = receipt;
+    const expectedRevision = planCapture?.expectedRevision ?? snapshot.revision;
     this.#busy = command.action; this.requestUpdate();
     try {
-      const result = await this.store.outputRequirementCommand({ ...command, documentId: view.documentId, expectedRevision: receipt.expectedRevision, clientMutationId: receipt.id } as OutputRequirementCommand);
-      if (!this.#viewCurrent(view)) return null;
+      // Retain a complete binding digest, never command prose, in the existing uncertain owner.
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
+        command, documentId: view.documentId, expectedRevision, sourceRevision: snapshot.sourceRevision,
+        requirementRevision: snapshot.requirementRevision, ...(planCapture ? { semanticKey: planCapture.semanticKey } : {}),
+      })));
+      if (!this.#viewCurrent(view) || this.#snapshot() !== snapshot) return null;
+      const signature = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      if (original && this.#uncertainCommand?.signature !== signature) { this.#writeNotAttempted(); return null; }
+      const previousReceipt = this.#uncertainCommand;
+      const receipt = this.#uncertainCommand?.signature === signature && !this.#uncertainCommand.receipt
+        ? this.#uncertainCommand : { signature, id: crypto.randomUUID(), expectedRevision };
+      this.#uncertainCommand = receipt;
+      const result = await this.store.outputRequirementCommand({ ...command, documentId: view.documentId, expectedRevision: receipt.expectedRevision, clientMutationId: receipt.id } as OutputRequirementCommand, {
+        current: () => this.#viewCurrent(view) && this.store.route.get() === route && this.#snapshot() === snapshot
+          && (!planCapture || Boolean(this.#reviewPlan && this.#planning && outputPlanConfirmationCanClose(this.#planning, planCapture))),
+      });
+      if (!this.#viewCurrent(view)) {
+        const acknowledged = this.#originalAcknowledgment(view, result, receipt.id, command.action);
+        if (acknowledged && this.#uncertainCommand?.id === receipt.id) {
+          this.#uncertainCommand = { ...this.#uncertainCommand, sourceRetired: true, receipt: acknowledged }; this.requestUpdate();
+        }
+        return null;
+      }
+      if (result.status === "not-attempted") {
+        if (this.#uncertainCommand?.id === receipt.id) this.#uncertainCommand = previousReceipt;
+        this.#writeNotAttempted(); return null;
+      }
       if (result.status !== "unavailable") this.#uncertainCommand = null;
       if (result.status !== "saved") { this.#announce(this.#failure(result), true); return null; }
       return result.body;
@@ -701,6 +814,9 @@ export class FormaOutputRequirements extends FormaElement {
   }
 
   #setFile(event: Event) {
+    if (!this.store.sourceOwnershipActive(this.store.captureSourceOwnership()) || this.#uploadSourceRetired && !this.#uploadReceipt) return;
+    if (this.#unresolvedWrite()?.sourceRetired) { this.#writeNotAttempted(); return; }
+    this.#uploadSourceRetired = false; this.#uploadReceipt = null;
     this.#file = (event.target as HTMLInputElement).files?.[0] ?? null;
     this.#uploadFailure = null;
     this.#rightsConfirmed = false; this.#uploadCommandId = crypto.randomUUID();
@@ -714,11 +830,21 @@ export class FormaOutputRequirements extends FormaElement {
     if (!this.#file || !this.#rightsConfirmed || this.#busy || outputUploadNeedsRestage(this.#uploadFailure) || resource.state !== "ready" || !resource.snapshot?.permissions.canAuthor || !resource.snapshot.capabilities.ownedFileAdoption) return;
     const gate = outputSourceReadiness(resource.snapshot);
     if (!gate.allowed) { this.#announce(this.#readinessMessage(gate), true); return; }
-    const view = this.#captureView(), file = this.#file, mutationId = this.#uploadCommandId;
+    const view = this.#captureView(), route = this.store.route.get(), file = this.#file, mutationId = this.#uploadCommandId;
+    if (!this.#viewCurrent(view) || this.#uploadSourceRetired) return;
+    const original = this.#unresolvedWrite();
+    if (original && (original.status === "pending" || original.sourceRetired || original.clientMutationId !== mutationId)) { this.#writeNotAttempted(); return; }
     this.#busy = "upload"; this.requestUpdate();
     try {
-      const result = await this.store.uploadOutputAsset(view.documentId, file, this.#uploadRevision, mutationId, true);
-      if (!this.#viewCurrent(view)) return;
+      const result = await this.store.uploadOutputAsset(view.documentId, file, this.#uploadRevision, mutationId, true, {
+        current: () => this.#viewCurrent(view) && this.store.route.get() === route && this.#file === file && this.#uploadCommandId === mutationId && this.#rightsConfirmed,
+      });
+      if (!this.#viewCurrent(view)) {
+        const receipt = this.#originalAcknowledgment(view, result, mutationId, "adopt");
+        if (receipt && this.#uploadCommandId === mutationId) { this.#uploadReceipt = receipt; this.#uploadFailure = null; this.requestUpdate(); }
+        return;
+      }
+      if (result.status === "not-attempted") { this.#writeNotAttempted(); return; }
       const sameSelection = this.#file === file && this.#uploadCommandId === mutationId;
       if (result.status === "saved") {
         if (sameSelection) {
@@ -1001,10 +1127,14 @@ export class FormaOutputRequirements extends FormaElement {
   }
 
   #card(snapshot: OutputRequirementsSnapshot, row: OutputRequirementRow, ready: boolean) {
-    const resource = this.store.outputRequirements.resource(this.documentId);
+    const resource = this.store.outputRequirements.resource(this.documentId), original = this.#unresolvedWrite();
+    // An unrelated or retired unresolved write blocks only submission; the card's
+    // existing authoring fields and newer human draft remain editable.
+    const submissionBlocked = original && (original.sourceRetired || original.clientMutationId !== this.#editors.get(row.blockId)?.clientMutationId);
+
     return html`<div class="output-card-host">
       ${!this.inspectionOnly && snapshot.grants.some((grant) => grant.status === "authorized" || grant.status === "active" || grant.pendingCalls > 0 || grant.exposedMicrousd > 0) ? html`<p>${this.#t("editingActiveWork", "Saving requirement changes can pause further provider calls until the source and plan are checked again. Existing work and charges remain recorded; uncertain submissions cannot be withdrawn silently.")}</p>` : nothing}
-      <forma-output-requirement-card .snapshot=${this.#cardSnapshot(snapshot, row)} .resourceState=${resource.state} .presentation=${this.surface === "project" ? "compact" : "full"} .editorState=${this.#editors.get(row.blockId) ?? { status: "idle" }} .readOnlyReason=${row.locked ? this.#t("locked", "This Output requirement is locked.") : ""}
+      <forma-output-requirement-card .snapshot=${this.#cardSnapshot(snapshot, row)} .resourceState=${submissionBlocked ? "unavailable" : resource.state} .presentation=${this.surface === "project" ? "compact" : "full"} .editorState=${this.#editors.get(row.blockId) ?? { status: "idle" }} .readOnlyReason=${row.locked ? this.#t("locked", "This Output requirement is locked.") : ""}
         @forma-output-save=${this.#save} @forma-output-review-plan=${this.#reviewIntent}
         @forma-output-open-result=${(event: CustomEvent<{ scope: { authorizationScopeKey: string; documentId: string }; targetId: string; artifactId: string; artifactRevision: string | number }>) => {
           const detail = event.detail;
@@ -1385,13 +1515,14 @@ export class FormaOutputRequirements extends FormaElement {
     const resource = this.store.outputRequirements.resource(this.documentId);
     const snapshot = resource.snapshot;
     const ready = resource.state === "ready";
-    if (!snapshot) return html`<section class="output-requirements" aria-busy=${resource.state === "loading" || this.#sourceRefreshing ? "true" : "false"}><h2>${this.#t("title", "Outputs")}</h2><p role="status">${resource.state === "loading" ? this.#t("loading", "Loading the complete delivery scope…") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p>${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}${this.#refreshControl("button secondary")}</section>`;
+    if (!snapshot) return html`${this.#transportReceipt()}<section class="output-requirements" aria-busy=${resource.state === "loading" || this.#sourceRefreshing ? "true" : "false"}><h2>${this.#t("title", "Outputs")}</h2><p role="status">${resource.state === "loading" ? this.#t("loading", "Loading the complete delivery scope…") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p>${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}${this.#refreshControl("button secondary")}</section>`;
     const rows = this.blockId ? snapshot.requirements.filter((row) => row.blockId === this.blockId) : snapshot.requirements;
     const packageGate = outputPackageReadiness(snapshot), historyUnverified = snapshot.capabilities.limitationCodes?.includes("output_scope_history_reason_unverified") === true;
-    if (this.blockId) return html`${rows.map((row) => this.#card(snapshot, row, ready))}${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>${this.#refreshControl("button secondary")}` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}`;
-    if (!rows.length && !snapshot.confirmedPlan) return nothing;
+    if (this.blockId) return html`${this.#transportReceipt()}${rows.map((row) => this.#card(snapshot, row, ready))}${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>${this.#refreshControl("button secondary")}` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}`;
+    if (!rows.length && !snapshot.confirmedPlan) return this.#transportReceipt();
     return html`<section class="output-requirements" aria-busy=${resource.state === "refreshing" || this.#sourceRefreshing || Boolean(this.#busy) ? "true" : "false"} data-document-id=${this.documentId}>
       <header class="output-requirements-heading"><div>${this.documentName ? html`<span class="eyebrow" dir="auto">${this.documentName}</span>` : nothing}<h2 aria-label=${this.#controlName(this.#t("title", "Outputs"))} tabindex="-1" data-output-plan-focus-return>${this.#t("title", "Outputs")}</h2><p>${ready ? outputSourceReadiness(snapshot).allowed ? this.#summary(snapshot.summary, !snapshot.confirmedPlan, historyUnverified) : this.#t("sourceReadinessUnknown", "Source checks are unavailable; delivery readiness is unknown.") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p></div>${this.#refreshControl("button ghost compact")}</header>
+      ${this.#transportReceipt()}
       <p>${this.#t("wholeScope", "Progress covers the entire confirmed plan, including unselected, unresolved, and currently unavailable work.")}</p>
       ${this.#sourceNotice(snapshot)}
       ${this.#sourceCapacityNotice(snapshot)}

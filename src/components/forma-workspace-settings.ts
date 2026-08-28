@@ -72,8 +72,8 @@ export class FormaWorkspaceSettings extends FormaElement{
     return{organizationId,section,invitations:parts[2]==="invitations"};
   }
 
-  async #request<T>(url:string,init:RequestInit={}){
-    const response=await fetch(url,{credentials:"same-origin",...init});
+  async #request<T>(url:string,init:RequestInit={},selectedResponse?:Response){
+    const response=selectedResponse??await fetch(url,{credentials:"same-origin",...init});
     const body=await response.json() as T&{error?:string;retryable?:boolean;status?:string};
     if(!response.ok){const key=String(body.error??"");throw Object.assign(new Error(this.i18n.t(`workspace.admin.error.${key}`,this.i18n.t("workspace.admin.unavailable","This workspace is unavailable."))),{retryable:body.retryable===true||body.status==="partial",status:response.status,code:key});}
     return body;
@@ -148,11 +148,12 @@ export class FormaWorkspaceSettings extends FormaElement{
     this.requestUpdate();
   }
 
-  async #mutate(description:string,action:()=>Promise<void>){
-    if(this.#busy)return;
+  async #mutate(description:string,action:()=>Promise<void|false>,current?:()=>boolean){
+    if(this.#busy||current&&!current())return;
     this.#busy=true;this.#error="";this.requestUpdate();
-    try{await action();this.#notice=description;await this.store.refreshSession();await this.#load();}
+    try{const completed=await action();if(completed===false||current&&!current())return;this.#notice=description;await this.store.refreshSession();if(current&&!current())return;await this.#load();}
     catch(error){
+      if(current&&!current())return;
       const message=error instanceof Error?error.message:"workspace_mutation_failed";
       if(error instanceof Error&&(error as Error&{retryable?:boolean}).retryable)await this.#load();
       this.#error=message;
@@ -288,10 +289,14 @@ export class FormaWorkspaceSettings extends FormaElement{
   }
 
   #openProject(project:{organizationId:string;projectAccessId:string}){
+    if(this.#busy)return;
+    const selection=this.store.beginProjectContextSelection();
     void this.#mutate(this.i18n.t("workspace.admin.projectOpened","Shared project opened."),async()=>{
-      await this.#request(`/api/workspaces/${encodeURIComponent(project.organizationId)}/projects/${encodeURIComponent(project.projectAccessId)}/context`,{method:"POST"});
-      await this.store.refreshSession();this.store.setRoute("/projects");await this.store.load();
-    });
+      const response=await selection.request(project);if(!response||!selection.sourceCurrent())return false;
+      await this.#request("",{},response);if(!selection.sourceCurrent())return false;
+      await this.store.refreshSession();if(!selection.current())return false;
+      this.store.setRoute("/projects");await this.store.load();
+    },selection.current);
   }
 
   #savePolicy(event:SubmitEvent){

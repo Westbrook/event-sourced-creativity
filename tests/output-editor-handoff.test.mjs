@@ -66,7 +66,7 @@ async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="appl
   f.store.outputRequirementCommand=async()=>assert.fail("No save, confirm, approve, grant, or generate");
   f.store.refreshEvents=async()=>assert.fail("A refused application cannot refresh authored state");
   const model=outputSnapshot("A");model.projectId="p";model.scope.actorUserId="owner";f.output=model;
-  f.store.outputRequirements={resource:()=>({state:"ready",snapshot:f.output,error:null}),ensure:async()=>({state:"ready",snapshot:f.output,error:null})};
+  f.store.outputRequirements={retainedWrite:()=>null,resource:()=>({state:"ready",snapshot:f.output,error:null}),ensure:async()=>({state:"ready",snapshot:f.output,error:null})};
   f.preview=retainedReview("p","A","requirement-A");
   f.reply=async body=>body.action===refusalAt?Response.json({error,blockId:"requirement-A",status:"not-applied",message:"RAW_PRIVATE_BACKEND_MESSAGE"},{status:409})
     :body.action==="resume"?Response.json({status:"review",preview:f.preview}):assert.fail("Unexpected action "+body.action);

@@ -22,7 +22,8 @@ async function fixtureDeclarations(file, names, namespace) {
   try { return await import(url.href); } finally { hooks.deregister(); }
 }
 const receiptFixture = await fixtureDeclarations("./output-operation-receipt-store.test.mjs", ["fixture", "body", "response", "job", "deferred"], "receipt-privacy-r2-fixture");
-const tick = () => new Promise(resolve => setImmediate(resolve));
+let waitForOriginalDispatch = () => new Promise(resolve => setImmediate(resolve));
+const tick = () => waitForOriginalDispatch();
 const privateText = "PRIVATE_RECEIPT_SOURCE_NOT_AN_ACCOUNTING_RECORD";
 function bodyGate(status = 200) {
   let controller, finished = false;
@@ -202,7 +203,10 @@ test("a synchronous newer read started by refresh notification cannot be adopted
 
 
 const writeFixture = await fixtureDeclarations("./output-client-freshness.test.mjs",
-  ["fixture", "sample", "start", "command", "assertHidden", "assertReceipt", "secret"], "committed-private-receipt-r2-fixture");
+  ["fixture", "sample", "start", "command", "assertHidden", "assertReceipt", "secret", "tick"], "committed-private-receipt-r2-fixture");
+// The same real transport-entry barrier as its paired write fixture. Receipt-only
+// reads retain their original header boundary; no private response body is awaited.
+waitForOriginalDispatch = writeFixture.tick;
 function privateAcknowledgment(action, status = 410) {
   const code = status === 410 ? "output_private_evidence_unavailable" : "output_execution_authority_revoked";
   return { ok: true, replayed: false, command: { action, eventId: "canonical-output-event" }, appended: [], snapshot: null,

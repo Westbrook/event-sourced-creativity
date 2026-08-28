@@ -18,6 +18,9 @@ import enMessages from "../src/components/design-system/locales/system-en.ts";
 import frMessages from "../src/components/design-system/locales/fr.ts";
 import arMessages from "../src/components/design-system/locales/ar.ts";
 import jaMessages from "../src/components/design-system/locales/ja.ts";
+import { isDeepStrictEqual } from "node:util";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
+import { normalizeOutputRequirementCreation } from "../src/model/output-requirement-creation.ts";
 
 // This runs actual component renderers and handlers with in-memory application,
 // template, focus, and modal ports. It is not a browser/AT or viewport certificate.
@@ -253,6 +256,7 @@ function fixture(locale = "en", viewer = false) {
     toast: text => f.trace.push("toast:" + text), copyLibraryBlockSet: async id => { f.trace.push("copy:" + id); return { rootBlockId: "copied", blockCount: 1 }; },
     guardedFetch: async (url, options) => { const body = JSON.parse(options.body); state.requests.push({ url, body }); const reply = state.replies.shift(); assert.ok(reply, "A deterministic response was prepared for " + url); return { ok: reply.ok !== false, json: async () => reply.body ?? reply }; },
   };
+  installSourceOwnershipPort(f.store);
   f.renderer = new RendererPort(f, registry);
   activeFixture = f;
   f.host = new ListHost();
@@ -1420,19 +1424,42 @@ test("final context names: same peer array uses current labels, visible state, e
 
 // Context continuity uses the actual Store authoring methods and model event
 // builders. Only this fixture's existing appendBatch transport is deferred.
+// This named adapter describes that SIMULATED transport, not a server receipt or
+// authority proof. It retains the existing rows and invents no acknowledgment ID.
+function SIMULATED_CONTEXT_APPEND_RESULT(inputs, appended) {
+  const rows = Array.isArray(appended) ? appended : [];
+  const complete = Array.isArray(inputs) && inputs.length > 0 && rows.length === inputs.length
+    && new Set(rows.map(row => row?.eventId)).size === rows.length
+    && rows.every((row, index) => {
+      const input = inputs[index];
+      return row && typeof row === "object" && !Array.isArray(row)
+        && typeof row.eventId === "string" && row.eventId.length > 0
+        && input && typeof input === "object" && !Array.isArray(input)
+        && typeof input.type === "string" && input.type.length > 0 && row.type === input.type
+        && input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)
+        && isDeepStrictEqual(row.payload, input.payload)
+        && (input.compensatesEventId == null || typeof input.compensatesEventId === "string" && input.compensatesEventId.length > 0)
+        && (row.compensatesEventId ?? null) === (input.compensatesEventId ?? null);
+    });
+  return {
+    appended: rows,
+    acknowledgment: { outcome: complete ? "observed" : "unconfirmed", rejectedIndices: [] },
+    publication: complete ? "published" : "none",
+  };
+}
 const contextContinuityAuthoring = await import("../src/model/output-authoring.ts");
 const contextContinuityStoreTree = syntax("src/state/store.ts");
 const contextContinuityStoreClass = contextContinuityStoreTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaStore");
-const contextContinuityStoreNames = ["#relatedOutputBlocks", "outputBlockTextEvents", "outputInputEvents", "saveOutputInput"];
+const contextContinuityStoreNames = ["#relatedOutputBlocks", "outputBlockTextEvents", "outputInputEvents", "saveOutputInput", "#eventWriteComplete", "#requestedEventObserved"];
 const contextContinuityStoreMembers = contextContinuityStoreNames.map(name => {
   const member = contextContinuityStoreClass.members.find(node => node.name?.getText(contextContinuityStoreTree) === name);
   assert.ok(member, "reuse complete Store member " + name);
   return member.getText(contextContinuityStoreTree);
 });
-const ContextContinuityStore = new Function("outputInputDraft", "outputInputEditEvents", "outputBlockTextEditEvents", ts.transpileModule(
+const ContextContinuityStore = new Function("outputInputDraft", "outputInputEditEvents", "outputBlockTextEditEvents", "normalizeOutputRequirementCreation", ts.transpileModule(
   "return class ContextContinuityStore {\n" + contextContinuityStoreMembers.join("\n") + "\n}",
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-).outputText)(contextContinuityAuthoring.outputInputDraft, contextContinuityAuthoring.outputInputEditEvents, contextContinuityAuthoring.outputBlockTextEditEvents);
+).outputText)(contextContinuityAuthoring.outputInputDraft, contextContinuityAuthoring.outputInputEditEvents, contextContinuityAuthoring.outputBlockTextEditEvents, normalizeOutputRequirementCreation);
 
 async function contextContinuityFixture(locale, kind) {
   const f = fixture(locale);
@@ -1452,6 +1479,10 @@ async function contextContinuityFixture(locale, kind) {
   const actual = new ContextContinuityStore();
   actual.projection = f.store.projection; actual.toast = f.store.toast;
   actual.appendBatch = (...args) => f.store.appendBatch(...args);
+  actual.appendBatchWithReceipt = async (inputs, ...args) =>
+    SIMULATED_CONTEXT_APPEND_RESULT(inputs, await actual.appendBatch(inputs, ...args));
+  for (const name of ["captureSourceOwnership", "sourceOwnershipScopeActive", "sourceOwnershipActive"])
+    actual[name] = (...args) => f.store[name](...args);
   for (const name of contextContinuityStoreNames.filter(name => !name.startsWith("#"))) f.store[name] = actual[name].bind(actual);
   f.draw(); await f.select("decision-0"); await f.toggle("decision-0");
   f.contextContinuityKind = kind;

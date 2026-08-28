@@ -1,6 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1dlpcpe.28": "デバイスのキューは未確認です",
+  "system.auto.1ssjjvw.195": "このページではCanvasの同期を一時停止し、デバイスのストレージで非公開の下書き本文を削除して元の参照を保存しています。再読み込み後に一時停止が維持されるかは、まだ確認されていません。元の変更を再送しないでください。",
+  "system.auto.1yofwuk.49": "Canvasの同期を一時停止中 · 元の参照を保持",
+  "system.auto.1w0ppjw.143": "Canvasの非公開の下書き本文は、このデバイスのキューから取り除かれました。元のバッチ参照は保持され、未確認の変更は再送されません。",
+  "system.auto.1lzk80v.175": "このページではCanvasの同期を一時停止しています。デバイスのストレージでは、非公開の下書き本文の削除や、再読み込み後の一時停止の維持を確認できませんでした。元の変更を再送しないでください。",
   "system.auto.e7k4f4.75": "表示されたアクションが現在の表示に属するかを確認する任意のチェックです。権限を付与するものではありません。",
+  "system.auto.1lv00pf.71": "識別情報のみです。下書き自体は、この接続済みエディターが引き続き管理します。",
   "system.auto.1we72vb.8": "拒否",
   "system.auto.sq78o8.8": "準備済み",
   "system.auto.144hcr3.9": "準備中",
@@ -6070,6 +6076,12 @@ Object.assign(messages, {
   "system.auto.1eape3u.21": "プラン作成を停止しました。",
   "system.auto.1hytdg0.74": "既存のプロバイダーリクエストには料金が発生する可能性があるため、確保枠は維持されています。",
   "system.auto.ayjo92.48": "プロバイダーへの送信前にプラン作成を停止しました。",
+  "system.auto.1rrda77.69": "確認待ちの変更が上限に達しました。新しい変更は送信されていません。",
+  "system.auto.1cr0pj7.77": "元の変更はサーバーで確認されています。非公開の表示は利用できません。",
+  "system.auto.1p6ks6n.64": "元の変更の結果は未確認です。再送信はしていません。",
+  "system.auto.108waw7.63": "参照元を利用できないため、今回の要求は送信されていません。",
+  "system.auto.s84qun.90": "元の完成出力への変更は一部のみ確認されています。同じ操作を繰り返してはいません。",
+  "system.auto.1ijg7qv.78": "元の変更の一部のみが確認されています。再送信はしていません。",
 });
 
 export default messages;

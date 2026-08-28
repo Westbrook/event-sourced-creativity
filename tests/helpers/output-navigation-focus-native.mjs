@@ -126,7 +126,7 @@ export function installOutputNavigationFocusNative(t, f, ports) {
   f.renderer.query = (owner, selector) => {
     if (selector.includes(",")) return selector.split(",").flatMap(value => f.renderer.query(owner, value.trim()));
     const actual = !f.renderer.updatingOwner ? treeRows() : null;
-    const literalOwner=actual?.find(row=>row.port===owner);
+    const literalOwner=owner == null ? undefined : actual?.find(row=>row.port===owner);
     const result = query(literalOwner?owner.owner:owner, selector).filter(node=>{
       if(!literalOwner)return true;
       const row=actual.find(value=>value.port===node||value.component===node);

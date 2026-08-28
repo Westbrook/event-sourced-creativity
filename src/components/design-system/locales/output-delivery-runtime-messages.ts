@@ -85,6 +85,12 @@ const groups = {
     "تعذر تحميل متطلبات المخرجات. نطاق التسليم غير معروف؛ حدّث البيانات قبل اتخاذ إجراء.",
     "納品要件を読み込めませんでした。納品範囲が不明なため、操作前に更新してください。",
   ] },
+  requestNotAttempted: { codes: "output_client_write_not_attempted", text: [
+    "This request was not sent. Keep any original operation ID until its receipt is confirmed.",
+    "Cette demande n’a pas été envoyée. Conservez tout identifiant d’opération d’origine jusqu’à confirmation de son reçu.",
+    "لم يُرسل هذا الطلب. احتفظ بأي معرّف للعملية الأصلية حتى تأكيد إيصالها.",
+    "このリクエストは送信されていません。元の処理IDがある場合は、その記録を確認できるまで保持してください。",
+  ] },
   responseLost: { codes: "output_client_response_lost output_client_write_unconfirmed output_client_transport_failed", text: [
     "The response was not confirmed. Keep this draft and recover the same operation ID before starting another request.",
     "La réponse n’a pas été confirmée. Conservez ce brouillon et récupérez l’opération portant le même identifiant avant de lancer une autre demande.",
@@ -1297,6 +1303,12 @@ const groups = {
     "Cette tentative enregistrée est indisponible dans l’espace de travail actuel. Vérifiez le document sélectionné et vos droits d’accès avant de vérifier son reçu.",
     "هذه المحاولة المحفوظة غير متاحة في مساحة العمل الحالية. تحقق من المستند المحدد وصلاحيات الوصول قبل فحص إيصالها.",
     "現在のワークスペースでは、この保存済みの試行を利用できません。処理記録を確認する前に、選択したドキュメントとアクセス権を確認してください。"
+  ] },
+  artifactNoChanges: { codes: "", text: [
+    "No changes to this finished output.",
+    "Aucune modification de ce résultat final.",
+    "لا توجد تغييرات على هذا المخرج النهائي.",
+    "この完成済みの出力に変更はありません。",
   ] },
   sourceGovernanceCapacity: { codes: "output_source_governance_capacity_exceeded", text: [
     "This route cannot fully verify the governed sources within the pilot’s verification capacity. Inspect this Document’s governed sources and contact a workspace administrator.",

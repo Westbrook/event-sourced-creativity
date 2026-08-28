@@ -172,7 +172,7 @@ function contextFocusSaveDefer(t, f) {
   host.intercept = request => {
     if (request.url !== "/api/events" || request.init.method !== "POST") return original?.(request);
     const gate = Promise.withResolvers(), submitted = structuredClone(request.body.events);
-    requests.push({ gate, submitted });
+    requests.push({ gate, submitted, clientId: request.body.clientId });
     return gate.promise;
   };
   t.after(() => { host.intercept = original; });
@@ -190,7 +190,7 @@ async function contextFocusSaveAcknowledge(f, request) {
   const appended = request.submitted.map((input, index) => ({
     ...structuredClone(input), eventId: "context-continuity-ack-" + (head + index + 1), sequence: head + index + 1,
     streamId: f.storeHost.worker.streamId, occurredAt: "2026-08-27T00:00:00Z", recordedAt: "2026-08-27T00:00:00Z",
-    actor: "user", correlationId: "context-continuity-explicit-save",
+    actor: "user", clientId: request.clientId, schemaVersion: 1, correlationId: "context-continuity-explicit-save",
   }));
   request.gate.resolve(Response.json({ appended, head: head + appended.length }));
   await untilScene(() => f.store.busy.get() === "", "original append acknowledgement completes before any next render");

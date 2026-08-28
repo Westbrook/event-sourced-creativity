@@ -412,6 +412,21 @@ for(const locale of ["en","fr","ar","ja"])test(`Scene plan grammar ${locale}: or
   }
 });
 
+for(const locale of ["en","fr","ar","ja"])test(`Scene viewer type ${locale}: exact retained output metadata uses the scoped label without generation`,async t=>{
+  t.mock.method(globalThis,"fetch",async()=>assert.fail("No provider or external network is permitted"));
+  const h=await createSceneStoreHost({count:1});t.after(()=>h.close());await seedRegenerableScene(h);
+  const f=await createSceneComposer(t,{locale,storeHost:h,workflow:true});
+  assert.equal(await f.host.openArtifactById("saved-regeneration-scene",{expectedRevision:0}),true);
+  await settle(f);
+  assert.ok(f.renderer.ownNodes(f.host,"dialog").some(node=>node.attributes.class==="document-artifact-view"&&node.open));
+  assert.ok(f.renderer.markup.includes('<p class="artifact-scene-configuration"><b>'+sceneTypeLabels[locale]+"</b>"));
+  assert.ok(f.visible().includes(f.i18n.t("scene.variant.visual")));
+  assert.ok(f.visible().includes("The keeper hears the harbor bell."),"retained authored text stays unchanged");
+  if(locale==="fr")assert.equal(f.i18n.t("evaluation.preview.medium"),"Moyenne");
+  assert.equal(h.requests.filter(request=>request.body?.payload?.sceneCostConsent||request.body?.payload?.sceneCostPreview).length,0);
+  assert.equal(h.worker.counts().document_jobs,0);assert.equal(h.worker.counts().budget_reservations,0);assert.equal(h.worker.counts().cost_budget_reservations,0);
+});
+
 test("Scene composer normal completion: Arabic shared nine-part check waits for its actual free response",async t=>{
   const network=t.mock.method(globalThis,"fetch",async()=>assert.fail("No provider or external network is permitted"));
   t.after(()=>assert.equal(network.mock.callCount(),0));

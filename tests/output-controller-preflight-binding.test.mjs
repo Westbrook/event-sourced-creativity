@@ -66,6 +66,7 @@ for (const alternative of [false, true]) for (const [name, mutate, mayOffer] of 
   test(`actual ${alternative ? "alternative" : "initial"} preflight reply after ${name}`, async () => {
     const f = await fixture({ alternative });
     const pending = f.start();
+    await f.waitForRequest(pending);
     assert.equal(f.requests.length, 1);
     assert.equal(f.requests[0].action, "preflight");
     if (alternative) assert.equal(f.requests[0].alternativeOfSlotId, "failed-slot");
@@ -127,6 +128,7 @@ test("256 selected targets can be checked without changing the complete assignme
   assert.equal(binding(check(f), "?disabled"), false);
   assert.ok(JSON.stringify(execution(f)).includes("at most 256 targets at a time"));
   const pending = f.start();
+  await f.waitForRequest(pending);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].targetIds.length, 256);
   assert.deepEqual(new Set(f.requests[0].targetIds), new Set(current.confirmedPlan.plan.targets.map((target) => target.id)));
   f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight: offerForAll(current, current.confirmedPlan.plan.targets) } } });
@@ -149,6 +151,7 @@ test("257 selected targets remain visible and owed, require an explicit smaller 
   assert.equal(runRows(f).length, 257); assert.equal(runRows(f).filter((row) => binding(row, ".checked")).length, 256);
   assert.equal(binding(check(f), "?disabled"), false);
   const pending = f.start();
+  await f.waitForRequest(pending);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].targetIds.length, 256);
   assert.ok(!f.requests[0].targetIds.includes("target-256"));
   assert.deepEqual(f.snapshots.get("doc-a"), before, "local run selection cannot withdraw any committed target");
@@ -180,7 +183,7 @@ test("a committed optional target can be unchecked for a run without withdrawing
   assert.equal(binding(row, ".checked"), true); assert.equal(binding(row, "?disabled"), false);
   eventHandlers(row, "change")[0]({ target: { checked: false } });
   assert.equal(current.confirmedPlan.plan.targets[1].selected, true);
-  const pending = f.start(); assert.deepEqual(f.requests[0].targetIds, ["target-0"]);
+  const pending = f.start(); await f.waitForRequest(pending); assert.deepEqual(f.requests[0].targetIds, ["target-0"]);
   f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight: offerForAll(current, [current.confirmedPlan.plan.targets[0]]) } } });
   await pending;
   assert.equal(current.confirmedPlan.plan.targets.length, 2);
@@ -196,7 +199,7 @@ test("a one-target alternative offer is bound to its slot, not silently expanded
   f.preflight.planRevisionId = current.confirmedPlan.revisionId;
   f.controller.willUpdate(new Map());
   assert.equal(runRows(f).filter((row) => binding(row, ".checked")).length, 2);
-  const pending = f.start(); assert.deepEqual(f.requests[0].targetIds, [original.id]);
+  const pending = f.start(); await f.waitForRequest(pending); assert.deepEqual(f.requests[0].targetIds, [original.id]);
   f.resolve(); await pending;
   assert.ok(region(f.controller.render(), 'class="output-provider-disclosure"'));
   assert.equal(runRows(f).filter((row) => binding(row, ".checked")).length, 2, "preparing an alternative does not rewrite the general run selection");
@@ -260,6 +263,7 @@ test("one explicit Clear narrows an actual 1000-target plan to zero locally, the
   assert.equal(binding(check(f), "?disabled"), false);
   assert.ok(!JSON.stringify(clearControl(f)).includes("output.delivery.runSelectionCleared"));
   const pending = startPreflight(f), first = current.confirmedPlan.plan.targets[0];
+  await f.waitForRequest(pending);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].action, "preflight");
   assert.deepEqual(f.requests[0].targetIds, [first.id]);
   f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight: offerForAll(current, [first]) } } });

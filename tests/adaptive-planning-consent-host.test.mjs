@@ -6,7 +6,8 @@ import ts from "typescript";
 import { adaptiveSuggestionsForCanvas } from "../src/model/block-types.ts";
 import { adaptiveRequestKey, adaptiveJobMatchesRequest } from "../src/model/adaptive-request.ts";
 import { contextConsentAction, contextConsentFailure } from "../src/model/context-consent-state.ts";
-import { documentJobStopBudgetMessage, documentJobTerminal, documentJobHasNoBudgetHold, planningStopBudget } from "../src/model/document-jobs.ts";
+import { DOCUMENT_JOB_KINDS, documentJobStopBudgetMessage, documentJobTerminal, documentJobHasNoBudgetHold, planningStopBudget } from "../src/model/document-jobs.ts";
+import { isDocumentArtifactKind } from "../src/model/document-artifacts.ts";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
 import englishSystemMessages from "../src/components/design-system/locales/system-en.ts";
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
@@ -29,6 +30,9 @@ const parse=path=>ts.createSourceFile(path,readFileSync(new URL(path,import.meta
 const storeSyntax=parse("../src/state/store.ts"),shellSyntax=parse("../src/components/forma-shell.ts"),previewSyntax=parse("../src/components/consequential-preview.ts"),canvasSyntax=parse("../src/canvas/canvas-application.ts"),adaptiveSyntax=parse("../src/components/forma-studio-editor-alternatives.ts");
 function member(syntax,className,name){const owner=syntax.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text===className),node=owner?.members.find(candidate=>candidate.name?.getText(syntax)===name&&(!ts.isMethodDeclaration(candidate)||candidate.body));assert.ok(node,`${className}.${name} production member exists`);return node.getText(syntax);}
 const actualStore=["subscribe","loadDocumentJobDetail","#hydrateDocumentJobGenerationReceipt","#systemNotice","stopDocumentJob","structureAdaptive","#finishPlanningConsent","closePlanningConsent","reviewPlanningJob","newPlanningPreview","previewPlanningConsent","approvePlanningConsent","#requestPlanningConsent","#canReadProjectJobs","#canRequestProjectOutputs","canPreparePlanning","notify","#snapshotIdentity","#authorizationScope","#activeAuthorizationScope","#scopeStillActive","#assertAuthorizationScope","captureAuthorizationScope","authorizationScopeActive","guardedFetch","#adaptiveIntentForJob","#syncAdaptiveSuggestionSets","#withdrawAdaptiveRead","#clearAdaptivePrivatePresentation","#observeAdaptivePlanningJob","#referencedPlanningJobIds","#trimDocumentJobDetails","#rememberPlanningRecovery","planningRecoveryEntries","dismissAdaptiveStructure","dismissAdaptiveSuggestion","adaptiveSuggestionSetsFor"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n");
+// The selected-member host must execute the real Store ownership/deadline
+// implementation; it is not a fallback or a newly invented authority port.
+const actualSourceOwnershipStore=["#sourcePausedJobs","#sourceOwnedJobResponse","#privateJobReference","#sourceGeneration","#sourceRetired","#sourceOwners","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceExpiryValid","#sourceDeadlineCurrent","#assertSourceOwnership"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n");
 const cell=value=>({get:()=>value,set:next=>{value=next;}});
 function deferred(){let resolve,reject;const promise=new Promise((accept,fail)=>{resolve=accept;reject=fail;});return{promise,resolve,reject};}
 const turn=()=>new Promise(setImmediate),document={documentElement:{lang:"en"}};
@@ -58,7 +62,7 @@ function fixture(t,locale="en",{polling=false,scope=""}={}){
   const window={clearTimeout(){}};
   const fetch=(url,init={method:"GET"})=>{const reading=init.method==="GET";assert.ok(reading?polling&&(/^\/api\/document-jobs(?:\?|$)/u.test(url)||/^\/api\/document-jobs\/[^/]+\?inspection=1$/u.test(url)):url==="/api/document-jobs/adaptive"||/^\/api\/document-jobs\/[^/]+\/(?:cancel|force-fail)$/u.test(url));assert.equal(init.method,reading?"GET":"POST");const gate=deferred(),call={url,init,body:init.body?JSON.parse(init.body):null,gate};calls.push(call);if(takers.length)takers.shift()(call);else queues.push(call);return gate.promise;};
   const pollingMethods=polling?["syncDocumentJobs","#revalidateMissingAdaptivePlans"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n"):'async syncDocumentJobs(){trace.push(["sync-jobs"]);}';
-  const Probe=eval(stripTypeScriptTypes(`(class {
+  const Probe=eval(stripTypeScriptTypes(`((DOCUMENT_JOB_KINDS,isDocumentArtifactKind)=>(class {
     #listeners=new Set();#planningConsentScope="";#planningConsentRoute="";#planningConsentResolve;
     #navigationCommit=null;#appendPipeline=Promise.resolve();#pendingAdaptiveIntents=new Map();#adaptiveStructureJobIds=new Map();#dismissedAdaptiveSuggestions=new Set();
     #planningRecoveryIdentities=new Map();#planningRecoverySequence=0;#planningLocaleRevision=0;
@@ -72,11 +76,12 @@ function fixture(t,locale="en",{polling=false,scope=""}={}){
     async refreshSession(){trace.push(["refresh-session"]);}
     async confirmImpersonatedInteraction(){throw new Error("Unexpected impersonation");}documentJobActive(){return false;}canvasPlanningDocumentId(){return "doc-a";}toast(value){trace.push(["toast",value]);}pendingIntent(id){return this.#pendingAdaptiveIntents.get(id);}
     ${actualStore}
+    ${actualSourceOwnershipStore}
     ${actualLocaleChangeMemberR16()}
     ${member(storeSyntax,"FormaStore","#clearPendingAdaptiveSelection")}
     ${member(storeSyntax,"FormaStore","#canPresentAdaptivePlanningJob")}
     ${pollingMethods}
-  })`));
+  }))`))(DOCUMENT_JOB_KINDS,isDocumentArtifactKind);
   const host=new Probe();t.after(()=>host.closePlanningConsent());
   return{host,calls,trace,take:()=>queues.length?Promise.resolve(queues.shift()):new Promise(resolve=>takers.push(resolve)),async reply(call,body,status=200,beforeJson=()=>{}){call.gate.resolve({ok:status>=200&&status<300,status,json:async()=>{beforeJson();return body;}});await turn();}};
 }

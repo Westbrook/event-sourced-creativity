@@ -237,9 +237,9 @@ test("Library prioritizes matching results, merges all artifact types by real se
 test("delivery labels approval truthfully without blocking already releasable personal outputs", () => {
   assert.match(deliver, /documentIds\.has\(artifact\.documentId\)/);
   assert.match(deliver, /documentIds\.has\(output\.documentId\)/);
-  assert.match(deliver, /const approvedArtifacts = reviewedArtifacts\.filter\(\(\{ review \}\) => review\.status === "approved"\)/);
-  assert.match(deliver, /session\?\.projectContext && \(session\.projectContext\.managedPilot \|\| artifactSourceVersions\(artifact\.id, events\)\) && review\.status !== "approved"/);
-  assert.match(deliver, /const readyArtifacts = reviewedArtifacts\.filter\(\(entry\) => entry\.review\.status !== "approved" && !independentlyGated\(entry\)\)/);
+  assert.match(deliver, /const approvedArtifacts = reviewedArtifacts\.filter\(\(\{ delivery \}\) => delivery\.approved\)/);
+  assert.match(deliver, /session\?\.projectContext && \(session\.projectContext\.managedPilot \|\| artifactSourceVersions\(artifact\.id, events\)\) && !delivery\.approved/);
+  assert.match(deliver, /const readyArtifacts = reviewedArtifacts\.filter\(\(entry\) => !entry\.delivery\.approved && !independentlyGated\(entry\)\)/);
   assert.match(deliver, /artifactSection\(approvedArtifacts,[\s\S]*?artifactSection\(readyArtifacts,[\s\S]*?artifactSection\(pendingArtifacts,/);
   assert.match(deliver, /const reviewed = approvedArtifacts\.length/);
   assert.ok(deliver.indexOf("artifactSection(approvedArtifacts") < deliver.indexOf('class="forma-deliver-summary"'));

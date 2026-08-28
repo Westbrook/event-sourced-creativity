@@ -127,7 +127,8 @@ async function contextualFixture(t, locale, options = {}) {
       reviewAllowed: true, targetContractDigest: "a".repeat(64), sourceDigest: snapshot.sourceRevision, sha256: String(ordinal).repeat(64) });
   }
   f.output = snapshot; f.commands = []; f.downloads = [];
-  f.store.outputRequirements = { resource: () => ({ state: "ready", snapshot: f.output, error: null }), ensure: async () => ({ state: "ready", snapshot: f.output, error: null }),
+  // SIMULATED resource facade: no OutputRequirementsClient transport owner is installed.
+  f.store.outputRequirements = { retainedWrite: () => null, resource: () => ({ state: "ready", snapshot: f.output, error: null }), ensure: async () => ({ state: "ready", snapshot: f.output, error: null }),
     download: async (documentId, path) => { f.downloads.push({ documentId, path }); return { status: "unavailable", error: "output_client_response_lost" }; } };
   f.store.outputRequirementCommand = async command => { f.commands.push(command); return { status: "saved", body: { command: {} } }; };
   f.host = new FormaOutputRequirements(); f.host.documentId = "A"; f.host.documentName = authoredName; f.host.surface = "deliver";

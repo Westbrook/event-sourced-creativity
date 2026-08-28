@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {readFileSync} from "node:fs";
 import {stripTypeScriptTypes} from "node:module";
+import ts from "typescript";
 import {creativeNextActions,creativeNextTargetAvailable,creativePreparationChoice,creativePreparationTargetAvailable,followCreativeNextTarget,retainCreativePreparation} from "../src/model/workspace-intelligence.ts";
 import {VIDEO_ADAPTER_CONTRACT} from "../src/model/video-adapter.ts";
 import {outputComparisonHistory} from "../src/model/output-comparison.ts";
@@ -65,6 +66,37 @@ test("image opening fails closed after authority changes during viewer update",a
 
 const artifactSource=readFileSync(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8");
 const generationSource=readFileSync(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8");
+const storeSource=readFileSync(new URL("../src/state/store.ts",import.meta.url),"utf8");
+function actualClassMembers(source,className,names){
+  const tree=ts.createSourceFile(className+".ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+  const owner=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text===className);
+  assert.ok(owner,"the fixture reads actual "+className);
+  return names.map(name=>{
+    const member=owner.members.find(node=>node.name?.getText(tree)===name);
+    assert.ok(member,"the fixture retains actual "+className+"."+name);
+    return member.getText(tree);
+  }).join("\n");
+}
+const sourceOwnershipMembers=actualClassMembers(storeSource,"FormaStore",[
+  "#sourceGeneration","#sourceRetired","#sourceOwners","captureSourceOwnership","sourceOwnershipScopeActive",
+  "#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive",
+]);
+const SourceOwnership=new Function("return "+stripTypeScriptTypes("(class {"+sourceOwnershipMembers+"})"))();
+const privateSourceMembers=actualClassMembers(artifactSource,"DocumentArtifacts",["#privateSourceRevision","#editDraftRevision","#privateSourceCurrent"]).replaceAll("#","_");
+const PrivateSource=new Function("return "+stripTypeScriptTypes("(class {"+privateSourceMembers+"})"))();
+function installPrivateSource(host){
+  const store=host.store;
+  const source=Object.assign(new SourceOwnership(),{
+    captureAuthorizationScope:()=>store.captureAuthorizationScope(),
+    authorizationScopeActive:authorization=>store.authorizationScopeActive(authorization),
+    session:{get:()=>store.session.get()},
+  });
+  store.captureSourceOwnership=source.captureSourceOwnership.bind(source);
+  store.sourceOwnershipActive=source.sourceOwnershipActive.bind(source);
+  Object.assign(host,new PrivateSource(),{isConnected:true});
+  host._privateSourceCurrent=PrivateSource.prototype._privateSourceCurrent;
+  return host;
+}
 function configurationMember(text,from,to){const begin=text.indexOf(from),end=text.indexOf(to,begin+from.length);assert.ok(begin>=0&&end>begin,"Production configuration boundaries changed: "+from);return text.slice(begin,end).replaceAll("#","_");}
 const artifactConfigurationMethods=[configurationMember(artifactSource,"  #closeViewerPopovers(","  #clearCreationDraft("),configurationMember(artifactSource,"  protected override willUpdate(","  protected override updated("),configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage("),configurationMember(artifactSource,"  #openCreate=","  async #revealWorkbenchPane("),configurationMember(artifactSource,"  async #revealWorkbenchPane(","  async openRender("),configurationMember(artifactSource,"  async openRender(","  async openArtifactById(")].join("\n");
 const imageConfigurationMethods=[configurationMember(generationSource,"  async openConfiguration(","  #budgetGuidance("),configurationMember(generationSource,"  protected override updated(","  override connectedCallback("),configurationMember(generationSource,"  #closeDetails(","  #closeFailures(")].join("\n");
@@ -75,7 +107,7 @@ function configurationHost(kind,{changeAt=0,change=null}={}){
   const state={facts:makeFacts(),required:true,route:"/document/A"},trace=[];let host,awaits=0;
   const document={documentElement:{dataset:{}}},window={clearTimeout(){}},nextActionFacts=()=>state.facts;
   const fetch=()=>assert.fail("Free configuration must not dispatch a request");
-  const store=new Proxy({captureAuthorizationScope:()=>({key:state.facts.authorityKey}),route:{get:()=>state.route},session:{get:()=>({projectContext:null})},projection:{get:()=>state.facts},canvasProjection:{get:()=>({selectedCanvasId:state.facts.canvasId})},routeDataReady:()=>false},{get(target,key){assert.ok(key in target,"Unexpected configuration store operation: "+String(key));return target[key];}});
+  const store=new Proxy({captureAuthorizationScope:()=>({key:state.facts.authorityKey}),authorizationScopeActive:authorization=>Boolean(state.facts.canRead&&authorization?.key===state.facts.authorityKey),route:{get:()=>state.route},session:{get:()=>({projectContext:null})},projection:{get:()=>state.facts},canvasProjection:{get:()=>({selectedCanvasId:state.facts.canvasId})},routeDataReady:()=>false},{get(target,key){assert.ok(key in target,"Unexpected configuration store operation: "+String(key));return target[key];}});
   const popovers=[{open:true,close(){this.open=false;trace.push("popover-close");}}];
   const dialog={open:false,close(){this.open=false;trace.push("close");}},ensureModalDialog=value=>{if(!value)return false;if(!value.open){value.open=true;trace.push("show:"+state.facts.documentId);}return true;};
   function invalidate(reason){
@@ -96,7 +128,7 @@ function configurationHost(kind,{changeAt=0,change=null}={}){
     closest(selector){assert.equal(selector,"forma-workspace");return{updateComplete:tick("workspace")};}
     dispatchEvent(event){trace.push("event:"+event.type);return true;}${members}
   })`));
-  host=new Probe();return{host,state,trace,dialog,popovers,invalidate,open:()=>kind==="artifact"?host.openRender("slides","A",{current:()=>state.required}):host.openConfiguration(()=>state.required),steps:()=>awaits};
+  host=new Probe();if(kind==="artifact")installPrivateSource(host);return{host,state,trace,dialog,popovers,invalidate,open:()=>kind==="artifact"?host.openRender("slides","A",{current:()=>state.required}):host.openConfiguration(()=>state.required),steps:()=>awaits};
 }
 for(const kind of ["artifact","image"]){
   test("real "+kind+" configuration opens unchanged A only, through its updated auto-open path",async()=>{const f=configurationHost(kind);assert.equal(await f.open(),true);assert.equal(f.dialog.open,true);assert.deepEqual(f.trace.filter(event=>event.startsWith("show:")),["show:A"]);assert.equal(f.steps(),kind==="artifact"?3:1);});
@@ -125,9 +157,9 @@ for(const medium of ["slides","image"])test("warm chooser surfaces an unavailabl
 
 function artifactHost(changeOnUpdate=false){
   const trace=[],artifact={id:"saved",documentId:"A",sequence:2},job={jobId:"saved",documentId:"A",status:"running"};
-  const host={documentId:"A",store:{captureAuthorizationScope:()=>({key:"authority"}),authorizationScopeActive:()=>true,projection:{get:()=>({libraryArtifacts:[artifact]})},documentJobs:{get:()=>[job]},events:{get:()=>[]},content:{get:()=>({})}},get updateComplete(){return Promise.resolve().then(()=>{if(changeOnUpdate)this.documentId="B";});},_targetDocumentId(){return this.documentId;},_revealWorkbenchPane:async()=>{},_openArtifact:async()=>trace.push("artifact"),_inspectRunningInputs:async()=>trace.push("job")};
+  const host={documentId:"A",store:{captureAuthorizationScope:()=>({key:"authority"}),authorizationScopeActive:authorization=>authorization?.key==="authority",session:{get:()=>({projectContext:null})},projection:{get:()=>({libraryArtifacts:[artifact]})},documentJobs:{get:()=>[job]},events:{get:()=>[]},content:{get:()=>({})}},get updateComplete(){return Promise.resolve().then(()=>{if(changeOnUpdate)this.documentId="B";});},_targetDocumentId(){return this.documentId;},_revealWorkbenchPane:async()=>{},_openArtifact:async()=>trace.push("artifact"),_inspectRunningInputs:async()=>trace.push("job")};
   for(const name of ["openArtifactById","openJobById"]){const method=artifactSource.split("\n").find(line=>line.includes(`async ${name}(`));assert.ok(method);const generated=eval(stripTypeScriptTypes(`({${method.replaceAll("#","_")}})`));host[name]=generated[name];}
-  return{host,trace};
+  installPrivateSource(host);return{host,trace};
 }
 test("same artifact host follows explicit document rebinding after artifact or job inspection",async()=>{
   assert.match(source,/forma-document-artifacts compact source="document" \.documentId=\$\{p.documentId\}/);
@@ -153,7 +185,7 @@ test("unavailable historical comparison renders the saved pair without a false z
 function actualArtifactViewerHost({boundary=null,change=null,unloaded=false,memberGate=null}={}){
   const event=(sequence,type,payload)=>({eventId:`artifact-event-${sequence}`,streamId:"stream",sequence,type,payload,actor:"user:owner",correlationId:"artifact",occurredAt:"2026-08-27T00:00:00Z"});
   const originalContent=JSON.stringify({content_markdown:"Saved body",items:[]});
-  const state={events:[event(1,"ProjectCreated",{project_id:"p",name:"Project"}),event(2,"DocumentCreated",{document_id:"A",project_id:"p",title:"Document"}),event(3,"DocumentRenderCompleted",{document_id:"A",project_id:"p",artifact_id:"saved-artifact",artifact_kind:"slides",title:"Saved revision",content_ref:"private-body"})],content:unloaded?{}:{"private-body":originalContent},authorityKey:"authority-1",canRead:true,saveConflicts:false},trace=[];let updateReads=0,invalidated=false;
+  const state={route:"/document/A",events:[event(1,"ProjectCreated",{project_id:"p",name:"Project"}),event(2,"DocumentCreated",{document_id:"A",project_id:"p",title:"Document"}),event(3,"DocumentRenderCompleted",{document_id:"A",project_id:"p",artifact_id:"saved-artifact",artifact_kind:"slides",title:"Saved revision",content_ref:"private-body"})],content:unloaded?{}:{"private-body":originalContent},authorityKey:"authority-1",canRead:true,saveConflicts:false},trace=[];let updateReads=0,invalidated=false;
   const projection=()=>foldEvents(state.events,Infinity,"A","p"),original=projection().libraryArtifacts[0];
   const commitEdit=(markdown,extra={})=>{const revision=documentArtifactRevision(state.events,original.id)+1;state.events.push(event(state.events.length+1,"DocumentArtifactEdited",{project_id:"p",document_id:"A",artifact_id:original.id,content_ref:original.contentRef,revision,changed_fields:["content_markdown"],...extra}));state.content[original.contentRef]=JSON.stringify({content_markdown:markdown,items:[]});};
   const invalidate=()=>{if(invalidated)return;invalidated=true;trace.push("invalidate:"+change);if(change==="revision")commitEdit("Collaborator replacement");else if(change==="content")state.content[original.contentRef]="Unreceipted replacement";else if(change==="authorization"){state.authorityKey="authority-2";state.canRead=false;}else throw new Error("Unknown mutation "+change);};
@@ -162,11 +194,12 @@ function actualArtifactViewerHost({boundary=null,change=null,unloaded=false,memb
   const ensureModalDialog=element=>{assert.equal(element,dialog);if(!element.open){element.open=true;trace.push("viewer-open:"+original.id+":"+projection().libraryArtifacts[0].sequence);}};
   let enteredMembers;const membersEntered=new Promise(resolve=>enteredMembers=resolve);
   const fetch=async(url,options)=>{assert.equal(url,"/api/workspaces/org/projects/access/members");assert.equal(options.credentials,"same-origin");trace.push("members");enteredMembers();if(memberGate)await memberGate;if(boundary==="member-fetch")invalidate();return{ok:true,json:async()=>({members:[]})};};
-  const host={documentId:"A",source:"document",_viewerCurrent:null,_configurationCurrent:null,_activeId:"",_savingEdit:false,store:{captureAuthorizationScope:()=>({key:state.authorityKey}),authorizationScopeActive:authorization=>Boolean(state.canRead&&authorization?.key===state.authorityKey),projection:{get:projection},content:{get:()=>state.content},ensurePrivateContent:async()=>{state.content[original.contentRef]=originalContent;},session:{get:()=>({user:{userId:"owner"},projectContext:{organizationId:"org",projectAccessId:"access",permissions:["project.author"]}})},events:{get:()=>state.events},ui:{instrumentation:false},reviseDocumentArtifact:async(id,input)=>{assert.equal(id,original.id);assert.equal(input.expectedRevision,documentArtifactRevision(state.events,id));if(state.saveConflicts)return false;commitEdit(input.markdown);host.updated();return true;},restoreDocumentArtifact:async(id,revision,expectedRevision)=>{assert.equal(id,original.id);assert.equal(expectedRevision,documentArtifactRevision(state.events,id));commitEdit("Restored original body",{restored_from_revision:revision,revision_action:"restore"});host.updated();return true;}},get updateComplete(){const ordinal=++updateReads;return Promise.resolve().then(()=>{if(boundary==="final-render"&&ordinal===2)invalidate();this.updated();});},_targetDocumentId(){return this.documentId;},_revealWorkbenchPane:async()=>{},_viewDialog:()=>dialog,_createDialog:()=>null,_bindCompletedWorkflowStage(){},querySelector:()=>null,requestUpdate(){},dispatchEvent(){},_content:()=>JSON.parse(state.content[original.contentRef]),_loadHistory:async()=>trace.push("history-refreshed")};
-  const methods=["openArtifactById","#openArtifact","#saveArtifactEdit","#restoreRevision"].map(name=>{const method=artifactSource.split("\n").find(line=>line.includes("async "+name+"("));assert.ok(method);return method.replaceAll("#","_");});
+  const host={documentId:"A",source:"document",_viewerCurrent:null,_configurationCurrent:null,_activeId:"",_savingEdit:false,store:{captureAuthorizationScope:()=>({key:state.authorityKey}),authorizationScopeActive:authorization=>Boolean(state.canRead&&authorization?.key===state.authorityKey),projection:{get:projection},route:{get:()=>state.route},content:{get:()=>state.content},ensurePrivateContent:async()=>{state.content[original.contentRef]=originalContent;},session:{get:()=>({user:{userId:"owner"},projectContext:{organizationId:"org",projectAccessId:"access",permissions:["project.author"]}})},events:{get:()=>state.events},ui:{instrumentation:false},reviseDocumentArtifact:async(id,input)=>{assert.equal(id,original.id);assert.equal(input.expectedRevision,documentArtifactRevision(state.events,id));if(state.saveConflicts)return false;commitEdit(input.markdown);host.updated();return true;},restoreDocumentArtifact:async(id,revision,expectedRevision)=>{assert.equal(id,original.id);assert.equal(expectedRevision,documentArtifactRevision(state.events,id));commitEdit("Restored original body",{restored_from_revision:revision,revision_action:"restore"});host.updated();return true;}},get updateComplete(){const ordinal=++updateReads;return Promise.resolve().then(()=>{if(boundary==="final-render"&&ordinal===2)invalidate();this.updated();});},_targetDocumentId(){return this.documentId;},_revealWorkbenchPane:async()=>{},_viewDialog:()=>dialog,_createDialog:()=>null,_bindCompletedWorkflowStage(){},querySelector:()=>null,requestUpdate(){},dispatchEvent(){},_content:()=>JSON.parse(state.content[original.contentRef]),_loadHistory:async()=>trace.push("history-refreshed")};
+  const methods=["openArtifactById","#openArtifact","#saveArtifactEdit","#restoreRevision"].map(name=>{const method=actualClassMembers(artifactSource,"DocumentArtifacts",[name]);assert.ok(method);return method.replaceAll("#","_");});
   for(const name of ["#startArtifactEdit","#cancelArtifactEdit"]){const method=artifactSource.split("\n").find(line=>line.trimStart().startsWith(name+"("));assert.ok(method);methods.push(method.replaceAll("#","_"));}
+  for(const [from,to] of [["  #currentDeliveryBinding(","  async #refreshDeliveryBinding("],["  async #refreshDeliveryBinding(","  async #showArtifactIntent("],["  async #artifactBinding(","  async #download("]])methods.push(configurationMember(artifactSource,from,to));
   methods.push(configurationMember(artifactSource,"  protected override updated(","  #bindCompletedWorkflowStage(").replace("protected override ",""));Object.assign(host,eval(stripTypeScriptTypes("({"+methods.join(",\n")+"})")));
-  return{host,state,trace,dialog,original,projection,commitEdit,membersEntered,updateReads:()=>updateReads};
+  installPrivateSource(host);return{host,state,trace,dialog,original,projection,commitEdit,membersEntered,updateReads:()=>updateReads};
 }
 test("actual artifact viewer opens its unchanged saved revision after member lookup and final render",async()=>{
   const f=actualArtifactViewerHost();assert.equal(await f.host.openArtifactById(f.original.id),true);assert.equal(f.dialog.open,true);assert.equal(f.updateReads(),2);assert.deepEqual(f.trace,["members","viewer-open:saved-artifact:3"]);
@@ -188,4 +221,36 @@ test("background updates cannot expose an artifact editor before member lookup c
 test("a collaborator edit during delayed member lookup and background rendering never exposes the stale viewer",async()=>{
   let release;const memberGate=new Promise(resolve=>release=resolve),f=actualArtifactViewerHost({memberGate});const opening=f.host.openArtifactById(f.original.id);await f.membersEntered;
   f.host.updated();f.commitEdit("Collaborator replaced this while opening");f.host.updated();release();assert.equal(await opening,false);assert.equal(f.dialog.open,false);assert.ok(!f.trace.some(item=>item.startsWith("viewer-open:")));
+});
+
+
+test("actual source fixture closure rejects cloned and foreign ownership across all three artifact hosts",()=>{
+  for(const create of[()=>configurationHost("artifact"),()=>artifactHost(),()=>actualArtifactViewerHost()]){
+    const f=create(),other=create(),source=f.host.store.captureSourceOwnership();
+    assert.equal(f.host.store.sourceOwnershipActive(source),true);
+    assert.equal(f.host.store.sourceOwnershipActive({...source}),false);
+    assert.equal(other.host.store.sourceOwnershipActive(source),false);
+    assert.equal(f.host._privateSourceCurrent()(),true);
+  }
+});
+test("actual source deadlines invalidate all three artifact fixture leases without changing their authorization",async()=>{
+  for(const create of[()=>configurationHost("artifact"),()=>artifactHost(),()=>actualArtifactViewerHost()]){
+    const f=create(),current=f.host._privateSourceCurrent(),source=f.host.store.captureSourceOwnership(),authorization=f.host.store.captureAuthorizationScope();
+    assert.equal(current(),true);
+    const read=f.host.store.session.get;
+    f.host.store.session.get=()=>({...read(),projectContext:{...read().projectContext,expiresAt:"2000-01-01T00:00:00.000Z"}});
+    assert.equal(f.host.store.authorizationScopeActive(authorization),true);
+    assert.equal(f.host.store.sourceOwnershipActive(source),false);
+    assert.equal(current(),false);
+    const opened=f.open?await f.open():await f.host.openArtifactById(f.original?.id??"saved");
+    assert.equal(opened,false);assert.deepEqual(f.trace,[]);
+  }
+});
+test("a disconnected artifact fixture cannot reuse an otherwise-current source lease",()=>{
+  for(const create of[()=>configurationHost("artifact"),()=>artifactHost(),()=>actualArtifactViewerHost()]){
+    const f=create(),current=f.host._privateSourceCurrent(),source=f.host.store.captureSourceOwnership();
+    assert.equal(current(),true);f.host.isConnected=false;
+    assert.equal(f.host.store.sourceOwnershipActive(source),true);
+    assert.equal(current(),false);
+  }
 });

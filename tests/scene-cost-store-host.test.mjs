@@ -3,6 +3,7 @@ import test from "node:test";
 import { createSceneStoreHost, sceneDeferred, untilScene } from "./helpers/scene-cost-store-host.mjs";
 import { appendAuditEvent } from "../worker/runtime.ts";
 import { sceneCostRequestHash } from "../src/model/scene-cost-consent.ts";
+import { financial } from "./helpers/event-source-retirement-fixture.mjs";
 
 const noProviders=t=>t.mock.method(globalThis,"fetch",async()=>assert.fail("This Store test cannot contact a provider, model-health API or external host"));
 const postRequests=host=>host.requests.filter(request=>request.url==="/api/document-jobs");
@@ -11,6 +12,23 @@ const freeRequests=host=>postRequests(host).filter(request=>request.body.payload
 const resultPort=()=>{const results=[];return{results,onResult:result=>results.push(result)};};
 async function hostFor(t,options){noProviders(t);const host=await createSceneStoreHost(options);t.after(()=>host.close());return host;}
 const noJob=host=>{assert.equal(host.worker.counts().document_jobs,0);assert.equal(paidRequests(host).length,0);};
+// This existing feed can retain an exact, paused, content-free operation reference.
+// It is not a recovered private result or a certificate that the presenter saw admission.
+function assertPausedSceneReference(host, original) {
+  if (original === null) { assert.deepEqual(host.store.documentJobs.get(), []); return; }
+  assert.equal(original.jobId, host.request.requestId); assert.equal(original.documentId, host.request.documentId);
+  assert.equal(original.kind, "render_document"); assert.equal(original.result?.artifactKind, "scene");
+  assert.deepEqual(original.members, []);
+  const keys = ["jobId", "documentId", "canvasId", "kind", "status", "sourceSurface", "requestedSequence",
+    "documentRevision", "requestKey", "sourcePreviewId", "productionMode", "promptTechnique", "promptFanId",
+    "parentJobId", "fanKind", "dismissedAt", "attemptCount", "requestedAt", "startedAt", "completedAt",
+    "notifiedAt", "leaseExpiresAt", "updatedAt"];
+  const expected = Object.fromEntries(keys.map(key => [key, original[key]]));
+  Object.assign(expected, { members: [], result: { artifactKind: "scene" }, error: null, errorDetail: null,
+    moderationPromptRef: null, stage: "", progressMessage: "" });
+  assert.deepEqual(host.store.documentJobs.get(), [expected], "Only the verified original metadata and kind survive; no private/financial result fields");
+}
+
 
 for(const medium of ["visual","audio"])for(const count of [1,9,17]){
   test("actual Store "+medium+" "+count+"-part free quote and exact paid admission use authoritative source/call ceiling",async t=>{
@@ -191,19 +209,22 @@ test("throwing onDispatch cannot abandon its invoked HTTP promise or falsely los
 
 for(const change of ["close","authority","route","source"]){
   test("post-dispatch "+change+" retains unknown exact ID and permits explicit same-ID free recovery only",async t=>{
-    const h=await hostFor(t),{preview}=await h.quote(),wait=sceneDeferred(),entered=sceneDeferred(),originalSession=h.store.session.get(),originalEvents=h.store.events.get(),originalRoute=h.store.route.get();const port=resultPort();let current=true;
-    h.intercept=async request=>{if(request.url!=="/api/document-jobs"||request.body.payload.sceneCostPreview===true)return;const response=await h.worker.request(request.url,request.init);entered.resolve();await wait.promise;return response;};
+    const h=await hostFor(t),{preview}=await h.quote(),wait=sceneDeferred(),entered=sceneDeferred(),originalSession=h.store.session.get(),originalEvents=h.store.events.get(),originalRoute=h.store.route.get();const port=resultPort();let current=true,admitted,accounting;
+    h.intercept=async request=>{if(request.url!=="/api/document-jobs"||request.body.payload.sceneCostPreview===true)return;const response=await h.worker.request(request.url,request.init);assert.equal(response.status,202);admitted=(await response.clone().json()).job;accounting=financial(h.worker);entered.resolve();await wait.promise;return response;};
     const task=h.approve(preview,{current:()=>current,onDispatch(){if(change==="close")current=false;},onResult:port.onResult});
     await entered.promise;
     if(change==="authority")h.setSession({permissionEpoch:"withdrawn"});
     if(change==="route")h.store.route.set("/library");
     if(change==="source")h.changeText();
     wait.resolve();assert.equal(await task,false);assert.equal(port.results[0].requestId,h.request.requestId);assert.equal(port.results[0].attemptSubmission,"unknown");
-    assert.equal(port.results[0].job,null);assert.equal(h.store.documentJobs.get().length,0);
+    assert.equal(port.results[0].job,null);assertPausedSceneReference(h,change==="authority"?null:admitted);
+    const retainedFeed=structuredClone(h.store.documentJobs.get());assert.deepEqual(financial(h.worker),accounting);
+    assert.equal(h.requests.some(request=>/\/api\/document-jobs\/[^/]+\/run$/u.test(request.url)),false,"A paused original is never driven automatically");
     current=true;h.store.session.set(originalSession);h.store.events.set(originalEvents);h.store.route.set(originalRoute);h.intercept=null;
     const before=paidRequests(h).length,writes=h.worker.controls.writes.length,result=await h.quote();
     assert.equal(result.job.jobId,h.request.requestId);assert.equal(result.preview.bindingHash,preview.bindingHash);
-    assert.equal(paidRequests(h).length,before);assert.equal(h.worker.controls.writes.length,writes);assert.equal(h.worker.counts().document_jobs,1);assert.equal(h.store.documentJobs.get().length,0,"free recovery never reconciles the job feed");
+    assert.equal(paidRequests(h).length,before);assert.equal(h.worker.controls.writes.length,writes);assert.equal(h.worker.counts().document_jobs,1);assert.deepEqual(h.store.documentJobs.get(),retainedFeed,"free recovery never reconciles the job feed");
+    assert.deepEqual(financial(h.worker),accounting);assert.equal(h.requests.some(request=>/\/api\/document-jobs\/[^/]+\/run$/u.test(request.url)),false);
   });
 }
 

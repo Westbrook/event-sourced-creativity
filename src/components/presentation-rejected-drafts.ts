@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import type { DocumentJob } from "../model/document-jobs";
+import type { CapturedSourceOwnership } from "../state/store";
 import { parseDocumentArtifactContent, type DocumentArtifactDraftItem } from "../model/document-artifacts";
 import type { PresentationCandidateDetail, PresentationCandidateSummary } from "../model/presentation-candidates";
 import { FormaElement, icon } from "./forma-element";
@@ -24,9 +25,28 @@ export class PresentationRejectedDrafts extends FormaElement {
   #comparison: CandidateComparison = "alternatives";
   #preservedJobs: Array<{ jobId: string; documentId: string }> = [];
   #discoveredFor = "";
+  #privateRevision=0;
+  #referenceRevision=0;
+  #jobDocumentId="";
+  #referenceSource:CapturedSourceOwnership|null=null;
+
+  #rememberJob(jobId:string,documentId:string,source:CapturedSourceOwnership|null){
+    if(!jobId||!documentId||!source||!this.store.sourceOwnershipScopeActive(source))return;
+    if(this.#referenceSource&&!this.store.sourceOwnershipScopeActive(this.#referenceSource))this.#clearAuthorizedDrafts();
+    this.#referenceSource=source;
+    if(!this.#preservedJobs.some(job=>job.jobId===jobId&&job.documentId===documentId))this.#preservedJobs=[...this.#preservedJobs,{jobId,documentId}];
+  }
+  readonly #retirePrivateDrafts=(event:Event)=>{
+    const source=(event as CustomEvent<{source?:CapturedSourceOwnership}>).detail?.source;
+    if(!source||!this.store.sourceOwnershipScopeActive(source))return;
+    this.#clearPrivateDrafts();
+  };
+
 
   readonly #clearPrivateDrafts = () => {
-    this.#jobId = "";
+    this.#rememberJob(this.#jobId,this.#jobDocumentId,this.#referenceSource);
+    this.#privateRevision++;
+    this.#jobId = "";this.#jobDocumentId="";
     this.#open = false;
     this.#busy = false;
     this.#preserving = "";
@@ -39,6 +59,7 @@ export class PresentationRejectedDrafts extends FormaElement {
   };
 
   readonly #clearAuthorizedDrafts = () => {
+    this.#referenceRevision++;this.#referenceSource=null;
     this.#preservedJobs = [];
     this.#discoveredFor = "";
     this.#clearPrivateDrafts();
@@ -46,21 +67,24 @@ export class PresentationRejectedDrafts extends FormaElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    if(this.#referenceSource&&!this.store.sourceOwnershipScopeActive(this.#referenceSource))this.#clearAuthorizedDrafts();
     window.addEventListener("forma-authorization-changed", this.#clearAuthorizedDrafts);
+    window.addEventListener("forma-event-source-retired",this.#retirePrivateDrafts);
   }
 
   override disconnectedCallback() {
     window.removeEventListener("forma-authorization-changed", this.#clearAuthorizedDrafts);
-    this.#clearAuthorizedDrafts();
+    window.removeEventListener("forma-event-source-retired",this.#retirePrivateDrafts);
+    this.#clearPrivateDrafts();
     super.disconnectedCallback();
   }
 
   protected override updated() {
+    if(this.#referenceSource&&!this.store.sourceOwnershipScopeActive(this.#referenceSource))this.#clearAuthorizedDrafts();
     const dialog = this.querySelector<HTMLDialogElement>(".presentation-rejected-drafts-dialog");
     if (this.#open && dialog && !dialog.open) ensureModalDialog(dialog);
-    if (this.documentId && this.#discoveredFor !== this.documentId) {
+    if (this.documentId && this.#discoveredFor !== this.documentId && this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) {
       if (this.#discoveredFor) {
-        this.#preservedJobs = [];
         this.#clearPrivateDrafts();
       }
       this.#discoveredFor = this.documentId;
@@ -68,25 +92,25 @@ export class PresentationRejectedDrafts extends FormaElement {
     }
   }
 
-  async #discoverPreservedDrafts(documentId: string) {
-    const authorization = this.store.captureAuthorizationScope();
-    if (!authorization) return;
-    try {
-      const listing = await this.store.loadPreservedPresentationCandidateJobs(documentId);
-      if (!this.store.authorizationScopeActive(authorization) || this.documentId !== documentId) return;
-      this.#preservedJobs = listing.jobs.map(({ jobId }) => ({ jobId, documentId }));
+  async #discoverPreservedDrafts(documentId:string){
+    const source=this.store.captureSourceOwnership(),revision=this.#referenceRevision;
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&revision===this.#referenceRevision&&this.documentId===documentId;
+    if(!current())return;
+    try{const listing=await this.store.loadPreservedPresentationCandidateJobs(documentId);
+      if(!current())return;
+      for(const {jobId} of listing.jobs)this.#rememberJob(jobId,documentId,source);
       this.requestUpdate();
-    } catch {
-      if (this.store.authorizationScopeActive(authorization) && this.documentId === documentId) {
-        this.#preservedJobs = [];
-        this.requestUpdate();
-      }
-    }
+    }catch{if(current())this.requestUpdate();}
   }
 
   async #openDrafts(jobId: string) {
-    const authorization = this.store.captureAuthorizationScope();
-    if (!authorization) return;
+    const source=this.store.captureSourceOwnership(),documentId=this.documentId;
+    if(!this.isConnected||!this.store.sourceOwnershipActive(source))return;
+    const known=this.jobs.some(job=>job.jobId===jobId&&job.documentId===documentId)||this.#preservedJobs.some(job=>job.jobId===jobId&&job.documentId===documentId);
+    if(!known)return;
+    const revision=++this.#privateRevision;
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&revision===this.#privateRevision&&this.#jobId===jobId&&this.documentId===documentId;
+    this.#referenceSource=source;this.#jobDocumentId=documentId;
     this.#jobId = jobId;
     this.#open = true;
     this.#busy = true;
@@ -95,8 +119,8 @@ export class PresentationRejectedDrafts extends FormaElement {
     this.#selected = [];
     this.requestUpdate();
     try {
-      const listing = await this.store.loadPresentationCandidates(jobId, this.documentId);
-      if (!this.store.authorizationScopeActive(authorization) || this.#jobId !== jobId) return;
+      const listing = await this.store.loadPresentationCandidates(jobId, documentId);
+      if (!current()) return;
       this.#candidates = listing.candidates;
       this.#busy = false;
       this.requestUpdate();
@@ -109,7 +133,7 @@ export class PresentationRejectedDrafts extends FormaElement {
         || right.capturedAt.localeCompare(left.capturedAt))[0];
       if (preferred) await this.#selectCandidate(preferred.responseId);
     } catch (error) {
-      if (!this.store.authorizationScopeActive(authorization)) return;
+      if (!current()) return;
       this.#busy = false;
       this.store.toast(error instanceof Error ? error.message : this.i18n.t("presentation.draft.loadFailed", "Private generated drafts could not be loaded."));
       this.requestUpdate();
@@ -117,20 +141,21 @@ export class PresentationRejectedDrafts extends FormaElement {
   }
 
   async #selectCandidate(responseId: string) {
-    const authorization = this.store.captureAuthorizationScope();
-    if (!authorization || !this.#jobId || !this.#candidates.some((candidate) => candidate.responseId === responseId)) return;
+    const source=this.store.captureSourceOwnership(),jobId=this.#jobId,documentId=this.#jobDocumentId,revision=this.#privateRevision;
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&revision===this.#privateRevision&&this.#jobId===jobId&&this.documentId===documentId;
+    if(!current()||!jobId||!this.#candidates.some(candidate=>candidate.responseId===responseId))return;
     if (!this.#selected.includes(responseId)) this.#selected = [...this.#selected.slice(-1), responseId];
     if (this.#details.has(responseId)) { this.requestUpdate(); return; }
     this.#busy = true;
     this.requestUpdate();
     try {
-      const detail = await this.store.loadPresentationCandidate(this.#jobId, responseId, this.documentId);
-      if (!this.store.authorizationScopeActive(authorization) || this.#jobId !== detail.jobId) return;
+      const detail = await this.store.loadPresentationCandidate(jobId, responseId, documentId);
+      if (!current()||detail.jobId!==jobId||detail.documentId!==documentId||detail.responseId!==responseId) return;
       this.#details.set(responseId, detail);
       this.#busy = false;
       this.requestUpdate();
     } catch (error) {
-      if (!this.store.authorizationScopeActive(authorization)) return;
+      if (!current()) return;
       this.#busy = false;
       this.store.toast(error instanceof Error ? error.message : this.i18n.t("presentation.draft.inspectFailed", "The private generated draft could not be inspected."));
       this.requestUpdate();
@@ -138,22 +163,25 @@ export class PresentationRejectedDrafts extends FormaElement {
   }
 
   async #preserveCandidate(responseId: string) {
-    const authorization = this.store.captureAuthorizationScope();
-    if (!authorization || !this.#jobId || this.#preserving) return;
+    const source=this.store.captureSourceOwnership(),jobId=this.#jobId,documentId=this.#jobDocumentId,revision=this.#privateRevision,referenceRevision=this.#referenceRevision;
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&revision===this.#privateRevision&&this.#jobId===jobId&&this.documentId===documentId;
+    if(!current()||!jobId||this.#preserving)return;
     this.#preserving = responseId;
     this.requestUpdate();
     try {
-      const preserved = await this.store.preservePresentationCandidate(this.#jobId, responseId, this.documentId);
-      if (!this.store.authorizationScopeActive(authorization) || this.#jobId !== preserved.jobId) return;
+      const preserved = await this.store.preservePresentationCandidate(jobId, responseId, documentId);
+      if(referenceRevision!==this.#referenceRevision||!this.store.sourceOwnershipScopeActive(source)||preserved.jobId!==jobId||preserved.documentId!==documentId||preserved.responseId!==responseId)return;
+      // This is the original server acknowledgment, not authority to publish its private body.
+      this.#rememberJob(jobId,documentId,source);this.requestUpdate();
+      if(!current())return;
       this.#candidates = this.#candidates.map((candidate) => candidate.responseId === responseId ? preserved : candidate);
       const detail = this.#details.get(responseId);
       if (detail) this.#details.set(responseId, { ...detail, ...preserved });
       this.store.toast(this.i18n.t("presentation.draft.preservedNotice", "Private draft preserved under your existing evidence-retention policy."));
     } catch (error) {
-      if (this.store.authorizationScopeActive(authorization)) this.store.toast(error instanceof Error ? error.message : this.i18n.t("presentation.draft.preserveFailed", "The private generated draft could not be safely preserved."));
+      if (current()) this.store.toast(error instanceof Error ? error.message : this.i18n.t("presentation.draft.preserveFailed", "The private generated draft could not be safely preserved."));
     } finally {
-      this.#preserving = "";
-      this.requestUpdate();
+      if(current()){this.#preserving = "";this.requestUpdate();}
     }
   }
 
@@ -275,7 +303,7 @@ export class PresentationRejectedDrafts extends FormaElement {
   override render() {
     const jobs = [
       ...this.jobs.map((job) => ({ jobId: job.jobId, dismissedAt: Boolean(job.dismissedAt || job.result?.dismissedAt) })),
-      ...this.#preservedJobs.filter((preserved) => !this.jobs.some((current) => current.jobId === preserved.jobId)).map((job) => ({ jobId: job.jobId, dismissedAt: false })),
+      ...this.#preservedJobs.filter((preserved) => preserved.documentId===this.documentId && !this.jobs.some((current) => current.jobId === preserved.jobId)).map((job) => ({ jobId: job.jobId, dismissedAt: false })),
     ];
     if (!jobs.length) return nothing;
     return html`<section class="presentation-rejected-drafts" aria-label=${this.i18n.t("presentation.draft.regionLabel", "Private rejected presentation drafts")}><header><div><span class="eyebrow">${this.i18n.t("presentation.draft.eyebrow", "Rejected drafts · private")}</span><p>${this.i18n.t("presentation.draft.description", "Inspect paid provider responses without generating, sharing, or exporting.")}</p></div><span>${this.i18n.number(jobs.length)}</span></header><div class="presentation-rejected-draft-jobs">${jobs.map((job) => html`<button type="button" class="button secondary compact" @click=${() => void this.#openDrafts(job.jobId)}>${this.i18n.t("presentation.draft.review", "Review generated drafts")}${job.dismissedAt ? ` · ${this.i18n.t("presentation.draft.dismissed", "dismissed issue")}` : ""}</button>`)}</div></section>

@@ -12,6 +12,9 @@ import {contextConsentFailure} from "../src/model/context-consent-state.ts";
 const path="../src/state/store.ts",syntax=ts.createSourceFile(path,readFileSync(new URL(path,import.meta.url),"utf8"),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS),owner=syntax.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="FormaStore");
 function actual(name){const method=owner.members.find(node=>node.name?.getText(syntax)===name);assert.ok(method,name);return method.getText(syntax);}
 const methods=["#canRequestProjectOutputs","#canReadProjectJobs","#jobScope","#scheduleJobPoll","#syncVisibleJobs","syncDocumentJobs","#syncAdaptiveSuggestionSets","#withdrawAdaptiveRead","#clearAdaptivePrivatePresentation","#observeAdaptivePlanningJob","#revalidateMissingAdaptivePlans","#referencedPlanningJobIds","#trimDocumentJobDetails","#rememberPlanningRecovery","planningRecoveryEntries","#driveDocumentJobs","#ackJob","reviewPlanningJob","#requestPlanningConsent","#finishPlanningConsent","closePlanningConsent"].map(actual).join("\n");
+// Reuse exact current source ownership, branding, and expiry checks.
+// Existing serialized-session authority and network/native ports stay SIMULATED.
+const sourceOwnershipMembers=["#sourceGeneration","#sourceRetired","#sourceOwners","#sourcePausedJobs","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive","#assertSourceOwnership"].map(actual).join("\n");
 const cell=value=>({get:()=>value,set:next=>{value=next;}}),turn=()=>new Promise(setImmediate);
 function fixture(permissions=["project.read"]){
   const calls=[],trace=[],timers=[],document={visibilityState:"visible",documentElement:{dataset:{formaPhase:"populated"}}},window={clearTimeout(){},setTimeout(callback,delay){timers.push({callback,delay});return timers.length;}};
@@ -25,6 +28,7 @@ function fixture(permissions=["project.read"]){
     #dismissedAdaptiveSuggestions=new Set();#pendingJobNotices=[];#jobsDriving=new Set();#presentationRecoveryAttempts=new Set();#adaptiveStructureJobIds=new Map();#pendingAdaptiveIntents=new Map();#planningRecoveryIdentities=new Map();#planningRecoverySequence=0;
     #planningConsentScope="";#planningConsentRoute="";#planningConsentResolve;
     #planningLocaleRevision=0;
+    ${sourceOwnershipMembers}
     session=cell({user:{userId:"actor-a"},projectContext:{projectId:"project-a",permissions:permissions}});route=cell("/activity");
     projection=cell({projectId:"project-a",documents:[{id:"doc-a",projectId:"project-a"}]});documentJobs=cell([]);adaptiveStructures=cell({});adaptiveSuggestionSets=cell({});planningConsent=cell(null);
     #authorizationScope(session){return JSON.stringify(session);}#scopeStillActive(scope){return this.#authorizationScope(this.session.get())===scope;}
@@ -196,4 +200,49 @@ for(const first of["A","B"])test("adaptive aggregate revision R6: valid A and B 
   assert.deepEqual(new Set(sets.map(item=>item.id)),new Set([a.id,b.id]));
   for(const plan of[a,b])assert.deepEqual(sets.find(item=>item.id===plan.id)?.structure,plan.structure);
   assert.equal(f.host.planningConsent.get(),null);assertAggregateCanvasReadsOnly(pair);
+});
+
+// Source guards below are actual current Store members. The fixture's original
+// serialized-session authority and network/native ports are SIMULATED; these
+// controls make no claim about a Worker source-retirement or billing receipt.
+test("adaptive polling source owner: copied and foreign tokens cannot authorize retained recovery",()=>{
+  const f=fixture(),other=fixture(),source=f.host.captureSourceOwnership();
+  assert.ok(source);assert.equal(Object.isFrozen(source),true);assert.equal(Object.isFrozen(source.authorization),true);
+  assert.equal(f.host.sourceOwnershipScopeActive(source),true);assert.equal(f.host.sourceOwnershipActive(source),true);
+  const copied=structuredClone(source);
+  assert.equal(f.host.sourceOwnershipScopeActive(copied),false);assert.equal(f.host.sourceOwnershipActive(copied),false);
+  assert.equal(other.host.sourceOwnershipScopeActive(source),false);assert.equal(other.host.sourceOwnershipActive(source),false);
+  assert.equal(f.host.sourceOwnershipActive(null),false);assert.deepEqual(f.calls,[]);assert.deepEqual(other.calls,[]);
+});
+
+for(const [label,offset,valid]of[["no deadline",null,true],["current deadline",60_000,true],["exact deadline",0,false],["expired",-1,false],["malformed","not-a-time",false],["empty","",false]])test("adaptive polling source owner: "+label+" uses the actual current expiry guard",async t=>{
+  const now=Date.parse("2026-08-28T14:00:00Z");t.mock.method(Date,"now",()=>now);
+  const f=fixture(),session=f.host.session.get(),expiresAt=typeof offset==="number"?new Date(now+offset).toISOString():offset;
+  f.host.session.set({...session,projectContext:{...session.projectContext,expiresAt}});
+  const source=f.host.captureSourceOwnership();
+  assert.equal(f.host.sourceOwnershipScopeActive(source),true,"request ownership alone is not private-source availability");
+  assert.equal(f.host.sourceOwnershipActive(source),valid);
+  f.jobs([job({status:"completed",result:{structure:{interpretation:"PRIVATE CURRENT PLAN"}}})]);
+  await f.host.syncDocumentJobs();
+  assert.deepEqual(f.calls,valid?[["/api/document-jobs","GET"]]:[]);
+  assert.equal(f.host.documentJobs.get().length,valid?1:0);
+  assert.deepEqual(f.trace,[]);
+});
+
+for(const phase of["headers","body"])test("adaptive polling source owner: expiry while "+phase+" are pending cannot publish an old private job",async t=>{
+  let now=Date.parse("2026-08-28T14:00:00Z");t.mock.method(Date,"now",()=>now);
+  const f=fixture(),session=f.host.session.get(),gate=Promise.withResolvers();
+  f.host.session.set({...session,projectContext:{...session.projectContext,expiresAt:new Date(now+60_000).toISOString()}});
+  const source=f.host.captureSourceOwnership(),saved=job({status:"completed",result:{structure:{interpretation:"PRIVATE EXPIRED PLAN"}}});
+  f.respondWith(async()=>{
+    if(phase==="headers")await gate.promise;
+    return{ok:true,status:200,json:async()=>{if(phase==="body")await gate.promise;return{jobs:[saved]};}};
+  });
+  const pending=f.host.syncDocumentJobs();await turn();
+  assert.deepEqual(f.calls,[["/api/document-jobs","GET"]]);assert.deepEqual(f.host.documentJobs.get(),[]);
+  now+=60_000;
+  assert.equal(f.host.sourceOwnershipScopeActive(source),true);assert.equal(f.host.sourceOwnershipActive(source),false);
+  gate.resolve();await pending;
+  assert.deepEqual(f.host.documentJobs.get(),[]);assert.deepEqual(f.host.adaptiveStructures.get(),{});assert.deepEqual(f.host.adaptiveSuggestionSets.get(),{});
+  assert.deepEqual(f.trace,[]);assert.equal(f.timers.length,0);assert.deepEqual(f.calls,[["/api/document-jobs","GET"]]);
 });

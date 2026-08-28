@@ -512,9 +512,12 @@ test("background visits and unrelated job polling begin after meaningful route p
   assert.match(store, /addEventListener\("forma-performance"/);
   assert.match(store, /this\.#scheduleJobPoll\(1_200\)/);
   assert.match(store, /documentViewFromRoute\(path\)==="chat"\)void sessionPromise\.then/);
-  assert.match(store, /contentScope=\$\{required\}/);
+  assert.match(store, /fetch\("\/api\/events\?after="\+this\.head\.get\(\)\+"&limit=1&content=1"\+\(required!=="all"\?"&contentScope="\+required:""\)\)/, "chat/memory hydration keeps its exact scope; all-content hydration omits the scope parameter");
   assert.match(store, /profile==="memory"\?"memory"/);
-  assert.match(store, /this\.content\.set\(\{\.\.\.this\.content\.get\(\),\.\.\.body\.content\}\)/);
+  assert.match(store, /const body=await response\.json\(\) as \{content\?:Record<string,string>\};this\.#assertSourceRead\(read\);this\.#assertSourceOwnership\(source\)/, "private hydration verifies its original read and source ownership after the body await");
+  assert.match(store, /this\.#publishSourceContent\(read,\(\)=>\{this\.#privateContentScope=required;if\(Object\.keys\(content\)\.length\)this\.#mergeSourceContent\(read,content\);\}\)/);
+  assert.match(store, /const previous=this\.content\.get\(\),next=replace\?\{\.\.\.incoming\}:\{\.\.\.previous,\.\.\.incoming\}/, "owned partial hydration merges retained content instead of replacing it");
+  assert.match(store, /this\.content\.set\(next\)/);
   assert.match(analytics, /#expandedEvidence=new Set<string>\(\)/);
   assert.match(analytics, /data-evidence-key=\$\{item\.key\}/);
   assert.match(analytics, /\?open=\$\{expanded\} @toggle=\$\{this\.#toggleEvidence\}/);
@@ -2013,7 +2016,7 @@ test("viewer-only independent review, governed release, source attestation, arti
   const open=async(identity)=>{const opened=await request(`/api/workspaces/${organizationId}/projects/${projectId}/context`,{method:"POST",headers:identity});assert.equal(opened.status,200);return{...identity,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};};
   let reviewerScope=await open(reviewer);const ownerScope=await open(owner);
   const binding=()=>({artifact_revision:Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='DocumentArtifactEdited' AND json_extract(payload,'$.artifact_id')='governed-output'").get(stream).count),content_sha256:createHash("sha256").update(database.sqlite.prepare("SELECT content FROM private_content WHERE content_id='governed-output-content'").get().content).digest("hex")});
-  const action=(type)=>({type,payload:{artifact_id:"governed-output",artifact_kind:"short_story",document_id:"doc-atmosphere",...binding(),source_block_versions:versions}});
+  const action=(type)=>({type,payload:{artifact_id:"governed-output",artifact_kind:"short_story",document_id:"doc-atmosphere",...binding(),source_block_versions:versions,...(type==="ArtifactReviewRequested"?{assigned_reviewer_user_id:"governed-review-viewer"}:{})}});
   const append=(identity,event)=>request("/api/events",json(identity,{action:"append",event}));
   const revise=(identity,markdown,expectedRevision)=>request("/api/artifacts/governed-output",json(identity,{markdown,expectedRevision},"PATCH"));
   assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,403,"viewer has no ambient approval authority");
@@ -2026,7 +2029,13 @@ test("viewer-only independent review, governed release, source attestation, arti
   assert.equal((await request(memberPath,json(owner,{reviewAccess:true},"PATCH"))).status,409,"duplicate reviewer grants cannot accumulate");
   const members=await(await request(`/api/workspaces/${organizationId}/projects/${projectId}/members`,{headers:owner})).json();assert.equal(members.members.find((member)=>member.user_id==="governed-review-viewer").review_access,1);assert.equal(members.members.find((member)=>member.user_id==="governed-review-owner").role,"owner");assert.equal(members.members.find((member)=>member.user_id==="governed-review-owner").review_access,1,"an eligible non-contributing project owner remains discoverable for independent teammate review");
   const session=await(await request("/api/session",{headers:reviewerScope})).json();assert.equal(session.projectContext.permissions.includes("project.review.approve"),true);assert.equal(session.projectContext.permissions.includes("project.author"),false);assert.equal(session.projectContext.permissions.includes("project.output.request"),false);
+  const unassigned=action("ArtifactReviewRequested");delete unassigned.payload.assigned_reviewer_user_id;
+  assert.equal((await append(ownerScope,unassigned)).status,200,"legacy unassigned review remains readable project history");
+  assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,200);
+  database.reset();const unassignedRelease=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown",...binding()}});
+  assert.equal(unassignedRelease.status,409);assert.equal((await unassignedRelease.json()).error,"artifact_approval_required");assert.equal(database.writeCount(),0,"legacy approval without a named reviewer is not exact delivery authorization");
   const submitted=await append(ownerScope,action("ArtifactReviewRequested"));assert.equal(submitted.status,200,JSON.stringify(await submitted.clone().json()));
+  assert.equal((await submitted.clone().json()).appended[0].payload.assigned_reviewer_user_id,"governed-review-viewer","the actual owner request names its independent reviewer");
   assert.equal((await append(ownerScope,action("ArtifactApproved"))).status,403,"creator/requester cannot approve their own deliverable");
   const mixed=await request("/api/events",json(ownerScope,{action:"batch",events:[{type:"BlockPropertyEdited",payload:{block_id:versions[0].block_id,property_path:"text",new_value:"Race attempt"}},action("ArtifactApproved")]}));assert.equal(mixed.status,409,"context mutations cannot hide in an approval batch");
   const approved=await append(reviewerScope,action("ArtifactApproved"));assert.equal(approved.status,200,JSON.stringify(await approved.clone().json()));
@@ -2084,7 +2093,10 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
   const insertEvent=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
   const append=(type,payload)=>{const id=crypto.randomUUID();insertEvent.run(id,stream,++ownerSequence,timestamp,timestamp,"user","server:canvas-test",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));return id;};
   append("GenerationCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",generation_id:"shared-generation",object_ids:["shared-output"],quality:"high"});
-  append("DocumentRenderCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"shared-artifact",artifact_kind:"short_story",title:"Shared story",summary:"Approved shared output",item_count:1,items:[]});
+  const sharedArtifactContent=JSON.stringify({title:"Shared story",summary:"Approved shared output",content_markdown:"Exact retained shared story.",presentation:null,items:[{title:"Opening",body:"Exact retained shared story.",notes:"",image_prompt:"",context_group_ids:[],slide:null}]});
+  const sharedArtifactStored=await storePrivateContent(environment,"canvas-project-owner","document-artifact",sharedArtifactContent);
+  const sharedArtifactBinding={artifact_revision:0,content_sha256:createHash("sha256").update(sharedArtifactContent).digest("hex")};
+  append("DocumentRenderCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"shared-artifact",artifact_kind:"short_story",title:"Shared story",summary:"Approved shared output",item_count:1,items:[],content_ref:sharedArtifactStored.contentId});
   append("CanvasCreated",{project_id:"project-atmosphere",canvas_id:"shared-board",name:"Shared board",slug:"shared-board"});
   append("CanvasItemPlaced",{project_id:"project-atmosphere",canvas_id:"shared-board",item_id:"shared-item",source_kind:"document",source_id:"doc-atmosphere",title:"PRIVATE BOARD CARD TITLE",frame:{x:10,y:20,w:320,h:220,z:"a1"}});
   append("ProjectCreated",{project_id:"private-project",name:"Private project"});
@@ -2131,7 +2143,9 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
   database.reset();assert.equal((await request("/api/document-jobs",json(scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"an explicit output grant still cannot admit a project viewer's paid request");
   assert.equal((await request("/canvas",{headers:scoped})).status,200);
   const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.ok(visible.events.some((event)=>event.type==="CanvasCreated"&&event.payload.canvas_id==="shared-board"));assert.doesNotMatch(JSON.stringify(visible),/PRIVATE PROJECT CARD|private-board|private-item/);
-  for(const event of [{type:"ObjectExported",payload:{object_id:"shared-output",destination_class:"download",format:"image/png"}},{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown"}}]){
+  database.reset();const unboundExport=await request("/api/events",json(scoped,{action:"append",event:{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown"}}}));
+  assert.equal(unboundExport.status,409);assert.equal((await unboundExport.json()).error,"stale_release_context");assert.equal(database.writeCount(),0,"a viewer cannot release retained artifact content without its exact revision and digest");
+  for(const event of [{type:"ObjectExported",payload:{object_id:"shared-output",destination_class:"download",format:"image/png"}},{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown",...sharedArtifactBinding}}]){
     const exported=await request("/api/events",json(scoped,{action:"append",event}));const receipt=await exported.json();assert.equal(exported.status,200,JSON.stringify(receipt));assert.equal(receipt.appended[0].actor,"user:canvas-project-editor","viewer downloads retain an actor-attributed project audit receipt");
   }
   database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event:{type:"DocumentArtifactExported",payload:{artifact_id:"private-artifact",document_id:"doc-atmosphere"}}}))).status,403);assert.equal(database.writeCount(),0,"viewer export receipts cannot reference another project");

@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { observeNativePopoverPosition, positionNativePopover } from "./native-popover";
-import { documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute, withProjectTaskDocumentInRoute } from "../model/routes";
 import { generationHistoryItems } from "../model/events";
 import { projectRailDocumentCount, projectRailDocumentDestination, projectRailDocuments } from "../model/project-rail";
 import type { FormaIconName } from "./icons";
@@ -208,7 +208,7 @@ export class ProjectRail extends FormaElement {
     const canvasWorkspace=pathname==="/canvas/library"||pathname.startsWith("/canvas/library/");
     const projectsRoute=canvasWorkspace?"/canvas/projects":"/projects";
     const overviewRoute=canvasWorkspace?"/canvas":"/studio/project";
-    const libraryRoute=libraryBaseRoute(route);
+    const libraryRoute=withProjectTaskDocumentInRoute(libraryBaseRoute(route),projection.documentId, this.store.route.get());
     const context=this.store.session.get()?.projectContext;
     const canAuthor=!context||context.permissions.includes("project.author");
     const documentDestination=projectRailDocumentDestination(route, this.getAttribute("destination"));

@@ -2447,14 +2447,65 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if (path.endsWith("/dismiss") && request.method === "POST") {
     const jobId = decodeURIComponent(path.slice(0, -8).replace(/\/$/, ""));
+    const headers = { "cache-control": "private, no-store" };
+    const notFound = () => Response.json({ error: "job_not_found" }, { status: 404, headers });
+    const conflict = () => Response.json({ error: "Generation issue could not be dismissed" }, { status: 409, headers });
     const target = await readJob(env, user.userId, jobId);
-    if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
-    if (target.status !== "failed" && target.status !== "partial") return Response.json({ error: "terminal_failure_required" }, { status: 409 });
-    const previousResult = parseResult(target);
-    const result = { ...previousResult, dismissedAt: previousResult.dismissedAt ?? now };
-    await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=?").bind(JSON.stringify(result), now, jobId, user.userId).run();
-    const updated = await readJob(env, user.userId, jobId);
-    return Response.json({ job:project?safeScopedJob(updated!):serializeJob(updated!) });
+    if (!target || target.stream_id !== user.streamId) return notFound();
+    if (target.status !== "failed" && target.status !== "partial") return Response.json({ error: "terminal_failure_required" }, { status: 409, headers });
+    // SQL NULL is an absent checkpoint; malformed or non-object retained data is not.
+    const readDismissedAt = (row: DocumentJobRow): string | null | undefined => {
+      if (row.result_json === null) return null;
+      try {
+        const result: unknown = JSON.parse(row.result_json);
+        if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
+        const value = (result as Record<string, unknown>).dismissedAt;
+        if (value === undefined || value === null) return null;
+        if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return undefined;
+        return new Date(value).toISOString() === value ? value : undefined;
+      } catch { return undefined; }
+    };
+    const originalDismissal = readDismissedAt(target);
+    if (originalDismissal === undefined) return conflict();
+    const authority = documentJobProjectAuthority(user, target.document_id, jobId);
+    const custodySql = authority?.sql ?? "NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)";
+    const selectionSql = project ? ` AND EXISTS(SELECT 1 FROM project_context_sessions selection WHERE selection.context_id=? AND selection.principal_user_id=?
+      AND selection.organization_id=? AND selection.project_access_id=? AND selection.revoked_at IS NULL
+      AND selection.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))` : "";
+    const scopeBindings = [...(authority?.bindings ?? []), ...(project ? [project.contextId, user.userId, project.organizationId, project.projectAccessId] : [])];
+    // Change only dismissal metadata on the exact observed failed attempt.
+    const changed = originalDismissal === null ? await env.DB.prepare(`UPDATE document_jobs
+      SET result_json=json_set(COALESCE(result_json,'{}'),'$.dismissedAt',strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at=MAX(updated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind=?
+        AND correlation_id=? AND attempt_count=? AND status=? AND result_json IS ? AND updated_at=?
+        AND CASE WHEN result_json IS NULL THEN 1 WHEN json_valid(result_json) THEN
+          json_type(result_json)='object' AND (json_type(result_json,'$.dismissedAt') IS NULL OR json_type(result_json,'$.dismissedAt')='null')
+          ELSE 0 END
+        AND (${custodySql})${selectionSql}`)
+      .bind(jobId, user.userId, user.streamId, target.document_id, target.kind, target.correlation_id, target.attempt_count,
+        target.status, target.result_json, target.updated_at, ...scopeBindings).run() : null;
+    // Reload under the same current custody/selection predicates, never return the captured body.
+    const updated = await env.DB.prepare(`SELECT document_jobs.*${outputSchemaIsReady(env.DB) ? ",(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id" : ""},
+      CASE WHEN json_valid(result_json) AND json_valid(?) THEN json_type(result_json)='object'
+        AND json_remove(result_json,'$.dismissedAt')=json_remove(?,'$.dismissedAt') ELSE 0 END AS dismissal_checkpoint_matches
+      FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind=?
+        AND (${custodySql})${selectionSql}`)
+      .bind(target.result_json ?? "{}", target.result_json ?? "{}", jobId, user.userId, user.streamId, target.document_id, target.kind, ...scopeBindings)
+      .first<DocumentJobRow & { dismissal_checkpoint_matches: number }>();
+    if (!updated) return notFound();
+    const currentDismissal = readDismissedAt(updated);
+    if (currentDismissal === undefined) return conflict();
+    if (Number(changed?.meta.changes ?? 0) !== 1) {
+      const sameAttempt = updated.correlation_id === target.correlation_id && updated.attempt_count === target.attempt_count && updated.status === target.status;
+      const sameSnapshot = updated.dismissal_checkpoint_matches === 1 && DOCUMENT_JOB_COLUMNS.split(",")
+        .filter(column => column !== "result_json" && column !== "updated_at")
+        .every(column => updated[column as keyof DocumentJobRow] === target[column as keyof DocumentJobRow]);
+      const sameDismissal = typeof currentDismissal === "string" && (originalDismissal !== null
+        ? currentDismissal === originalDismissal : sameSnapshot);
+      if (!sameAttempt || !sameDismissal) return conflict();
+    }
+    return Response.json({ job: project ? safeScopedJob(updated) : serializeJob(updated) }, { headers });
   }
 
   if(path.endsWith("/recover")&&request.method==="POST"){

@@ -50,7 +50,7 @@ export type OutputRequirementCardSnapshot = {
   results?: Array<{ targetId: string; artifactId: string; revision: string; title: string; stateLabel: string; canOpen: boolean }>;
 };
 export type OutputCardEditorState = {
-  status: "idle" | "saving" | "saved" | "conflict" | "invalid" | "forbidden" | "unavailable";
+  status: "idle" | "saving" | "saved" | "conflict" | "invalid" | "forbidden" | "unavailable" | "not-attempted";
   clientMutationId?: string;
   issues?: Array<{ path: string; message: string }>;
   latest?: OutputRequirementCardSnapshot;

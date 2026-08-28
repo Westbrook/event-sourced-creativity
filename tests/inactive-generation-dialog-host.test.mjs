@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
 import fs from "node:fs";
 import ts from "typescript";
@@ -180,6 +181,7 @@ class RendererPort {
       const parsed = this.attrs(raw), node = { tag, owner, ...parsed, full, open: Object.hasOwn(parsed.attributes, "open"), isConnected: true, value: parsed.properties.value ?? parsed.attributes.value ?? "", checked: parsed.properties.checked ?? false };
       node.setAttribute = (name, value) => { node.attributes[name] = String(value); };
       node.addEventListener = (type, handler) => { (node.listeners ??= {})[type] = handler; };
+      node.removeEventListener = (type, handler) => { if (node.listeners?.[type] === handler) delete node.listeners[type]; };
       node.classList = { contains: name => String(node.attributes.class ?? "").split(/\s+/).includes(name) };
       node.setCustomValidity = value => { node.validationMessage = value; };
       node.reportValidity = () => !node.validationMessage;
@@ -244,7 +246,7 @@ const { VideoReferencePreflight } = await loadActual("src/components/video-refer
 const { FormaLocaleController, FORMA_DEFAULT_MESSAGES } = await loadActual("src/components/design-system/localization.ts");
 const registry = { "forma-generation-input-dialog": GenerationInputDialog, "forma-video-reference-preflight": VideoReferencePreflight };
 
-function fixture(kind = "create", options = {}) {
+export function fixture(kind = "create", options = {}) {
   const state = { authorization: "actor-scope-a", canRead: true, canRequest: true, documentId: "A", required: true, events: [], content: {}, requests: [], saveConflict: false };
   const f = { state, locale: options.locale ?? "en", trace: [], clipboard: [], listeners: new Map(), changed: new Map(), steps: 0, requested: false };
   const messages = { ...FORMA_DEFAULT_MESSAGES, ...localeCatalogs[f.locale] };
@@ -287,6 +289,7 @@ function fixture(kind = "create", options = {}) {
     restoreDocumentArtifact: async (id, revision, current) => { assert.equal(current, documentArtifactRevision(state.events, id)); commit(id, "Restored original manuscript.", { restored_from_revision: revision, revision_action: "restore" }); return true; },
     artifactRevisions: async id => ({ revisions: [{ revision: 0, current: false, available: true, kind: "initial", contentSha256: "original-exact-hash", createdAt: "2026-08-27T00:00:00Z" }, { revision: documentArtifactRevision(state.events, id), current: true, available: true, kind: "edit", contentSha256: "current-exact-hash", createdAt: "2026-08-27T00:01:00Z" }], nextBefore: null }),
   };
+  installSourceOwnershipPort(f.store);
   f.renderer = new RendererPort(f, { ...registry, "forma-ui-popover": FormaUiPopover, "forma-presentation-deck": PresentationDeck });
   f.tick = async () => { const step = ++f.steps; await Promise.resolve(); options.onUpdate?.(f, step); f.draw(); return true; };
   f.workspace = { get updateComplete() { return f.tick(); } };

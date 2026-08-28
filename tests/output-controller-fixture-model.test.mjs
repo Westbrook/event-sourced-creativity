@@ -1,5 +1,6 @@
 // Adapter/scoped-transport tests only: these do not establish real DOM or server behavior.
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
 import ts from "typescript";
 import { controllerFixture } from "./output-ui-source-harness.mjs";
@@ -955,6 +956,7 @@ function browserFixtureStore(adapter, controller, records, fixtureLocation) {
     FIXTURE_DOCUMENT_IDS, FIXTURE_ACTOR, FIXTURE_PROJECT, FIXTURE_PROJECT_ACCESS, window: { location: fixtureLocation } };
   const evaluate = node => new Function(...Object.keys(bindings), '"use strict"; return (' + node.getText(tree) + ");")(...Object.values(bindings));
   const store = evaluate(assignment.expression.right);
+  installSourceOwnershipPort(store);
   store.outputRequirements = new transport.OutputRequirementsClient({
     captureScope: () => adapter.scope(), scopeActive: scope => adapter.scopeActive(scope), fetch: (...args) => adapter.fetch(...args),
     notify: bindings.notify, isSnapshot: evaluate(snapshotDeclaration.initializer),
@@ -1026,4 +1028,30 @@ test("browser fixture keeps its original CSP and executable global network block
   assert.equal(fixtureWindow.__formaOutputFixtureBlockedRequests.length, 2);
   assert.deepEqual(events.map(event => event.type), ["fixture-network-blocked", "fixture-network-blocked"]);
   assert.ok(events.every(event => event.detail.blocked === true));
+});
+
+
+test("the original synthetic extra-message CAS response cannot discard the real client's unknown original owner", async () => {
+  const records = [], adapter = await fixture(entry => records.push(entry));
+  adapter.seed(doc, "planning-saved");
+  const originalFetch = adapter.fetch;
+  const malformedAdapter = { ...adapter, fetch: async (...args) => {
+    const response = await originalFetch(...args);
+    if (response.status !== 409) return response;
+    const value = await response.clone().json();
+    if (value.error !== "output_revision_conflict") return response;
+    return Response.json({ error: value.error, message: "SYNTHETIC fixture: " + value.error }, { status: 409 });
+  } };
+  const client = realClient(malformedAdapter); await client.ensure(doc);
+  const denied = await client.command(doc, { action: "confirm", expectedRevision: "old-revision",
+    clientMutationId: "original-malformed-cas" }, "SYNTHETIC stale confirmation");
+  assert.equal(denied.status, "conflict");
+  assert.deepEqual(denied.body, { error: "output_revision_conflict", message: "SYNTHETIC fixture: output_revision_conflict" });
+  const owner = client.retainedWrite(doc);
+  assert.equal(owner.clientMutationId, "original-malformed-cas"); assert.equal(owner.status, "unknown");
+  await client.ensure(doc, { force: true }); const before = records.length;
+  const next = await client.command(doc, { action: "confirm", expectedRevision: client.resource(doc).snapshot.revision,
+    clientMutationId: "different-reviewed-confirm" }, "SYNTHETIC later confirmation");
+  assert.equal(next.status, "not-attempted"); assert.equal(records.length, before);
+  assert.deepEqual(client.retainedWrite(doc), owner); assert.equal(adapter.snapshot(doc).confirmedPlan, null);
 });

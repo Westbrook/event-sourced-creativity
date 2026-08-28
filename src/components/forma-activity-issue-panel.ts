@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import { activityJobDisposition, activityJobEvidence, activityJobIssueReport } from "../model/activity-issues";
 import { artifactReviewState, artifactSourceVersions } from "../model/context-health";
-import { parseDocumentArtifactContent, type DocumentArtifact } from "../model/document-artifacts";
+import { documentArtifactRevision, parseDocumentArtifactContent, type DocumentArtifact } from "../model/document-artifacts";
 import { documentJobFailure, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
 import { failedGenerationInputInspection } from "../model/generation-inputs";
 import type { PresentationCandidateDetail, PresentationCandidateSummary } from "../model/presentation-candidates";
@@ -9,12 +9,18 @@ import type {
   ActivityIssueNote,
   AssignedReviewTask,
   CapturedAuthorizationScope,
+  CapturedSourceOwnership,
   OrganizationContextBinding,
   OrganizationContextVersion,
   ProjectNotification,
 } from "../state/store";
 import { copyTextToClipboard, FormaElement } from "./forma-element";
 import "./generation-input-dialog";
+
+type ActivityCorrectionOwner = Readonly<{
+  notificationId: string; artifactId: string; documentId: string; contentRef: string;
+  projectId: string; route: string; source: CapturedSourceOwnership;
+}>;
 
 /**
  * Inspect approved failure evidence, capture actor-private notes, resolve assigned reviews, and explicitly accept scoped context changes without leaving Activity.
@@ -24,12 +30,14 @@ export class FormaActivityIssuePanel extends FormaElement {
   static properties = {
     job: { attribute: false },
     review: { attribute: false },
+    reviewContext: { attribute: false },
     notification: { attribute: false },
     documentName: { type: String, attribute: "document-name" },
   };
 
   job: DocumentJob | null = null;
   review: AssignedReviewTask | null = null;
+  reviewContext: { identity: string; name: string } | null = null;
   notification: ProjectNotification | null = null;
   documentName = "";
 
@@ -44,10 +52,67 @@ export class FormaActivityIssuePanel extends FormaElement {
   #editMarkdown = "";
   #editItems: Array<{ title: string; body: string; notes: string }> = [];
   #editRevision = 0;
+  #editDraftRevision = 0;
   #busy = "";
   #reviewUnavailable = false;
+  #correctionOwner: ActivityCorrectionOwner | null = null;
+
+  /** Identity only: the draft itself remains owned by this connected editor. */
+  get correctionEditorOwner(): Readonly<{
+    notificationId: string; artifactId: string; documentId: string; phase: "loading" | "editing";
+  }> | null {
+    const owner = this.#correctionOwner;
+    if (!owner || !this.#correctionOwnerCurrent(owner)) return null;
+    if (this.#busy !== "edit" && this.#editingArtifactId !== owner.artifactId) return null;
+    return { notificationId: owner.notificationId, artifactId: owner.artifactId,
+      documentId: owner.documentId, phase: this.#busy === "edit" ? "loading" : "editing" };
+  }
+
+  #correctionOwnerRetained(owner: ActivityCorrectionOwner) {
+    const notification = this.store.projectNotifications.get().find(row => row.id === owner.notificationId);
+    const context = this.store.session.get()?.projectContext;
+    const artifact = notification ? this.#notificationArtifact(notification) : null;
+    return this.#correctionOwner === owner && this.isConnected
+      && this.store.sourceOwnershipActive(owner.source) && this.store.route.get() === owner.route
+      && this.store.projection.get().projectId === owner.projectId
+      && (!context || context.permissions.includes("project.author"))
+      && notification?.id === owner.notificationId && notification.kind === "changes_requested"
+      && notification.artifactId === owner.artifactId && notification.documentId === owner.documentId
+      && artifact?.id === owner.artifactId && artifact.documentId === owner.documentId && artifact.contentRef === owner.contentRef
+      && (this.#editingArtifactId !== owner.artifactId || typeof this.store.content.get()[owner.contentRef] === "string");
+  }
+
+  #correctionOwnerCurrent(owner: ActivityCorrectionOwner) {
+    const notification = this.notification;
+    return this.#correctionOwnerRetained(owner) && notification?.id === owner.notificationId
+      && notification.kind === "changes_requested" && notification.artifactId === owner.artifactId
+      && notification.documentId === owner.documentId;
+  }
+
+  #correctionStateChanged() {
+    this.dispatchEvent(new CustomEvent("forma-activity-correction-state-changed", { bubbles: true, composed: true }));
+  }
+
+  #releaseCorrectionOwner() {
+    if (!this.#correctionOwner) return;
+    this.#correctionOwner = null;
+    this.#correctionStateChanged();
+  }
+
+  readonly #retireCorrection = () => {
+    if (!this.#correctionOwner || this.#correctionOwnerRetained(this.#correctionOwner)) return;
+    this.#editingArtifactId = "";
+    this.#editMarkdown = "";
+    this.#editItems = [];
+    if (this.#busy === "edit" || this.#busy === "save-edit") this.#busy = "";
+    this.#releaseCorrectionOwner();
+    this.requestUpdate();
+  };
+
+  protected override willUpdate() { this.#retireCorrection(); }
 
   readonly #clearPrivateState = () => {
+    this.#releaseCorrectionOwner();
     this.#inspectionJob = null;
     this.#actorContent = {};
     this.#candidates = null;
@@ -66,10 +131,12 @@ export class FormaActivityIssuePanel extends FormaElement {
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("forma-authorization-changed", this.#clearPrivateState);
+    window.addEventListener("forma-event-source-retired", this.#retireCorrection);
   }
 
   override disconnectedCallback() {
     window.removeEventListener("forma-authorization-changed", this.#clearPrivateState);
+    window.removeEventListener("forma-event-source-retired", this.#retireCorrection);
     this.#clearPrivateState();
     super.disconnectedCallback();
   }
@@ -300,11 +367,19 @@ export class FormaActivityIssuePanel extends FormaElement {
     const scope = this.store.captureAuthorizationScope();
     const context = this.store.session.get()?.projectContext;
     if (!scope || !artifact.contentRef || context && !context.permissions.includes("project.author") || this.#busy) return;
+    const source = this.store.captureSourceOwnership(), notification = this.notification;
+    if (!source || !this.store.sourceOwnershipActive(source) || notification?.kind !== "changes_requested"
+      || notification.artifactId !== artifact.id || notification.documentId !== artifact.documentId) return;
+    const owner = Object.freeze({ notificationId: notification.id, artifactId: artifact.id,
+      documentId: artifact.documentId, contentRef: artifact.contentRef, source,
+      projectId: this.store.projection.get().projectId, route: this.store.route.get() });
+    this.#correctionOwner = owner;
     this.#busy = "edit";
+    this.#correctionStateChanged();
     this.requestUpdate();
     try {
       const retained = await this.store.ensurePrivateContent(artifact.contentRef);
-      if (!this.store.authorizationScopeActive(scope)
+      if (!this.store.authorizationScopeActive(scope) || !this.#correctionOwnerCurrent(owner)
         || this.#notificationArtifact(this.notification!)?.id !== artifact.id) return;
       const draft = parseDocumentArtifactContent(retained ?? undefined);
       if (!draft) return;
@@ -314,10 +389,17 @@ export class FormaActivityIssuePanel extends FormaElement {
       this.#editRevision = this.store.events.get().filter((entry) => entry.type === "DocumentArtifactEdited"
         && String(entry.payload.artifact_id ?? "") === artifact.id).length;
     } catch (error) {
-      if (this.store.authorizationScopeActive(scope)) this.#reportFailure(error);
+      if (this.store.authorizationScopeActive(scope) && this.#correctionOwnerCurrent(owner)) this.#reportFailure(error);
     } finally {
-      if (this.store.authorizationScopeActive(scope)) {
+      if (this.#correctionOwner === owner) {
+        if (!this.#correctionOwnerCurrent(owner) || this.#editingArtifactId !== owner.artifactId) {
+          this.#editingArtifactId = "";
+          this.#editMarkdown = "";
+          this.#editItems = [];
+          this.#releaseCorrectionOwner();
+        }
         this.#busy = "";
+        this.#correctionStateChanged();
         this.requestUpdate();
       }
     }
@@ -325,26 +407,60 @@ export class FormaActivityIssuePanel extends FormaElement {
 
   async #saveCorrection(artifact: DocumentArtifact, event: SubmitEvent) {
     event.preventDefault();
-    const scope = this.store.captureAuthorizationScope();
-    if (!scope || this.#editingArtifactId !== artifact.id || !this.#editMarkdown.trim() || this.#busy) return;
+    const scope = this.store.captureAuthorizationScope(), owner = this.#correctionOwner;
+    if (!scope || !owner || !this.#correctionOwnerCurrent(owner)
+      || this.#editingArtifactId !== artifact.id || !this.#editMarkdown.trim() || this.#busy) return;
+    const source = this.store.captureSourceOwnership(), notification = this.notification ? { ...this.notification } : null, notificationId = notification?.id;
+    // Feed parsing may replace an equivalent row. Bind the original correction
+    // target/instructions, not the object instance or its read-status metadata.
+    const notificationCurrent = () => Boolean(notification && this.notification
+      && this.notification.id === notification.id && this.notification.kind === notification.kind
+      && this.notification.artifactId === notification.artifactId && this.notification.documentId === notification.documentId
+      && this.notification.message === notification.message && this.notification.createdAt === notification.createdAt);
+    const artifactId = artifact.id, documentId = artifact.documentId, contentRef = artifact.contentRef ?? "";
+    const route = this.store.route.get(), projectId = this.store.projection.get().projectId;
+    const editItems = this.#editItems, draftRevision = this.#editDraftRevision, retainedBefore = this.store.content.get()[contentRef];
+    const input = {
+      markdown: this.#editMarkdown,
+      items: editItems.map((item, index) => ({ index, ...item })),
+      expectedRevision: this.#editRevision,
+    };
+    const current = () => this.store.authorizationScopeActive(scope) && this.store.sourceOwnershipActive(source)
+      && this.#correctionOwnerCurrent(owner)
+      && notificationCurrent() && this.#editingArtifactId === artifactId && this.#editItems === editItems
+      && this.#editRevision === input.expectedRevision && this.store.route.get() === route && this.store.projection.get().projectId === projectId
+      && Boolean(notification && this.#notificationArtifact(notification)?.documentId === documentId
+        && this.#notificationArtifact(notification)?.contentRef === contentRef);
+    if (!current()) return;
     this.#busy = "save-edit";
     this.requestUpdate();
     try {
-      const saved = await this.store.reviseDocumentArtifact(artifact.id, {
-        markdown: this.#editMarkdown,
-        items: this.#editItems.map((item, index) => ({ index, ...item })),
-        expectedRevision: this.#editRevision,
-      });
-      if (!this.store.authorizationScopeActive(scope)) return;
-      if (saved) {
-        this.#editingArtifactId = "";
-        this.#editMarkdown = "";
-        this.#editItems = [];
-        const notification = this.notification;
-        if (notification && !notification.readAt) await this.store.acknowledgeProjectNotification(notification.id);
+      const saved = await this.store.reviseDocumentArtifact(artifact.id, input);
+      if (!saved || !current()) return;
+      const revision = documentArtifactRevision(this.store.events.get(), artifactId);
+      let matches = false;
+      try {
+        const retained = JSON.parse(this.store.content.get()[contentRef] ?? "") as {
+          content_markdown?: unknown; items?: Array<{ title?: unknown; body?: unknown; notes?: unknown }>;
+        };
+        const unchanged = revision === input.expectedRevision && this.store.content.get()[contentRef] === retainedBefore;
+        matches = (revision === input.expectedRevision + 1 || unchanged) && retained.content_markdown === input.markdown
+          && Array.isArray(retained.items) && retained.items.length === input.items.length
+          && input.items.every((item, index) => retained.items![index]?.title === item.title
+            && retained.items![index]?.body === item.body && retained.items![index]?.notes === item.notes);
+      } catch { /* An unverified current revision cannot rebase or dismiss a newer correction. */ }
+      if (!matches) return;
+      if (this.#editDraftRevision !== draftRevision) {
+        this.#editRevision = revision;
+        return; // B remains unsaved; A cannot move its notification out of view.
       }
+      this.#editingArtifactId = "";
+      this.#editMarkdown = "";
+      this.#editItems = [];
+      this.#releaseCorrectionOwner();
+      if (notificationId && !notification?.readAt && this.notification?.readAt === notification.readAt) await this.store.acknowledgeProjectNotification(notificationId);
     } finally {
-      if (this.store.authorizationScopeActive(scope)) {
+      if (this.store.authorizationScopeActive(scope) && (this.#correctionOwner === owner || !this.#correctionOwner)) {
         this.#busy = "";
         this.requestUpdate();
       }
@@ -469,7 +585,7 @@ export class FormaActivityIssuePanel extends FormaElement {
         <form @submit=${(event: SubmitEvent) => void this.#saveNote(job, event)}>
           <label>${this.i18n.t("activity.issue.noteLabel", "Add a private note")}<textarea required maxlength="2000" rows="3"
             placeholder=${this.i18n.t("activity.issue.notePlaceholder", "Record what happened, what you checked, or the next action…")}
-            .value=${this.#noteDraft} @input=${(event: Event) => { this.#noteDraft = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea></label>
+            .value=${this.#noteDraft} ?readonly=${this.#busy === "save-note"} @input=${(event: Event) => { this.#noteDraft = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea></label>
           <button type="submit" class="button secondary compact" ?disabled=${Boolean(this.#busy)}>${this.#busy === "save-note"
             ? this.i18n.t("activity.issue.savingNote", "Saving private note…") : this.i18n.t("activity.issue.saveNote", "Save private note")}</button>
         </form>
@@ -482,16 +598,18 @@ export class FormaActivityIssuePanel extends FormaElement {
   #reviewPanel(task: AssignedReviewTask) {
     const artifact = this.#reviewArtifact(task);
     if (!artifact) return nothing;
-    return html`<section class="forma-activity-issue-panel forma-activity-issue-review">
-      <h4>${this.i18n.t("activity.issue.reviewHere", "Review this exact output here")}</h4>
+    const context = this.reviewContext?.identity === JSON.stringify([task.id, task.organizationId, task.projectAccessId, task.projectId, task.documentId, task.artifactId, task.artifactKind, task.revision, task.contentSha256, task.artifactTitle, task.documentTitle, task.projectName, task.organizationName]) ? this.reviewContext.name : "";
+    const named = (label: string) => context ? this.i18n.t("artifact.delivery.namedAction", "{action} — {name}", { action: label, name: context }) : label;
+    return html`<section class="forma-activity-issue-panel forma-activity-issue-review" aria-label=${named(this.i18n.t("activity.issue.reviewHere", "Review this exact output here"))}>
+      <h4 aria-label=${named(this.i18n.t("activity.issue.reviewHere", "Review this exact output here"))}>${this.i18n.t("activity.issue.reviewHere", "Review this exact output here")}</h4>
       ${this.#artifactPreview(artifact)}
       ${this.#reviewUnavailable ? html`<p role="alert">${this.i18n.t("activity.issue.reviewUnavailable", "This output changed or is no longer available. Open the assigned review to verify its latest version.")}</p>` : nothing}
-      <button type="button" class="button primary compact" ?disabled=${Boolean(this.#busy)} @click=${() => void this.#resolveReview(task, "approved")}>${this.i18n.t("activity.issue.approve", "Approve output")}</button>
-      <form @submit=${(event: SubmitEvent) => void this.#resolveReview(task, "changes-requested", event)}>
-        <label>${this.i18n.t("activity.issue.reviewNote", "Describe the required changes")}<textarea required maxlength="500" rows="2"
+      <button type="button" class="button primary compact" aria-label=${named(this.i18n.t("activity.issue.approve", "Approve output"))} ?disabled=${Boolean(this.#busy)} @click=${() => void this.#resolveReview(task, "approved")}>${this.i18n.t("activity.issue.approve", "Approve output")}</button>
+      <form aria-label=${named(this.i18n.t("activity.issue.requestChanges", "Request changes"))} @submit=${(event: SubmitEvent) => void this.#resolveReview(task, "changes-requested", event)}>
+        <label>${this.i18n.t("activity.issue.reviewNote", "Describe the required changes")}<textarea required maxlength="500" rows="2" aria-label=${named(this.i18n.t("activity.issue.reviewNote", "Describe the required changes"))}
           placeholder=${this.i18n.t("activity.issue.reviewNotePlaceholder", "Explain precisely what the author should correct…")}
-          .value=${this.#reviewNote} @input=${(event: Event) => { this.#reviewNote = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea></label>
-        <button type="submit" class="button secondary compact" ?disabled=${Boolean(this.#busy)}>${this.i18n.t("activity.issue.requestChanges", "Request changes")}</button>
+          .value=${this.#reviewNote} ?readonly=${this.#busy === "review"} @input=${(event: Event) => { this.#reviewNote = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea></label>
+        <button type="submit" class="button secondary compact" aria-label=${named(this.i18n.t("activity.issue.requestChanges", "Request changes"))} ?disabled=${Boolean(this.#busy)}>${this.i18n.t("activity.issue.requestChanges", "Request changes")}</button>
       </form>
     </section>`;
   }
@@ -552,20 +670,20 @@ export class FormaActivityIssuePanel extends FormaElement {
     if (context && !context.permissions.includes("project.author")) return nothing;
     return html`<section class="forma-activity-issue-panel forma-activity-issue-correction">
       ${this.#artifactPreview(artifact)}
-      ${this.#editingArtifactId === artifact.id ? html`<form @submit=${(event: SubmitEvent) => void this.#saveCorrection(artifact, event)}>
+      ${this.#editingArtifactId === artifact.id && this.#correctionOwner && this.#correctionOwnerCurrent(this.#correctionOwner) ? html`<form @submit=${(event: SubmitEvent) => void this.#saveCorrection(artifact, event)}>
         <label>${this.i18n.t("activity.issue.editLabel", "Output content")}<textarea required rows="8" .value=${this.#editMarkdown}
-          @input=${(event: Event) => { this.#editMarkdown = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea></label>
+          @input=${(event: Event) => { this.#editMarkdown = (event.currentTarget as HTMLTextAreaElement).value; this.#editDraftRevision++; }}></textarea></label>
         ${this.#editItems.map((item, index) => html`<fieldset><legend>${this.i18n.t("presentation.draft.slideHeading", "Slide {slide}: {title}", {
           slide: this.i18n.number(index + 1), title: item.title,
         })}</legend><input aria-label=${this.i18n.t("activity.issue.itemTitle", "Item title")} .value=${item.title}
-          @input=${(event: Event) => { item.title = (event.currentTarget as HTMLInputElement).value; }}>
+          @input=${(event: Event) => { item.title = (event.currentTarget as HTMLInputElement).value; this.#editDraftRevision++; }}>
           <textarea aria-label=${this.i18n.t("activity.issue.editLabel", "Output content")} rows="3" .value=${item.body}
-            @input=${(event: Event) => { item.body = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea>
+            @input=${(event: Event) => { item.body = (event.currentTarget as HTMLTextAreaElement).value; this.#editDraftRevision++; }}></textarea>
           <textarea aria-label=${this.i18n.t("presentation.draft.speakerNotes", "Speaker notes")} rows="2" .value=${item.notes}
-            @input=${(event: Event) => { item.notes = (event.currentTarget as HTMLTextAreaElement).value; }}></textarea></fieldset>`)}
+            @input=${(event: Event) => { item.notes = (event.currentTarget as HTMLTextAreaElement).value; this.#editDraftRevision++; }}></textarea></fieldset>`)}
         <div class="forma-activity-issue-actions"><button type="submit" class="button primary compact" ?disabled=${Boolean(this.#busy)}>${this.#busy === "save-edit"
           ? this.i18n.t("activity.issue.saving", "Saving…") : this.i18n.t("activity.issue.saveCorrection", "Save correction without regenerating")}</button>
-          <button type="button" class="button ghost compact" @click=${() => { this.#editingArtifactId = ""; this.#editMarkdown = ""; this.#editItems = []; this.requestUpdate(); }}>${this.i18n.t("activity.issue.cancel", "Cancel")}</button></div>
+          <button type="button" class="button ghost compact" @click=${() => { this.#editingArtifactId = ""; this.#editMarkdown = ""; this.#editItems = []; this.#releaseCorrectionOwner(); this.requestUpdate(); }}>${this.i18n.t("activity.issue.cancel", "Cancel")}</button></div>
       </form>` : html`<button type="button" class="button secondary compact" ?disabled=${Boolean(this.#busy)}
         @click=${() => void this.#startCorrection(artifact)}>${this.i18n.t("activity.issue.editOutput", "Correct this output here")}</button>`}
     </section>`;

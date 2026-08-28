@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import ts from "typescript";
 import { canvasFocusFromRoute, canvasIdFromRoute, canvasLensFromRoute, canvasViewFromRoute, withCanvasFocus, withCanvasQuery, withCanvasView } from "../src/canvas/routes.ts";
 import { canvasImagePresentationSignals, canvasItemsInVirtualViewport, canvasMatchSizeTarget, foldCanvasEvents, foldCanvasText, matchCanvasItemSizes, organizeCanvasItems, translateCanvasItems } from "../src/canvas/model.ts";
 import { canvasFacetsForBlocks } from "../src/canvas/facets.ts";
@@ -195,7 +196,7 @@ test("admission rejects raw presence and malformed collaborative operations",()=
 test("Canvas UI preserves the source-of-truth and accessibility boundaries",async()=>{
   const [surface,styles,presence,operations,store,outputVisual,referenceImage]=await Promise.all([readFile(new URL("../src/canvas/canvas-application.ts",import.meta.url),"utf8"),readFile(new URL("../src/canvas/canvas.css",import.meta.url),"utf8"),readFile(new URL("../src/canvas/presence.ts",import.meta.url),"utf8"),readFile(new URL("../src/apps/operations/canvas-sync-inspector.ts",import.meta.url),"utf8"),readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/output-visual.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/reference-image.ts",import.meta.url),"utf8")]);
   assert.match(surface,/ContextSetFormalized/);assert.match(surface,/arrangement_is_context:false/);assert.match(surface,/source_kind:"context"/);assert.match(surface,/structureAdaptive\(intent,\{documentId,sourceSurface:"canvas",projectScope:true,canvasId\}\)/);assert.match(surface,/CanvasTextApplied/);assert.match(surface,/StrokeAdded/);assert.match(surface,/DRAG_THRESHOLD_PX/);assert.match(surface,/pointercancel/);assert.match(surface,/CanvasLockAcquired/);assert.match(surface,/saved on this device/);assert.doesNotMatch(surface,/Board changes could not be synchronized|The board changed before/);assert.match(surface,/ComparisonOpened/);assert.match(surface,/refreshEvents/);assert.match(surface,/role="region" aria-roledescription="virtual project board"/);assert.doesNotMatch(surface,/role="application"/);assert.match(surface,/const plainKey=!event\.metaKey&&!event\.ctrlKey&&!event\.altKey/);assert.match(surface,/plainKey&&event\.key\.toLowerCase\(\)==="f"/);assert.doesNotMatch(surface,/event\.metaKey&&event\.key==="[01]"/);assert.match(surface,/Board reading order/);assert.match(surface,/canvas-selection-hud/);assert.match(surface,/canvas-intent-dock/);assert.match(surface,/canvas-sync-status/);assert.match(surface,/All changes saved/);assert.match(surface,/data-canvas-focus/);assert.match(surface,/withCanvasFocus/);
-  assert.match(surface,/enqueueBatch\(events,scope\)/);assert.match(surface,/stageOptimisticCanvasEvents/);assert.match(surface,/forma-canvas-ordered-sync/);assert.match(surface,/listBatches\(scope\)/);assert.match(surface,/encodeURIComponent\(scope\.ownerId\)/);assert.match(surface,/encodeURIComponent\(scope\.projectId\)/);assert.doesNotMatch(surface,/await lockAttempt/);assert.match(store,/action:"canvas_sync"/);assert.match(store,/readonly optimisticEvents/);assert.match(store,/readonly eventView/);
+  assertCanvasQueueSourceGuards(surface);assert.match(surface,/stageOptimisticCanvasEvents/);assert.match(surface,/forma-canvas-ordered-sync/);assert.match(surface,/encodeURIComponent\(scope\.ownerId\)/);assert.match(surface,/encodeURIComponent\(scope\.projectId\)/);assert.doesNotMatch(surface,/await lockAttempt/);assert.match(store,/action:"canvas_sync"/);assert.match(store,/readonly optimisticEvents/);assert.match(store,/readonly eventView/);
   assert.match(surface,/aria-label="Clear selection"/);assert.match(surface,/#clearSelection\(\)/);assert.match(surface,/>Remove<\/button>/);assert.match(surface,/Create document/);assert.match(surface,/Step 1 of 2 · prepare/);assert.match(surface,/Step 2 of 2 · render when ready/);assert.match(surface,/Draft fan ×4/);assert.match(surface,/Full fan ×4/);assert.doesNotMatch(surface,/#generateSelection/);
   assert.match(surface,/Batch select ideas \(B\)/);assert.match(surface,/aria-pressed=\$\{active\}/);assert.match(surface,/Drag from empty canvas to select an area/);assert.match(surface,/Cards remain clickable and draggable/);assert.match(surface,/#marqueeSelect\(event:PointerEvent\)/);assert.match(surface,/if\(event\.target===event\.currentTarget\)this\.#marqueeSelect\(event\)/);assert.match(surface,/\["select","marquee"\]\.includes\(this\.#tool\)/);assert.match(surface,/const visibleItems=this\.#orderedItems/);assert.match(surface,/class="canvas-selection-marquee"/);assert.match(styles,/\.canvas-plane\.is-batch-selecting/);assert.match(styles,/\.canvas-selection-marquee\{/);assert.match(styles,/\.canvas-batch-select\{/);
   assert.match(surface,/Search existing context/);assert.match(surface,/Search name, type, or instructions/);assert.match(surface,/blockTypeDefinition\(source\.blockType as BlockKind\)/);assert.match(surface,/No existing context matches/);assert.match(styles,/\.canvas-source-search-field:focus-within/);
@@ -220,4 +221,71 @@ test("Canvas UI preserves the source-of-truth and accessibility boundaries",asyn
   assert.doesNotMatch(exactPlanningRead,/#syncAdaptiveSuggestionSets\(/,"An exact receipt is not an authoritative full Canvas suggestion list");
   assert.match(presence,/BroadcastChannel/);assert.doesNotMatch(presence,/append|fetch\(/);assert.match(operations,/Cursor presence is ephemeral|cursor trails|raw pointer paths/i);assert.match(operations,/Image presentation signals/);assert.match(operations,/organizational evidence, not creative truth/);
   assert.match(styles,/content-visibility:auto/);assert.match(styles,/will-change:transform/);assert.doesNotMatch(styles,/--canvas-world-(?:width|height)/);assert.match(styles,/\.canvas-viewport\{[^}]*overflow:hidden/);assert.match(styles,/\.canvas-plane\{[^}]*position:absolute;inset:0/);assert.match(styles,/minmax\(0,1fr\)/);assert.match(styles,/\.canvas-intent-cards\{[^}]*overflow:auto/);assert.match(styles,/@media\(max-width:900px\)/);assert.match(styles,/html\[data-canvas-focus\]/);
+});
+
+
+// This is a method-scoped source-contract oracle, not a substitute for the
+// actual Canvas/Store/Worker retirement cases in canvas-source-retirement.test.
+function assertCanvasQueueSourceGuards(surface) {
+  const tree = ts.createSourceFile("canvas-application.ts", surface, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  assert.equal(tree.parseDiagnostics.length, 0);
+  const component = tree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CanvasApplication");
+  assert.ok(component);
+  const compact = node => node.getText(tree).replace(/\s+/gu, "");
+  const member = name => { const result = component.members.find(node => node.name?.getText(tree) === name); assert.ok(result, name); return result; };
+  const nodes = (root, predicate) => { const found = []; const visit = node => { if (predicate(node)) found.push(node); ts.forEachChild(node, visit); }; visit(root); return found; };
+  const one = (root, predicate, label) => { const found = nodes(root, predicate); assert.equal(found.length, 1, label); return found[0]; };
+  const initializer = (root, name) => one(root, node => ts.isVariableDeclaration(node) && node.name.getText(tree) === name, name).initializer;
+  const call = (root, name) => one(root, node => ts.isCallExpression(node) && node.expression.getText(tree) === name, name);
+  const guard = (root, condition) => { const found = root.body.statements.find(node => ts.isIfStatement(node) && compact(node.expression) === condition); assert.ok(found, condition); return found; };
+  const returns = root => compact(one(root, ts.isReturnStatement, "one ownership predicate").expression);
+
+  const capture = member("#captureQueueOwner");
+  assert.equal(compact(initializer(capture, "source")), "this.store.captureSourceOwnership()");
+  assert.equal(compact(initializer(capture, "scope")), "this.#queueScope()");
+  assert.equal(compact(guard(capture, "!source||!this.store.sourceOwnershipActive(source)||!scope.ownerId||!scope.projectId").thenStatement), "returnnull;");
+  assert.equal(compact(initializer(capture, "owner")), "{source,scope,retired:false}");
+  assert.ok(capture.body.statements.some(node => ts.isExpressionStatement(node) && compact(node.expression) === "this.#queueOwner=owner"));
+  assert.equal(compact(capture.body.statements.at(-1)), "returnowner;");
+  assert.equal(returns(member("#queueSourceRetired")), "owner.retired||this.store.sourceOwnershipScopeActive(owner.source)&&!this.store.sourceOwnershipActive(owner.source)");
+  assert.equal(returns(member("#queueOwnerCurrent")), "this.isConnected&&this.#queueOwner===owner&&this.store.sourceOwnershipActive(owner.source)&&this.#queueScopeActive(owner.scope)&&!owner.retired");
+  assert.equal(returns(member("#queueScopeActive")), "this.#canEditCanvas()&&current.ownerId===scope.ownerId&&current.projectId===scope.projectId&&current.organizationId===scope.organizationId&&current.projectAccessId===scope.projectAccessId&&current.historyOwnerId===scope.historyOwnerId&&current.permissionEpoch===scope.permissionEpoch");
+
+  const queue = member("#queueLocally"), enqueue = call(queue, "canvasOfflineQueue.enqueueBatch");
+  assert.equal(compact(initializer(queue, "owner")), "this.#captureQueueOwner()");
+  assert.ok(ts.isThrowStatement(guard(queue, "!owner||!this.#canEditCanvas()").thenStatement));
+  assert.deepEqual(enqueue.arguments.map(compact), ["events", "owner.scope", "{current:()=>!this.#queueSourceRetired(owner)}"]);
+  assert.equal(compact(initializer(queue, "queued")), "await" + compact(enqueue));
+  const retired = guard(queue, "queued.sourceRetired||this.#queueSourceRetired(owner)");
+  assert.equal(compact(retired.thenStatement), '{awaitthis.#pauseQueue(owner,[queued]);thrownewError("canvas_source_retired");}');
+  const display = call(queue, "this.store.stageOptimisticCanvasEvents"), summary = call(queue, "canvasOfflineQueue.summary");
+  const ownerChecks = queue.body.statements.filter(node => ts.isIfStatement(node) && compact(node.expression) === "!this.#queueOwnerCurrent(owner)");
+  assert.equal(ownerChecks.length, 2, "Current ownership is rechecked after queue storage and after summary");
+  assert.ok(ownerChecks.every(node => ts.isThrowStatement(node.thenStatement)));
+  assert.ok(enqueue.end < retired.pos && retired.end <= ownerChecks[0].pos && ownerChecks[0].end < display.pos);
+  assert.ok(summary.end < ownerChecks[1].pos, "A late summary cannot publish under a different owner");
+
+  const flush = member("#runFlushQueue");
+  assert.equal(compact(initializer(flush, "owner")), "this.#captureQueueOwner()");
+  guard(flush, "!owner||!this.#canEditCanvas()");
+  assert.equal(compact(initializer(flush, "scope")), "owner.scope");
+  assert.equal(compact(initializer(flush, "activeScope")), "()=>this.#queueOwnerCurrent(owner)");
+  assert.deepEqual(call(flush, "canvasOfflineQueue.listBatches").arguments.map(compact), ["scope", "{current:()=>!this.#queueSourceRetired(owner)}"]);
+}
+
+for (const [label, before, after] of [
+  ["missing enqueue callback", "canvasOfflineQueue.enqueueBatch(events,owner.scope,{current:()=>!this.#queueSourceRetired(owner)})", "canvasOfflineQueue.enqueueBatch(events,owner.scope)"],
+  ["unconditional enqueue callback", "canvasOfflineQueue.enqueueBatch(events,owner.scope,{current:()=>!this.#queueSourceRetired(owner)})", "canvasOfflineQueue.enqueueBatch(events,owner.scope,{current:()=>true})"],
+  ["uncaptured enqueue scope", "canvasOfflineQueue.enqueueBatch(events,owner.scope,{current:()=>!this.#queueSourceRetired(owner)})", "canvasOfflineQueue.enqueueBatch(events,this.#queueScope(),{current:()=>!this.#queueSourceRetired(owner)})"],
+  ["missing source capture authority", "if(!source||!this.store.sourceOwnershipActive(source)||!scope.ownerId||!scope.projectId)return null;", "if(!source||!scope.ownerId||!scope.projectId)return null;"],
+  ["missing live source retirement dependency", "return owner.retired||this.store.sourceOwnershipScopeActive(owner.source)&&!this.store.sourceOwnershipActive(owner.source);", "return owner.retired;"],
+  ["missing current owner source dependency", "return this.isConnected&&this.#queueOwner===owner&&this.store.sourceOwnershipActive(owner.source)&&this.#queueScopeActive(owner.scope)&&!owner.retired;", "return this.isConnected&&this.#queueOwner===owner&&this.#queueScopeActive(owner.scope)&&!owner.retired;"],
+  ["missing post-await owner guard", 'if(!this.#queueOwnerCurrent(owner))throw new Error("The active project changed before this board change could be displayed.");', ""],
+  ["missing guarded queue read", "canvasOfflineQueue.listBatches(scope,{current:()=>!this.#queueSourceRetired(owner)})", "canvasOfflineQueue.listBatches(scope)"],
+]) test("Canvas queue source oracle rejects " + label, async () => {
+  const surface = await readFile(new URL("../src/canvas/canvas-application.ts", import.meta.url), "utf8");
+  assertCanvasQueueSourceGuards(surface);
+  const mutated = surface.replace(before, after);
+  assert.notEqual(mutated, surface, "The causal control must change the actual production member");
+  assert.throws(() => assertCanvasQueueSourceGuards(mutated), assert.AssertionError);
 });

@@ -1,10 +1,12 @@
 import { SCENE_COST_MESSAGES } from "./scene-cost-messages.ts";
+import { ARTIFACT_DELIVERY_MESSAGES } from "./artifact-delivery-messages.ts";
 import { ACTIVITY_ISSUE_MESSAGES } from "./activity-issue-messages.ts";
 import { ASSISTANT_MESSAGES } from "./assistant-messages.ts";
 import { PRESENTATION_CANDIDATE_MESSAGES } from "./presentation-candidate-messages.ts";
 
 const english = {
   ...ACTIVITY_ISSUE_MESSAGES.en,
+  ...ARTIFACT_DELIVERY_MESSAGES.en,
   ...ASSISTANT_MESSAGES.en,
   ...PRESENTATION_CANDIDATE_MESSAGES.en,
   "generation.planningLimit.title": "This request exceeds its planning allowance",
@@ -27,6 +29,8 @@ const english = {
   "workbench.noTasks": "No active tasks",
   "workbench.reviewQueue": "Review queue",
   "workbench.deliveryReady": "Ready to deliver",
+  "shell.sourceUnavailable": "The current source is unavailable. Its saved operation references are retained.",
+  "shell.sourceAccessRevoked": "This session cannot read the project. Saved operation references are retained. Restore access, then retry to check the source.",
   "activity.navigationBadge": "Activity, {count} items need attention",
   "activity.inbox": "Activity · inbox",
   "activity.description": "Keep track of assigned reviews, authorized project updates, and your own background operations.",
@@ -142,6 +146,7 @@ type ResponsiveMessages = Record<keyof typeof english, string>;
 
 const french: ResponsiveMessages = {
   ...ACTIVITY_ISSUE_MESSAGES.fr,
+  ...ARTIFACT_DELIVERY_MESSAGES.fr,
   ...ASSISTANT_MESSAGES.fr,
   ...PRESENTATION_CANDIDATE_MESSAGES.fr,
   "generation.planningLimit.title": "Cette demande dépasse son allocation de planification",
@@ -164,6 +169,8 @@ const french: ResponsiveMessages = {
   "workbench.noTasks": "Aucune tâche en cours",
   "workbench.reviewQueue": "Révisions en attente",
   "workbench.deliveryReady": "Prêt à livrer",
+  "shell.sourceUnavailable": "La source actuelle n’est pas disponible. Les références des opérations enregistrées sont conservées.",
+  "shell.sourceAccessRevoked": "Cette session ne peut pas lire le projet. Les références des opérations enregistrées sont conservées. Rétablissez l’accès, puis réessayez pour vérifier la source.",
   "activity.navigationBadge": "Activité : {count} éléments nécessitent votre attention",
   "activity.inbox": "Activité · boîte de réception",
   "activity.description": "Suivez vos révisions attribuées, les mises à jour autorisées du projet et vos propres traitements.",
@@ -277,6 +284,7 @@ const french: ResponsiveMessages = {
 
 const arabic: ResponsiveMessages = {
   ...ACTIVITY_ISSUE_MESSAGES.ar,
+  ...ARTIFACT_DELIVERY_MESSAGES.ar,
   ...ASSISTANT_MESSAGES.ar,
   ...PRESENTATION_CANDIDATE_MESSAGES.ar,
   "generation.planningLimit.title": "يتجاوز هذا الطلب مخصصات التخطيط الخاصة به",
@@ -299,6 +307,8 @@ const arabic: ResponsiveMessages = {
   "workbench.noTasks": "لا توجد مهام نشطة",
   "workbench.reviewQueue": "قائمة المراجعة",
   "workbench.deliveryReady": "جاهز للتسليم",
+  "shell.sourceUnavailable": "المصدر الحالي غير متاح. تم الاحتفاظ بمراجع العمليات المحفوظة.",
+  "shell.sourceAccessRevoked": "لا يمكن لهذه الجلسة قراءة المشروع. تم الاحتفاظ بمراجع العمليات المحفوظة. استعد صلاحية الوصول، ثم أعد المحاولة للتحقق من المصدر.",
   "activity.navigationBadge": "النشاط: يوجد {count} عناصر تحتاج إلى انتباهك",
   "activity.inbox": "النشاط · صندوق الوارد",
   "activity.description": "تابع المراجعات المسندة إليك وتحديثات المشروع المصرح بها وعملياتك الخاصة.",
@@ -412,6 +422,7 @@ const arabic: ResponsiveMessages = {
 
 const japanese: ResponsiveMessages = {
   ...ACTIVITY_ISSUE_MESSAGES.ja,
+  ...ARTIFACT_DELIVERY_MESSAGES.ja,
   ...ASSISTANT_MESSAGES.ja,
   ...PRESENTATION_CANDIDATE_MESSAGES.ja,
   "generation.planningLimit.title": "このリクエストは計画処理の上限を超えています",
@@ -434,6 +445,8 @@ const japanese: ResponsiveMessages = {
   "workbench.noTasks": "進行中のタスクはありません",
   "workbench.reviewQueue": "レビュー待ち",
   "workbench.deliveryReady": "納品準備完了",
+  "shell.sourceUnavailable": "現在のソースを利用できません。保存済みの操作の参照情報は保持されています。",
+  "shell.sourceAccessRevoked": "このセッションではプロジェクトを読み取れません。保存済みの操作の参照情報は保持されています。アクセスを復旧してから、再試行してソースを確認してください。",
   "activity.navigationBadge": "アクティビティ：対応が必要な項目が {count} 件あります",
   "activity.inbox": "アクティビティ · 受信トレイ",
   "activity.description": "担当レビュー、アクセス可能なプロジェクトの更新、自分のバックグラウンド処理を確認できます。",

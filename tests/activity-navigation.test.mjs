@@ -5,7 +5,7 @@ import ts from "typescript";
 import { artifactReviewState } from "../src/model/context-health.ts";
 import { formaActivityAttention, formaActivityJobNeedsAttention, formaActivityUnread, scopedFormaActivity } from "../src/model/activity.ts";
 import { describeOutputs, imageOutputNamingCandidate } from "../src/model/output-naming.ts";
-import { libraryFocusRoute } from "../src/model/routes.ts";
+import { libraryFocusRoute, withProjectTaskDocumentInRoute } from "../src/model/routes.ts";
 import { documentJobStopBudgetMessage } from "../src/model/document-jobs.ts";
 import { documentArtifactDefinition, isDocumentArtifactKind } from "../src/model/document-artifacts.ts";
 import {
@@ -17,6 +17,7 @@ import {
   generationFailureGuidance,
 } from "../src/model/document-jobs.ts";
 import { eventMatchesProfile } from "../src/model/event-profiles.ts";
+import { captureAccountSnapshotFence, accountSnapshotFenceCurrent } from "../src/state/account-cache.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
@@ -43,6 +44,7 @@ globalThis[runtimeKey] = {
   describeOutputs,
   imageOutputNamingCandidate,
   libraryFocusRoute,
+  withProjectTaskDocumentInRoute,
   authorizedGenerationFailureRemediation,
   documentArtifactDefinition,
   documentJobCanRecoverPresentation,
@@ -54,6 +56,8 @@ globalThis[runtimeKey] = {
   localizedDocumentJobProgress,
   localizedDocumentJobProgressDetail,
   localizedGenerationFailureGuidance,
+  captureAccountSnapshotFence,
+  accountSnapshotFenceCurrent,
 };
 
 function actualMethod(source, className, methodName) {
@@ -65,6 +69,14 @@ function actualMethod(source, className, methodName) {
   return method.getText(syntax);
 }
 
+function actualStoreSourceField(name) {
+  const syntax = ts.createSourceFile("store.ts", storeSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const declaration = syntax.statements.find(statement => ts.isClassDeclaration(statement) && statement.name?.text === "FormaStore");
+  const fields = declaration?.members.filter(member => ts.isPropertyDeclaration(member) && member.name?.getText(syntax) === name) ?? [];
+  if (fields.length !== 1) throw new Error("Expected one complete Store source field " + name);
+  return fields[0].getText(syntax);
+}
+
 const harnessSource = `
 const {
   formaActivityJobNeedsAttention,
@@ -73,6 +85,7 @@ const {
   describeOutputs,
   imageOutputNamingCandidate,
   libraryFocusRoute,
+  withProjectTaskDocumentInRoute,
   authorizedGenerationFailureRemediation,
   documentArtifactDefinition,
   documentJobCanRecoverPresentation,
@@ -84,9 +97,14 @@ const {
   localizedDocumentJobProgress,
   localizedDocumentJobProgressDetail,
   localizedGenerationFailureGuidance,
+  captureAccountSnapshotFence,
+  accountSnapshotFenceCurrent,
 } = globalThis[Symbol.for("forma.activity-navigation-test.runtime")];
 const nothing = Symbol("nothing");
 const html = (strings, ...values) => ({ strings: [...strings], values });
+// Template-only traversal for this childless reduced host. Full-parent tests
+// exercise the actual Lit directive and keyed DOM identity separately.
+const repeat = (items, ...args) => Array.from(items, args.at(-1));
 const icon = (name) => name;
 const jobLabels = { render_document: "Document rendering", generate: "Image generation" };
 const profiles = ["projects", "workspace", "memory", "scout", "sessions", "full"];
@@ -137,6 +155,10 @@ export class RouteStoreHarness {
   #resolveProjectHistory = () => {};
   #resolveWorkspaceHistory = () => {};
   #pauseWorkspace = false;
+  // Exact production source ownership and publication closure. The existing
+  // session/profile/cache I/O ports below remain explicitly simulated.
+  ${["#sourceGeneration","#sourceRetired","#retiredSourceProjectId","#sourceOwners","#sourceReadSequence","#sourcePublishedRead","#sourceContentReadIds","#sourceCertifiedCoverage"].map(actualStoreSourceField).join("\n")}
+  ${["#activeAuthorizationScope","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceReadOwned","#sourceExpiryValid","#sourceDeadlineCurrent","#sourceReadCurrent","#assertSourceRead","#beginSourceRead","#sourceCacheGuard","#sourceContentReferences","#mergeSourceContent","#publishSourceRead"].map(name => actualMethod(storeSource, "FormaStore", name)).join("\n")}
 
   constructor() {
     this.projectRequested = new Promise((resolve) => { this.#resolveProjectRequest = resolve; });
@@ -150,27 +172,39 @@ export class RouteStoreHarness {
   releaseWorkspace() { this.#resolveWorkspaceHistory({ events: [{ eventId: "workspace", sequence: 2 }], content: {}, head: 2 }); }
   #profileForRoute(path) { return routeCapabilities(path).profile; }
   routeDataReady(path = this.route.get()) { return eventProfileRank(this.#historyProfile) >= eventProfileRank(this.#profileForRoute(path)); }
-  #scopeStillActive(scope) { return scope === "authorized-user"; }
+  ${actualMethod(storeSource, "FormaStore", "#scopeStillActive")}
   #assertAuthorizationScope(scope) { if (!this.#scopeStillActive(scope)) throw new Error("authorization_changed"); }
   #authorizationScope(session) { return session.user.userId; }
   #snapshotIdentity(session) { return { userId: session.user.userId }; }
   #applySession(session) { this.session.set(session); return session; }
   async refreshSession() { return this.session.get(); }
-  async #readEventStream(_after, profile) {
+  async #readEventStream(after, profile, _includeContent = false, owned) {
+    const read = owned ?? this.#beginSourceRead(profile);
+    this.#assertSourceRead(read);
+    read.complete = false; read.from = Math.max(0, after); profile = read.profile;
     this.reads.push(profile);
-    if (profile === "projects") { this.#resolveProjectRequest(); return this.#projectHistory; }
-    if (profile === "workspace") {
+    let page;
+    if (profile === "projects") {
+      this.#resolveProjectRequest(); page = await this.#projectHistory;
+    } else if (profile === "workspace") {
       this.#resolveWorkspaceRequest();
-      if (this.#pauseWorkspace) return this.#workspaceHistory;
+      if (this.#pauseWorkspace) page = await this.#workspaceHistory;
     }
-    return { events: [{ eventId: profile, sequence: 2 }], content: {}, head: 2 };
+    page ??= { events: [{ eventId: profile, sequence: 2 }], content: {}, head: 2 };
+    this.#assertSourceRead(read);
+    // Only this completed, whole-profile SIMULATED history is complete. This
+    // is not a Worker/server receipt or device-cache revalidation certificate.
+    read.complete = true;
+    return { ...page, read };
   }
   async #upgradeHistory(profile) {
     this.upgrades.push(profile);
     const incoming = await this.#readEventStream(0, profile);
-    this.events.set(incoming.events);
-    this.head.set(incoming.head);
-    this.#historyProfile = profile;
+    this.#publishSourceRead(incoming, () => {
+      this.events.set(incoming.events);
+      this.head.set(incoming.head);
+      this.#historyProfile = profile;
+    });
   }
   #publishAppended() {}
   async syncDocumentFromRoute() {}
@@ -194,6 +228,9 @@ class ActivityBase {
     };
     this.store = {
       session: { get: () => session },
+      route: { get: () => "/activity" },
+      // A neutral absent source token is not an authorization grant.
+      captureSourceOwnership: () => null,
       refreshEvents: () => { this.calls.push("events"); return Promise.resolve(); },
       syncReviewInbox: () => { this.calls.push("reviews"); },
       syncProjectNotifications: () => { this.calls.push("notifications"); },
@@ -207,6 +244,8 @@ class ActivityBase {
       dismissDocumentJobFailure: (jobId) => { this.calls.push("dismiss:" + jobId); },
     };
   }
+  // No connected child editors exist in this template/lifecycle-only port.
+  querySelectorAll() { return []; }
   connectedCallback() { this.calls.push("connected"); }
 }
 

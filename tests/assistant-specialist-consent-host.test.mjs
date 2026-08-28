@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes, createRequire } from "node:module";
@@ -75,6 +76,7 @@ function fixture(t, locale = "en") {
     refreshEvents: async () => { throw new Error("Free Send/retrieval must not mutate or refresh creative output"); },
     refreshSession: async () => {}, toast: (message) => trace.push(["toast", message]), setRoute: (route) => store.route.set(route),
   };
+  installSourceOwnershipPort(store);
   const document = {
     querySelectorAll: (selector) => selector.includes("canvas-item.selected") ? selected.map((id) => ({ dataset: { canvasItemId: id } }))
       : selector === "dialog:modal" ? (modal ? [modal] : []) : [],
@@ -82,7 +84,7 @@ function fixture(t, locale = "en") {
     activeElement: null,
   };
   const location = { origin: "https://forma.invalid" };
-  const window = { clearTimeout: () => {}, setTimeout: () => 1, confirm: () => { throw new Error("No legacy reconciliation"); }, addEventListener() {}, removeEventListener() {} };
+  const window = Object.assign(new EventTarget(), { clearTimeout: () => {}, setTimeout: () => 1, confirm: () => { throw new Error("No legacy reconciliation"); } });
   const requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
   const cancelAnimationFrame = () => {};
   const matchMedia = () => ({ matches: true });
@@ -169,7 +171,7 @@ function fixture(t, locale = "en") {
   panel.addEventListener("forma-assistant-guidance-recovery", (event) => event.detail.action === "check" ? void host.loadForTest() : void host.retryForTest());
   t.after(() => host.disconnectedCallback());
   const f = {
-    host, panel, store, session, calls, trace, events, context, dialog, opener, field, transcript, frames,
+    host, panel, store, session, calls, trace, events, context, dialog, opener, field, transcript, frames, window,
     select(ids) { selected = ids; }, topModal(value) { modal = value; },
     hideRecoveryControls() { recoveryControls = []; },
     flushFrames() { for (const frame of frames.splice(0)) frame(); },

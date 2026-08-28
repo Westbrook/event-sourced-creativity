@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import type { CapturedSourceOwnership } from "../state/store.ts";
 import { assistantInteractionForSurface, assistantSurfaceForRoute, type AssistantInteractionMode, type AssistantToolRequest } from "../model/assistant-route-policy.ts";
 import type { AssistantContext } from "../model/conversation-context.ts";
 import { contextConsentAction } from "../model/context-consent-state.ts";
@@ -38,11 +39,35 @@ export class FormaCreativeAssistant extends FormaElement {
   // Request-order clock: a deliberate read gets a position at dispatch, but
   // only its accepted exact response can certify private presentation.
   #withdrawalRevision = 0;
-  #guidance: { turnId: string; message: string; locale: string; url: string; scope: string; status: "sending" | "uncertain" } | null = null;
+  #guidance: { turnId: string; message: string; locale: string; url: string; scope: string; status: "sending" | "uncertain"; sourceRetired?: true } | null = null;
   #specialist: AssistantSpecialistReview | null = null;
   #specialistUrl = "";
+  #sourceProject: { source: CapturedSourceOwnership; projectId: string } | null = null;
+  #sourceRetired = (event: Event) => {
+    const detail = (event as CustomEvent<{ source: CapturedSourceOwnership; generation: number; status: number }>).detail;
+    const source = this.store.captureSourceOwnership();
+    if (!detail || ![401, 403, 404].includes(detail.status) || !source || source.generation !== detail.generation
+      || !this.store.sourceOwnershipScopeActive(detail.source) || this.store.sourceOwnershipActive(source)) return;
+    // The original request owners survive; no private conversation or saved proposal does.
+    const active = this.#specialist, retainedTasks = this.#tasks;
+    if (active) this.#rememberSpecialistExecution(active);
+    this.#tasks = this.#tasks.map(task => this.#taskReference(retainedTasks.find(previous => previous.id === task.id
+      && previous.executionId === task.executionId && previous.bindingHash === task.bindingHash) ?? task));
+    this.#readRevision += 1; this.#reviewRevision += 1;
+    this.#retentionVersions.set("withdrawal:scope", ++this.#withdrawalRevision);
+    this.#context = null; this.#turns = []; this.#messages = []; this.#localToolMessages = []; this.#proposals = [];
+    if (this.#guidance) this.#guidance = { ...this.#guidance, message: "", sourceRetired: true, status: "uncertain" };
+    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, resultReply: null, unusedExecution: false,
+      task: this.#tasks.find(task => task.executionId === active.executionId) ?? null, working: false, stopping: false,
+      retrievalOnly: true, notice: "unavailable" };
+    this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
+    this.#activeTasks.clear(); window.clearTimeout(this.#taskTimer); this.#taskTimer = 0;
+    this.requestUpdate();
+  };
 
+  override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-event-source-retired", this.#sourceRetired); }
   override disconnectedCallback() {
+    window.removeEventListener("forma-event-source-retired", this.#sourceRetired);
     window.clearTimeout(this.#taskTimer);
     this.#taskTimer = 0;
     this.#clearPrivateState("");
@@ -51,7 +76,7 @@ export class FormaCreativeAssistant extends FormaElement {
 
   #refreshActiveTasks() {
     window.clearTimeout(this.#taskTimer);
-    if (!this.#open || !this.#activeTasks.size) return;
+    if (!this.#open || !this.#activeTasks.size || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
     this.#taskTimer = window.setTimeout(() => {
       this.#taskTimer = 0;
       if (!this.#open) return;
@@ -60,12 +85,21 @@ export class FormaCreativeAssistant extends FormaElement {
     }, 750);
   }
 
+  #projectId() {
+    const context = this.store.session.get()?.projectContext;
+    if (context) return context.projectId;
+    const source = this.store.captureSourceOwnership();
+    return !this.store.sourceOwnershipActive(source) && this.#sourceProject
+      && this.store.sourceOwnershipScopeActive(this.#sourceProject.source)
+      ? this.#sourceProject.projectId : this.store.projection.get().projectId;
+  }
+
   #scope() {
     const session = this.store.session.get();
     return JSON.stringify([
       this.store.captureAuthorizationScope()?.key ?? "",
       session?.impersonation?.impersonationId ?? "",
-      session?.projectContext?.projectId ?? this.store.projection.get().projectId,
+      this.#projectId(),
       session?.projectContext?.expiresAt ?? "",
       session?.projectContext?.permissions ?? session?.capabilities ?? [],
       session?.policy.accepted ?? false, session?.policy.version ?? "",
@@ -90,6 +124,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#guidance = null;
     this.#specialist = null;
     this.#specialistUrl = "";
+    this.#sourceProject = null;
     this.#pending.clear();
     this.#activeTasks.clear();
     window.clearTimeout(this.#taskTimer);
@@ -99,12 +134,14 @@ export class FormaCreativeAssistant extends FormaElement {
   #synchronizeScope() {
     const scope = this.#scope();
     if (this.#loadedScope !== scope) this.#clearPrivateState(scope);
+    const source = this.store.captureSourceOwnership();
+    if (source && this.store.sourceOwnershipActive(source)) this.#sourceProject = { source, projectId: this.#projectId() };
     return scope;
   }
 
   #canAuthor() {
     const session = this.store.session.get();
-    return Boolean(session && (session.projectContext?.permissions ?? session.capabilities ?? []).includes("project.author"));
+    return Boolean(session && this.store.sourceOwnershipActive(this.store.captureSourceOwnership()) && (session.projectContext?.permissions ?? session.capabilities ?? []).includes("project.author"));
   }
 
   #canSpecialist(turnId?: string) {
@@ -116,7 +153,7 @@ export class FormaCreativeAssistant extends FormaElement {
       && surface.host === "creator" && surface.available);
     if (!canRequest || !turnId) return canRequest;
     const original = this.#turns.find((turn) => turn.id === turnId)?.originalRequest;
-    const projectId = session?.projectContext?.projectId ?? this.store.projection.get().projectId;
+    const projectId = this.#projectId();
     if (!original || original.schema !== 1 || original.turnId !== turnId || original.projectId !== projectId) return false;
     const saved = assistantSurfaceForRoute(original.route);
     if (saved.documentId !== original.documentId || saved.canvasId !== original.canvasId) return false;
@@ -137,7 +174,7 @@ export class FormaCreativeAssistant extends FormaElement {
   #url() {
     const url = new URL("/api/assistant", location.origin);
     url.searchParams.set("route", this.store.route.get());
-    const projectId = this.store.session.get()?.projectContext?.projectId ?? this.store.projection.get().projectId;
+    const projectId = this.#projectId();
     if (projectId) url.searchParams.set("projectId", projectId);
     for (const item of this.#selection()) url.searchParams.append("selected", item);
     return url;
@@ -162,12 +199,20 @@ export class FormaCreativeAssistant extends FormaElement {
     const previous = this.#turns.findIndex((item) => item.id === turn.id);
     if (previous < 0) this.#turns = [...this.#turns, turn];
     else this.#turns = this.#turns.map((item, index) => index === previous ? turn : item);
-    if (this.#guidance?.turnId === turn.id && this.#guidance.message === turn.user) {
+    if (this.#guidance?.turnId === turn.id && (this.#guidance.sourceRetired || this.#guidance.message === turn.user)) {
       this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(true, this.#guidance.message);
       this.#guidance = null;
     }
     this.#refreshTranscript();
     return true;
+  }
+
+  #taskReference(task: AssistantDisplayedTask): AssistantDisplayedTask {
+    const status = ["queued", "running", "reconciling", "completed", "partial", "canceled", "failed", "needs-review", "reconciled"].includes(task.status) ? task.status : "recovery";
+    const submission = ["not-submitted", "submitting", "uncertain", "usage-recorded", "settled"].includes(task.submission ?? "") ? task.submission : undefined;
+    return { id: task.id, turnId: task.turnId, executionId: task.executionId, bindingHash: task.bindingHash, status,
+      recoveryOnly: true, canExecute: false, ...(submission ? { submission } : {}),
+      ...(typeof task.estimatedMicrousd === "number" && Number.isSafeInteger(task.estimatedMicrousd) && task.estimatedMicrousd >= 0 ? { estimatedMicrousd: task.estimatedMicrousd } : {}) };
   }
 
   #mergeTask(task: AssistantDisplayedTask) {
@@ -204,12 +249,14 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   async #load() {
-    const scope = this.#synchronizeScope(), revision = ++this.#readRevision, withdrawalRevision = this.#withdrawalRevision;
+    const scope = this.#synchronizeScope(), source = this.store.captureSourceOwnership();
+    if (!this.store.sourceOwnershipActive(source)) return;
+    const revision = ++this.#readRevision, withdrawalRevision = this.#withdrawalRevision;
     // Reconcile an unconfirmed Send against its original query, never a newly inferred turn.
     const url = this.#guidance?.url ?? this.#url().href;
     try {
       const response = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
-      if (scope !== this.#scope() || !this.#open || !this.#withdrawalCurrent("", "", withdrawalRevision)) return;
+      if (scope !== this.#scope() || !this.#open || !this.store.sourceOwnershipActive(source) || !this.#withdrawalCurrent("", "", withdrawalRevision)) return;
       if (!response.ok) {
         if ([401, 403, 404, 410].includes(response.status)) {
           this.#clearPrivateState(scope);
@@ -218,7 +265,7 @@ export class FormaCreativeAssistant extends FormaElement {
         throw new Error("assistant_unavailable");
       }
       const payload = await response.json() as { context: AssistantContext; turns: AssistantServerTurn[]; tasks?: AssistantDisplayedTask[] };
-      if (scope !== this.#scope() || !this.#open || !this.#withdrawalCurrent("", "", withdrawalRevision)) return;
+      if (scope !== this.#scope() || !this.#open || !this.store.sourceOwnershipActive(source) || !this.#withdrawalCurrent("", "", withdrawalRevision)) return;
       const canMerge = revision === this.#readRevision;
       const supplied = payload.tasks ?? [];
       // A current negative outranks incidental completion and unproven pending
@@ -272,7 +319,7 @@ export class FormaCreativeAssistant extends FormaElement {
       }
       this.#activeTasks = new Set(this.#tasks.filter((task) => task.status === "queued" || task.status === "running" || task.status === "reconciling").map((task) => task.id));
     } catch {
-      if (scope === this.#scope() && revision === this.#readRevision && this.#open) {
+      if (scope === this.#scope() && this.store.sourceOwnershipActive(source) && revision === this.#readRevision && this.#open) {
         this.#refreshTranscript();
         this.#messages = [...this.#messages, { id: "load:unavailable", role: "assistant", key: "assistant.unavailable" }];
       }
@@ -283,7 +330,7 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #send(input: { message: string }) {
     const scope = this.#synchronizeScope();
-    if (this.#guidance || !this.#open || !this.store.session.get()?.assistant?.enabled) return;
+    if (this.#guidance || !this.#open || !this.store.session.get()?.assistant?.enabled || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
     this.#guidance = { turnId: crypto.randomUUID(), message: input.message.trim(), locale: this.i18n.locale,
       url: this.#url().href, scope, status: "sending" };
     if (!this.#guidance.message) { this.#guidance = null; return; }
@@ -293,7 +340,9 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #deliverGuidance() {
     const request = this.#guidance;
-    if (!request || request.scope !== this.#scope() || this.#pending.has(request.turnId)) return;
+    const source = this.store.captureSourceOwnership();
+    if (!request || request.sourceRetired || request.scope !== this.#scope() || this.#pending.has(request.turnId) || !this.store.sourceOwnershipActive(source)) return;
+    const message = request.message;
     this.#pending.add(request.turnId);
     request.status = "sending";
     const revision = ++this.#readRevision;
@@ -303,7 +352,7 @@ export class FormaCreativeAssistant extends FormaElement {
         method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, cache: "no-store",
         body: JSON.stringify({ turnId: request.turnId, message: request.message, locale: request.locale }),
       }, this.i18n.t("assistant.send"));
-      if (request.scope !== this.#scope() || this.#guidance !== request) return;
+      if (request.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source) || this.#guidance?.turnId !== request.turnId) return;
       if (!response.ok) {
         if ([401, 403, 404, 410].includes(response.status)) {
           this.#clearPrivateState(request.scope);
@@ -312,7 +361,12 @@ export class FormaCreativeAssistant extends FormaElement {
         throw new Error("assistant_unavailable");
       }
       const payload = await response.json() as { context: AssistantContext; turn: AssistantServerTurn };
-      if (request.scope !== this.#scope() || this.#guidance !== request) return;
+      if (request.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source) || this.#guidance?.turnId !== request.turnId) return;
+      if (!this.store.sourceOwnershipActive(source)) {
+        if (payload.turn?.id === request.turnId && payload.turn.user === message) this.#guidance = null;
+        return;
+      }
+      if (this.#guidance !== request) return;
       if (revision !== this.#readRevision) {
         request.status = "uncertain";
         if (this.#open) void this.#load();
@@ -322,7 +376,7 @@ export class FormaCreativeAssistant extends FormaElement {
       this.#context = payload.context;
       this.#mergeTurn(payload.turn);
     } catch {
-      if (request.scope === this.#scope() && this.#guidance === request) {
+      if (request.scope === this.#scope() && this.store.sourceOwnershipActive(source) && this.#guidance === request) {
         request.status = "uncertain";
         this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.resolveGuidanceRequest(false, request.message);
       }
@@ -454,8 +508,9 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   async #requestSpecialist(action: "quote" | "execute" | "retrieve" | "resume" | "stop", model?: string) {
-    const state = this.#specialist;
-    if (!state || state.working || state.scope !== this.#scope()) return;
+    const state = this.#specialist, source = this.store.captureSourceOwnership();
+    if (!state || state.working || state.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source)) return;
+    if (["quote", "execute", "stop"].includes(action) && !this.store.sourceOwnershipActive(source)) return;
     const refreshUnused = action === "quote" && !state.notice && state.retrievalOnly && state.unusedExecution === true
       && state.quote?.status === "quoted" && state.quote.canExecute === false && state.originalRequest
       && (!state.task || state.task.recoveryOnly) && !state.resultReply
@@ -517,9 +572,9 @@ export class FormaCreativeAssistant extends FormaElement {
         selectedModel: model, unusedExecution: false } : {}),
       ...(action !== "quote" ? { retrievalOnly: true } : {}) };
     this.requestUpdate();
-    const readable = () => state.scope === this.#scope() && this.#specialist?.id === state.id
-      && this.#withdrawalCurrent(state.turnId, state.executionId, withdrawalRevision);
-    const current = () => readable() && (revision === this.#reviewRevision
+    const receiptScope = () => state.scope === this.#scope() && this.#specialist?.id === state.id && this.store.sourceOwnershipScopeActive(source);
+    const readable = () => receiptScope() && this.#withdrawalCurrent(state.turnId, state.executionId, withdrawalRevision);
+    const current = () => readable() && this.store.sourceOwnershipActive(source) && (revision === this.#reviewRevision
       && retentionVersion === this.#retentionVersion(state.turnId, state.executionId)
       || exactRead && this.#retentionVersions.get("pending-read:" + readKey) === withdrawalRevision
         && this.#privatePresentationHidden(state.turnId, state.executionId));
@@ -528,7 +583,7 @@ export class FormaCreativeAssistant extends FormaElement {
         ...(action === "stop" ? {} : { "content-type": "application/json" }) },
         cache: "no-store", ...(body ? { body: JSON.stringify(body) } : {}) }, this.i18n.t(action === "stop" ? "assistant.specialist.stop"
           : action === "execute" ? "assistant.specialist.approve" : action === "quote" ? "assistant.specialist.review" : "assistant.specialist.retrieve"));
-      if (!readable()) { if (state.scope === this.#scope() && this.#open && (action === "execute" || action === "stop")) void this.#load(); return; }
+      if (!receiptScope() || !readable() && this.store.sourceOwnershipActive(source)) { if (state.scope === this.#scope() && this.store.sourceOwnershipActive(source) && this.#open && (action === "execute" || action === "stop")) void this.#load(); return; }
       if (response.status === 401) { this.#clearPrivateState(state.scope); return; }
       if ([403, 404, 410].includes(response.status) && (exactRead || action === "stop")) {
         // These are current per-request privacy denials even if the server body
@@ -539,7 +594,7 @@ export class FormaCreativeAssistant extends FormaElement {
         return;
       }
       const payload = await response.json() as AssistantSpecialistResponse;
-      if (!readable()) return;
+      if (!receiptScope() || !readable() && this.store.sourceOwnershipActive(source)) return;
       const withdrawn = this.#retentionUnavailable(payload);
       if (withdrawn) {
         const identity = { ...state, executionId: payload.executionId || state.executionId };
@@ -594,6 +649,24 @@ export class FormaCreativeAssistant extends FormaElement {
           || payload.task.bindingHash !== quote.bindingHash || payload.task.model !== original.model)) {
         throw new Error("assistant_specialist_identity_mismatch");
       }
+      if (!this.store.sourceOwnershipActive(source)) {
+        // Decode the exact original acknowledgment, but never rehydrate its source,
+        // reply, proposed actions, or approval contract through an older source owner.
+        const existing = this.#tasks.find(task => task.executionId === quote.executionId);
+        const reference = this.#taskReference(payload.task ?? existing ?? {
+          id: quote.executionId, turnId: state.turnId, executionId: quote.executionId, bindingHash: quote.bindingHash, status: "recovery",
+        });
+        if (payload.task && existing && payload.task.id !== existing.id) return;
+        const retained = existing && (!existing.recoveryOnly
+          || existing.submission === "settled" && reference.submission !== "settled"
+          || existing.status === "completed" && reference.status !== "completed") ? existing : reference;
+        if (retained === reference) this.#mergeTask(reference);
+        const active = this.#specialist;
+        if (active?.id === state.id && (revision === this.#reviewRevision || !active.working && !active.quote)) this.#specialist = { ...active,
+          executionId: quote.executionId, task: retained, working: false,
+          originalRequest: null, resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
+        return;
+      }
       const canonicalCompletion = quote.status === "completed" && payload.result?.sourceStatus === "original-approved-source";
       const activeHash = this.#specialist?.quote?.bindingHash ?? this.#specialist?.task?.bindingHash;
       // A late paid completion may outrank a stopped/failed task receipt, but never
@@ -644,11 +717,15 @@ export class FormaCreativeAssistant extends FormaElement {
       if (payload.turn && (!certificate || canonicalCompletion)) this.#mergeTurn(payload.turn as AssistantServerTurn);
       this.#refreshActiveTasks();
     } catch {
-      if (!current()) { if (state.scope === this.#scope() && this.#open && (action === "execute" || action === "stop")) void this.#load(); return; }
+      if (!current()) { if (state.scope === this.#scope() && this.store.sourceOwnershipActive(source) && this.#open && (action === "execute" || action === "stop")) void this.#load(); return; }
       if (action === "quote") this.#specialist = { ...this.#specialist!, working: false, stopping: false, notice: "failed" };
       else this.#unconfirmedSpecialistRequest(action);
     } finally {
       if (exactRead && this.#retentionVersions.get("pending-read:" + readKey) === withdrawalRevision) this.#retentionVersions.delete("pending-read:" + readKey);
+      if (receiptScope() && revision === this.#reviewRevision && !this.store.sourceOwnershipActive(source) && this.#specialist) {
+        this.#specialist = { ...this.#specialist, working: false, stopping: false, quote: null, originalRequest: null,
+          resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
+      }
       if (state.scope === this.#scope()) this.requestUpdate();
     }
   }
@@ -720,10 +797,10 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #tool(input: { message: string; mode: Exclude<AssistantInteractionMode, "guidance"> }) {
     const panel = this.querySelector<FormaAssistantPanel>("forma-assistant-panel");
-    const scope = this.#scope();
+    const scope = this.#scope(), source = this.store.captureSourceOwnership();
     const session = this.store.session.get();
     const surface = assistantSurfaceForRoute(this.store.route.get());
-    if (!panel || !session || !this.#interaction().modes.includes(input.mode)) {
+    if (!panel || !session || !this.store.sourceOwnershipActive(source) || !this.#interaction().modes.includes(input.mode)) {
       panel?.resolveToolRequest(false, input.message);
       return;
     }
@@ -735,7 +812,7 @@ export class FormaCreativeAssistant extends FormaElement {
         return;
       }
       const accepted = await this.store.chat(input.message, false);
-      if (scope !== this.#scope()) return;
+      if (scope !== this.#scope() || !this.store.sourceOwnershipActive(source)) return;
       panel.resolveToolRequest(Boolean(accepted), input.message);
       if (accepted) this.store.setRoute(withDocumentInRoute("/studio/chat", projection.documentId, projection.documentTitle));
       return;
@@ -757,7 +834,7 @@ export class FormaCreativeAssistant extends FormaElement {
       const event = new CustomEvent<AssistantToolRequest>("forma-assistant-tool-request", { detail, cancelable: true });
       if (window.dispatchEvent(event)) resolve(false);
     });
-    if (scope !== this.#scope()) return;
+    if (scope !== this.#scope() || !this.store.sourceOwnershipActive(source)) return;
     panel.resolveToolRequest(accepted, input.message);
     if (accepted && input.mode === "quick-edit") {
       this.#open = false;
@@ -805,6 +882,7 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #proposal(detail: { proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }) {
     const { proposal, action } = detail;
+    if (!this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
     if (proposal.kind === "navigate") {
       this.#removeProposal(proposal.id);
       this.requestUpdate();
@@ -844,6 +922,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   async #task(detail: { task: AssistantDisplayedTask; action: "cancel" | "reconcile" }) {
+    if (!this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
     if (detail.task.executionId) {
       const state = this.#specialist;
       if (detail.action === "cancel" && state?.task?.id === detail.task.id && state.turnId === detail.task.turnId

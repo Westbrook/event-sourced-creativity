@@ -4,6 +4,7 @@ import { OutputRequirementsClient } from "./output-requirements-client";
 import type { OutputCommandResponse, OutputRequirementCommand, OutputRequirementsSnapshot } from "../model/output-delivery-contract";
 import { isOutputContextBlock } from "../model/output-source-policy";
 import { outputRequirementEditableDraft } from "../model/output-requirements";
+import { normalizeOutputRequirementCreation } from "../model/output-requirement-creation.ts";
 import { resolvePresentationCountRequest, type SlideCountPolicy } from "../model/presentation-count-policy";
 import { Signal } from "signal-polyfill";
 import { adaptiveRequestKey, adaptiveJobMatchesRequest } from "../model/adaptive-request";
@@ -14,17 +15,17 @@ import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInpu
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
 import { adaptiveSuggestionsForCanvas, blockEffectFor, blockIntentFor, type AdaptiveStructure, type AdaptiveSuggestionSet } from "../model/block-types";
-import { documentContextBlockRoute, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
+import { artifactFocusRoute, documentContextBlockRoute, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, isProjectTaskRoute, projectTaskDocumentIdFromRoute, withProjectTaskDocumentInRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { normalizeSpatialScope } from "../model/spatial-scope";
 import { CURRENT_FOCAL_POINT_METHOD, normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
-import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobCanRecoverPresentation, documentJobFailure, documentJobIsStale, documentJobTerminal, documentJobStopBudgetMessage, documentJobHasNoBudgetHold, planningStopBudget, generationFailureGuidance, type DocumentJob, type DocumentJobKind, type DocumentJobStopBudget } from "../model/document-jobs";
+import { DOCUMENT_JOB_KINDS, documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobCanRecoverPresentation, documentJobFailure, documentJobIsStale, documentJobTerminal, documentJobStopBudgetMessage, documentJobHasNoBudgetHold, planningStopBudget, generationFailureGuidance, type DocumentJob, type DocumentJobKind, type DocumentJobStopBudget } from "../model/document-jobs";
 import { effectivePromptPreference, normalizePromptTechnique, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas-document-target";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
+import { documentArtifactRevision, isDocumentArtifactKind, parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType, CONTEXT_CONTAINS_RELATION, isContextCompositionRelation, normalizeActionBlockReferences } from "../model/combined-context";
@@ -42,7 +43,7 @@ import { formaSystemMessageId } from "../components/design-system/system-message
 import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, type ProductionMode } from "../model/managed-production";
 import { productionWorkflowSourceIdentity, productionWorkflows, productionWorkflowSourcesForStage, productionWorkflowStageStates, type ProductionWorkflowSource } from "../model/production-workflow";
 import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, recordPopulationSource, recordPrivateContentState, recordRouteHistoryProfile, recordSessionReady } from "../performance";
-import { clearAccountSnapshots, clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { accountSnapshotFenceCurrent, captureAccountSnapshotFence, clearAccountSnapshots, clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotFence, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
 import { canvasOfflineQueue } from "../sync/canvas-offline-queue";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
 import { routeCapabilities } from "./route-capabilities";
@@ -51,11 +52,23 @@ import { applicationIdFromRoute, type ApplicationId } from "../platform/applicat
 import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
 import type { PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
 
-type WorkspaceNavigationOptions = { replace?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease };
+type WorkspaceNavigationOptions = { replace?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string };
 const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options.current||options.current())&&(!options.focus||options.focus.current());
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
-export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index?:number;type?:string;reason:string}>; head:number; retryable:boolean; error:string };
+export type CapturedSourceOwnership = Readonly<{ authorization:CapturedAuthorizationScope; generation:number }>;
+export type EventSourceRetirement = Readonly<{ source:CapturedSourceOwnership; generation:number; status:401|403|404 }>;
+export type EventWriteOwner = Readonly<{ authorizationKey:string; actorUserId:string; projectId:string|null; sourceGeneration:number }>;
+export type CommittedEventIdentity = Readonly<{ eventId:string; type:CreativeEvent["type"]; sequence:number; clientEventId:string|null }>;
+export type EventWriteAcknowledgment = Readonly<{ observationId:string; owner:EventWriteOwner; action:"append"|"batch"|"canvas_sync"; requestedClientEventIds:readonly string[]; committed:readonly CommittedEventIdentity[]; rejectedIndices:readonly number[]; outcome:"not-attempted"|"observed"|"unconfirmed"; observedHead:number|null; privateUnavailable:boolean }>;
+export type EventWriteResult = Readonly<{ appended:CreativeEvent[]; acknowledgment:EventWriteAcknowledgment; publication:"published"|"withheld"|"none" }>;
+export type WithheldEventWrite = Readonly<{publication:"withheld";acknowledgment:EventWriteAcknowledgment}>;
+export type AppendOptions = { expected?:number; remember?:boolean; rebaseAttempts?:number; silent?:boolean; background?:boolean; onAcknowledgment?:(receipt:EventWriteAcknowledgment)=>void };
+export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index?:number;type?:string;reason:string}>; head:number; retryable:boolean; error:string; acknowledgment?:EventWriteAcknowledgment; pause?:"source-retired" };
+type EventSourceRead = { source:CapturedSourceOwnership; id:number; profile:AccountSnapshotProfile; identity:AccountSnapshotIdentity; cacheFence:AccountSnapshotFence; complete:boolean; from:number };
+type EventSourcePage = { events:CreativeEvent[]; content:Record<string,string>; head:number; read:EventSourceRead };
+type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string };
+const EVENT_WRITE_SCOPE_CAPACITY=32, EVENT_WRITE_STORE_CAPACITY=128;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
   impersonation: { active:true; impersonationId:string; personaId:string; replaySessionId:string; actor:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; fictionalUser:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; startedAt:string; expiresAt:string } | null;
@@ -206,9 +219,12 @@ export class FormaStore {
   readonly outputRequirements = new OutputRequirementsClient<OutputRequirementsSnapshot>({
     captureScope: () => {
       const scope = this.captureAuthorizationScope();
-      return scope ? { key: scope.key, projectId: this.projection.get().projectId || null } : null;
+      return scope ? { key: scope.key, projectId: this.#outputSourceProjectId() } : null;
     },
-    scopeActive: (scope) => this.captureAuthorizationScope()?.key === scope.key && (this.projection.get().projectId || null) === scope.projectId,
+    scopeActive: (scope) => this.captureAuthorizationScope()?.key === scope.key && this.#outputSourceProjectId() === scope.projectId,
+    captureSourceOwnership: () => this.captureSourceOwnership(),
+    sourceOwnershipActive: (source) => this.sourceOwnershipActive(source),
+    sourceOwnershipScopeActive: (source) => this.sourceOwnershipScopeActive(source),
     fetch: (input, init, action) => this.guardedFetch(input, init, action),
     isSnapshot: (value, documentId, scope): value is OutputRequirementsSnapshot => {
       if (!outputSnapshotRenderable(value)) return false;
@@ -249,13 +265,31 @@ export class FormaStore {
   readonly canvasPlanningSelection = new Signal.State({scope:"",canvasId:"",itemIds:[] as string[]});
   readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: window.matchMedia?.("(max-width: 75rem), (max-height: 37.5rem)")?.matches ?? false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, impersonationConfirmOpen:false, impersonationAction:"", selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => {
-    const route = this.route.get();
-    const canvasId=canvasIdFromRoute(route)??"";
-    const events=this.eventView.get();
-    return foldEvents(events, this.asOf.get(), isDocumentViewRoute(route) ? documentIdFromRoute(route) ?? "" : "", canvasId?canvasProjectId(events,canvasId):"");
+    const route = this.route.get(), taskDocumentId = projectTaskDocumentIdFromRoute(route);
+    const canvasId = canvasIdFromRoute(route) ?? "", events = this.eventView.get();
+    const projection = foldEvents(events, this.asOf.get(), isDocumentViewRoute(route) ? documentIdFromRoute(route) ?? "" : taskDocumentId ?? "", canvasId ? canvasProjectId(events, canvasId) : "");
+    if (isProjectTaskRoute(route)) {
+      const session = this.session.get(), context = session?.projectContext;
+      const readable = Boolean(session && (!context || context.projectId === projection.projectId && context.permissions.includes("project.read") && Date.parse(context.expiresAt) > Date.now()));
+      // A claimed task Document is a view address, never permission or a reason
+      // to substitute another project's history while its source is unavailable.
+      if (!readable || taskDocumentId !== null && (!taskDocumentId || projection.documentId !== taskDocumentId))
+        return { ...foldEvents([]), projects: readable ? projection.projects : [] };
+    }
+    return projection;
   });
   readonly canvasProjection = new Signal.Computed<CanvasProjection>(() => foldCanvasEvents(this.eventView.get(),this.projection.get().projectId,canvasIdFromRoute(this.route.get())??""));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
+  #sourceGeneration=0;
+  #sourceRetired=false;
+  #retiredSourceProjectId:string|null=null;
+  #sourceOwners=new WeakMap<CapturedSourceOwnership,string|null>();
+  #sourceReadSequence=0;
+  #sourcePublishedRead=0;
+  #sourceContentReadIds=new Map<string,number>();
+  #sourceCertifiedCoverage=new Map<AccountSnapshotProfile,{id:number;source:CapturedSourceOwnership}>();
+  #sourcePausedJobs=new Map<string,string>();
+  #eventWriteObservations=new Map<string,EventWriteObservation>();
   #listeners = new Set<Listener>();
   #undo: HistoryGroup[] = [];
   #redo: HistoryGroup[] = [];
@@ -263,6 +297,8 @@ export class FormaStore {
   #appendPipeline:Promise<void> = Promise.resolve();
   #navigationCommit:Promise<boolean>|null=null;
   #workspaceTransition=0;
+  #projectContextHandshake:Promise<void>|null=null;
+  #projectTaskExpiry: { timer: number } | null = null;
   #workspaceNavigationFocus: { route:string; focus:OutputNavigationFocusLease } | null = null;
   #outputInputReveal:{cancel:()=>void}|null=null;
 
@@ -339,8 +375,10 @@ export class FormaStore {
     if(this.planningConsent.get()&&(!this.#scopeStillActive(this.#planningConsentScope)||this.route.get()!==this.#planningConsentRoute))this.#finishPlanningConsent(false);
     this.#listeners.forEach((listener) => listener());
   }
-  #publishAppended(events:CreativeEvent[]){
+  #publishAppended(events:CreativeEvent[],read?:EventSourceRead){
     if(!events.length)return;
+    if(this.#sourceRetired)return;
+    if(!read)this.#sourcePublishedRead=++this.#sourceReadSequence;
     if (events.some((event) => event.type.startsWith("Output") || /^(?:Block|Document|Rights|Artifact|GenerationCompleted)/.test(event.type))) this.outputRequirements.invalidate();
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
     if(session?.projectContext&&events.some((event)=>["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","DocumentArtifactEdited","DocumentRenderCompleted","BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","RightsAsserted"].includes(event.type))){void this.syncProjectNotifications();void this.syncReviewInbox();}
@@ -396,18 +434,21 @@ export class FormaStore {
   generationReadinessFor(kind:GenerationReadinessKind,sourcePreviewId?:string|null,promptTechnique:PromptTechnique=this.promptTechniquePreference().technique,productionMode:ProductionMode="manual"){return this.generationReadiness.get()[this.generationReadinessRequestKey(kind,sourcePreviewId,promptTechnique,productionMode)]??null;}
   generationRiskAcknowledged(requestKey:string){return this.#readinessAcknowledgements.has(requestKey);}
   acknowledgeGenerationRisk(requestKey:string){this.#readinessAcknowledgements.add(requestKey);this.notify();}
-  async ensureGenerationReadiness(kind:GenerationReadinessKind,options:{sourcePreviewId?:string|null;promptTechnique?:PromptTechnique;productionMode?:ProductionMode;sourceSurface?:string;force?:boolean;requestKey?:string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];contextRootBlockId?:string;characterOutputKind?:"headshot"|"character_sheet"}={}){const authorization=this.#activeAuthorizationScope();const technique=normalizePromptTechnique(options.promptTechnique??this.promptTechniquePreference().technique);const productionMode=options.productionMode??"manual";const context=this.#generationContext(this.projection.get().documentId,options.contextRootBlockId,options.characterOutputKind);const requestKey=options.requestKey??this.generationReadinessRequestKey(kind,options.sourcePreviewId,technique,productionMode);if(this.#readinessInFlight.has(requestKey))return this.generationReadiness.get()[requestKey]??null;const existing=this.generationReadiness.get()[requestKey];if(existing&&!options.force&&Date.parse(existing.expiresAt)>Date.now())return existing;this.#readinessInFlight.add(requestKey);this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:existing?{...existing,status:"checking",summary:"Checking current generation readiness…"}:{preflightId:"",requestKey,documentId:context.documentId,documentRevision:context.documentRevision,kind,productionMode,promptTechnique:technique,status:"checking",summary:"Checking current generation readiness…",probes:[],provider:{status:"unknown",scope:"unknown",message:"Checking provider status.",observedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),retryAfterMs:null,requestId:null},estimatedTokens:0,estimatedCostMicrousd:0,estimatedSeconds:0,requiresAcknowledgement:false,checkedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),cached:false,version:"pending"}});this.notify();try{const response=await fetch("/api/generation-readiness",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...context,kind,requestKey,productionMode,sourcePreviewId:options.sourcePreviewId??null,promptTechnique:technique,sourceSurface:options.sourceSurface??"generation-controls",force:Boolean(options.force),...(options.contextRootBlockId?{contextRootBlockId:options.contextRootBlockId,characterOutputKind:options.characterOutputKind??"headshot"}:{}),...(options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:{})})});this.#assertAuthorizationScope(authorization);const body=await response.json() as {readiness?:GenerationReadiness;error?:string;message?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.readiness)throw new Error(body.message??body.error??"Generation readiness could not be checked");this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(body.readiness.status!=="review")this.#readinessAcknowledgements.delete(requestKey);this.notify();return body.readiness;}catch(error){if(!this.#scopeStillActive(authorization))return null;const failed={...(this.generationReadiness.get()[requestKey]??existing!),status:"unknown" as const,summary:error instanceof Error?error.message:"Generation readiness could not be checked",expiresAt:new Date(Date.now()+30_000).toISOString()};this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:failed});this.notify();return failed;}finally{if(this.#scopeStillActive(authorization))this.#readinessInFlight.delete(requestKey);}}
-  async refreshGenerationProviderStatus(){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch("/api/generation-readiness/provider/refresh",{method:"POST"},"refresh provider readiness");this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Provider status could not be refreshed");this.generationReadiness.set({});this.#readinessAcknowledgements.clear();this.toast("Provider status cleared. Rechecking the current document…");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Provider status could not be refreshed");return false;}}
+  async ensureGenerationReadiness(kind:GenerationReadinessKind,options:{sourcePreviewId?:string|null;promptTechnique?:PromptTechnique;productionMode?:ProductionMode;sourceSurface?:string;force?:boolean;requestKey?:string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];contextRootBlockId?:string;characterOutputKind?:"headshot"|"character_sheet"}={}){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return null;}const authorization=this.#activeAuthorizationScope();const technique=normalizePromptTechnique(options.promptTechnique??this.promptTechniquePreference().technique);const productionMode=options.productionMode??"manual";const context=this.#generationContext(this.projection.get().documentId,options.contextRootBlockId,options.characterOutputKind);const requestKey=options.requestKey??this.generationReadinessRequestKey(kind,options.sourcePreviewId,technique,productionMode);if(this.#readinessInFlight.has(requestKey))return this.generationReadiness.get()[requestKey]??null;const existing=this.generationReadiness.get()[requestKey];if(existing&&!options.force&&Date.parse(existing.expiresAt)>Date.now())return existing;this.#readinessInFlight.add(requestKey);this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:existing?{...existing,status:"checking",summary:"Checking current generation readiness…"}:{preflightId:"",requestKey,documentId:context.documentId,documentRevision:context.documentRevision,kind,productionMode,promptTechnique:technique,status:"checking",summary:"Checking current generation readiness…",probes:[],provider:{status:"unknown",scope:"unknown",message:"Checking provider status.",observedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),retryAfterMs:null,requestId:null},estimatedTokens:0,estimatedCostMicrousd:0,estimatedSeconds:0,requiresAcknowledgement:false,checkedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),cached:false,version:"pending"}});this.notify();try{const response=await fetch("/api/generation-readiness",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...context,kind,requestKey,productionMode,sourcePreviewId:options.sourcePreviewId??null,promptTechnique:technique,sourceSurface:options.sourceSurface??"generation-controls",force:Boolean(options.force),...(options.contextRootBlockId?{contextRootBlockId:options.contextRootBlockId,characterOutputKind:options.characterOutputKind??"headshot"}:{}),...(options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:{})})});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {readiness?:GenerationReadiness;error?:string;message?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok||!body.readiness)throw new Error(body.message??body.error??"Generation readiness could not be checked");this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(body.readiness.status!=="review")this.#readinessAcknowledgements.delete(requestKey);this.notify();return body.readiness;}catch(error){if(!(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))return null;const failed={...(this.generationReadiness.get()[requestKey]??existing!),status:"unknown" as const,summary:error instanceof Error?error.message:"Generation readiness could not be checked",expiresAt:new Date(Date.now()+30_000).toISOString()};this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:failed});this.notify();return failed;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.#readinessInFlight.delete(requestKey);}}
+  async refreshGenerationProviderStatus(){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch("/api/generation-readiness/provider/refresh",{method:"POST"},"refresh provider readiness");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Provider status could not be refreshed");this.generationReadiness.set({});this.#readinessAcknowledgements.clear();this.toast("Provider status cleared. Rechecking the current document…");this.notify();return true;}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Provider status could not be refreshed");return false;}}
   async comparePromptTechniqueSafety(job:DocumentJob,failedTechnique:PromptTechnique=job.promptTechnique,failedPrompt=""){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return null;}
     const authorization=this.#activeAuthorizationScope(),context=this.#generationContext(job.documentId);
     const kind=job.kind==="prompt_fan"?job.fanKind??"generate":job.kind==="preview"?"preview":"generate";
     const response=await this.guardedFetch("/api/generation-readiness/prompt-techniques",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...context,kind,productionMode:job.productionMode??"manual",sourcePreviewId:job.sourcePreviewId,failedTechnique:normalizePromptTechnique(failedTechnique),failedPrompt,sourceSurface:job.sourceSurface||"generation-failure"})},"run a moderation-only prompt comparison");
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     const body=await response.json() as {comparison?:PromptTechniqueSafetyComparison;error?:string;message?:string};
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!response.ok||!body.comparison)throw new Error(body.message??body.error??"Prompt structures could not be compared");
     await this.#refreshEvents();
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     return body.comparison;
   }
   documentGenerationJobs(documentId=this.projection.get().documentId){return this.documentJobs.get().filter((job)=>job.documentId===documentId&&(job.kind==="prompt_fan"||(job.kind==="preview"||job.kind==="generate")&&!job.parentJobId)&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId));}
@@ -555,6 +596,7 @@ export class FormaStore {
   }
   /** Feed omission is not deletion. Recheck the exact private identities still shown elsewhere. */
   async #revalidateMissingAdaptivePlans(jobs:DocumentJob[],authorization:string,previous=new Map<string,DocumentJob>()){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return [];}
     type Target={documentId:string;canvasId:string|null;sourceSurface?:string;requestKey?:string;planningProjectScope?:boolean;planningLocale?:string};
     const targets=new Map<string,Target>(),present=new Set(jobs.map(job=>job.jobId));
     const remember=(id:string,target:Target)=>{if(!id||present.has(id))return;const known=previous.get(id)??this.#jobDetails.get(id),identity=known??{...target,jobId:id,kind:"structure_adaptive" as const,planningExecutionId:id};this.#rememberPlanningRecovery(identity);targets.set(id,{documentId:identity.documentId,canvasId:identity.canvasId??null,sourceSurface:identity.sourceSurface,requestKey:identity.requestKey,planningProjectScope:identity.planningProjectScope,planningLocale:identity.planningLocale});};
@@ -571,9 +613,9 @@ export class FormaStore {
       const currentRead=()=>this.#planningRecoveryIdentities.get(id)?.revision===revision&&(this.#planningRecoveryIdentities.get(id)?.deliberateReadRevision??0)===deliberateReadRevision&&(this.#planningRecoveryIdentities.get(id)?.withdrawalRevision??0)<=startedAt&&(this.#planningRecoveryIdentities.get(id)?.certifiedReadRevision??0)<=startedAt;
       try{
         const response=await fetch(`/api/document-jobs/${encodeURIComponent(id)}?inspection=1`);
-        this.#assertAuthorizationScope(authorization);
+        this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
         if(!response.ok){if([401,403,404,410].includes(response.status))this.#withdrawAdaptiveRead(id,startedAt);else if(currentRead())this.#clearAdaptivePrivatePresentation(id);return null;}
-        const body=await response.json() as {job?:DocumentJob};this.#assertAuthorizationScope(authorization);
+        const body=await response.json() as {job?:DocumentJob};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
         const job=body.job,projection=this.projection.get();
         const matches=Boolean(job&&job.jobId===id&&job.planningExecutionId===id&&job.kind==="structure_adaptive"&&job.documentId===target.documentId&&(job.canvasId??null)===target.canvasId
           &&(target.sourceSurface===undefined||job.sourceSurface===target.sourceSurface)&&(target.requestKey===undefined||job.requestKey===target.requestKey)
@@ -594,9 +636,9 @@ export class FormaStore {
         const certified=this.#planningRecoveryIdentities.get(id);if(certified)certified.detailRevision=certified.revision;
         this.#trimDocumentJobDetails();
         return{job,revision:this.#planningRecoveryIdentities.get(id)?.revision,terminalRevision:this.#planningRecoveryIdentities.get(id)?.terminalRevision??0,deliberateReadRevision};
-      }catch{if(this.#scopeStillActive(authorization)&&currentRead())this.#clearAdaptivePrivatePresentation(id);return null;}
+      }catch{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))&&currentRead())this.#clearAdaptivePrivatePresentation(id);return null;}
     }));
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     return inspected.filter((entry):entry is {job:DocumentJob;revision:number;terminalRevision:number;deliberateReadRevision:number}=>entry!==null&&entry.revision!==undefined&&this.#planningRecoveryIdentities.get(entry.job.jobId)?.revision===entry.revision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.terminalRevision??0)===entry.terminalRevision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.deliberateReadRevision??0)===entry.deliberateReadRevision);
   }
   #canPresentAdaptivePlanningJob(job:DocumentJob){
@@ -648,7 +690,8 @@ export class FormaStore {
   }
   async #ackJob(jobId:string){if(!this.#canRequestProjectOutputs())return;try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
   async #hydrateDocumentJobGenerationReceipt(job:DocumentJob,authorization:string){
-    const receipt=job.result?.generationReceipt;this.#assertAuthorizationScope(authorization);
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
+    const receipt=job.result?.generationReceipt;this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(this.session.get()?.projectContext){if(receipt!==undefined&&receipt!==null)throw new Error("Actor-private generation receipts are unavailable in shared project views.");return;}
     if(!receipt||typeof receipt!=="object"||Array.isArray(receipt))return;
     const reference=(receipt as Record<string,unknown>).input_ref;if(typeof reference!=="string"||!reference.trim())return;
@@ -656,7 +699,7 @@ export class FormaStore {
     const retained=await this.ensurePrivateContent(reference,{validate:(value)=>{
       try{const parsed=JSON.parse(value) as unknown;const valid=Boolean(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&(parsed as Record<string,unknown>).job_id===job.jobId&&(parsed as Record<string,unknown>).document_id===job.documentId);if(!valid)rejected=true;return valid;}catch{rejected=true;return false;}
     }});
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!retained){if(rejected)throw new Error("The private generation receipt does not belong to this authorized job.");return;}
     let parsed:unknown;try{parsed=JSON.parse(retained);}catch{throw new Error("The private generation receipt could not be verified for this authorized job.");}
     if(!parsed||typeof parsed!=="object"||Array.isArray(parsed)||(parsed as Record<string,unknown>).job_id!==job.jobId||(parsed as Record<string,unknown>).document_id!==job.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
@@ -664,6 +707,7 @@ export class FormaStore {
   loadDocumentJobDetail(jobId:string,options:SceneGenerationReceiptReadOptions):Promise<SceneGenerationReceiptInspection>;
   loadDocumentJobDetail(jobId:string):Promise<DocumentJob>;
   async loadDocumentJobDetail(jobId:string,options?:SceneGenerationReceiptReadOptions):Promise<DocumentJob|SceneGenerationReceiptInspection>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     if(options)return this.loadActorDocumentGenerationReceipt(jobId,options);
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
@@ -679,7 +723,7 @@ export class FormaStore {
     const currentRead=()=>{const observed=this.#planningRecoveryIdentities.get(jobId);return!adaptive||revision!==undefined&&observed?.revision===revision&&(observed.deliberateReadRevision??0)===deliberateReadRevision&&(observed.certifiedReadRevision??0)<=startedAt&&((observed.withdrawalRevision??0)<=startedAt||observed.preservedReadRevision===deliberateReadRevision);};
     try{
       const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`);
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       // Access/retention denial is already authoritative in the headers. A
       // broken or empty error body must not preserve private presentation.
       if(adaptive&&!response.ok&&[401,403,404,410].includes(response.status)){
@@ -687,7 +731,7 @@ export class FormaStore {
         throw new Error("planning_result_unavailable");
       }
       const body=await response.json() as {job?:DocumentJob;error?:string};
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const candidate=body.job;
       const withdrawn=adaptive&&Boolean(candidate&&candidate.jobId===jobId&&candidate.planningExecutionId===jobId&&candidate.kind==="structure_adaptive"
         &&candidate.documentId===known.documentId&&(candidate.canvasId??null)===(known.canvasId??null)&&candidate.sourceSurface===known.sourceSurface
@@ -705,7 +749,7 @@ export class FormaStore {
       if(adaptive&&(!signed||job.documentId!==known.documentId||(job.canvasId??null)!==(known.canvasId??null)||job.sourceSurface!==known.sourceSurface||job.requestKey!==known.requestKey||job.planningProjectScope!==known.planningProjectScope||job.planningLocale!==known.planningLocale))throw new Error("planning_result_identity_changed");
       if(signed&&!adaptive&&(this.#planningRecoveryIdentities.get(jobId)?.revision??0)>startedAt)throw new Error("planning_result_unavailable");
       await this.#hydrateDocumentJobGenerationReceipt(job,authorization);
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if(!currentRead()||signed&&!adaptive&&(this.#planningRecoveryIdentities.get(jobId)?.revision??0)>startedAt)throw new Error("planning_result_unavailable");
       if(signed){
         if(job.result?.planningReviewAvailable===false||job.result?.resultUnavailable===true){this.#observeAdaptivePlanningJob(job);throw new Error("planning_result_unavailable");}
@@ -727,6 +771,7 @@ export class FormaStore {
   }
   /** Explicit actor-only project receipts never enter shared job or content caches. */
   async loadActorDocumentGenerationReceipt(jobId:string,options?:SceneGenerationReceiptReadOptions):Promise<SceneGenerationReceiptInspection>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     if(options){
       // Scene handoff is response-only. Neither an old feed row nor a late
       // general content hydration can supply its job or retained source bytes.
@@ -737,7 +782,7 @@ export class FormaStore {
       const unavailable=()=>new Error("The retained generation inputs could not be loaded.");
       const mismatch=()=>new Error("The retained generation inputs do not belong to this authorized job.");
       const verifyCurrent=()=>{
-        this.#assertAuthorizationScope(authorization);
+        this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
         const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];
         if(options.fresh!==true||typeof documentId!=="string"||!documentId.trim()||typeof jobId!=="string"||!jobId.trim()
           ||Boolean(session?.projectContext)!==shared||access()!==accessKey||this.route.get()!==route
@@ -796,7 +841,7 @@ export class FormaStore {
     if(!current)throw new Error("The retained generation inputs do not belong to this authorized job.");
     const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/private-receipt`);
     const body=await response.json() as {job?:DocumentJob;content?:Record<string,unknown>;error?:string};
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!this.session.get()?.projectContext||!response.ok||!body.job)throw new Error(body.error??"The actor-private generation receipt could not be loaded.");
     if(body.job.jobId!==jobId||body.job.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");
     const receipt=body.job.result?.generationReceipt;
@@ -804,17 +849,18 @@ export class FormaStore {
     if(typeof reference!=="string"||!reference.trim()||!body.content||Object.keys(body.content).length!==1||typeof body.content[reference]!=="string")throw new Error("The actor-private generation receipt could not be verified.");
     let retained:unknown;try{retained=JSON.parse(body.content[reference]);}catch{throw new Error("The actor-private generation receipt could not be verified.");}
     if(!retained||typeof retained!=="object"||Array.isArray(retained)||(retained as Record<string,unknown>).job_id!==jobId||(retained as Record<string,unknown>).document_id!==current.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     return{job:body.job,content:{[reference]:body.content[reference]}};
   }
   /** Issue-note bodies remain actor-private and never enter shared job or content caches. */
   async loadActivityIssueNotes(jobId:string):Promise<ActivityIssueNote[]>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     if(!current)throw new Error("The issue notes do not belong to this authorized job.");
     const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/notes`);
     const body=await response.json() as {jobId?:string;documentId?:string;notes?:ActivityIssueNote[];error?:string};
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!response.ok||body.jobId!==jobId||body.documentId!==current.documentId||!Array.isArray(body.notes)){
       throw new Error(body.error??"The private issue notes could not be loaded.");
     }
@@ -843,12 +889,13 @@ export class FormaStore {
   }
   /** Rejected provider drafts remain ephemeral actor-private values, never shared job/content state. */
   async loadPreservedPresentationCandidateJobs(documentId:string):Promise<PreservedPresentationCandidateJobs>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     if(!documentId||this.projection.get().documentId!==documentId)throw new Error("The preserved presentation drafts do not belong to this authorized document.");
     const response=await fetch(`/api/document-jobs/presentation-candidates?document=${encodeURIComponent(documentId)}`);
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     const body=await response.json() as Partial<PreservedPresentationCandidateJobs>&{error?:string};
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!response.ok||body.documentId!==documentId||!Array.isArray(body.jobs))throw new Error(body.error??"The preserved presentation drafts could not be verified.");
     if(body.jobs.some((listing)=>!listing.jobId||listing.documentId!==documentId||!Array.isArray(listing.candidates)
       ||listing.candidates.some((candidate)=>candidate.jobId!==listing.jobId||candidate.documentId!==documentId||candidate.retentionClass!=="governed-evidence")))throw new Error("A preserved presentation draft does not belong to this authorized document.");
@@ -856,38 +903,42 @@ export class FormaStore {
     return body as PreservedPresentationCandidateJobs;
   }
   async loadPresentationCandidates(jobId:string,documentId?:string):Promise<PresentationCandidateList>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const authorizedDocument=current?.documentId??documentId;
     if(!authorizedDocument||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation drafts do not belong to this authorized document.");
     const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates`);
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     const body=await response.json() as Partial<PresentationCandidateList>&{error?:string};
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!response.ok||body.jobId!==jobId||body.documentId!==authorizedDocument||!Array.isArray(body.candidates))throw new Error(body.error??"The private presentation drafts could not be verified.");
     if(body.candidates.some((candidate)=>candidate.jobId!==jobId||candidate.documentId!==authorizedDocument))throw new Error("A private presentation draft does not belong to this authorized document.");
     this.#assertPresentationCandidatePayload(body);
     return body as PresentationCandidateList;
   }
   async loadPresentationCandidate(jobId:string,responseId:string,documentId?:string):Promise<PresentationCandidateDetail>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const authorizedDocument=current?.documentId??documentId;
     if(!authorizedDocument||!responseId||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation draft does not belong to this authorized document.");
     const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates/${encodeURIComponent(responseId)}`);
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     const body=await response.json() as {jobId?:string;documentId?:string;candidate?:PresentationCandidateDetail;error?:string};
-    this.#assertAuthorizationScope(authorization);
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!response.ok||body.jobId!==jobId||body.documentId!==authorizedDocument||!body.candidate||body.candidate.jobId!==jobId||body.candidate.documentId!==authorizedDocument||body.candidate.responseId!==responseId)throw new Error(body.error??"The private presentation draft could not be verified.");
     this.#assertPresentationCandidatePayload(body);
     return body.candidate;
   }
   async preservePresentationCandidate(jobId:string,responseId:string,documentId?:string):Promise<PresentationCandidateSummary>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const authorizedDocument=current?.documentId??documentId;
     if(!authorizedDocument||!responseId||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation draft does not belong to this authorized document.");
-    const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates/${encodeURIComponent(responseId)}/preserve`,{method:"POST"},"preserve this actor-private presentation draft");
+    let dispatched=false;
+    const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates/${encodeURIComponent(responseId)}/preserve`,{method:"POST"},"preserve this actor-private presentation draft",{current:()=>dispatched||this.sourceOwnershipActive(sourceOwner),onDispatch:()=>{dispatched=true;}});
     this.#assertAuthorizationScope(authorization);
     const body=await response.json() as {jobId?:string;documentId?:string;candidate?:PresentationCandidateSummary;error?:string};
     this.#assertAuthorizationScope(authorization);
@@ -903,9 +954,23 @@ export class FormaStore {
       this.#assertPresentationCandidatePayload(entry);
     }
   }
-  async dismissDocumentJobFailure(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
+  async dismissDocumentJobFailure(jobId:string){
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const original=this.documentJobs.get().find(job=>job.jobId===jobId);
+    try{
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);
+      if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");
+      const updated=this.#sourceOwnedJobResponse(sourceOwner,jobId,body.job,original);
+      if(!updated)return true;
+      this.documentJobs.set(this.documentJobs.get().map(job=>job.jobId===jobId?updated:job));
+      this.toast(!this.sourceOwnershipActive(sourceOwner)?this.#systemNotice("The server acknowledged the original change. Its private view is unavailable."):this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");
+      this.notify();return true;
+    }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}
+  }
   async reconcileDocumentProviderReceipt(jobId:string){
-    const authorization=this.#activeAuthorizationScope();
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
     try{
       const session=this.session.get();
       const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
@@ -923,16 +988,34 @@ export class FormaStore {
       }
       const providerJobId=body.job?.result?.providerJobId;
       if(!response.ok||body.reconciledProviderRequest!==true||!body.job||body.job.jobId!==jobId||body.job.documentId!==original.documentId||body.job.kind!=="render_document"||body.job.status!=="failed"||body.job.result?.artifactKind!=="storyboard"||body.job.result.storyboardProviderSubmission!=="confirmed"||!session.projectContext&&(typeof providerJobId!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(providerJobId)||["pending","submitted","unknown"].includes(providerJobId.toLowerCase())))throw new Error(body.error??"The saved provider render could not be recovered");
-      this.#jobDetails.delete(jobId);
-      this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
-      this.toast(this.#systemNotice("Paid once · replay without another provider call"));
+      const updated=this.#sourceOwnedJobResponse(sourceOwner,jobId,body.job,original);
+      if(!updated)return true;
+      this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?updated:job));
+      this.toast(this.#systemNotice(this.sourceOwnershipActive(sourceOwner)?"Paid once · replay without another provider call":"The server acknowledged the original change. Its private view is unavailable."));
       this.notify();
       return true;
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
+    }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
   }
-  async recoverDocumentRender(jobId:string){const authorization=this.#activeAuthorizationScope();try{const original=this.documentJobs.get().find((job)=>job.jobId===jobId);const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string;reason?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job){const reason=typeof body.reason==="string"&&/^[a-z0-9_]{1,120}$/u.test(body.reason)?` (${body.reason})`:"";throw new Error((body.error??"The saved provider render could not be recovered")+reason);}this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);const medium=original?.result?.artifactKind==="storyboard"?"Storyboard":original?.result?.artifactKind==="audio"?"Audio":"Video";this.toast(medium==="Video"?"Recovering the saved Fal video. No second paid video was submitted.":[this.#systemNotice(medium),this.#systemNotice("Paid once · replay without another provider call")].join(" · "));this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
+  async recoverDocumentRender(jobId:string){
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    try{
+      const original=this.documentJobs.get().find(job=>job.jobId===jobId);
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {job?:DocumentJob;error?:string;reason?:string};this.#assertAuthorizationScope(authorization);
+      if(!response.ok||!body.job){const reason=typeof body.reason==="string"&&/^[a-z0-9_]{1,120}$/u.test(body.reason)?` (${body.reason})`:"";throw new Error((body.error??"The saved provider render could not be recovered")+reason);}
+      const updated=this.#sourceOwnedJobResponse(sourceOwner,jobId,body.job,original);
+      if(!updated)return true;
+      this.documentJobs.set([updated,...this.documentJobs.get().filter(job=>job.jobId!==jobId)]);
+      const medium=original?.result?.artifactKind==="storyboard"?"Storyboard":original?.result?.artifactKind==="audio"?"Audio":"Video";
+      this.toast(!this.sourceOwnershipActive(sourceOwner)?this.#systemNotice("The server acknowledged the original change. Its private view is unavailable."):medium==="Video"?"Recovering the saved Fal video. No second paid video was submitted.":[this.#systemNotice(medium),this.#systemNotice("Paid once · replay without another provider call")].join(" · "));
+      this.notify();
+      if(this.sourceOwnershipActive(sourceOwner)){this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);}
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
+  }
   async recoverDocumentPresentation(jobId:string){
-    const authorization=this.#activeAuthorizationScope();
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
     const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
     try{
       if(!original||!documentJobCanRecoverPresentation(original))throw new Error("The saved presentation response could not be recovered");
@@ -942,17 +1025,24 @@ export class FormaStore {
       this.#assertAuthorizationScope(authorization);
       if(!response.ok||!body.job)throw new Error(body.reason&&body.error?`${body.error}: ${body.reason}`:body.error??"The saved presentation response could not be recovered");
       if(body.job.jobId!==jobId||body.job.documentId!==original.documentId)throw new Error("The saved presentation response does not belong to this authorized document");
-      this.#jobDetails.delete(jobId);
-      this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);
-      await this.#refreshEvents();
-      this.#assertAuthorizationScope(authorization);
-      this.toast("Paid once · replay without another provider call");
+      const updated=this.#sourceOwnedJobResponse(sourceOwner,jobId,body.job,original);
+      if(!updated)return true;
+      this.documentJobs.set([updated,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);
+      // The original server acknowledgement is not undone by a failed view read.
+      let viewAvailable=this.sourceOwnershipActive(sourceOwner);
+      if(viewAvailable){
+        try{await this.#refreshEvents();}catch{viewAvailable=false;}
+        this.#assertAuthorizationScope(authorization);
+        viewAvailable=viewAvailable&&this.sourceOwnershipActive(sourceOwner);
+      }
+      this.toast(this.#systemNotice(viewAvailable?"Paid once · replay without another provider call":"The server acknowledged the original change. Its private view is unavailable."));
       this.notify();
       return true;
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
+    }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
   }
   async stopDocumentJob(jobId:string,force=false){
-    const authorization=this.#activeAuthorizationScope();
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const original=this.documentJobs.get().find(job=>job.jobId===jobId);
     try{
       const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");
       this.#assertAuthorizationScope(authorization);
@@ -962,12 +1052,21 @@ export class FormaStore {
         const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",provider_submission_in_flight:"The provider request is being submitted. Wait until its receipt is confirmed before stopping this generation.",admin_required:"Only an administrator can force-fail an operation."};
         throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");
       }
-      this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
+      const updated=this.#sourceOwnedJobResponse(sourceOwner,jobId,body.job,original);
+      if(!updated)return documentJobTerminal(body.job);
+      this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?updated:job));
       const outcome=body.job.status==="completed"||body.job.status==="partial"||body.stoppedCount===0&&documentJobTerminal(body.job)?"Operation already finished.":body.job.status==="canceled"?"Operation stopped.":body.job.status==="failed"?(force?"Operation force-failed.":"Operation stopped."):"The stop is not yet confirmed.";
-      this.toast(this.#systemNotice(outcome)+" "+this.#systemNotice(documentJobStopBudgetMessage(body.budget)));
-      await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);this.#assertAuthorizationScope(authorization);
+      let viewAvailable=this.sourceOwnershipActive(sourceOwner);
+      if(viewAvailable){
+        try{await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);}catch{viewAvailable=false;}
+        this.#assertAuthorizationScope(authorization);
+        viewAvailable=viewAvailable&&this.sourceOwnershipActive(sourceOwner);
+      }
+      this.toast(this.#systemNotice(outcome)+" "+this.#systemNotice(documentJobStopBudgetMessage(body.budget))
+        +(!viewAvailable&&documentJobTerminal(body.job)?" "+this.#systemNotice("The server acknowledged the original change. Its private view is unavailable."):""));
+      this.notify();
       return documentJobTerminal(body.job);
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}
+    }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}
   }
   #flushPendingJobNotices(){
     if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;
@@ -976,38 +1075,241 @@ export class FormaStore {
     this.toast(jobs.length===1?this.#jobNotice(jobs[0]):combined);
     for(const job of jobs)if(!job.canvasId||this.#jobResultVisible(job))void this.#ackJob(job.jobId);
   }
-  async #readEventPages(after=0){return this.#readEventStream(after,"full",after===0);}
-  async replayAuthoritativeHistory(sequence:number){const authorization=this.#activeAuthorizationScope(),complete=await this.#readEventStream(0,"full",false);this.#assertAuthorizationScope(authorization);this.replayEvents.set(complete.events);this.setReplayAsOf(sequence);}
-  async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false){
-    const authorization=this.#activeAuthorizationScope();
-    this.#assertAuthorizationScope(authorization);
-    let cursor=Math.max(0,after),head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
-    const events:CreativeEvent[]=[];let content:Record<string,string>={};
+  #outputSourceProjectId(){return this.#sourceRetired?this.#retiredSourceProjectId:this.projection.get().projectId||null;}
+  captureSourceOwnership():CapturedSourceOwnership|null{
+    const authorization=this.captureAuthorizationScope();if(!authorization)return null;
+    const source=Object.freeze({authorization:Object.freeze({...authorization}),generation:this.#sourceGeneration});
+    this.#sourceOwners.set(source,this.session.get()?.projectContext?.expiresAt??null);return source;
+  }
+  /** Ownership only. This permits bookkeeping for the original request, never private publication. */
+  sourceOwnershipScopeActive(source:CapturedSourceOwnership|null):boolean{
+    return Boolean(source&&this.#sourceOwners.has(source)&&this.authorizationScopeActive(source.authorization));
+  }
+
+  #sourceExpiryValid(expiry:string|null|undefined){return expiry===null||typeof expiry==="string"&&Number.isFinite(Date.parse(expiry))&&Date.parse(expiry)>Date.now();}
+  #sourceDeadlineCurrent(source:CapturedSourceOwnership|null){
+    return Boolean(source&&this.#sourceExpiryValid(this.#sourceOwners.get(source))
+      &&this.#sourceExpiryValid(this.session.get()?.projectContext?.expiresAt??null));
+  }
+  #sourceReadOwned(read:EventSourceRead){return this.sourceOwnershipScopeActive(read.source)&&read.source.generation===this.#sourceGeneration;}
+
+  sourceOwnershipActive(source:CapturedSourceOwnership|null):boolean{
+    return Boolean(source&&this.sourceOwnershipScopeActive(source)&&source.generation===this.#sourceGeneration&&!this.#sourceRetired&&this.#sourceDeadlineCurrent(source));
+  }
+  #assertSourceOwnership(source:CapturedSourceOwnership|null){
+    if(!this.sourceOwnershipActive(source))throw new Error("The current source is unavailable; its private result was withheld.");
+  }
+  #sourceReadCurrent(read:EventSourceRead){
+    return this.#sourceReadOwned(read)&&this.#sourceDeadlineCurrent(read.source)&&this.#sourceExpiryValid(read.identity.accessExpiresAt??null);
+  }
+  #assertSourceRead(read:EventSourceRead){
+    if(!this.#sourceReadCurrent(read))throw new Error("The source read was superseded; its private result was withheld.");
+  }
+  #beginSourceRead(profile:AccountSnapshotProfile):EventSourceRead{
+    const source=this.captureSourceOwnership(),session=this.session.get();
+    if(!source||!session)throw new Error("Authentication is required to read this source.");
+    // A denied whole source is restored from a complete fresh stream, never an old incremental base.
+    const actual=this.#sourceRetired?"full":profile,identity=this.#snapshotIdentity(session);
+    return{source,id:++this.#sourceReadSequence,profile:actual,identity,
+      cacheFence:captureAccountSnapshotFence(identity,actual),complete:false,from:0};
+  }
+  #sourceCacheGuard(read:EventSourceRead,complete=false){
+    return{fence:read.cacheFence,current:()=>this.#sourceReadCurrent(read)&&accountSnapshotFenceCurrent(read.identity,read.cacheFence)
+      &&(!complete||read.complete&&!this.#sourceRetired&&this.#sourcePublishedRead===read.id)};
+  }
+  #sourceOwnedJobResponse(source:CapturedSourceOwnership|null,jobId:string,job:DocumentJob,original?:Pick<DocumentJob,"documentId"|"kind">):DocumentJob|null{
+    if(!job||typeof job!=="object"||Array.isArray(job)||job.jobId!==jobId||typeof job.documentId!=="string"||!job.documentId
+      ||!DOCUMENT_JOB_KINDS.includes(job.kind)||!documentJobTerminal(job)&&!["queued","running","committing"].includes(job.status)
+      ||original&&(job.documentId!==original.documentId||job.kind!==original.kind))
+      throw new Error("The original change is unconfirmed. It has not been resubmitted.");
+    if(!this.sourceOwnershipScopeActive(source))throw new Error("The active workspace changed; the previous result was safely discarded.");
+    const sourceActive=this.sourceOwnershipActive(source),reference=this.#privateJobReference(job);
+    const cached=this.#jobDetails.get(jobId),current=this.documentJobs.get().find(entry=>entry.jobId===jobId);
+    // Exact reads and complete original acknowledgements require their captured Source after the
+    // last await. Preserve a later exact read during the same Source as well
+    // as after retirement, which clears this cache before any new exact read.
+    // A renewed deadline alone, an absent/other detail, or a mere new source
+    // read is not this proof. Never copy private fields from the old response.
+    if((sourceActive||source!.generation<this.#sourceGeneration&&this.sourceOwnershipActive(this.captureSourceOwnership())
+      &&this.#sourcePausedJobs.get(jobId)===source!.authorization.key)
+      &&cached&&current&&cached.jobId===jobId&&current.jobId===jobId
+      &&cached.documentId===job.documentId&&current.documentId===job.documentId&&cached.kind===job.kind&&current.kind===job.kind
+      &&current.result===cached.result&&JSON.stringify(this.#privateJobReference(current))===JSON.stringify(this.#privateJobReference(cached))){
+      const incomingVersion=Date.parse(job.updatedAt),currentVersion=Date.parse(current.updatedAt);
+      if(JSON.stringify(this.#privateJobReference(current))===JSON.stringify(reference)
+        ||Number.isFinite(incomingVersion)&&Number.isFinite(currentVersion)&&currentVersion>incomingVersion)return null;
+    }
+    if(sourceActive){
+      // The same detail cache records an exact acknowledged body, never an
+      // arbitrary feed row. Incomplete envelopes still require a fresh detail
+      // read; the existing warm reader must validate private input separately.
+      const complete=Object.keys(reference).every(key=>key==="canvasId"||Object.hasOwn(job,key))
+        &&typeof job.updatedAt==="string"&&Number.isFinite(Date.parse(job.updatedAt))
+        &&typeof job.requestedAt==="string"&&Number.isFinite(Date.parse(job.requestedAt))
+        &&Array.isArray(job.members)&&(job.result===null||typeof job.result==="object"&&!Array.isArray(job.result));
+      if(complete){this.#jobDetails.set(jobId,job);this.#trimDocumentJobDetails();}
+      else this.#jobDetails.delete(jobId);
+      return job;
+    }
+    this.#sourcePausedJobs.set(jobId,source!.authorization.key);this.#jobDetails.delete(jobId);
+    return reference;
+  }
+  #privateJobReference(job:DocumentJob):DocumentJob{
+    // Keep only exact original operation identity/status. No copied result,
+    // diagnostic, prompt, provider body or hidden extra wire fields survive.
+    return{jobId:job.jobId,documentId:job.documentId,canvasId:job.canvasId,
+      ...(job.planningExecutionId?{planningExecutionId:job.planningExecutionId}:{}),
+      ...(typeof job.planningProjectScope==="boolean"?{planningProjectScope:job.planningProjectScope}:{}),
+      ...(typeof job.planningLocale==="string"?{planningLocale:job.planningLocale}:{}),
+      kind:job.kind,status:job.status,sourceSurface:job.sourceSurface,requestedSequence:job.requestedSequence,
+      documentRevision:job.documentRevision,requestKey:job.requestKey,sourcePreviewId:job.sourcePreviewId,
+      productionMode:job.productionMode,promptTechnique:job.promptTechnique,promptFanId:job.promptFanId,
+      parentJobId:job.parentJobId,fanKind:job.fanKind,
+      members:(Array.isArray(job.members)?job.members:[]).map(member=>({jobId:member.jobId,promptTechnique:member.promptTechnique,
+        status:member.status,attemptCount:member.attemptCount,updatedAt:member.updatedAt,error:null,moderationPromptRef:null})),
+      result:isDocumentArtifactKind(job.result?.artifactKind)?{artifactKind:job.result!.artifactKind}:null,error:null,errorDetail:null,moderationPromptRef:null,dismissedAt:job.dismissedAt,attemptCount:job.attemptCount,
+      requestedAt:job.requestedAt,startedAt:job.startedAt,completedAt:job.completedAt,notifiedAt:job.notifiedAt,
+      leaseExpiresAt:job.leaseExpiresAt,updatedAt:job.updatedAt,stage:"",progressMessage:""};
+  }
+  #retireOwnedSource(read:EventSourceRead,status:401|403|404){
+    if(!this.#sourceReadOwned(read))return false;
+    const newer=[...this.#sourceCertifiedCoverage].some(([profile,proof])=>proof.id>read.id&&eventProfileRank(profile)>=eventProfileRank(read.profile)&&this.sourceOwnershipActive(proof.source));
+    if(newer)return false;
+    const source=read.source,projectId=this.#outputSourceProjectId(),scope=source.authorization.key;
+    this.#sourceRetired=true;this.#retiredSourceProjectId=projectId;this.#sourceGeneration+=1;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
+    for(const observation of this.#eventWriteObservations.values())if(this.sourceOwnershipScopeActive(observation.source)){observation.paused=true;observation.receipt=this.#eventWriteReceipt(observation,{privateUnavailable:true});}
+    const session=this.session.get(),context=session?.projectContext,retirementGeneration=this.#sourceGeneration;
+    if(session&&projectId){
+      const queueScope={ownerId:session.user.userId,projectId,...(context?{historyOwnerId:context.ownerUserId,organizationId:context.organizationId,
+        projectAccessId:context.projectAccessId,permissionEpoch:session.permissionEpoch}: {})};
+      // This existing queue owner fences immediately even when Canvas is unmounted.
+      // Only its own committed transaction can claim a reload-safe private cleanup.
+      void canvasOfflineQueue.retireSource(queueScope).catch(()=>{
+        if(this.sourceOwnershipScopeActive(source)&&this.#sourceRetired&&this.#sourceGeneration===retirementGeneration)
+          this.toast(this.#systemNotice("Canvas sync is paused in this page. Device storage could not confirm removal of private draft bodies or retention of the pause after reload. Do not retry the original changes."));
+      });
+    }
+    // The cache invalidates synchronously; optional local cleanup never delays private retirement.
+    void clearAccountSnapshots(read.identity,{scope:"source",fence:read.cacheFence}).catch(()=>undefined);
+    if(projectId)this.outputRequirements.withdrawSource({key:scope,projectId},status);
+    for(const job of this.documentJobs.get())this.#sourcePausedJobs.set(job.jobId,scope);
+    for(const job of this.#jobDetails.values())this.#sourcePausedJobs.set(job.jobId,scope);
+    const planningIds=new Set([...this.#planningRecoveryIdentities.keys(),...this.documentJobs.get().filter(job=>job.kind==="structure_adaptive").map(job=>job.jobId)]);
+    for(const id of planningIds)this.#clearAdaptivePrivatePresentation(id,undefined,++this.#planningRecoverySequence,true);
+    this.documentJobs.set(this.documentJobs.get().map(job=>this.#privateJobReference(job)));this.#jobDetails.clear();
+    this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.replayEvents.set([]);this.head.set(0);
+    this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
+    this.loading.set(false);this.busy.set("");this.error.set("The current source is unavailable. Its saved operation references are retained.");this.appendFailure.set("");this.ui.toast="";
+    this.generationReadiness.set({});this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});
+    this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);
+    this.#privateContentScope="none";this.#historyProfile="projects";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
+    this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";
+    this.#readinessAcknowledgements.clear();this.#readinessInFlight.clear();this.#undo=[];this.#redo=[];
+    this.ui.shareOpen=false;this.ui.compareOpen=false;this.ui.inspectorOpen=false;this.ui.commandOpen=false;
+    this.ui.selectedEventId="";this.ui.selectedOutputId="";this.ui.comparisonOutputIds="";this.ui.focusBlockId="";this.ui.focusCollectionId="";this.ui.editingBlockId="";this.ui.search="";
+    window.clearTimeout(this.#jobPollTimer);window.clearTimeout(this.#focalBackfillTimer);this.#outputInputReveal?.cancel();
+    const detail:EventSourceRetirement=Object.freeze({source,generation:this.#sourceGeneration,status});
+    window.dispatchEvent(new CustomEvent<EventSourceRetirement>("forma-event-source-retired",{detail}));
+    this.notify();return true;
+  }
+  #observeSourceHeaders(read:EventSourceRead,response:Response,label:string){
+    if(!this.#sourceReadOwned(read))throw new Error("The source read no longer belongs to this workspace.");
+    if(response.status===401||response.status===403||response.status===404)this.#retireOwnedSource(read,response.status);
+    if(!response.ok)throw new Error(label+" returned "+response.status);
+    this.#assertSourceRead(read);
+    if(read.id<this.#sourcePublishedRead)throw new Error("A newer complete source read already owns the current view.");
+  }
+
+  #sourceContentReferences(events:readonly CreativeEvent[]){
+    const references=new Set<string>(),pending:unknown[]=events.map(event=>event.payload);
+    while(pending.length){
+      const value=pending.pop();if(!value||typeof value!=="object")continue;
+      if(Array.isArray(value)){pending.push(...value);continue;}
+      for(const [key,item]of Object.entries(value)){
+        if(/(?:_ref|Ref)$/.test(key)&&typeof item==="string")references.add(item);
+        else if(/(?:_refs|Refs)$/.test(key)&&Array.isArray(item))for(const ref of item)if(typeof ref==="string")references.add(ref);
+        if(item&&typeof item==="object")pending.push(item);
+      }
+    }
+    return references;
+  }
+
+  #mergeSourceContent(read:EventSourceRead,incoming:Record<string,string>,replace=false){
+    this.#assertSourceRead(read);
+    const previous=this.content.get(),next=replace?{...incoming}:{...previous,...incoming};
+    const references=replace?this.#sourceContentReferences(this.events.get()):null;
+    // A content-only read owns only the exact refs it returned. It cannot
+    // certify event coverage or let an absent ref survive a full replacement.
+    for(const [reference,id]of this.#sourceContentReadIds){
+      if(id<=read.id||typeof previous[reference]!=="string")continue;
+      if(!replace||Object.hasOwn(incoming,reference)||references!.has(reference))next[reference]=previous[reference]!;
+    }
+    for(const reference of this.#sourceContentReadIds.keys())if(!Object.hasOwn(next,reference))this.#sourceContentReadIds.delete(reference);
+    for(const reference of Object.keys(incoming)){
+      const id=this.#sourceContentReadIds.get(reference)??0;
+      if(id<=read.id||next[reference]!==previous[reference])this.#sourceContentReadIds.set(reference,read.id);
+    }
+    this.content.set(next);
+  }
+
+  #publishSourceContent(read:EventSourceRead,publish:()=>void){
+    this.#assertSourceRead(read);this.#assertSourceOwnership(read.source);
+    if(read.id<this.#sourcePublishedRead)throw new Error("A newer current source result already owns the private view.");
+    publish();this.#assertSourceRead(read);
+  }
+  #sourceContent(value:unknown):Record<string,string>{
+    if(value===undefined)return{};
+    if(!value||typeof value!=="object"||Array.isArray(value)||Object.values(value).some(item=>typeof item!=="string"))throw new Error("The private source response was malformed.");
+    return value as Record<string,string>;
+  }
+  #publishSourceRead(page:EventSourcePage,publish:()=>void,coverage:AccountSnapshotProfile=page.read.profile){
+    const read=page.read;this.#assertSourceRead(read);
+    if(!read.complete||read.id<this.#sourcePublishedRead)throw new Error("A newer complete source read already owns the current view.");
+    if(this.#sourceRetired){this.events.set(page.events);this.#mergeSourceContent(read,page.content,true);this.head.set(page.head);this.#historyProfile=read.profile;this.error.set("");}
+    publish();
+    this.#assertSourceRead(read);
+    this.#sourcePublishedRead=read.id;this.#sourceCertifiedCoverage.set(coverage,{id:read.id,source:read.source});
+    this.#sourceRetired=false;this.#retiredSourceProjectId=null;
+  }
+  async #readEventPages(after=0,read?:EventSourceRead){return this.#readEventStream(after,"full",after===0,read);}
+  async replayAuthoritativeHistory(sequence:number){
+    const complete=await this.#readEventStream(0,"full",false);
+    this.#publishSourceRead(complete,()=>{this.replayEvents.set(complete.events);});
+    this.setReplayAsOf(sequence);
+  }
+  async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false,owned?:EventSourceRead):Promise<EventSourcePage>{
+    const read=owned??this.#beginSourceRead(profile);this.#assertSourceRead(read);read.complete=false;
+    const restoring=this.#sourceRetired;after=restoring?0:after;profile=read.profile;read.from=Math.max(0,after);
+    if(restoring)includeContent=true;
+    let cursor=read.from,head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
+    const events:CreativeEvent[]=[],seen=new Set<string>();let content:Record<string,string>={};
     for(let page=0;page<500;page+=1){
-      const limit=profile==="full"?5000:6500;
-      const selection=profile==="full"?"":`&profile=${profile}`;
-      const response=await fetch(`/api/events?after=${cursor}&limit=${limit}&content=${first&&includeContent?1:0}${selection}`);
-      this.#assertAuthorizationScope(authorization);
-      if(!response.ok)throw new Error(`Event stream returned ${response.status}`);
+      const limit=profile==="full"?5000:6500,selection=profile==="full"?"":"&profile="+profile;
+      const response=await fetch("/api/events?after="+cursor+"&limit="+limit+"&content="+(first&&includeContent?1:0)+selection);
+      this.#observeSourceHeaders(read,response,"Event stream");
       const body=await response.json() as {events?:CreativeEvent[];content?:Record<string,string>;head?:number;nextAfter?:number;hasMore?:boolean};
-      this.#assertAuthorizationScope(authorization);
-      const responseHead=Math.max(0,Number(body.head??head));
-      head=first?responseHead:Math.max(head,responseHead);
-      if(first)initialHead=head;
-      const received=(body.events??[]).filter((event)=>event.sequence<=initialHead);events.push(...received);recordEventPage(received.length);
-      if(body.content)content={...content,...body.content};
-      const next=Math.min(initialHead,Math.max(cursor,Number(body.nextAfter??received.at(-1)?.sequence??cursor)));
+      this.#assertSourceRead(read);
+      if(!body||!Array.isArray(body.events)||!Number.isSafeInteger(body.head)||Number(body.head)<0
+        ||body.nextAfter!==undefined&&(!Number.isSafeInteger(body.nextAfter)||body.nextAfter<0)
+        ||body.hasMore!==undefined&&typeof body.hasMore!=="boolean")throw new Error("The event source response was malformed.");
+      const responseHead=body.head!;head=first?responseHead:Math.max(head,responseHead);if(first)initialHead=head;
+      if(body.events.some(event=>!event||typeof event.eventId!=="string"||!event.eventId||!Number.isSafeInteger(event.sequence)||event.sequence<1||typeof event.type!=="string"||!event.payload||typeof event.payload!=="object"||Array.isArray(event.payload)))throw new Error("The event source response was malformed.");
+      const received=body.events.filter(event=>event.sequence<=initialHead);
+      for(const event of received){if(seen.has(event.eventId))throw new Error("The event source repeated a receipt.");seen.add(event.eventId);}
+      events.push(...received);recordEventPage(received.length);content={...content,...this.#sourceContent(body.content)};
+      const next=Math.min(initialHead,Math.max(cursor,body.nextAfter??received.at(-1)?.sequence??cursor));
       const hasMore=(body.hasMore??next<head)&&next<initialHead;
       if(hasMore&&next<=cursor)throw new Error("Event stream pagination did not advance");
       cursor=next;first=false;
       if(!hasMore){
-        if(profile==="full"&&after>0&&events.some((event)=>event.type==="DocumentArtifactEdited"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat"&&event.payload.deterministic===false&&Boolean(event.payload.task_id)||Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){
-          const hydration=await fetch(`/api/events?after=${head}&limit=1&content=1`);
-          this.#assertAuthorizationScope(authorization);
-          if(hydration.ok){const hydrated=await hydration.json() as {content?:Record<string,string>};this.#assertAuthorizationScope(authorization);content={...content,...(hydrated.content??{})};}
+        if(profile==="full"&&after>0&&events.some(event=>event.type==="DocumentArtifactEdited"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat"&&event.payload.deterministic===false&&Boolean(event.payload.task_id)||Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){
+          const hydration=await fetch("/api/events?after="+head+"&limit=1&content=1");
+          this.#observeSourceHeaders(read,hydration,"Private content");
+          const hydrated=await hydration.json() as {content?:Record<string,string>};this.#assertSourceRead(read);
+          content={...content,...this.#sourceContent(hydrated?.content)};
         }
-        this.#assertAuthorizationScope(authorization);
-        return{events,content,head:Math.min(head,initialHead)};
+        this.#assertSourceRead(read);read.complete=true;
+        return{events,content,head:Math.min(head,initialHead),read};
       }
     }
     throw new Error("Event stream exceeded the supported pagination window");
@@ -1018,7 +1320,7 @@ export class FormaStore {
   }
 
   routeDataReady(path=this.route.get()){
-    return eventProfileRank(this.#historyProfile)>=eventProfileRank(this.#profileForRoute(path));
+    return !this.#sourceRetired&&eventProfileRank(this.#historyProfile)>=eventProfileRank(this.#profileForRoute(path));
   }
 
   #snapshotIdentity(session:PilotSession):AccountSnapshotIdentity{
@@ -1140,92 +1442,111 @@ export class FormaStore {
     } catch { return active() ? { status: "unavailable", errorCode: "output_receipt_check_failed" } : forbidden(); }
   }
 
-  async outputRequirementCommand(command: OutputRequirementCommand) {
-    const authorization = this.captureAuthorizationScope();
-    const result = await this.outputRequirements.command<OutputCommandResponse>(command.documentId, command, "update Output requirements");
-    if ((result.status === "saved" || result.status === "conflict") && this.authorizationScopeActive(authorization)) {
+  async outputRequirementCommand(command: OutputRequirementCommand, options: { current?: () => boolean } = {}) {
+    const sourceOwner = this.captureSourceOwnership(), authorization = this.captureAuthorizationScope();
+    const result = await this.outputRequirements.command<OutputCommandResponse>(command.documentId, command, "update Output requirements", options);
+    if ((result.status === "saved" || result.status === "conflict") && this.authorizationScopeActive(authorization) && this.sourceOwnershipActive(sourceOwner)) {
       if (result.status === "saved") {
         try { await this.refreshEvents(); }
         catch { /* The mutation receipt is already committed. Hydration must not turn it into a retry. */ }
       }
-      if (this.authorizationScopeActive(authorization)) await this.outputRequirements.ensure(command.documentId, { force: true });
+      if (this.authorizationScopeActive(authorization) && this.sourceOwnershipActive(sourceOwner)) await this.outputRequirements.ensure(command.documentId, { force: true });
     }
     if (!this.authorizationScopeActive(authorization)) return { status: "forbidden" as const, body: null, error: "The active workspace changed. The previous result was discarded." };
-    if (this.outputRequirements.resource(command.documentId).accessLost || this.outputRequirements.resource(command.documentId).privateUnavailable) return this.outputRequirements.withholdCommandBody(command.documentId, result, { clientMutationId: command.clientMutationId, action: command.action });
+    if (!this.sourceOwnershipActive(sourceOwner) || this.outputRequirements.resource(command.documentId).accessLost || this.outputRequirements.resource(command.documentId).privateUnavailable) return this.outputRequirements.withholdCommandBody(command.documentId, result, { clientMutationId: command.clientMutationId, action: command.action });
     return result;
   }
 
-  async uploadOutputAsset(documentId: string, file: File, expectedRevision: string, clientMutationId: string, rightsConfirmed: boolean) {
+  async uploadOutputAsset(documentId: string, file: File, expectedRevision: string, clientMutationId: string, rightsConfirmed: boolean, options: { current?: () => boolean } = {}) {
     if (!rightsConfirmed) return { status: "invalid" as const, body: null, error: "Confirm that you own or have permission to use this file." };
-    const authorization = this.captureAuthorizationScope();
+    const sourceOwner = this.captureSourceOwnership(), authorization = this.captureAuthorizationScope();
     const result = await this.outputRequirements.upload<OutputCommandResponse>(documentId, file, {
       "content-type": "application/octet-stream",
       "x-output-filename": encodeURIComponent(file.name),
       "x-output-expected-revision": expectedRevision,
       "x-output-client-mutation-id": clientMutationId,
       "x-output-rights-confirmed": "true",
-    });
-    if ((result.status === "saved" || result.status === "conflict") && this.authorizationScopeActive(authorization)) {
+    }, options);
+    if ((result.status === "saved" || result.status === "conflict") && this.authorizationScopeActive(authorization) && this.sourceOwnershipActive(sourceOwner)) {
       if (result.status === "saved") {
         try { await this.refreshEvents(); }
         catch { /* Keep the committed upload receipt; recover the view without uploading a second file. */ }
       }
-      if (this.authorizationScopeActive(authorization)) await this.outputRequirements.ensure(documentId, { force: true });
+      if (this.authorizationScopeActive(authorization) && this.sourceOwnershipActive(sourceOwner)) await this.outputRequirements.ensure(documentId, { force: true });
     }
     if (!this.authorizationScopeActive(authorization)) return { status: "forbidden" as const, body: null, error: "The active workspace changed. The previous result was discarded." };
-    if (this.outputRequirements.resource(documentId).accessLost || this.outputRequirements.resource(documentId).privateUnavailable) return this.outputRequirements.withholdCommandBody(documentId, result, { clientMutationId, action: "adopt" });
+    if (!this.sourceOwnershipActive(sourceOwner) || this.outputRequirements.resource(documentId).accessLost || this.outputRequirements.resource(documentId).privateUnavailable) return this.outputRequirements.withholdCommandBody(documentId, result, { clientMutationId, action: "adopt" });
     return result;
   }
 
   async #upgradeHistory(profile:AccountSnapshotProfile){
-    const authorization=this.#activeAuthorizationScope();
-    if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
-    if(this.#historyUpgrade){await this.#historyUpgrade;this.#assertAuthorizationScope(authorization);if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
+    const source=this.captureSourceOwnership();
+    if(!this.#sourceRetired&&eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
+    if(this.#historyUpgrade){await this.#historyUpgrade;this.#assertSourceOwnership(source);if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
     const upgrade=(async()=>{
       const incoming=await this.#readEventStream(0,profile,profile==="full"&&routeCapabilities(this.route.get()).privateContent);
-      this.#assertAuthorizationScope(authorization);
-      const merged=new Map(incoming.events.map((event)=>[event.eventId,event]));
-      for(const event of this.events.get())merged.set(event.eventId,event);
-      this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
-      if(Object.keys(incoming.content).length)this.content.set({...this.content.get(),...incoming.content});
-      this.head.set(Math.max(this.head.get(),incoming.head));
-      this.#historyProfile=profile;
-      recordRouteHistoryProfile(profile);
-      if(profile!=="projects")completeBackgroundHydration(this.events.get().length,profile);
+      this.#publishSourceRead(incoming,()=>{
+        const merged=new Map(incoming.events.map(event=>[event.eventId,event]));
+        // Local known events can only be carried forward by this same owned read.
+        if(!this.#sourceRetired)for(const event of this.events.get())if(event.sequence>incoming.head)merged.set(event.eventId,event);
+        this.events.set([...merged.values()].sort((a,b)=>a.sequence-b.sequence||a.eventId.localeCompare(b.eventId)));
+        this.#mergeSourceContent(incoming.read,incoming.content);this.head.set(Math.max(this.head.get(),incoming.head));
+        this.#historyProfile=incoming.read.profile;
+      });
+      recordRouteHistoryProfile(this.#historyProfile);
+      if(this.#historyProfile!=="projects")completeBackgroundHydration(this.events.get().length,this.#historyProfile);
       this.notify();
-      const session=this.session.get();if(session)void writeAccountSnapshot(this.#snapshotIdentity(session),this.events.get(),this.head.get(),profile);
+      void writeAccountSnapshot(incoming.read.identity,this.events.get(),this.head.get(),this.#historyProfile,this.#sourceCacheGuard(incoming.read,true));
     })();
     this.#historyUpgrade=upgrade;
     try{await upgrade;}finally{if(this.#historyUpgrade===upgrade)this.#historyUpgrade=undefined;}
   }
 
   async #hydrateVisiblePrivateContent():Promise<void>{
-    const required: "chat"|"memory"|"all"=routeCapabilities(this.route.get()).profile==="memory"?"memory":documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
+    const source=this.captureSourceOwnership();this.#assertSourceOwnership(source);
+    const required:"chat"|"memory"|"all"=routeCapabilities(this.route.get()).profile==="memory"?"memory":documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
     if(this.#privateContentScope==="all"||this.#privateContentScope===required){recordPrivateContentState("ready",required);return;}
     const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
-    const initialSession=this.session.get(),owner=initialSession?.user.userId,authorization=initialSession?this.#authorizationScope(initialSession):"";
-    if(this.#contentHydration){try{await this.#contentHydration;if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent();if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;}
-    recordPrivateContentState("pending",required);
+    if(this.#contentHydration){
+      try{await this.#contentHydration;this.#assertSourceOwnership(source);
+        if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent();
+        if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);
+      }catch(error){if(this.sourceOwnershipActive(source)&&(this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;
+    }
+    recordPrivateContentState("pending",required);const read=this.#beginSourceRead("full");
     const hydration=(async()=>{
-      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1${required!=="all"?`&contentScope=${required}`:""}`);
-      if(!response.ok)throw new Error(`Private content returned ${response.status}`);
-      const body=await response.json() as {content?:Record<string,string>};
-      const currentSession=this.session.get();
-      if(!owner||!currentSession||currentSession.user.userId!==owner||this.#authorizationScope(currentSession)!==authorization)throw new Error("Private content no longer belongs to the active account or project");
-      this.#privateContentScope=required;
-      if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}
-    })();
-    this.#contentHydration=hydration;
+      const response=await fetch("/api/events?after="+this.head.get()+"&limit=1&content=1"+(required!=="all"?"&contentScope="+required:""));
+      this.#observeSourceHeaders(read,response,"Private content");
+      const body=await response.json() as {content?:Record<string,string>};this.#assertSourceRead(read);this.#assertSourceOwnership(source);
+      const content=this.#sourceContent(body?.content);
+      // A hydration-only response is not a complete event-source certificate.
+      this.#publishSourceContent(read,()=>{this.#privateContentScope=required;if(Object.keys(content).length)this.#mergeSourceContent(read,content);});
+      if(Object.keys(content).length)this.notify();
+    })();this.#contentHydration=hydration;
     let state:"ready"|"unavailable"="unavailable";
-    try{await hydration;state="ready";}finally{if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
+    try{await hydration;state="ready";}finally{
+      if(this.sourceOwnershipActive(source)&&(this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);
+      if(this.#contentHydration===hydration)this.#contentHydration=undefined;
+    }
   }
 
   async ensurePrivateContent(reference:string,options:{force?:boolean;validate?:(value:string)=>boolean}={}){
-    if(!reference)return null;
-    const initialSession=this.session.get(),owner=initialSession?.user.userId,authorization=initialSession?this.#authorizationScope(initialSession):"";if(!owner)return null;
+    if(!reference)return null;const source=this.captureSourceOwnership();if(!this.sourceOwnershipActive(source))return null;
     const existing=this.content.get()[reference];if(typeof existing==="string"&&!options.force&&(!options.validate||options.validate(existing)))return existing;
-    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const active=this.session.get();if(!active||this.#authorizationScope(active)!==authorization)return null;const hydrated=this.content.get()[reference];if(typeof hydrated==="string"&&!options.force&&(!options.validate||options.validate(hydrated)))return hydrated;}
-    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};const active=this.session.get();if(!active||active.user.userId!==owner||this.#authorizationScope(active)!==authorization)return null;const requested=body.content?.[reference];if(options.validate&&(typeof requested!=="string"||!options.validate(requested)))return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
+    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* Only a still-owned targeted read may follow. */}
+      if(!this.sourceOwnershipActive(source))return null;const hydrated=this.content.get()[reference];
+      if(typeof hydrated==="string"&&!options.force&&(!options.validate||options.validate(hydrated)))return hydrated;
+    }
+    try{
+      const read=this.#beginSourceRead("full"),response=await fetch("/api/events?after="+this.head.get()+"&limit=1&content=1");
+      this.#observeSourceHeaders(read,response,"Private content");
+      const body=await response.json() as {content?:Record<string,string>};this.#assertSourceRead(read);this.#assertSourceOwnership(source);
+      const content=this.#sourceContent(body?.content),requested=content[reference];
+      if(options.validate&&(typeof requested!=="string"||!options.validate(requested)))return null;
+      this.#publishSourceContent(read,()=>{this.#privateContentScope="all";if(Object.keys(content).length)this.#mergeSourceContent(read,content);});
+      if(Object.keys(content).length)this.notify();
+      return this.sourceOwnershipActive(source)?this.content.get()[reference]??null:null;
+    }catch{return null;}
   }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #principalEventActor(){const session=this.session.get();return session?.projectContext?`user:${session.user.userId}`:"user";}
@@ -1238,6 +1559,7 @@ export class FormaStore {
     this.#publishAppended(fresh);return fresh;
   }
   stageOptimisticCanvasEvents(events:EventInput[]){
+    if(!this.sourceOwnershipActive(this.captureSourceOwnership()))return[];
     const existing=new Set(this.optimisticEvents.get().map((event)=>String(event.payload.client_event_id??"")));const now=new Date().toISOString();let index=this.optimisticEvents.get().length;
     const staged:CreativeEvent[]=events.filter((event)=>!existing.has(String(event.payload.client_event_id??""))).map((event)=>{const clientEventId=String(event.payload.client_event_id??crypto.randomUUID());return{eventId:`optimistic:${clientEventId}`,streamId:"optimistic:canvas",sequence:this.head.get()+(++index),occurredAt:now,recordedAt:now,actor:"user",clientId:"web:canvas-optimistic",correlationId:String(event.payload.history_action_id??clientEventId),causationId:null,compensatesEventId:event.compensatesEventId??null,schemaVersion:1,type:event.type,payload:{...event.payload,client_event_id:clientEventId}};});
     if(staged.length){this.optimisticEvents.set([...this.optimisticEvents.get(),...staged]);this.notify();}return staged;
@@ -1245,17 +1567,75 @@ export class FormaStore {
   discardOptimisticCanvasEvents(clientEventIds:Iterable<string>){const ids=new Set(clientEventIds);if(!ids.size)return;this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!ids.has(String(event.payload.client_event_id??""))));this.notify();}
   async syncCanvasBatch(events:EventInput[],options:{remember?:boolean}={}):Promise<CanvasSyncResult>{
     if(!events.length)return{appended:[],rejected:[],head:this.head.get(),retryable:false,error:""};
-    const authorization=this.#activeAuthorizationScope();
-    let response:Response;let body:{appended?:CreativeEvent[];rejected?:Array<{index?:number;type?:string;reason:string}>;head?:number;error?:string}={};
-    try{response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"canvas_sync",events,clientId:"web:canvas"})},events.length>1?`apply ${events.length} ordered board changes`:`record ${events[0].type}`);this.#assertAuthorizationScope(authorization);try{body=await response.json() as typeof body;}catch{body={error:`Canvas sync returned HTTP ${response.status} without a readable receipt.`};}this.#assertAuthorizationScope(authorization);}
-    catch(error){const message=error instanceof Error?error.message:"The Canvas server could not be reached.";if(this.#scopeStillActive(authorization))this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};}
-    this.#assertAuthorizationScope(authorization);
-    const appended=body.appended??[];if(appended.length)this.#mergeConfirmed(appended,body.head??this.head.get(),options.remember!==false);
-    const error=response.ok?"":body.error??`Canvas sync returned HTTP ${response.status}`;const retryable=!response.ok&&(response.status>=500||[408,425,429].includes(response.status)||response.status===409&&body.error==="stale_sequence");
-    this.appendFailure.set(error||((body.rejected?.length??0)>0?body.rejected!.map((item)=>item.reason).join("; "):""));this.notify();
-    return{appended,rejected:body.rejected??[],head:body.head??this.head.get(),retryable,error};
+    const retained=JSON.parse(JSON.stringify(events)) as EventInput[];
+    const admission=await this.#admitEventWrite(retained,"canvas_sync"),observation=admission.observation;
+    const active=()=>this.sourceOwnershipActive(observation.source)&&!observation.paused;
+    const paused=(receipt:EventWriteResult):CanvasSyncResult=>({appended:[],rejected:[],head:receipt.acknowledgment.observedHead??0,
+      retryable:false,error:"",acknowledgment:receipt.acknowledgment,pause:"source-retired"});
+    if(!admission.admitted){
+      if(admission.reused)return paused(this.#withheldEventWrite(observation));
+      const result=this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!active()},[],active()?"none":"withheld",{silent:true});
+      if(!admission.capacity&&this.sourceOwnershipScopeActive(observation.source))this.toast(this.#systemNotice("Too many original changes await confirmation. No new change was sent."));
+      return paused(result);
+    }
+    if(!active())return paused(this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld",{silent:true}));
+    let dispatched=false;observation.attempted=true;
+    try{
+      const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({action:"canvas_sync",events:retained,clientId:"web:canvas"})},
+        retained.length>1?"apply "+retained.length+" ordered board changes":"record "+retained[0]!.type,
+        {current:()=>dispatched||active(),onDispatch:()=>{dispatched=true;}});
+      if([401,403,404].includes(response.status)){
+        if(observation.read)this.#retireOwnedSource(observation.read,response.status as 401|403|404);
+        const result=this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:!active()},[],active()?"none":"withheld",{silent:true});
+        return paused(result);
+      }
+      let body:unknown;try{body=await response.json();}catch{throw new Error("Canvas sync returned no verifiable acknowledgment.");}
+      const receipt=response.ok?this.#validateEventWriteBody(body,retained,observation):null;
+      if(!active()){
+        observation.paused=true;
+        return paused(this.#finishEventWrite(observation,{outcome:receipt?.complete?"observed":"unconfirmed",
+          ...(receipt?{committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head}:{}),privateUnavailable:true},[],"withheld",{silent:true}));
+      }
+      if(receipt){
+        this.#mergeConfirmed(receipt.appended,receipt.head,options.remember!==false);
+        this.appendFailure.set(receipt.rejected.map(item=>item.reason).join("; "));this.notify();
+        this.#finishEventWrite(observation,{outcome:receipt.complete?"observed":"unconfirmed",committed:receipt.committed,
+          rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});
+        return{appended:receipt.appended,rejected:receipt.rejected,head:receipt.head,retryable:!receipt.complete,error:""};
+      }
+      const error=body&&typeof body==="object"&&!Array.isArray(body)&&typeof(body as Record<string,unknown>).error==="string"
+        ?String((body as Record<string,unknown>).error):"Canvas sync returned no verifiable acknowledgment.";
+      this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:false},[],"none",{silent:true});
+      this.appendFailure.set(error);this.notify();
+      return{appended:[],rejected:[],head:this.head.get(),retryable:response.ok||response.status>=500||[408,425,429].includes(response.status)
+        ||response.status===409&&error==="stale_sequence",error};
+    }catch(error){
+      if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;
+      const result=this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!active()},[],active()?"none":"withheld",{silent:true});
+      if(!active()){observation.paused=true;return paused(result);}
+      const message=error instanceof Error?error.message:"The Canvas server could not be reached.";
+      this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};
+    }
   }
-  async #refreshEvents(){const authorization=this.#activeAuthorizationScope(),previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);this.#assertAuthorizationScope(authorization);if(body.head<after){body=await this.#readEventPages(0);this.#assertAuthorizationScope(authorization);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.#assertAuthorizationScope(authorization);this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
+  async #refreshEvents(){
+    const baseProfile=this.#historyProfile,wasRetired=this.#sourceRetired,previous=wasRetired?[]:this.events.get(),known=new Set(previous.map(event=>event.eventId));
+    const after=wasRetired?0:this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();
+    let replace=after===0,body=await this.#readEventPages(after);
+    this.#assertSourceRead(body.read);
+    if(body.head<after){body=await this.#readEventPages(0,body.read);this.#assertSourceRead(body.read);replace=true;}
+    if(body.read.from===0)replace=true;
+    const changed=wasRetired||replace||body.events.length>0||body.head!==after||Object.keys(body.content).length>0;
+    const complete=replace?body.events:[...previous,...body.events.filter(event=>!known.has(event.eventId))];
+    this.#publishSourceRead(body,()=>{
+      if(changed){this.events.set(complete);const confirmed=this.#clientEventIds(complete);
+        if(confirmed.size)this.optimisticEvents.set(this.optimisticEvents.get().filter(event=>!confirmed.has(String(event.payload.client_event_id??""))));
+        if(replace||Object.keys(body.content).length)this.#mergeSourceContent(body.read,body.content,replace);
+        this.head.set(body.head);if(replace)this.#historyProfile=body.read.profile;}
+    },replace?body.read.profile:eventProfileRank(baseProfile)<eventProfileRank(body.read.profile)?baseProfile:body.read.profile);
+    if(changed)this.#publishAppended(complete.filter(event=>!known.has(event.eventId)),body.read);
+    return changed;
+  }
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
 
   /** Recheck only the selected project's existing source index; never hydrate, author, or select another context. */
@@ -1299,11 +1679,12 @@ export class FormaStore {
   #canRequestProjectOutputs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.output.request");}
   #canReadProjectJobs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.read")||permissions.includes("project.output.request");}
   canPreparePlanning(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.author")&&permissions.includes("project.output.request");}
-  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.#canReadProjectJobs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
+  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canReadProjectJobs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
   #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get()||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){
-    if(!this.#canRequestProjectOutputs())return;
+    if(!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canRequestProjectOutputs())return;
+    const originalScope=this.#activeAuthorizationScope();jobs=jobs.filter(job=>this.#sourcePausedJobs.get(job.jobId)!==originalScope);
     const projection=this.projection.get(),projectDocuments=new Set(projection.documents
       .filter((document)=>document.projectId===projection.projectId).map((document)=>document.id));
     const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")
@@ -1313,9 +1694,10 @@ export class FormaStore {
     const recoverable=jobs.find((job)=>!this.#presentationRecoveryAttempts.has(job.jobId)&&documentJobCanRecoverPresentation(job));
     if(recoverable&&this.session.get()){this.#presentationRecoveryAttempts.add(recoverable.jobId);void this.recoverDocumentPresentation(recoverable.jobId);}
   }
-  async #driveDocumentJob(job:DocumentJob){const authorization=this.#activeAuthorizationScope();this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
+  async #driveDocumentJob(job:DocumentJob){const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();if(!this.sourceOwnershipActive(sourceOwner)||this.#sourcePausedJobs.get(job.jobId)===authorization)return;this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
 async syncDocumentJobs(){
-    if(!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);return;}
+    const sourceOwner=this.captureSourceOwnership();
+    if(!this.sourceOwnershipActive(sourceOwner)||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);return;}
     const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";
     if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}
     this.#jobsSyncing=true;this.#jobSyncScope=scope;
@@ -1325,7 +1707,7 @@ async syncDocumentJobs(){
       const response=await fetch(`/api/document-jobs${scope}`);
       if(!response.ok)throw new Error(`Job status returned ${response.status}`);
       const body=await response.json() as {jobs?:DocumentJob[]},currentSession=this.session.get();
-      if(this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}
+      if(!this.sourceOwnershipActive(sourceOwner)||this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}
       // A newer explicit action may have completed while this list was in transit.
       // Discard that older page; a free resync can observe the new canonical state.
       if(this.documentJobs.get()!==feedBeforeRead){this.#jobResyncRequested=true;return;}
@@ -1343,14 +1725,14 @@ async syncDocumentJobs(){
       const disappearedActive=[...previous.values()].some(job=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some(current=>current.jobId===job.jobId));
       const completed=terminalChanges.filter(job=>!job.notifiedAt&&!job.parentJobId);
       if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}
-      if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#pendingJobEventRefresh=false;}
+      if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);this.#pendingJobEventRefresh=false;}
       if(this.#pendingJobSessionRefresh){
-        try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#pendingJobSessionRefresh=false;}
+        try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);this.#pendingJobSessionRefresh=false;}
         catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently of creative recovery. */}
       }
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const inspected=await this.#revalidateMissingAdaptivePlans(jobs,authorization,previous);
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       // Exact inspections may overlap a newer completion, dismissal, or withdrawal.
       // Reconcile from the current authorized page, never the pre-await snapshot.
       const currentJobs=this.documentJobs.get(),currentIds=new Set(currentJobs.map(job=>job.jobId));
@@ -1382,20 +1764,22 @@ async syncDocumentJobs(){
       const latest=this.documentJobs.get();this.notify();this.#driveDocumentJobs(latest);
       this.#scheduleJobPoll(latest.some(job=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
     }catch{
-      if(this.#scopeStillActive(authorization)){
+      if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){
         this.#jobPollFailures+=1;
         if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}
         this.#scheduleJobPoll(5_000);
       }
     }finally{
       this.#jobsSyncing=false;
-      if(this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}
+      if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}
     }
   }
 
   /** Read-only client evidence guard; the server still recertifies private sources and the HttpOnly context. */
   captureSceneCostSource(request:SceneCostRequest){
+    const ownership=this.captureSourceOwnership();
     const source=()=>{
+      if(!this.sourceOwnershipActive(ownership))return null;
       const session=this.session.get(),projection=this.projection.get();
       const document=projection.documents.find(candidate=>candidate.id===request.documentId&&candidate.projectId===projection.projectId&&!candidate.removed);
       const context=session?.projectContext,permissions=context?.permissions??session?.capabilities??[];
@@ -1480,6 +1864,7 @@ async syncDocumentJobs(){
   }
   async #authorizeGenerationBudget(kind:DocumentJobKind,payload:Record<string,unknown>){
     if(!["preview","generate","prompt_fan","render_document","chat","structure_adaptive"].includes(kind))return;
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const session=this.session.get();if(!session?.costBudgets)return;
     const authorization=this.#authorizationScope(session);
     const billingUserId=session.impersonation?.actor.userId??session.user.userId;
@@ -1492,7 +1877,7 @@ async syncDocumentJobs(){
     const localize=(source:string,values:Record<string,string|number>={})=>(locale.messages[formaSystemMessageId(source)]??source).replace(/\{(\w+)\}/g,(_,name:string)=>String(values[name]??""));
     const scope=localize(gate.scope==="workspace"?"organization":"personal");
     if(gate.level==="blocked")throw new Error(localize("This generation exceeds the remaining {scope} monthly budget.",{scope}));
-    if(!gate.requiresAcknowledgement){this.#assertAuthorizationScope(authorization);payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
+    if(!gate.requiresAcknowledgement){this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
     const dialog=document.createElement("dialog");dialog.className="modal generation-budget-approval";dialog.lang=locale.locale;dialog.dir=locale.direction;const dialogId=crypto.randomUUID();dialog.setAttribute("aria-labelledby",`generation-budget-title-${dialogId}`);dialog.setAttribute("aria-describedby",`generation-budget-description-${dialogId}`);
     const card=document.createElement("section");card.className="modal-card";
     const heading=document.createElement("h2");heading.id=`generation-budget-title-${dialogId}`;heading.textContent=localize(gate.level==="critical"?"Your monthly generation budget is almost exhausted":"Review your monthly generation budget");
@@ -1501,14 +1886,15 @@ async syncDocumentJobs(){
     let suppression:HTMLInputElement|null=null;
     if(gate.dismissible){const label=document.createElement("label");suppression=document.createElement("input");suppression.type="checkbox";label.append(suppression,document.createTextNode(` ${localize("I no longer want to see this until 95% of the monthly budget is used")}`));card.append(label);}
     const footer=document.createElement("footer"),cancel=document.createElement("button"),continueButton=document.createElement("button");cancel.type="button";cancel.className="button ghost";cancel.textContent=locale.messages["action.cancel"]??"Cancel";continueButton.type="button";continueButton.className="button primary";continueButton.textContent=localize("I understand, continue");footer.append(cancel,continueButton);card.append(footer);dialog.append(card);document.body.append(dialog);
-    const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(requested:boolean)=>{if(settled)return;settled=true;window.removeEventListener("forma-authorization-changed",changed);const value=requested&&this.#scopeStillActive(authorization);if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);if(dialog.open)dialog.close();dialog.remove();resolve(value);};const changed=()=>finish(false);window.addEventListener("forma-authorization-changed",changed,{once:true});cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});if(!this.#scopeStillActive(authorization)){finish(false);return;}dialog.showModal();});
-    this.#assertAuthorizationScope(authorization);
+    const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(requested:boolean)=>{if(settled)return;settled=true;window.removeEventListener("forma-authorization-changed",changed);window.removeEventListener("forma-event-source-retired",retired);const value=requested&&this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner);if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);if(dialog.open)dialog.close();dialog.remove();resolve(value);};const changed=()=>finish(false),retired=(event:Event)=>{const detail=(event as CustomEvent<EventSourceRetirement>).detail;if(detail&&this.sourceOwnershipScopeActive(detail.source))finish(false);};window.addEventListener("forma-authorization-changed",changed,{once:true});window.addEventListener("forma-event-source-retired",retired);cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});if(!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner)){finish(false);return;}dialog.showModal();});
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
     if(!accepted)throw new Error(localize("Generation canceled before any provider work was started."));
     payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
   }
   async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
+    const sourceOwner=this.captureSourceOwnership(),sourceProjectId=this.projection.get().projectId;
     const scene=kind==="render_document"&&payload.artifactKind==="scene";
-    const check=()=>{if(scene&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
+    const check=()=>{this.#assertSourceOwnership(sourceOwner);if(scene&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     if(!payload.locale&&["preview","generate","prompt_fan","render_document"].includes(kind))payload={...payload,locale:typeof document==="undefined"?"en":document.documentElement.lang||"en"};
     const authorization=this.#activeAuthorizationScope();
     if(!this.#canRequestProjectOutputs())throw new Error("Your project role does not permit creating outputs.");
@@ -1531,20 +1917,27 @@ async syncDocumentJobs(){
       if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");
       this.#assertAuthorizationScope(authorization);check();await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);check();
       const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;
-      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,scene?controls:{});
-      this.#assertAuthorizationScope(authorization);check();
+      let dispatched=false;
+      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,{current:()=>dispatched||this.sourceOwnershipActive(sourceOwner)&&(!scene||!controls.current||controls.current()),onDispatch:()=>{dispatched=true;controls.onDispatch?.();}});
+      this.#assertAuthorizationScope(authorization);
       const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness;attemptSubmission?:string;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}};
-      this.#assertAuthorizationScope(authorization);check();
+      this.#assertAuthorizationScope(authorization);
       if(!response.ok||!body.job)throw Object.assign(new Error(body.message??body.error??"Document operation could not be started"),scene&&body.attemptSubmission==="not-submitted"?{attemptSubmission:"not-submitted"}:{});
       if(scene){
         if(!sceneCostJobMatches(body.job,String(payload.sceneRequestId??""),documentId))throw new Error("scene_cost_unavailable");
         const original=body.sceneCostExisting,session=this.session.get();
         if(original&&(original.requestId!==payload.sceneRequestId||original.preview!==null&&(!isSceneCostPreview(original.preview)
           ||original.preview.requestId!==payload.sceneRequestId||original.preview.actorUserId!==session?.user.userId
-          ||original.preview.projectId!==this.projection.get().projectId||original.preview.documentId!==documentId)))throw new Error("scene_cost_unavailable");
+          ||original.preview.projectId!==sourceProjectId||original.preview.documentId!==documentId)))throw new Error("scene_cost_unavailable");
       }
       if(kind==="structure_adaptive"&&!adaptiveJobMatchesRequest(body.job,{documentId,canvasId:typeof payload.canvasId==="string"?payload.canvasId:null,sourceSurface,requestKey}))throw new Error(currentFormaLocale().messages["next.exact.unavailable"]??"The exact planning request changed.");
       const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");
+      if(!this.sourceOwnershipActive(sourceOwner)||scene&&controls.current&&!controls.current()){
+        this.#sourcePausedJobs.set(body.job.jobId,authorization);
+        const reference=this.#privateJobReference(body.job);
+        this.documentJobs.set([reference,...this.documentJobs.get().filter(job=>job.jobId!==reference.jobId)]);this.notify();
+        return{job:reference,reused:Boolean(body.reused),...(scene&&body.sceneCostExisting?{sceneCostExisting:{requestId:body.sceneCostExisting.requestId,preview:null}}:{})};
+      }
       if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});
       const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];
       this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);
@@ -1573,8 +1966,46 @@ async syncDocumentJobs(){
     const response=await fetch("/api/impersonation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({personaId,confirmation:"I understand, continue"})});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"The fictional account could not be opened");window.location.assign(body.route??route);
   }
   async stopImpersonating(){const response=await fetch("/api/impersonation",{method:"DELETE"});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"Your regular account could not be restored");window.location.assign(body.route??"/laboratory/replay");}
+  #scheduleProjectTaskExpiry() {
+    if (this.#projectTaskExpiry) window.clearTimeout(this.#projectTaskExpiry.timer);
+    this.#projectTaskExpiry = null;
+    if (!isProjectTaskRoute(this.route.get())) return;
+    const session = this.session.get(), context = session?.projectContext;
+    if (!session || !context) return;
+    const deadline = Date.parse(context.expiresAt);
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) {
+      // Republish identical signed fields only to invalidate cached projections.
+      // This is not a fresh authorization, session refresh, or HTTP operation.
+      this.session.set({ ...session }); this.notify(); return;
+    }
+    // Starting a session read or workspace handoff cannot extend this published deadline.
+    const authorization = this.captureAuthorizationScope(), route = this.route.get();
+    const owner = { timer: 0 };
+    this.#projectTaskExpiry = owner;
+    const arm = () => {
+      owner.timer = window.setTimeout(() => {
+        if (this.#projectTaskExpiry !== owner) return;
+        if (this.route.get() !== route
+          || this.session.get() !== session
+          || !this.authorizationScopeActive(authorization) || this.session.get()?.projectContext?.expiresAt !== context.expiresAt) {
+          this.#projectTaskExpiry = null; return;
+        }
+        if (Date.now() < deadline) { arm(); return; }
+        this.#projectTaskExpiry = null;
+        this.session.set({ ...session }); this.notify();
+      }, Math.min(2_147_483_647, Math.max(1, deadline - Date.now())));
+    };
+    arm();
+  }
+
+  #projectTaskRoute(path: string, options: WorkspaceNavigationOptions = {}) {
+    return projectTaskDocumentIdFromRoute(path) !== null ? path
+      : withProjectTaskDocumentInRoute(path, options.documentId ?? this.projection.get().documentId, options.documentId === undefined ? this.route.get() : undefined);
+  }
+
   setRoute(path: string, options: WorkspaceNavigationOptions = {}) {
     if(!workspaceNavigationCurrent(options))return;
+    path = this.#projectTaskRoute(path, options);
     const current=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
     if(current!==destination){
       if(!["creative","canvas"].includes(current)||!["creative","canvas"].includes(destination)){location.assign(path);return;}
@@ -1586,7 +2017,8 @@ async syncDocumentJobs(){
 
   async transitionWorkspace(path:string,options:WorkspaceNavigationOptions={}){
     if(!workspaceNavigationCurrent(options))return false;
-    const guarded=Boolean(options.current||options.focus),navigationScope=guarded?this.captureAuthorizationScope():null;
+    path = this.#projectTaskRoute(path, options);
+    const navigationScope = this.captureAuthorizationScope(), sourceRoute = this.route.get(), sessionRevision = this.#sessionRevision;
     const source=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
     if(source===destination){this.#commitRoute(path,options);return true;}
     if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)){location.assign(path);return true;}
@@ -1597,10 +2029,10 @@ async syncDocumentJobs(){
       const current=await response.json() as PilotSession&{error?:string};
       const ownsBody=workspaceNavigationCurrent(options);
       if(!response.ok)throw new Error(current.error??"The selected workspace is no longer available.");
-      if(attempt!==this.#workspaceTransition||applicationIdFromRoute(this.route.get())!==source)return false;
+      if(attempt!==this.#workspaceTransition||this.route.get()!==sourceRoute||sessionRevision!==this.#sessionRevision)return false;
       // A stale navigation may still retire permissions for its original actor,
       // but must never restore another account or silently move a newer view.
-      if(guarded&&!this.authorizationScopeActive(navigationScope))return false;
+      if(!this.authorizationScopeActive(navigationScope))return false;
       if(!workspaceTransitionAuthorized(previous,current,destination)){
         if(previous&&previous.user.userId===current.user.userId)this.#applySession({...current,audience:previous.audience});
         this.toast(destination==="canvas"?"Canvas is no longer available for this account or project.":"Your workspace authorization has changed. Reload your current project.");
@@ -1610,16 +2042,18 @@ async syncDocumentJobs(){
       if(!ownsHeaders||!ownsBody||!workspaceNavigationCurrent(options))return false;
       this.#commitRoute(path,options);
       return true;
-    }catch(error){if(attempt===this.#workspaceTransition)this.toast(error instanceof Error?error.message:"The selected workspace could not be authorized.");return false;}
+    }catch(error){if(attempt===this.#workspaceTransition&&this.route.get()===sourceRoute&&sessionRevision===this.#sessionRevision&&this.authorizationScopeActive(navigationScope)&&workspaceNavigationCurrent(options))this.toast(error instanceof Error?error.message:"The selected workspace could not be authorized.");return false;}
   }
 
   #commitRoute(path:string,options:WorkspaceNavigationOptions={}){
     if(!workspaceNavigationCurrent(options))return;
+    path = this.#projectTaskRoute(path, options);
+    this.#workspaceTransition += 1;
     const projection = this.projection.get();
     const requestedFocus = options.documentFocus ?? (documentFocusFromRoute(path) || documentFocusFromRoute(this.route.get()));
     const focusAwarePath = isDocumentViewRoute(path) ? withDocumentFocusInRoute(path, requestedFocus) : path;
     const requestedDocumentId = documentIdFromRoute(focusAwarePath);
-    const routeDocumentId = requestedDocumentId || projection.documentId;
+    const routeDocumentId = requestedDocumentId || (options.documentId ?? projection.documentId);
     const routeDocumentTitle = projection.documents.find((document) => document.id === routeDocumentId)?.title ?? (routeDocumentId === projection.documentId ? projection.documentTitle : "");
     const routedPath = isDocumentViewRoute(focusAwarePath) && routeDocumentId ? withDocumentInRoute(focusAwarePath, routeDocumentId, routeDocumentTitle) : focusAwarePath;
     const current = `${location.pathname}${location.search}${location.hash}`;
@@ -1634,7 +2068,7 @@ async syncDocumentJobs(){
       }
     }
     this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus}:null;
-    this.route.set(routedPath);if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
+    this.route.set(routedPath);this.#scheduleProjectTaskExpiry();if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
     const required=this.#profileForRoute(routedPath);
     if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
     if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
@@ -1642,8 +2076,21 @@ async syncDocumentJobs(){
   }
 
   async syncDocumentFromRoute(path = this.route.get()) {
-    if (!isDocumentViewRoute(path) || !this.events.get().length) return;
-    const projection = this.projection.get();
+    if (path !== this.route.get() || this.loading.get() || !this.routeDataReady(path) || !this.events.get().length) return;
+    const taskDocumentId = projectTaskDocumentIdFromRoute(path);
+    if (isProjectTaskRoute(path)) {
+      this.#scheduleProjectTaskExpiry();
+      const session = this.session.get(), context = session?.projectContext;
+      if (!session || context && (!context.permissions.includes("project.read") || !(Date.parse(context.expiresAt) > Date.now()))) return;
+      if (taskDocumentId !== null && (this.projection.get().documentId !== taskDocumentId || !taskDocumentId)) {
+        this.setRoute(applicationIdFromRoute(path) === "canvas" ? "/canvas/projects" : "/projects", { replace: true });
+        this.toast("That document is no longer available.");
+      }
+      return;
+    }
+    if (!isDocumentViewRoute(path)) return;
+    const projection = this.projection.get(), revision = this.#workspaceTransition, authorization = this.captureAuthorizationScope();
+    const current = () => this.authorizationScopeActive(authorization) && this.#workspaceTransition === revision && this.route.get() === path;
     const requestedDocumentId = documentIdFromRoute(path);
     if (!requestedDocumentId) {
       if (projection.documentId) this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
@@ -1656,10 +2103,9 @@ async syncDocumentJobs(){
       return;
     }
     if (requestedDocumentId !== projection.documentId) {
-      const opened = await this.openDocument(requestedDocumentId, path, "shared-document-url");
-      if (!opened) this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
-    }
-    else {
+      const opened = await this.openDocument(requestedDocumentId, path, "shared-document-url", { current });
+      if (!opened && current()) this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
+    } else {
       const canonicalRoute = withDocumentInRoute(path, projection.documentId, projection.documentTitle);
       if (canonicalRoute !== path) this.setRoute(canonicalRoute, { replace: true });
     }
@@ -1670,60 +2116,77 @@ async syncDocumentJobs(){
   async erasePersonalAuthoredContext(){const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number;outputReservationReconciliationPending?:boolean;outputProviderReconciliationPending?:number;outputStorageCleanupPending?:number;outputReconciliationCheckFailed?:boolean};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);this.#assertAuthorizationScope(authorization);this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);await this.#refreshEvents();this.#assertAuthorizationScope(authorization);const outputPending=Boolean(result.outputReservationReconciliationPending||result.outputProviderReconciliationPending||result.outputStorageCleanupPending||result.outputReconciliationCheckFailed);this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0})+(outputPending?" "+this.#systemNotice("Some Output file cleanup or provider accounting is still pending. No new generation was authorized."):""));this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");return false;}}
   async migrateHistoricalEventPrivacy(){const session=this.session.get();if(!session||session.user.role!=="admin"||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"migrate-historical-events",confirmation:"MIGRATE_HISTORICAL_EVENT_CONTENT"})},"migrate historical event privacy");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;migratedEvents?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Historical event migration failed.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session))]);this.toast(this.#systemNotice("{count} historical event bodies moved into erasable owner-scoped storage. Existing backups and other devices still require separate handling.",{count:result.migratedEvents??0}));return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Historical event migration failed.");return false;}}
 
-  async load() {
-    const loadRevision=++this.#loadRevision;let loadAuthorization="";
-    const ownsLoad=()=>loadRevision===this.#loadRevision&&(!loadAuthorization||this.#scopeStillActive(loadAuthorization));
-    const path=this.route.get();const profile=this.#profileForRoute(path);const started=performance.now();
-    beginRoutePopulation(path);
-    recordRouteHistoryProfile(profile);
+  async load(options:{routeHandoff?:Promise<void>}={}) {
+    const loadRevision=++this.#loadRevision;let loadAuthorization="",loadRead:EventSourceRead|undefined;
+    const ownsLoad=()=>loadRevision===this.#loadRevision&&(!loadAuthorization||this.#scopeStillActive(loadAuthorization))&&(!loadRead||this.#sourceReadOwned(loadRead));
+    const path=this.route.get(),profile=this.#profileForRoute(path),started=performance.now();
+    beginRoutePopulation(path);recordRouteHistoryProfile(profile);
     recordPrivateContentState(routeCapabilities(path).privateContent?"pending":"not-required");
-    this.loading.set(true); this.notify();
-    try {
-      // The document's streamed session is verified on this exact request. Cached
-      // account data remains invisible until that authoritative identity is known.
-      const bootstrap=consumeSessionBootstrap();
-      const prefetched=consumeSessionPrefetch();
+    this.loading.set(true);this.notify();
+    try{
+      const bootstrap=consumeSessionBootstrap(),prefetched=consumeSessionPrefetch();
       const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
-      const snapshotsPromise=sessionPromise.then((verified)=>readAccountSnapshots(this.#snapshotIdentity(verified)));
-      if(documentViewFromRoute(path)==="chat")void sessionPromise.then((verified)=>{if(this.session.get()?.user.userId!==verified.user.userId||this.route.get()!==path)return;return this.#hydrateVisiblePrivateContent();}).catch(()=>undefined);
-      const live=snapshotsPromise.then(async(snapshots)=>{
-        if(snapshots.length){
-          const verified=await sessionPromise;
-          const snapshot=matchingAccountSnapshot(snapshots,this.#snapshotIdentity(verified),profile);
-          if(snapshot)return this.#readEventStream(snapshot.head,snapshot.profile,false);
-        }
-        return this.#readEventStream(0,profile,false);
+      const snapshotsPromise=sessionPromise.then(verified=>{
+        if(loadRevision!==this.#loadRevision||this.#authorizationScope(verified)!==this.#activeAuthorizationScope())throw new Error("A newer workspace load already owns this source.");
+        loadRead=this.#beginSourceRead(profile);
+        return readAccountSnapshots(loadRead.identity,this.#sourceCacheGuard(loadRead));
       });
+      if(documentViewFromRoute(path)==="chat")void sessionPromise.then(verified=>{
+        if(this.session.get()?.user.userId!==verified.user.userId||this.route.get()!==path||this.#sourceRetired)return;
+        return this.#hydrateVisiblePrivateContent();
+      }).catch(()=>undefined);
+      const live=snapshotsPromise.then(snapshots=>{
+        const read=loadRead;if(!read||!ownsLoad())throw new Error("The source load was superseded.");
+        const snapshot=matchingAccountSnapshot(snapshots,read.identity,read.profile,this.#sourceCacheGuard(read));
+        return this.#readEventStream(snapshot?.head??0,read.profile,false,read);
+      });
+      // Attach a handler immediately; foreground cache publication must never hide an owned denial.
+      void live.catch(()=>undefined);
       const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
-      const authorization=this.#authorizationScope(session);loadAuthorization=authorization;if(!ownsLoad())throw new Error("The active workspace changed before its history finished loading.");this.#assertAuthorizationScope(authorization);
+      loadAuthorization=this.#authorizationScope(session);
+      if(!loadRead||!ownsLoad())throw new Error("The active workspace changed before its history finished loading.");
+      const read=loadRead;this.#assertSourceRead(read);
       recordSessionReady(started,bootstrap?"document":prefetched?"prefetch":"request");
-      const identity=this.#snapshotIdentity(session);
-      const cached=matchingAccountSnapshot(snapshots,identity,profile);
+      const cached=matchingAccountSnapshot(snapshots,read.identity,read.profile,this.#sourceCacheGuard(read));
       if(cached){
-        this.#assertAuthorizationScope(authorization);
+        this.#assertSourceRead(read);
+        if(this.#sourceRetired||read.id<this.#sourcePublishedRead)throw new Error("A newer source read owns the current workspace.");
+        // A cache is a provisional view, never a certificate that supersedes another read.
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
-        void live.then(async(current)=>{
-          this.#assertAuthorizationScope(authorization);
-          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.#assertAuthorizationScope(authorization);this.events.set(restored.events);this.content.set({...this.content.get(),...restored.content});this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
-          else if(current.head>cached.head){this.#assertAuthorizationScope(authorization);const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
-        }).catch((error)=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
+        void live.then(async current=>{
+          if(!ownsLoad())throw new Error("The source load was superseded.");
+          if(current.head<cached.head)current=await this.#readEventStream(0,read.profile,false,read);
+          if(!ownsLoad())throw new Error("The source load was superseded.");
+          const replace=current.read.from===0,changed=replace||current.head!==cached.head||current.events.length>0||Object.keys(current.content).length>0;
+          this.#publishSourceRead(current,()=>{
+            if(replace){this.events.set(current.events);this.#mergeSourceContent(current.read,current.content,true);}
+            else if(changed){const merged=new Map([...this.events.get(),...current.events].map(event=>[event.eventId,event]));
+              this.events.set([...merged.values()].sort((a,b)=>a.sequence-b.sequence||a.eventId.localeCompare(b.eventId)));
+              if(Object.keys(current.content).length)this.#mergeSourceContent(current.read,current.content);}
+            this.head.set(current.head);this.#historyProfile=read.profile;
+          });
+          if(changed){this.#publishAppended(current.events,current.read);this.notify();}
+          void writeAccountSnapshot(read.identity,this.events.get(),this.head.get(),this.#historyProfile,this.#sourceCacheGuard(read,true));
+        }).catch(error=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
       }else{
-        const body=await live;
-        this.#assertAuthorizationScope(authorization);
-        this.events.set(body.events);this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#historyProfile=profile;
+        const body=await live;if(!ownsLoad())throw new Error("The source load was superseded.");
+        this.#publishSourceRead(body,()=>{
+          this.events.set(body.events);this.#mergeSourceContent(body.read,body.content,true);this.head.set(body.head);this.#historyProfile=body.read.profile;
+        });
         recordPopulationSource("miss",body.events.length);
-        void writeAccountSnapshot(identity,body.events,body.head,profile);
+        void writeAccountSnapshot(read.identity,body.events,body.head,body.read.profile,this.#sourceCacheGuard(read,true));
       }
-      while (!this.routeDataReady()) {
+      if(!ownsLoad())throw new Error("The source load was superseded.");
+      while(!this.routeDataReady()){
         await this.#upgradeHistory(this.#profileForRoute(this.route.get()));
-        if (!ownsLoad()) throw new Error("The active workspace changed before its history finished loading.");
+        if(!ownsLoad())throw new Error("The active workspace changed before its history finished loading.");
       }
-      this.#assertAuthorizationScope(authorization);this.error.set("");this.loading.set(false);this.notify();
-      requestAnimationFrame(()=>{
-        if(!ownsLoad())return;
-        void this.syncDocumentFromRoute(this.route.get());
-        this.#syncVisibleJobs(this.route.get());
+      this.#assertSourceRead(read);this.error.set("");this.loading.set(false);this.notify();
+      requestAnimationFrame(async()=>{
+        if(options.routeHandoff)await options.routeHandoff;
+        if(!ownsLoad()||!this.sourceOwnershipActive(read.source))return;
+        void this.syncDocumentFromRoute(this.route.get());this.#syncVisibleJobs(this.route.get());
         if(routeCapabilities(this.route.get()).privateContent)void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
       });
     }catch(error){if(ownsLoad())this.error.set(error instanceof Error?error.message:"Unable to load event stream");}
@@ -1733,6 +2196,9 @@ async syncDocumentJobs(){
   #applySession(body:PilotSession,revision?:number){
     if(revision===undefined)this.#sessionRevision+=1;
     const previous=this.session.get(),previousUserId=previous?.user.userId;
+    if(!previous||this.#authorizationScope(previous)!==this.#authorizationScope(body)){
+      this.#sourceGeneration+=1;this.#sourceRetired=false;this.#retiredSourceProjectId=null;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
+    }
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
       this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
       this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
@@ -1743,7 +2209,7 @@ async syncDocumentJobs(){
       this.#undo=[];this.#redo=[];this.#rememberedClientEventIds.clear();window.clearTimeout(this.#jobPollTimer);window.clearTimeout(this.#collaborationPollTimer);window.clearTimeout(this.#focalBackfillTimer);
       window.dispatchEvent(new CustomEvent("forma-authorization-changed",{detail:{previous:this.#authorizationScope(previous),current:this.#authorizationScope(body)}}));
     }
-    this.session.set(body);
+    this.session.set(body);this.#scheduleProjectTaskExpiry();
     if(body.projectContext){void this.syncProjectNotifications();void this.syncOrganizationContextPackages();}else{this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});}
     void this.syncReviewInbox();
     this.#scheduleCollaborationPoll();
@@ -1760,38 +2226,41 @@ async syncDocumentJobs(){
     if(!response.ok)throw new Error(body.error??"Authentication required");return this.#applySession(body,revision);
   }
 
-  async syncProjectNotifications(){const session=this.session.get();if(!session?.projectContext){this.projectNotifications.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/project-notifications");this.#assertAuthorizationScope(authorization);const body=await response.json() as {notifications?:ProjectNotification[]};this.#assertAuthorizationScope(authorization);if(response.ok){this.projectNotifications.set(body.notifications??[]);this.notify();}}catch{/* Event polling retries project follow-up without blocking the actual work. */}}
+  async syncProjectNotifications(){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}const session=this.session.get();if(!session?.projectContext){this.projectNotifications.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/project-notifications");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {notifications?:ProjectNotification[]};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(response.ok){this.projectNotifications.set(body.notifications??[]);this.notify();}}catch{/* Event polling retries project follow-up without blocking the actual work. */}}
   async acknowledgeProjectNotification(id:string){const session=this.session.get();if(!session?.projectContext)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/project-notifications",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({notificationId:id})},"acknowledge this project update");this.#assertAuthorizationScope(authorization);const body=await response.json() as {readAt?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)return false;this.projectNotifications.set(this.projectNotifications.get().map((item)=>item.id===id?{...item,readAt:body.readAt??new Date().toISOString()}:item));this.notify();return true;}catch{return false;}}
-  async syncReviewInbox(){const session=this.session.get();if(!session){this.reviewInbox.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/workspaces/reviews",{credentials:"same-origin"});this.#assertAuthorizationScope(authorization);const body=await response.json() as {tasks?:AssignedReviewTask[]};this.#assertAuthorizationScope(authorization);if(response.ok){this.reviewInbox.set(body.tasks??[]);this.notify();}}catch{/* Reviewer work is refreshed without exposing stale cross-tenant responses. */}}
+  async syncReviewInbox(){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}const session=this.session.get();if(!session){this.reviewInbox.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/workspaces/reviews",{credentials:"same-origin"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {tasks?:AssignedReviewTask[]};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(response.ok){this.reviewInbox.set(body.tasks??[]);this.notify();}}catch{/* Reviewer work is refreshed without exposing stale cross-tenant responses. */}}
   async syncOrganizationContextPackages(){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const session=this.session.get(),context=session?.projectContext;
     if(!session||!context){this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});return;}
     const authorization=this.#authorizationScope(session);
     try{
       const response=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages`,{credentials:"same-origin"});
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body=await response.json() as {packages?:OrganizationContextPackage[]};
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if(!response.ok)return;
       const packages=body.packages??[];
       const versions:Record<string,OrganizationContextVersion>={};
       const results=await Promise.all(packages.map(async(item)=>{
         const scoped=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(item.id)}/bindings`,{credentials:"same-origin"});
-        this.#assertAuthorizationScope(authorization);
+        this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
         const rows=await scoped.json() as {bindings?:Array<Record<string,unknown>>};
-        this.#assertAuthorizationScope(authorization);
+        this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
         const bindings=scoped.ok?(rows.bindings??[]):[];
         const requested=new Set([item.versionId,...bindings.flatMap((binding)=>[binding.version_id,binding.pending_version_id])].filter((id):id is string=>typeof id==="string"&&Boolean(id)));
         await Promise.all([...requested].map(async(versionId)=>{
           const published=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(item.id)}/versions/${encodeURIComponent(versionId)}`,{credentials:"same-origin"});
-          this.#assertAuthorizationScope(authorization);
+          this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
           const detail=await published.json().catch(()=>null) as {versionId?:string;version?:number;snapshot?:Omit<OrganizationContextVersion,"id"|"version">}|null;
-          this.#assertAuthorizationScope(authorization);
+          this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
           if(published.ok&&detail?.versionId&&detail.snapshot)versions[detail.versionId]={...detail.snapshot,id:detail.versionId,version:Number(detail.version??0)};
         }));
         return bindings;
       }));
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       this.organizationContextPackages.set(packages);
       this.organizationContextBindings.set(results.flat().map((row)=>({id:String(row.binding_id),organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id),documentId:String(row.document_id),packageId:String(row.package_id),versionId:String(row.version_id),pendingVersionId:row.pending_version_id?String(row.pending_version_id):null,updateMode:row.update_mode==="follow-approved"?"follow-approved":"pinned",status:String(row.status)})));
       this.organizationContextVersions.set(versions);
@@ -1869,20 +2338,78 @@ async syncDocumentJobs(){
       await this.syncOrganizationContextPackages();this.toast(mode==="pinned"?"This document is pinned to its current context version.":"Published context updates will be offered before anything changes.");return true;
     }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The context update policy could not be changed.");return false;}
   }
-  async openAssignedReview(task:AssignedReviewTask){const session=this.session.get();if(!session)return false;try{const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(task.organizationId)}/projects/${encodeURIComponent(task.projectAccessId)}/context`,{method:"POST"},"open this assigned review in its exact authorized project");const body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error??"The assigned project is no longer available.");await this.refreshSession();this.setRoute(`/document/${encodeURIComponent(task.documentId)}/assigned-review`);await this.load();requestAnimationFrame(()=>{const artifacts=document.querySelector("forma-document-artifacts") as HTMLElement&{openArtifactById?:(id:string)=>Promise<unknown>};void artifacts?.openArtifactById?.(task.artifactId);});return true;}catch(error){this.toast(error instanceof Error?error.message:"The assigned review could not be opened.");return false;}}
+  /** One ephemeral owner for a context-cookie mutation, never an authorization grant. */
+  beginProjectContextSelection(options:{requireUnexpiredContext?:boolean}={}){
+    const navigation=++this.#workspaceTransition,sourceRoute=this.route.get(),session=this.session.get();
+    const authorization=this.captureAuthorizationScope(),sourceGeneration=this.#sourceGeneration;
+    const actorId=session?.user.userId,principalId=session?.impersonation?.actor.userId??actorId;
+    const impersonationId=session?.impersonation?.impersonationId??null,audience=session?.audience??"creative";
+    const current=()=>{const now=this.session.get();return Boolean(session&&now&&this.#workspaceTransition===navigation&&this.route.get()===sourceRoute
+      &&now.user.userId===actorId&&(now.impersonation?.actor.userId??now.user.userId)===principalId
+      &&(now.impersonation?.impersonationId??null)===impersonationId&&(now.audience??"creative")===audience);};
+    const sourceCurrent=()=>current()&&sourceGeneration===this.#sourceGeneration&&this.authorizationScopeActive(authorization)
+      &&(!options.requireUnexpiredContext||this.#sourceExpiryValid(session?.projectContext?.expiresAt??null));
+    let requested=false;
+    return {current,sourceCurrent,request:async(project:{organizationId:string;projectAccessId:string}|null):Promise<Response|null>=>{
+      if(requested)return null;requested=true;
+      // A newer waiter cannot overtake a response which can still install Set-Cookie.
+      while(this.#projectContextHandshake){await this.#projectContextHandshake;if(!sourceCurrent())return null;}
+      if(!sourceCurrent())return null;
+      const pending=fetch(project?"/api/workspaces/"+encodeURIComponent(project.organizationId)+"/projects/"+encodeURIComponent(project.projectAccessId)+"/context":"/api/workspaces/context",
+        {method:project?"POST":"DELETE",credentials:"same-origin"});
+      const settled=pending.then(()=>undefined,()=>undefined);this.#projectContextHandshake=settled;
+      try{const response=await pending;return sourceCurrent()?response:null;}
+      finally{if(this.#projectContextHandshake===settled)this.#projectContextHandshake=null;}
+    }};
+  }
+
+  async openAssignedReview(task:AssignedReviewTask){
+    const selection=this.beginProjectContextSelection({requireUnexpiredContext:true}),session=this.session.get();
+    if(!session||session.impersonation||task.status!=="pending"||!Number.isSafeInteger(task.revision)||task.revision<0||!/^[a-f0-9]{64}$/.test(task.contentSha256))return false;
+    const actorId=session.user.userId,ownsNavigation=selection.current;
+    const originContext=session.projectContext;
+    const sameProject=Boolean(originContext&&originContext.organizationId===task.organizationId
+      &&originContext.projectAccessId===task.projectAccessId&&originContext.projectId===task.projectId);
+    let finishRouteHandoff!:()=>void;
+    const routeHandoff=new Promise<void>(resolve=>{finishRouteHandoff=resolve;});
+    const current=()=>{const now=this.session.get(),context=now?.projectContext;return Boolean(ownsNavigation()&&now&&!now.impersonation&&now.user.userId===actorId
+      &&context?.organizationId===task.organizationId&&context.projectAccessId===task.projectAccessId
+      &&context.projectId===task.projectId&&context.permissions.includes("project.review.approve"));};
+    try{
+      const response=await selection.request(task);if(!response)return false;
+      const body=await response.json() as {error?:string};if(!selection.sourceCurrent())return false;
+      if(!response.ok)throw new Error(body.error??"The assigned project is no longer available.");
+      if(this.session.get()?.user.userId!==actorId)return false;
+      await this.refreshSession();if(!current())return false;
+      // Only this load waits for its exact task decision; newer loads remain independent.
+      await this.load({routeHandoff});if(!current())return false;
+      await this.syncReviewInbox();if(!current())return false;
+      const pending=this.reviewInbox.get().some(candidate=>candidate.id===task.id&&candidate.status==="pending"
+        &&candidate.organizationId===task.organizationId&&candidate.projectAccessId===task.projectAccessId
+        &&candidate.documentId===task.documentId&&candidate.artifactId===task.artifactId
+        &&candidate.revision===task.revision&&candidate.contentSha256===task.contentSha256);
+      if(!pending)throw new Error("The assigned review could not be opened.");
+      this.setRoute(artifactFocusRoute(task.artifactId,task.artifactTitle,{expectedRevision:task.revision,expectedContentSha256:task.contentSha256,intent:"review"}),
+        {...(sameProject?{}:{documentId:task.documentId}),current});
+      return true;
+    }catch(error){if(ownsNavigation()&&this.session.get()?.user.userId===actorId)this.toast(error instanceof Error?error.message:"The assigned review could not be opened.");return false;}
+    finally{finishRouteHandoff();}
+  }
 
   async leaveProjectContext(){
-    if(!this.session.get()?.projectContext)return true;
+    const selection=this.beginProjectContextSelection();
+    if(!this.session.get()?.projectContext&&!this.#projectContextHandshake)return true;
     try{
-      const response=await fetch("/api/workspaces/context",{method:"DELETE",credentials:"same-origin"});
-      const body=await response.json() as {error?:string};
+      const response=await selection.request(null);if(!response)return false;
+      const body=await response.json() as {error?:string};if(!selection.sourceCurrent())return false;
       if(!response.ok)throw new Error(body.error??"project_context_exit_failed");
-      await this.refreshSession();
+      await this.refreshSession();if(!selection.current())return false;
       this.patchUi({commandOpen:false,accountOpen:false,shareOpen:false,compareOpen:false});
       this.setRoute("/projects");
+      const navigation=this.#workspaceTransition,route=this.route.get(),source=this.captureSourceOwnership();
       await this.load();
-      return true;
-    }catch(error){this.toast(error instanceof Error?error.message:"The shared project could not be closed.");return false;}
+      return this.#workspaceTransition===navigation&&this.route.get()===route&&this.sourceOwnershipActive(source);
+    }catch(error){if(selection.current())this.toast(error instanceof Error?error.message:"The shared project could not be closed.");return false;}
   }
 
   async acceptTerms() {
@@ -1895,87 +2422,328 @@ async syncDocumentJobs(){
     finally { this.busy.set(""); this.notify(); }
   }
 
-  async append(event: EventInput, options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
-    return this.appendBatch([event], options);
+
+  #eventWriteOwner(source:CapturedSourceOwnership|null):EventWriteOwner{
+    const session=this.session.get();
+    return Object.freeze({authorizationKey:source?.authorization.key??"",actorUserId:session?.user.userId??"",
+      projectId:session?.projectContext?.projectId??this.#outputSourceProjectId(),sourceGeneration:source?.generation??this.#sourceGeneration});
   }
+  #sameEventWriteScope(left:EventWriteOwner,right:EventWriteOwner){
+    return left.authorizationKey===right.authorizationKey&&left.actorUserId===right.actorUserId&&left.projectId===right.projectId;
+  }
+  #eventWriteReceipt(observation:EventWriteObservation,patch:Partial<EventWriteAcknowledgment>={}):EventWriteAcknowledgment{
+    const value={...observation.receipt,...patch};
+    return Object.freeze({...value,owner:Object.freeze({...value.owner}),
+      requestedClientEventIds:Object.freeze([...value.requestedClientEventIds]),
+      committed:Object.freeze(value.committed.map(row=>Object.freeze({...row}))),
+      rejectedIndices:Object.freeze([...value.rejectedIndices])});
+  }
+  /** Local, content-free observations only. These identifiers are not server recovery keys. */
+  eventWriteAcknowledgments(owner:EventWriteOwner):readonly EventWriteAcknowledgment[]{
+    const current=this.#eventWriteOwner(this.captureSourceOwnership());
+    if(!current.authorizationKey||!this.#sameEventWriteScope(owner,current))return[];
+    return [...this.#eventWriteObservations.values()].filter(entry=>this.#sameEventWriteScope(entry.receipt.owner,owner))
+      .map(entry=>this.#eventWriteReceipt(entry));
+  }
+  releaseEventWriteAcknowledgment(observationId:string,owner:EventWriteOwner):boolean{
+    const entry=this.#eventWriteObservations.get(observationId),current=this.#eventWriteOwner(this.captureSourceOwnership());
+    if(!entry||!current.authorizationKey||!this.#sameEventWriteScope(owner,current)
+      ||!this.#sameEventWriteScope(entry.receipt.owner,owner)||entry.pending||!entry.delivered
+      ||entry.receipt.outcome==="unconfirmed")return false;
+    this.#eventWriteObservations.delete(observationId);return true;
+  }
+  async #admitEventWrite(events:EventInput[],action:EventWriteAcknowledgment["action"],expected?:number){
+    const source=this.captureSourceOwnership(),session=this.session.get(),owner=this.#eventWriteOwner(source);
+    const clientIds=events.map(event=>typeof event.payload?.client_event_id==="string"?event.payload.client_event_id:"");
+    const completeIds=clientIds.length>0&&clientIds.every(Boolean)&&new Set(clientIds).size===clientIds.length;
+    const record:EventWriteObservation={source,read:null,pending:true,delivered:false,signature:null,attempted:false,paused:false,
+      streamId:session?.projectContext?"project:"+session.projectContext.projectAccessId:"creative:"+(session?.user.userId??""),actor:source?.authorization.shared?"user:"+owner.actorUserId:"user",
+      receipt:Object.freeze({observationId:crypto.randomUUID(),owner,action,requestedClientEventIds:Object.freeze(clientIds.filter(Boolean)),
+        committed:Object.freeze([]),rejectedIndices:Object.freeze([]),outcome:"not-attempted",observedHead:null,privateUnavailable:!this.sourceOwnershipActive(source)})};
+    const scopeCount=[...this.#eventWriteObservations.values()].filter(entry=>this.#sameEventWriteScope(entry.receipt.owner,owner)).length;
+    const capacity=scopeCount<EVENT_WRITE_SCOPE_CAPACITY&&this.#eventWriteObservations.size<EVENT_WRITE_STORE_CAPACITY;
+    const admitted=Boolean(events.length&&capacity&&this.sourceOwnershipActive(source));
+    // Reserve synchronously, before the digest, append queue or network can yield.
+    if(admitted){record.read=this.#beginSourceRead("full");this.#eventWriteObservations.set(record.receipt.observationId,record);}
+    try{
+      if(completeIds){
+        const bytes=new TextEncoder().encode(JSON.stringify({action,events,expected:expected??null}));
+        const digest=await crypto.subtle.digest("SHA-256",bytes);
+        record.signature=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
+        const existing=[...this.#eventWriteObservations.values()].find(entry=>entry!==record&&entry.signature===record.signature
+          &&entry.receipt.action===action&&this.#sameEventWriteScope(entry.receipt.owner,owner)
+          &&entry.receipt.requestedClientEventIds.length===clientIds.length
+          &&entry.receipt.requestedClientEventIds.every((id,index)=>id===clientIds[index]));
+        if(existing){
+          if(admitted)this.#eventWriteObservations.delete(record.receipt.observationId);
+          // Keep the normal Canvas same-ID transport retry. A retired original is
+          // permanently paused; a later source refresh does not authorize a resend.
+          const retry=action==="canvas_sync"&&!existing.pending&&!existing.paused
+            &&existing.receipt.outcome==="unconfirmed"&&this.sourceOwnershipActive(existing.source);
+          if(retry){existing.pending=true;existing.delivered=false;}
+          return{observation:existing,admitted:retry,reused:true,capacity:true};
+        }
+      }
+    }catch{
+      if(admitted)this.#eventWriteObservations.delete(record.receipt.observationId);
+      record.pending=false;return{observation:record,admitted:false,reused:false,capacity:true};
+    }
+    if(!admitted)record.pending=false;
+    return{observation:record,admitted,reused:false,capacity};
+  }
+  #withheldEventWrite(observation:EventWriteObservation):EventWriteResult{
+    const pending=observation.pending&&!observation.attempted;
+    const acknowledgment=this.#eventWriteReceipt(observation,{privateUnavailable:!this.sourceOwnershipActive(observation.source)||observation.paused,
+      ...(pending?{outcome:"unconfirmed" as const}:{})});
+    return{appended:[],acknowledgment,publication:acknowledgment.privateUnavailable?"withheld":"none"};
+  }
+  #finishEventWrite(observation:EventWriteObservation,patch:Partial<EventWriteAcknowledgment>,appended:CreativeEvent[],publication:EventWriteResult["publication"],options:AppendOptions={}):EventWriteResult{
+    observation.pending=false;observation.receipt=this.#eventWriteReceipt(observation,patch);observation.delivered=true;
+    const receipt=observation.receipt;
+    if(this.sourceOwnershipScopeActive(observation.source)){
+      try{options.onAcknowledgment?.(receipt);}catch{/* The already-observed commit is independent of its UI owner. */}
+      if(publication==="withheld"){
+        this.appendFailure.set("");
+        if(!options.silent)this.toast(this.#systemNotice(receipt.committed.length
+          ?receipt.outcome==="observed"?"The server acknowledged the original change. Its private view is unavailable.":"Only part of the original change is acknowledged. It has not been resubmitted."
+          :receipt.outcome==="unconfirmed"?"The original change is unconfirmed. It has not been resubmitted."
+          :"This invocation was not sent because the source is unavailable."));
+      }
+    }
+    if(receipt.outcome==="not-attempted"||publication==="published"&&receipt.outcome==="observed")
+      this.#eventWriteObservations.delete(receipt.observationId);
+    return{appended,acknowledgment:receipt,publication};
+  }
+
+  #requestedEventObserved(input:EventInput,event:CreativeEvent){
+    if(input.type!==event.type||(input.compensatesEventId??null)!==(event.compensatesEventId??null))return false;
+    const contains=(expected:unknown,actual:unknown):boolean=>{
+      if(expected===null||typeof expected!=="object")return expected===actual;
+      if(Array.isArray(expected))return Array.isArray(actual)&&expected.length===actual.length&&expected.every((value,index)=>contains(value,actual[index]));
+      if(!actual||typeof actual!=="object"||Array.isArray(actual))return false;
+      return Object.entries(expected as Record<string,unknown>).every(([key,value])=>value===undefined||Object.hasOwn(actual,key)&&contains(value,(actual as Record<string,unknown>)[key]));
+    };
+    const expectedPayload=input.type==="BlockCreated"?normalizeOutputRequirementCreation(input.payload):input.payload;
+    return contains(expectedPayload,event.payload);
+  }
+
+  #matchedRequestedWrites(inputs:EventInput[],appended:CreativeEvent[],rejected:Set<number>,actor:string){
+    const ownerByEvent=new Map<number,number>();
+    const assign=(inputIndex:number,seen:Set<number>):boolean=>{
+      for(let index=0;index<appended.length;index++){
+        const event=appended[index]!;
+        if(seen.has(index)||event.actor!==actor||!this.#requestedEventObserved(inputs[inputIndex]!,event))continue;
+        seen.add(index);const previous=ownerByEvent.get(index);
+        if(previous===undefined||assign(previous,seen)){ownerByEvent.set(index,inputIndex);return true;}
+      }
+      return false;
+    };
+    for(let index=0;index<inputs.length;index++)if(!rejected.has(index))assign(index,new Set());
+    return new Set(ownerByEvent.values());
+  }
+
+  #eventWriteComplete(result:EventWriteResult,inputs:EventInput[]){
+    return result.publication==="published"&&result.acknowledgment.outcome==="observed"&&!result.acknowledgment.rejectedIndices.length
+      &&inputs.every(input=>result.appended.some(event=>this.#requestedEventObserved(input,event)));
+  }
+  #withheldWrite(result:EventWriteResult):WithheldEventWrite{return{publication:"withheld",acknowledgment:result.acknowledgment};}
+
+  #validateEventWriteBody(value:unknown,events:EventInput[],observation:EventWriteObservation){
+    if(!value||typeof value!=="object"||Array.isArray(value))return null;
+    const body=value as Record<string,unknown>;
+    if(!Array.isArray(body.appended)||!Number.isSafeInteger(body.head)||Number(body.head)<0
+      ||body.rejected!==undefined&&!Array.isArray(body.rejected))return null;
+    const rejected:Array<{index:number;type?:string;reason:string}>=[],rejectedIds=new Set<number>();
+    for(const item of (body.rejected??[]) as unknown[]){
+      if(!item||typeof item!=="object"||Array.isArray(item))return null;
+      const row=item as Record<string,unknown>,index=Number(row.index);
+      if(!Number.isSafeInteger(row.index)||index<0||index>=events.length||rejectedIds.has(index)||typeof row.reason!=="string"
+        ||row.type!==undefined&&(typeof row.type!=="string"||row.type!==events[index]!.type))return null;
+      rejectedIds.add(index);rejected.push({index,reason:row.reason,...(typeof row.type==="string"?{type:row.type}:{})});
+    }
+    const ids=new Set<string>(),sequences=new Set<number>(),clientIds=new Set<string>(),appended:CreativeEvent[]=[],committed:CommittedEventIdentity[]=[];
+    const requested=new Map(events.flatMap(event=>typeof event.payload?.client_event_id==="string"&&event.payload.client_event_id?[[event.payload.client_event_id,event] as const]:[]));
+    for(const value of body.appended){
+      if(!value||typeof value!=="object"||Array.isArray(value))return null;
+      const event=value as CreativeEvent;
+      if(typeof event.eventId!=="string"||!event.eventId||ids.has(event.eventId)||event.streamId!==observation.streamId
+        ||!Number.isSafeInteger(event.sequence)||event.sequence<1||event.sequence>Number(body.head)||sequences.has(event.sequence)
+        ||typeof event.type!=="string"||!event.type||!event.payload||typeof event.payload!=="object"||Array.isArray(event.payload)
+        ||typeof event.occurredAt!=="string"||typeof event.recordedAt!=="string"||typeof event.clientId!=="string"
+        ||typeof event.correlationId!=="string"||!Number.isSafeInteger(event.schemaVersion))return null;
+      ids.add(event.eventId);sequences.add(event.sequence);
+      if(event.actor==="worker:validator"&&event.type==="ValidationFailed"){appended.push(event);continue;}
+      if(event.actor!==observation.actor)return null;
+      const clientId=typeof event.payload.client_event_id==="string"&&event.payload.client_event_id?event.payload.client_event_id:null;
+      if(clientId&&(clientIds.has(clientId)||!requested.has(clientId)))return null;
+      if(clientId)clientIds.add(clientId);
+      if(observation.receipt.action==="canvas_sync"){
+        const input=clientId?requested.get(clientId):undefined;
+        if(!input||event.type!==input.type||event.payload.history_owner_id!==observation.receipt.owner.actorUserId
+          ||event.payload.project_id!==input.payload.project_id||event.compensatesEventId!==(input.compensatesEventId??null))return null;
+      }
+      appended.push(event);committed.push({eventId:event.eventId,type:event.type,sequence:event.sequence,clientEventId:clientId});
+    }
+    const matched=this.#matchedRequestedWrites(events,appended,rejectedIds,observation.actor);
+    const complete=events.every((event,index)=>rejectedIds.has(index)||(observation.receipt.action==="canvas_sync"
+      ?clientIds.has(String(event.payload.client_event_id??"")):matched.has(index)));
+    return{appended,committed,rejected,rejectedIndices:[...rejectedIds],head:Number(body.head),complete};
+  }
+
+  async append(event:EventInput,options:AppendOptions={}):Promise<CreativeEvent[]>{return this.appendBatch([event],options);}
 
   /** Correct the durable deliverable itself without invoking a generation provider. */
   async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}){
-    const authorization=this.#activeAuthorizationScope();
+    const requestInput=JSON.parse(JSON.stringify(input)) as typeof input;
+    // Capture the exact current artifact and retained bytes before admission can yield.
+    // Only the dedicated server no-op envelope may certify these same bytes later.
+    const artifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
+    const contentRef=artifact?.contentRef??"",retainedBefore=this.content.get()[contentRef];
+    const projectId=this.projection.get().projectId,revisionBefore=documentArtifactRevision(this.events.get(),artifactId);
+    const unchangedContent=(()=>{
+      if(!artifact||!contentRef||!Number.isSafeInteger(requestInput.expectedRevision)||requestInput.expectedRevision!==revisionBefore
+        ||typeof requestInput.markdown!=="string"||!requestInput.markdown.trim())return null;
+      const edited=parseDocumentArtifactContent(retainedBefore);if(!edited)return null;
+      edited.content_markdown=requestInput.markdown;
+      if(requestInput.items!==undefined){
+        if(!Array.isArray(requestInput.items))return null;
+        for(const candidate of requestInput.items){
+          if(!candidate||!Number.isSafeInteger(candidate.index)||candidate.index<0||candidate.index>=edited.items.length)return null;
+          for(const field of ["title","body","notes"] as const){
+            if(candidate[field]===undefined)continue;
+            if(typeof candidate[field]!=="string")return null;
+            edited.items[candidate.index]![field]=candidate[field];
+          }
+        }
+      }else if(edited.items.length===1&&["short_story","scene"].includes(artifact.kind))edited.items[0]!.body=requestInput.markdown;
+      // Reuse the same parser normalization as the existing artifact endpoint.
+      // Semantically equal text is insufficient when serialized retained bytes differ.
+      return JSON.stringify(edited)===retainedBefore?retainedBefore:null;
+    })();
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const admission=await this.#admitEventWrite([{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],"append"),observation=admission.observation;
+    if(!admission.admitted){if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!this.sourceOwnershipActive(sourceOwner)},[],this.sourceOwnershipActive(sourceOwner)?"none":"withheld",{silent:true});return false;}
     const edit=async()=>{
-      if(!this.#scopeStillActive(authorization))return false;
-      this.busy.set("DocumentArtifactEdited");this.notify();
+      if(!this.sourceOwnershipActive(sourceOwner)){this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");return false;}
+      this.busy.set("DocumentArtifactEdited");this.notify();let dispatched=false;observation.attempted=true;
       try{
-        const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(input)},"save a correction to this finished output");
+        const response=await this.guardedFetch("/api/artifacts/"+encodeURIComponent(artifactId),{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(requestInput)},"save a correction to this finished output",
+          {current:()=>dispatched||this.sourceOwnershipActive(sourceOwner),onDispatch:()=>{dispatched=true;}});
         this.#assertAuthorizationScope(authorization);
-        const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string;message?:string};
+        const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;revision?:number;error?:string;message?:string};
         this.#assertAuthorizationScope(authorization);
         if(!response.ok){if(response.status===409&&result.error==="artifact_revision_conflict")throw new Error("Another collaborator changed this output. Your unsaved correction is preserved; reopen the latest version before saving again.");throw new Error(result.message??result.error??"The finished output could not be saved.");}
-        if(result.content)this.content.set({...this.content.get(),...result.content});
-        this.#mergeConfirmed(result.appended??[],result.head??this.head.get());
-        this.toast("Finished output updated. Request a fresh review before approval.");
-        return true;
-      }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The finished output could not be saved.");return false;}
-      finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+        const currentArtifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
+        const noChange=response.status===200&&unchangedContent!==null&&result&&typeof result==="object"&&!Array.isArray(result)
+          &&Object.keys(result).sort().join(",")==="appended,content,revision"
+          &&Array.isArray(result.appended)&&result.appended.length===0&&result.revision===requestInput.expectedRevision
+          &&result.content&&typeof result.content==="object"&&!Array.isArray(result.content)
+          &&Object.keys(result.content).length===1&&Object.hasOwn(result.content,contentRef)&&result.content[contentRef]===unchangedContent
+          &&this.sourceOwnershipActive(sourceOwner)&&!observation.paused&&this.projection.get().projectId===projectId
+          &&currentArtifact?.documentId===artifact?.documentId&&currentArtifact?.kind===artifact?.kind&&currentArtifact?.contentRef===contentRef
+          &&documentArtifactRevision(this.events.get(),artifactId)===revisionBefore&&this.content.get()[contentRef]===unchangedContent;
+        if(noChange){
+          // Administrative completion of this invocation only: no committed event,
+          // source publication, head, hash, or revision is manufactured for a no-op.
+          this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:false},[],"none",{silent:true});
+          this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);
+          this.toast("No changes to this finished output.");return true;
+        }
+        const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+        if(!receipt||!receipt.committed.some(event=>event.type==="DocumentArtifactEdited"))throw new Error("The original finished-output change is unconfirmed. It has not been repeated.");
+        const current=this.sourceOwnershipActive(sourceOwner)&&!observation.paused;
+        const patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,
+          outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!current};
+        if(!current){this.#finishEventWrite(observation,patch,[],"withheld");return false;}
+        if(!receipt.complete||receipt.rejected.length){this.#finishEventWrite(observation,patch,[],"none",{silent:true});this.toast(this.#systemNotice("The original finished-output change is only partly acknowledged. It has not been repeated."));return false;}
+        if(result.content)this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+        this.#mergeConfirmed(receipt.appended,receipt.head);
+        this.#finishEventWrite(observation,patch,receipt.appended,"published",{silent:true});
+        this.toast("Finished output updated. Request a fresh review before approval.");return true;
+      }catch(error){
+        if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;
+        const current=this.sourceOwnershipActive(sourceOwner)&&!observation.paused;
+        this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!current},[],current?"none":"withheld",{silent:true});
+        if(current)this.toast(error instanceof Error?error.message:"The finished output could not be saved.");return false;
+      }finally{if(this.sourceOwnershipScopeActive(sourceOwner)){this.busy.set("");this.notify();}}
     };
     const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
   }
 
   /** Revision bodies stay off the general content hydration path and follow the exact current authorization scope. */
   async artifactRevisions(artifactId:string,before?:number){
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     try{
       const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/revisions${before===undefined?"":`?before=${before}`}`,{},"inspect finished-output history");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const result=await response.json() as {revisions?:ArtifactRevisionSummary[];currentRevision?:number;nextBefore?:number|null;error?:string};
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if(!response.ok)throw new Error(result.error??"The finished-output history could not be loaded.");
       return{revisions:result.revisions??[],currentRevision:Number(result.currentRevision??0),nextBefore:result.nextBefore??null};
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The finished-output history could not be loaded.");return null;}
+    }catch(error){if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The finished-output history could not be loaded.");return null;}
   }
 
   async artifactRevision(artifactId:string,revision:number){
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const authorization=this.#activeAuthorizationScope();
     try{
       const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/revisions/${revision}`,{},"inspect a finished-output revision");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const result=await response.json() as ArtifactRevisionDetail&{error?:string};
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if(!response.ok)throw new Error(result.error??"This finished-output revision is unavailable.");
       return result;
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"This finished-output revision is unavailable.");return null;}
+    }catch(error){if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"This finished-output revision is unavailable.");return null;}
   }
 
   /** Restoration creates a fresh output revision; previous approval must be independently renewed. */
   async restoreDocumentArtifact(artifactId:string,revision:number,expectedRevision:number){
-    const authorization=this.#activeAuthorizationScope();
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const admission=await this.#admitEventWrite([{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],"append"),observation=admission.observation;
+    if(!admission.admitted){if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!this.sourceOwnershipActive(sourceOwner)},[],this.sourceOwnershipActive(sourceOwner)?"none":"withheld",{silent:true});return false;}
     const restore=async()=>{
-      if(!this.#scopeStillActive(authorization))return false;
-      this.busy.set("DocumentArtifactEdited");this.notify();
+      if(!this.sourceOwnershipActive(sourceOwner)){this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");return false;}
+      this.busy.set("DocumentArtifactEdited");this.notify();let dispatched=false;observation.attempted=true;
       try{
-        const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/revisions/${revision}/restore`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({expectedRevision})},"restore an earlier finished output");
+        const response=await this.guardedFetch("/api/artifacts/"+encodeURIComponent(artifactId)+"/revisions/"+revision+"/restore",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({expectedRevision})},"restore an earlier finished output",
+          {current:()=>dispatched||this.sourceOwnershipActive(sourceOwner),onDispatch:()=>{dispatched=true;}});
         this.#assertAuthorizationScope(authorization);
         const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string;message?:string};
         this.#assertAuthorizationScope(authorization);
         if(!response.ok)throw new Error(result.error==="artifact_revision_conflict"?"Another collaborator changed this output. Reopen its latest history before restoring.":result.message??result.error??"The earlier finished output could not be restored.");
-        if(result.content)this.content.set({...this.content.get(),...result.content});
-        this.#mergeConfirmed(result.appended??[],result.head??this.head.get());
-        this.toast("Earlier finished output restored. Request a fresh independent review.");
-        return true;
-      }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The earlier finished output could not be restored.");return false;}
-      finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+        const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+        if(!receipt||!receipt.committed.some(event=>event.type==="DocumentArtifactEdited"))throw new Error("The original finished-output change is unconfirmed. It has not been repeated.");
+        const current=this.sourceOwnershipActive(sourceOwner)&&!observation.paused;
+        const patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,
+          outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!current};
+        if(!current){this.#finishEventWrite(observation,patch,[],"withheld");return false;}
+        if(!receipt.complete||receipt.rejected.length){this.#finishEventWrite(observation,patch,[],"none",{silent:true});this.toast(this.#systemNotice("The original finished-output change is only partly acknowledged. It has not been repeated."));return false;}
+        if(result.content)this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+        this.#mergeConfirmed(receipt.appended,receipt.head);
+        this.#finishEventWrite(observation,patch,receipt.appended,"published",{silent:true});
+        this.toast("Earlier finished output restored. Request a fresh independent review.");return true;
+      }catch(error){
+        if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;
+        const current=this.sourceOwnershipActive(sourceOwner)&&!observation.paused;
+        this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!current},[],current?"none":"withheld",{silent:true});
+        if(current)this.toast(error instanceof Error?error.message:"The earlier finished output could not be restored.");return false;
+      }finally{if(this.sourceOwnershipScopeActive(sourceOwner)){this.busy.set("");this.notify();}}
     };
     const pending=this.#appendPipeline.then(restore,restore);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
   }
 
   /** Every download is permitted only after its exact actor/resource release receipt commits. */
   async authorizeProjectExport(event:EventInput,expectedScope:CapturedAuthorizationScope|null=this.captureAuthorizationScope()){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
     const session=this.session.get(),context=session?.projectContext;
     if(!session||!expectedScope||!this.authorizationScopeActive(expectedScope))return false;
     if(Boolean(context)!==expectedScope.shared)return false;
     const authorization=expectedScope.key,resource=String(event.payload.artifact_id??event.payload.object_id??"");
     if(!resource||!["DocumentArtifactExported","ObjectExported"].includes(event.type))return false;
-    const receipts=await this.append(event,{remember:false,silent:true});
+    const result=await this.appendWithReceipt(event,{remember:false,silent:true});
+    if(!this.sourceOwnershipActive(sourceOwner)||result.publication!=="published")return false;
+    const receipts=result.appended;
     if(!this.#scopeStillActive(authorization))return false;
     const accepted=receipts.some((receipt)=>receipt.type===event.type
       &&receipt.actor===(context?`user:${session.user.userId}`:"user")
@@ -1985,29 +2753,90 @@ async syncDocumentJobs(){
     return accepted;
   }
 
-  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
-    const authorization=this.#activeAuthorizationScope(),pending=this.#appendPipeline.then(()=>this.#scopeStillActive(authorization)?this.#appendBatchNow(events,options,authorization):[]);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  async appendBatch(events:EventInput[],options:AppendOptions={}):Promise<CreativeEvent[]>{return(await this.appendBatchWithReceipt(events,options)).appended;}
+  async appendWithReceipt(event:EventInput,options:AppendOptions={}):Promise<EventWriteResult>{return this.appendBatchWithReceipt([event],options);}
+  async appendBatchWithReceipt(events:EventInput[],options:AppendOptions={}):Promise<EventWriteResult>{
+    // Copy once: later caller mutations must not change the admitted request/digest.
+    let retained:EventInput[];try{retained=JSON.parse(JSON.stringify(events)) as EventInput[];}catch{retained=[];}
+    const admission=await this.#admitEventWrite(retained,retained.length>1?"batch":"append",options.expected),observation=admission.observation;
+    if(!admission.admitted){
+      if(admission.reused)return this.#withheldEventWrite(observation);
+      if(!admission.capacity&&this.sourceOwnershipScopeActive(observation.source))this.toast(this.#systemNotice("Too many original changes await confirmation. No new change was sent."));
+      return this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!this.sourceOwnershipActive(observation.source)},[],
+        this.sourceOwnershipActive(observation.source)?"none":"withheld",options);
+    }
+    const pending=this.#appendPipeline.then(()=>this.#appendBatchNow(retained,options,observation));
+    this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
   }
 
-  async #appendBatchNow(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {},authorization=this.#activeAuthorizationScope()) {
-    if(!this.#scopeStillActive(authorization))return[];
-    if(!options.background)this.busy.set(events[0]?.type ?? "append"); this.appendFailure.set(""); this.notify();
-    try {
-      let response:Response;let body:{ appended?: CreativeEvent[]; rejected?: Array<{ index?: number; type?: string; reason: string }>; head?: number; error?: string }={};
+
+  async #appendBatchNow(events:EventInput[],options:AppendOptions,observation:EventWriteObservation):Promise<EventWriteResult>{
+    const source=observation.source,active=()=>this.sourceOwnershipActive(source)&&!observation.paused;
+    if(!active())return this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld",options);
+    if(!options.background)this.busy.set(events[0]?.type??"append");this.appendFailure.set("");this.notify();
+    try{
+      let response:Response|undefined,body:unknown;
       const attempts=options.expected===undefined?Math.max(1,Math.min(6,options.rebaseAttempts??2)):1;
-      for(let attempt=0;attempt<attempts;attempt+=1){response=await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) },events.length>1?`apply ${events.length} document changes`:`record ${events[0]?.type??"this change"}`);this.#assertAuthorizationScope(authorization);body=await response.json() as typeof body;this.#assertAuthorizationScope(authorization);if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);continue;}if(response.status===409&&(body.error==="context_value_conflict"||body.error==="output_title_conflict")){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);throw new Error(body.error==="output_title_conflict"?"Another collaborator renamed this result. Its latest name is now loaded; review it and try again.":"Another collaborator changed this exact decision. Your change was not saved; review the latest value and try again.");}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
-      this.#assertAuthorizationScope(authorization);
-      const appended = body.appended ?? [];
-      this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
+      for(let attempt=0;attempt<attempts;attempt+=1){
+        if(!active())return this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:true},[],"withheld",options);
+        let dispatched=false;observation.attempted=true;
+        try{response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},
+          body:JSON.stringify({action:observation.receipt.action,event:events[0],events,expectedSequence:options.expected??this.head.get(),clientId:"web:lit"})},
+          events.length>1?"apply "+events.length+" document changes":"record "+(events[0]?.type??"this change"),
+          {current:()=>dispatched||active(),onDispatch:()=>{dispatched=true;}});
+        }catch(error){if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;throw error;}
+        if([401,403,404].includes(response.status)){
+          if(observation.read)this.#retireOwnedSource(observation.read,response.status as 401|403|404);
+          return this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:!active()},[],active()?"none":"withheld",options);
+        }
+        body=await response.json();
+        const error=body&&typeof body==="object"&&!Array.isArray(body)?String((body as Record<string,unknown>).error??""):"";
+        if(!response.ok){
+          if(!active())return this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:true},[],"withheld",options);
+          if(response.status===409&&error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){
+            await this.#refreshEvents();if(!active())return this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:true},[],"withheld",options);continue;
+          }
+          if(response.status===409&&(error==="context_value_conflict"||error==="output_title_conflict")){
+            await this.#refreshEvents();if(!active())return this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:true},[],"withheld",options);
+            throw new Error(error==="output_title_conflict"?"Another collaborator renamed this result. Its latest name is now loaded; review it and try again."
+              :"Another collaborator changed this exact decision. Your change was not saved; review the latest value and try again.");
+          }
+          throw new Error(error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":error||"Append rejected");
+        }
+        break;
+      }
+      const receipt=response?.ok?this.#validateEventWriteBody(body,events,observation):null;
+      if(!receipt)throw new Error("The original change returned no verifiable acknowledgment. Its outcome is unconfirmed; it has not been resubmitted.");
+      const patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,
+        observedHead:receipt.head,outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!active()};
+      if(!active())return this.#finishEventWrite(observation,patch,[],"withheld",options);
+      if(!receipt.complete){
+        this.appendFailure.set("");
+        if(!options.silent)this.toast(this.#systemNotice(receipt.committed.length
+          ?"Only part of the original change is acknowledged. It has not been resubmitted."
+          :"The original change is unconfirmed. It has not been resubmitted."));
+        return this.#finishEventWrite(observation,patch,[],"none",options);
+      }
+      // The final synchronous ownership check gates every private continuation.
+      this.#mergeConfirmed(receipt.appended,receipt.head,options.remember!==false);
       this.#reflectDocumentInRoute();
-      if (options.remember !== false) { const actor=this.session.get()?.projectContext?`user:${this.session.get()?.user.userId}`:"user";const remembered=appended.filter((e) => e.actor === actor && !e.compensatesEventId && inverseEvent(e));if(remembered.length)this.#undo.push(remembered);this.#redo = []; }
-      if (body.rejected?.length) {const reasons=[...new Set(body.rejected.map((item)=>`${item.type?`${item.type}: `:""}${item.reason}`))];this.appendFailure.set(reasons.join("; "));this.toast(documentViewFromRoute(this.route.get()) === "editor" ? body.rejected.length===1?this.#systemNotice("{count} change could not be saved; the other changes are safe.",{count:body.rejected.length}):this.#systemNotice("{count} changes could not be saved; the other changes are safe.",{count:body.rejected.length}) : body.rejected.length===1?this.#systemNotice("{count} event rejected; valid events still appended.",{count:body.rejected.length}):this.#systemNotice("{count} events rejected; valid events still appended.",{count:body.rejected.length}));}
-      return appended;
-    } catch (error) {const message=error instanceof Error?error.message:"Append failed";if(this.#scopeStillActive(authorization)){this.appendFailure.set(message);if(!options.silent)this.toast(message);}return[];}
-    finally {if(this.#scopeStillActive(authorization)){if(!options.background)this.busy.set("");this.notify();}}
+      if(receipt.rejected.length){
+        const reasons=[...new Set(receipt.rejected.map(item=>(item.type?item.type+": ":"")+item.reason))];
+        this.appendFailure.set(reasons.join("; "));
+        this.toast(documentViewFromRoute(this.route.get())==="editor"
+          ?this.#systemNotice("{count} change could not be saved; the other changes are safe.",{count:receipt.rejected.length})
+          :this.#systemNotice("{count} event rejected; valid events still appended.",{count:receipt.rejected.length}));
+      }
+      return this.#finishEventWrite(observation,patch,receipt.appended,"published",options);
+    }catch(error){
+      const unavailable=!active(),message=error instanceof Error?error.message:"The original change is unconfirmed.";
+      if(!unavailable){this.appendFailure.set(message);if(!options.silent)this.toast(message);}
+      return this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:unavailable},[],unavailable?"withheld":"none",options);
+    }finally{if(this.sourceOwnershipScopeActive(source)){if(!options.background)this.busy.set("");this.notify();}}
   }
 
   async copyLibraryBlockSet(rootBlockId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="library"){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();const available=new Map(projection.libraryBlocks.filter((block)=>!block.removed&&block.projectId===projection.projectId).map((block)=>[block.id,block]));const root=available.get(rootBlockId);
     if(!root){this.toast("That reusable context is no longer available.");return null;}
     const connected=new Set([root.id]);let changed=true;while(changed){changed=false;for(const relation of projection.libraryBlockRelations){if(connected.has(relation.fromBlockId)&&available.has(relation.toBlockId)&&!connected.has(relation.toBlockId)){connected.add(relation.toBlockId);changed=true;}}}
@@ -2017,7 +2846,7 @@ async syncDocumentJobs(){
     const legacyGroups=new Map<string,string>();for(const block of blocks)for(const membership of combinedContextMemberships(block.properties))if(!legacyGroups.has(membership.contextSetId))legacyGroups.set(membership.contextSetId,crypto.randomUUID());
     const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>{const authoredMemberships=combinedContextMemberships(block.properties);return{type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,...(block.type==="action"?{block_references:normalizeActionBlockReferences(block.properties.block_references).flatMap((reference)=>ids.has(reference.block_id)?[{...reference,block_id:ids.get(reference.block_id)!}]:[])}:{}),authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:normalized?null:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:authoredMemberships.length?authoredMemberships.map((membership)=>({...membership,contextSetId:normalized?legacyGroups.get(membership.contextSetId)??contextSetId:contextSetId,memberOrder:normalized?membership.memberOrder:index,sourceCanvasId:""})):blocks.length>1&&!normalized?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}};}).sort((left,right)=>Number(left.payload.type==="action")-Number(right.payload.type==="action"));
     for(const relation of projection.libraryBlockRelations){const from=ids.get(relation.fromBlockId);const to=ids.get(relation.toBlockId);if(!from||!to)continue;const{context_set_id:sourceContextId,...properties}=relation.properties;events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:from,to_block_id:to,kind:relation.kind,properties:{...properties,copied_from_relation_id:relation.id,...(normalized&&relation.kind===CONTEXT_CONTAINS_RELATION?{}:{context_set_id:normalized?legacyGroups.get(String(sourceContextId??""))??contextSetId:contextSetId})},source_surface:sourceSurface}});}
-    const appended=await this.appendBatch(copyOutputRequirementCreationEvents(events,ids));if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":this.#systemNotice("{count} connected blocks added as one context set.",{count:blocks.length}));return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
+    const write=await this.appendBatchWithReceipt(copyOutputRequirementCreationEvents(events,ids));if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);if(!write.appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":this.#systemNotice("{count} connected blocks added as one context set.",{count:blocks.length}));return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
   }
 
   #relatedOutputBlocks(blockId:string){
@@ -2054,10 +2883,11 @@ async syncDocumentJobs(){
   }
 
   async saveOutputInput(blockId:string,draft:OutputInputDraft,sourceSurface="output-input-editor"){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
     const root=this.projection.get().libraryBlocks.find((block)=>block.id===blockId);if(!root)return false;
     const events=this.outputInputEvents(blockId,draft,sourceSurface);
     if(!events.length){if(JSON.stringify(outputInputDraft(root))===JSON.stringify(draft)){this.toast("Your input is already up to date.");return true;}this.toast(root.locked?"Unlock this input before editing it.":"Unlock the related storyboard frame before saving these changes.");return false;}
-    const appended=await this.appendBatch(events,{rebaseAttempts:6});if(appended.length)this.toast("Your customized input is saved. The original output remains unchanged.");return Boolean(appended.length);
+    const result=await this.appendBatchWithReceipt(events,{rebaseAttempts:6});const saved=this.sourceOwnershipActive(sourceOwner)&&this.#eventWriteComplete(result,events);if(saved)this.toast("Your customized input is saved. The original output remains unchanged.");return saved;
   }
 
   outputInputEvents(blockId:string,draft:OutputInputDraft,sourceSurface="output-input-editor"){
@@ -2234,23 +3064,25 @@ async syncDocumentJobs(){
   }
 
   async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer",options:{reveal?:boolean;presentation?:SlidePresentation|null}={}){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===artifactId);
     if(!artifact){this.toast("That output is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding output context.");return null;}
     const existingBlocks=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const ownedChildIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const existingSourceItemIds=existingBlocks.filter((block)=>ownedChildIds.has(block.id)).map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
     const availableFrames=artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:artifact.kind==="video"?artifact.items.filter((item)=>Boolean(item.mediaUrl)&&String(item.mediaType??"").startsWith("video/")).length:0;
     if(existingRoot&&existingSourceItemIds.length>=availableFrames){if(options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot.id,created:false,blockCount:0,availableMemberCount:1+availableFrames};}
-    const retained=artifact.contentRef?await this.ensurePrivateContent(artifact.contentRef):null;let content=parseDocumentArtifactContent(retained??undefined);const existingDraft=existingRoot?outputInputDraft(existingRoot):null;if(content&&existingDraft)content={...content,title:existingDraft.title,summary:existingDraft.summary,content_markdown:existingDraft.markdown,items:existingDraft.items.map((item)=>({title:item.title,body:item.body,notes:item.notes,image_prompt:item.image_prompt,context_group_ids:item.context_group_ids,slide:item.slide??null}))};if(content&&artifact.kind==="slides"&&options.presentation)content={...content,presentation:structuredClone(options.presentation)};
+    const retained=artifact.contentRef?await this.ensurePrivateContent(artifact.contentRef):null;if(!this.sourceOwnershipActive(sourceOwner))return null;let content=parseDocumentArtifactContent(retained??undefined);const existingDraft=existingRoot?outputInputDraft(existingRoot):null;if(content&&existingDraft)content={...content,title:existingDraft.title,summary:existingDraft.summary,content_markdown:existingDraft.markdown,items:existingDraft.items.map((item)=>({title:item.title,body:item.body,notes:item.notes,image_prompt:item.image_prompt,context_group_ids:item.context_group_ids,slide:item.slide??null}))};if(content&&artifact.kind==="slides"&&options.presentation)content={...content,presentation:structuredClone(options.presentation)};
     if(artifact.contentRef&&!content){this.toast("The complete original output is unavailable, so an incomplete copy was not created.");return null;}
     const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
     if(!result.blockIds.length){if(existingRoot&&options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot?.id??"",created:false,blockCount:0,availableMemberCount:result.availableMemberCount};}
-    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;
+    const write=await this.appendBatchWithReceipt(result.events,{rebaseAttempts:6});if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);const created=write.appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;
     const rootBlockId=existingRoot?.id??result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast(artifact.kind==="storyboard"?this.#systemNotice("{title} is ready to customize, with its finished frames kept in order.",{title:artifact.title}):artifact.kind==="video"?this.#systemNotice("{title} is ready to customize, with its finished motion scenes kept in order.",{title:artifact.title}):this.#systemNotice("{title} is ready to customize.",{title:artifact.title}));return{rootBlockId,created:true,blockCount:created,availableMemberCount:result.availableMemberCount};
   }
 
   async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){return this.addArtifactAsContext(artifactId,destinationDocumentId,sourceSurface);}
 
   async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card",options:{reveal?:boolean;contextParentBlockId?:string;identityReference?:boolean}={}){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();const output=projection.libraryOutputs.find((candidate)=>candidate.id===outputId);if(!output){this.toast("That generated image is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before using this image as input.");return null;}
     const parent=options.contextParentBlockId?projection.libraryBlocks.find((block)=>block.id===options.contextParentBlockId&&block.documentId===destinationDocumentId):undefined;
@@ -2261,44 +3093,46 @@ async syncDocumentJobs(){
         if(existing.locked)return null;
         const relation={type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:parent.id,to_block_id:existing.id,kind:CONTEXT_CONTAINS_RELATION,properties:{member_order:projection.libraryBlockRelations.filter((item)=>isContextCompositionRelation(item.kind)&&item.fromBlockId===parent.id).length,relation_label:"Identity reference",relativity:1},source_surface:sourceSurface}};
         const protection=options.identityReference?[{type:"BlockPropertyEdited",payload:{block_id:existing.id,property_path:"pixel_reference_mode",old_value:existing.properties.pixel_reference_mode??"context_only",new_value:"context_only",source_surface:sourceSurface}},{type:"BlockPropertyEdited",payload:{block_id:existing.id,property_path:"context_reference_kind",old_value:existing.properties.context_reference_kind??null,new_value:"character_identity",source_surface:sourceSurface}}]:[];
-        if(!(await this.appendBatch([...protection,relation],{rebaseAttempts:6})).length)return null;
+        const write=await this.appendBatchWithReceipt([...protection,relation],{rebaseAttempts:6});if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);if(!this.#eventWriteComplete(write,[...protection,relation]))return null;
       }
       if(options.reveal!==false)await this.revealOutputInput(existing.id,destinationDocumentId);return{rootBlockId:existing.id,created:false,blockCount:0};
     }
-    const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
+    const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;if(!this.sourceOwnershipActive(sourceOwner))return null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
     const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content:direction,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
     if(parent&&options.identityReference){const created=result.events.find((event)=>event.type==="BlockCreated");if(created){const properties=created.payload.properties as Record<string,unknown>;created.payload={...created.payload,properties:{...properties,pixel_reference_mode:"context_only",context_reference_kind:"character_identity",likeness_transfer_consent:false}};}}
     if(parent)result.events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:parent.id,to_block_id:result.blockIds[0],kind:CONTEXT_CONTAINS_RELATION,properties:{member_order:projection.libraryBlockRelations.filter((item)=>isContextCompositionRelation(item.kind)&&item.fromBlockId===parent.id).length,relation_label:options.identityReference?"Identity reference":"Reference",relativity:1},source_surface:sourceSurface}});
-    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
+    const write=await this.appendBatchWithReceipt(result.events,{rebaseAttempts:6});if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);const created=write.appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
   }
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
     if(this.session.get()?.impersonation)return;
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const authorization=this.#activeAuthorizationScope();
     try {
       if(!options.keepalive)await this.#appendPipeline;
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const appended=body.appended??[];this.events.set([...this.events.get(), ...appended].sort((left,right)=>left.sequence-right.sequence)); this.head.set(Math.max(this.head.get(),body.head??0)); this.#publishAppended(appended);this.notify();
     } catch { /* Engagement instrumentation never blocks the creative action. */ }
   }
 
   async propose(prompt: string, events: EventInput[], exemplarRefs: Array<Record<string, unknown>> = []) {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("proposal"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "propose", prompt, events, exemplarRefs, expectedSequence: this.head.get(), clientId: "web:lit" }) },"ask the assistant to propose document changes");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error("Proposal could not be recorded");
       const body = await response.json() as { appended: CreativeEvent[]; head: number };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head); this.toast("Proposal recorded — review it before applying.");
       return body.appended[0];
-    } finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async preview(sourceSurface?: string,promptTechnique?:PromptTechnique,productionMode:ProductionMode="manual") {
@@ -2346,13 +3180,17 @@ async syncDocumentJobs(){
   }
 
   async preferPromptTechnique(technique:PromptTechnique,scope:PromptPreferenceScope,source:{fanId?:string|null;outputId?:string|null}={}){
-    const projection=this.projection.get();const collectionId=projection.membership[projection.documentId]?.collectionId;const scopeId=scope==="document"?projection.documentId:scope==="collection"?collectionId:scope==="project"?projection.projectId:this.session.get()?.user.userId;
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
+    const projection=this.projection.get(),collectionId=projection.membership[projection.documentId]?.collectionId;
+    const scopeId=scope==="document"?projection.documentId:scope==="collection"?collectionId:scope==="project"?projection.projectId:this.session.get()?.user.userId;
     if(!scopeId){this.toast("File this document in a collection before setting a folder preference.");return false;}
-    const appended=await this.append({type:"PromptTechniquePreferred",payload:{preference_id:crypto.randomUUID(),preference_kind:"prompt_technique",technique:normalizePromptTechnique(technique),scope,scope_id:scopeId,document_id:projection.documentId,project_id:projection.projectId,source_fan_id:source.fanId??null,source_output_id:source.outputId??null}});
-    if(appended.length)this.toast(this.#systemNotice("{technique} prompts preferred for this {scope}.",{technique:this.#systemNotice(normalizePromptTechnique(technique)),scope:this.#systemNotice(scope==="collection"?"folder":scope)}));return Boolean(appended.length);
+    const event:EventInput={type:"PromptTechniquePreferred",payload:{preference_id:crypto.randomUUID(),preference_kind:"prompt_technique",technique:normalizePromptTechnique(technique),scope,scope_id:scopeId,document_id:projection.documentId,project_id:projection.projectId,source_fan_id:source.fanId??null,source_output_id:source.outputId??null}};
+    const result=await this.appendWithReceipt(event),saved=this.sourceOwnershipActive(sourceOwner)&&this.#eventWriteComplete(result,[event]);
+    if(saved)this.toast(this.#systemNotice("{technique} prompts preferred for this {scope}.",{technique:this.#systemNotice(normalizePromptTechnique(technique)),scope:this.#systemNotice(scope==="collection"?"folder":scope)}));return saved;
   }
 
   async adoptCanvasOutputItems(items:readonly{sourceKind:string;sourceId:string}[],documentId:string,sourceSurface="canvas-generation"){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();if(!projection.documents.some((document)=>document.id===documentId)){this.toast("Choose an available document before reusing the selected outputs.");return null;}
     const unique=new Map<string,{sourceKind:string;sourceId:string}>();for(const item of items)if(item.sourceKind==="output"||item.sourceKind==="artifact")unique.set(`${item.sourceKind}:${item.sourceId}`,item);
     for(const item of unique.values()){
@@ -2361,7 +3199,7 @@ async syncDocumentJobs(){
       const existingRoot=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_artifact_id===artifact.id&&!block.properties.source_artifact_item_id);const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const finished=new Set(artifact.items.filter((entry)=>Boolean(entry.mediaUrl)&&(artifact.kind!=="video"||String(entry.mediaType??"").startsWith("video/"))).map((entry)=>entry.id));const available=new Set(projection.libraryBlocks.filter((block)=>ownedIds.has(block.id)&&finished.has(String(block.properties.source_artifact_item_id??""))).map((block)=>String(block.properties.source_artifact_item_id)));if(existingRoot&&((artifact.kind!=="storyboard"&&artifact.kind!=="video")||available.size===finished.size))continue;
       if(artifact.contentRef&&!parseDocumentArtifactContent(await this.ensurePrivateContent(artifact.contentRef)??undefined)){this.toast(this.#systemNotice("{title} is unavailable, so your document was left unchanged.",{title:artifact.title}));return null;}
     }
-    const rootIds:string[]=[];for(const item of unique.values()){const result=item.sourceKind==="output"?await this.addImageOutputAsContext(item.sourceId,documentId,`${sourceSurface}-output`,{reveal:false}):await this.addArtifactAsContext(item.sourceId,documentId,`${sourceSurface}-artifact`,{reveal:false});if(!result?.rootBlockId)return null;rootIds.push(result.rootBlockId);}
+    const rootIds:string[]=[];for(const item of unique.values()){const result=item.sourceKind==="output"?await this.addImageOutputAsContext(item.sourceId,documentId,`${sourceSurface}-output`,{reveal:false}):await this.addArtifactAsContext(item.sourceId,documentId,`${sourceSurface}-artifact`,{reveal:false});if(!this.sourceOwnershipActive(sourceOwner)||!result||"publication"in result||!result.rootBlockId)return null;rootIds.push(result.rootBlockId);}
     return rootIds;
   }
 
@@ -2380,10 +3218,12 @@ async syncDocumentJobs(){
   }
 
   async promotePromptFanOutputs(promptFanId:string,outputIds:string[]){
-    const projection=this.projection.get();const requested=new Set(outputIds);const outputs=projection.outputs.filter((output)=>output.promptFanId===promptFanId&&requested.has(output.id)&&!output.standalone);
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
+    const projection=this.projection.get(),requested=new Set(outputIds),outputs=projection.outputs.filter(output=>output.promptFanId===promptFanId&&requested.has(output.id)&&!output.standalone);
     if(!outputs.length){this.toast("Those fan results already stand on their own.");return false;}
-    const appended=await this.appendBatch(outputs.map((output)=>({type:"PromptFanOutputPromoted",payload:{object_id:output.id,prompt_fan_id:promptFanId,prompt_technique:output.promptTechnique,document_id:projection.documentId,project_id:projection.projectId,source_surface:"prompt-fan-comparison"}})));
-    if(appended.length)this.toast(appended.length===1?this.#systemNotice("{count} fan result now stands alone in the generation history.",{count:appended.length}):this.#systemNotice("{count} fan results now stand alone in the generation history.",{count:appended.length}));return Boolean(appended.length);
+    const events=outputs.map(output=>({type:"PromptFanOutputPromoted",payload:{object_id:output.id,prompt_fan_id:promptFanId,prompt_technique:output.promptTechnique,document_id:projection.documentId,project_id:projection.projectId,source_surface:"prompt-fan-comparison"}}));
+    const result=await this.appendBatchWithReceipt(events),saved=this.sourceOwnershipActive(sourceOwner)&&this.#eventWriteComplete(result,events);
+    if(saved)this.toast(result.appended.length===1?this.#systemNotice("{count} fan result now stands alone in the generation history.",{count:result.appended.length}):this.#systemNotice("{count} fan results now stand alone in the generation history.",{count:result.appended.length}));return saved;
   }
 
   async chat(message:string,livePreview=true,locale=document.documentElement.lang||"en") {
@@ -2434,8 +3274,9 @@ async syncDocumentJobs(){
   async previewPlanningConsent(){return this.#requestPlanningConsent(this.planningConsent.get()?.recoveryExecutionId?"resume":"quote");}
   async approvePlanningConsent(){const state=this.planningConsent.get();if(!state?.quote)return;const action=state.submitted||state.recoveryExecutionId?{action:"retrieve" as const,disabled:false}:contextConsentAction(state.quote.status,state.quote.providerAvailable,state.quote.canExecute);if(!action.disabled)return this.#requestPlanningConsent(action.action);}
   async #requestPlanningConsent(action:"quote"|"resume"|ContextConsentAction){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const state=this.planningConsent.get(),authorization=this.#planningConsentScope,selectionLocaleRevision=this.#planningLocaleRevision;
-    if(!state||state.working||!this.#scopeStillActive(authorization)||action==="resume"&&!state.recoveryExecutionId||action!=="quote"&&action!=="resume"&&!state.quote)return;
+    if(!state||state.working||!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner)||action==="resume"&&!state.recoveryExecutionId||action!=="quote"&&action!=="resume"&&!state.quote)return;
     const replacing=action==="quote"&&Boolean(state.replaceExecutionId)&&state.quote?.status==="completed";
     const trackedId=state.recoveryExecutionId??state.replaceExecutionId??state.quote?.executionId;
     if(trackedId)this.#rememberPlanningRecovery({jobId:trackedId,kind:"structure_adaptive",planningExecutionId:trackedId,documentId:state.request.documentId,canvasId:state.request.canvasId,sourceSurface:state.request.sourceSurface,requestKey:state.request.requestKey,planningLocale:state.request.locale,planningProjectScope:state.request.projectScope},state.submitted||Boolean(state.recoveryExecutionId)||state.quote?.status!=="quoted");
@@ -2457,17 +3298,17 @@ async syncDocumentJobs(){
       // whose current original receipt already proves settlement or release.
       return result.notice==="uncertain"&&job&&adaptiveJobMatchesRequest(job,state.request)&&documentJobHasNoBudgetHold(budget)?{...result,notice:"failed" as const}:result;
     };
-    const update=(patch:Partial<PlanningConsentState>)=>{const current=this.planningConsent.get();if(current?.id!==state.id||!this.#scopeStillActive(authorization))return false;this.planningConsent.set({...current,...patch});this.notify();return true;};
+    const update=(patch:Partial<PlanningConsentState>)=>{const current=this.planningConsent.get();if(current?.id!==state.id||!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return false;this.planningConsent.set({...current,...patch});this.notify();return true;};
     update({working:true,notice:"",submitted:state.submitted||action==="execute",readRevision:startedReadAt});
     try{
       const response=await this.guardedFetch("/api/document-jobs/adaptive",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...state.request,action,...(action==="resume"?{executionId:state.recoveryExecutionId}:action!=="quote"?{executionId:state.quote!.executionId,approvedBindingHash:state.quote!.bindingHash}:state.replaceExecutionId?{replaceExecutionId:state.replaceExecutionId}:{})})},this.#systemNotice("Review this exact planning request"));
-      if(!this.#scopeStillActive(authorization))return;
+      if(!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return;
       if((action==="resume"||action==="retrieve")&&trackedId&&!response.ok&&[401,403,404,410].includes(response.status)){
         this.#withdrawAdaptiveRead(trackedId,startedReadAt);
         return;
       }
       const body=await response.json() as {quote?:AvailableConsequentialPreview;planningRequest?:PlanningConsentRequest;job?:DocumentJob;status?:string;submission?:string;providerAvailable?:boolean;error?:string;executionId?:string;bindingHash?:string;sourceHash?:string;requestKey?:string;reused?:boolean;requestedExecutionId?:string;reusedExecutionId?:string};
-      if(!this.#scopeStillActive(authorization))return;
+      if(!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return;
       const requestedId=action==="resume"?state.recoveryExecutionId:state.quote?.executionId;
       const unavailable=!response.ok&&["adaptive_existing_request_unavailable","adaptive_result_unavailable","adaptive_execution_unavailable","adaptive_consent_unavailable","adaptive_read_scope_denied","adaptive_read_authorization_changed"].includes(body.error??"");
       const returnedId=body.quote?.executionId??body.job?.planningExecutionId??(unavailable?requestedId:undefined);
@@ -2475,7 +3316,7 @@ async syncDocumentJobs(){
       const original=body.planningRequest;
       if(original&&(original.projectId!==state.request.projectId||original.documentId!==state.request.documentId||(original.canvasId??null)!==state.request.canvasId||original.sourceSurface!==state.request.sourceSurface||original.requestKey!==state.request.requestKey||original.projectScope!==state.request.projectScope||original.locale!==state.request.locale||typeof original.prompt!=="string"||!original.prompt.trim()||original.prompt.length>2_000))throw new Error("planning_result_identity_changed");
       if(original&&await adaptiveRequestKey(original)!==original.requestKey)throw new Error("planning_result_identity_changed");
-      if(!this.#scopeStillActive(authorization))return;
+      if(!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return;
       if(body.quote&&(body.executionId!==undefined&&body.executionId!==body.quote.executionId||body.bindingHash!==undefined&&body.bindingHash!==body.quote.bindingHash||body.sourceHash!==undefined&&body.sourceHash!==body.quote.sourceHash||body.requestKey!==undefined&&body.requestKey!==(original??state.request).requestKey))throw new Error("planning_result_identity_changed");
       // A replacement must carry its own freshly certified intent after the
       // predecessor was withdrawn. Never approve an empty request or restore
@@ -2650,67 +3491,107 @@ async syncDocumentJobs(){
     try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId);this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
-  async openProject(projectId:string,destination="/") {
-    const projection=this.projection.get();if(!projectId||projectId===projection.projectId){this.setRoute(destination);return true;}
-    const target=projection.projects.find((project)=>project.id===projectId);if(!target){this.toast("That project is no longer available.");return false;}
-    const previousRoute=this.route.get(),clientEventId=crypto.randomUUID(),now=new Date().toISOString();
-    const canvasDestination=destination==="/canvas"||destination.startsWith("/canvas/");
-    const input:EventInput={type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:canvasDestination?"canvas-projects":"projects",client_event_id:clientEventId}};
-    const optimistic:CreativeEvent={eventId:`optimistic:${clientEventId}`,streamId:"optimistic:project",sequence:this.head.get()+1,occurredAt:now,recordedAt:now,actor:"user",clientId:"web:project-optimistic",correlationId:clientEventId,causationId:null,compensatesEventId:null,schemaVersion:1,type:input.type,payload:input.payload};
-    this.optimisticEvents.set([...this.optimisticEvents.get(),optimistic]);
-    this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});const persisted=this.append(input,{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(destination);
-    const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
-    this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>event.eventId!==optimistic.eventId));
-    if(!appended.length){this.setRoute(previousRoute,{replace:true});this.toast("That project could not be opened. Your current workspace was restored.");return false;}
-    this.notify();this.toast(this.#systemNotice("{name} opened in {workspace}.",{name:target.name,workspace:this.#systemNotice(canvasDestination?"Canvas":"Creator Workspace")}));return true;
+  async openProject(projectId: string, destination = "/", options: WorkspaceNavigationOptions = {}) {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
+    if (!workspaceNavigationCurrent(options)) return false;
+    const projection = this.projection.get(), authorization = this.captureAuthorizationScope();
+    const target = projection.projects.find((project) => project.id === projectId);
+    if (!projectId || !target) { this.toast("That project is no longer available."); return false; }
+    const selected = foldEvents(this.eventView.get(), this.asOf.get(), "", projectId);
+    const requestedDocumentId = documentIdFromRoute(destination);
+    if (requestedDocumentId !== null && (!requestedDocumentId || !selected.documents.some((document) => document.id === requestedDocumentId))) {
+      this.toast("That document is no longer available."); return false;
+    }
+    const documentId = requestedDocumentId ?? (projectId === projection.projectId ? projection.documentId : selected.documentId);
+    const documentTitle = selected.documents.find((document) => document.id === documentId)?.title ?? "";
+    const routedDestination = isDocumentViewRoute(destination) && documentId
+      ? withDocumentInRoute(destination, documentId, documentTitle) : withProjectTaskDocumentInRoute(destination, documentId);
+    const routeOptions = { ...options, documentId };
+    if (projectId === projection.projectId) { this.setRoute(routedDestination, routeOptions); return true; }
+    const previousRoute = this.#projectTaskRoute(this.route.get()), clientEventId = crypto.randomUUID(), now = new Date().toISOString();
+    const canvasDestination = destination === "/canvas" || destination.startsWith("/canvas/");
+    const input: EventInput = { type: "ProjectOpened", payload: { project_id: projectId, previous_project_id: projection.projectId, source_surface: canvasDestination ? "canvas-projects" : "projects", client_event_id: clientEventId } };
+    const optimistic: CreativeEvent = { eventId: `optimistic:${clientEventId}`, streamId: "optimistic:project", sequence: this.head.get() + 1, occurredAt: now, recordedAt: now, actor: "user", clientId: "web:project-optimistic", correlationId: clientEventId, causationId: null, compensatesEventId: null, schemaVersion: 1, type: input.type, payload: input.payload };
+    this.optimisticEvents.set([...this.optimisticEvents.get(), optimistic]);
+    this.patchUi({ focusBlockId: "", focusCollectionId: "", selectedOutputId: "", compareOpen: false });
+    const persisted = this.appendWithReceipt(input, { rebaseAttempts: 6, silent: true, background: true });
+    const committed = persisted.then((result) => result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId), () => false);
+    this.#navigationCommit = committed;
+    this.setRoute(routedDestination, routeOptions);
+    const revision = this.#workspaceTransition, route = this.route.get();
+    const current = () => this.sourceOwnershipActive(sourceOwner) && this.authorizationScopeActive(authorization) && this.#workspaceTransition === revision && this.route.get() === route && workspaceNavigationCurrent(options);
+    const result = await persisted;
+    if (this.#navigationCommit === committed) this.#navigationCommit = null;
+    this.optimisticEvents.set(this.optimisticEvents.get().filter((event) => event.eventId !== optimistic.eventId));
+    if(result.publication!=="published"){
+      const observed=result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId);
+      if(!observed&&(result.acknowledgment.outcome==="unconfirmed"||result.acknowledgment.outcome==="not-attempted")&&current()){
+        // Only the local view returns. The original receipt and history remain unchanged.
+        this.setRoute(previousRoute,{replace:true});
+        if(result.acknowledgment.outcome==="unconfirmed")this.toast(this.#systemNotice("The original change is unconfirmed. It has not been resubmitted."));
+      }
+      return observed;
+    }
+    if (!result.appended.length) {
+      if (current()) { this.setRoute(previousRoute, { replace: true }); this.toast("That project could not be opened. Your current workspace was restored."); }
+      return false;
+    }
+    if (current()) { this.notify(); this.toast(this.#systemNotice("{name} opened in {workspace}.", { name: target.name, workspace: this.#systemNotice(canvasDestination ? "Canvas" : "Creator Workspace") })); }
+    return true;
   }
 
   async openDocument(documentId: string, destination="/", sourceSurface?: string, options:Pick<WorkspaceNavigationOptions,"current"|"focus">={}) {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
     if(!workspaceNavigationCurrent(options))return false;
-    const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withDocumentInRoute(destination, documentId, target?.title ?? "");
-    if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination,options);return true;}
-    if(!target){this.toast("That document is no longer available.");return false;}
+    const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withProjectTaskDocumentInRoute(withDocumentInRoute(destination, documentId, target?.title ?? ""), documentId);
+    if(!documentId||!target){this.toast("That document is no longer available.");return false;}
+    if(documentId===projection.documentId){this.setRoute(routedDestination,options);return true;}
     if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination,options);return true;}
     const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
-    const persisted=this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination,options);
-    const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
-    if(appended.length)this.toast("Document opened.");return true;
+    const persisted=this.appendWithReceipt({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then(result=>result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="DocumentOpened"),()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination,options);
+    const revision=this.#workspaceTransition,authorization=this.captureAuthorizationScope();
+    const result=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
+    if(result.publication==="published"&&this.sourceOwnershipActive(sourceOwner)&&result.appended.length&&revision===this.#workspaceTransition&&this.authorizationScopeActive(authorization))this.toast("Document opened.");return true;
   }
 
   async removeDocument(documentId: string) {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return[];
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);if(!target){this.toast("That document is no longer available.");return[];}if(projection.documents.length<=1){this.toast("Create another document before removing the project’s final document.");return[];}
     const fallback=projection.documents.find((document)=>document.id!==documentId)!;const wasCurrent=documentId===projection.documentId;
-    const appended=await this.append({type:"DocumentRemoved",payload:{document_id:documentId,title:target.title,was_current:wasCurrent,previous_document_id:projection.documentId,fallback_document_id:fallback.id,reason:"removed-by-user"}});
+    const result=await this.appendWithReceipt({type:"DocumentRemoved",payload:{document_id:documentId,title:target.title,was_current:wasCurrent,previous_document_id:projection.documentId,fallback_document_id:fallback.id,reason:"removed-by-user"}});
+    if(!this.sourceOwnershipActive(sourceOwner)||result.publication!=="published")return[];const appended=result.appended;
     if(appended.length){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});if(wasCurrent&&isDocumentViewRoute(this.route.get()))this.setRoute(withDocumentInRoute(this.route.get(),this.projection.get().documentId,this.projection.get().documentTitle),{replace:true});this.toast(wasCurrent?this.#systemNotice("{title} was removed. {fallback} is now open.",{title:target.title,fallback:fallback.title}):this.#systemNotice("{title} was removed. Undo can restore it.",{title:target.title}));}return appended;
   }
 
   async evaluateExtractors() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("extractor-eval"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "evaluate_extractors", expectedSequence: this.head.get(), clientId: "web:system" }) },"run reference extraction");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must witness the quality-gate rerun." : body.error ?? "Extractor evaluation failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Extractor gate passed and the result was appended to the event stream.");
-    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Extractor evaluation failed");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Extractor evaluation failed");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async rebuildIndex() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("phase7-index"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "rebuild_index", expectedSequence: this.head.get(), clientId: "web:library" }) },"rebuild the fictional account’s library index");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; report?: { indexedItems?: number; exemplars?: number; families?: number } };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must run the derived index." : body.error ?? "Index rebuild failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get());
       this.toast(body.appended?.length ? this.#systemNotice("Indexed {objects} objects, {exemplars} exemplars, and {families} families.",{objects:body.report?.indexedItems??0,exemplars:body.report?.exemplars??0,families:body.report?.families??0}) : "The Phase 7 index is already fresh.");
-    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Index rebuild failed");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Index rebuild failed");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async extractReference(blockId: string, referenceId: string, sample: ImageSample, findingKinds: ReferenceFindingKind[] = []) {
@@ -2720,120 +3601,131 @@ async syncDocumentJobs(){
   }
 
   async calculateImageFocalPoint(input:{targetKind:"generation"|"reference"|"artifact";targetId:string;mediaUrl:string;referenceId?:string;sample?:ImageSample}){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope(),key=`${input.targetKind}:${input.targetId}:${input.mediaUrl}`;if(!input.mediaUrl||this.#focalInFlight.has(key)||this.#hasFocalPoint(input.targetKind,input.targetId))return null;this.#focalInFlight.add(key);
     try{
       const sample=input.sample??(await resolveImageFocalAnalysis(input.mediaUrl)).sample;
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       let resolved:unknown=null;
-      const append=async()=>{this.#assertAuthorizationScope(authorization);if(this.#hasFocalPoint(input.targetKind,input.targetId))return;const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"calculate_focal_point",clientId:"web:focal-extractor",targetKind:input.targetKind,targetId:input.targetId,referenceId:input.referenceId,mediaUrl:input.mediaUrl,sample})},"calculate and save this image’s focal point");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];head?:number;focalPoint?:unknown;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"focal_point_calculation_failed");const appended=body.appended??[];if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);this.notify();}resolved=body.focalPoint??null;};
-      const task=this.#focalAppendQueue.then(append);this.#focalAppendQueue=task.catch(()=>{});await task;this.#assertAuthorizationScope(authorization);return normalizeImageFocalPoint(resolved);
-    }catch{return null;}finally{if(this.#scopeStillActive(authorization))this.#focalInFlight.delete(key);}
+      const append=async()=>{this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(this.#hasFocalPoint(input.targetKind,input.targetId))return;const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"calculate_focal_point",clientId:"web:focal-extractor",targetKind:input.targetKind,targetId:input.targetId,referenceId:input.referenceId,mediaUrl:input.mediaUrl,sample})},"calculate and save this image’s focal point");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];head?:number;focalPoint?:unknown;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"focal_point_calculation_failed");const appended=body.appended??[];if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);this.notify();}resolved=body.focalPoint??null;};
+      const task=this.#focalAppendQueue.then(append);this.#focalAppendQueue=task.catch(()=>{});await task;this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);return normalizeImageFocalPoint(resolved);
+    }catch{return null;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.#focalInFlight.delete(key);}
   }
 
   async closeSession() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("close-session"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "close_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"close this fictional work session");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { closedSessions?: number; requiredClosedSessions?: number } };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "no_open_session" ? "Open a session before closing it." : body.error ?? "Session could not be closed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(this.#systemNotice("Session closed with a state receipt · {closed}/{required} toward brief eligibility.",{closed:body.eligibility?.closedSessions??0,required:body.eligibility?.requiredClosedSessions??3}));
-    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Session could not be closed");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Session could not be closed");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async openSession() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("open-session"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "open_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"open a fictional work session");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; briefComposed?: boolean };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "session_already_open" ? "The current session is already open." : body.error ?? "Session could not be opened");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(body.briefComposed ? "Session opened with an eligible re-entry brief; every impression was witnessed." : "Session opened. More history is needed before composing a valid brief.");
-    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Session could not be opened");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Session could not be opened");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async composeBrief() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("compose-brief"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "compose_brief", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"compose a re-entry brief for this fictional account");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { reasons?: string[] } };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "brief_not_eligible" ? `Brief is not eligible: ${body.eligibility?.reasons?.join(" and ") ?? "more history required"}.` : body.error === "open_session_required" ? "Open a session before composing a brief." : body.error ?? "Brief could not be composed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Re-entry brief composed from the event stream; impressions were witnessed in the same batch.");
-    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Brief could not be composed");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Brief could not be composed");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async declareIntent(statement: string, deadline: string | null = null) {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("declare-intent"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "declare_intent", expectedSequence: this.head.get(), clientId: "web:sessions", statement, deadline }) },"record this intent in the fictional account");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error ?? "Intent could not be recorded");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Intent recorded privately; the immutable event keeps only its expiring reference.");
-    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async runScout(maxObservations: number) {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("run-scout"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({action:"run_scout",expectedSequence:this.head.get(),clientId:"web:scout",maxObservations}) },"run Scout against the fictional account");
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};
-      this.#assertAuthorizationScope(authorization);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if(!response.ok) throw new Error(body.error === "phase6_advance_required" ? "Record the Phase 6 advance-with-monitoring decision first." : body.error ?? "Scout run failed");
       this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast("Scout report completed inside its hard planning envelope.");
-    } catch(error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Scout run failed");}
-    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch(error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Scout run failed");}
+    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async refreshTasteModel() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("taste-model");this.notify();
     try {
       const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"refresh_taste_model",expectedSequence:this.head.get(),clientId:"web:memory"})},"refresh the fictional account’s taste model");
-      this.#assertAuthorizationScope(authorization);
-      const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string;beliefs?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error === "phase6_advance_required"?"Record the Phase 6 advance-with-monitoring decision first.":body.error??"Taste model refresh failed");
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+      const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string;beliefs?:number};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error === "phase6_advance_required"?"Record the Phase 6 advance-with-monitoring decision first.":body.error??"Taste model refresh failed");
       this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast((body.beliefs??0)===1?this.#systemNotice("Taste model versioned with {count} ranking-only belief.",{count:body.beliefs??0}):this.#systemNotice("Taste model versioned with {count} ranking-only beliefs.",{count:body.beliefs??0}));
-    } catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Taste model refresh failed");}
-    finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    } catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Taste model refresh failed");}
+    finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async setCondition(condition:string,triggerKind:"generation_count"|"on_date",threshold:number,onDate:string|null){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("set-condition");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"set_condition",expectedSequence:this.head.get(),clientId:"web:memory",condition,triggerKind,threshold,onDate})},"set a time condition in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Condition could not be set");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Time policy recorded privately.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Condition could not be set");return false;}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"set_condition",expectedSequence:this.head.get(),clientId:"web:memory",condition,triggerKind,threshold,onDate})},"set a time condition in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Condition could not be set");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Time policy recorded privately.");return true;}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Condition could not be set");return false;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async checkConditions(){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("check-conditions");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?body.appended.length===2?this.#systemNotice("{count} condition resurfaced.",{count:Math.floor(body.appended.length/2)}):this.#systemNotice("{count} conditions resurfaced.",{count:Math.floor(body.appended.length/2)}):"No time policies are due yet.");}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Policy check failed");}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?body.appended.length===2?this.#systemNotice("{count} condition resurfaced.",{count:Math.floor(body.appended.length/2)}):this.#systemNotice("{count} conditions resurfaced.",{count:Math.floor(body.appended.length/2)}):"No time policies are due yet.");}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Policy check failed");}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   async critiqueObject(objectId:string,axis:string,polarity:"positive"|"negative",value:string,note:string){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("critique-object");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"critique_object",expectedSequence:this.head.get(),clientId:"web:studio",objectId,axis,polarity,value,note})},"record this critique in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Critique could not be recorded");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Axis-specific critique recorded for the taste ledger.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Critique could not be recorded");return false;}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"critique_object",expectedSequence:this.head.get(),clientId:"web:studio",objectId,axis,polarity,value,note})},"record this critique in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Critique could not be recorded");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Axis-specific critique recorded for the taste ledger.");return true;}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Critique could not be recorded");return false;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
   canManageProjectShares(){const session=this.session.get(),context=session?.projectContext;return Boolean(session)&&(!context||context.role==="owner"&&context.ownerUserId===session.user.userId);}
   async loadShares() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     if(!this.canManageProjectShares()){this.shares.set([]);return;}
-    const authorization=this.#activeAuthorizationScope(),response=await fetch("/api/shares");if(!response.ok||!this.#scopeStillActive(authorization))return;const body=await response.json() as {shares:ShareRecord[]};if(!this.#scopeStillActive(authorization))return;this.shares.set(body.shares);this.notify();
+    const authorization=this.#activeAuthorizationScope(),response=await fetch("/api/shares");if(!response.ok||!(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))return;const body=await response.json() as {shares:ShareRecord[]};if(!(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))return;this.shares.set(body.shares);this.notify();
   }
 
   async createShare(expiresHours: number) {
@@ -2865,16 +3757,19 @@ async syncDocumentJobs(){
     const actor=this.#principalEventActor(),fallback=[...this.events.get()].reverse().find((event)=>event.actor===actor&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));return fallback?[fallback]:null;
   }
   async undo() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const canvasId=canvasIdFromRoute(this.route.get())??"";const source = this.#undoCandidate(canvasId); if (!source?.length) return this.toast(canvasId?"Nothing to undo on this board.":documentViewFromRoute(this.route.get()) === "editor" ? "Nothing to undo." : "Nothing reversible remains in this document history.");
     const inverses=source.toReversed().map((event)=>{const inverse=inverseEvent(event)!;return{...inverse,payload:withoutClientEventId(inverse.payload),compensatesEventId:event.eventId};});
-    const appended = await this.appendBatch(inverses, { remember: false });
-    if (appended.length===inverses.length) this.#redo.push(source);
+    const result = await this.appendBatchWithReceipt(inverses, { remember: false });
+    if(this.sourceOwnershipActive(sourceOwner)&&this.#eventWriteComplete(result,inverses))this.#redo.push(source);
   }
 
   async redo() {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const canvasId=canvasIdFromRoute(this.route.get())??"";const index=this.#historyIndex(this.#redo,canvasId);const source=index>=0?this.#redo.splice(index,1)[0]:null;if (!source?.length) return this.toast(canvasId?"Nothing to redo on this board.":"Nothing to redo in this session.");
-    const appended = await this.appendBatch(source.map(redoEvent), { remember: false });
-    const actor=this.#principalEventActor(),redone=appended.filter((event)=>event.actor===actor&&Boolean(inverseEvent(event)));if(redone.length)this.#undo.push(redone);
+    const result = await this.appendBatchWithReceipt(source.map(redoEvent), { remember: false });
+    if(!this.sourceOwnershipActive(sourceOwner)||result.publication!=="published")return;
+    const actor=this.#principalEventActor(),redone=result.appended.filter((event)=>event.actor===actor&&Boolean(inverseEvent(event)));if(redone.length)this.#undo.push(redone);
   }
 
   buildReplay(events: CreativeEvent[]) { this.replayEvents.set(events); this.replayAsOf.set(0); this.notify(); }

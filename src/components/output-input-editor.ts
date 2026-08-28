@@ -10,10 +10,12 @@ import "./reference-image";
 
 /** A single format-aware workbench for every adopted document work product. */
 export class OutputInputEditor extends FormaElement {
-  static properties = { block: { attribute: false }, standalone: { type: Boolean }, source: { type: String } };
+  static properties = { block: { attribute: false }, standalone: { type: Boolean }, source: { type: String }, shortcutHelp: { type: String, attribute: false } };
   block!: CreativeBlock;
   standalone = false;
   source = "output-input-editor";
+  // Display-only copy supplied by the owning form; it does not handle keys.
+  shortcutHelp = "";
   #loaded = "";
   #edited = false;
   #draft: OutputInputDraft | null = null;
@@ -128,12 +130,13 @@ export class OutputInputEditor extends FormaElement {
 
   #deck(presentation: SlidePresentation | null) {
     if (!presentation) return nothing;
+    const roleLabels = new Map([["background", this.i18n.system("Background")], ["foreground", this.i18n.system("Foreground")], ["accent", this.i18n.system("Accent")], ["muted", this.i18n.system("Muted")], ["surface", this.i18n.system("Surface")]]);
     return html`<details class="output-input-presentation"><summary>Presentation style and labels</summary><div class="output-input-field-grid">
       <label>Presentation theme<input .value=${presentation.theme} @input=${(event: InputEvent) => this.#presentation({ theme: (event.target as HTMLInputElement).value })}></label>
       <label>Presentation footer<input .value=${presentation.footerLabel} @input=${(event: InputEvent) => this.#presentation({ footerLabel: (event.target as HTMLInputElement).value })}></label>
       <label>Presentation style<select .value=${presentation.stylePreset} @change=${(event: Event) => this.#presentation(applySlideStylePreset(presentation, (event.target as HTMLSelectElement).value as SlideStylePresetId))}>${SLIDE_STYLE_PRESETS.map((preset) => html`<option value=${preset.id}>${this.i18n.system(preset.label)}</option>`)}</select></label>
       <label>Presentation appearance<select .value=${presentation.mode} @change=${(event: Event) => this.#presentation({ mode: (event.target as HTMLSelectElement).value as "light" | "dark" })}><option value="light">Light</option><option value="dark">Dark</option></select></label>
-      ${Object.entries(presentation.palette).map(([key, value]) => html`<label>Presentation ${key} color<input type="color" .value=${value} @input=${(event: InputEvent) => this.#presentation({ palette: { ...presentation.palette, [key]: (event.target as HTMLInputElement).value } })}></label>`)}
+      ${Object.entries(presentation.palette).map(([key, value]) => html`<label>Presentation ${roleLabels.get(key) ?? key} color<input type="color" .value=${value} @input=${(event: InputEvent) => this.#presentation({ palette: { ...presentation.palette, [key]: (event.target as HTMLInputElement).value } })}></label>`)}
     </div></details>`;
   }
 
@@ -149,7 +152,7 @@ export class OutputInputEditor extends FormaElement {
       <fieldset class="output-input-primary" ?disabled=${this.block.locked || this.#saving}>
         <label>${label} title<input .value=${draft.title} @input=${(event: InputEvent) => this.#change({ ...draft, title: (event.target as HTMLInputElement).value })}></label>
         <label>${label} summary<textarea rows="3" .value=${draft.summary} @input=${(event: InputEvent) => this.#change({ ...draft, summary: (event.target as HTMLTextAreaElement).value })}></textarea></label>
-        <forma-ui-rich-text .label=${this.i18n.system(narrative)} .value=${draft.markdown} .rows=${draft.kind === "short_story" || draft.kind === "scene" ? 12 : 8} .help=${this.i18n.system("Your complete writing remains separate from the original output. Command or Control plus Enter saves; Escape cancels.")} ?disabled=${this.block.locked || this.#saving} @forma-input=${(event: CustomEvent<{ value: string }>) => this.#change({ ...this.#draft!, markdown: event.detail.value })}></forma-ui-rich-text>
+        <forma-ui-rich-text .label=${this.i18n.system(narrative)} .value=${draft.markdown} .rows=${draft.kind === "short_story" || draft.kind === "scene" ? 12 : 8} .help=${this.shortcutHelp || this.i18n.system("Your complete writing remains separate from the original output. Command or Control plus Enter saves; Escape cancels.")} ?disabled=${this.block.locked || this.#saving} @forma-input=${(event: CustomEvent<{ value: string }>) => this.#change({ ...this.#draft!, markdown: event.detail.value })}></forma-ui-rich-text>
         ${draft.kind === "slides" ? this.#deck(draft.presentation) : nothing}
         ${this.#items(draft)}
       </fieldset>

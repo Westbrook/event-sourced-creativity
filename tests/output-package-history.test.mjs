@@ -2,7 +2,6 @@
 // No HTTP, browser, provider, or immutable-history repair is exercised by this test.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { setImmediate as nextTask } from "node:timers/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -50,7 +49,7 @@ test("a stale partial-export callback cannot work around newly unverified immuta
 });
 
 test("held package bytes are not released after same-revision history becomes unverified, while exact files remain available", async () => {
-  const f = await controllerFixture(), initial = f.snapshots.get("doc-a"), bytes = deferred();
+  const f = await controllerFixture(), initial = f.snapshots.get("doc-a"), bytes = deferred(), bytesEntered = deferred();
   initial.summary.delivery_ready = true;
   const revision = initial.revision, source = initial.sourceRevision, plan = initial.confirmedPlan.revisionId;
   const path = "/api/output-requirements/deliveries/synthetic-package?documentId=doc-a";
@@ -58,9 +57,11 @@ test("held package bytes are not released after same-revision history becomes un
     f.requests.push({ kind: "command", ...command });
     return { status: "saved", body: { snapshot: structuredClone(initial), command: { action: "export", downloadUrl: path } } };
   };
-  f.store.outputRequirements.download = (documentId, url) => { f.requests.push({ kind: "download", documentId, url }); return bytes.promise; };
+  f.store.outputRequirements.download = (documentId, url) => { f.requests.push({ kind: "download", documentId, url }); bytesEntered.resolve(); return bytes.promise; };
   const pending = handler(exportForm(f), "submit", "#export").call(f.controller, submitEvent());
-  await nextTask();
+  // Await this exact byte-request entry, not a guessed turn of the digest clock.
+  // Unexpected non-dispatch also terminates so the original count assertion fails.
+  await Promise.race([bytesEntered.promise, pending]);
   assert.equal(f.requests.length, 2); assert.equal(f.requests[1].url, path, "the package-byte request really began before the changed snapshot");
   const current = historyFailure(f);
   assert.equal(current.revision, revision); assert.equal(current.sourceRevision, source); assert.equal(current.confirmedPlan.revisionId, plan);
@@ -96,4 +97,16 @@ test("previously prepared package parts become disabled and old part callbacks r
     assert.equal(binding(part, "?disabled"), true);
   }
   assert.equal(f.requests.length, 1, "part release is refused before another bytes request");
+});
+
+
+test("a package-entry wait terminates without dispatch when history changes during digest preparation", async () => {
+  const f = await controllerFixture(), bytesEntered = deferred();
+  f.snapshots.get("doc-a").summary.delivery_ready = true;
+  f.store.outputRequirements.download = () => { bytesEntered.resolve(); throw new Error("unexpected package-byte dispatch"); };
+  const pending = handler(exportForm(f), "submit", "#export").call(f.controller, submitEvent());
+  historyFailure(f);
+  await Promise.race([bytesEntered.promise, pending]); await pending;
+  assert.equal(f.requests.length, 0); assert.equal(f.effects.downloads, 0);
+  assert.equal(outputPackageReadiness(f.snapshots.get("doc-a")).allowed, false);
 });

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import assert from "node:assert/strict";
 import { OutputRequirementsClient } from "../src/state/output-requirements-client.ts";
 import { outputRequirementEditableDraft } from "../src/model/output-requirements.ts";
@@ -21,7 +22,11 @@ const clientField = declaration?.members.find((node) => ts.isPropertyDeclaration
 assert.ok(clientField, "the actual Store transport client options must exist");
 const snapshotGuard = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "outputSnapshotRenderable");
 assert.ok(snapshotGuard, "the actual Store snapshot-admission helper must exist");
-const compiled = ts.transpileModule(`${snapshotGuard.getText(parsed)}\nclass ReceiptStore { #jobDetails = new Map(); ${clientField.getText(parsed)} ${method.getText(parsed)} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+const sourceProjectMembers = ["#sourceRetired", "#retiredSourceProjectId", "#outputSourceProjectId"].map(name => {
+  const node = declaration.members.find(member => member.name?.getText(parsed) === name);
+  assert.ok(node, "actual source identity member " + name); return node.getText(parsed);
+}).join("\n");
+const compiled = ts.transpileModule(`${snapshotGuard.getText(parsed)}\nclass ReceiptStore { #jobDetails = new Map(); ${sourceProjectMembers} ${clientField.getText(parsed)} ${method.getText(parsed)} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 const ReceiptStore = new Function("OutputRequirementsClient", "outputRequirementEditableDraft", `${compiled}; return ReceiptStore;`)(OutputRequirementsClient, outputRequirementEditableDraft);
 const deferred = () => { let resolvePromise; const promise = new Promise((resolveValue) => { resolvePromise = resolveValue; }); return { promise, resolve: resolvePromise }; };
 
@@ -90,6 +95,7 @@ async function fixture() {
     syncDocumentJobs: () => { throw new Error("receipt inspection must never drive queued jobs"); },
     refreshSession: () => { throw new Error("receipt inspection must never accept terms or mutate an unrelated route"); },
   });
+  installSourceOwnershipPort(store);
   const resource = await store.outputRequirements.ensure("doc");
   const ensure = store.outputRequirements.ensure.bind(store.outputRequirements);
   store.outputRequirements.ensure = (...args) => { effects.refreshes.push(args); return ensure(...args); };

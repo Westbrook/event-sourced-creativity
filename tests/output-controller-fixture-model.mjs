@@ -463,8 +463,13 @@ export async function createOutputControllerFixture({ domain, onRecord = () => {
       snapshot.requirements[0].spec.label += " · other fictional editor";
       return Response.json({ error: "output_revision_conflict" }, { status: 409 }); // Deliberately no latest snapshot.
     }
-    if (request.expectedRevision !== snapshot.revision) return reject("output_revision_conflict", 409);
-    if (request.action === "export" && snapshot.fixtureScenario === "history-unverified") return reject(HISTORY_UNVERIFIED_CODE, 409);
+    // Match the server's canonical CAS error code, as the existing next-write
+    // conflict port does; synthetic prose is not proof of noncommit.
+    if (request.expectedRevision !== snapshot.revision) return Response.json({ error: "output_revision_conflict" }, { status: 409 });
+    // Actual handleOutputRequirements.prepareDelivery emits this exact typed
+    // envelope before commit. Keep generic reject/GET diagnostics unchanged.
+    if (request.action === "export" && snapshot.fixtureScenario === "history-unverified")
+      return Response.json({ error: HISTORY_UNVERIFIED_CODE, errorCode: HISTORY_UNVERIFIED_CODE, errorValues: {} }, { status: 409 });
     if (!snapshot.permissions.canAuthor && ["save", "confirm", "bind", "remove"].includes(request.action)
       || !snapshot.permissions.canRequest && ["preflight", "authorize", "run"].includes(request.action)
       || !snapshot.permissions.canReview && request.action === "review") return reject("fixture_permission_denied", 403);

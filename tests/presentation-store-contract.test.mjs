@@ -14,8 +14,20 @@ function actualMethod(name) {
   return method.getText(syntax);
 }
 
+
+// Exact source-ownership implementation and initializers, not a truthy facade.
+// The fixture's existing activeScope, budget and transport ports are SIMULATED;
+// they do not certify server authority, a paid submission, or a billing receipt.
+function actualSourceMember(name) {
+  const member=store.members.find(entry=>entry.name?.getText(syntax)===name);
+  assert.ok(member,"the actual source ownership dependency "+name+" remains available");
+  return member.getText(syntax);
+}
+const sourceOwnershipMembers=["#sourceGeneration","#sourceRetired","#sourceOwners","#sourcePausedJobs","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive","#assertSourceOwnership"].map(actualSourceMember).join("\n");
+
 const harnessSource = `
 import { resolvePresentationCountRequest } from ${JSON.stringify(new URL("../src/model/presentation-count-policy.ts", import.meta.url).href)};
+import { isDocumentArtifactKind } from ${JSON.stringify(new URL("../src/model/document-artifacts.ts", import.meta.url).href)};
 const MAX_MANAGED_PRESENTATION_SLIDES = 100;
 const generationRevisionFor = (value) => {
   let hash = 0x811c9dc5;
@@ -52,6 +64,8 @@ export class PresentationStoreHarness {
   #appendPipeline = Promise.resolve();
   #navigationCommit = null;
   #readinessAcknowledgements = new Set();
+  ${sourceOwnershipMembers}
+  ${actualMethod("#privateJobReference")}
 
   #generationContext(documentId) {
     return {
@@ -474,4 +488,43 @@ test("rejects actor-private receipt content bound to a different job or document
 
   await assert.rejects(harness.loadDocumentJobDetail(listed.jobId), /private generation receipt does not belong/);
   assert.equal(harness.jobs[0].result, null, "an invalid receipt never becomes an inspectable job detail");
+});
+
+test("presentation Store source ownership uses exact branded tokens and denies expired reads before dispatch",async t=>{
+  const now=Date.parse("2026-08-28T15:00:00Z");t.mock.method(Date,"now",()=>now);
+  const harness=new PresentationStoreHarness(),source=harness.captureSourceOwnership();
+  assert.equal(harness.sourceOwnershipActive(source),true);
+  assert.equal(harness.sourceOwnershipActive(structuredClone(source)),false);
+  assert.equal(new PresentationStoreHarness().sourceOwnershipActive(source),false);
+  const session={actor:"authorized-user",projectContext:{expiresAt:new Date(now).toISOString()}};
+  harness.session={get:()=>session};
+  await assert.rejects(harness.loadPresentationCandidates("private-job","authorized-document"),/current source is unavailable/u);
+  assert.equal(await harness.renderDocumentArtifact("slides",{itemCount:12}),false);
+  assert.deepEqual(harness.requests,[]);assert.deepEqual(harness.budgetChecks,[]);assert.deepEqual(harness.contentValues,{});
+});
+
+for(const operation of["list","detail"])for(const stage of["headers","body"])for(const expired of[false,true])test("presentation Store "+operation+" "+stage+" "+(expired?"expiry withholds":"current ownership preserves")+" an exact private response",async t=>{
+  let now=Date.parse("2026-08-28T15:00:00Z");t.mock.method(Date,"now",()=>now);
+  const harness=new PresentationStoreHarness(),session={actor:"authorized-user",projectContext:{expiresAt:new Date(now+60_000).toISOString()}};
+  harness.session={get:()=>session};
+  const listed={jobId:"private-job",documentId:"authorized-document",result:null};
+  harness.jobs=[listed];
+  const candidate={jobId:listed.jobId,documentId:listed.documentId,responseId:"private-response",title:"PRIVATE SELECTED DRAFT",slides:[]};
+  const body=operation==="list"?{jobId:listed.jobId,documentId:listed.documentId,candidates:[candidate]}:{jobId:listed.jobId,documentId:listed.documentId,candidate};
+  const gate=Promise.withResolvers(),reached=Promise.withResolvers(),calls=[];
+  t.mock.method(globalThis,"fetch",async url=>{
+    calls.push(url);if(stage==="headers"){reached.resolve();await gate.promise;}
+    return{ok:true,status:200,json:async()=>{if(stage==="body"){reached.resolve();await gate.promise;}return body;}};
+  });
+  const pending=operation==="list"?harness.loadPresentationCandidates(listed.jobId):harness.loadPresentationCandidate(listed.jobId,candidate.responseId);
+  const source=harness.captureSourceOwnership();await reached.promise;
+  if(expired)now+=60_000;
+  assert.equal(harness.sourceOwnershipScopeActive(source),true);
+  assert.equal(harness.sourceOwnershipActive(source),!expired);
+  const observed=expired?assert.rejects(pending,/current source is unavailable/u):pending;
+  gate.resolve();const result=await observed;
+  if(!expired)assert.deepEqual(result,operation==="list"?body:candidate);
+  assert.deepEqual(calls,["/api/document-jobs/private-job/presentation-candidates"+(operation==="detail"?"/private-response":"")]);
+  assert.deepEqual(harness.jobs,[listed]);assert.deepEqual(harness.contentValues,{});assert.deepEqual(harness.hydrations,[]);
+  assert.deepEqual(harness.requests,[]);assert.deepEqual(harness.budgetChecks,[]);
 });

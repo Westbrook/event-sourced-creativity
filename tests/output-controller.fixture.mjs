@@ -1,4 +1,5 @@
 // This entry does not import the application entrypoint, load sessions, or call providers.
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import "/src/components/forma-output-requirements.ts";
 import { FormaStore } from "/src/state/store.ts";
 import { OutputRequirementsClient } from "/src/state/output-requirements-client.ts";
@@ -214,6 +215,7 @@ store = {
   append: async (event) => adapter.appendFixtureEvent(event),
   setRoute: (route) => record({ type: "fixture-navigation-intent", detail: { route } }),
 };
+installSourceOwnershipPort(store);
 const isFixtureSnapshot = (value, documentId, scope) => value?.schemaVersion === 1 && value.documentId === documentId && value.projectId === scope.projectId
   && typeof value.revision === "string" && Array.isArray(value.requirements) && value.scope?.actorUserId === FIXTURE_ACTOR
   && (value.scope.kind === "personal" && value.scope.projectAccessId === null || value.scope.kind === "project" && value.scope.projectAccessId === FIXTURE_PROJECT_ACCESS);

@@ -227,6 +227,7 @@ test("a valid nonblank amendment reaches Confirm verbatim and survives a failed 
   eventHandlers(f.amendment(), "input")[0](event(raw));
   assert.equal(binding(f.amendment(), "aria-invalid"), "false");
   const pending = eventHandlers(f.review(), "submit")[0].call(f.controller, event());
+  await f.fixture.waitForRequest(pending);
   assert.equal(f.fixture.requests.length, 1);
   assert.equal(f.fixture.requests[0].action, "confirm");
   assert.equal(f.fixture.requests[0].amendmentReason, raw);

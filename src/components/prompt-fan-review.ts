@@ -36,7 +36,7 @@ export class PromptFanReview extends FormaElement {
     this.requestUpdate();
   }
 
-  async #useAsInput(output:CreativeOutput){const destination=this.store.projection.get().documentId;const result=await this.store.addImageOutputAsContext(output.id,destination,"prompt-fan-comparison",{reveal:false});if(result?.rootBlockId){this.#close();await this.store.revealOutputInput(result.rootBlockId,destination);}this.requestUpdate();}
+  async #useAsInput(output:CreativeOutput){const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;const destination=this.store.projection.get().documentId;const result=await this.store.addImageOutputAsContext(output.id,destination,"prompt-fan-comparison",{reveal:false});if(result&&!("publication"in result)&&this.store.sourceOwnershipActive(sourceOwner)&&result.rootBlockId){this.#close();await this.store.revealOutputInput(result.rootBlockId,destination);}this.requestUpdate();}
   #inputLabel(output:CreativeOutput,technique:string){const adopted=this.store.projection.get().blocks.some((block)=>block.properties.source_output_id===output.id);if(this.store.route.get().startsWith("/canvas/"))return`${this.i18n.t(adopted?"projects.editCreator":"projects.useEditCreator",adopted?"Edit in Creator Workspace":"Use & edit in Creator Workspace")}: \u2068${technique}\u2069`;return`${adopted?"Edit":"Use and edit"} the ${technique} image as input`;}
 
   #fans() {

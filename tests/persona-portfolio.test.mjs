@@ -238,7 +238,12 @@ test("shared downloads, invitation secrets, review links, and delayed mutations 
   assert.match(store,/captureAuthorizationScope\(\):CapturedAuthorizationScope\|null/);
   assert.match(store,/authorizeProjectExport\(event:EventInput,expectedScope:CapturedAuthorizationScope\|null/);
   assert.match(store,/if\(!session\|\|!expectedScope\|\|!this\.authorizationScopeActive\(expectedScope\)\)return false/);
-  assert.match(store,/const authorization=this\.#activeAuthorizationScope\(\),pending=this\.#appendPipeline\.then\(\(\)=>this\.#scopeStillActive\(authorization\)/);
+  assert.ok(
+    /const pending=this\.#appendPipeline\.then\(\(\)=>this\.#appendBatchNow\(retained,options,observation\)\)/.test(store)
+    && /const source=observation\.source,active=\(\)=>this\.sourceOwnershipActive\(source\)&&!observation\.paused/.test(store)
+    && /sourceOwnershipActive\(source:CapturedSourceOwnership\|null\):boolean\{[\s\S]*?this\.sourceOwnershipScopeActive\(source\)/.test(store)
+    && /sourceOwnershipScopeActive\(source:CapturedSourceOwnership\|null\):boolean\{[\s\S]*?this\.authorizationScopeActive\(source\.authorization\)/.test(store),
+    "Queued appends retain their exact original source owner and authorization before dispatch");
   assert.match(store,/#sessionRevision=0/);
   for(const source of [outputs,artifacts,presentations]){
     assert.match(source,/captureAuthorizationScope\(\)/);

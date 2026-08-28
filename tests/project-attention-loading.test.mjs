@@ -18,8 +18,12 @@ function method(name) {
 // The current store separates free job reading from paid output permission.
 // Keep its accepted recovery helpers intact in this focused job-history host.
 function recoveryHelpers() {
-  const present = new Set(["#jobDetails", "#dismissedAdaptiveSuggestions", "#authorizationScope", "#scopeStillActive", "#assertAuthorizationScope"]);
-  const pending = ["#canReadProjectJobs", "planningRecoveryEntries", "#observeAdaptivePlanningJob", "#revalidateMissingAdaptivePlans"];
+  const present = new Set(["#jobDetails", "#dismissedAdaptiveSuggestions"]);
+  // Public ownership calls do not appear as PrivateIdentifier nodes. Seed their
+  // actual methods, then retain their private identity, branding and expiry closure.
+  const pending = ["captureSourceOwnership", "sourceOwnershipScopeActive", "sourceOwnershipActive",
+    "captureAuthorizationScope", "authorizationScopeActive", "#assertSourceOwnership",
+    "#canReadProjectJobs", "planningRecoveryEntries", "#observeAdaptivePlanningJob", "#revalidateMissingAdaptivePlans"];
   const copied = [];
   while (pending.length) {
     const name = pending.shift();
@@ -45,7 +49,7 @@ const window={clearTimeout:()=>{}};
 class State {constructor(value){this.value=value;}get(){return this.value;}set(value){this.value=value;}}
 export class JobLoadingStore {
   route=new State("/document/document-a/fixture");
-  session=new State({user:{userId:"fixture-actor"},projects:[],capabilities:["project.read"]});
+  session=new State({user:{userId:"fixture-actor"},projects:[],capabilities:["project.read"],permissionEpoch:"fixture-epoch",policy:{version:"fixture-policy",accepted:true}});
   projection=new State({projectId:"project-a",documents:[]});
   content=new State({});events=new State([]);
   planningConsent=new State(null);adaptiveSuggestionSets=new State({});
@@ -56,9 +60,6 @@ export class JobLoadingStore {
   #jobPollTimer=0;#pendingPassiveJobPath="";#jobPollFailures=0;#jobPollIssueNotified=false;
   #pendingJobEventRefresh=false;#pendingJobSessionRefresh=false;
   #dismissedAdaptiveSuggestions=new Set();#pendingJobNotices=[];
-  #authorizationScope(session){return session.user.userId;}
-  #scopeStillActive(authorization){return this.session.get()?.user.userId===authorization;}
-  #assertAuthorizationScope(authorization){if(!this.#scopeStillActive(authorization))throw new Error("authorization_changed");}
   async #refreshEvents(){throw new Error("existing notified failures must not rewrite history");}
   async refreshSession(){return this.session.get();}
   #syncAdaptiveSuggestionSets(){}
@@ -129,7 +130,7 @@ test("real store polling keeps failed jobs when moving from a Document to Projec
 
 test("Project overview does not request jobs for a principal without project output permission", async (context) => {
   const store = new JobLoadingStore();
-  store.session.set({ user: { userId: "fixture-viewer" }, projectContext: { projectId: "project-a", permissions: [] } });
+  store.session.set({ user: { userId: "fixture-viewer" }, projectContext: { projectId: "project-a", permissions: [] }, permissionEpoch: "fixture-denied", policy: { version: "fixture-policy", accepted: true } });
   context.mock.method(globalThis, "fetch", async () => { throw new Error("unauthorized job request"); });
   store.show("/studio/project");
   await store.syncDocumentJobs();
@@ -137,3 +138,122 @@ test("Project overview does not request jobs for a principal without project out
   assert.deepEqual(store.schedules, []);
   assert.deepEqual(store.writes, []);
 });
+
+function scopedAttentionSession(expiresAt) {
+  return {
+    user: { userId: "fixture-reader" }, permissionEpoch: "fixture-reader-epoch",
+    policy: { version: "fixture-policy", accepted: true }, capabilities: [],
+    projectContext: { projectId: "project-a", organizationId: "fixture-organization",
+      projectAccessId: "fixture-project-access", ownerUserId: "fixture-owner",
+      permissions: ["project.read"], expiresAt },
+  };
+}
+
+function attentionFailure() {
+  return { jobId: "retained-failure", documentId: "document-a", kind: "render_document",
+    status: "failed", dismissedAt: null, members: [],
+    notifiedAt: "2026-08-27T15:30:00.000Z", updatedAt: "2026-08-27T15:29:00.000Z",
+    result: { artifactKind: "slides", generationReceipt: { actual_provider_call_count: 2 },
+      privateFixtureText: "only the current owned response may publish this body" } };
+}
+
+test("job-history fixture uses the actual Store-instance source ownership brand", () => {
+  const store = new JobLoadingStore(), other = new JobLoadingStore();
+  const token = store.captureSourceOwnership();
+  assert.ok(token);
+  assert.equal(Object.isFrozen(token), true);
+  assert.equal(Object.isFrozen(token.authorization), true);
+  assert.equal(store.sourceOwnershipActive(token), true);
+  assert.equal(store.sourceOwnershipScopeActive(token), true);
+  assert.equal(store.sourceOwnershipActive({ ...token }), false, "equal fields do not manufacture a Store-owned ticket");
+  assert.equal(store.sourceOwnershipScopeActive({ ...token }), false);
+  assert.equal(other.sourceOwnershipActive(token), false, "the same actor in another Store cannot own this ticket");
+  assert.equal(store.sourceOwnershipActive(other.captureSourceOwnership()), false);
+  store.session.set(null);
+  assert.equal(store.captureSourceOwnership(), null);
+  assert.equal(store.sourceOwnershipScopeActive(token), false);
+  assert.equal(store.sourceOwnershipActive(token), false);
+});
+
+for (const state of ["current", "expired", "invalid"]) {
+  test("project job polling keeps actual selected-source deadline checks: " + state, async (context) => {
+    const now = Date.UTC(2026, 7, 28, 12);
+    context.mock.method(Date, "now", () => now);
+    const store = new JobLoadingStore();
+    const expiresAt = state === "invalid" ? "not-an-expiry"
+      : new Date(now + (state === "current" ? 60_000 : -1)).toISOString();
+    store.session.set(scopedAttentionSession(expiresAt));
+    store.route.set("/studio/project");
+    const token = store.captureSourceOwnership(), requests = [], failed = attentionFailure();
+    context.mock.method(globalThis, "fetch", async (path, options) => {
+      assert.equal(options?.method ?? "GET", "GET");
+      assert.equal(path, "/api/document-jobs", "only the ordinary free job-history endpoint is read");
+      requests.push(path);
+      return Response.json({ jobs: [failed] });
+    });
+    assert.equal(store.session.get().projectContext.permissions.includes("project.output.request"), false);
+    assert.equal(store.sourceOwnershipScopeActive(token), true, "original scope bookkeeping is not permission to publish expired content");
+    assert.equal(store.sourceOwnershipActive(token), state === "current");
+    await store.syncDocumentJobs();
+    assert.deepEqual(requests, state === "current" ? ["/api/document-jobs"] : []);
+    assert.deepEqual(store.documentJobs.get(), state === "current" ? [failed] : []);
+    assert.deepEqual(store.schedules, state === "current" ? [60_000] : []);
+    assert.deepEqual(store.writes, []);
+  });
+}
+
+for (const change of ["none", "captured-expiry-renewed", "current-expiry-shortened", "permission-epoch", "actor", "project-access"]) {
+  test("a delayed job page preserves the actual original source owner: " + change, { timeout: 5_000 }, async (context) => {
+    let now = Date.UTC(2026, 7, 28, 12);
+    context.mock.method(Date, "now", () => now);
+    const deadline = now + 1_000, store = new JobLoadingStore();
+    const session = scopedAttentionSession(new Date(deadline).toISOString());
+    store.session.set(session);
+    const token = store.captureSourceOwnership(), failed = attentionFailure(), requests = [];
+    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    context.after(() => release.resolve());
+    context.mock.method(globalThis, "fetch", async (path, options) => {
+      assert.equal(options?.method ?? "GET", "GET");
+      assert.equal(path, "/api/document-jobs?document=document-a");
+      requests.push(path);
+      const response = Response.json({ jobs: [failed] }), read = response.json.bind(response);
+      response.json = async () => {
+        const body = await read();
+        entered.resolve();
+        await release.promise;
+        return body;
+      };
+      return response;
+    });
+    const pending = store.syncDocumentJobs();
+    await entered.promise;
+    if (change === "captured-expiry-renewed") {
+      now = deadline + 1;
+      store.session.set({ ...session, projectContext: { ...session.projectContext,
+        expiresAt: new Date(now + 60_000).toISOString() } });
+      assert.equal(store.captureAuthorizationScope().key, token.authorization.key);
+      assert.equal(store.sourceOwnershipActive(store.captureSourceOwnership()), true, "a new healthy capture cannot revive the expired original read");
+    } else if (change === "current-expiry-shortened") {
+      store.session.set({ ...session, projectContext: { ...session.projectContext,
+        expiresAt: new Date(now - 1).toISOString() } });
+    } else if (change === "permission-epoch") {
+      store.session.set({ ...session, permissionEpoch: "fixture-revoked-epoch",
+        projectContext: { ...session.projectContext, permissions: [] } });
+    } else if (change === "actor") {
+      store.session.set({ ...session, user: { userId: "another-actor" } });
+    } else if (change === "project-access") {
+      store.session.set({ ...session, projectContext: { ...session.projectContext, projectAccessId: "another-project-access" } });
+    }
+    assert.equal(store.sourceOwnershipActive(token), change === "none");
+    release.resolve();
+    await pending;
+    assert.deepEqual(requests, ["/api/document-jobs?document=document-a"], "withdrawal never schedules another actor's request");
+    assert.deepEqual(store.documentJobs.get(), change === "none" ? [failed] : []);
+    assert.deepEqual(store.schedules, change === "none" ? [60_000] : []);
+    assert.deepEqual(store.writes, []);
+    if (change === "permission-epoch") {
+      await store.syncDocumentJobs();
+      assert.equal(requests.length, 1, "the new denied principal cannot start a replacement read");
+    }
+  });
+}

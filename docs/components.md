@@ -560,3 +560,30 @@ contract, and generated manifest agrees.
 
 `DESIGN.md` owns visual and interaction policy; `ARCHITECTURE.md` owns
 authorization, application boundaries, and protected delivery contracts.
+
+## Exact artifact review and export entry
+
+Document, Canvas, Activity, Library, and Deliver retain the same generated artifact,
+source-health projection, review events, assignment records, and export executor.
+`forma-document-artifacts.openArtifactById` accepts an expected revision, an
+optional SHA-256 of the exact retained content, and an `inspect`, `review`, or
+`export` disclosure intent. These intents never approve, download, or generate
+anything by themselves. Canvas may provide a current-scope callback; it checks
+source and board identity while opening and preserves authorized output editing
+after the viewer has opened. Source changes still invalidate review and release.
+
+Revision links preserve their requested revision and hash. A stale link offers an
+explicit way to open the current output rather than substituting it. The shared
+viewer displays the actual retained byte hash, exact review assignment, current
+source blockers, and existing export choices. Each action remains server-checked
+against current permissions, independent authorship, retained bytes, rights, and
+revision at commit. The standard buttons, disclosure, native modal, and focus
+foundation remain in use; no new visual primitive is introduced.
+
+A `DocumentArtifactExported` event is the existing pre-download authorization
+receipt. It does not prove a completed local download or recipient delivery.
+Independent approval records, export acknowledgments, and saved work are counted
+separately. Unmanaged legacy outputs without a source manifest retain a clearly
+labeled **Export unreviewed draft** path, with current access, rights, private
+retention, and exact bytes checked. They are never counted as independently
+approved delivery, and inspecting or exporting them does not require new spending.

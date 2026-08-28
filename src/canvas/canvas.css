@@ -368,3 +368,7 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
 
 .application-canvas .canvas-view-actions { display:grid; }
 .application-canvas .canvas-view-menu .ui-popover-panel { max-block-size:min(34rem,var(--forma-popover-max-height,calc(100dvb - 1rem))); }
+
+/* Queue durability uncertainty stays readable in the existing status area, not an overlay. */
+.canvas-commandbar:has(>.canvas-storage-status){flex-wrap:wrap}
+.canvas-commandbar>.canvas-storage-status{display:block;flex:1 0 100%;grid-column:1 / -1;min-inline-size:0;max-inline-size:100%;margin:0;color:var(--accent-strong);font-size:var(--type-caption);line-height:1.45;white-space:normal;overflow-wrap:anywhere}

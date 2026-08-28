@@ -1,4 +1,5 @@
 import { artifactReviewState } from "./context-health.ts";
+import { artifactReviewBindingMatches, artifactReviewParticipants } from "./artifact-delivery.ts";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactRevision, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput, CreativeProjection } from "./events.ts";
 import type { ProductionFormat } from "./managed-production.ts";
@@ -372,7 +373,9 @@ export function productionWorkflowStageStates(
       if (!artifact) status = "complete";
       else {
         const review = artifactReviewState(artifact, projection.libraryBlocks, events);
-        status = review.status === "approved" ? "approved"
+        status = review.status === "approved" && (!workflow.approvalRequired || artifactReviewBindingMatches(
+          artifact, events, documentArtifactRevision(events, artifact.id), artifactReviewParticipants(artifact, events).latest?.payload.content_sha256,
+        )) ? "approved"
           : review.status === "stale" || review.status === "unverified" ? "stale"
           : review.status === "changes-requested" ? "changes-requested"
           : review.status === "in-review" ? "in-review"
@@ -393,7 +396,8 @@ export function productionWorkflowStageStates(
       if (review.status === "stale" || review.status === "unverified") status = "stale";
       else if (review.status === "changes-requested") status = "changes-requested";
       else if (stage.approvalRequired || stage.source.approvalRequired) {
-        status = review.status === "approved" ? "approved" : review.status === "in-review" ? "in-review" : "needs-review";
+        status = review.status === "approved" && artifactReviewBindingMatches(artifact, events, stage.source.revision, stage.source.contentSha256)
+          ? "approved" : review.status === "in-review" ? "in-review" : "needs-review";
       } else status = review.status === "approved" ? "approved" : "selected";
     }
     states.set(stage.id, {

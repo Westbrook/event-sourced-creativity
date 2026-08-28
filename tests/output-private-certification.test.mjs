@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import ts from "typescript";
-import { eventHandlers } from "./output-ui-source-harness.mjs";
+import { eventHandlers, snapshot as scopedSnapshot } from "./output-ui-source-harness.mjs";
 
 // Reuse the real client, Store methods and complete Output controller fixtures.
 // Only test registration is omitted; transport streams are explicit no-network ports.
@@ -26,6 +26,7 @@ const clientFixture = await declarations("./output-client-freshness.test.mjs",
   ["fixture", "start", "sample", "committed", "command", "assertHidden", "assertReceipt", "bodyGate", "privateError", "tick"]);
 const delay = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const failureKinds = ["valid", "http-error", "malformed", "body-error", "wrong-scope"];
+const isWrite = action => action === "command" || action === "upload";
 function finishGate(gate, kind, value) {
   if (kind === "body-error") gate.fail();
   else gate.finish(kind === "malformed" ? "{" : kind === "http-error" ? { error: "service_unavailable" } : value);
@@ -71,6 +72,26 @@ for (const first of ["read", "command", "upload", "download"]) for (const status
       const f = clientFixture.fixture(); await f.warm();
       const originalHeaders = delay(); f.enqueue(originalHeaders.promise);
       const original = clientFixture.start(f, first);
+      await clientFixture.tick(); // Bind the first FIFO reply to its actual dispatch before queuing a replacement.
+      if (isWrite(first) && isWrite(replacement)) {
+        // A same-Document second mutation is deliberately not dispatched while
+        // the original remains pending. It cannot own a second private response.
+        const owner = f.client.retainedWrite("doc-a"), calls = f.calls.length;
+        try {
+          const result = await clientFixture.start(f, replacement);
+          assert.equal(result.status, "not-attempted");
+          assert.equal(f.calls.length, calls, "no second POST or consumption of an invented response");
+          assert.deepEqual(f.client.retainedWrite("doc-a"), owner);
+        } finally {
+          originalHeaders.resolve(Response.json(clientFixture.privateError(status), { status }));
+          await original;
+        }
+        clientFixture.assertHidden(f, status);
+        assert.equal(f.client.retainedWrite("doc-a").clientMutationId, owner.clientMutationId);
+        assert.equal(f.client.retainedWrite("doc-a").status, "unknown");
+        assert.equal(f.calls.length, calls);
+        return;
+      }
       const gate = clientFixture.bodyGate(), nextHeaders = delay();
       f.enqueue(headers === "before-denial" ? gate.response : nextHeaders.promise);
       const pending = clientFixture.start(f, replacement); await clientFixture.tick();
@@ -97,9 +118,27 @@ for (const first of ["read", "command", "upload", "download"]) for (const status
 
 for (const first of ["read", "command", "upload", "download"]) for (const status of [401, 403, 404, 410])
   for (const replacement of ["command", "upload"])
-    test("fully certified newer " + replacement + " protects Output against old " + first + status, async () => {
+    test((isWrite(first) ? "same-Document second " + replacement + " is not-attempted behind old " : "fully certified newer " + replacement + " protects Output against old ") + first + status, async () => {
       const f = clientFixture.fixture(); await f.warm();
       const oldHeaders = delay(); f.enqueue(oldHeaders.promise); const old = clientFixture.start(f, first);
+      await clientFixture.tick();
+      if (isWrite(first)) {
+        const owner = f.client.retainedWrite("doc-a"), calls = f.calls.length;
+        try {
+          const result = await clientFixture.start(f, replacement);
+          assert.equal(result.status, "not-attempted");
+          assert.equal(f.calls.length, calls);
+          assert.deepEqual(f.client.retainedWrite("doc-a"), owner);
+        } finally {
+          oldHeaders.resolve(Response.json(clientFixture.privateError(status), { status }));
+          await old;
+        }
+        clientFixture.assertHidden(f, status);
+        assert.equal(f.client.retainedWrite("doc-a").clientMutationId, owner.clientMutationId);
+        assert.equal(f.client.retainedWrite("doc-a").status, "unknown");
+        assert.equal(f.calls.length, calls);
+        return;
+      }
       f.enqueue(Response.json(clientFixture.committed(replacement === "upload" ? "adopt" : "save", "already-certified")));
       await clientFixture.start(f, replacement);
       const resource = f.client.resource("doc-a");
@@ -133,6 +172,7 @@ for (const change of ["permission", "project", "sign-out-return", "aba"]) for (c
   test("old " + action + " denial cannot retire the new " + change + " epoch's pending private view", async () => {
     const f = clientFixture.fixture(); await f.warm();
     const headers = delay(); f.enqueue(headers.promise); const old = clientFixture.start(f, action);
+    await clientFixture.tick(); // The old request must capture/enter its original scope, not the replacement epoch.
     const originalScope = { key: "fixture-actor:project:1", projectId: "fixture-project" };
     const newerScope = { key: "fixture-actor:project:2", projectId: change === "project" ? "other-project" : "fixture-project" };
     f.setScope(change === "sign-out-return" ? null : newerScope); f.client.resource("doc-a");
@@ -147,3 +187,40 @@ for (const change of ["permission", "project", "sign-out-return", "aba"]) for (c
     gate.finish(clientFixture.sample("current-epoch-finished", projectId)); await Promise.all([pending, duplicate]);
     assert.equal(f.client.resource("doc-a").snapshot.revision, "current-epoch-finished");
   });
+
+
+// Preserve genuine parallel-mutation privacy coverage with two separate actual
+// client Document owners. HTTP bodies remain explicitly synthetic test ports.
+for (const first of ["command", "upload"]) for (const status of [401, 403, 404, 410])
+  for (const replacement of ["command", "upload"])
+    test("certified separate-Document " + replacement + " survives original " + first + status + " without replacing its owner", async () => {
+      const f = clientFixture.fixture(); await f.warm();
+      const headers = delay(); f.enqueue(headers.promise);
+      const original = clientFixture.start(f, first); await clientFixture.tick();
+      const owner = f.client.retainedWrite("doc-a"), nextId = "independent-doc-b-operation", next = scopedSnapshot("doc-b", "already-certified");
+      next.requirements[0].content = clientFixture.sample().requirements[0].content;
+      next.requirements[0].spec.original_text = next.requirements[0].content;
+      const body = { ...clientFixture.committed(replacement === "upload" ? "adopt" : "save", "already-certified"), snapshot: next };
+      f.enqueue(Response.json(body));
+      let resource;
+      try {
+        const result = replacement === "command"
+          ? await f.client.command("doc-b", { ...clientFixture.command, clientMutationId: nextId }, "SYNTHETIC independent Document write")
+          : await f.client.upload("doc-b", new Blob(["owned bytes"]), { "x-output-client-mutation-id": nextId });
+        assert.equal(result.status, "saved");
+        resource = f.client.resource("doc-b");
+        assert.equal(resource.snapshot.documentId, "doc-b"); assert.equal(resource.snapshot.revision, "already-certified");
+        assert.equal(f.client.retainedWrite("doc-b").clientMutationId, nextId);
+        assert.equal(f.client.retainedWrite("doc-b").status, "acknowledged");
+        assert.deepEqual(f.client.retainedWrite("doc-a"), owner, "another Document never replaces the original write owner");
+      } finally {
+        headers.resolve(Response.json(clientFixture.privateError(status), { status })); await original;
+      }
+      clientFixture.assertHidden(f, status);
+      assert.equal(f.client.resource("doc-b"), resource);
+      assert.equal(resource.snapshot.revision, "already-certified"); assert.notEqual(resource.privateUnavailable, true);
+      assert.equal(f.client.retainedWrite("doc-a").clientMutationId, owner.clientMutationId);
+      assert.equal(f.client.retainedWrite("doc-a").status, "unknown");
+      assert.equal(f.client.retainedWrite("doc-b").clientMutationId, nextId);
+      assert.equal(f.calls.filter(call => call.method === "POST").length, 2, "one explicit operation per Document; no replay or third request");
+    });

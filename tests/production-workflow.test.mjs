@@ -393,16 +393,19 @@ test("an exact independently approved artifact unlocks its dependent stage witho
   const result = workflow("scene", true);
   result.stages[0].enabled = true;
   result.stages[0].source = artifactSource("short_story", "event-4", { approvalRequired: true });
+  const contentSha256 = createHash("sha256").update(JSON.stringify({ content_markdown: "Exact source under independent review", items: [] })).digest("hex");
+  result.stages[0].source.contentSha256 = contentSha256;
+  const exact = { artifact_id: "short_story", document_id: "document", artifact_revision: 0, content_sha256: contentSha256 };
   const rows = [...foundation(), artifactEvent(4, "short_story")];
   let projection = foldEvents(rows, Number.POSITIVE_INFINITY, "document");
   let states = productionWorkflowStageStates(result, projection, rows);
   assert.equal(states[0].status, "needs-review");
   assert.equal(states[1].status, "blocked");
-  rows.push(event(5, "ArtifactReviewRequested", { artifact_id: "short_story", document_id: "document" }));
+  rows.push(event(5, "ArtifactReviewRequested", { ...exact, assigned_reviewer_user_id: "independent-reviewer" }, "user:owner"));
   projection = foldEvents(rows, Number.POSITIVE_INFINITY, "document");
   states = productionWorkflowStageStates(result, projection, rows);
   assert.equal(states[0].status, "in-review");
-  rows.push(event(6, "ArtifactApproved", { artifact_id: "short_story", document_id: "document" }, "user:independent-reviewer"));
+  rows.push(event(6, "ArtifactApproved", exact, "user:independent-reviewer"));
   projection = foldEvents(rows, Number.POSITIVE_INFINITY, "document");
   states = productionWorkflowStageStates(result, projection, rows);
   assert.equal(states[0].status, "approved");
@@ -417,10 +420,15 @@ test("edited upstream revisions become stale and transitively block all enabled 
   result.stages[0].enabled = true;
   result.stages.find((stage) => stage.format === "scene").enabled = true;
   result.stages[0].source = artifactSource("short_story", "event-4", { approvalRequired: true });
-  const rows = [...foundation(), artifactEvent(4, "short_story"), event(5, "ArtifactApproved", { artifact_id: "short_story", document_id: "document" })];
+  const contentSha256 = createHash("sha256").update(JSON.stringify({ content_markdown: "The exact approved upstream output", items: [] })).digest("hex");
+  result.stages[0].source.contentSha256 = contentSha256;
+  const exact = { artifact_id: "short_story", document_id: "document", artifact_revision: 0, content_sha256: contentSha256 };
+  const rows = [...foundation(), artifactEvent(4, "short_story"),
+    event(5, "ArtifactReviewRequested", { ...exact, assigned_reviewer_user_id: "independent-reviewer" }, "user:owner"),
+    event(6, "ArtifactApproved", exact, "user:independent-reviewer")];
   let states = productionWorkflowStageStates(result, foldEvents(rows, Number.POSITIVE_INFINITY, "document"), rows);
   assert.equal(states[0].status, "approved");
-  rows.push(event(6, "DocumentArtifactEdited", { artifact_id: "short_story", document_id: "document" }));
+  rows.push(event(7, "DocumentArtifactEdited", { artifact_id: "short_story", document_id: "document" }));
   states = productionWorkflowStageStates(result, foldEvents(rows, Number.POSITIVE_INFINITY, "document"), rows);
   assert.equal(states[0].status, "stale");
   assert.equal(states.find((stage) => stage.stage.format === "scene").status, "blocked");

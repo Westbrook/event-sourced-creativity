@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { canvasLegacySourceOwnership } from "./helpers/canvas-source-queue-host.mjs";
 import test from "node:test";
 import fs from "node:fs";
 import ts from "typescript";
@@ -331,6 +332,7 @@ function fixture(options = {}) {
     guardedFetch:async(url,options)=>{const body=JSON.parse(options.body);state.requests.push({url,body});const reply=state.replies.shift();assert.ok(reply,"Mock response prepared for "+url);return{ok:reply.ok!==false,json:async()=>reply.body??reply};},
     structureAdaptive:async(...args)=>{state.requests.push({kind:"adaptive",args});return false;},ensurePrivateContent:async()=>assert.fail("Fixture content is already hydrated"),
   };
+  if(options.storeHost)f.store=options.storeHost.store;else canvasLegacySourceOwnership(f.store);
   f.renderer = new RendererPort(f,registry);
   f.tick = async()=>{await Promise.resolve();f.draw();return true;};
   activeFixture=f;f.host=new CanvasApplication();f.host.isConnected=true;f.host.connectedCallback();
