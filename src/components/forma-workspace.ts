@@ -96,6 +96,19 @@ export class FormaWorkspace extends FormaElement {
     });
   }
 
+
+  /** Panel-only navigation. The existing Output controller still owns exact focus and all decisions. */
+  revealOutputNavigation(documentId:string,current:()=>boolean):boolean{
+    const projection=this.store.projection.get(),session=this.store.session.get(),context=session?.projectContext;
+    const permissions=context?.permissions??session?.capabilities??[];
+    if(!this.isConnected||!current()||!session||!this.store.captureAuthorizationScope()||!permissions.includes("project.read")
+      ||projection.documentId!==documentId||!projection.documents.some(value=>value.id===documentId&&value.projectId===projection.projectId&&!value.removed)
+      ||context&&context.projectId!==projection.projectId||this.#blockDraft||this.#proposal||this.#formatChoiceOpen||this.#artifactViewerOpen
+      ||document.querySelector("dialog[open]")||document.querySelector(".output-requirement-form")||document.querySelector(".output-plan-review"))return false;
+    if(this.#workbenchPane!=="write")this.#selectWorkbenchPane("write");
+    return true;
+  }
+
   #selectWorkbenchPane(pane:"write"|"result"|"review"){
     this.#workbenchPane=pane;
     this.requestUpdate();

@@ -1,4 +1,17 @@
+import type { FormaOutputRequirements } from "../components/forma-output-requirements";
+import { outputNavigationMatches } from "../model/output-navigation";
+import { outputSourceReadiness } from "../components/output-source-readiness";
+import { FORMA_OUTPUT_DELIVERY_MESSAGES, outputDeliveryLabelKey, type OutputDeliveryLabelCategory } from "../components/design-system/locales/output-delivery-messages";
+import { documentContextBlockRoute, documentIdFromRoute, withDocumentInRoute } from "../model/routes";
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
+import { renderOutcomeDesk, renderOutcomeArrangementReview, restoreOutcomeDeskFocus } from "../components/outcome-desk";
+import { outcomeDeskCopy } from "../components/design-system/locales/outcome-recipe-messages";
+import { outcomeDeskIntegrationCopy, outcomeDeskLocale } from "../components/design-system/locales/outcome-desk-integration-messages";
+import { OUTCOME_RECIPES, outcomeRecipe } from "../model/outcome-recipes";
+import { outcomeDeskOutputSnapshot, projectOutcomeDesk, followOutcomeDeskAction, outcomeDeskRouteState, withOutcomeDeskPosture, withOutcomeDeskSelection, withOutcomeRecipe, type OutcomeDeskAction, type OutcomeDeskRow } from "../model/outcome-desk";
+import { outcomeDeskHostActions, outcomeDeskHostActionAvailable, outcomeDeskPreparationActions, type OutcomeDeskTarget } from "./outcome-desk-host";
+import { isProtectedOutcomeArrangementEvent, outcomeArrangementSelectionIds } from "./outcome-arrangements";
+import { OutcomeArrangementController, currentOutcomeArrangementContext, outcomeArrangementOperationFromRoute, withOutcomeArrangementOperation } from "../state/outcome-desk-controller";
 import { html, nothing, type TemplateResult } from "lit";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -10,7 +23,7 @@ import { localizeTemplateResult } from "../components/design-system/localized-te
 import { FormaElement, icon } from "../components/forma-element";
 import type { FormaIconName } from "../components/icons";
 import { ensureModalDialog } from "../components/modal-dialog";
-import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
+import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
 import { renderVideoReel } from "../components/video-reel";
 import { renderAudioPlayer, renderIncludedSoundtrackTranscripts, renderSoundtrackCompanions as renderAudioCompanions } from "../components/audio-playback";
 import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type AdaptiveStructure, type BlockGroup, type BlockKind } from "../model/block-types";
@@ -89,6 +102,25 @@ const canvasSyncMessage=(reason:string,eventTypes:string[],localize:(source:stri
 
 export class CanvasApplication extends FormaElement {
   #selected=new Set<string>();
+  #deskDismissed=new Set<string>();
+  #arrangementOpen=false;
+  #arrangementOpening=0;
+  #arrangementOpeningScope="";
+  #deskFocusVersion=0;
+  #arrangementName="";
+  #arrangementReturnFocus?:HTMLElement;
+  #arrangementCheckedStamp="";
+  #arrangementUndoRequest:unknown;
+  #arrangement=new OutcomeArrangementController({
+    scope:()=>this.#arrangementScope(),stamp:()=>this.#arrangementStamp(),
+    context:()=>currentOutcomeArrangementContext(this.store,[...this.#selected],this.#site(),this.#offline.count===0),
+    post:(command,controls)=>this.store.canvasArrangementRequest(command,controls),
+    remember:(identity)=>this.store.setRoute(withOutcomeArrangementOperation(this.store.route.get(),identity.operationId),{replace:true}),
+    recoveryIdentity:()=>{const scope=this.#arrangementScope(),operationId=outcomeArrangementOperationFromRoute(this.store.route.get());return scope&&operationId?{projectId:scope.projectId,canvasId:scope.canvasId,operationId}:null;},
+    captureRecoveryOwnership:(invalidated)=>this.#captureArrangementRecovery(invalidated),
+    captureRefusalOwnership:(invalidated)=>this.#captureArrangementRecovery(invalidated,true),
+    refresh:()=>this.store.refreshEvents(),changed:()=>this.requestUpdate(),operationId:uid,now:()=>Date.now(),
+  });
   #controlsScope="";
   #popoverRoute="";
   #viewTriggerId=nextFormaId("canvas-view-toggle");
@@ -263,7 +295,7 @@ export class CanvasApplication extends FormaElement {
     if(scope!==this.#controlsScope||route!==this.#popoverRoute){this.#disposeControlsFocus();this.#closePopovers();}
     this.#popoverRoute=route;
     if([...this.#selected].some((id)=>!canvas.items.some((item)=>item.id===id)))this.querySelector<FormaUiPopover>(".canvas-organize-control")?.close();
-    const selection=JSON.stringify([scope,canvasViewFromRoute(this.store.route.get()),[...this.#selected].sort()]);
+    const selection=JSON.stringify([scope,canvasViewFromRoute(this.store.route.get()),outcomeDeskRouteState(this.store.route.get()).posture,[...this.#selected].sort()]);
     if(selection!==this.#selectionKey){
       this.#disposeControlsFocus();
       for(const hud of this.querySelectorAll<HTMLElement>(".canvas-selection-hud"))suspendContextControls(hud);
@@ -271,13 +303,14 @@ export class CanvasApplication extends FormaElement {
     }
     if(this.#controlsScope&&scope!==this.#controlsScope){
       this.#closeAdd(false);this.#closeDocumentOutputs(false);this.#selectionContexts.clear();
+      this.#closeArrangement(false);this.#arrangementName="";this.#arrangementReturnFocus=undefined;this.#deskDismissed.clear();
       this.#newBlockTitle="";this.#newBlockBody="";this.#sourceQuery="";this.#selectedSourceIds.clear();this.#addKind="start";
       this.#addReturnFocus=undefined;this.#outputsReturnFocus=undefined;
     }
     if(this.#documentOutputsOpen&&!canvas.items.some((item)=>item.id===this.#documentOutputsItemId&&item.sourceKind==="document"&&item.sourceId===this.#outputsDocumentId))this.#closeDocumentOutputs(false);
     this.#controlsScope=scope;this.#selectionKey=selection;
   }
-  #disposeControlsFocus(){this.#controlsFocus?.dispose();this.#controlsFocus=undefined;}
+  #disposeControlsFocus(){this.#controlsFocus?.dispose();this.#controlsFocus=undefined;this.#arrangement.retireRecovery();}
   #returnControlsFocus(opener?:HTMLElement){
     this.#disposeControlsFocus();
     const scope=this.#controlsScope,route=this.store.route.get(),selection=JSON.stringify([...this.#selected].sort());
@@ -305,6 +338,16 @@ export class CanvasApplication extends FormaElement {
     this.querySelectorAll<HTMLDialogElement>("dialog.modal").forEach((dialog)=>{if(dialog.dataset.canvasTopLayer==="true")return;dialog.dataset.canvasTopLayer="true";ensureModalDialog(dialog);});
     const canvas=this.store.canvasProjection.get();const canvasId=canvas.selectedCanvasId;
     this.store.setCanvasPlanningSelection([...this.#selected]);
+    if(outcomeDeskRouteState(this.store.route.get()).posture==="outcomes"){const current=this.#deskCurrent();
+      if(current.facts.canRead&&["loading","refreshing"].includes(current.output?.resource.state??""))void this.store.outputRequirements.ensure(current.facts.documentId);
+    }
+    const arrangementStamp=this.#arrangementStamp();
+    if(arrangementStamp!==this.#arrangementCheckedStamp){this.#arrangementCheckedStamp=arrangementStamp;void this.#arrangement.revalidate();}
+    const undoRequest=this.store.canvasArrangementUndoRequest.get();
+    if(undoRequest&&undoRequest!==this.#arrangementUndoRequest){this.#arrangementUndoRequest=undoRequest;this.store.canvasArrangementUndoRequest.set(null);
+      if(undoRequest.authorityKey===this.store.captureAuthorizationScope()?.key&&undoRequest.canvasId===canvasId
+        &&undoRequest.projectId===canvas.projectId)void this.#reviewArrangementUndo(undoRequest.operationId);
+    }
     if(canvasId&&canvasId!==this.#interactionCanvas){this.#interactionCanvas=canvasId;this.#trackCanvasInteraction("board_opened",{item_count:canvas.items.length});}
     if(canvasId&&canvasId!==this.#presenceCanvas){this.#presenceHub?.disconnect();const user=this.store.session.get()?.user;this.#presenceHub=new CanvasPresenceHub({userId:user?.userId??"anonymous",name:user?.displayName??"You"});this.#presenceHub.subscribe((presence)=>{this.#presence=presence;this.requestUpdate();});this.#presenceHub.connect(canvasId,canvas.projectId);this.#presenceCanvas=canvasId;}
     const viewport=this.querySelector<HTMLElement>(".canvas-viewport");if(viewport!==this.#viewportElement){this.#viewportObserver?.disconnect();this.#bindTouchViewport(this.#viewportElement,false);this.#viewportElement=viewport??undefined;this.#viewportSize=viewport?{width:viewport.clientWidth,height:viewport.clientHeight}:undefined;this.#bindTouchViewport(this.#viewportElement,true);if(viewport&&typeof ResizeObserver!=="undefined"){this.#viewportObserver=new ResizeObserver((entries)=>{const entry=entries[0];if(!entry)return;const next={width:entry.contentRect.width,height:entry.contentRect.height},previous=this.#viewportSize;this.#viewportSize=next;if(previous&&previous.width>0&&previous.height>0&&next.width>0&&next.height>0&&this.#touchPointers.size<2){this.#cameraX+=(previous.width-next.width)/(2*this.#zoom);this.#cameraY+=(previous.height-next.height)/(2*this.#zoom);this.#scheduleViewportPersistence();}this.requestUpdate();});this.#viewportObserver.observe(viewport);}}
@@ -339,6 +382,7 @@ export class CanvasApplication extends FormaElement {
     owner.retired=true;
     this.#disposeControlsFocus();this.#closePopovers();this.#closeAdd(false);this.#closeDocumentOutputs(false);
     this.#selected.clear();this.#selectionContexts.clear();this.#selectedSourceIds.clear();this.#controlsScope="";this.#selectionKey="";
+    this.#arrangementName="";
     this.#addKind="start";this.#newBlockTitle="";this.#newBlockBody="";this.#sourceQuery="";this.#editValue="";this.#canvasName="";this.#documentTitle="";this.#contextName="";this.#contextTarget="";this.#intent="";
     this.#newCanvasOpen=false;this.#formalizeOpen=false;this.#memberOpen=false;this.#semanticOpen=false;this.#organizeOpen=false;this.#editOpen=false;this.#documentOpen=false;this.#renderOpen=false;
     this.#viewingOutputId="";this.#viewingArtifactId="";this.#inputOutputId="";this.#inputArtifactId="";this.#inputFailureJobId="";this.#viewingComparisonId="";this.#viewerActionsOpen=false;this.#viewingOutputSource="canvas-image-dialog";
@@ -473,11 +517,11 @@ export class CanvasApplication extends FormaElement {
     const project=this.store.projection.get(),document=project.documents.find((candidate)=>candidate.id===item.documentId),content=this.store.content.get();
     const candidate=imageOutputNamingCandidate(item,content,document?.title??"Project output");
     const peers=project.libraryOutputs.filter((output)=>output.documentId===item.documentId).map((output)=>imageOutputNamingCandidate(output,content,document?.title??"Project output"));
-    const presentation=describeOutput(candidate,peers,{events:this.store.events.get(),locale:this.i18n.locale,timeZone:this.i18n.timeZone,formatTake:(take)=>this.i18n.t("output.take","Take {number}",{number:this.i18n.number(take)})});
+    const presentation=describeOutput(candidate,peers,{events:this.store.events.get(),locale:outcomeDeskLocale(this.i18n.locale),timeZone:this.i18n.timeZone,formatTake:(take)=>this.i18n.t("output.take","Take {number}",{number:this.i18n.number(take)})});
     return{kind:"output",id:item.id,title:presentation.disambiguator?`${presentation.disambiguator} — ${presentation.title}`:presentation.title,body:`${promptTechniqueDefinition(item.promptTechnique).shortLabel} prompt · ${document?.title??"Project output"}`,blockType:"output"};
   }
   #artifactSource(item:DocumentArtifact):Source{
-    const presentation=describeOutput(item,this.store.projection.get().libraryArtifacts,{events:this.store.events.get(),locale:this.i18n.locale,timeZone:this.i18n.timeZone,formatTake:(take)=>this.i18n.t("output.take","Take {number}",{number:this.i18n.number(take)})});
+    const presentation=describeOutput(item,this.store.projection.get().libraryArtifacts,{events:this.store.events.get(),locale:outcomeDeskLocale(this.i18n.locale),timeZone:this.i18n.timeZone,formatTake:(take)=>this.i18n.t("output.take","Take {number}",{number:this.i18n.number(take)})});
     return{kind:"artifact",id:item.id,title:presentation.disambiguator?`${presentation.disambiguator} — ${presentation.title}`:presentation.title,body:`${documentArtifactDefinition(item.kind).label} · ${item.summary}`,blockType:item.kind};
   }
   #itemTitle(item:CanvasItem){
@@ -621,7 +665,10 @@ export class CanvasApplication extends FormaElement {
   #resizeItemWithKeyboard(event:KeyboardEvent,item:CanvasItem,corner:ResizeCorner){
     if(!this.#canEditCanvas()||event.defaultPrevented||event.isComposing||event.metaKey||event.ctrlKey||event.altKey||!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key))return;event.preventDefault();event.stopPropagation();const step=event.shiftKey?24:8;const dx=event.key==="ArrowLeft"?-step:event.key==="ArrowRight"?step:0,dy=event.key==="ArrowUp"?-step:event.key==="ArrowDown"?step:0;const next=this.#itemFrameFromPointer(item,corner,dx,dy);const changes=this.#resizeEvents(item,next,corner,"keyboard",this.#site());if(changes.length)void this.#commit(changes);
   }
-  async #reapplyArrangement(arrangement:CanvasArrangement){if(!this.#canEditCanvas())return;const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();const frames=new Map(arrangement.frames.map((frame)=>[frame.itemId,frame]));const items=canvas.items.filter((item)=>arrangement.itemIds.includes(item.id));const events:EventInput[]=[];for(const item of items){const frame=frames.get(item.id);if(!frame)continue;for(const prop of ["x","y","w","h"] as const)if(item[prop]!==frame[prop])events.push({type:"CanvasRegisterSet",payload:{canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,item_id:item.id,previous_value:item[prop],organization:"arrangement-reapply",arrangement_id:arrangement.id,organization_action_id:actionId,selected_item_ids:arrangement.itemIds,source_surface:"canvas-organize-menu",operation:{object:{kind:"canvas_item",item_id:item.id},prop,value:frame[prop],hlc:hlc(site)}}});}this.#organizeOpen=false;if(!events.length){this.store.toast(this.i18n.system("{name} is already applied.",{name:arrangement.name}));this.requestUpdate();return;}const appended=await this.#commit(events);if(appended.length)this.store.toast(this.i18n.system("{name} reapplied to {count} cards.",{name:arrangement.name,count:this.i18n.number(items.length)}));this.requestUpdate();}
+  async #reapplyArrangement(arrangement:CanvasArrangement){if(!this.#canEditCanvas())return;
+    const protectedGroup=this.store.events.get().find((event)=>event.type==="CanvasArrangementCreated"&&event.payload.arrangement_id===arrangement.id&&isProtectedOutcomeArrangementEvent(event));
+    if(protectedGroup){const recipe=outcomeRecipe(protectedGroup.payload.recipe_id);if(!recipe)return;if(!this.#arrangementName)this.#arrangementName=arrangement.name;this.#go(withOutcomeRecipe(this.store.route.get(),recipe.id));this.#organizeOpen=false;this.#openArrangement();return;}
+const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();const frames=new Map(arrangement.frames.map((frame)=>[frame.itemId,frame]));const items=canvas.items.filter((item)=>arrangement.itemIds.includes(item.id));const events:EventInput[]=[];for(const item of items){const frame=frames.get(item.id);if(!frame)continue;for(const prop of ["x","y","w","h"] as const)if(item[prop]!==frame[prop])events.push({type:"CanvasRegisterSet",payload:{canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,item_id:item.id,previous_value:item[prop],organization:"arrangement-reapply",arrangement_id:arrangement.id,organization_action_id:actionId,selected_item_ids:arrangement.itemIds,source_surface:"canvas-organize-menu",operation:{object:{kind:"canvas_item",item_id:item.id},prop,value:frame[prop],hlc:hlc(site)}}});}this.#organizeOpen=false;if(!events.length){this.store.toast(this.i18n.system("{name} is already applied.",{name:arrangement.name}));this.requestUpdate();return;}const appended=await this.#commit(events);if(appended.length)this.store.toast(this.i18n.system("{name} reapplied to {count} cards.",{name:arrangement.name,count:this.i18n.number(items.length)}));this.requestUpdate();}
   async #organizeSelection(organization:CanvasOrganization){if(!this.#canEditCanvas())return;const canvas=this.store.canvasProjection.get();const items=canvas.items.filter((item)=>this.#selected.has(item.id));if(items.length<2)return;const positions=organizeCanvasItems(items,organization);const site=this.#site(),arrangementId=uid(),selectedItemIds=items.map((item)=>item.id);const names:Record<CanvasOrganization,string>={grid:"Compact grid",row:"Horizontal row",column:"Vertical column",type:"Content-type groups"};const previousFrames=items.map((item)=>({item_id:item.id,x:item.x,y:item.y,w:item.w,h:item.h}));const arrangementFrames=items.map((item)=>{const position=positions.get(item.id)??item;return{item_id:item.id,x:position.x,y:position.y,w:item.w,h:item.h};});const events:EventInput[]=[{type:"CanvasArrangementCreated",payload:{arrangement_id:arrangementId,canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,name:`${names[organization]} · ${items.length} cards`,kind:organization,item_ids:selectedItemIds,frames:arrangementFrames,previous_frames:previousFrames,source_surface:"canvas-organize-menu",organization_action_id:arrangementId,explicit_user_action:true,does_not_change_generation_context:true}}];for(const item of items){const position=positions.get(item.id);if(!position)continue;for(const[prop,value,previous]of [["x",position.x,item.x],["y",position.y,item.y]] as const)if(value!==previous)events.push({type:"CanvasRegisterSet",payload:{canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,item_id:item.id,previous_value:previous,organization,arrangement_id:arrangementId,organization_action_id:arrangementId,selected_item_ids:selectedItemIds,source_surface:"canvas-organize-menu",operation:{object:{kind:"canvas_item",item_id:item.id},prop,value,hlc:hlc(site)}}});}this.#organizeOpen=false;const appended=await this.#commit(events);if(appended.length)this.store.toast(this.i18n.system("{name} arrangement saved for {count} cards.",{name:this.i18n.system(names[organization]),count:this.i18n.number(items.length)}));this.requestUpdate();}
   async #matchSelectionSize(sizeModifier:CanvasSizeModifier){if(!this.#canEditCanvas())return;const canvas=this.store.canvasProjection.get();const items=canvas.items.filter((item)=>this.#selected.has(item.id));if(items.length<2)return;const target=canvasMatchSizeTarget(items,sizeModifier),frames=matchCanvasItemSizes(items,sizeModifier),site=this.#site(),arrangementId=uid();const selectedItemIds=items.map((item)=>item.id),modifierLabel=sizeModifier[0].toUpperCase()+sizeModifier.slice(1);const previousFrames=items.map((item)=>({item_id:item.id,x:item.x,y:item.y,w:item.w,h:item.h}));const arrangementFrames=items.flatMap((item)=>{const frame=frames.get(item.id);return frame?[{item_id:item.id,...frame}]:[];});const events:EventInput[]=[{type:"CanvasArrangementCreated",payload:{arrangement_id:arrangementId,canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,name:`${modifierLabel} size · ${items.length} cards`,kind:"match-size",size_modifier:sizeModifier,target_width:target.width,target_height:target.height,item_ids:selectedItemIds,frames:arrangementFrames,previous_frames:previousFrames,source_surface:"canvas-organize-menu",organization_action_id:arrangementId,explicit_user_action:true,does_not_change_generation_context:true}}];for(const item of items){const next=frames.get(item.id);if(!next)continue;const image=mediaKind(item),previousFrame={x:item.x,y:item.y,w:item.w,h:item.h,area:item.w*item.h},nextFrame={...next,area:next.w*next.h},receiptId=uid();for(const prop of ["x","y","w","h"] as const)if(next[prop]!==item[prop])events.push({type:"CanvasRegisterSet",payload:{canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,item_id:item.id,previous_value:item[prop],organization:"match-size",arrangement_id:arrangementId,organization_action_id:arrangementId,presentation_action_id:arrangementId,presentation_receipt_id:receiptId,presentation_intent:"organization",does_not_change_generation_context:true,explicit_user_action:true,size_modifier:sizeModifier,target_width:target.width,target_height:target.height,target_area:target.width*target.height,resize_mode:"uniform-card-size-match",card_frame_normalized:true,aspect_ratio_preserved:Math.abs(item.w/item.h-next.w/next.h)<.001,intrinsic_media_aspect_ratio_preserved:image,media_fit:image?"cover":null,source_aspect_ratio:item.w/item.h,applied_aspect_ratio:next.w/next.h,normalization_delta:{width:next.w-target.width,height:next.h-target.height},source_kind:item.sourceKind,source_id:item.sourceId,block_type:item.blockType,selected_item_ids:selectedItemIds,previous_frame:previousFrame,next_frame:nextFrame,relative_area_change:nextFrame.area/previousFrame.area,source_surface:"canvas-organize-menu",operation:{object:{kind:"canvas_item",item_id:item.id},prop,value:next[prop],hlc:hlc(site)}}});}this.#organizeOpen=false;const appended=await this.#commit(events);if(appended.length)this.store.toast(this.i18n.system("{modifier} size arrangement saved. All {count} cards now measure {width} × {height}; images crop without stretching.",{modifier:this.i18n.system(modifierLabel),count:this.i18n.number(items.length),width:this.i18n.number(Math.round(target.width)),height:this.i18n.number(Math.round(target.height))}));this.requestUpdate();}
   async #formalize(options:{place?:boolean;name?:string;target?:string;composite?:boolean}={}){if(!this.#canEditCanvas())return null;const canvas=this.store.canvasProjection.get();if(!this.#selected.size)return null;const id=uid(),itemId=uid();const name=options.name?.trim()||this.#contextName.trim()||"Working context",target=options.target?.trim()||this.#contextTarget.trim()||name,composite=options.composite!==false;const selected=canvas.items.filter((item)=>this.#selected.has(item.id));const blockIds=selected.filter((item)=>["block","reference","sketch"].includes(item.sourceKind)).map((item)=>item.sourceId);const documentIds=selected.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId);const outputIds=selected.filter((item)=>item.sourceKind==="output").map((item)=>item.sourceId);const events:EventInput[]=[{type:"ContextSetFormalized",payload:{context_set_id:id,canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,name,target,role:this.#contextRole,application:this.#contextApplication,relativity:this.#contextRelativity,item_ids:[...this.#selected],as_of_sequence:this.store.head.get(),explicit_user_action:true,arrangement_is_context:false,contains_generations:outputIds.length>0,composite,semantic_isolation:composite}}];if(options.place){const point=this.#insertionPoint(36);events.push({type:"CanvasItemPlaced",payload:{canvas_id:canvas.selectedCanvasId,project_id:canvas.projectId,item_id:itemId,source_kind:"context",source_id:id,title:name,body:`${selected.length} connected ideas · ${COMBINED_CONTEXT_ROLE_DEFINITIONS.find((item)=>item.id===this.#contextRole)?.label??"Custom target"}: ${target} · ${Math.round(this.#contextRelativity*100)}% relative`,block_type:"context",frame:{x:point.x,y:point.y,w:320,h:180,rot:0,z:`z${String(this.store.head.get()+2).padStart(12,"0")}`}}});}const appended=await this.#commit(events);if(!appended.length)return null;const context:CanvasContextSet={id,canvasId:canvas.selectedCanvasId,projectId:canvas.projectId,name,itemIds:[...this.#selected],blockIds,documentIds,outputIds,role:this.#contextRole,target,application:this.#contextApplication,relativity:this.#contextRelativity,asOfSequence:this.store.head.get(),sourceEventId:appended[0].eventId};this.#formalizeOpen=false;if(options.place){this.#selected=new Set([itemId]);this.store.toast("Combined context added with a durable isolation boundary. Its sources remain independently reusable.");}this.requestUpdate();return context;}
@@ -635,6 +682,8 @@ export class CanvasApplication extends FormaElement {
     if(event.defaultPrevented||event.key==="Escape"&&document.querySelector("[popover]:popover-open"))return;
     const target=event.composedPath()[0];if(!(target instanceof HTMLElement)||!this.store.route.get().startsWith("/canvas"))return;if(target.matches("input,textarea,select,[contenteditable=true]")||target.closest("button,a,summary,[role=button],[role=link],[role=tab],[role=menuitem],dialog")&&event.key!=="Escape")return;
     if(event.key==="Escape"&&this.#viewerFocused&&(this.#viewingOutputId||this.#viewingArtifactId)){event.preventDefault();event.stopPropagation();this.#setViewerFocus(false);return;}
+    // This posture and its owned review dialog do not operate on hidden board selections.
+    if(this.#arrangementOpen||outcomeDeskRouteState(this.store.route.get()).posture==="outcomes")return;
     const plainKey=!event.metaKey&&!event.ctrlKey&&!event.altKey,editable=this.#canEditCanvas();
     const focusedCard=target.closest<HTMLElement>(".canvas-item[data-canvas-item-id]");
     if(plainKey&&focusedCard&&(event.key==="Enter"||event.key===" ")&&!target.closest("button,a,summary")){event.preventDefault();const itemId=focusedCard.dataset.canvasItemId;if(itemId)this.#select(itemId,{shiftKey:event.shiftKey});return;}
@@ -838,13 +887,346 @@ export class CanvasApplication extends FormaElement {
 
   #listing(){const canvas=this.store.canvasProjection.get();const p=this.store.projection.get();const editable=this.#canEditCanvas();return html`<section class="canvas-page canvas-home page-pad"><header class="page-header page-header--hero page-header--canvas"><div class="page-header-copy"><h1 dir="auto">${this.i18n.t("canvas.projectBoardsHeading","{name} boards",{name:p.projectName})}</h1><p>Open spatial rooms for collecting project documents, reusable context, references, sketches, and generations—without reducing them to a single document.</p></div>${editable?html`<div class="page-header-actions"><forma-ui-button label=${this.i18n.t("canvas.newBoard","New board")} icon-name="plus" variant="primary" @forma-press=${()=>{this.#newCanvasOpen=true;this.requestUpdate();}}></forma-ui-button></div>`:nothing}</header><div class="canvas-home-grid">${canvas.canvases.map((item)=>{const itemCount=foldCanvasEvents(this.store.eventView.get(),item.projectId,item.id).items.length;return html`<article><a href=${canvasRoute(item)} @click=${(event:MouseEvent)=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0)return;event.preventDefault();this.#go(canvasRoute(item));}}><span>${item.name.slice(0,1).toUpperCase()}</span><div><h2 dir="auto">${item.name}</h2><p>${itemCount} idea${itemCount===1?"":"s"} on the board</p><small dir="auto">${p.projectName}</small></div>${icon("arrow")}</a></article>`;})}${!canvas.canvases.length?editable?html`<forma-ui-empty-state heading="Make space for the project" detail="Start with an empty board, then pull in only the ideas, studies, and generations that matter to the next decision." action="Create the first board" @forma-action=${()=>{this.#newCanvasOpen=true;this.requestUpdate();}}></forma-ui-empty-state>`:html`<forma-ui-empty-state heading=${this.i18n.t("canvas.noSharedBoards","No shared boards yet")} detail=${this.i18n.t("canvas.readOnlyBoards","A project editor can create the first board for this shared project.")}></forma-ui-empty-state>`:nothing}</div>${editable&&this.#newCanvasOpen?this.#newCanvasDialog():nothing}</section>`;}
   #newCanvasDialog(){return html`<dialog class="modal" open closedby="any" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget){this.#newCanvasOpen=false;this.requestUpdate();}}}><form class="modal-card canvas-compact-dialog" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#createCanvas();}}><button type="button" class="icon-button modal-close" @click=${()=>{this.#newCanvasOpen=false;this.requestUpdate();}} aria-label="Close">${icon("close")}</button><h2>Name this project board</h2><p>It starts empty and can draw from every document and reusable asset in ${this.store.projection.get().projectName}.</p><label>Board name<input autofocus .value=${this.#canvasName} @input=${(event:InputEvent)=>{this.#canvasName=(event.target as HTMLInputElement).value;}}></label><button type="submit" class="button primary">Create board</button></form></dialog>`;}
-  #workspace(){const canvas=this.store.canvasProjection.get();const project=this.store.projection.get();const selectedCanvas=canvas.canvases.find((item)=>item.id===canvas.selectedCanvasId);if(!selectedCanvas)return this.#listing();const editable=this.#canEditCanvas();const focused=canvasFocusFromRoute(this.store.route.get());const view=canvasViewFromRoute(this.store.route.get());const items=this.#orderedItems(canvas.items);const nearbyItems=view==="spatial"?this.#nearbyItems(items):items;const facets=this.#facetGroups(canvas.items);const filed=canvas.items.some((item)=>Boolean(project.membership[item.sourceId]));const enoughToOrganize=canvas.items.length>=4;const selectedItems=canvas.items.filter((item)=>this.#selected.has(item.id));const textEditable=selectedItems.length===1&&["block","reference","sketch"].includes(selectedItems[0].sourceKind);const comparable=selectedItems.filter(mediaKind).length>=2;const trackedDocumentIds=new Set(canvas.items.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId));const unplacedOutputs=project.libraryOutputs.filter((output)=>output.canvasId===canvas.selectedCanvasId&&!trackedDocumentIds.has(output.documentId)&&!this.store.events.get().some((event)=>event.type==="CanvasItemPlaced"&&event.payload.source_id===output.id));const inputOutput=project.libraryOutputs.find((output)=>output.id===this.#inputOutputId),inputArtifact=project.libraryArtifacts.find((artifact)=>artifact.id===this.#inputArtifactId),inputFailure=this.store.documentJobs.get().find((job)=>job.jobId===this.#inputFailureJobId);const gridSize=24*this.#zoom,gridX=(-this.#cameraX*this.#zoom)%gridSize,gridY=(-this.#cameraY*this.#zoom)%gridSize;return html`<section class="canvas-workspace" data-empty=${String(canvas.items.length===0)} aria-label=${selectedCanvas.name}>
-    <header class="canvas-commandbar"><div class="canvas-board-identity"><a href="/canvas" @click=${(event:MouseEvent)=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0)return;event.preventDefault();this.#go("/canvas");}} aria-label=${this.i18n.t("canvas.backToProjectBoards","Back to project boards")}><span class="ui-directional-icon">${icon("back")}</span></a><div><small dir="auto">${project.projectName}</small><h1 dir="auto">${selectedCanvas.name}</h1></div><span class=${`canvas-sync-status${this.#offline.count?" pending":""}`} role="status" aria-live="polite">${this.#syncStatus()}</span></div><div class="canvas-command-actions">${editable?html`${canvas.items.length?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button class="icon-button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" title=${this.store.canUndo()?this.i18n.system("Undo the last board action"):this.i18n.system("No board action to undo")} @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button class="icon-button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" title=${this.store.canRedo()?this.i18n.system("Redo the last undone board action"):this.i18n.system("No board action to redo")} @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}<button class="button primary compact canvas-sources-toggle" @click=${()=>this.#openAdd()} aria-haspopup="dialog">${icon("plus")} ${this.i18n.t("canvas.controls.sources","Sources")}</button>`:nothing}<forma-ui-popover class="canvas-view-menu" .label=${this.i18n.system("View")} .triggerId=${this.#viewTriggerId} .content=${html`<div class="canvas-view-actions" @click=${this.#viewMenuAction} @change=${this.#viewMenuAction}>${this.#planningDocumentControl()}${!canvas.items.length?html`<div class="canvas-empty-tools">${editable?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button type="button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button type="button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}${this.#batchSelectionControl()}<button type="button" aria-label=${this.i18n.t("canvas.zoomOut","Zoom out")} @click=${()=>this.#setZoom(this.#zoom-.1)}>${icon("minus")}</button><button type="button" @click=${()=>this.#setZoom(1)}>${Math.round(this.#zoom*100)}%</button><button type="button" aria-label=${this.i18n.t("canvas.zoomIn","Zoom in")} @click=${()=>this.#setZoom(this.#zoom+.1)}>${icon("plus")}</button></div>`:nothing}<button class=${view==="spatial"?"active":""} @click=${()=>this.#setView("spatial")}>${this.i18n.t("canvas.board","Board")}</button><button class=${view==="list"?"active":""} @click=${()=>this.#setView("list")}>${this.i18n.t("canvas.readingOrder","Reading order")}</button>${filed?html`<button class=${view==="folders"?"active":""} @click=${()=>this.#setView("folders")}>Project folders</button>`:nothing}${enoughToOrganize?html`<hr><form class="canvas-view-preferences" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label>Order<select .value=${canvasLensFromRoute(this.store.route.get()).sort} @change=${(event:Event)=>this.#go(withCanvasQuery(this.store.route.get(),{sort:(event.target as HTMLSelectElement).value,seed:(event.target as HTMLSelectElement).value==="random"?String(Date.now()):null}))}><option value="authored">Board placement</option><option value="title">Title</option><option value="type">Content type</option><option value="random">Shuffle</option></select></label></form>`:nothing}${facets.length?html`<hr><span>Focus by what Forma found</span><button @click=${()=>this.#go(withCanvasQuery(this.store.route.get(),{filter:"all"}))}>Everything</button>${facets.map(({facet,count})=>html`<button @click=${()=>this.#go(withCanvasQuery(this.store.route.get(),{filter:`facet:${canvasFacetKey(facet)}`}))}>${this.i18n.system(facet.label)}: ${facet.value}<small>${count}</small></button>`)}`:nothing}<hr><button @click=${()=>{this.#memberOpen=true;this.requestUpdate();}}>${this.i18n.t("projects.sharingHeading","Project sharing")}</button><button @click=${()=>{this.#semanticOpen=true;this.requestUpdate();}}>Accessible reading order</button></div>`}></forma-ui-popover><button class="button secondary compact canvas-focus-toggle" aria-label=${focused?this.i18n.system("Exit focused Canvas view"):this.i18n.system("Enter focused Canvas view")} aria-pressed=${focused} title=${focused?this.i18n.system("Restore application navigation"):this.i18n.system("Give this project board the full workspace")} @click=${()=>this.#go(withCanvasFocus(this.store.route.get(),!focused))}><span aria-hidden="true">${icon(focused?"collapse":"expand")}</span><span>${focused?this.i18n.system("Exit focus"):this.i18n.system("Focus")}</span></button></div>${this.#queueStorageDisclosure()}</header>
-    ${this.#nextDocument()}
-    <section class="canvas-stage-shell" tabindex="-1" aria-label="Project board">${view==="spatial"?html`<div class="canvas-viewport" tabindex="-1" role="region" aria-roledescription="virtual project board" aria-label=${this.i18n.system("{name}, {count} items", { name: selectedCanvas.name, count: this.i18n.number(items.length) })} @wheel=${(event:WheelEvent)=>this.#canvasWheel(event)}><div class=${`canvas-plane${this.#tool==="marquee"?" is-batch-selecting":""}`} style=${`--canvas-zoom:${this.#zoom};--canvas-grid-size:${gridSize}px;--canvas-grid-x:${gridX}px;--canvas-grid-y:${gridY}px`} @pointerdown=${(event:PointerEvent)=>this.#pan(event)}>${nearbyItems.map((item)=>this.#card(item))}${this.#nearbyPresence().map((peer)=>html`<span class="canvas-presence" style=${`transform:translate3d(${(peer.x-this.#cameraX)*this.#zoom}px,${(peer.y-this.#cameraY)*this.#zoom}px,0) scale(${this.#zoom});--presence:${peer.color}`}><i></i>${peer.name}</span>`)}${this.#selectionMarquee?html`<span class="canvas-selection-marquee" aria-hidden="true" style=${`left:${this.#selectionMarquee.x}px;top:${this.#selectionMarquee.y}px;width:${this.#selectionMarquee.width}px;height:${this.#selectionMarquee.height}px`}></span>`:nothing}</div></div>`:view==="list"?this.#listView(items):view==="compare"?this.#compareView(items):this.#folderView(items)}
+  #canArrangeOutcome(){const session=this.store.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return Boolean(this.#arrangementScope()&&this.store.asOf.get()===Number.POSITIVE_INFINITY&&permissions.includes("project.author")&&this.#canEditCanvas());}
+  #arrangementScope(){
+    const authorization=this.store.captureAuthorizationScope(),session=this.store.session.get(),canvas=this.store.canvasProjection.get();
+    const permissions=session?.projectContext?.permissions??session?.capabilities??[];
+    return authorization&&session&&canvas.projectId&&canvas.selectedCanvasId&&permissions.includes("project.read")&&permissions.includes("project.canvas.use")
+      &&(!session.projectContext||session.projectContext.projectId===canvas.projectId)
+      ?{authorityKey:authorization.key,actorId:session.user.userId,projectId:canvas.projectId,canvasId:canvas.selectedCanvasId}:null;
+  }
+  #arrangementStamp(){return JSON.stringify([this.#arrangementScope(),[...this.#selected].sort(),this.store.events.get().map((event)=>event.eventId),
+    this.store.optimisticEvents.get().length,this.#offline.count,navigator.onLine,this.store.asOf.get(),this.#canEditCanvas(),
+    this.#arrangementOpening,this.store.route.get()]);}
+
+  #deskNavigation = 0;
+  async #deskRefreshOutputs(){
+    const current=this.#deskCurrent(),route=this.store.route.get(),scope=this.#currentControlsScope(),client=this.store.outputRequirements;
+    if(!client||!current.facts.canRead)return false;
+    this.#disposeControlsFocus();
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    this.#controlsFocus=focus;
+    try{
+      await client.ensure(current.facts.documentId,{force:true});
+      if(!this.isConnected||route!==this.store.route.get()||scope!==this.#currentControlsScope())return false;
+      if(this.#controlsFocus===focus)await this.#focusOutcomeDesk("canvas-outcome-desk-selected",scope,undefined,focus);
+      return true;
+    }finally{
+      focus.dispose();if(this.#controlsFocus===focus)this.#controlsFocus=undefined;
+    }
+  }
+  #deskOutputScope(){
+    const current=this.#deskCurrent(),snapshot=outcomeDeskOutputSnapshot(current),copy=outcomeDeskIntegrationCopy(this.i18n.locale),summary=snapshot?.summary;
+    const values=summary?{done:summary.fulfilled_required_obligations,total:summary.required_obligations,
+      optionalDone:summary.fulfilled_selected_optional_obligations,optionalTotal:summary.selected_optional_obligations,
+      unresolved:summary.unresolved_required_groups+summary.unresolved_selected_optional_groups}:null;
+    const known=Boolean(snapshot&&outputSourceReadiness(snapshot).allowed&&summary?.scope_known&&values
+      &&Object.values(values).every(value=>Number.isSafeInteger(value)&&value>=0));
+    const route=this.store.route.get(),scope=this.#currentControlsScope();
+    return html`<section class="outcome-desk-scope" aria-live="polite"><p>${known?copy.scopeProgress.replace(/\{(\w+)\}/g,(_match,key)=>this.i18n.number(values![key as keyof typeof values])):copy.unknownOutputs}</p>
+      <p>${copy.deliveryHint}</p><button type="button" class="button secondary" ?disabled=${!current.facts.canRead||!this.store.outputRequirements}
+        @click=${()=>{if(this.isConnected&&route===this.store.route.get()&&scope===this.#currentControlsScope())void this.#deskRefreshOutputs();}}>${this.i18n.t("output.delivery.refresh","Refresh outputs")}</button></section>`;
+  }
+  async #deskOpenOutput(target:Extract<OutcomeDeskTarget,{kind:"canonical-output"}>){
+    const reference=target.reference,authorization=this.store.captureAuthorizationScope(),sourceRoute=this.store.route.get(),
+      sourceScope=this.#currentControlsScope(),selection=JSON.stringify([...this.#selected].sort()),request=++this.#deskNavigation;
+    const targetDocument=this.store.projection.get().documents.find(value=>value.id===reference.documentId&&value.projectId===reference.projectId);
+    if(!targetDocument)return false;
+    const originalCurrent=()=>request===this.#deskNavigation&&this.isConnected&&sourceRoute===this.store.route.get()
+      &&sourceScope===this.#currentControlsScope()&&selection===JSON.stringify([...this.#selected].sort())&&!this.#arrangementOpen
+      &&this.store.authorizationScopeActive(authorization)&&!document.querySelector("dialog[open]")
+      &&outputNavigationMatches(reference,outcomeDeskOutputSnapshot(this.#deskCurrent()),this.store.captureAuthorizationScope()?.key??"");
+    if(!originalCurrent())return false;
+    const destination=reference.blockId?documentContextBlockRoute(reference.documentId,targetDocument.title,reference.blockId)
+      :withDocumentInRoute("/",reference.documentId,targetDocument.title);
+    let arrived="";
+    const destinationIdentityCurrent=()=>{
+      const resource=this.store.outputRequirements.resource(reference.documentId),projection=this.store.projection.get();
+      return request===this.#deskNavigation&&this.store.route.get()===arrived&&documentIdFromRoute(arrived)===reference.documentId
+        &&this.store.authorizationScopeActive(authorization)&&projection.projectId===reference.projectId&&projection.documentId===reference.documentId
+        &&projection.documents.some(value=>value.id===reference.documentId&&!value.removed)
+        &&resource.state==="ready"&&!resource.accessLost&&!resource.privateUnavailable
+        &&outputNavigationMatches(reference,resource.snapshot,this.store.captureAuthorizationScope()?.key??"")
+        &&!document.querySelector("dialog[open]");
+    };
+    const focus=captureOutputNavigationFocus(this.ownerDocument,{
+      ownedRouteFocus:outputNavigationOwnedRouteFocus(this.ownerDocument,this.store,reference,destinationIdentityCurrent),
+    });
+    try{
+      if(!await this.store.transitionWorkspace(destination,{documentFocus:false,current:originalCurrent,focus}))return false;
+      arrived=this.store.route.get();
+      const navigation=this.store.captureWorkspaceNavigationFocus(arrived,focus);
+      const destinationCurrent=()=>destinationIdentityCurrent()&&Boolean(navigation?.current());
+    // The deliberate transition may disconnect this Canvas. The destination owns
+    // focus now; unrelated later navigation or authority changes still invalidate it.
+    for(let attempt=0;attempt<24&&destinationCurrent();attempt++){
+      await new Promise<void>(resolve=>window.requestAnimationFrame(()=>resolve()));
+      if(!destinationCurrent())return false;
+      const controllers=[...document.querySelectorAll<FormaOutputRequirements>("forma-output-requirements")]
+        .filter(controller=>controller.isConnected&&controller.documentId===reference.documentId&&controller.surface==="document"
+          &&(reference.kind==="requirement"?controller.blockId===reference.blockId:!controller.blockId));
+      if(controllers.length>1)return false;
+      if(controllers.length===1){
+        await controllers[0].updateComplete;if(!destinationCurrent())return false;
+        return await controllers[0].focusOutputReference(reference,{section:target.section,current:destinationCurrent,focus});
+      }
+    }
+    return false;
+    }finally{focus.dispose();}
+  }
+
+  #deskCurrent(){
+    const documentId=this.#anchorDocumentId(),canvasId=this.store.canvasProjection.get().selectedCanvasId;
+    const authorization=this.store.captureAuthorizationScope(),session=this.store.session.get(),client=this.store.outputRequirements;
+    return{facts:nextActionFacts(this.store,documentId,canvasId),document:this.store.projection.get().documents.find((document)=>document.id===documentId)??null,
+      ...(authorization&&session&&client?{output:{authorizationScopeKey:authorization.key,actorUserId:session.user.userId,
+        projectAccessId:session.projectContext?.projectAccessId??null,resource:client.resource(documentId),
+        jobs:this.store.documentJobs.get().filter(job=>job.documentId===documentId)}}:{})};
+  }
+  #deskPorts(){return{localize:(id:string,fallback:string)=>this.i18n.t(id,fallback),
+    delivery:(artifact:DocumentArtifact)=>artifactDeliveryFor(this.store,artifact,undefined,this.store.canvasProjection.get().selectedCanvasId)};}
+  #focusOutcomeDesk(focusId:string,scope=this.#currentControlsScope(),opener?:HTMLElement,focus?:OutputNavigationFocusLease){
+    const version=++this.#deskFocusVersion,route=this.store.route.get(),opening=this.#arrangementOpening;
+    return this.updateComplete.then(()=>{
+      if(!this.isConnected||!scope||scope!==this.#currentControlsScope()||version!==this.#deskFocusVersion
+        ||route!==this.store.route.get()||opening!==this.#arrangementOpening||this.#arrangementOpen||this.querySelector("dialog[open]")
+        ||focus&&!focus.current())return;
+      if(opener?.isConnected)opener.focus({preventScroll:true});else restoreOutcomeDeskFocus(this,focusId==="canvas-view-toggle"?this.#viewTriggerId:focusId);
+    });
+  }
+  #deskNavigate(route:string,focusId:string){
+    const scope=this.#currentControlsScope(),menu=this.querySelector<FormaUiPopover>(".canvas-view-menu");menu?.close();
+    this.#go(route);this.#focusOutcomeDesk(focusId,scope);
+  }
+  async #deskFollow(action:OutcomeDeskAction<OutcomeDeskTarget>){
+    const route=this.store.route.get(),scope=this.#currentControlsScope();
+    const followed=await followOutcomeDeskAction(action,()=>this.#deskCurrent(),{
+      available:(candidate,current)=>outcomeDeskHostActionAvailable(candidate,current,this.#deskPorts()),
+      open:(candidate)=>candidate.target.kind==="canonical-output"?candidate.target.refresh?this.#deskRefreshOutputs():this.#deskOpenOutput(candidate.target)
+        :candidate.target.kind==="next"?this.#followNextAction(candidate.target.action)
+        :this.#openArtifactDelivery(this.#deskCurrent().facts.artifacts.find((artifact)=>candidate.target.kind==="delivery"&&artifact.id===candidate.target.artifactId)!),
+    });
+    if(!followed&&this.isConnected&&route===this.store.route.get()&&scope===this.#currentControlsScope())
+      this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));
+    return followed;
+  }
+  #deskTitle(row:OutcomeDeskRow){
+    const copy=outcomeDeskIntegrationCopy(this.i18n.locale),object=row.object;
+    if(row.retained)return copy.operation+" · "+row.reference.id;
+    if(object.kind==="requirement")return object.value.spec?.label||copy.requirement;
+    if(object.kind==="target")return object.value.label;
+    if(object.kind==="result"){const matches=outcomeDeskOutputSnapshot(this.#deskCurrent())?.assets.filter(asset=>asset.id===object.value.assetId)??[];return matches.length===1?matches[0].name:copy.result;}
+    if(object.kind==="operation")return object.value.targetLabel||copy.operation+" · "+object.value.id;
+    return object.kind==="job"?copy.job+" · "+object.value.jobId
+      :object.kind==="output"?object.value.title||copy.output:object.value.title;
+  }
+  #deskObject(row:OutcomeDeskRow){
+    const copy=outcomeDeskIntegrationCopy(this.i18n.locale),object=row.object;
+    if(row.navigation){
+      const snapshot=outcomeDeskOutputSnapshot(this.#deskCurrent());
+      if(row.retained||!snapshot)return html`<p role="status">${copy.retainedOperation}</p><code dir="ltr">${row.reference.id}</code>`;
+      if(object.kind==="requirement")return html`<p>${copy.canonicalHint}</p><p dir="auto">${object.value.content}</p>`;
+      if(object.kind==="target"){
+        const state=snapshot.targetStates.find(value=>value.target_id===object.value.id);
+        const label=(category:OutputDeliveryLabelCategory,value:unknown)=>{const key=outputDeliveryLabelKey(category,value);return this.i18n.t("output.delivery."+key,FORMA_OUTPUT_DELIVERY_MESSAGES.en[("output.delivery."+key) as keyof typeof FORMA_OUTPUT_DELIVERY_MESSAGES.en]);};
+        return html`<p>${copy.canonicalHint}</p>${object.value.required?html`<p>${copy.requiredOwed}</p>`:nothing}
+          <p>${state?this.i18n.t("output.delivery.targetDimensions","Execution: {execution} · Checks: {checks} · Review: {review} · Freshness: {freshness}",{
+            execution:label("execution",state.execution),checks:label("checks",state.checks),review:label("review",state.review),freshness:label("freshness",state.freshness)}):copy.unknownOutputs}</p>`;
+      }
+      return html`<p>${copy.canonicalHint}</p><code dir="ltr">${row.reference.id}</code><p>${copy.deliveryHint}</p>`;
+    }
+    if(object.kind==="document")return html`<p>${copy.sourceHint}</p>`;
+    if(object.kind==="output")return html`<forma-output-visual .output=${object.value} .compact=${true}></forma-output-visual><p>${copy.existingHint}</p>`;
+    if(object.kind==="job")return html`<p>${localizedDocumentJobProgress(object.value,this.i18n)}</p><p>${copy.existingHint}</p>`;
+    if(object.kind!=="artifact")return nothing;
+    const artifact=object.value,delivery=artifactDeliveryFor(this.store,artifact,undefined,this.store.canvasProjection.get().selectedCanvasId);
+    return html`<div class="outcome-desk-artifact-preview">${this.#artifactPreview(artifact)}</div>
+      <p>${this.i18n.t("artifact.delivery.revision","Output revision {revision}",{revision:this.i18n.number(delivery.revision)})}</p>
+      <p>${delivery.review.status==="approved"&&!delivery.approved?this.i18n.t("artifact.delivery.unverifiedApproval","Recorded approval does not match the current output."):this.i18n.system(delivery.review.label)}</p><p>${copy.deliveryHint}</p>`;
+  }
+  #outcomeDesk(){
+    const route=this.store.route.get(),state=outcomeDeskRouteState(route),current=this.#deskCurrent(),ports=this.#deskPorts();
+    const copy=outcomeDeskIntegrationCopy(this.i18n.locale),scope=this.#currentControlsScope();
+    const active=()=>this.isConnected&&scope===this.#currentControlsScope()&&route===this.store.route.get()&&!this.#arrangementOpen;
+    return renderOutcomeDesk({instanceId:"canvas-outcome-desk",canvasReturnFocusId:"canvas-view-toggle",locale:outcomeDeskLocale(this.i18n.locale),
+      route,current,selectedKey:state.selectedKey,recipeId:state.recipeId,candidates:outcomeDeskHostActions(current,state.selectedKey,ports),
+      dismissedKeys:[...this.#deskDismissed]},{
+      available:(action,facts)=>outcomeDeskHostActionAvailable(action,facts,this.#deskPorts()),open:(action)=>void this.#deskFollow(action),
+      navigate:(path,focus)=>{if(active())this.#deskNavigate(path,focus);},dismiss:(key,focus)=>{if(!active())return;this.#deskDismissed.add(key);this.requestUpdate();this.#focusOutcomeDesk(focus);},
+      restoreSuggestions:(focus)=>{if(!active())return;this.#deskDismissed.clear();this.requestUpdate();this.#focusOutcomeDesk(focus);},
+      renderScope:()=>this.#deskOutputScope(),
+      title:(row)=>this.#deskTitle(row),accessibleName:(row)=>copy[row.object.kind]+" · "+this.#deskTitle(row)+" · "+row.reference.id+(row.reference.revision?" · "+row.reference.revision:""),
+      renderObject:(row)=>this.#deskObject(row),
+      renderOtherWays:(row)=>{const formats=outcomeDeskPreparationActions(this.#deskCurrent(),row.key,this.#deskPorts());
+        return formats.length?html`<section class="outcome-desk-formats" aria-label=${copy.prepare}><p>${copy.prepareHint}</p><p>${copy.formatLimits}</p>
+          ${formats.map((action)=>html`<button type="button" class="button secondary" @click=${()=>void this.#deskFollow(action)}>${action.label}</button>`)}
+        </section>`:nothing;},
+    });
+  }
+  #captureArrangementRecovery(invalidated:()=>void,sourceWitness=false){
+    const source=this.store.captureSourceOwnership(),opening=this.#arrangementOpening,route=this.store.route.get();
+    const scope=this.#currentControlsScope(),stamp=this.#arrangementStamp();
+    // Historical presentation variants are validated once in this one witness
+    // closure; later Output-cache loading is not a new source/authority denial.
+    const routes=new Set(sourceWitness?[route,withOutcomeDeskPosture(route,"canvas"),withOutcomeDeskPosture(route,"outcomes")]:[route]);
+    const routeCurrent=()=>{
+      const next=this.store.route.get();
+      if(routes.has(next))return true;
+      if(!sourceWitness)return false;
+      const key=outcomeDeskRouteState(next).selectedKey;
+      if(!key)return false;
+      // Preserve the exact existing transforms, including query ordering from
+      // the currently validated posture; do not normalize arbitrary parameters.
+      for(const base of routes){
+        const selected=withOutcomeDeskSelection(base,key),spatial=withOutcomeDeskPosture(selected,"canvas");
+        if(next!==selected&&next!==spatial)continue;
+        if(!projectOutcomeDesk(this.#deskCurrent(),key).selected)return false;
+        routes.add(selected);routes.add(spatial);return true;
+      }
+      return false;
+    };
+    let live=true,unsubscribe:()=>void=()=>{};
+    const dispose=()=>{if(!live)return;live=false;unsubscribe();};
+    const current=()=>{
+      if(live&&(!source||!this.isConnected||!scope||scope!==this.#currentControlsScope()||!this.store.sourceOwnershipActive(source)
+        ||!sourceWitness&&(!this.#arrangementOpen||opening!==this.#arrangementOpening||stamp!==this.#arrangementStamp())
+        ||!routeCurrent()))dispose();
+      return live;
+    };
+    if(!current())return null;
+    unsubscribe=this.store.subscribe(()=>{if(!current())invalidated();});
+    return{current,dispose};
+  }
+  #openArrangement(){
+    this.#arrangement.retireRecovery();
+    const active=document.activeElement instanceof HTMLElement?document.activeElement:undefined;
+    this.#arrangementReturnFocus=active?.closest(".canvas-view-menu")?.querySelector<HTMLElement>(".ui-popover-trigger")??active;
+    this.#arrangementOpening++;this.#deskFocusVersion++;this.#arrangementOpeningScope=this.#currentControlsScope();
+    this.#arrangementOpen=true;const menu=this.querySelector<FormaUiPopover>(".canvas-view-menu");menu?.close();
+    this.requestUpdate();
+  }
+  #closeArrangement(restoreFocus=true){
+    this.#arrangement.retireRecovery();
+    const scope=this.#arrangementOpeningScope,opener=this.#arrangementReturnFocus;
+    this.#arrangementOpening++;this.#deskFocusVersion++;this.#arrangementOpen=false;
+    this.querySelector<HTMLDialogElement>(".canvas-outcome-arrangement-dialog")?.close();this.requestUpdate();
+    if(restoreFocus)this.#focusOutcomeDesk("canvas-view-toggle",scope,opener);
+  }
+  #arrangementCloseHandler(){
+    const opening=this.#arrangementOpening;
+    return(event:Event)=>{
+      const dialog=event.currentTarget as HTMLDialogElement|null;
+      if(this.#arrangementOpen&&opening===this.#arrangementOpening&&dialog&&!dialog.open
+        &&dialog===this.querySelector(".canvas-outcome-arrangement-dialog"))this.#closeArrangement();
+    };
+  }
+  async #previewArrangement(){
+    const refused=this.#arrangement.refusedPreparation;
+    const recipe=refused?.recipeId??outcomeDeskRouteState(this.store.route.get()).recipeId,name=refused?.name??this.#arrangementName,scope=this.#currentControlsScope(),selection=JSON.stringify([...this.#selected].sort());
+    const opening=this.#arrangementOpening,route=this.store.route.get();
+    if(!recipe||!await this.#settleCanvasWrites()||!this.isConnected||!this.#arrangementOpen||opening!==this.#arrangementOpening
+      ||route!==this.store.route.get()||scope!==this.#currentControlsScope()||selection!==JSON.stringify([...this.#selected].sort())
+      ||(refused?this.#arrangement.refusedPreparation!==refused:name!==this.#arrangementName
+        ||recipe!==outcomeDeskRouteState(this.store.route.get()).recipeId))return false;
+    return refused?this.#arrangement.reviewRefusedPreparation(refused):this.#arrangement.start({recipeId:recipe,name});
+  }
+  async #retrieveArrangement(){
+    const scope=this.#arrangementScope(),operationId=outcomeArrangementOperationFromRoute(this.store.route.get());
+    if(!scope||!operationId)return false;
+    return this.#arrangement.retrieve({projectId:scope.projectId,canvasId:scope.canvasId,operationId});
+  }
+  #selectArrangementReceipt(){
+    const preview=this.#arrangement.state.preview,scope=this.#arrangementScope();
+    if(!preview||!scope||preview.canvasId!==scope.canvasId||preview.projectId!==scope.projectId)return;
+    const ids=outcomeArrangementSelectionIds(preview.selectedItemIds);
+    if(!ids||!ids.every((id)=>this.store.canvasProjection.get().items.some((item)=>item.id===id&&!item.removed&&item.visible)))return;
+    this.#selected=new Set(ids);this.requestUpdate();void this.#arrangement.revalidate();
+  }
+  async #reviewArrangementUndo(operationId:string){
+    const scope=this.#arrangementScope(),state=this.#arrangement.state;
+    if(!scope||!this.#canArrangeOutcome())return false;
+    if(state.identity&&!["applied","dismissed","not-applied"].includes(state.status)){this.#openArrangement();return false;}
+    const originals=this.store.events.get().filter((event)=>event.type==="CanvasArrangementCreated"&&isProtectedOutcomeArrangementEvent(event,scope.actorId)
+      &&event.payload.history_action_id===operationId&&event.payload.project_id===scope.projectId&&event.payload.canvas_id===scope.canvasId);
+    const original=originals.length===1?originals[0]:null,recipe=outcomeRecipe(original?.payload.recipe_id);
+    const ids=original&&Array.isArray(original.payload.item_ids)?outcomeArrangementSelectionIds(original.payload.item_ids as string[]):null;
+    if(!original||!recipe||!ids)return false;
+    this.#selected=new Set(ids);this.#openArrangement();
+    const opening=this.#arrangementOpening,route=this.store.route.get(),stamp=this.#arrangementStamp(),originalProof=JSON.stringify(original);
+    if(!await this.#settleCanvasWrites()||!this.isConnected||!this.#arrangementOpen||opening!==this.#arrangementOpening
+      ||route!==this.store.route.get()||stamp!==this.#arrangementStamp()||!this.#canArrangeOutcome()
+      ||!this.store.events.get().some((event)=>event.eventId===original.eventId&&JSON.stringify(event)===originalProof))return false;
+    return this.#arrangement.start({recipeId:recipe.id,name:outcomeDeskIntegrationCopy(this.i18n.locale).undoName,undoOperationId:operationId});
+  }
+  async #dismissArrangement(){
+    const opening=this.#arrangementOpening,scope=this.#arrangementOpeningScope,route=this.store.route.get();
+    if(this.#arrangement.state.submitted||!this.#arrangement.state.preview){this.#closeArrangement();return;}
+    if(await this.#arrangement.dismiss()&&this.#arrangementOpen&&opening===this.#arrangementOpening
+      &&scope===this.#currentControlsScope()&&route===this.store.route.get())this.#closeArrangement();
+  }
+  #arrangementDialog(){
+    const state=this.#arrangement.state,disposition=this.#arrangement.disposition,refused=this.#arrangement.refusedPreparation,copy=outcomeDeskIntegrationCopy(this.i18n.locale),sharedCopy=outcomeDeskCopy(this.i18n.locale);
+    const recipe=outcomeDeskRouteState(this.store.route.get()).recipeId,scope=this.#arrangementScope(),ids=outcomeArrangementSelectionIds([...this.#selected]);
+    const retainedOperation=outcomeArrangementOperationFromRoute(this.store.route.get());
+    const pending=Boolean(retainedOperation&&!state.identity||state.identity&&!["applied","dismissed","not-applied"].includes(state.status));
+    const pendingName=this.#arrangement.pendingLocalName;
+    const localName=pending&&!refused&&pendingName===this.#arrangementName&&this.#controlsScope===this.#currentControlsScope()?pendingName:null;
+    const notDispatched=Boolean(refused&&this.#arrangement.preparationNotDispatched);
+    const status=notDispatched?copy.preparationNotDispatched:refused?(refused.undoOperationId?copy.refusedUndoPreparation:copy.refusedPreparation):disposition?copy.dispositionHint:state.status==="not-applied"?copy.notApplied:state.status==="idle"?(retainedOperation?copy.uncertain:""):copy[state.status];
+    const opening=this.#arrangementOpening,openingScope=this.#arrangementOpeningScope;
+    const owned=()=>this.isConnected&&this.#arrangementOpen&&opening===this.#arrangementOpening&&openingScope===this.#currentControlsScope();
+    const close=()=>{if(this.#arrangementOpen&&opening===this.#arrangementOpening)this.#closeArrangement();};
+    return html`<dialog class="modal canvas-outcome-arrangement-dialog" open closedby="any" aria-labelledby="canvas-arrangement-heading"
+      @cancel=${(event:Event)=>{event.preventDefault();close();}} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)close();}}
+      @close=${this.#arrangementCloseHandler()}>
+      <section class="modal-card" lang=${this.i18n.locale} dir=${this.i18n.locale==="ar"?"rtl":"ltr"}>
+        <h2 id="canvas-arrangement-heading" tabindex="-1">${copy.arrange}</h2>
+        <p>${copy.rights}</p><p>${copy.board}: <bdi>${scope?.canvasId??""}</bdi></p>
+        ${state.identity?html`<p>${copy.operation}: <bdi>${state.identity.operationId}</bdi></p>`:nothing}
+        ${localName?html`<p data-arrangement-local-name>${copy.name}: <bdi>${localName}</bdi></p>`:nothing}
+        ${status?html`<p role="status">${status}</p>`:nothing}
+        ${disposition?html`<button type="button" class="button secondary" data-arrangement-disposition=${disposition.operationId}
+          @click=${(event:MouseEvent)=>{const button=event.currentTarget as HTMLElement|null;
+            if(owned()&&button?.isConnected&&button===this.querySelector("[data-arrangement-disposition]")
+              &&this.#arrangement.disposition===disposition)void this.#arrangement.dismiss(disposition);}}>${copy.requestDisposition}</button>`:nothing}
+        ${state.issue&&!(notDispatched&&state.issue==="changed")&&!(pending&&state.issue==="expired")&&(!state.preview||state.status!=="review")?html`<p role="status">${sharedCopy.issues[state.issue]}</p>`:nothing}
+        ${state.preview&&state.status==="review"?html`<p>${sharedCopy.recipesById[state.preview.recipeId]?.title??sharedCopy.recipes}</p>
+          <button type="button" class="button secondary" ?disabled=${state.busy||state.submitted} @click=${()=>{if(owned())this.#selectArrangementReceipt();}}>${copy.selectReceipt}</button>
+          ${renderOutcomeArrangementReview(state.preview,{instanceId:"canvas-arrangement-review",locale:outcomeDeskLocale(this.i18n.locale),issue:state.issue,
+            busy:state.busy,submitted:state.submitted,retrieve:()=>{if(owned())void this.#retrieveArrangement();},
+            titleForCard:(id)=>{const item=this.store.canvasProjection.get().items.find((candidate)=>candidate.id===id);return(item?this.#itemTitle(item)+" · ":"")+id;},
+            confirm:(_preview,confirmation)=>{if(owned())void this.#arrangement.apply(confirmation);},cancel:()=>{if(owned())void this.#dismissArrangement();}})}`:nothing}
+        ${refused?.undoOperationId?html`<p>${copy.undo}: <bdi>${refused.undoOperationId}</bdi></p>
+          <p>${copy.name}: <bdi>${refused.name}</bdi></p><p>${copy.selection}: <bdi>${this.i18n.number(refused.selectedItemIds.length)}</bdi>.</p>
+          <button type="button" class="button primary" data-arrangement-refused-undo=${refused.operationId}
+            ?disabled=${state.busy||!scope||!this.#canArrangeOutcome()||!navigator.onLine||!ids||JSON.stringify(ids)!==JSON.stringify(refused.selectedItemIds)}
+            @click=${()=>{if(owned()&&this.#arrangement.refusedPreparation===refused)void this.#previewArrangement();}}>${copy.undo}</button>`:nothing}
+        ${!pending||refused&&!refused.undoOperationId?html`<form class="canvas-arrangement-form" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(owned()&&(!refused||this.#arrangement.refusedPreparation===refused))void this.#previewArrangement();}}>
+          <label>${sharedCopy.recipes}<select .value=${refused?.recipeId??recipe??""} ?disabled=${Boolean(refused)} @change=${(event:Event)=>{if(!owned()||refused)return;const selected=outcomeRecipe((event.target as HTMLSelectElement).value);this.#go(withOutcomeRecipe(this.store.route.get(),selected?.id??null));this.requestUpdate();}}>
+            <option value="">${sharedCopy.noRecipe}</option>${OUTCOME_RECIPES.map((value)=>html`<option value=${value.id}>${sharedCopy.recipesById[value.id].title}</option>`)}
+          </select></label>
+          <label>${copy.name}<input dir="auto" .value=${refused?.name??this.#arrangementName} ?readonly=${Boolean(refused)} @input=${(event:InputEvent)=>{if(!owned()||refused)return;this.#arrangementName=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label>
+          <p>${recipe?sharedCopy.recipeHint:copy.recipeRequired}</p><p>${copy.selection}: <bdi>${this.i18n.number(ids?.length??0)}</bdi>. ${copy.selectionRequired}</p>
+          <button type="submit" class="button primary" ?disabled=${state.busy||!scope||!this.#canArrangeOutcome()||!(refused?.recipeId??recipe)||!ids||!(refused?.name??this.#arrangementName).trim()||Array.from((refused?.name??this.#arrangementName).trim()).length>80||!navigator.onLine||Boolean(refused&&JSON.stringify(ids)!==JSON.stringify(refused.selectedItemIds))}>${copy.preview}</button>
+        </form>`:nothing}
+        ${state.status==="applied"&&state.identity?html`<button type="button" class="button secondary" ?disabled=${state.busy||!this.#canArrangeOutcome()} @click=${()=>{if(owned())void this.#reviewArrangementUndo(state.identity!.operationId);}}>${copy.undo}</button>`:nothing}
+        ${retainedOperation&&(!state.preview||state.status!=="review")?html`<button type="button" class="button secondary" ?disabled=${state.busy} @click=${()=>{if(owned())void this.#retrieveArrangement();}}>${sharedCopy.retrieve}</button>`:nothing}
+        ${!state.preview||state.status!=="review"?html`<button type="button" class="button secondary" @click=${close}>${copy.close}</button>`:nothing}
+      </section>
+    </dialog>`;
+  }
+  #workspace(){const canvas=this.store.canvasProjection.get();const project=this.store.projection.get();const selectedCanvas=canvas.canvases.find((item)=>item.id===canvas.selectedCanvasId);if(!selectedCanvas)return this.#listing();const editable=this.#canEditCanvas();const outcomes=outcomeDeskRouteState(this.store.route.get()).posture==="outcomes";const focused=canvasFocusFromRoute(this.store.route.get());const view=canvasViewFromRoute(this.store.route.get());const items=this.#orderedItems(canvas.items);const nearbyItems=view==="spatial"?this.#nearbyItems(items):items;const facets=this.#facetGroups(canvas.items);const filed=canvas.items.some((item)=>Boolean(project.membership[item.sourceId]));const enoughToOrganize=canvas.items.length>=4;const selectedItems=canvas.items.filter((item)=>this.#selected.has(item.id));const textEditable=selectedItems.length===1&&["block","reference","sketch"].includes(selectedItems[0].sourceKind);const comparable=selectedItems.filter(mediaKind).length>=2;const trackedDocumentIds=new Set(canvas.items.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId));const unplacedOutputs=project.libraryOutputs.filter((output)=>output.canvasId===canvas.selectedCanvasId&&!trackedDocumentIds.has(output.documentId)&&!this.store.events.get().some((event)=>event.type==="CanvasItemPlaced"&&event.payload.source_id===output.id));const inputOutput=project.libraryOutputs.find((output)=>output.id===this.#inputOutputId),inputArtifact=project.libraryArtifacts.find((artifact)=>artifact.id===this.#inputArtifactId),inputFailure=this.store.documentJobs.get().find((job)=>job.jobId===this.#inputFailureJobId);const gridSize=24*this.#zoom,gridX=(-this.#cameraX*this.#zoom)%gridSize,gridY=(-this.#cameraY*this.#zoom)%gridSize;return html`<section class="canvas-workspace" data-empty=${String(canvas.items.length===0)} aria-label=${selectedCanvas.name}>
+    <header class="canvas-commandbar"><div class="canvas-board-identity"><a href="/canvas" @click=${(event:MouseEvent)=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0)return;event.preventDefault();this.#go("/canvas");}} aria-label=${this.i18n.t("canvas.backToProjectBoards","Back to project boards")}><span class="ui-directional-icon">${icon("back")}</span></a><div><small dir="auto">${project.projectName}</small><h1 dir="auto">${selectedCanvas.name}</h1></div><span class=${`canvas-sync-status${this.#offline.count?" pending":""}`} role="status" aria-live="polite">${this.#syncStatus()}</span></div><div class="canvas-command-actions">${editable?html`${canvas.items.length?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button class="icon-button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" title=${this.store.canUndo()?this.i18n.system("Undo the last board action"):this.i18n.system("No board action to undo")} @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button class="icon-button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" title=${this.store.canRedo()?this.i18n.system("Redo the last undone board action"):this.i18n.system("No board action to redo")} @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}<button class="button primary compact canvas-sources-toggle" @click=${()=>this.#openAdd()} aria-haspopup="dialog">${icon("plus")} ${this.i18n.t("canvas.controls.sources","Sources")}</button>`:nothing}<forma-ui-popover class="canvas-view-menu" .label=${this.i18n.system("View")} .triggerId=${this.#viewTriggerId} .content=${html`<div class="canvas-view-actions" @click=${this.#viewMenuAction} @change=${this.#viewMenuAction}>${this.#planningDocumentControl()}<button type="button" id="canvas-outcome-toggle" aria-pressed=${outcomes} @click=${()=>this.#deskNavigate(withOutcomeDeskPosture(this.store.route.get(),outcomes?"canvas":"outcomes"),outcomes?"canvas-view-toggle":"canvas-outcome-desk-heading")}>${outcomeDeskCopy(this.i18n.locale).heading}</button>
+      <button type="button" ?disabled=${!this.#canArrangeOutcome()} @click=${()=>this.#openArrangement()}>${outcomeDeskIntegrationCopy(this.i18n.locale).arrange}</button>
+      ${outcomeArrangementOperationFromRoute(this.store.route.get())?html`<button type="button" @click=${()=>{this.#openArrangement();void this.#retrieveArrangement();}}>${outcomeDeskIntegrationCopy(this.i18n.locale).openReceipt}</button>`:nothing}
+      ${!canvas.items.length?html`<div class="canvas-empty-tools">${editable?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button type="button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button type="button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}${this.#batchSelectionControl()}<button type="button" aria-label=${this.i18n.t("canvas.zoomOut","Zoom out")} @click=${()=>this.#setZoom(this.#zoom-.1)}>${icon("minus")}</button><button type="button" @click=${()=>this.#setZoom(1)}>${Math.round(this.#zoom*100)}%</button><button type="button" aria-label=${this.i18n.t("canvas.zoomIn","Zoom in")} @click=${()=>this.#setZoom(this.#zoom+.1)}>${icon("plus")}</button></div>`:nothing}<button class=${view==="spatial"?"active":""} @click=${()=>this.#setView("spatial")}>${this.i18n.t("canvas.board","Board")}</button><button class=${view==="list"?"active":""} @click=${()=>this.#setView("list")}>${this.i18n.t("canvas.readingOrder","Reading order")}</button>${filed?html`<button class=${view==="folders"?"active":""} @click=${()=>this.#setView("folders")}>Project folders</button>`:nothing}${enoughToOrganize?html`<hr><form class="canvas-view-preferences" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label>Order<select .value=${canvasLensFromRoute(this.store.route.get()).sort} @change=${(event:Event)=>this.#go(withCanvasQuery(this.store.route.get(),{sort:(event.target as HTMLSelectElement).value,seed:(event.target as HTMLSelectElement).value==="random"?String(Date.now()):null}))}><option value="authored">Board placement</option><option value="title">Title</option><option value="type">Content type</option><option value="random">Shuffle</option></select></label></form>`:nothing}${facets.length?html`<hr><span>Focus by what Forma found</span><button @click=${()=>this.#go(withCanvasQuery(this.store.route.get(),{filter:"all"}))}>Everything</button>${facets.map(({facet,count})=>html`<button @click=${()=>this.#go(withCanvasQuery(this.store.route.get(),{filter:`facet:${canvasFacetKey(facet)}`}))}>${this.i18n.system(facet.label)}: ${facet.value}<small>${count}</small></button>`)}`:nothing}<hr><button @click=${()=>{this.#memberOpen=true;this.requestUpdate();}}>${this.i18n.t("projects.sharingHeading","Project sharing")}</button><button @click=${()=>{this.#semanticOpen=true;this.requestUpdate();}}>Accessible reading order</button></div>`}></forma-ui-popover><button class="button secondary compact canvas-focus-toggle" aria-label=${focused?this.i18n.system("Exit focused Canvas view"):this.i18n.system("Enter focused Canvas view")} aria-pressed=${focused} title=${focused?this.i18n.system("Restore application navigation"):this.i18n.system("Give this project board the full workspace")} @click=${()=>this.#go(withCanvasFocus(this.store.route.get(),!focused))}><span aria-hidden="true">${icon(focused?"collapse":"expand")}</span><span>${focused?this.i18n.system("Exit focus"):this.i18n.system("Focus")}</span></button></div>${this.#queueStorageDisclosure()}</header>
+    ${outcomes?this.#outcomeDesk():nothing}
+    <div class="canvas-authoring-next" ?hidden=${outcomes} ?inert=${outcomes}>${this.#nextDocument()}</div>
+    <section class="canvas-stage-shell" ?hidden=${outcomes} ?inert=${outcomes} tabindex="-1" aria-label="Project board">${view==="spatial"?html`<div class="canvas-viewport" tabindex="-1" role="region" aria-roledescription="virtual project board" aria-label=${this.i18n.system("{name}, {count} items", { name: selectedCanvas.name, count: this.i18n.number(items.length) })} @wheel=${(event:WheelEvent)=>this.#canvasWheel(event)}><div class=${`canvas-plane${this.#tool==="marquee"?" is-batch-selecting":""}`} style=${`--canvas-zoom:${this.#zoom};--canvas-grid-size:${gridSize}px;--canvas-grid-x:${gridX}px;--canvas-grid-y:${gridY}px`} @pointerdown=${(event:PointerEvent)=>this.#pan(event)}>${nearbyItems.map((item)=>this.#card(item))}${this.#nearbyPresence().map((peer)=>html`<span class="canvas-presence" style=${`transform:translate3d(${(peer.x-this.#cameraX)*this.#zoom}px,${(peer.y-this.#cameraY)*this.#zoom}px,0) scale(${this.#zoom});--presence:${peer.color}`}><i></i>${peer.name}</span>`)}${this.#selectionMarquee?html`<span class="canvas-selection-marquee" aria-hidden="true" style=${`left:${this.#selectionMarquee.x}px;top:${this.#selectionMarquee.y}px;width:${this.#selectionMarquee.width}px;height:${this.#selectionMarquee.height}px`}></span>`:nothing}</div></div>`:view==="list"?this.#listView(items):view==="compare"?this.#compareView(items):this.#folderView(items)}
       ${view==="spatial"&&canvas.items.length?this.#batchSelectionControl():nothing}${view==="spatial"&&editable?this.#intentDock():nothing}${this.#selectionControls(view==="spatial"?selectedItems:[],textEditable,comparable)}${view==="spatial"&&canvas.items.length?html`<div class="canvas-zoom-hud"><button aria-label=${this.i18n.t("canvas.zoomOut","Zoom out")} @click=${()=>this.#setZoom(this.#zoom-.1)}>${icon("minus")}</button><button @click=${()=>this.#setZoom(1)}>${Math.round(this.#zoom*100)}%</button><button aria-label=${this.i18n.t("canvas.zoomIn","Zoom in")} @click=${()=>this.#setZoom(this.#zoom+.1)}>${icon("plus")}</button></div>`:nothing}${view==="spatial"&&editable&&unplacedOutputs.length?html`<button class="canvas-new-output" @click=${()=>this.#placeSource(this.#sources().find((source)=>source.id===unplacedOutputs[0].id)!)}>${icon("plus")} Place ${unplacedOutputs.length===1?this.i18n.system("new generation"):this.i18n.system("{count} new generations", { count: this.i18n.number(unplacedOutputs.length) })}</button>`:nothing}
     </section>
     <forma-document-artifacts class="canvas-shared-artifact-composer" .launcherOnly=${true} .documentId=${this.#anchorDocumentId()} source="canvas" @document-artifact-queued=${(event:CustomEvent<{documentId:string}>)=>{const target=canvas.items.find((item)=>item.sourceKind==="document"&&item.sourceId===event.detail.documentId);if(target)this.#openDocumentOutputs(target);}}></forma-document-artifacts>
+    ${this.#arrangementOpen?this.#arrangementDialog():nothing}
     ${editable&&this.#addOpen?this.#addDialog():nothing}${editable&&this.#formalizeOpen?this.#formalizeDialog():nothing}${this.#memberOpen?this.#memberDialog():nothing}${editable&&this.#editOpen?this.#editDialog():nothing}${editable&&this.#documentOpen?this.#documentDialog():nothing}${editable&&this.#renderOpen?this.#renderDialog():nothing}${this.#semanticOpen?this.#semanticDialog(items):nothing}${this.#documentOutputsOpen?this.#documentOutputsDialog():nothing}${this.#viewingOutputId?this.#outputViewerDialog():nothing}${this.#viewingArtifactId?this.#artifactViewerDialog():nothing}${!this.store.session.get()?.projectContext&&inputOutput?html`<forma-generation-input-dialog .open=${true} .inspection=${outputGenerationInputInspection(inputOutput,this.store.events.get(),this.store.content.get())} @generation-input-close=${()=>{this.#inputOutputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}${!this.store.session.get()?.projectContext&&inputArtifact?html`<forma-generation-input-dialog .open=${true} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputArtifactId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}${!this.store.session.get()?.projectContext&&inputFailure?html`<forma-generation-input-dialog .open=${true} .inspection=${failedGenerationInputInspection(inputFailure,this.store.events.get(),this.store.content.get())} @generation-input-close=${()=>{this.#inputFailureJobId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}
   </section>`;}
   #intentDock(){const scope=this.#controlsScope,route=this.store.route.get();const anchor=this.#anchorDocumentId();const canvasId=this.store.canvasProjection.get().selectedCanvasId;const suggestions=this.store.adaptiveSuggestionSetsFor(anchor,canvasId);const pendingJobs=this.store.documentJobs.get().filter((job)=>job.documentId===anchor&&job.canvasId===canvasId&&job.kind==="structure_adaptive"&&job.sourceSurface==="canvas"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).length;const working=pendingJobs>0;const session=this.store.session.get();const assistantActive=Boolean(session?.assistant?.enabled&&session.policy.accepted);const plannerReady=Boolean(session?.provider.plannerConfigured??session?.provider.configured);const canPlan=Boolean(session&&(!session.projectContext||session.projectContext.permissions.includes("project.output.request")));return html`${assistantActive?nothing:html`<forma-ui-popover class="canvas-intent-dock" .label=${this.i18n.t("assistant.mode.planBoard")} .content=${html`<form @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!scope||scope!==this.#currentControlsScope()||route!==this.store.route.get()){this.#closePopovers();return;}this.querySelector<FormaUiPopover>(".canvas-intent-dock")?.close(true);void this.#askIntent();}}><span>${icon("spark")}</span><input aria-label="Describe what you want to explore" maxlength="2000" dir="auto" ?disabled=${!canPlan} placeholder=${!canPlan?plannerReady?this.i18n.t("workspace.admin.readOnlyGeneration"):this.i18n.t("assistant.creativeUnavailable"):working?this.i18n.system("You can prepare the next intent…"):this.i18n.system("What do you want to explore?")} .value=${this.#intent} @input=${(event:InputEvent)=>{this.#intent=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button ?disabled=${this.#intentSubmitting||!canPlan||!this.#intent.trim()} aria-label=${working?this.i18n.system("Forma is preparing suggestions"):this.i18n.t("assistant.mode.planBoardSubmit")}>${working?icon("dots"):icon("send")}</button></form>`}></forma-ui-popover>`}${suggestions.length||working?html`<aside class="canvas-intent-stack" aria-label="Suggested next moves" aria-live="polite">${working?html`<div class="canvas-intent-pending" role="status"><span>${icon("spark")}</span><div><b>Considering your intent</b><small>Suggestions will join this stack when they are ready.</small></div></div>`:nothing}<div class="canvas-intent-cards">${[...suggestions].reverse().map((suggestion,index)=>{const structure=suggestion.structure;const matches=this.#intentMatches(`${suggestion.intent} ${structure.interpretation}`);return html`<article class="canvas-intent-response" data-suggestion-id=${suggestion.id}><header><div><small>${index===0?this.i18n.system("Latest suggestions"):this.i18n.system("Earlier suggestions")}</small>${suggestion.intent?html`<q>${suggestion.intent}</q>`:nothing}<p>${structure.interpretation}</p></div><button aria-label=${(suggestion.intent ? this.i18n.system("Dismiss suggestions for {intent}", { intent: suggestion.intent }) : this.i18n.system("Dismiss suggestions"))} @click=${()=>this.store.dismissAdaptiveSuggestion(anchor,suggestion.id)}>${icon("close")}</button></header><div>${matches.map((source)=>html`<button @click=${()=>this.#placeSource(source)}><span>Add from project</span><b>${source.title}</b></button>`)}<button @click=${()=>this.#useSuggestion(structure.active_decision)}><span>Shape the next decision</span><b>${structure.active_decision.label}</b></button>${structure.suggested_blocks.slice(0,3).map((item)=>html`<button @click=${()=>this.#useSuggestion(item)}><span>${this.i18n.system(blockTypeDefinition(item.type)?.label??item.type)}</span><b>${item.label}</b></button>`)}</div></article>`;})}</div></aside>`:nothing}`;}

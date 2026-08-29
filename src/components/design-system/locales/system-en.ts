@@ -6088,6 +6088,8 @@ Object.assign(messages, {
   "system.auto.108waw7.63": "This invocation was not sent because the source is unavailable.",
   "system.auto.s84qun.90": "The original finished-output change is only partly acknowledged. It has not been repeated.",
   "system.auto.1ijg7qv.78": "Only part of the original change is acknowledged. It has not been resubmitted.",
+  "system.auto.w37m4z.89": "Exact navigation only. Never changes a run selection, draft, offer, or authored decision.",
+  "system.auto.13cst8w.95": "Panel-only navigation. The existing Output controller still owns exact focus and all decisions.",
 });
 
 export default messages;

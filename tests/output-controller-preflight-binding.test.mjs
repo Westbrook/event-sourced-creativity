@@ -102,7 +102,7 @@ for (const [name, mutate] of replacements.slice(1, 4)) {
 
 const tagged = (part, key) => part.values.some((value) => typeof value === "string" && value.includes(`output.delivery.${key}`));
 const execution = (f) => region(f.controller.render(), 'class="output-execution"');
-const runRows = (f) => templates(execution(f)).filter((part) => part.strings.some((value) => value.includes('<label><input type="checkbox"'))
+const runRows = (f) => templates(execution(f)).filter((part) => part.strings.some((value) => value.includes('<label><input class="output-run-target" data-output-run-target=')) && part.strings.some((value) => value.includes(' type="checkbox"'))
   && part.strings.some((value) => value.includes('<span dir="auto">')));
 const check = (f) => templates(execution(f)).find((part) => tagged(part, "checkRun"));
 function offerForAll(snapshot, targets) {

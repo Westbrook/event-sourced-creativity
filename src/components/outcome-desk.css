@@ -1,0 +1,61 @@
+.outcome-desk, .outcome-arrangement-review {
+  display: grid;
+  gap: var(--forma-space-5, 1.5rem);
+  min-inline-size: 0;
+  container-type: inline-size;
+}
+.outcome-desk-header, .outcome-arrangement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: var(--forma-space-4, 1rem);
+}
+.outcome-desk-header > div { flex: 1; min-inline-size: 0; }
+.outcome-desk h2, .outcome-desk h3, .outcome-desk p,
+.outcome-arrangement-review h3, .outcome-arrangement-review p { overflow-wrap: anywhere; }
+.outcome-desk-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--forma-space-5, 1.5rem); }
+.outcome-desk-layout > *, .outcome-desk-selected { min-inline-size: 0; }
+.outcome-desk-objects { display: grid; gap: var(--forma-space-2, .5rem); list-style: none; margin: 0; padding: 0; }
+.outcome-desk-objects a {
+  display: flex;
+  align-items: center;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding: var(--forma-space-2, .5rem);
+  border: 1px solid transparent;
+  border-radius: var(--forma-radius-small, 6px);
+  color: var(--forma-color-text, var(--ink));
+  overflow-wrap: anywhere;
+}
+.outcome-desk-objects a[aria-current="true"] {
+  border-color: var(--forma-color-accent, var(--accent));
+  background: var(--forma-color-accent-subtle, var(--accent-wash));
+}
+.outcome-recipe-choices, .outcome-desk-actions { display: grid; gap: var(--forma-space-2, .5rem); }
+.outcome-desk [data-primary="true"] .ui-choice-card,
+.outcome-arrangement-review [data-primary="true"] .ui-choice-card {
+  border-color: var(--forma-color-accent, var(--accent));
+  background: var(--forma-color-accent-subtle, var(--accent-wash));
+}
+.outcome-desk button, .outcome-desk summary, .outcome-desk a,
+.outcome-arrangement-review button { min-block-size: 44px; min-inline-size: 44px; }
+.outcome-desk :is(button, a, summary, [tabindex]):focus-visible,
+.outcome-arrangement-review :is(button, a, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--forma-color-accent, var(--accent));
+  outline-offset: 3px;
+}
+.outcome-desk .ui-choice-card-copy, .outcome-arrangement-review .ui-choice-card-copy { min-inline-size: 0; overflow-wrap: anywhere; }
+.outcome-arrangement-table { overflow: auto; max-inline-size: 100%; padding: .25rem; }
+.outcome-arrangement-table table { inline-size: 100%; text-align: start; border-collapse: separate; border-spacing: .5rem; }
+.outcome-arrangement-table :is(th, td) { text-align: start; vertical-align: top; overflow-wrap: anywhere; }
+.outcome-arrangement-actions > forma-ui-choice-card { flex: 1; min-inline-size: min(100%, 14rem); }
+@container (max-width: 44rem) { .outcome-desk-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .outcome-desk *, .outcome-arrangement-review * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+  .outcome-desk-objects a[aria-current="true"],
+  .outcome-desk [data-primary="true"] .ui-choice-card,
+  .outcome-arrangement-review [data-primary="true"] .ui-choice-card { border-color: Highlight; }
+  .outcome-desk :focus-visible, .outcome-arrangement-review :focus-visible { outline-color: Highlight; }
+}

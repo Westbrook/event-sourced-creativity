@@ -11811,6 +11811,30 @@
               }
             },
             {
+              "kind": "method",
+              "name": "focusOutputReference",
+              "parameters": [
+                {
+                  "name": "reference",
+                  "type": {
+                    "text": "OutputNavigationReference"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ section?: OutputNavigationSection; current: () => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Exact navigation only. Never changes a run selection, draft, offer, or authored decision."
+            },
+            {
               "kind": "field",
               "name": "inspectionOnly",
               "type": {
@@ -12629,6 +12653,30 @@
                 }
               },
               "description": "Shared entry point: choosing a command never creates placeholder content."
+            },
+            {
+              "kind": "method",
+              "name": "revealOutputNavigation",
+              "parameters": [
+                {
+                  "name": "documentId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "current",
+                  "type": {
+                    "text": "() => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Panel-only navigation. The existing Output controller still owns exact focus and all decisions."
             }
           ],
           "x-forma": {

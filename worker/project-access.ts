@@ -13,6 +13,7 @@ import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/
 import { ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, isContextCompositionRelation, normalizeActionBlockReferences, validateContextCompositionGraph } from "../src/model/combined-context.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "./context-package-rights.ts";
+import { CANVAS_ARRANGEMENT_MAX_EVENTS, validateAtomicCanvasArrangementEvents } from "./canvas-arrangement-contract.ts";
 import { combineAuthoringGuards, prepareAuthoringEventBatch, prepareAuthoringMediaBatch, prepareAuthoringSidecarBatch } from "./authoring-event-batches.ts";
 
 import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
@@ -936,14 +937,16 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
-  authoringOperation?:"context-proposal"|"document-duplicate";
+  authoringOperation?:"context-proposal"|"document-duplicate"|"canvas-arrangement";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
   if(!["append","batch","canvas_sync"].includes(action))return Response.json({error:"project_operation_unavailable"},{status:403});
   const original=Array.isArray(body.events)?body.events:body.event?[body.event]:[];
   if(atomicSidecars?.authoringOperation&&(!atomicSidecars.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)
-    ||original.some((event)=>!["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"].includes(String(event.type)))))return Response.json({error:"invalid_authoring_operation"},{status:403});
+    ||(atomicSidecars.authoringOperation==="canvas-arrangement"
+      ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
+      : original.some((event)=>!["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"].includes(String(event.type))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
   const assistantAcceptance=atomicSidecars?.assistantAcceptance;
   if(assistantAcceptance){
     const accepted=original[0],mutation=original[1],payload=accepted?.payload??{};
@@ -1067,7 +1070,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const canvasAction=action==="canvas_sync"||original.some((event)=>PROJECT_CANVAS_MUTATION_TYPES.has(String(event.type??""))||Boolean(event.payload?.canvas_id));
   if(canvasAction&&!hasCapability(principal,"project.canvas.use",{organizationId:context.organizationId,projectAccessId:context.projectAccessId}))return Response.json({error:"project_canvas_access_required"},{status:403});
-  const maximumEvents=atomicSidecars?.authoringOperation?512:action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
+  const maximumEvents=atomicSidecars?.authoringOperation==="canvas-arrangement"?CANVAS_ARRANGEMENT_MAX_EVENTS:atomicSidecars?.authoringOperation?512:action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
   if(!original.length||original.length>maximumEvents)return Response.json({error:"invalid_project_event_batch",maximum:maximumEvents},{status:400});
   if(action==="canvas_sync"&&original.some((event)=>!String(event.payload?.client_event_id??"")))return Response.json({error:"client_event_id_required"},{status:400});
   if(original.some((event)=>event.type==="ArtifactApproved")&&original.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??""))))return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});

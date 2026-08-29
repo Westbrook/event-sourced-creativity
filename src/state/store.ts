@@ -23,6 +23,9 @@ import { resolveImageFocalAnalysis } from "../model/image-focus";
 import { DOCUMENT_JOB_KINDS, documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobCanRecoverPresentation, documentJobFailure, documentJobIsStale, documentJobTerminal, documentJobStopBudgetMessage, documentJobHasNoBudgetHold, planningStopBudget, generationFailureGuidance, type DocumentJob, type DocumentJobKind, type DocumentJobStopBudget } from "../model/document-jobs";
 import { effectivePromptPreference, normalizePromptTechnique, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 import { canvasIdFromRoute } from "../canvas/routes";
+import { isProtectedOutcomeArrangementEvent, outcomeArrangementUndoneActions } from "../canvas/outcome-arrangements";
+import { outcomeDeskIntegrationCopy } from "../components/design-system/locales/outcome-desk-integration-messages";
+import { OUTCOME_ARRANGEMENT_ENDPOINT, type OutcomeArrangementCommand, type OutcomeArrangementHttp } from "./outcome-desk-controller";
 import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas-document-target";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
@@ -222,6 +225,8 @@ function outputSnapshotRenderable(value: unknown): value is OutputRequirementsSn
 }
 
 export class FormaStore {
+  /** A transient request to review existing ledger Undo, not a second history/queue. */
+  readonly canvasArrangementUndoRequest = new Signal.State<{ eventId: string; operationId: string; projectId: string; canvasId: string; authorityKey: string } | null>(null);
   readonly outputRequirements = new OutputRequirementsClient<OutputRequirementsSnapshot>({
     captureScope: () => {
       const scope = this.captureAuthorizationScope();
@@ -1647,6 +1652,23 @@ export class FormaStore {
     return changed;
   }
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
+
+  /** One direct receipt-bound transport. Never appendBatch, Canvas queue or optimistic events. */
+  async canvasArrangementRequest(command: OutcomeArrangementCommand, controls: { current?: () => boolean; onDispatch?: () => void; onNotDispatchedAtConfirmation?: () => void } = {}): Promise<OutcomeArrangementHttp> {
+    const authorization=this.captureAuthorizationScope(),session=this.session.get();
+    const permissions=session?.projectContext?.permissions??session?.capabilities??[];
+    if(controls.current&&!controls.current()||!authorization||!session||!navigator.onLine||!permissions.includes("project.read")||!permissions.includes("project.canvas.use")
+      ||command.projectId!==this.projection.get().projectId||command.canvasId!==canvasIdFromRoute(this.route.get())
+      ||session.projectContext&&session.projectContext.projectId!==command.projectId)throw new Error("canvas_arrangement_unavailable");
+    const response=await this.guardedFetch(OUTCOME_ARRANGEMENT_ENDPOINT,{
+      method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(command),
+    },outcomeDeskIntegrationCopy(currentFormaLocale().locale).arrange,controls);
+    if(controls.current&&!controls.current()||!this.authorizationScopeActive(authorization)||command.projectId!==this.projection.get().projectId||command.canvasId!==canvasIdFromRoute(this.route.get()))throw new Error("canvas_arrangement_authority_changed");
+    const body=await response.json() as Record<string,unknown>;
+    if(controls.current&&!controls.current()||!this.authorizationScopeActive(authorization)||command.projectId!==this.projection.get().projectId||command.canvasId!==canvasIdFromRoute(this.route.get()))throw new Error("canvas_arrangement_authority_changed");
+    return{ok:response.ok,status:response.status,body};
+  }
+
   #documentCopyFacts(target:DocumentCopyTarget){
     const session=this.session.get(),projection=this.projection.get(),authorization=this.captureAuthorizationScope();
     const sourceOwner=this.captureSourceOwnership();
@@ -2267,11 +2289,11 @@ async syncDocumentJobs(){
     if(!this.session.get()?.impersonation)return true;if(this.#impersonationConfirmation)return false;this.patchUi({impersonationConfirmOpen:true,impersonationAction:action});return new Promise<boolean>((resolve)=>{this.#impersonationConfirmation=resolve;});
   }
   resolveImpersonatedInteraction(confirmed:boolean){const resolve=this.#impersonationConfirmation;this.#impersonationConfirmation=undefined;this.patchUi({impersonationConfirmOpen:false,impersonationAction:""});resolve?.(confirmed);if(!confirmed)this.toast("Canceled. The fictional account was not changed.");}
-  async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account",controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">={}){
+  async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account",controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{onNotDispatchedAtConfirmation?:()=>void}={}){
     const check=()=>{if(controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     const authorization=this.#activeAuthorizationScope(),method=String(init.method??(input instanceof Request?input.method:"GET")).toUpperCase();
     if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){check();const pending=fetch(input,init);try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();if(authorization)this.#assertAuthorizationScope(authorization);return response;}
-    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);check();if(!confirmed)return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");check();const pending=fetch(input,{...init,headers});try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();this.#assertAuthorizationScope(authorization);return response;
+    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);check();if(!confirmed){try{controls.onNotDispatchedAtConfirmation?.();}catch{/* A presentation callback cannot dispatch this unapproved attempt. */}return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});}const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");check();const pending=fetch(input,{...init,headers});try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();this.#assertAuthorizationScope(authorization);return response;
   }
   async startImpersonating(personaId:string,route="/projects"){
     const response=await fetch("/api/impersonation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({personaId,confirmation:"I understand, continue"})});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"The fictional account could not be opened");window.location.assign(body.route??route);
@@ -4055,7 +4077,7 @@ async syncDocumentJobs(){
 
   #canvasHistoryEvent(event:CreativeEvent,canvasId:string){return String(event.payload.canvas_id??event.payload.source_canvas_id??"")===canvasId&&Boolean(inverseEvent(event));}
   #historyIndex(groups:HistoryGroup[],canvasId=""){for(let index=groups.length-1;index>=0;index-=1)if(groups[index].some((event)=>canvasId?this.#canvasHistoryEvent(event,canvasId):Boolean(inverseEvent(event))))return index;return-1;}
-  #streamCanvasUndoGroup(canvasId:string){const ownerId=this.session.get()?.user.userId??"";if(!ownerId)return null;const actor=this.#principalEventActor(),events=this.events.get();const compensated=new Set(events.map((event)=>event.compensatesEventId).filter(Boolean));const owned=events.filter((event)=>event.actor===actor&&!event.compensatesEventId&&event.payload.history_owner_id===ownerId&&this.#canvasHistoryEvent(event,canvasId));const eligible=owned.filter((event)=>!compensated.has(event.eventId));const latest=eligible.at(-1);if(!latest)return null;const actionId=String(latest.payload.history_action_id??latest.eventId);const action=owned.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);return action.some((event)=>event.type==="CanvasArrangementCreated")?action:eligible.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);}
+  #streamCanvasUndoGroup(canvasId:string){const ownerId=this.session.get()?.user.userId??"";if(!ownerId)return null;const actor=this.#principalEventActor(),events=this.events.get();const compensated=new Set(events.map((event)=>event.compensatesEventId).filter(Boolean));const undone=outcomeArrangementUndoneActions(events,canvasId,ownerId);const owned=events.filter((event)=>(event.actor===actor||isProtectedOutcomeArrangementEvent(event,ownerId))&&!event.compensatesEventId&&event.payload.history_owner_id===ownerId&&this.#canvasHistoryEvent(event,canvasId));const eligible=owned.filter((event)=>!compensated.has(event.eventId)&&!undone.has(String(event.payload.history_action_id??"")));const latest=eligible.at(-1);if(!latest)return null;const actionId=String(latest.payload.history_action_id??latest.eventId);const action=owned.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);return action.some((event)=>event.type==="CanvasArrangementCreated")?action:eligible.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);}
   canUndo() {
     const canvasId=canvasIdFromRoute(this.route.get())??"";if(this.#historyIndex(this.#undo,canvasId)>=0)return true;if(canvasId)return Boolean(this.#streamCanvasUndoGroup(canvasId));
     const compensated=new Set(this.events.get().map((event)=>event.compensatesEventId).filter(Boolean));
@@ -4071,6 +4093,13 @@ async syncDocumentJobs(){
   async undo() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const canvasId=canvasIdFromRoute(this.route.get())??"";const source = this.#undoCandidate(canvasId); if (!source?.length) return this.toast(canvasId?"Nothing to undo on this board.":documentViewFromRoute(this.route.get()) === "editor" ? "Nothing to undo." : "Nothing reversible remains in this document history.");
+    if(source.some((event)=>isProtectedOutcomeArrangementEvent(event))){
+      const ownerId=this.session.get()?.user.userId??"",authorization=this.captureAuthorizationScope();
+      const original=source.find((event)=>event.type==="CanvasArrangementCreated"&&isProtectedOutcomeArrangementEvent(event,ownerId));
+      if(!original||!authorization||!canvasId||original.payload.canvas_id!==canvasId)return this.toast(this.#systemNotice("This exact action changed or is no longer available. Review the current document."));
+      this.canvasArrangementUndoRequest.set({eventId:original.eventId,operationId:String(original.payload.history_action_id),projectId:String(original.payload.project_id),canvasId,authorityKey:authorization.key});
+      this.notify();return;
+    }
     const inverses=source.toReversed().map((event)=>{const inverse=inverseEvent(event)!;return{...inverse,payload:withoutClientEventId(inverse.payload),compensatesEventId:event.eventId};});
     const result = await this.appendBatchWithReceipt(inverses, { remember: false });
     if(this.sourceOwnershipActive(sourceOwner)&&this.#eventWriteComplete(result,inverses))this.#redo.push(source);

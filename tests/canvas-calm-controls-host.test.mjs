@@ -206,7 +206,7 @@ class RendererPort {
       const node=this.previousNodes?.find(candidate=>candidate.owner===owner&&candidate.nativeKey===nativeKey)??{};
       Object.assign(node,{tag,owner,...parsed,full,nativeKey,open:Object.hasOwn(parsed.attributes,"open"),isConnected:true,value:parsed.properties.value??parsed.attributes.value??"",checked:parsed.properties.checked??false});
       Object.setPrototypeOf(node, ElementPort.prototype);
-      node.parentElement = ancestors.at(-1)??owner; node.fixture = this.fixture; node.tagName = tag.toUpperCase();
+      node.parentElement = ancestors.at(-1)??owner; node.fixture = this.fixture; node.tagName = tag.toUpperCase(); node.id = String(node.attributes.id ?? "");
       Object.defineProperty(node,"disabled",{configurable:true,get:()=>Object.hasOwn(node.attributes,"disabled")});
       node.dataset = Object.fromEntries(Object.entries(node.attributes).filter(([key]) => key.startsWith("data-")).map(([key,value]) => [key.slice(5).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase()),String(value)]));
       node.style = { setProperty() {} }; node.clientWidth = 1280; node.clientHeight = 540;
@@ -273,12 +273,12 @@ const { CanvasApplication } = await loadActual("src/canvas/canvas-application.ts
 const { DocumentArtifacts } = await loadActual("src/components/document-artifacts.ts");
 const { ContextIntelligence } = await loadActual("src/components/context-intelligence.ts");
 const { FormaUiChoiceCard } = await loadActual("src/components/design-system/choice-card.ts");
-const { FormaUiPopover } = await loadActual("src/components/design-system/feedback.ts");
+const { FormaUiPopover, FormaUiDisclosure } = await loadActual("src/components/design-system/feedback.ts");
 const { PresentationDeck } = await loadActual("src/components/presentation-deck.ts");
 const { CollectionTree } = await loadActual("src/components/collection-tree.ts");
 const { positionNativePopover } = await loadActual("src/components/native-popover.ts");
 const { FormaLocaleController, FORMA_DEFAULT_MESSAGES } = await loadActual("src/components/design-system/localization.ts");
-const registry = { "forma-document-artifacts": DocumentArtifacts, "forma-context-intelligence": ContextIntelligence, "forma-ui-choice-card": FormaUiChoiceCard, "forma-ui-popover": FormaUiPopover, "forma-presentation-deck": PresentationDeck };
+const registry = { "forma-document-artifacts": DocumentArtifacts, "forma-context-intelligence": ContextIntelligence, "forma-ui-choice-card": FormaUiChoiceCard, "forma-ui-popover": FormaUiPopover, "forma-ui-disclosure": FormaUiDisclosure, "forma-presentation-deck": PresentationDeck };
 
 function restingControls(f, markup = f.renderer.markup) {
   const stack = [], controls = [], voids = new Set(["input","img","br","hr","meta","link","source","area","wbr"]);
@@ -292,6 +292,21 @@ function restingControls(f, markup = f.renderer.markup) {
     if(!voids.has(tag)) stack.push({tag,hidden,open});
   }
   return controls;
+}
+
+// Legacy synthetic application port only. It does not provide a notification
+// stream or authority evidence; no-render retirement is tested with full Store.
+function canvasLegacySubscriptions() {
+  const tree=syntax("src/state/store.ts"),owner=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="FormaStore");
+  assert.ok(owner);
+  const members=["#listeners","subscribe"].map(name=>{
+    const member=owner.members.find(node=>node.name?.getText(tree)===name);assert.ok(member,"actual Store subscription member "+name);
+    return member.getText(tree);
+  });
+  const code=ts.transpileModule("class SubscriptionOwner { "+members.join("\n")+" }\nexports.SubscriptionOwner=SubscriptionOwner;",
+    {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+  const exports={};new Function("exports",code)(exports);const subscription=new exports.SubscriptionOwner();
+  return subscription.subscribe.bind(subscription);
 }
 
 function fixture(options = {}) {
@@ -316,9 +331,13 @@ function fixture(options = {}) {
   if(options.artifact && state.documentCount)append({type:"DocumentRenderCompleted",payload:{project_id:"p",document_id:"document-0",artifact_id:"artifact-a",artifact_kind:"short_story",title:"Saved exact story",summary:"A complete saved outcome.",content_ref:"story-content",item_count:1,items:[],requested_by_user_id:"owner"}});
   const projection = () => foldEvents(state.events,Infinity,state.documentCount?"document-0":"","p");
   const canvas = () => foldCanvasEvents(state.events,"p",state.boardId);
+  f.append=append;
   f.store = {
+    ...(options.storeHost?{}:{subscribe:canvasLegacySubscriptions()}),
+    canvasArrangementUndoRequest:cell(null),optimisticEvents:cell([]),refreshEvents:async()=>{},
+    canvasArrangementRequest:async(command)=>{state.requests.push({url:"/api/canvas/arrangements",body:command});return f.arrangementTransport?f.arrangementTransport(command):{ok:false,status:503,body:{error:"fixture_transport_unavailable"}};},
     ui:{instrumentation:false}, head:{get:()=>state.events.length}, events:{get:()=>state.events},eventView:{get:()=>state.events},projection:{get:projection},canvasProjection:{get:canvas},
-    session:{get:()=>({user:{userId:"owner",role:"user",displayName:"Owner"},canvas:{access:true,blockedBy:[],requirements:[]},provider:{configured:true,plannerConfigured:true,videoConfigured:true,audioConfigured:true},assistant:{enabled:state.assistant},policy:{accepted:true},capabilities:["project.read","project.author","project.output.request"],...(state.viewer?{projectContext:{projectId:"p",projectAccessId:"access",organizationId:"org",ownerUserId:"owner",role:"viewer",permissions:["project.read","project.canvas.use"]}}:{})})},
+    session:{get:()=>({user:{userId:"owner",role:"user",displayName:"Owner"},canvas:{access:true,blockedBy:[],requirements:[]},provider:{configured:true,plannerConfigured:true,videoConfigured:true,audioConfigured:true},assistant:{enabled:state.assistant},policy:{accepted:true},capabilities:["project.read","project.canvas.use","project.author","project.output.request"],...(state.viewer?{projectContext:{projectId:"p",projectAccessId:"access",organizationId:"org",ownerUserId:"owner",role:"viewer",permissions:["project.read","project.canvas.use"]}}:{})})},
     captureAuthorizationScope:()=>state.authorization?{key:state.authorization,shared:state.viewer}:null,authorizationScopeActive:scope=>Boolean(state.authorization&&scope?.key===state.authorization),
     route:{get:()=>f.route??"/canvas/"+state.boardId+"/"+state.boardId},setRoute:route=>{f.route=route;},asOf:cell(Infinity),content:cell({"story-content":JSON.stringify({content_markdown:"A complete saved outcome.",title:"Saved exact story",summary:"A complete saved outcome.",items:[]})}),busy:cell(""),
     canUndo:()=>Boolean(options.undo),canRedo:()=>Boolean(options.redo),undo:async()=>f.trace.push("undo"),redo:async()=>f.trace.push("redo"),
@@ -881,6 +900,531 @@ for(const boundary of ["authorization","board","route"])test("the exact old inte
   else f.route="/canvas/projects";
   actualForm.handlers.submit.call(f.host,{preventDefault(){}});
   await f.flush();
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+// Phase7 integration: actual Canvas renderer/handlers and native-control ports.
+// No browser, AT, live provider, second-user or production acceptance is claimed.
+const { outcomeDeskCopy } = await loadActual("src/components/design-system/locales/outcome-recipe-messages.ts");
+const { outcomeDeskIntegrationCopy } = await loadActual("src/components/design-system/locales/outcome-desk-integration-messages.ts");
+const { outcomeArrangementRevisions, previewOutcomeArrangement } = await import("../src/canvas/outcome-arrangements.ts");
+const flushUntil = async (f, ready) => { for(let n=0;n<30&&!ready();n++)await f.flush(); assert.ok(ready(),"bounded host settlement "+JSON.stringify({requests:f.state.requests,trace:f.trace.slice(-8),markup:f.renderer.markup.slice(-5000)})); };
+
+for(const locale of ["en","fr","ar","ja"])test("actual "+locale+" Canvas Desk switch and recipe preserve mounted authoring and original draft", async () => {
+  const f=fixture({populated:true,chosen:"document-0",locale});
+  await f.select(0);
+  const editor=f.renderer.query(f.host,"forma-context-intelligence")[0];
+  const field=f.native("input",node=>node.attributes.maxlength==="2000"),draft="User-authored intent — do not submit or translate";
+  field.handlers.input.call(f.host,{target:{value:draft}});f.draw();
+  const before=JSON.stringify(f.state.events),selection=[...f.state.selected];
+  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");await f.flush();
+  assert.ok(f.route.includes("posture=outcomes"));
+  const stage=f.native("section",node=>node.attributes.class==="canvas-stage-shell");
+  assert.ok(Object.hasOwn(stage.attributes,"hidden"));assert.ok(Object.hasOwn(stage.attributes,"inert"));
+  assert.equal(f.renderer.query(f.host,"forma-context-intelligence")[0],editor);
+  assert.equal(f.native("input",node=>node.attributes.maxlength==="2000").value,draft);
+  assert.ok(f.renderer.markup.includes(escapeText(outcomeDeskCopy(locale).heading)));
+  assert.equal(f.renderer.query(f.host,"forma-ui-choice-card").filter(choice=>String(choice.value??"").includes(":delivery:")).length,0,"no first object chosen");
+  const section=f.native("section",node=>node.attributes.class==="outcome-desk");
+  assert.equal(section.attributes.dir,locale==="ar"?"rtl":"ltr");
+  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  const recipe=f.native("select",node=>node.handlers.change?.toString().includes("outcomeRecipe"));
+  assert.ok(recipe);
+  recipe.handlers.change.call(f.host,{target:{value:"film-continuity"}});f.draw();
+  assert.ok(f.route.includes("recipe=film-continuity"));
+  assert.equal(JSON.stringify(f.state.events),before);assert.deepEqual(f.state.selected,selection);
+  const dialog=f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog"));
+  dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
+  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");await f.flush();
+  assert.ok(!f.route.includes("posture=outcomes"));
+  assert.equal(f.native("input",node=>node.attributes.maxlength==="2000").value,draft);
+  assert.equal(f.renderer.query(f.host,"forma-context-intelligence")[0],editor);
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+test("actual Canvas receipt review enables an exact Apply and only retrieval after HTTP uncertainty", async () => {
+  const f=fixture({populated:true,chosen:"document-0"});
+  await f.select(0,"document");await f.select(0,"block",true);
+  f.route="/canvas/board-a/board-a?recipe=campaign";
+  let preview;
+  f.arrangementTransport=async command=>{
+    if(command.action==="preview"){
+      const canvas=f.store.canvasProjection.get(),projection=f.store.projection.get(),revisions=await outcomeArrangementRevisions(projection,canvas,f.state.selected);
+      assert.equal(revisions.ok,true);
+      const draft=previewOutcomeArrangement({canvas,selectedItemIds:f.state.selected,authorityKey:f.state.authorization,actorId:"owner",siteId:"owner:host",
+        canRead:true,canArrange:true,atomicTransportAvailable:true,...revisions.value},command);
+      assert.equal(draft.ok,true);
+      preview={...draft.value.request,before:draft.value.before,after:draft.value.after,previewId:"retained-preview",approvalHash:"a".repeat(64),
+        arrangementId:"outcome-arrangement:"+ "b".repeat(64),expiresAt:new Date(Date.now()+60_000).toISOString(),
+        providerCalls:0,maximumMicrousd:0,maximumEvents:201,changesSemantics:false};
+      return{ok:true,status:200,body:{status:"review",preview}};
+    }
+    if(command.action==="apply"){
+      assert.equal(command.confirmed,true);assert.equal(command.previewId,preview.previewId);assert.equal(command.approvalHash,preview.approvalHash);
+      assert.deepEqual(command.selectedItemIds,preview.selectedItemIds);
+      throw new Error("Mock HTTP lost after submission; the host cannot infer applied");
+    }
+    assert.equal(command.action,"retrieve");
+    return{ok:true,status:202,body:{status:"applying",operationId:command.operationId,projectId:command.projectId,canvasId:command.canvasId,previewId:preview.previewId}};
+  };
+  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  const name=f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName"));
+  name.handlers.input.call(f.host,{target:{value:"Human named arrangement"}});f.draw();
+  const form=f.native("form",node=>node.attributes.class==="canvas-arrangement-form");
+  form.handlers.submit.call(f.host,{preventDefault(){}});
+  await flushUntil(f,()=>Boolean(f.renderer.query(f.host,"forma-ui-choice-card").find(choice=>preview&&choice.value===preview.operationId&&!choice.disabled)));
+  let apply=f.renderer.query(f.host,"forma-ui-choice-card").find(choice=>choice.value===preview.operationId);
+  assert.equal(apply.disabled,false);
+  const before=JSON.stringify(f.state.events);
+  await f.renderer.handler(apply,"button",()=>true)();await flushUntil(f,()=>f.renderer.markup.includes(escapeText(outcomeDeskIntegrationCopy("en").uncertain)));
+  assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);
+  assert.equal(JSON.stringify(f.state.events),before);assert.equal(f.state.batches.length,0);
+  const retained=new URL(f.route,"https://fixture.invalid").searchParams.get("arrangement");
+  assert.equal(retained,preview.operationId);
+  await f.click("button",node=>node.handlers.click?.toString().includes("#retrieveArrangement()")&&!node.handlers.click?.toString().includes("#openArrangement()"));
+  await flushUntil(f,()=>f.state.requests.at(-1)?.body.action==="retrieve");
+  assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);
+  assert.equal(f.state.requests.at(-1).body.operationId,retained);
+  assert.equal(f.state.batches.length,0);
+});
+
+test("actual read-only Canvas Desk retains exact inspection and hides preparation/Apply authority", async () => {
+  const f=fixture({populated:true,chosen:"document-0",viewer:true,artifact:true});
+  f.route="/canvas/board-a/board-a?posture=outcomes&outcome=artifact%3Aartifact-a";f.draw();
+  assert.ok(f.renderer.markup.includes("Saved exact story"));
+  assert.equal(f.renderer.ownNodes(f.host,"section").some(node=>node.attributes.class==="outcome-desk-formats"),false);
+  const arrange=f.native("button",node=>node.handlers.click?.toString().includes("#openArrangement()"));
+  assert.ok(Object.hasOwn(arrange.attributes,"disabled"));
+  const candidates=f.renderer.query(f.host,"forma-ui-choice-card").filter(choice=>String(choice.value).includes(":delivery:"));
+  assert.equal(candidates.length,1);assert.equal(candidates[0].disabled,false);
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+
+test("actual Canvas receives the store's protected Undo request and opens only an exact free undo-preview", async () => {
+  const f=fixture({populated:true,chosen:"document-0"}),items=[...f.store.canvasProjection.get().items].sort((a,b)=>a.id.localeCompare(b.id));
+  const row=item=>({item_id:item.id,x:item.x,y:item.y,w:item.w,h:item.h});
+  const original=f.append({type:"CanvasArrangementCreated",payload:{project_id:"p",canvas_id:"board-a",arrangement_id:"protected-layout",
+    history_action_id:"protected-original",organization_action_id:"protected-original",history_owner_id:"owner",
+    source_surface:"canvas-outcome-arrangement",recipe_id:"campaign",name:"Existing original",item_ids:items.map(item=>item.id),
+    frames:items.map(row),previous_frames:items.map(item=>({...row(item),x:item.x-20,y:item.y-30})),
+    source_items:items.map(item=>({item_id:item.id,source_id:item.sourceId,source_kind:item.sourceKind,rot:item.rot,z:item.z})),
+  }});
+  f.arrangementTransport=async()=>({ok:false,status:409,body:{error:"fixture_has_no_retained_server_preview"}});
+  f.store.canvasArrangementUndoRequest.set({eventId:original.eventId,operationId:"protected-original",projectId:"p",canvasId:"board-a",authorityKey:f.state.authorization});
+  f.draw();await flushUntil(f,()=>f.state.requests.some(request=>request.body.action==="undo-preview"));
+  const request=f.state.requests.find(request=>request.body.action==="undo-preview");
+  assert.equal(request.body.undoOperationId,"protected-original");assert.notEqual(request.body.operationId,"protected-original");
+  assert.deepEqual(request.body.selectedItemIds,items.map(item=>item.id));
+  assert.equal(request.body.recipeId,"campaign");assert.equal(request.body.confirmed,undefined);
+  assert.equal(f.store.canvasArrangementUndoRequest.get(),null,"consume the transient request so remount cannot create another preview");
+  assert.equal(f.state.requests.some(value=>value.body.action==="apply"),false);
+  assert.equal(f.state.batches.length,0);
+});
+
+
+test("arrangement name drafts remain same-board state and are concealed on authority replacement", async () => {
+  const f=fixture({populated:true,chosen:"document-0"});
+  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  const field=f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName"));
+  field.handlers.input.call(f.host,{target:{value:"PRIVATE ARRANGEMENT NAME"}});f.draw();
+  let dialog=f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog"));
+  dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
+  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"PRIVATE ARRANGEMENT NAME");
+  f.state.authorization="another-actor";f.draw();
+  assert.equal(f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog")),undefined);
+  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"");
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+
+test("Desk and arrangement-dialog keyboard events never mutate the hidden board selection", async () => {
+  const f=fixture({populated:true,chosen:"document-0"});await f.select(0);
+  const before=JSON.stringify(f.state.events),selection=[...f.state.selected];
+  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");await f.flush();
+  const heading=f.native("h2",node=>node.attributes.id==="canvas-outcome-desk-heading");
+  const keydown=f.listeners.get("keydown")[0];
+  assert.ok(heading);assert.equal(typeof keydown,"function");
+  for(const key of ["ArrowLeft","ArrowDown","Delete","Backspace","f","e","n","d","b","Escape"]){
+    keydown({key,composedPath:()=>[heading],metaKey:false,ctrlKey:false,altKey:false,shiftKey:false,
+      preventDefault(){assert.fail("Desk must not intercept board shortcuts");},stopPropagation(){}});
+  }
+  f.draw();assert.deepEqual(f.state.selected,selection);assert.equal(JSON.stringify(f.state.events),before);
+  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");
+  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  const dialogHeading=f.native("h2",node=>node.attributes.id==="canvas-arrangement-heading");
+  keydown({key:"Escape",composedPath:()=>[dialogHeading],metaKey:false,ctrlKey:false,altKey:false,
+    preventDefault(){assert.fail("The native dialog owns Escape");},stopPropagation(){}});
+  const dialog=f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog"));
+  dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
+  assert.deepEqual(f.state.selected,selection);assert.equal(f.state.batches.length,0);assert.equal(f.state.requests.length,0);
+});
+
+
+// Phase7 R3: delayed continuations execute actual handlers; no browser/native/AT certificate.
+const continuityDeferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
+const continuityTurn=()=>new Promise(setImmediate);
+const arrangementNode=f=>f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog"));
+const openArrangement=f=>f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+const setArrangementName=(f,value)=>{const field=f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName"));assert.ok(field);field.handlers.input.call(f.host,{target:{value}});f.draw();};
+async function mockArrangementReview(f,command){
+  const canvas=f.store.canvasProjection.get(),projection=f.store.projection.get(),revisions=await outcomeArrangementRevisions(projection,canvas,command.selectedItemIds);
+  assert.equal(revisions.ok,true);
+  const draft=previewOutcomeArrangement({canvas,selectedItemIds:command.selectedItemIds,authorityKey:f.state.authorization,actorId:"owner",siteId:"owner:host",
+    canRead:true,canArrange:true,atomicTransportAvailable:true,...revisions.value},command);assert.equal(draft.ok,true);
+  return{ok:true,status:200,body:{status:"review",preview:{...draft.value.request,before:draft.value.before,after:draft.value.after,previewId:"retained-"+command.operationId,
+    approvalHash:"a".repeat(64),arrangementId:"outcome-arrangement:"+"b".repeat(64),expiresAt:new Date(Date.now()+60_000).toISOString(),providerCalls:0,maximumMicrousd:0,maximumEvents:201,changesSemantics:false}}};
+}
+async function namedArrangement(f){
+  await f.select(0,"document");await f.select(0,"block",true);f.route="/canvas/board-a/board-a?recipe=campaign";
+  f.arrangementTransport=command=>mockArrangementReview(f,command);await openArrangement(f);setArrangementName(f,"Retained exact human name");
+  f.native("form",node=>node.attributes.class==="canvas-arrangement-form").handlers.submit.call(f.host,{preventDefault(){}});
+  await flushUntil(f,()=>f.renderer.query(f.host,"forma-ui-choice-card").some(choice=>choice.value===f.state.requests[0]?.body.operationId&&!choice.disabled));
+}
+function protectedArrangement(f){
+  const items=[...f.store.canvasProjection.get().items].sort((a,b)=>a.id.localeCompare(b.id)),row=item=>({item_id:item.id,x:item.x,y:item.y,w:item.w,h:item.h});
+  const original=f.append({type:"CanvasArrangementCreated",payload:{project_id:"p",canvas_id:"board-a",arrangement_id:"protected-layout",
+    history_action_id:"protected-original",organization_action_id:"protected-original",history_owner_id:"owner",source_surface:"canvas-outcome-arrangement",
+    recipe_id:"campaign",name:"Original authored layout",item_ids:items.map(item=>item.id),frames:items.map(row),previous_frames:items.map(item=>({...row(item),x:item.x-20,y:item.y-30})),
+    source_items:items.map(item=>({item_id:item.id,source_id:item.sourceId,source_kind:item.sourceKind,rot:item.rot,z:item.z}))}});
+  return original;
+}
+
+test("R3 queued native Close from A cannot close a reopened arrangement B",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await openArrangement(f);setArrangementName(f,"Original human draft");
+  const first=arrangementNode(f),close=first.handlers.close;first.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
+  await openArrangement(f);setArrangementName(f,"Newer opening draft");assert.ok(arrangementNode(f));
+  close.call(f.host,{currentTarget:first,target:first});await f.flush();
+  assert.ok(arrangementNode(f),"old native close owns A only");
+  assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"Newer opening draft");
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+test("R3 current native Close, Escape and backdrop keep normal draft-preserving behavior",async()=>{
+  for(const kind of ["close","cancel","backdrop"]){
+    const f=fixture({populated:true,chosen:"document-0"});await openArrangement(f);setArrangementName(f,"Normal retained draft");
+    const dialog=arrangementNode(f);
+    if(kind==="close"){dialog.open=false;dialog.handlers.close.call(f.host,{currentTarget:dialog,target:dialog});}
+    else if(kind==="cancel")dialog.handlers.cancel.call(f.host,{currentTarget:dialog,target:dialog,preventDefault(){}});
+    else dialog.handlers.click.call(f.host,{currentTarget:dialog,target:dialog});
+    await f.flush();assert.equal(arrangementNode(f),undefined);assert.equal(f.state.requests.length,0);
+    await openArrangement(f);assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"Normal retained draft");
+  }
+});
+
+test("R3 late explicit Cancel acknowledgement cannot close a newer opening of the retained arrangement",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await namedArrangement(f);const gate=continuityDeferred();
+  f.arrangementTransport=command=>{assert.equal(command.action,"dismiss");return gate.promise;};
+  const cancel=f.native("button",node=>node.handlers.click?.toString().includes("#dismissArrangement"));
+  assert.ok(cancel);cancel.handlers.click.call(f.host);await flushUntil(f,()=>f.state.requests.some(request=>request.body.action==="dismiss"));
+  const original=f.state.requests[0].body,handle=f.route;
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);
+  gate.resolve({ok:true,status:200,body:{status:"dismissed",operationId:original.operationId,projectId:original.projectId,canvasId:original.canvasId}});
+  await continuityTurn();await f.flush();assert.ok(arrangementNode(f),"late acknowledgement must not own the replacement opening");
+  assert.equal(f.route,handle);assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"Retained exact human name");
+  assert.equal(f.state.requests.filter(request=>request.body.action==="dismiss").length,1);assert.equal(f.state.batches.length,0);
+});
+
+test("R3 normal explicit Cancel closes only after the exact acknowledgement and preserves the name",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await namedArrangement(f);const gate=continuityDeferred(),original=f.state.requests[0].body;
+  f.arrangementTransport=command=>{assert.equal(command.action,"dismiss");return gate.promise;};
+  f.native("button",node=>node.handlers.click?.toString().includes("#dismissArrangement")).handlers.click.call(f.host);
+  await flushUntil(f,()=>f.state.requests.some(request=>request.body.action==="dismiss"));assert.ok(arrangementNode(f));
+  gate.resolve({ok:true,status:200,body:{status:"dismissed",operationId:original.operationId,projectId:original.projectId,canvasId:original.canvasId}});
+  await continuityTurn();await f.flush();assert.equal(arrangementNode(f),undefined);
+  await openArrangement(f);assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"Retained exact human name");
+  assert.equal(f.state.requests.filter(request=>request.body.action==="dismiss").length,1);
+});
+
+test("R3 late preview after normal Close retains its exact URL receipt without reopening or applying",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await f.select(0,"document");await f.select(0,"block",true);
+  f.route="/canvas/board-a/human-slug?recipe=campaign&posture=outcomes#kept";const gate=continuityDeferred();
+  f.arrangementTransport=()=>gate.promise;await openArrangement(f);setArrangementName(f,"Name typed before Close");
+  f.native("form",node=>node.attributes.class==="canvas-arrangement-form").handlers.submit.call(f.host,{preventDefault(){}});
+  await flushUntil(f,()=>f.state.requests.length===1);const command=f.state.requests[0].body,receipt=await mockArrangementReview(f,command),handle=f.route;
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();gate.resolve(receipt);await continuityTurn();await f.flush();
+  assert.equal(arrangementNode(f),undefined);assert.equal(f.route,handle);assert.ok(f.route.endsWith("#kept"));assert.ok(f.route.includes("human-slug"));
+  await openArrangement(f);assert.ok(f.renderer.markup.includes("Name typed before Close"));assert.ok(f.renderer.markup.includes(command.operationId));
+  assert.equal(f.state.requests.length,1);assert.equal(f.state.batches.length,0);
+});
+
+test("R3 late private preview after authority replacement does not reopen or reveal the old name",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await f.select(0,"document");await f.select(0,"block",true);f.route="/canvas/board-a/board-a?recipe=campaign";
+  const gate=continuityDeferred();f.arrangementTransport=()=>gate.promise;await openArrangement(f);setArrangementName(f,"PRIVATE PENDING NAME");
+  f.native("form",node=>node.attributes.class==="canvas-arrangement-form").handlers.submit.call(f.host,{preventDefault(){}});
+  await flushUntil(f,()=>f.state.requests.length===1);const receipt=await mockArrangementReview(f,f.state.requests[0].body),handle=f.route;
+  f.state.authorization="different-current-authority";f.draw();gate.resolve(receipt);await continuityTurn();await f.flush();
+  assert.equal(arrangementNode(f),undefined);await openArrangement(f);assert.ok(!f.renderer.markup.includes("PRIVATE PENDING NAME"));
+  assert.equal(f.route,handle);assert.equal(f.state.requests.length,1);assert.equal(f.state.batches.length,0);
+});
+
+test("R3 Close during pre-preview queue settlement does not allocate a hidden arrangement",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await f.select(0,"document");await f.select(0,"block",true);f.route="/canvas/board-a/board-a?recipe=campaign";
+  await openArrangement(f);setArrangementName(f,"Human cancelled opening");const originalList=offlinePort.listBatches,gate=continuityDeferred();let entered=false;
+  offlinePort.listBatches=()=>{entered=true;return gate.promise;};
+  try{
+    f.native("form",node=>node.attributes.class==="canvas-arrangement-form").handlers.submit.call(f.host,{preventDefault(){}});
+    await flushUntil(f,()=>entered);const route=f.route;arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
+    gate.resolve([]);await continuityTurn();await f.flush();assert.equal(f.state.requests.length,0);assert.equal(f.route,route);assert.equal(arrangementNode(f),undefined);
+  }finally{offlinePort.listBatches=originalList;gate.resolve([]);}
+});
+
+for(const kind of ["authority","selection","source","close-reopen","posture"])test("R3 pending atomic Undo never retargets after "+kind+" changes",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"}),original=protectedArrangement(f),gate=continuityDeferred(),originalList=offlinePort.listBatches;let entered=false;
+  f.arrangementTransport=async()=>({ok:false,status:409,body:{error:"No retained preview in this fixture"}});
+  offlinePort.listBatches=()=>{entered=true;return gate.promise;};
+  try{
+    f.store.canvasArrangementUndoRequest.set({eventId:original.eventId,operationId:"protected-original",projectId:"p",canvasId:"board-a",authorityKey:f.state.authorization});f.draw();
+    await flushUntil(f,()=>entered);f.draw();assert.ok(arrangementNode(f));
+    if(kind==="authority"){f.state.authorization="another-current-authority";f.draw();}
+    if(kind==="selection")await f.select(0,"block");
+    if(kind==="source"){f.append({type:"BlockPropertyEdited",payload:{project_id:"p",document_id:"document-0",block_id:"block-0",property_path:"text",new_value:"New authored source arrived during Undo settlement"}});f.draw();assert.equal(f.store.projection.get().libraryBlocks.find(block=>block.id==="block-0").properties.text,"New authored source arrived during Undo settlement");}
+    if(kind==="close-reopen"){arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);setArrangementName(f,"Replacement human draft");}
+    if(kind==="posture"){f.route="/canvas/board-a/board-a?posture=outcomes";f.draw();}
+    const before=JSON.stringify(f.state.events),route=f.route,selection=[...f.state.selected];
+    gate.resolve([]);await continuityTurn();await f.flush();
+    assert.equal(f.state.requests.length,0,"old Undo must not create a fresh receipt against changed ownership/source");
+    assert.equal(JSON.stringify(f.state.events),before);assert.equal(f.route,route);assert.deepEqual(f.state.selected,selection);assert.equal(f.state.batches.length,0);
+  }finally{offlinePort.listBatches=originalList;gate.resolve([]);}
+});
+
+for(const action of ["navigate","dismiss","restore"])test("R3 delayed Desk "+action+" focus belongs to its current route, authority, posture and modal owner",async()=>{
+  for(const change of ["authority","route","modal","disconnect"]){
+    const f=fixture({populated:true,chosen:"document-0",artifact:true});
+    f.route="/canvas/board-a/board-a?posture=outcomes&outcome=artifact%3Aartifact-a";f.draw();
+    if(action==="restore"){const dismiss=f.native("button",node=>node.handlers.click?.toString().includes("ports.dismiss"));assert.ok(dismiss);dismiss.handlers.click.call(f.host);await f.flush();}
+    const gate=continuityDeferred();f.tick=()=>gate.promise;
+    let trigger;
+    if(action==="navigate")trigger=f.native("a",node=>String(node.attributes.href??"").includes("document%3A"));
+    else trigger=f.native("button",node=>node.handlers.click?.toString().includes(action==="dismiss"?"ports.dismiss":"ports.restoreSuggestions"));
+    assert.ok(trigger,action+" is a real rendered control");trigger.handlers.click.call(f.host,{button:0,preventDefault(){},currentTarget:trigger,target:trigger});f.draw();
+    if(change==="authority"){f.state.authorization="replacement-authority";f.draw();}
+    if(change==="route"){f.route="/canvas/board-a/board-a";f.draw();}
+    if(change==="modal")await openArrangement(f);
+    if(change==="disconnect")f.host.isConnected=false;
+    f.trace.length=0;gate.resolve(true);await continuityTurn();
+    assert.equal(f.trace.filter(value=>value.startsWith("focus:")).length,0,action+" "+change+" cannot steal focus after ownership changed");
+  }
+});
+
+test("R3 current Desk focus still lands on the exact requested element",async()=>{
+  const f=fixture({populated:true,chosen:"document-0",artifact:true});
+  f.route="/canvas/board-a/board-a?posture=outcomes&outcome=artifact%3Aartifact-a";f.draw();const gate=continuityDeferred();f.tick=()=>gate.promise;
+  const trigger=f.native("a",node=>String(node.attributes.href??"").includes("document%3A"));assert.ok(trigger);
+  trigger.handlers.click.call(f.host,{button:0,preventDefault(){},currentTarget:trigger,target:trigger});f.draw();gate.resolve(true);await continuityTurn();
+  assert.equal(documentPort.activeElement.id,"canvas-outcome-desk-selected");assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+
+test("R3 a queued close delivered to the current still-open native node cannot dismiss its reopening",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await openArrangement(f);
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);
+  const current=arrangementNode(f);assert.equal(current.open,true);
+  current.handlers.close.call(f.host,{currentTarget:current,target:current});await f.flush();
+  assert.ok(arrangementNode(f),"queued native events are not evidence that the current open node closed");
+  const closed=arrangementNode(f);closed.open=false;closed.handlers.close.call(f.host,{currentTarget:closed,target:closed});await f.flush();
+  assert.equal(arrangementNode(f),undefined,"a genuine current native Close still works");
+});
+
+for(const kind of ["name","recipe","submit"])test("R3 a detached arrangement "+kind+" handler cannot mutate a new opening",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await f.select(0,"document");await f.select(0,"block",true);
+  f.route="/canvas/board-a/board-a?recipe=campaign";await openArrangement(f);setArrangementName(f,"Old private draft");
+  const oldName=f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).handlers.input;
+  const oldRecipe=f.native("select",node=>node.handlers.change?.toString().includes("outcomeRecipe")).handlers.change;
+  const oldSubmit=f.native("form",node=>node.attributes.class==="canvas-arrangement-form").handlers.submit;
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);setArrangementName(f,"Current human draft");
+  const route=f.route;
+  if(kind==="name")oldName.call(f.host,{target:{value:"STALE PRIVATE INPUT"}});
+  if(kind==="recipe")oldRecipe.call(f.host,{target:{value:"film-continuity"}});
+  if(kind==="submit")oldSubmit.call(f.host,{preventDefault(){}});
+  await continuityTurn();await f.flush();assert.equal(f.route,route);
+  assert.equal(f.native("input",node=>node.handlers.input?.toString().includes("#arrangementName")).value,"Current human draft");
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+for(const action of ["apply","cancel"])test("R3 a detached exact review "+action+" callback cannot act on a newer opening",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await namedArrangement(f);
+  const choice=f.renderer.query(f.host,"forma-ui-choice-card").find(value=>value.value===f.state.requests[0].body.operationId);
+  const callback=action==="apply"?choice.eventBindings["forma-action"]:f.native("button",node=>node.handlers.click?.toString().includes("#dismissArrangement")).handlers.click;
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);
+  await flushUntil(f,()=>f.renderer.query(f.host,"forma-ui-choice-card").some(value=>value.value===f.state.requests[0].body.operationId&&!value.disabled));
+  const before=f.state.requests.length,route=f.route;f.arrangementTransport=()=>({ok:false,status:409,body:{error:"A stale button must not have reached transport"}});
+  callback.call(f.host);await continuityTurn();await f.flush();
+  assert.equal(f.state.requests.length,before);assert.equal(f.route,route);assert.ok(arrangementNode(f));assert.equal(f.state.batches.length,0);
+});
+
+test("R3 only the newest Close owns deferred opener focus",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await openArrangement(f);const first=continuityDeferred(),second=continuityDeferred();
+  f.tick=()=>first.promise;arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});f.draw();
+  await openArrangement(f);f.tick=()=>second.promise;arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});f.draw();
+  f.trace.length=0;second.resolve(true);await continuityTurn();const currentFocus=documentPort.activeElement,focusCount=f.trace.filter(value=>value.startsWith("focus:")).length;
+  assert.equal(focusCount,1);first.resolve(true);await continuityTurn();
+  assert.equal(documentPort.activeElement,currentFocus);assert.equal(f.trace.filter(value=>value.startsWith("focus:")).length,focusCount);
+});
+
+test("R3 current reopened exact review still requires and accepts a fresh human Apply",async()=>{
+  const f=fixture({populated:true,chosen:"document-0"});await namedArrangement(f);const original=f.state.requests[0].body;
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);
+  await flushUntil(f,()=>f.renderer.query(f.host,"forma-ui-choice-card").some(choice=>choice.value===original.operationId&&!choice.disabled));
+  f.arrangementTransport=command=>{
+    assert.equal(command.action,"apply");assert.equal(command.operationId,original.operationId);assert.equal(command.confirmed,true);
+    return{ok:true,status:202,body:{status:"applying",operationId:command.operationId,projectId:command.projectId,canvasId:command.canvasId}};
+  };
+  const apply=f.renderer.query(f.host,"forma-ui-choice-card").find(choice=>choice.value===original.operationId);
+  await f.renderer.handler(apply,"button",()=>true)();await flushUntil(f,()=>f.state.requests.some(request=>request.body.action==="apply"));
+  assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);assert.equal(f.state.requests.filter(request=>request.body.action==="preview").length,1);assert.equal(f.state.batches.length,0);
+});
+
+
+// Phase7 R4: current-authority receipt retrieval, still using the actual native Canvas host.
+async function renewedAuthorityHost(){
+  const f=fixture({populated:true,chosen:"document-0"});await f.select(0,"document");await f.select(0,"block",true);
+  f.route="/canvas/board-a/human-route?recipe=campaign&posture=outcomes#retained";
+  let receipt;f.arrangementTransport=async command=>{
+    if(command.action==="preview"){const response=await mockArrangementReview(f,command);receipt=response.body.preview;return response;}
+    if(command.action==="apply")throw new Error("Injected lost Apply response; no canonical saved outcome is inferred");
+    if(command.action==="retrieve")return{ok:true,status:200,body:{status:"review",preview:receipt}};
+    assert.equal(command.action,"dismiss");assert.equal(command.previewId,receipt.previewId);assert.equal(command.approvalHash,receipt.approvalHash);
+    return{ok:true,status:200,body:{status:"dismissed",operationId:command.operationId,projectId:command.projectId,canvasId:command.canvasId}};
+  };
+  await openArrangement(f);setArrangementName(f,"Exact private arrangement before renewal");
+  f.native("form",node=>node.attributes.class==="canvas-arrangement-form").handlers.submit.call(f.host,{preventDefault(){}});
+  await flushUntil(f,()=>f.renderer.query(f.host,"forma-ui-choice-card").some(choice=>choice.value===receipt?.operationId&&!choice.disabled));
+  const apply=f.renderer.query(f.host,"forma-ui-choice-card").find(choice=>choice.value===receipt.operationId);
+  await f.renderer.handler(apply,"button",()=>true)();await flushUntil(f,()=>f.renderer.markup.includes(escapeText(outcomeDeskIntegrationCopy("en").uncertain)));
+  assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);
+  return{f,preview:receipt};
+}
+const reopenOriginalReceipt=f=>f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&node.handlers.click?.toString().includes("#retrieveArrangement()"));
+const currentReceiptSettled=f=>{const select=f.native("button",node=>node.handlers.click?.toString().includes("#selectArrangementReceipt"));return Boolean(select&&!Object.hasOwn(select.attributes,"disabled"));};
+
+for(const reader of [false,true])test("R4 actual Canvas renewed "+(reader?"reader":"author")+" retrieves the original after Close and permits current human Cancel",async()=>{
+  const{f,preview}=await renewedAuthorityHost(),route=f.route,events=JSON.stringify(f.state.events),oldDialog=arrangementNode(f),oldClose=oldDialog.handlers.close,read=continuityDeferred(),transport=f.arrangementTransport;
+  f.state.authorization="same-actor-new-permission-epoch";f.state.viewer=reader;f.draw();assert.equal(arrangementNode(f),undefined);
+  const session=f.store.session.get(),permissions=session.projectContext?.permissions??session.capabilities;
+  assert.equal(session.user.userId,"owner");assert.ok(permissions.includes("project.read"));assert.ok(permissions.includes("project.canvas.use"));
+  f.arrangementTransport=command=>command.action==="retrieve"?read.promise:transport(command);
+  await reopenOriginalReceipt(f);await flushUntil(f,()=>f.state.requests.some(request=>request.body.action==="retrieve"));
+  assert.ok(!f.renderer.markup.includes(preview.name),"old private content is hidden until a current authenticated read succeeds");
+  oldClose.call(f.host,{currentTarget:oldDialog,target:oldDialog});f.draw();assert.ok(arrangementNode(f),"old native Close cannot dismiss the renewed opening");
+  const readCommand=f.state.requests.find(request=>request.body.action==="retrieve").body;
+  assert.deepEqual(readCommand,{operationId:preview.operationId,projectId:preview.projectId,canvasId:preview.canvasId,action:"retrieve"});
+  read.resolve({ok:true,status:200,body:{status:"review",preview}});
+  await flushUntil(f,()=>f.renderer.markup.includes(preview.name)&&currentReceiptSettled(f));
+  // Close and reopen stay native presentation actions; neither creates another preview.
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();await openArrangement(f);
+  await flushUntil(f,()=>currentReceiptSettled(f)&&f.renderer.query(f.host,"forma-ui-choice-card").some(choice=>choice.value===preview.operationId&&choice.disabled===reader));
+  const apply=f.renderer.query(f.host,"forma-ui-choice-card").find(choice=>choice.value===preview.operationId);assert.equal(apply.disabled,reader);
+  if(reader){await f.renderer.handler(apply,"button",()=>true)();await f.flush();assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);}
+  f.arrangementTransport=transport;
+  f.native("button",node=>node.handlers.click?.toString().includes("#dismissArrangement")).handlers.click.call(f.host);
+  await flushUntil(f,()=>!arrangementNode(f));
+  assert.equal(f.state.requests.filter(request=>request.body.action==="retrieve").length,1);assert.equal(f.state.requests.filter(request=>request.body.action==="dismiss").length,1);
+  assert.equal(f.state.requests.filter(request=>request.body.action==="preview").length,1);assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);
+  assert.equal(f.route,route);assert.equal(JSON.stringify(f.state.events),events);assert.equal(f.state.batches.length,0);
+});
+
+for(const failure of ["HTTP","substituted-preview"])test("R4 actual Canvas preserves uncertainty/private concealment after renewed "+failure+" read",async()=>{
+  const{f,preview}=await renewedAuthorityHost(),route=f.route,transport=f.arrangementTransport;
+  f.state.authorization="renewed-current-reader";f.state.viewer=true;f.draw();
+  f.arrangementTransport=async command=>{
+    assert.equal(command.action,"retrieve");
+    if(failure==="HTTP")return{ok:false,status:403,body:{error:"Current server read denied"}};
+    return{ok:true,status:200,body:{status:"review",preview:{...preview,name:"UNTRUSTED SUBSTITUTED NAME"}}};
+  };
+  await reopenOriginalReceipt(f);await flushUntil(f,()=>f.state.requests.some(request=>request.body.action==="retrieve"));await f.flush();
+  assert.ok(arrangementNode(f));assert.ok(!f.renderer.markup.includes(preview.name));assert.ok(!f.renderer.markup.includes("UNTRUSTED SUBSTITUTED NAME"));
+  assert.equal(f.native("form",node=>node.attributes.class==="canvas-arrangement-form"),undefined,"unresolved intent cannot allocate another preview");
+  assert.equal(f.native("button",node=>node.handlers.click?.toString().includes("#dismissArrangement")),undefined,"no unverified Cancel command");
+  assert.equal(f.route,route);
+  arrangementNode(f).handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();f.arrangementTransport=transport;
+  await reopenOriginalReceipt(f);await flushUntil(f,()=>f.renderer.markup.includes(preview.name)&&currentReceiptSettled(f));
+  const apply=f.renderer.query(f.host,"forma-ui-choice-card").find(choice=>choice.value===preview.operationId);assert.ok(apply);assert.equal(apply.disabled,true);
+  f.native("button",node=>node.handlers.click?.toString().includes("#dismissArrangement")).handlers.click.call(f.host);await flushUntil(f,()=>!arrangementNode(f));
+  assert.equal(f.state.requests.filter(request=>request.body.action==="retrieve").length,2);assert.equal(f.state.requests.filter(request=>request.body.action==="apply").length,1);
+  assert.equal(f.state.requests.filter(request=>request.body.action==="preview").length,1);assert.equal(f.route,route);assert.equal(f.state.batches.length,0);
+});
+
+
+
+
+
+const arrangementNameBoundsByLocale = { en: /1–80/u, fr: /1 à 80/u, ar: /١ إلى ٨٠/u, ja: /1〜80/u };
+for (const locale of ["en", "fr", "ar", "ja"]) test("actual " + locale + " arrangement renderer matches the 80-code-point name contract", async () => {
+  const message = outcomeDeskCopy(locale).issues.name;
+  assert.match(message, arrangementNameBoundsByLocale[locale], "the real localized error states the accepted bound");
+  const names = [
+    ["ASCII", "a".repeat(80)],
+    ["astral", "\u{1f680}".repeat(80)],
+    ["NFC", "\u00e9".repeat(80)],
+    ["combining", "e\u0301".repeat(40)],
+    ["ZWJ", "\u{1f469}\u200d\u{1f4bb}".repeat(26) + "ab"],
+  ];
+  for (const [label, boundary] of names) for (const valid of [true, false]) {
+    const f = fixture({ populated: true, chosen: "document-0", locale });
+    await f.select(0, "document"); await f.select(0, "block", true);
+    f.route = "/canvas/board-a/board-a?recipe=campaign";
+    f.arrangementTransport = command => mockArrangementReview(f, command);
+    await openArrangement(f);
+    const name = boundary + (valid ? "" : "x"), before = JSON.stringify(f.state.events);
+    setArrangementName(f, name);
+    const input = f.native("input", node => node.handlers.input?.toString().includes("#arrangementName"));
+    const submit = f.native("button", node => node.attributes.type === "submit" && node.attributes.class === "button primary");
+    assert.ok(input && submit); assert.equal(input.value, name);
+    assert.equal(Object.hasOwn(submit.attributes, "disabled"), !valid, label + ": actual preview control counts Unicode code points");
+    assert.equal(input.attributes.maxlength, undefined, "native UTF-16 maxlength must not truncate 80 astral characters");
+    f.native("form", node => node.attributes.class === "canvas-arrangement-form").handlers.submit.call(f.host, { preventDefault() {} });
+    if (valid) {
+      await flushUntil(f, () => f.renderer.query(f.host, "forma-ui-choice-card").some(choice => choice.value === f.state.requests[0]?.body.operationId && !choice.disabled));
+      assert.equal(f.state.requests.length, 1); assert.equal(f.state.requests[0].body.action, "preview");
+      assert.equal(f.state.requests[0].body.name, name, "the real model/controller preserves the submitted authored form");
+      assert.ok(f.renderer.markup.includes("<bdi>" + escapeText(name) + "</bdi>"), "the actual review renderer preserves the exact name");
+    } else {
+      await flushUntil(f, () => f.renderer.markup.includes(escapeText(message)));
+      assert.equal(f.state.requests.length, 0, "even a direct form submission cannot bypass the model's name rejection");
+      assert.ok(f.native("form", node => node.attributes.class === "canvas-arrangement-form"));
+      assert.equal(f.native("input", node => node.handlers.input?.toString().includes("#arrangementName")).value, name, "invalid drafts remain editable");
+    }
+    assert.equal(f.state.batches.length, 0); assert.equal(JSON.stringify(f.state.events), before);
+    f.host.disconnectedCallback();
+  }
+  const f = fixture({ populated: true, chosen: "document-0", locale });
+  await f.select(0, "document"); await f.select(0, "block", true);
+  f.route = "/canvas/board-a/board-a?recipe=campaign"; await openArrangement(f);
+  const before = JSON.stringify(f.state.events); setArrangementName(f, "Before\u0085After");
+  f.native("form", node => node.attributes.class === "canvas-arrangement-form").handlers.submit.call(f.host, { preventDefault() {} });
+  await flushUntil(f, () => f.renderer.markup.includes(escapeText(message)));
+  assert.equal(f.state.requests.length, 0, "Unicode C1 control characters are rejected by the real model before transport");
+  assert.equal(f.state.batches.length, 0); assert.equal(JSON.stringify(f.state.events), before);
+  f.host.disconnectedCallback();
+});
+
+for(const locale of ["en","ar"])test("native View returns Desk focus to its exact instance invoker in "+locale,async()=>{
+  const f=fixture({populated:true,locale}),initial=ownedPopover(f,"canvas-view-menu"),id=initial.trigger.attributes.id,before=JSON.stringify(f.state.events);
+  assert.ok(id&&id!=="canvas-view-toggle");
+  for(const expectedDesk of [true,false]){
+    const owned=openOwnedPopover(f,"canvas-view-menu"),group=f.renderer.ownNodes(owned.menu,"div").find(node=>node.attributes.class==="canvas-view-actions");
+    const toggle=f.renderer.ownNodes(owned.menu,"button").find(node=>node.attributes.id==="canvas-outcome-toggle");
+    assert.ok(toggle);runPortHandler(group.handlers.click,owned.menu,{type:"click",target:toggle,preventDefault(){assert.fail("current native View action remains available");},stopImmediatePropagation(){assert.fail("current View scope");}});
+    toggle.handlers.click.call(f.host,{target:toggle,currentTarget:toggle});await f.flush();
+    assert.equal(f.openPopovers.has(owned.panel.attributes.id),false);
+    assert.equal(new URL(f.route,"https://fixture.invalid").searchParams.get("posture")==="outcomes",expectedDesk);
+    assert.equal(documentPort.activeElement?.id,expectedDesk?"canvas-outcome-desk-heading":id);
+  }
+  const another=fixture({populated:true,locale});assert.notEqual(ownedPopover(another,"canvas-view-menu").trigger.attributes.id,id);
+  assert.equal(JSON.stringify(f.state.events),before);assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+test("native arrangement opening and Close use the current View trigger without a stale summary target",async()=>{
+  const f=fixture({populated:true}),owned=openOwnedPopover(f,"canvas-view-menu"),group=f.renderer.ownNodes(owned.menu,"div").find(node=>node.attributes.class==="canvas-view-actions");
+  const action=f.renderer.ownNodes(owned.menu,"button").find(node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
+  runPortHandler(group.handlers.click,owned.menu,{type:"click",target:action,preventDefault(){assert.fail("current arrangement action");},stopImmediatePropagation(){assert.fail("current scope");}});
+  action.handlers.click.call(f.host,{target:action,currentTarget:action});await f.flush();
+  assert.equal(f.openPopovers.has(owned.panel.attributes.id),false);
+  const dialog=arrangementNode(f);assert.ok(dialog);dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
+  assert.equal(documentPort.activeElement?.id,owned.trigger.attributes.id);
   assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
 });
 

@@ -6,6 +6,7 @@ import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, r
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
 import { handleDocumentDuplication } from "./document-duplication-api";
+import { handleCanvasArrangements } from "./canvas-arrangements";
 import { handleOutputRequirements } from "./output-requirements-api";
 import { outputDocumentExecutionBridge } from "./output-document-execution";
 import { observeScheduledRetention, schedulePrivateContentRetention, streamHead, type WorkerExecutionContext } from "./runtime";
@@ -157,6 +158,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/output-requirements"||url.pathname.startsWith("/api/output-requirements/"))return handleOutputRequirements(request,env,url.pathname,context,outputDocumentExecutionBridge);
     if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
     if(url.pathname==="/api/documents/duplicate")return handleDocumentDuplication(request,env);
+    if(url.pathname==="/api/canvas/arrangements")return handleCanvasArrangements(request,env);
     if(url.pathname.startsWith("/api/artifacts/")){
       const segments=url.pathname.slice("/api/artifacts/".length).split("/").map((segment)=>decodeURIComponent(segment));
       return handleArtifactEdit(request,env,segments[0]??"",segments.slice(1));

@@ -18,6 +18,7 @@ export const FORMA_NEXT_ACTION_MESSAGES={
     "next.exact.compare-images.label":"Compare these images","next.exact.compare-images.reason":"Inspect these two saved alternatives side by side.",
     "next.exact.check-job.label":"Check this work in progress","next.exact.check-job.reason":"Open the existing request. A new request is not needed to check progress.",
     "next.exact.inspect-job.label":"Inspect the previous attempt","next.exact.inspect-job.reason":"Review retained evidence and partial work. Independent outputs can continue.",
+    "next.exact.inspect-terminal-job.label":"Inspect this request","next.exact.inspect-terminal-job.reason":"View the original request and any retained results. No new work is started.",
   },
   fr:{
     "canvas.controls.sources":"Sources",
@@ -38,6 +39,7 @@ export const FORMA_NEXT_ACTION_MESSAGES={
     "next.exact.compare-images.label":"Comparer ces images","next.exact.compare-images.reason":"Examinez ces deux variantes enregistrées côte à côte.",
     "next.exact.check-job.label":"Suivre ce travail en cours","next.exact.check-job.reason":"Ouvrez la demande existante. Aucune nouvelle demande n’est nécessaire pour suivre sa progression.",
     "next.exact.inspect-job.label":"Examiner la tentative précédente","next.exact.inspect-job.reason":"Consultez les éléments conservés et le travail partiel. Les résultats indépendants peuvent avancer.",
+    "next.exact.inspect-terminal-job.label":"Examiner cette demande","next.exact.inspect-terminal-job.reason":"Consultez la demande d’origine et les résultats conservés, le cas échéant. Aucun nouveau travail n’est lancé.",
   },
   ar:{
     "canvas.controls.sources":"المصادر",
@@ -58,6 +60,7 @@ export const FORMA_NEXT_ACTION_MESSAGES={
     "next.exact.compare-images.label":"قارن هاتين الصورتين","next.exact.compare-images.reason":"افحص هذين البديلين المحفوظين جنبًا إلى جنب.",
     "next.exact.check-job.label":"تابع هذا العمل الجاري","next.exact.check-job.reason":"افتح الطلب الحالي. لا تحتاج إلى طلب جديد للتحقق من التقدم.",
     "next.exact.inspect-job.label":"افحص المحاولة السابقة","next.exact.inspect-job.reason":"راجع الأدلة المحتفظ بها والعمل الجزئي. يمكن متابعة المخرجات المستقلة.",
+    "next.exact.inspect-terminal-job.label":"افحص هذا الطلب","next.exact.inspect-terminal-job.reason":"اعرض الطلب الأصلي وأي نتائج محتفظ بها. لا يبدأ أي عمل جديد.",
   },
   ja:{
     "canvas.controls.sources":"ソース",
@@ -78,5 +81,6 @@ export const FORMA_NEXT_ACTION_MESSAGES={
     "next.exact.compare-images.label":"これらの画像を比較","next.exact.compare-images.reason":"保存済みの2つの候補を並べて確認します。",
     "next.exact.check-job.label":"進行中の作業を確認","next.exact.check-job.reason":"既存のリクエストを開きます。進捗確認に新しいリクエストは不要です。",
     "next.exact.inspect-job.label":"前回の試行を確認","next.exact.inspect-job.reason":"保存された証跡と部分的な成果を確認します。独立した出力の作業は続けられます。",
+    "next.exact.inspect-terminal-job.label":"このリクエストを確認","next.exact.inspect-terminal-job.reason":"元のリクエストと保持された結果を確認します。新しい作業は開始しません。",
   },
 } as const;

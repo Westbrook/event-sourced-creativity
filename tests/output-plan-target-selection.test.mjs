@@ -123,7 +123,7 @@ async function controllerReview() {
   const reset = () => templates(review()).find((part) => tagged(part, "planIncludeCommittedTargets"));
   return { ...f, current, review, reset, open, focuses };
 }
-const runRows = (f) => templates(region(f.controller.render(), 'class="output-execution"')).filter((part) => part.strings.some((text) => text.includes('<label><input type="checkbox"')) && part.strings.some((text) => text.includes('<span dir="auto">')));
+const runRows = (f) => templates(region(f.controller.render(), 'class="output-execution"')).filter((part) => part.strings.some((text) => text.includes('<label><input class="output-run-target" data-output-run-target=')) && part.strings.some((text) => text.includes(' type="checkbox"')) && part.strings.some((text) => text.includes('<span dir="auto">')));
 
 test("actual compiled required and already-owed optional exclusions have accurate author and viewer guidance", async () => {
   for (const canAuthor of [true, false]) {

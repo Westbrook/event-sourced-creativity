@@ -369,6 +369,24 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
 .application-canvas .canvas-view-actions { display:grid; }
 .application-canvas .canvas-view-menu .ui-popover-panel { max-block-size:min(34rem,var(--forma-popover-max-height,calc(100dvb - 1rem))); }
 
+/* Outcome Desk is a presentation of this Canvas; the authoring subtree stays mounted. */
+.canvas-authoring-next[hidden], .canvas-stage-shell[hidden] { display: none !important; }
+.canvas-workspace > .outcome-desk { min-inline-size: 0; overflow: auto; padding: 1rem; }
+.outcome-desk-formats { display: flex; flex-wrap: wrap; gap: .5rem; }
+.outcome-desk-formats p { flex-basis: 100%; }
+.outcome-desk-formats button, .canvas-outcome-arrangement-dialog button,
+.canvas-arrangement-form select, .canvas-arrangement-form input { min-block-size: 44px; min-inline-size: 44px; }
+.outcome-desk-artifact-preview { max-inline-size: 40rem; overflow: hidden; }
+.canvas-outcome-arrangement-dialog .modal-card { inline-size: min(52rem, calc(100vw - 2rem)); max-block-size: calc(100dvh - 2rem); overflow: auto; }
+.canvas-outcome-arrangement-dialog bdi { overflow-wrap: anywhere; }
+.canvas-arrangement-form { display: grid; gap: .75rem; margin-block: 1rem; }
+.canvas-arrangement-form label { display: grid; gap: .35rem; }
+.canvas-outcome-arrangement-dialog :is(button, input, select):focus-visible,
+.outcome-desk-formats button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .canvas-workspace > .outcome-desk, .canvas-outcome-arrangement-dialog { animation: none; transition: none; scroll-behavior: auto; }
+}
+
 /* Queue durability uncertainty stays readable in the existing status area, not an overlay. */
 .canvas-commandbar:has(>.canvas-storage-status){flex-wrap:wrap}
 .canvas-commandbar>.canvas-storage-status{display:block;flex:1 0 100%;grid-column:1 / -1;min-inline-size:0;max-inline-size:100%;margin:0;color:var(--accent-strong);font-size:var(--type-caption);line-height:1.45;white-space:normal;overflow-wrap:anywhere}

@@ -1251,7 +1251,7 @@ export function privateContentRetentionClass(kind: PrivateContentKind): "durable
 }
 
 export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}) {
-  if(identity&&(kind!=="authoring-preview"||!/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)))throw new Error("private_content_identity_invalid");
+  if(identity&&(kind!=="authoring-preview"||(!/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)&&!/^canvas-arrangement-preview-[a-f0-9]{64}$/u.test(identity.contentId))))throw new Error("private_content_identity_invalid");
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
   assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
   const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
@@ -1275,6 +1275,16 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
         AND resource.project_id=? AND resource.resource_kind='content' AND resource.resource_id=? AND resource.actor_user_id=?)`)
       .bind(contentId,projectScope.organizationId,projectScope.projectAccessId,projectScope.projectId,ownerId,category,Number(policy?.version??0),expiresAt.toISOString(),now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,contentId,ownerId),
   ]:[env.DB.prepare(`INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) ${guard?`SELECT ?,?,?,?,?,?,NULL WHERE ${guard.sql}`:"VALUES (?,?,?,?,?,?,NULL)"}`).bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),...(guard?.bindings??[]))];
+  // Identity-bound admission must insert once or abort before custody, cleanup, and publication.
+  // The existing content NOT NULL constraint rejects a denied predicate inside this batch.
+  const identityAdmission=identity?(projectScope?{sql:`${activeProjectBillingSql}
+        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')
+        AND ((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=?))
+          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))${guard?` AND (${guard.sql})`:""}`,
+    bindings:[ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0),...(guard?.bindings??[])]}:guard):undefined;
+  if(identityAdmission)statements[0]=env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
+    SELECT ?,?,?,CASE WHEN (${identityAdmission.sql}) THEN ? ELSE NULL END,?,?,NULL`)
+    .bind(contentId,ownerId,kind,...identityAdmission.bindings,content,now,expiresAt.toISOString());
   statements.push(projectScope?env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
     AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=private_content.content_id AND governed.organization_id=?)
     AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_retention_policies policy ON policy.organization_id=governed.organization_id AND policy.legal_hold=1
@@ -1296,7 +1306,14 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
 export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>,identity?:{contentId:string}) {
   const prepared=await preparePrivateContent(env,ownerId,kind,content,projectScope,undefined,guard,identity);
   const publicationOffset=prepared.statements.length,publications=publish?.({contentId:prepared.contentId,expiresAt:prepared.expiresAt})??[];
-  const results=await env.DB.batch([...prepared.statements,...publications]);
+  let results:Awaited<ReturnType<WorkerEnv["DB"]["batch"]>>;
+  try{results=await env.DB.batch([...prepared.statements,...publications]);}
+  catch(error){
+    const cause=error instanceof Error?error.cause:undefined;
+    if(identity&&(projectScope||guard)&&[error,cause].some(value=>value instanceof Error&&/(?:^|: )NOT NULL constraint failed: private_content\.content(?:$|:)/u.test(value.message)))
+      throw new Error("project_private_content_access_revoked",{cause:error});
+    throw error;
+  }
   for(let index=0;index<prepared.requiredInserts;index++)if(Number(results[index]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");
   if(publications.some((_,index)=>Number(results[publicationOffset+index]?.meta.changes??0)!==1))throw new Error("private_content_publication_unavailable");
   return {contentId:prepared.contentId,expiresAt:prepared.expiresAt};

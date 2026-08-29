@@ -7,7 +7,7 @@ import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, type EventRow, type
 import { authoringEventProof } from "./authoring-event-proof.ts";
 import { prepareAuthoringEventBatch } from "./authoring-event-batches.ts";
 
-export type AuthoringPlan={operation:"context-proposal"|"document-duplicate";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};duplication?:{operationId:string;title:string;collectionId:string|null;collectionMode:"source"|"explicit";collectionPath:string[];sourceTitle:string;copyMode:"independent-snapshot";excluded:["outputs","approvals","generation-jobs","review-assignments"]};result:{blockIds:string[];relationCount:number;documentId?:string;operationId?:string;requestHash?:string;dismissed?:boolean};expiresAt:string};
+export type AuthoringPlan={operation:"context-proposal"|"document-duplicate"|"canvas-arrangement";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};duplication?:{operationId:string;title:string;collectionId:string|null;collectionMode:"source"|"explicit";collectionPath:string[];sourceTitle:string;copyMode:"independent-snapshot";excluded:["outputs","approvals","generation-jobs","review-assignments"]};arrangement?:import("./canvas-arrangements.ts").RetainedCanvasArrangement;result:{blockIds:string[];relationCount:number;documentId?:string;operationId?:string;requestHash?:string;arrangementId?:string;itemCount?:number;dismissed?:boolean};expiresAt:string};
 export type AuthoringPreview={previewId:string;approvalHash:string;sourceHash:string;projectId:string;documentId:string;canvasId:string|null;blockId:string;changes:ContextChange[];events:EventInput[];review?:AuthoringPlan["review"];duplication?:AuthoringPlan["duplication"];blockCount:number;relationCount:number;expiresAt:string};
 export type RetainedAuthoringPreview={plan:AuthoringPlan;approvalHash:string;state?:"review"|"applying"|"applied"|"dismissed";leaseId?:string;leaseExpiresAt?:string};
 const correlationFor=(userId:string,id:string)=>`authoring:${userId}:${id}`;
@@ -22,13 +22,20 @@ export async function documentCopyPreviewId(actorUserId:string,operationId:strin
   return "copy-preview-"+await consentHash({domain:"forma:document-copy-private-preview:v1",actorUserId,operationId});
 }
 
+/** Prospective Canvas identity reserves the existing private row across content erasure.
+ * Retained legacy IDs stay readable; already-erased random IDs cannot be reconstructed. */
+export async function canvasArrangementPreviewId(actorUserId:string,operationId:string){
+  if(typeof actorUserId!=="string"||!actorUserId||typeof operationId!=="string"||operationId.length>80||!/^[a-z0-9][a-z0-9:_-]*$/iu.test(operationId))throw new Error("canvas_arrangement_scope_invalid");
+  return "canvas-arrangement-preview-"+await consentHash({domain:"forma:canvas-arrangement-private-preview:v1",actorUserId,operationId});
+}
+
 export async function storeAuthoringPreview(env:WorkerEnv,user:PilotUser,plan:AuthoringPlan,additional?:BudgetReservationGuard):Promise<AuthoringPreview>{
   const guard=executionAdmissionGuard(user,plan.binding,null);
   const admission=additional?{sql:`(${guard.sql}) AND (${additional.sql})`,bindings:[...guard.bindings,...additional.bindings]}:guard;
-  const identity=plan.operation==="document-duplicate"?{contentId:await documentCopyPreviewId(user.userId,plan.result.operationId??"")}:undefined;
+  const identity=plan.operation==="document-duplicate"?{contentId:await documentCopyPreviewId(user.userId,plan.result.operationId??"")}:plan.operation==="canvas-arrangement"?{contentId:await canvasArrangementPreviewId(user.userId,plan.result.operationId??"")}:undefined;
   const approvalHash=await consentHash(plan),saved=await storePrivateContent(env,user.userId,"authoring-preview",JSON.stringify({plan,approvalHash,state:"review"}),plan.binding.scope??undefined,admission,undefined,identity);
   // Different explicit copy intents can coexist. Retries of one intent are guarded by its operation ID.
-  if(plan.operation==="document-duplicate")return authoringPreview(saved.contentId,approvalHash,plan);
+  if(plan.operation!=="context-proposal")return authoringPreview(saved.contentId,approvalHash,plan);
   await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','dismissed') WHERE owner_id=? AND kind='authoring-preview' AND rowid<(SELECT rowid FROM private_content WHERE content_id=?)
     AND COALESCE(json_extract(${privateJson},'$.state'),'review')='review' AND json_extract(${privateJson},'$.plan.operation')=?
     AND json_extract(${privateJson},'$.plan.binding.projectId')=? AND json_extract(${privateJson},'$.plan.binding.documentId')=? AND json_extract(${privateJson},'$.plan.binding.blockId')=?

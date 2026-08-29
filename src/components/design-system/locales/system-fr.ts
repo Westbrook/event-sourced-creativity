@@ -6082,6 +6082,8 @@ Object.assign(messages, {
   "system.auto.108waw7.63": "Cette tentative n’a pas été envoyée, car la source n’est pas disponible.",
   "system.auto.s84qun.90": "La modification initiale du livrable n’est que partiellement confirmée. Elle n’a pas été répétée.",
   "system.auto.1ijg7qv.78": "Seule une partie de la modification initiale est confirmée. Elle n’a pas été renvoyée.",
+  "system.auto.w37m4z.89": "Navigation exacte uniquement. Ne modifie jamais la sélection d’une exécution, un brouillon, une offre ou une décision rédigée.",
+  "system.auto.13cst8w.95": "Navigation du panneau uniquement. Le contrôleur de sorties existant reste responsable du focus exact et de toutes les décisions.",
 });
 
 export default messages;
