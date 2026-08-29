@@ -1,0 +1,6 @@
+.context-change-preview{min-inline-size:0;padding:1rem;border:2px solid var(--accent);border-radius:.5rem;overflow-wrap:anywhere}
+.context-change-preview :is(h3,p){margin:0 0 .5rem}
+.context-change-preview li{margin-block:.75rem}
+.context-change-preview summary{min-block-size:44px;cursor:pointer}
+.context-change-preview ol{padding-inline-start:1.5rem}
+.context-change-preview pre{white-space:pre-wrap;font-size:var(--type-micro);overflow-wrap:anywhere}

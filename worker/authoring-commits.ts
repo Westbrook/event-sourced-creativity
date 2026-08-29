@@ -3,20 +3,32 @@ import type { EventInput } from "../src/model/events.ts";
 import { canonicalConsent, consentHash, executionAdmissionGuard, executionAuthorityCurrent, executionContentCustodyGuard, type ConsequentialBinding } from "./consequential-consent.ts";
 import { storePrivateContent, type BudgetReservationGuard, type PilotUser } from "./pilot-policy.ts";
 import { appendProjectEvents, type ProjectRequestContext } from "./project-access.ts";
-import { authoringEventProof } from "./authoring-event-proof.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, type EventRow, type WorkerEnv } from "./runtime.ts";
+import { authoringEventProof } from "./authoring-event-proof.ts";
+import { prepareAuthoringEventBatch } from "./authoring-event-batches.ts";
 
-export type AuthoringPlan={operation:"context-proposal"|"document-duplicate";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};result:{blockIds:string[];relationCount:number;documentId?:string};expiresAt:string};
-export type AuthoringPreview={previewId:string;approvalHash:string;sourceHash:string;projectId:string;documentId:string;canvasId:string|null;blockId:string;changes:ContextChange[];events:EventInput[];review?:AuthoringPlan["review"];blockCount:number;relationCount:number;expiresAt:string};
+export type AuthoringPlan={operation:"context-proposal"|"document-duplicate";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};duplication?:{operationId:string;title:string;collectionId:string|null;collectionMode:"source"|"explicit";collectionPath:string[];sourceTitle:string;copyMode:"independent-snapshot";excluded:["outputs","approvals","generation-jobs","review-assignments"]};result:{blockIds:string[];relationCount:number;documentId?:string;operationId?:string;requestHash?:string;dismissed?:boolean};expiresAt:string};
+export type AuthoringPreview={previewId:string;approvalHash:string;sourceHash:string;projectId:string;documentId:string;canvasId:string|null;blockId:string;changes:ContextChange[];events:EventInput[];review?:AuthoringPlan["review"];duplication?:AuthoringPlan["duplication"];blockCount:number;relationCount:number;expiresAt:string};
 export type RetainedAuthoringPreview={plan:AuthoringPlan;approvalHash:string;state?:"review"|"applying"|"applied"|"dismissed";leaseId?:string;leaseExpiresAt?:string};
 const correlationFor=(userId:string,id:string)=>`authoring:${userId}:${id}`;
 // Retention erases content to an empty string. CASE keeps every JSON predicate safe even
 // when SQLite reorders filters; erased previews are never reconstructed or modified.
 const privateJson = "CASE WHEN redacted_at IS NULL AND json_valid(content) THEN content ELSE '{}' END";
 
+/** Prospective copy identity survives content erasure in the existing private row's primary key.
+ * No private title, destination, approval, or outcome is encoded or reconstructed. */
+export async function documentCopyPreviewId(actorUserId:string,operationId:string){
+  if(!actorUserId||!/^[a-zA-Z0-9_-]{16,120}$/u.test(operationId))throw new Error("document_duplicate_intent_required");
+  return "copy-preview-"+await consentHash({domain:"forma:document-copy-private-preview:v1",actorUserId,operationId});
+}
+
 export async function storeAuthoringPreview(env:WorkerEnv,user:PilotUser,plan:AuthoringPlan,additional?:BudgetReservationGuard):Promise<AuthoringPreview>{
-  const approvalHash=await consentHash(plan),saved=await storePrivateContent(env,user.userId,"authoring-preview",JSON.stringify({plan,approvalHash,state:"review"}),plan.binding.scope??undefined,additional);
   const guard=executionAdmissionGuard(user,plan.binding,null);
+  const admission=additional?{sql:`(${guard.sql}) AND (${additional.sql})`,bindings:[...guard.bindings,...additional.bindings]}:guard;
+  const identity=plan.operation==="document-duplicate"?{contentId:await documentCopyPreviewId(user.userId,plan.result.operationId??"")}:undefined;
+  const approvalHash=await consentHash(plan),saved=await storePrivateContent(env,user.userId,"authoring-preview",JSON.stringify({plan,approvalHash,state:"review"}),plan.binding.scope??undefined,admission,undefined,identity);
+  // Different explicit copy intents can coexist. Retries of one intent are guarded by its operation ID.
+  if(plan.operation==="document-duplicate")return authoringPreview(saved.contentId,approvalHash,plan);
   await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','dismissed') WHERE owner_id=? AND kind='authoring-preview' AND rowid<(SELECT rowid FROM private_content WHERE content_id=?)
     AND COALESCE(json_extract(${privateJson},'$.state'),'review')='review' AND json_extract(${privateJson},'$.plan.operation')=?
     AND json_extract(${privateJson},'$.plan.binding.projectId')=? AND json_extract(${privateJson},'$.plan.binding.documentId')=? AND json_extract(${privateJson},'$.plan.binding.blockId')=?
@@ -26,12 +38,12 @@ export async function storeAuthoringPreview(env:WorkerEnv,user:PilotUser,plan:Au
   return authoringPreview(saved.contentId,approvalHash,plan);
 }
 export function authoringPreview(previewId:string,approvalHash:string,plan:AuthoringPlan):AuthoringPreview{
-  return{previewId,approvalHash,sourceHash:plan.binding.sourceHash,projectId:plan.binding.projectId,documentId:plan.binding.documentId,canvasId:plan.binding.canvasId,blockId:plan.binding.blockId,changes:plan.changes,events:plan.events,...(plan.review?{review:plan.review}:{}),blockCount:plan.result.blockIds.length,relationCount:plan.result.relationCount,expiresAt:plan.expiresAt};
+  return{previewId,approvalHash,sourceHash:plan.binding.sourceHash,projectId:plan.binding.projectId,documentId:plan.binding.documentId,canvasId:plan.binding.canvasId,blockId:plan.binding.blockId,changes:plan.changes,events:plan.events,...(plan.review?{review:plan.review}:{}),...(plan.duplication?{duplication:plan.duplication}:{}),blockCount:plan.result.blockIds.length,relationCount:plan.result.relationCount,expiresAt:plan.expiresAt};
 }
 export async function readAuthoringPreview(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string){
-  const guard=executionAdmissionGuard(user,binding,null),now=new Date().toISOString();
-  const row=await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='authoring-preview' AND redacted_at IS NULL AND json_valid(content) AND expires_at>? AND ${guard.sql}`)
-    .bind(id,user.userId,now,...guard.bindings).first<{content:string}>();
+  const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding),now=new Date().toISOString();
+  const row=await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='authoring-preview' AND redacted_at IS NULL AND json_valid(content) AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND expires_at>? AND ${custody.sql} AND ${guard.sql}`)
+    .bind(id,user.userId,now,...custody.bindings,...guard.bindings).first<{content:string}>();
   return row?JSON.parse(row.content) as RetainedAuthoringPreview:null;
 }
 export async function readAuthoringCommit(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string){
@@ -44,60 +56,69 @@ export async function readAuthoringCommit(env:WorkerEnv,user:PilotUser,binding:C
 
 /** Rediscovery uses actor-private server storage, not proposal text or opaque receipts in browser storage. */
 export async function latestAuthoringPreview(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding){
-  const guard=executionAdmissionGuard(user,binding,null),now=new Date().toISOString();
+  const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding),now=new Date().toISOString();
   const row=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND kind='authoring-preview' AND redacted_at IS NULL AND expires_at>?
     AND json_extract(${privateJson},'$.plan.operation')=? AND json_extract(${privateJson},'$.plan.binding.projectId')=? AND json_extract(${privateJson},'$.plan.binding.documentId')=?
     AND json_extract(${privateJson},'$.plan.binding.blockId')=? AND COALESCE(json_extract(${privateJson},'$.plan.binding.canvasId'),'')=?
     AND COALESCE(json_extract(${privateJson},'$.plan.binding.scope.organizationId'),'')=? AND COALESCE(json_extract(${privateJson},'$.plan.binding.scope.projectAccessId'),'')=?
-    AND COALESCE(json_extract(${privateJson},'$.state'),'review')!='dismissed' AND ${guard.sql}
+    AND COALESCE(json_extract(${privateJson},'$.state'),'review')!='dismissed' AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql} AND ${guard.sql}
     ORDER BY CASE json_extract(${privateJson},'$.state') WHEN 'applying' THEN 0 ELSE 1 END,rowid DESC LIMIT 1`)
-    .bind(user.userId,now,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",...guard.bindings).first<{content_id:string;content:string}>();
+    .bind(user.userId,now,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",...custody.bindings,...guard.bindings).first<{content_id:string;content:string}>();
   return row?{previewId:row.content_id,saved:JSON.parse(row.content) as RetainedAuthoringPreview}:null;
 }
 
 /** An expired lease is reusable only after an atomic state change prevents its old worker from ever committing. */
 export async function releaseExpiredAuthoringLease(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string){
-  const guard=executionAdmissionGuard(user,binding,null);
+  const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding);
   await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','review','$.leaseId','') WHERE content_id=? AND owner_id=? AND kind='authoring-preview'
     AND json_extract(${privateJson},'$.state')='applying' AND json_extract(${privateJson},'$.leaseExpiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
     AND json_extract(${privateJson},'$.plan.operation')=? AND json_extract(${privateJson},'$.plan.binding.projectId')=? AND json_extract(${privateJson},'$.plan.binding.documentId')=?
     AND json_extract(${privateJson},'$.plan.binding.blockId')=? AND COALESCE(json_extract(${privateJson},'$.plan.binding.canvasId'),'')=?
     AND COALESCE(json_extract(${privateJson},'$.plan.binding.scope.organizationId'),'')=? AND COALESCE(json_extract(${privateJson},'$.plan.binding.scope.projectAccessId'),'')=?
-    AND NOT EXISTS(SELECT 1 FROM authoring_commits WHERE preview_id=?) AND ${guard.sql}`)
-    .bind(id,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",id,...guard.bindings).run();
+    AND NOT EXISTS(SELECT 1 FROM authoring_commits WHERE preview_id=?) AND ${custody.sql} AND ${guard.sql}`)
+    .bind(id,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",id,...custody.bindings,...guard.bindings).run();
 }
 
 /** Read execution outcome and review visibility in one SQL snapshot. Dismissing or expiring
  * a private review cannot erase its canonical receipt or create a torn not-applied response. */
-export async function readAuthoringState(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string){
-  await releaseExpiredAuthoringLease(env,user,binding,id);
-  const guard=executionAdmissionGuard(user,binding,null);
+export async function readAuthoringState(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,options:{readOnly?:boolean}={}){
+  if(!options.readOnly)await releaseExpiredAuthoringLease(env,user,binding,id);
+  const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding,"saved");
   const row=await env.DB.prepare(`SELECT saved.content AS preview_content,receipt.result_json AS receipt_result_json,receipt.approval_hash AS receipt_approval_hash
     FROM(SELECT ? AS preview_id) requested
     LEFT JOIN private_content saved ON saved.content_id=requested.preview_id AND saved.owner_id=? AND saved.kind='authoring-preview'
-      AND saved.redacted_at IS NULL AND json_valid(saved.content) AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND saved.redacted_at IS NULL AND json_valid(saved.content) AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql}
     LEFT JOIN authoring_commits receipt ON receipt.preview_id=requested.preview_id AND receipt.actor_user_id=? AND receipt.operation=?
       AND receipt.project_id=? AND receipt.document_id=? AND receipt.block_id=? AND COALESCE(receipt.canvas_id,'')=?
       AND COALESCE(receipt.organization_id,'')=? AND COALESCE(receipt.project_access_id,'')=?
     WHERE ${guard.sql}`)
-    .bind(id,user.userId,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",...guard.bindings)
+    .bind(id,user.userId,...custody.bindings,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",...guard.bindings)
     .first<{preview_content:string|null;receipt_result_json:string|null;receipt_approval_hash:string|null}>();
   if(!row||!await executionAuthorityCurrent(env,user,binding,null))return null;
   const saved=row.preview_content?JSON.parse(row.preview_content) as RetainedAuthoringPreview:null;
   const committed=row.receipt_result_json&&row.receipt_approval_hash?{result:JSON.parse(row.receipt_result_json) as AuthoringPlan["result"],approvalHash:row.receipt_approval_hash}:null;
   const receiptPending=!committed&&saved?.state==="applied";
-  return{committed,saved,receiptPending,status:committed?"applied" as const:saved?.state==="applying"||receiptPending?"applying" as const:"not-applied" as const};
+  return{committed,saved,retainedContent:row.preview_content,receiptPending,status:committed?"applied" as const:saved?.state==="applying"||receiptPending?"applying" as const:"not-applied" as const};
 }
+/** Dismissal hides review UI only; its canonical outcome remains retrievable by exact receipt. */
 export async function dismissAuthoringPreview(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,hash:string){
-  const guard=executionAdmissionGuard(user,binding,null);
-  const result=await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','dismissed') WHERE content_id=? AND owner_id=? AND kind='authoring-preview'
-    AND json_extract(${privateJson},'$.approvalHash')=? AND COALESCE(json_extract(${privateJson},'$.state'),'review') IN('review','applied','dismissed') AND ${guard.sql}`)
-    .bind(id,user.userId,hash,...guard.bindings).run();
-  return Number(result.meta.changes??0)===1;
+  const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding);
+  const receipt=env.DB.prepare(`UPDATE authoring_commits SET result_json=json_set(result_json,'$.dismissed',json('true'))
+    WHERE preview_id=? AND actor_user_id=? AND operation=? AND project_id=? AND document_id=? AND block_id=?
+      AND COALESCE(canvas_id,'')=? AND COALESCE(organization_id,'')=? AND COALESCE(project_access_id,'')=? AND approval_hash=? AND ${guard.sql}`)
+    .bind(id,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",hash,...guard.bindings);
+  const preview=env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','dismissed') WHERE content_id=? AND owner_id=? AND kind='authoring-preview'
+    AND json_extract(${privateJson},'$.approvalHash')=? AND COALESCE(json_extract(${privateJson},'$.state'),'review') IN('review','applied','dismissed') AND ${custody.sql} AND ${guard.sql}`)
+    .bind(id,user.userId,hash,...custody.bindings,...guard.bindings);
+  // The receipt annotation and review visibility change in one snapshot, including after private erasure.
+  const results=await env.DB.batch([receipt,preview]);
+  return results.some((result)=>Number(result.meta.changes??0)===1);
 }
 
 /** The final CHECK receipt rolls back every preceding event if any admission or event write failed. */
-export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:ConsequentialBinding,shared:ProjectRequestContext|null|undefined,previewId:string,approvalHash:string,plan:AuthoringPlan,writeHead=plan.sourceHead,additional:BudgetReservationGuard={sql:"1",bindings:[]}){
+export type AuthoringCommitProof=BudgetReservationGuard|(((allocatedEvents:readonly EventRow[])=>BudgetReservationGuard)&{beforeWrite?:BudgetReservationGuard});
+
+export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:ConsequentialBinding,shared:ProjectRequestContext|null|undefined,previewId:string,approvalHash:string,plan:AuthoringPlan,writeHead=plan.sourceHead,additional:AuthoringCommitProof={sql:"1",bindings:[]}){
   const identity=(binding:ConsequentialBinding)=>canonicalConsent({operation:binding.operation,actor:binding.actorUserId,stream:binding.streamId,project:binding.projectId,document:binding.documentId,block:binding.blockId,canvas:binding.canvasId,scope:binding.scope,intent:binding.intentHash});
   if(!plan.events.length||plan.events.length>512||plan.operation!==current.operation||identity(plan.binding)!==identity(current)
     ||plan.binding.actorUserId!==user.userId||plan.binding.sourceHash!==current.sourceHash||plan.binding.permissionEpoch!==current.permissionEpoch
@@ -117,10 +138,16 @@ export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:C
       WHERE retention.content_id=private_content.content_id AND retention.classification='governed-evidence'
         AND retention.policy_version=COALESCE(policy.version,0) AND retention.assigned_expires_at=private_content.expires_at)`:""})`;
   const fullGuard=`(${guard.sql}) AND ${privateGuard}`,bindings=[...guard.bindings,previewId,user.userId,now,leaseId,approvalHash,...custody.bindings];
-  const finalize=(events:readonly EventRow[],writeProof:BudgetReservationGuard=authoringEventProof(events))=>{
-  if(!events.length||events.length!==plan.events.length)throw new Error("authoring_write_proof_required");
+  // A planned media transition must compare its previous custody row inside this transaction.
+  // The final proof separately verifies the exact server-allocated replacement pointer.
+  const beforeWrite=typeof additional==="function"?additional.beforeWrite:undefined;
+  const writeGuard=beforeWrite?`(${fullGuard}) AND EXISTS(WITH authoring_before_write AS MATERIALIZED(SELECT 1 WHERE ${beforeWrite.sql}) SELECT 1 FROM authoring_before_write)`:fullGuard;
+  const writeBindings=beforeWrite?[...bindings,...beforeWrite.bindings]:bindings;
+  const finalize=(events:readonly EventRow[],providedProof?:BudgetReservationGuard)=>{
+  if(!events.length||events.length!==plan.events.length||typeof additional==="function"&&(!providedProof||providedProof.sql==="1"))throw new Error("authoring_write_proof_required");
+  const writeProof=providedProof??authoringEventProof(events);
   if(JSON.stringify(plan)!==approvedPlanJson)throw new Error("authoring_preview_stale");
-  const lastEventId=events.at(-1)!.eventId,finalSource=additional;
+  const lastEventId=events.at(-1)!.eventId,finalSource=typeof additional==="function"?additional(events):additional;
   // Large source snapshots appear once in the final CHECK, not once per copied event.
   const finalGuard=`(${finalSource.sql}) AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND json_extract(${privateJson},'$.plan')=json(?))`;
   const finalBindings=[...finalSource.bindings,previewId,user.userId,approvedPlanJson];
@@ -148,16 +175,21 @@ export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:C
     // Owner custody without a selected cookie is explicit and still checked by the same live tenant guard.
     const context=shared??{contextId:"",organizationId:current.scope.organizationId,projectAccessId:current.scope.projectAccessId,projectId:current.projectId,ownerUserId:current.scope.ownerUserId,principalUserId:user.userId,role:user.role,permissions:user.access.capabilities,expiresAt:plan.expiresAt};
     const response=await appendProjectEvents(env,context,user,{action:"batch",events:plan.events,clientId:"web:context-approval",correlationId:correlation},undefined,
-      {preserveGovernance:true,authoringOperation:plan.operation,expectedOwnerHead:writeHead,guardSql:fullGuard,guardBindings:bindings,buildStatements:(lastEventId,writeProof,events)=>{if(!events?.length||events.at(-1)!.eventId!==lastEventId)throw new Error("authoring_write_proof_required");return[finalize(events,writeProof),completed()];}});
+      {preserveGovernance:true,authoringOperation:plan.operation,expectedOwnerHead:writeHead,guardSql:writeGuard,guardBindings:writeBindings,buildStatements:(lastEventId,writeProof,events)=>{if(!events?.length||events.at(-1)!.eventId!==lastEventId)throw new Error("authoring_write_proof_required");return[finalize(events,writeProof),completed()];}});
     if(!response.ok)throw new Error(String((await response.json() as {error?:string}).error??"authoring_commit_unavailable"));
   }else{
     // Activity may advance the stream without changing any approved source. The exact plan is unchanged;
     // the currently read head still guards every event, so concurrent semantic changes roll back atomically.
     const events=plan.events.map((input,index)=>makeEvent(streamId,writeHead+index+1,`user:${user.userId}`,"web:context-approval",correlation,input.type,input.payload));
+    if(plan.operation!=="context-proposal"){
+      const batch=prepareAuthoringEventBatch(env,events,writeHead,{sql:writeGuard,bindings:writeBindings});
+      await env.DB.batch([...batch.statements,finalize(events,batch.proof),completed()]);
+    }else{
     const placeholders=EVENT_WRITE_COLUMNS.split(",").map(()=>"?").join(",");
     await env.DB.batch([...events.map((event,index)=>env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${placeholders}
-      WHERE(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${fullGuard}`)
-      .bind(...eventWriteBindings(event),streamId,writeHead+index,...bindings)),finalize(events),completed()]);
+      WHERE(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${writeGuard}`)
+      .bind(...eventWriteBindings(event),streamId,writeHead+index,...writeBindings)),finalize(events),completed()]);
+    }
   }
   }catch(error){
     // Either the complete receipt already exists, or changing this lease atomically prevents any late commit.

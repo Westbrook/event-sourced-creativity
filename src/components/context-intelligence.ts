@@ -10,6 +10,7 @@ import { FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
 import { consequentialPreview } from "./consequential-preview";
+import { renderAuthoringPreview } from "./authoring-preview";
 import type { ConsequentialPreview } from "../../worker/consequential-consent";
 import type { AuthoringPreview } from "../../worker/authoring-commits";
 import type { ContextProposalSelection } from "../model/context-proposal-application";
@@ -341,14 +342,10 @@ export class ContextIntelligence extends FormaElement{
     }
   }
   #changesView(){
-    const preview=this.#changes;if(!preview)return nothing;
-    return html`<section class="context-change-preview" aria-labelledby=${`context-change-title-${this.block.id}`}>
-      <h3 tabindex="-1" id=${`context-change-title-${this.block.id}`}>${this.i18n.t("context.changes.title")}</h3>
-      <p role="status">${this.i18n.t(this.#saveApplied?"context.changes.applied":this.#savePending?"context.changes.applying":"context.changes.summary","",{blocks:this.i18n.number(preview.blockCount),relations:this.i18n.number(preview.relationCount)})}</p>
-      ${this.#canAuthor()||this.#saveApplied?html`<p>${this.i18n.t(this.#saveApplied?"context.changes.appliedHint":"context.changes.atomic")}</p>`:nothing}
-      <ol>${preview.changes.map((change)=>html`<li><b>${this.i18n.t(`context.changes.${change.kind}`)} · <span dir="auto">${change.label}</span></b>${change.type?html`<small>${this.i18n.system(change.type)}</small>`:nothing}<p dir="auto">${change.kind==="group"?this.i18n.t("context.changes.isolate"):change.text}</p></li>`)}</ol>
-      <details><summary>${this.i18n.t("context.changes.destination")}</summary><p>${preview.projectId} / ${preview.documentId}${preview.canvasId?` / ${preview.canvasId}`:""}</p><p>${preview.sourceHash}</p><p>${preview.expiresAt}</p><pre dir="ltr">${JSON.stringify(preview.events,null,2)}</pre></details>
-    </section>`;
+    return this.#changes?renderAuthoringPreview(this.#changes,this.i18n,{
+      id:`context-change-title-${this.block.id}`,status:this.#saveApplied?"applied":this.#savePending?"applying":"review",
+      readOnly:!this.#canAuthor(),
+    }):nothing;
   }
   #proposalNumber(id:string){return this.i18n.number([...(this.#plan?.proposals??[]),...(this.#plan?.addenda??[])].findIndex((item)=>item.id===id)+1);}
 

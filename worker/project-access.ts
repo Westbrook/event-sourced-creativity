@@ -13,6 +13,7 @@ import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/
 import { ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, isContextCompositionRelation, normalizeActionBlockReferences, validateContextCompositionGraph } from "../src/model/combined-context.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "./context-package-rights.ts";
+import { combineAuthoringGuards, prepareAuthoringEventBatch, prepareAuthoringMediaBatch, prepareAuthoringSidecarBatch } from "./authoring-event-batches.ts";
 
 import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
 import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
@@ -381,6 +382,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   let sequence=Number(existing.results.at(-1)?.project_sequence??0);
   const now=new Date().toISOString();
   const statements:D1PreparedStatement[]=[];
+  const retainedResourceKeys=new Set(previousResources.results.map((resource)=>`${resource.resource_kind}\u0000${resource.resource_id}`));
   const activeResources=new Map<string,Set<string>>([
     ["project",new Set([input.projectId])],["document",documentIds],["block",blockIds],["relation",relationIds],
     ["collection",collectionIds],["output",outputIds],["artifact",artifactIds],["reference",referenceIds],["canvas",canvasIds],
@@ -397,11 +399,14 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
         .bind(input.projectAccessId,resource.resource_id,new Date(Date.now()-15*60_000).toISOString()).first();
       if(pending)continue;
     }
+    retainedResourceKeys.delete(`${resource.resource_kind}\u0000${resource.resource_id}`);
     statements.push(env.DB.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind=? AND resource_id=?")
       .bind(input.projectAccessId,input.organizationId,resource.resource_kind,resource.resource_id));
   }
   const insertResource=(kind:string,id:string,visibility:ProjectPublicationResource["visibility"]="collaborative_output",sourceEventId:string|null=null,actorUserId=input.ownerUserId)=>{
-    if(!id)return;
+    const key=`${kind}\u0000${id}`;
+    if(!id||retainedResourceKeys.has(key))return; // The shared publication helper's INSERT OR IGNORE would be a no-op.
+    retainedResourceKeys.add(key);
     statements.push(prepareProjectResourceScopeStatement(env,input,{kind,id,visibility,sourceEventId,actorUserId},now));
   };
   insertResource("project",input.projectId);
@@ -679,7 +684,9 @@ async function historicalCanvasCreation(env:WorkerEnv,context:ProjectRequestCont
   try{const value=JSON.parse(source.payload) as unknown;return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;}catch{return null;}
 }
 
-async function ownerResourceExists(env:WorkerEnv,context:ProjectRequestContext,kind:"document"|"block"|"collection"|"relation"|"reference"|"canvas"|"canvas_item"|"canvas_arrangement"|"canvas_context",id:string){
+async function ownerResourceExists(env:WorkerEnv,context:ProjectRequestContext,kind:"document"|"block"|"collection"|"relation"|"reference"|"canvas"|"canvas_item"|"canvas_arrangement"|"canvas_context",id:string,pending?:PendingProjectResources){
+  const known=pending?.get(`owner-history:${kind}`);
+  if(known)return known.has(id);
   const types=kind==="document"?["DocumentCreated","DocumentForked"]:kind==="block"?["BlockCreated"]:kind==="collection"?["CollectionCreated"]:kind==="reference"?["ReferenceIngested"]:kind==="canvas"?["CanvasCreated"]:kind==="canvas_item"?["CanvasItemPlaced","CanvasReferenceCreated"]:kind==="canvas_arrangement"?["CanvasArrangementCreated"]:kind==="canvas_context"?["ContextSetFormalized"]:["BlockRelationAdded"];
   const property=kind==="relation"?"relation_id":kind==="canvas_item"?"item_id":kind==="canvas_arrangement"?"arrangement_id":kind==="canvas_context"?"context_set_id":`${kind}_id`;
   return Boolean(await env.DB.prepare(`SELECT 1 AS present FROM events WHERE stream_id=? AND type IN(${types.map(()=>"?").join(",")})
@@ -700,13 +707,13 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const requiresCanvas=canvasMutation||canvasAction;
   if(requiresCanvas&&!canvas)return"canvas_id_required";
   if(requiresCanvas&&type!=="CanvasCreated"&&!await exists("canvas",canvas)&&!(type==="CanvasRestored"&&await historicalCanvasCreation(env,context,"canvas",canvas,canvas)))return"foreign_canvas_resource";
-  if(type==="CanvasCreated"&&(pending.get("canvas")?.has(canvas)||await ownerResourceExists(env,context,"canvas",canvas)))return"resource_identifier_already_exists";
+  if(type==="CanvasCreated"&&(pending.get("canvas")?.has(canvas)||await ownerResourceExists(env,context,"canvas",canvas,pending)))return"resource_identifier_already_exists";
   const itemId=String(payload.item_id??payload.reference_item_id??"");
   const createsCanvasItem=type==="CanvasItemPlaced"||type==="CanvasReferenceCreated";
   const restoredItem=type==="CanvasItemRestored"&&itemId?await historicalCanvasCreation(env,context,"canvas_item",itemId,canvas):null;
   if(canvasMutation&&itemId&&!createsCanvasItem&&!restoredItem&&!await exists("canvas_item",itemId))return"foreign_canvas_item_resource";
   if(createsCanvasItem){
-    if(await exists("canvas_item",itemId)||await ownerResourceExists(env,context,"canvas_item",itemId))return"resource_identifier_already_exists";
+    if(await exists("canvas_item",itemId)||await ownerResourceExists(env,context,"canvas_item",itemId,pending))return"resource_identifier_already_exists";
     const sourceKind=String(payload.source_kind??(type==="CanvasReferenceCreated"?"reference":""));
     const sourceId=String(payload.source_id??payload.block_id??payload.document_id??payload.object_id??"");
     const kind=sourceKind==="document"?"document":sourceKind==="output"?"output":sourceKind==="artifact"?"artifact":sourceKind==="context"?"canvas_context":["block","reference","sketch"].includes(sourceKind)?"block":"";
@@ -723,14 +730,14 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const arrangement=String(payload.arrangement_id??"");
   const restoredArrangement=type==="CanvasArrangementRestored"&&arrangement?await historicalCanvasCreation(env,context,"canvas_arrangement",arrangement,canvas):null;
   if(["CanvasArrangementRemoved","CanvasArrangementRestored"].includes(type)&&!restoredArrangement&&(!await exists("canvas_arrangement",arrangement)||!await resourceBelongsToCanvas(env,context,"canvas_arrangement",arrangement,canvas,pending)))return"foreign_canvas_arrangement";
-  if(type==="CanvasArrangementCreated"&&(await exists("canvas_arrangement",arrangement)||await ownerResourceExists(env,context,"canvas_arrangement",arrangement)))return"resource_identifier_already_exists";
+  if(type==="CanvasArrangementCreated"&&(await exists("canvas_arrangement",arrangement)||await ownerResourceExists(env,context,"canvas_arrangement",arrangement,pending)))return"resource_identifier_already_exists";
   if(restoredArrangement){
     const restoredFrames=[...(Array.isArray(restoredArrangement.frames)?restoredArrangement.frames:[]),...(Array.isArray(restoredArrangement.previous_frames)?restoredArrangement.previous_frames:[])];
     const restoredIds=[...(Array.isArray(restoredArrangement.item_ids)?restoredArrangement.item_ids:[]).map(String),...restoredFrames.map((frame)=>frame&&typeof frame==="object"?String((frame as Record<string,unknown>).item_id??""):"")];
     for(const id of restoredIds)if(!id||!await exists("canvas_item",id)||!await resourceBelongsToCanvas(env,context,"canvas_item",id,canvas,pending))return"foreign_canvas_item_resource";
   }
   const contextSet=String(payload.context_set_id??"");
-  if(type==="ContextSetFormalized"&&(await exists("canvas_context",contextSet)||await ownerResourceExists(env,context,"canvas_context",contextSet)))return"resource_identifier_already_exists";
+  if(type==="ContextSetFormalized"&&(await exists("canvas_context",contextSet)||await ownerResourceExists(env,context,"canvas_context",contextSet,pending)))return"resource_identifier_already_exists";
   const operation=payload.operation&&typeof payload.operation==="object"?payload.operation as Record<string,unknown>:{};
   const operationObject=operation.object&&typeof operation.object==="object"?operation.object as Record<string,unknown>:{};
   const sketch=operation.sketch&&typeof operation.sketch==="object"?operation.sketch as Record<string,unknown>:{};
@@ -783,19 +790,19 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const relation=String(payload.relation_id??"");
   if(type.startsWith("BlockRelation")&&!relation)return"relation_id_required";
   if(type==="BlockRelationRemoved"&&!await exists("relation",relation))return"foreign_relation_resource";
-  if(type==="DocumentCreated"&&(pending.get("document")?.has(document)||await ownerResourceExists(env,context,"document",document)))return"resource_identifier_already_exists";
+  if(type==="DocumentCreated"&&(pending.get("document")?.has(document)||await ownerResourceExists(env,context,"document",document,pending)))return"resource_identifier_already_exists";
   if(type==="BlockCreated"){
     if(!block)return"block_id_required";
     if(document&&!await exists("document",document))return"foreign_document_resource";
     if(!document&&payload.scope!=="library"&&!(payload.scope==="canvas"&&canvas&&await exists("canvas",canvas)))return"document_and_block_required";
-    if(pending.get("block")?.has(block)||await ownerResourceExists(env,context,"block",block))return"resource_identifier_already_exists";
+    if(pending.get("block")?.has(block)||await ownerResourceExists(env,context,"block",block,pending))return"resource_identifier_already_exists";
   }
-  if(type==="CollectionCreated"&&(pending.get("collection")?.has(collection)||await ownerResourceExists(env,context,"collection",collection)))return"resource_identifier_already_exists";
-  if(type==="BlockRelationAdded"&&(pending.get("relation")?.has(relation)||await ownerResourceExists(env,context,"relation",relation)))return"resource_identifier_already_exists";
+  if(type==="CollectionCreated"&&(pending.get("collection")?.has(collection)||await ownerResourceExists(env,context,"collection",collection,pending)))return"resource_identifier_already_exists";
+  if(type==="BlockRelationAdded"&&(pending.get("relation")?.has(relation)||await ownerResourceExists(env,context,"relation",relation,pending)))return"resource_identifier_already_exists";
   const reference=String(payload.reference_id??"");
   if(["ReferenceIngested","RightsAsserted"].includes(type)&&!reference)return"reference_id_required";
   if(type==="ReferenceIngested"){
-    if(pending.get("reference")?.has(reference)||await ownerResourceExists(env,context,"reference",reference))return"resource_identifier_already_exists";
+    if(pending.get("reference")?.has(reference)||await ownerResourceExists(env,context,"reference",reference,pending))return"resource_identifier_already_exists";
     const key=mediaKey(payload.source_ref);
     if(!key||!await exists("media",key))return"foreign_media_resource";
     const claimedHash=String(payload.content_hash??"");
@@ -950,6 +957,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       ||String(mutation?.payload?.project_id??"")!==context.projectId||String(mutation?.payload?.document_id??"")!==assistantAcceptance.documentId)
       return Response.json({error:"invalid_assistant_approval"},{status:403});
   }
+  const bulkAuthoring=Boolean(atomicSidecars?.authoringOperation&&atomicSidecars.authoringOperation!=="context-proposal"&&action==="batch"&&!atomicEdit&&!atomicSidecars.statements?.length);
   const privilegedPackageSidecars=Boolean(atomicSidecars&&!atomicSidecars.preserveGovernance);
   if(!privilegedPackageSidecars&&original.some((event)=>{
     if(event.type==="BlockCreated"){
@@ -1164,6 +1172,17 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     values.add(id);pending.set(key,values);
     if(resource.canvas_id&&["canvas_item","canvas_arrangement","canvas_context"].includes(kind))pending.set(`parent:${kind}:${id}`,new Set([String(resource.canvas_id)]));
   }
+  if(bulkAuthoring){
+    const resourceKinds:Record<string,string>={DocumentCreated:"document",DocumentForked:"document",BlockCreated:"block",CollectionCreated:"collection",BlockRelationAdded:"relation",ReferenceIngested:"reference",CanvasCreated:"canvas",CanvasItemPlaced:"canvas_item",CanvasReferenceCreated:"canvas_item",CanvasArrangementCreated:"canvas_arrangement",ContextSetFormalized:"canvas_context"};
+    for(const kind of new Set(Object.values(resourceKinds)))pending.set(`owner-history:${kind}`,new Set());
+    const historical=await env.DB.prepare(`SELECT type,payload FROM events WHERE stream_id=? AND type IN(${Object.keys(resourceKinds).map((type)=>"'"+type+"'").join(",")})`)
+      .bind(ownerStream).all<{type:string;payload:string}>();
+    for(const row of historical.results){
+      const kind=resourceKinds[row.type],payload=JSON.parse(row.payload) as Record<string,unknown>;
+      const property=kind==="relation"?"relation_id":kind==="canvas_item"?"item_id":kind==="canvas_arrangement"?"arrangement_id":kind==="canvas_context"?"context_set_id":`${kind}_id`;
+      for(const value of [payload[property],...(kind==="canvas_item"?[payload.reference_item_id]:[])])if(value)pending.get(`owner-history:${kind}`)!.add(String(value));
+    }
+  }
   const needsReviewValidation=incoming.some((event)=>ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??"")));
   const validatedOwnerHead=needsReviewValidation?await streamHead(env,ownerStream):null;
   const reviewEvents=needsReviewValidation?await readProjectSourceEvents(env,context):null;
@@ -1242,6 +1261,9 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   let projectHead=Number(current?.head??0);
   if(action!=="canvas_sync"&&Number.isSafeInteger(body.expectedSequence)&&Number(body.expectedSequence)!==projectHead)return Response.json({error:"stale_sequence",expected:body.expectedSequence,head:projectHead},{status:409});
   const now=new Date().toISOString(),appended:EventRow[]=[],statements:D1PreparedStatement[]=[];
+  let bulkAdmission:BudgetReservationGuard|null=null,bulkAdmissionKey="";
+  const bulkProjectRows:Array<Array<string|number|null>>=[],bulkResourceRows:Array<Array<string|number|null>>=[];
+  const bulkMediaRows:Array<[string,string,string,string]>=[];
   if(validatedOutputOwnerHead!==null)statements.push(outputRequirementHeadGuard(env,ownerStream,validatedOutputOwnerHead));
   for(const [offset,input] of incoming.entries()){
     const payload:Record<string,unknown>={...(input.payload??{}),project_id:context.projectId,...(canvasAction?{history_owner_id:principal.userId}:{})};
@@ -1305,9 +1327,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
           WHERE requested_scope.project_access_id=? AND requested_scope.organization_id=? AND requested_event.type='ArtifactReviewRequested'
             AND json_extract(requested_event.payload,'$.artifact_id')=? ORDER BY requested_scope.project_sequence DESC LIMIT 1))`:"";
     const sidecarGuard=atomicSidecars?.guardSql?` AND (${atomicSidecars.guardSql})`:"";
-    statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
-      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`)
-      .bind(...eventWriteBindings(event),ownerStream,event.sequence-1,
+    const writeBindings:Array<string|number|null>=[
         principal.userId,POLICY_VERSION,principal.userId,principal.userId,context.projectAccessId,context.organizationId,principal.userId,Number(exportOnly||reviewOnly),
         context.contextId,context.contextId,principal.userId,now,canvasAction?1:0,principal.userId,principal.userId,now,reviewOnly||["ArtifactApproved","ArtifactChangesRequested"].includes(event.type)?1:0,principal.userId,principal.userId,now,
         ...(atomicEdit?[context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,atomicEdit.artifactId,atomicEdit.contentId,context.ownerUserId,now,atomicEdit.oldContent,ownerStream,atomicEdit.artifactId,atomicEdit.expectedRevision]:[]),
@@ -1315,10 +1335,22 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
         ...(atomicEdit?.restoreSource?[context.ownerUserId,context.organizationId,context.projectAccessId,context.projectId,atomicEdit.artifactId,atomicEdit.restoreSource.revision,now,atomicEdit.restoreSource.contentSha256,atomicEdit.restoreSource.contentJson]:[]),
         ...(assigned?[assigned,context.projectAccessId,context.organizationId,principal.userId,now]:[]),
         ...(decision?[context.projectAccessId,context.organizationId,String(payload.artifact_id??""),principal.userId,Number(payload.artifact_revision??-1),String(payload.content_sha256??""),context.projectAccessId,context.organizationId,String(payload.artifact_id??"")]:[]),
-        ...(atomicSidecars?.guardBindings??[])));
+        ...(atomicSidecars?.guardBindings??[])
+    ];
+    if(bulkAuthoring){
+      const sql=`${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`,key=JSON.stringify([sql,writeBindings]);
+      if(bulkAdmission&&bulkAdmissionKey!==key)throw new Error("invalid_authoring_operation");
+      bulkAdmission={sql,bindings:writeBindings};bulkAdmissionKey=key;
+    }else{
+      statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
+        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`)
+        .bind(...eventWriteBindings(event),ownerStream,event.sequence-1,...writeBindings));
+    }
     projectHead+=1;
-    statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-      .bind(event.eventId,context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,ownerStream,event.sequence,projectHead,principal.userId,now,event.eventId));
+    const projectRow=[event.eventId,context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,ownerStream,event.sequence,projectHead,principal.userId,now];
+    if(bulkAuthoring)bulkProjectRows.push(projectRow);
+    else statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+      .bind(...projectRow,event.eventId));
     if(atomicEdit)for(const revision of atomicEdit.revisions)statements.push(env.DB.prepare(`INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at)
       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,NULL WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)`)
       .bind(revision.revisionId,context.ownerUserId,context.organizationId,context.projectAccessId,context.projectId,atomicEdit.documentId,atomicEdit.artifactId,revision.revision,revision.contentJson,revision.contentSha256,revision.createdByUserId,revision.createdAt,revision.expiresAt,event.eventId));
@@ -1330,13 +1362,20 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     const resourceKind=event.type==="DocumentCreated"?"document":event.type==="BlockCreated"?"block":event.type==="CollectionCreated"?"collection":event.type==="BlockRelationAdded"?"relation":event.type==="ReferenceIngested"?"reference":event.type==="CanvasCreated"?"canvas":["CanvasItemPlaced","CanvasReferenceCreated"].includes(event.type)?"canvas_item":event.type==="CanvasArrangementCreated"?"canvas_arrangement":event.type==="ContextSetFormalized"?"canvas_context":"";
     const resourceProperty=resourceKind==="document"?"document_id":resourceKind==="block"?"block_id":resourceKind==="relation"?"relation_id":resourceKind==="reference"?"reference_id":resourceKind==="canvas"?"canvas_id":resourceKind==="canvas_item"?(payload.item_id?"item_id":"reference_item_id"):resourceKind==="canvas_arrangement"?"arrangement_id":resourceKind==="canvas_context"?"context_set_id":"collection_id";
     const resourceId=String(payload[resourceProperty]??"");
-    if(resourceKind&&resourceId)statements.push(env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,?,?,?,?,?,'collaborative_output',?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-      .bind(context.projectAccessId,resourceKind,resourceId,context.organizationId,context.projectId,context.ownerUserId,event.eventId,principal.userId,now,event.eventId));
+    if(resourceKind&&resourceId){
+      const resourceRow=[context.projectAccessId,resourceKind,resourceId,context.organizationId,context.projectId,context.ownerUserId,"collaborative_output",event.eventId,principal.userId,now];
+      if(bulkAuthoring)bulkResourceRows.push(resourceRow);
+      else statements.push(env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+        .bind(...resourceRow,event.eventId));
+    }
     if(event.type==="BlockCreated"){
       const properties=payload.properties&&typeof payload.properties==="object"?payload.properties as Record<string,unknown>:{};
       const key=mediaKey(properties.media_url);
-      if(key)statements.push(env.DB.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND organization_id=? AND resource_kind='media' AND resource_id=? AND EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-        .bind(event.eventId,context.projectAccessId,context.organizationId,key,event.eventId));
+      if(key){
+        if(bulkAuthoring)bulkMediaRows.push([event.eventId,context.projectAccessId,context.organizationId,key]);
+        else statements.push(env.DB.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND organization_id=? AND resource_kind='media' AND resource_id=? AND EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+          .bind(event.eventId,context.projectAccessId,context.organizationId,key,event.eventId));
+      }
     }
     if(action==="canvas_sync"){
       const originalIndex=original.indexOf(input);
@@ -1347,8 +1386,18 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const invalidatesResources=incoming.some(({type,payload})=>/Removed$|Restored$|Discarded$|Rehomed$/.test(String(type??""))
     ||(type==="BlockPropertyEdited"||type==="ChipEdited")&&["media_url","reference_id","source_document_id","source_block_id","source_output_id"].includes(String(type==="BlockPropertyEdited"?payload?.property_path:payload?.property)));
+  let writeProof:BudgetReservationGuard|undefined;
+  if(bulkAuthoring){
+    if(!bulkAdmission)throw new Error("invalid_authoring_operation");
+    const authored=prepareAuthoringEventBatch(env,appended,ownerHead,bulkAdmission);
+    const scoped=prepareAuthoringSidecarBatch(env,"project_event_scopes",bulkProjectRows);
+    const resources=prepareAuthoringSidecarBatch(env,"project_resource_scopes",bulkResourceRows);
+    const media=prepareAuthoringMediaBatch(env,bulkMediaRows);
+    statements.push(...authored.statements,...scoped.statements,...resources.statements,...media.statements);
+    writeProof=combineAuthoringGuards(authored.proof,scoped.proof,resources.proof,media.proof);
+  }
   if(atomicSidecars?.statements?.length)statements.push(...atomicSidecars.statements);
-  if(atomicSidecars?.buildStatements&&appended.length)statements.push(...atomicSidecars.buildStatements(appended.at(-1)!.eventId,undefined,appended));
+  if(atomicSidecars?.buildStatements&&appended.length)statements.push(...atomicSidecars.buildStatements(appended.at(-1)!.eventId,writeProof,appended));
   if(needsReviewValidation||exportOnly){
     const completion=artifactReviewCompletionGuard(context,appended);
     // last_owner_sequence is already NOT NULL: a suppressed row aborts all event, task, notification, and index writes.
@@ -1361,7 +1410,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   try{
     const results=await env.DB.batch(statements);
-    if(results.slice(validatedOutputOwnerHead===null?0:1).some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
+    if(!bulkAuthoring&&results.slice(validatedOutputOwnerHead===null?0:1).some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
   }catch{return Response.json({error:"stale_sequence",head:projectHead-incoming.length},{status:409});}
   const first=projectHead-appended.length+1;
   const newEvents=new Map(incoming.map((input,index)=>[input,{...appended[index]!,streamId:`project:${context.projectAccessId}`,sequence:first+index}] as const));

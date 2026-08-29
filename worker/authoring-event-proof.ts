@@ -7,13 +7,14 @@ const ROWS_PER_STATEMENT = 128;
 const byteLength = (value: string) => new TextEncoder().encode(value).length;
 type ProofRow = readonly (string | number | null)[];
 
-export function authoringJsonChunks(rows: readonly unknown[]): string[] {
+/** Write batches keep their 128-row bound. Read-only source proofs may pack by bytes only. */
+export function authoringJsonChunks(rows: readonly unknown[], options: { byteBoundedOnly?: boolean } = {}): string[] {
   const chunks: string[] = [];
   let current: string[] = [], bytes = 2;
   for (const row of rows) {
     const json = JSON.stringify(row), size = byteLength(json);
     if (size + 2 > JSON_BYTES) throw new Error("authoring_payload_too_large");
-    if (current.length && (current.length >= ROWS_PER_STATEMENT || bytes + size + 1 > JSON_BYTES)) {
+    if (current.length && (!options.byteBoundedOnly && current.length >= ROWS_PER_STATEMENT || bytes + size + 1 > JSON_BYTES)) {
       chunks.push("[" + current.join(",") + "]"); current = []; bytes = 2;
     }
     current.push(json); bytes += size + 1;
@@ -31,7 +32,7 @@ export const AUTHORING_EVENT_COLUMNS = EVENT_WRITE_COLUMNS.split(",").slice(0, 1
 const expectedJsonColumn = (index: number) => `json_extract(expected.value,'$[${index}]')`;
 
 /** Allocated writes require a private row. A captured legacy source may prove its original absence. */
-export function authoringEventRowsProof(rows: readonly ProofRow[], allowAbsentPrivate = false): BudgetReservationGuard {
+export function authoringEventRowsProof(rows: readonly ProofRow[], allowAbsentPrivate = false, options: { byteBoundedOnly?: boolean } = {}): BudgetReservationGuard {
   const proofs: BudgetReservationGuard[] = [];
   const join = allowAbsentPrivate ? "LEFT JOIN" : "JOIN";
   for (let first = 0; first < rows.length;) {
@@ -42,14 +43,14 @@ export function authoringEventRowsProof(rows: readonly ProofRow[], allowAbsentPr
       if (row.some((value) => typeof value === "string" && byteLength(value) > 2_000_000)) throw new Error("authoring_payload_too_large");
       proofs.push({
         sql: `EXISTS(SELECT 1 FROM events event ${join} event_private_payloads secret ON secret.private_event_id=event.event_id
-          WHERE ${AUTHORING_EVENT_COLUMNS.map((column) => "event." + column + " IS ?").join(" AND ")}
-            AND secret.owner_id IS ? AND secret.project_id IS ? AND secret.document_id IS ? AND secret.private_json IS ? AND secret.redacted_at IS NULL)`,
+          WHERE (${AUTHORING_EVENT_COLUMNS.map((column) => "event." + column).join(",")},secret.owner_id,secret.project_id,secret.document_id,secret.private_json)
+            IS (${Array.from({ length: 17 }, () => "?").join(",")}) AND secret.redacted_at IS NULL)`,
         bindings: [...row],
       });
       first++; continue;
     }
     const parts: string[] = []; let bytes = 2;
-    while (first < rows.length && parts.length < ROWS_PER_STATEMENT) {
+    while (first < rows.length && (options.byteBoundedOnly || parts.length < ROWS_PER_STATEMENT)) {
       if (rows[first]!.length !== 17) throw new Error("authoring_write_proof_required");
       const next = JSON.stringify(rows[first]), size = byteLength(next);
       if (size + 2 > JSON_BYTES || parts.length && bytes + size + 1 > JSON_BYTES) break;
@@ -58,9 +59,8 @@ export function authoringEventRowsProof(rows: readonly ProofRow[], allowAbsentPr
     proofs.push({
       sql: `NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(
         SELECT 1 FROM events event ${join} event_private_payloads secret ON secret.private_event_id=event.event_id
-        WHERE ${AUTHORING_EVENT_COLUMNS.map((column, index) => "event." + column + " IS " + expectedJsonColumn(index)).join(" AND ")}
-          AND secret.owner_id IS ${expectedJsonColumn(13)} AND secret.project_id IS ${expectedJsonColumn(14)}
-          AND secret.document_id IS ${expectedJsonColumn(15)} AND secret.private_json IS ${expectedJsonColumn(16)} AND secret.redacted_at IS NULL))`,
+        WHERE (${AUTHORING_EVENT_COLUMNS.map((column) => "event." + column).join(",")},secret.owner_id,secret.project_id,secret.document_id,secret.private_json)
+          IS (${Array.from({ length: 17 }, (_, index) => expectedJsonColumn(index)).join(",")}) AND secret.redacted_at IS NULL))`,
       bindings: ["[" + parts.join(",") + "]"],
     });
   }
@@ -78,13 +78,13 @@ export const AUTHORING_SIDECAR_COLUMNS = {
 } as const;
 
 /** These are the same complete-sidecar comparisons used by the prepared Phase6 atomic batch. */
-export function authoringSidecarProof(table: keyof typeof AUTHORING_SIDECAR_COLUMNS, rows: readonly ProofRow[]): BudgetReservationGuard {
+export function authoringSidecarProof(table: keyof typeof AUTHORING_SIDECAR_COLUMNS, rows: readonly ProofRow[], options: { byteBoundedOnly?: boolean } = {}): BudgetReservationGuard {
   const columns = AUTHORING_SIDECAR_COLUMNS[table], proofs: BudgetReservationGuard[] = [];
   if (rows.some((row) => row.length !== columns.length)) throw new Error("authoring_write_proof_required");
-  for (const json of authoringJsonChunks(rows)) {
+  for (const json of authoringJsonChunks(rows, options)) {
     proofs.push({
       sql: `NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(SELECT 1 FROM ${table} stored
-        WHERE ${columns.map((column, index) => "stored." + column + " IS " + expectedJsonColumn(index)).join(" AND ")}))`,
+        WHERE (${columns.map((column) => "stored." + column).join(",")}) IS (${columns.map((_, index) => expectedJsonColumn(index)).join(",")})))`,
       bindings: [json],
     });
   }

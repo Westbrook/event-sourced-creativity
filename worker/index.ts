@@ -5,6 +5,7 @@ import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api"
 import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
+import { handleDocumentDuplication } from "./document-duplication-api";
 import { handleOutputRequirements } from "./output-requirements-api";
 import { outputDocumentExecutionBridge } from "./output-document-execution";
 import { observeScheduledRetention, schedulePrivateContentRetention, streamHead, type WorkerExecutionContext } from "./runtime";
@@ -155,6 +156,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env,"",context);
     if(url.pathname==="/api/output-requirements"||url.pathname.startsWith("/api/output-requirements/"))return handleOutputRequirements(request,env,url.pathname,context,outputDocumentExecutionBridge);
     if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
+    if(url.pathname==="/api/documents/duplicate")return handleDocumentDuplication(request,env);
     if(url.pathname.startsWith("/api/artifacts/")){
       const segments=url.pathname.slice("/api/artifacts/".length).split("/").map((segment)=>decodeURIComponent(segment));
       return handleArtifactEdit(request,env,segments[0]??"",segments.slice(1));

@@ -1250,12 +1250,13 @@ export function privateContentRetentionClass(kind: PrivateContentKind): "durable
   return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
-export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard) {
+export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}) {
+  if(identity&&(kind!=="authoring-preview"||!/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)))throw new Error("private_content_identity_invalid");
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
   assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
   const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
     .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>()):null;
-  const contentId = uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
+  const contentId = identity?.contentId ?? uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
   const days=category==="governed-evidence"?Number(policy?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))):Number(policy?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30));
   const expiresAt=category==="durable-work"?new Date(DURABLE_WORK_RETENTION_END):new Date(createdAt.getTime()+days*86_400_000);
   const now=createdAt.toISOString();
@@ -1292,8 +1293,8 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
 }
 
 /** Existing callers keep their original storage behavior; atomic admissions collect the same statements. */
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>) {
-  const prepared=await preparePrivateContent(env,ownerId,kind,content,projectScope,undefined,guard);
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>,identity?:{contentId:string}) {
+  const prepared=await preparePrivateContent(env,ownerId,kind,content,projectScope,undefined,guard,identity);
   const publicationOffset=prepared.statements.length,publications=publish?.({contentId:prepared.contentId,expiresAt:prepared.expiresAt})??[];
   const results=await env.DB.batch([...prepared.statements,...publications]);
   for(let index=0;index<prepared.requiredInserts;index++)if(Number(results[index]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");

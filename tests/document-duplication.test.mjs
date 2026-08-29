@@ -137,10 +137,13 @@ test("supports empty documents and rejects documents outside the current project
   }), /no longer available/);
 });
 
-test("project contents exposes a named, author-only document duplication action", async () => {
+test("project contents reuses its copy slot for author confirmation and reader-only recovery", async () => {
   const source = await readFile(new URL("../src/components/forma-project-contents.ts", import.meta.url), "utf8");
   assert.match(source, /document-duplicate-trigger/);
-  assert.match(source, /canAuthor\?html`<button type="button" class="button ghost document-duplicate-trigger"/);
-  assert.match(source, /buildDocumentDuplicationPlan/);
-  assert.match(source, /rebaseAttempts:6/);
+  assert.match(source, /copyAccess\.canRead\?html`<button type="button" class="button ghost document-duplicate-trigger"/);
+  assert.match(source, /copyAccess\.canAuthor\?this\.i18n\.system\("Duplicate"\)/);
+  assert.match(source, /document\.copy\.check/);
+  assert.match(source, /previewDocumentCopy/);
+  assert.match(source, /applyDocumentCopy/);
+  assert.doesNotMatch(source, /buildDocumentDuplicationPlan|rebaseAttempts:6/);
 });

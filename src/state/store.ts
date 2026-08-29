@@ -10,6 +10,7 @@ import { Signal } from "signal-polyfill";
 import { adaptiveRequestKey, adaptiveJobMatchesRequest } from "../model/adaptive-request";
 import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
 import type { AvailableConsequentialPreview } from "../../worker/consequential-consent";
+import { documentCopyKey, documentCopyTargetValid, documentCopyIntent, documentCopySourceRevision, documentCopyRequest, documentCopyOutcome, type DocumentCopyTarget, type DocumentCopyDetails, type DocumentCopyAction, type DocumentCopyReview } from "../model/document-copy-review";
 import { SignalObject } from "signal-utils/object";
 import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInput } from "../model/events";
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
@@ -57,6 +58,11 @@ const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
 export type CapturedSourceOwnership = Readonly<{ authorization:CapturedAuthorizationScope; generation:number }>;
+type OwnedDocumentCopyReview = DocumentCopyReview & { sourceOwner:CapturedSourceOwnership|null; commitSubmitted:boolean;
+  /** A known refusal is provenance, not permission to edit after a failed read. */
+  refusedRevision?:Readonly<{intent:NonNullable<DocumentCopyReview["intent"]>;revisedIntent:NonNullable<DocumentCopyReview["revisedIntent"]>;
+    sourceOwner:CapturedSourceOwnership;authorityKey:string}>;
+};
 export type EventSourceRetirement = Readonly<{ source:CapturedSourceOwnership; generation:number; status:401|403|404 }>;
 export type EventWriteOwner = Readonly<{ authorizationKey:string; actorUserId:string; projectId:string|null; sourceGeneration:number }>;
 export type CommittedEventIdentity = Readonly<{ eventId:string; type:CreativeEvent["type"]; sequence:number; clientEventId:string|null }>;
@@ -260,6 +266,9 @@ export class FormaStore {
   readonly generationReadiness = new Signal.State<Record<string,GenerationReadiness>>({});
   readonly adaptiveStructures = new Signal.State<Record<string,AdaptiveStructure>>({});
   readonly planningConsent = new Signal.State<PlanningConsentState|null>(null);
+  // Ephemeral UI recovery only: no background copy execution or browser persistence.
+  readonly documentCopyReviews = new Signal.State<Record<string,OwnedDocumentCopyReview>>({});
+  #documentCopyRequest=0;
   readonly adaptiveSuggestionSets = new Signal.State<Record<string,AdaptiveSuggestionSet[]>>({});
   readonly canvasPlanningChoices = new Signal.State<Record<string,string>>({});
   readonly canvasPlanningSelection = new Signal.State({scope:"",canvasId:"",itemIds:[] as string[]});
@@ -1177,6 +1186,7 @@ export class FormaStore {
     if(newer)return false;
     const source=read.source,projectId=this.#outputSourceProjectId(),scope=source.authorization.key;
     this.#sourceRetired=true;this.#retiredSourceProjectId=projectId;this.#sourceGeneration+=1;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
+    this.#retireDocumentCopySource(source);
     for(const observation of this.#eventWriteObservations.values())if(this.sourceOwnershipScopeActive(observation.source)){observation.paused=true;observation.receipt=this.#eventWriteReceipt(observation,{privateUnavailable:true});}
     const session=this.session.get(),context=session?.projectContext,retirementGeneration=this.#sourceGeneration;
     if(session&&projectId){
@@ -1637,6 +1647,307 @@ export class FormaStore {
     return changed;
   }
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
+  #documentCopyFacts(target:DocumentCopyTarget){
+    const session=this.session.get(),projection=this.projection.get(),authorization=this.captureAuthorizationScope();
+    const sourceOwner=this.captureSourceOwnership();
+    const context=session?.projectContext,permissions=context?.permissions??session?.capabilities??[];
+    const canRead=Boolean(documentCopyTargetValid(target)&&session?.policy?.accepted&&authorization?.key&&
+      this.authorizationScopeActive(authorization)&&this.sourceOwnershipActive(sourceOwner)&&session.user.userId!=="anonymous"&&
+      projection.projectId===target.projectId&&permissions.includes("project.read")&&
+      (!context||context.projectId===target.projectId&&Number.isFinite(Date.parse(context.expiresAt))&&Date.parse(context.expiresAt)>Date.now()));
+    const source=projection.documents.find((document)=>document.id===target.documentId&&document.projectId===target.projectId&&!document.removed);
+    const authorityKey=JSON.stringify([authorization?.key,session?.user.role,[...permissions].sort(),session?.policy.version,
+      context?.ownerUserId,context?.role,context?.expiresAt]);
+    return{authorization,sourceOwner,authorityKey,projection,source,canRead,canAuthor:canRead&&permissions.includes("project.author")};
+  }
+  #documentCopyLiveCount(){
+    return Object.values(this.documentCopyReviews.get()).filter((state)=>state.phase!=="applied"||state.busy||!state.receipt).length;
+  }
+  documentCopyAccess(target:DocumentCopyTarget){
+    const current=this.#documentCopyFacts(target);
+    const capacity=current.canRead&&Boolean(current.source)&&!this.documentCopyReviews.get()[documentCopyKey(target)]&&this.#documentCopyLiveCount()>=32;
+    return{canRead:current.canRead,canAuthor:current.canAuthor&&Boolean(current.source),issue:capacity?"document_copy_capacity":""};
+  }
+  documentCopyReview(target:DocumentCopyTarget):OwnedDocumentCopyReview|null{
+    const current=this.#documentCopyFacts(target),state=this.documentCopyReviews.get()[documentCopyKey(target)];
+    if(!state||!current.canRead||state.scopeKey!==current.authorization?.key)return null;
+    if(!this.sourceOwnershipActive(state.sourceOwner)||state.refusedRevision&&
+      (!this.sourceOwnershipActive(state.refusedRevision.sourceOwner)||state.refusedRevision.authorityKey!==current.authorityKey)||state.retirement&&
+      (state.authorityKey!==current.authorityKey||!current.source))return this.#privateDocumentCopy(state);
+    const stale=state.stale||Boolean(state.preview&&!state.receipt&&
+      (state.authorityKey!==current.authorityKey||state.sourceRevision!==documentCopySourceRevision(current.projection,target)||
+        Date.parse(state.preview.expiresAt)<=Date.now()||!current.source||!current.canAuthor));
+    return{...state,stale};
+  }
+  #saveDocumentCopy(state:OwnedDocumentCopyReview){
+    this.documentCopyReviews.set({...this.documentCopyReviews.get(),[documentCopyKey(state.target)]:state});this.notify();
+  }
+  #privateDocumentCopy(state:OwnedDocumentCopyReview):OwnedDocumentCopyReview{
+    // Keep exact recovery/receipt identities, never a private title, plan, or source snapshot.
+    return{target:{...state.target},scopeKey:state.scopeKey,authorityKey:"",
+      sourceOwner:state.sourceOwner,commitSubmitted:state.commitSubmitted,
+      revisedIntent:null,revisionDraft:null,revisedRequestSubmitted:state.revisedRequestSubmitted,retirement:null,
+      operationId:state.operationId||state.intent?.operationId||state.receipt?.operationId||"",
+      sourceTitle:"",sourceRevision:"",phase:state.receipt?"applied":state.commitSubmitted?"uncertain":"unavailable",
+      busy:false,request:state.request,intent:null,preview:null,previewId:state.previewId,approvalHash:state.approvalHash,
+      receipt:state.receipt?{documentId:state.receipt.documentId,operationId:state.receipt.operationId}:null,
+      destinationDocumentId:state.receipt?.documentId??state.destinationDocumentId,stale:true,issue:"document_copy_unavailable"};
+  }
+  #retireDocumentCopySource(source:CapturedSourceOwnership){
+    const entries={...this.documentCopyReviews.get()};let changed=false;
+    for(const[key,state]of Object.entries(entries)){
+      if(state.scopeKey!==source.authorization.key)continue;
+      const reference=this.#privateDocumentCopy(state);
+      // A dispatched commit may still acknowledge its exact original identity.
+      // Source ownership fences every old preview; an unsubmitted request also loses its counter.
+      if(!state.commitSubmitted)reference.request=++this.#documentCopyRequest;
+      entries[key]=reference;changed=true;
+    }
+    if(changed)this.documentCopyReviews.set(entries);
+  }
+  #retainDocumentCopyReceipt(target:DocumentCopyTarget,request:number,source:CapturedSourceOwnership,result:unknown,ok:boolean){
+    const state=this.documentCopyReviews.get()[documentCopyKey(target)];
+    if(!state||state.request!==request||!state.commitSubmitted||!this.sourceOwnershipScopeActive(source))return null;
+    let reference=this.#privateDocumentCopy(state);
+    if(ok&&result&&typeof result==="object"&&!Array.isArray(result)){
+      const body=result as Record<string,unknown>;
+      if(body.status==="applied"){
+        try{
+          // Ignore optional private preview and all extra wire fields. The model
+          // still checks the original preview/hash/operation/destination tuple.
+          const receipt=documentCopyOutcome(reference,"apply",{status:"applied",previewId:body.previewId,
+            approvalHash:body.approvalHash,operationId:body.operationId,documentId:body.documentId},true);
+          reference=this.#privateDocumentCopy({...reference,...receipt});
+        }catch{/* An unverified reply is still unknown, not a failed or replacement copy. */}
+      }
+    }
+    this.#saveDocumentCopy(reference);
+    return this.documentCopyReview(target);
+  }
+  closeDocumentCopyDraft(target:DocumentCopyTarget){
+    const state=this.documentCopyReview(target);
+    if(!state||state.busy)return;
+    if(state.phase==="applied"&&state.receipt){
+      // Keep the chosen receipt, not private preview content or a slot in the live-review limit.
+      const unusedCandidate=state.reviewDisposition==="saved-original"&&state.revisedRequestSubmitted&&state.revisedIntent;
+      this.#saveDocumentCopy({...state,preview:null,intent:null,
+        revisedIntent:unusedCandidate?state.revisedIntent:null,revisionDraft:unusedCandidate?state.revisionDraft:null,
+        sourceTitle:"",sourceRevision:""});return;
+    }
+    if(state.intent||state.previewId||state.receipt||state.phase!=="draft")return;
+    const entries={...this.documentCopyReviews.get()};delete entries[documentCopyKey(target)];this.documentCopyReviews.set(entries);this.notify();
+  }
+  async beginDocumentCopy(target:DocumentCopyTarget){
+    const current=this.#documentCopyFacts(target);if(!current.canRead||!current.authorization)return null;
+    let state=this.documentCopyReview(target);
+    if(!state){
+      if(!current.source||this.#documentCopyLiveCount()>=32)return null;
+      state={target:{...target},scopeKey:current.authorization.key,authorityKey:current.authorityKey,
+        sourceOwner:current.sourceOwner,commitSubmitted:false,operationId:"",
+        sourceTitle:current.source.title,sourceRevision:documentCopySourceRevision(current.projection,target),
+        phase:"recovering",busy:false,request:0,intent:null,preview:null,previewId:"",approvalHash:"",receipt:null,destinationDocumentId:"",stale:false,issue:""};
+      this.#saveDocumentCopy(state);
+    }
+    if(state.busy||state.phase==="editing"||state.phase==="retired"&&state.retirement)return state;
+    return this.checkDocumentCopy(target);
+  }
+  beginDocumentCopyRevision(target:DocumentCopyTarget,operationId:string){
+    const state=this.documentCopyReview(target),current=this.#documentCopyFacts(target);
+    if(!state||state.busy||state.phase!=="unavailable"||state.issue!=="document_duplicate_folder_unavailable"||
+      state.operationId!==operationId||!state.intent||state.previewId||state.receipt||state.commitSubmitted||
+      !this.sourceOwnershipActive(state.sourceOwner)||!current.canAuthor||!current.source)return null;
+    // Editing does not abandon or replace the original operation. Only the
+    // separate free revise request may prepare a plan; an earlier saved plan wins.
+    const intent=state.revisedIntent??state.intent;
+    const revisionDraft=state.revisionDraft??Object.freeze({title:intent.title,
+      ...(Object.hasOwn(intent,"collectionId")?{collectionId:intent.collectionId}:{})});
+    const next={...state,revisionDraft,phase:"editing" as const,stale:false,issue:""};
+    this.#saveDocumentCopy(next);return next;
+  }
+  updateDocumentCopyRevisionDraft(target:DocumentCopyTarget,operationId:string,details:DocumentCopyDetails){
+    const state=this.documentCopyReview(target),current=this.#documentCopyFacts(target);
+    if(!state||state.busy||state.phase!=="editing"||state.operationId!==operationId||
+      !this.sourceOwnershipActive(state.sourceOwner)||!current.canAuthor||!current.source||
+      typeof details.title!=="string"||details.title.length>160||
+      Object.hasOwn(details,"collectionId")&&details.collectionId!==null&&
+        (typeof details.collectionId!=="string"||!/^[a-z0-9][a-z0-9:_-]{0,119}$/iu.test(details.collectionId)))return null;
+    const revisionDraft=Object.freeze({title:details.title,...(Object.hasOwn(details,"collectionId")?{collectionId:details.collectionId}:{})});
+    this.#saveDocumentCopy({...state,revisionDraft});return revisionDraft;
+  }
+  async previewDocumentCopy(target:DocumentCopyTarget,details:DocumentCopyDetails){
+    const current=this.#documentCopyFacts(target),state=this.documentCopyReview(target);
+    if(!current.canAuthor||!current.source||!state||state.busy||!["draft","editing"].includes(state.phase)||
+      state.phase==="draft"&&state.intent||state.phase==="editing"&&(!state.intent||!state.operationId||state.previewId||state.receipt||state.commitSubmitted))return null;
+    const revise=state.phase==="editing";
+    try{
+      const intent=documentCopyIntent(target,details,revise?state.operationId!:crypto.randomUUID());
+      this.#saveDocumentCopy({...state,...(revise?{revisedIntent:intent,revisedRequestSubmitted:true}:{intent,operationId:intent.operationId}),
+        sourceOwner:current.sourceOwner,authorityKey:current.authorityKey,
+        sourceRevision:documentCopySourceRevision(current.projection,target),issue:""});
+    }catch(error){
+      this.#saveDocumentCopy({...state,issue:error instanceof Error?error.message:"document_copy_invalid_target"});return null;
+    }
+    return this.#requestDocumentCopy(target,revise?"revise":"preview");
+  }
+  async checkDocumentCopy(target:DocumentCopyTarget,options:{includeRetirement?:boolean}={}){
+    const state=this.documentCopyReview(target);if(!state||state.busy||state.phase==="editing")return state;
+    if(options.includeRetirement&&state.operationId)return this.#requestDocumentCopy(target,"resume",{includeRetirement:true});
+    return this.#requestDocumentCopy(target,state.previewId?"retrieve":state.revisedRequestSubmitted?"resume":state.intent?"preview":"resume");
+  }
+  async applyDocumentCopy(target:DocumentCopyTarget,previewId:string,approvalHash:string){
+    const state=this.documentCopyReview(target),current=this.#documentCopyFacts(target);
+    if(!state||state.busy||state.receipt||state.phase!=="review"||state.stale||!this.sourceOwnershipActive(state.sourceOwner)||!current.canAuthor||!current.source||
+      !state.preview||state.previewId!==previewId||state.approvalHash!==approvalHash)return null;
+    return this.#requestDocumentCopy(target,"apply");
+  }
+  async dismissDocumentCopy(target:DocumentCopyTarget,previewId:string,approvalHash:string,
+    expected?:{operationId:string;request:number;retirement:NonNullable<DocumentCopyReview["retirement"]>}){
+    const state=this.documentCopyReview(target);
+    if(state?.phase==="retired"){
+      const current=this.#documentCopyFacts(target);
+      if(state.busy||state.receipt||!state.retirement||!expected||expected.retirement!==state.retirement||
+        expected.operationId!==state.operationId||expected.request!==state.request||
+        state.previewId!==previewId||state.approvalHash!==approvalHash||
+        state.scopeKey!==current.authorization?.key||state.authorityKey!==current.authorityKey||
+        !current.canRead||!current.source||!this.sourceOwnershipActive(state.sourceOwner))return null;
+      // The server has already irreversibly fenced this exact erased operation.
+      // Deliberate local Done releases only this owner; it sends no request or authoring receipt.
+      const entries={...this.documentCopyReviews.get()};delete entries[documentCopyKey(target)];
+      this.documentCopyReviews.set(entries);this.notify();return{...state,phase:"dismissed" as const};
+    }
+    if(expected)return null;
+    const guardedAvailable=Boolean(state?.guardedDismissAvailable&&["uncertain","unavailable"].includes(state.phase)&&
+      !state.intent&&!state.preview&&!state.receipt&&state.operationId&&this.sourceOwnershipActive(state.sourceOwner));
+    if(!state||state.busy||!(["review","applied"].includes(state.phase)||state.phase==="unavailable"&&!state.commitSubmitted||guardedAvailable)||
+      !state.previewId||state.previewId!==previewId||state.approvalHash!==approvalHash)return null;
+    return this.#requestDocumentCopy(target,"dismiss");
+  }
+  async #requestDocumentCopy(target:DocumentCopyTarget,action:DocumentCopyAction,options:{includeRetirement?:boolean}={}):Promise<OwnedDocumentCopyReview|null>{
+    const state=this.documentCopyReview(target),facts=this.#documentCopyFacts(target);
+    if(!state||state.busy||!facts.canRead||!facts.authorization||!facts.sourceOwner||
+      action==="apply"&&!this.sourceOwnershipActive(state.sourceOwner))return null;
+    const authorization=facts.authorization,sourceOwner=facts.sourceOwner,actorUserId=this.session.get()?.user.userId??"",request=++this.#documentCopyRequest;
+    const sourceRevision=documentCopySourceRevision(facts.projection,target),authorityKey=facts.authorityKey;
+    let body:ReturnType<typeof documentCopyRequest>;
+    try{body=documentCopyRequest(state,action,options);}catch{return null;}
+    const refused=state.refusedRevision;
+    const keepRefusal=Boolean(["resume","retrieve"].includes(action)&&refused&&refused.intent===state.intent&&
+      refused.revisedIntent===state.revisedIntent&&refused.intent.operationId===state.operationId&&
+      refused.revisedIntent.operationId===state.operationId);
+    const pending:OwnedDocumentCopyReview={...state,...(refused&&!keepRefusal?{refusedRevision:undefined}:{}),
+      ...(state.guardedDismissAvailable?{guardedDismissAvailable:false}:{}),sourceOwner,request,busy:true,issue:"",
+      phase:action==="apply"?"applying":["preview","revise"].includes(action)?"previewing":action==="resume"?"recovering":state.phase};
+    this.#saveDocumentCopy(pending);
+    const ownsRequest=()=>this.documentCopyReviews.get()[documentCopyKey(target)]?.request===request&&
+      this.authorizationScopeActive(authorization)&&this.sourceOwnershipScopeActive(sourceOwner);
+    const canReceive=()=>ownsRequest()&&this.sourceOwnershipActive(sourceOwner)&&this.#documentCopyFacts(target).canRead;
+    const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),15_000);
+    let denied=false,dispatched=false;
+    try{
+      const response=await this.guardedFetch("/api/documents/duplicate",{method:"POST",credentials:"same-origin",cache:"no-store",
+        headers:{"content-type":"application/json"},body:JSON.stringify(body),signal:controller.signal},this.#systemNotice("Duplicate"),{
+        current:()=>ownsRequest()&&(dispatched||this.sourceOwnershipActive(sourceOwner)),
+        onDispatch:()=>{dispatched=true;if(action==="apply"&&ownsRequest()){
+          const current=this.documentCopyReviews.get()[documentCopyKey(target)];
+          this.#saveDocumentCopy({...current,commitSubmitted:true});
+        }},
+      });
+      if(!ownsRequest())return null;
+      if(!canReceive()){
+        if(action==="apply"&&dispatched)return this.#retainDocumentCopyReceipt(target,request,sourceOwner,await response.json(),response.ok);
+        return null;
+      }
+      denied=[401,403,410].includes(response.status);
+      if(denied)this.#saveDocumentCopy(this.#privateDocumentCopy(this.documentCopyReviews.get()[documentCopyKey(target)]!));
+      const result:unknown=await response.json();
+      if(!canReceive()){
+        if(action==="apply"&&dispatched)return this.#retainDocumentCopyReceipt(target,request,sourceOwner,result,response.ok);
+        return null;
+      }
+      const original=this.documentCopyReviews.get()[documentCopyKey(target)]!;
+      let next:OwnedDocumentCopyReview={...documentCopyOutcome(denied?this.#privateDocumentCopy(original):original,action,result,response.ok,
+        action==="resume"&&"includeRetirement"in body&&body.includeRetirement===true?{retirementActorUserId:actorUserId}:{}),
+        sourceOwner,commitSubmitted:original.commitSubmitted};
+      // Capture only an actual exact revised-request refusal. Read failures may
+      // retain this provenance, but never turn it into an actionable issue.
+      if(action==="revise"&&response.status===409&&result&&typeof result==="object"&&!Array.isArray(result)&&
+        Object.keys(result).length===2&&"status"in result&&result.status==="not-applied"&&
+        "error"in result&&result.error==="document_duplicate_folder_unavailable"&&
+        "operationId"in body&&body.operationId===state.operationId&&original.operationId===state.operationId&&
+        body.projectId===target.projectId&&body.documentId===target.documentId&&
+        state.intent&&state.revisedIntent&&original.intent===state.intent&&original.revisedIntent===state.revisedIntent&&
+        !original.previewId&&!original.receipt&&!original.commitSubmitted&&
+        this.sourceOwnershipActive(sourceOwner)&&authorityKey===this.#documentCopyFacts(target).authorityKey)
+        next={...next,refusedRevision:Object.freeze({intent:state.intent,revisedIntent:state.revisedIntent,sourceOwner,authorityKey})};
+      const sameOriginalRead=action==="resume"&&"operationId"in body&&Boolean(state.operationId)&&
+        body.operationId===state.operationId&&original.operationId===state.operationId;
+      if(["resume","retrieve"].includes(action)&&next.issue==="document_duplicate_folder_unavailable")
+        next={...next,issue:"document_copy_unavailable"};
+      // Only a fresh exact same-original read may restore deliberate correction.
+      // Neither retained provenance nor absence authorizes a replacement or Apply.
+      if(sameOriginalRead&&response.status===200&&result&&typeof result==="object"&&!Array.isArray(result)&&
+        Object.keys(result).length===1&&"status"in result&&result.status==="none"&&
+        ["unavailable","uncertain"].includes(state.phase)&&refused&&original.refusedRevision===refused&&
+        state.revisedRequestSubmitted&&original.intent===refused.intent&&original.revisedIntent===refused.revisedIntent&&
+        refused.intent.operationId===state.operationId&&refused.revisedIntent.operationId===state.operationId&&
+        refused.intent.projectId===target.projectId&&refused.intent.documentId===target.documentId&&
+        refused.revisedIntent.projectId===target.projectId&&refused.revisedIntent.documentId===target.documentId&&
+        refused.authorityKey===authorityKey&&authorityKey===this.#documentCopyFacts(target).authorityKey&&
+        !state.previewId&&!original.previewId&&!state.receipt&&!original.receipt&&!state.commitSubmitted&&!original.commitSubmitted&&
+        this.sourceOwnershipActive(refused.sourceOwner)&&this.sourceOwnershipActive(state.sourceOwner))
+        next={...next,issue:"document_duplicate_folder_unavailable"};
+      if(response.ok&&result&&typeof result==="object"&&"status"in result&&result.status==="not-applied")
+        next.commitSubmitted=false;
+      if(denied||/retention|custody|source_rights|source_evidence/u.test(next.issue)||original.refusedRevision&&
+        (!this.sourceOwnershipActive(original.refusedRevision.sourceOwner)||original.refusedRevision.authorityKey!==this.#documentCopyFacts(target).authorityKey))
+        next=this.#privateDocumentCopy(next);
+      if(next.refusedRevision&&(next.previewId||next.receipt||next.commitSubmitted||["applying","applied","retired","dismissed"].includes(next.phase)))
+        next={...next,refusedRevision:undefined};
+      // This flag permits asking the existing server adjudicator; it is not a
+      // cancellation receipt, an unused-operation proof, or permission to Apply.
+      if(sameOriginalRead&&"includeRetirement"in body&&body.includeRetirement===true&&response.status===403&&
+        "previewId"in body&&"approvalHash"in body&&Boolean(state.previewId)&&Boolean(state.approvalHash)&&
+        body.previewId===state.previewId&&body.approvalHash===state.approvalHash&&
+        original.previewId===state.previewId&&original.approvalHash===state.approvalHash&&!original.receipt&&
+        result&&typeof result==="object"&&!Array.isArray(result)&&Object.keys(result).length===1&&
+        "error"in result&&result.error==="authoring_preview_unavailable"&&this.sourceOwnershipActive(sourceOwner))
+        next={...next,guardedDismissAvailable:true};
+      if(next.phase==="retired")next={...next,authorityKey};
+      if(next.phase==="review"){
+        const current=this.#documentCopyFacts(target);
+        next={...next,sourceRevision,authorityKey,stale:next.stale||!current.canAuthor||
+          authorityKey!==current.authorityKey||sourceRevision!==documentCopySourceRevision(current.projection,target)||
+          Boolean(next.preview&&Date.parse(next.preview.expiresAt)<=Date.now())};
+      }
+      if(next.phase==="dismissed"){
+        const entries={...this.documentCopyReviews.get()};delete entries[documentCopyKey(target)];
+        this.documentCopyReviews.set(entries);this.notify();return next;
+      }
+      this.#saveDocumentCopy(next);
+      if(next.phase==="applied"){
+        // Read only while this exact source still owns private publication.
+        this.#saveDocumentCopy({...next,busy:true});
+        try{await this.refreshEvents();}
+        catch{if(canReceive())this.#saveDocumentCopy({...next,issue:"document_copy_refresh_failed"});return canReceive()?this.documentCopyReview(target):null;}
+        if(!canReceive())return null;
+        const available=this.projection.get().documents.some((document)=>document.id===next.receipt?.documentId&&document.projectId===target.projectId&&!document.removed);
+        this.#saveDocumentCopy({...next,busy:false,issue:available?"":"document_copy_refresh_failed"});
+      }
+      return this.documentCopyReview(target);
+    }catch{
+      if(ownsRequest()){
+        const current=this.documentCopyReviews.get()[documentCopyKey(target)]!;
+        this.#saveDocumentCopy(!canReceive()||denied?this.#privateDocumentCopy(current):{...current,busy:false,
+          phase:current.receipt?"applied":"uncertain",issue:current.receipt?"document_copy_refresh_failed":"document_copy_uncertain"});
+      }
+      return null;
+    }finally{
+      window.clearTimeout(timeout);
+      const remaining=this.documentCopyReviews.get()[documentCopyKey(target)];
+      if(ownsRequest()&&remaining?.busy)this.#saveDocumentCopy(!canReceive()?this.#privateDocumentCopy(remaining):
+        {...remaining,busy:false,phase:remaining.receipt?"applied":"uncertain",issue:remaining.receipt?"document_copy_refresh_failed":"document_copy_uncertain"});
+    }
+  }
 
   /** Recheck only the selected project's existing source index; never hydrate, author, or select another context. */
   async refreshOutputSource(target: { authorization: CapturedAuthorizationScope | null; projectId: string; documentId: string;
@@ -2200,6 +2511,7 @@ async syncDocumentJobs(){
       this.#sourceGeneration+=1;this.#sourceRetired=false;this.#retiredSourceProjectId=null;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
     }
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
+      this.documentCopyReviews.set({});this.#documentCopyRequest+=1;
       this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
       this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
       this.#adaptiveStructureJobIds.clear();this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);

@@ -29,12 +29,7 @@ forma-context-intelligence{display:block;min-inline-size:0}
 .context-intelligence-proposal>label,.context-intelligence-fields>label{display:grid;gap:.35rem;font-size:var(--type-caption)}
 .context-intelligence-proposal>header label{min-block-size:44px}
 .context-intelligence-proposal :is(input:not([type=checkbox]),select){min-block-size:44px}
-.context-change-preview{min-inline-size:0;padding:1rem;border:2px solid var(--accent);border-radius:.5rem;overflow-wrap:anywhere}
-.context-change-preview :is(h3,p){margin:0 0 .5rem}
-.context-change-preview li{margin-block:.75rem}
-.context-change-preview summary{min-block-size:44px;cursor:pointer}
-.context-change-preview ol{padding-inline-start:1.5rem}
-.context-change-preview pre{white-space:pre-wrap;font-size:var(--type-micro);overflow-wrap:anywhere}
+
 .context-intelligence-source{padding:.8rem .9rem;background:color-mix(in srgb,var(--mint) 55%,var(--panel));border:1px solid var(--line);border-radius:.5rem}
 .context-intelligence-source>span,.context-intelligence-proposal>small,.context-intelligence-research-item>small,.context-intelligence-add label>span{color:var(--muted);font-size:var(--type-micro)}
 .context-intelligence-source>p,.context-intelligence-research-item>p{margin:.45rem 0 0;overflow-wrap:anywhere;font-size:var(--type-caption);line-height:1.55}

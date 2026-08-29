@@ -833,6 +833,7 @@ function assertReadOnlyReview(f, intelligence) {
   assert.equal(f.renderer.ownNodes(intelligence, "button").filter(node => node.attributes["data-context-review-action"] === "inspect").length, 1, "one free retained-review entry");
   assert.ok(!f.renderer.ownNodes(intelligence, "button").some(node => ["preview", "apply"].includes(node.attributes["data-context-review-action"])));
   assert.equal(f.renderer.ownNodes(intelligence, "section").filter(node => node.attributes.class === "context-consent").length, 0);
+  assert.ok(!intelligence.markup.includes(escapeText(f.i18n.t("context.changes.atomic"))), "reader inspection has no Apply guidance");
 }
 function savedContextReview(blockId = "decision-0", options = {}) {
   const executionId = "original-execution-" + blockId, proposalId = "original-proposal", key = executionId + ":" + proposalId;
@@ -924,6 +925,7 @@ test("an author downgraded to reader scrubs cached private edits and resumes a f
   assert.equal(retrieve.url, "/api/context/apply"); assert.equal(retrieve.body.action, "retrieve");
   assert.equal(retrieve.body.previewId, preview.previewId); assert.equal(retrieve.body.approvalHash, preview.approvalHash); assert.equal(retrieve.body.blockId, "decision-0");
   assertReadOnlyReview(f, reader); assert.ok(f.trace.includes("refresh-events"));
+  assert.ok(reader.markup.includes(escapeText(f.i18n.t("context.changes.appliedHint"))), "reader recovery retains the completed receipt hint");
   f.state.replies.push({ status: "dismissed" });
   await f.renderer.handler(reader, "button", node => node.attributes["data-context-review-action"] === "dismiss")(); await new Promise(setImmediate); f.draw();
   assert.deepEqual(f.state.requests.map(request => request.body.action), ["resume", "resume", "retrieve", "dismiss"]);
@@ -981,10 +983,12 @@ test("lost generation capability still allows free retained human-authoring revi
   assert.equal(f.renderer.ownNodes(intelligence, "button").length, 1);
   f.state.replies.push({ status: "not-applied", preview }); await inspectSavedReview(f, intelligence);
   assert.ok(f.renderer.ownNodes(intelligence, "textarea").length); assert.equal(f.renderer.ownNodes(intelligence, "form").length, 0);
+  assert.ok(intelligence.markup.includes(escapeText(f.i18n.t("context.changes.atomic"))), "current author keeps free Apply guidance without generation eligibility");
   f.state.replies.push({ status: "applied", preview });
   await f.renderer.handler(intelligence, "button", node => node.attributes["data-context-review-action"] === "apply")(); await new Promise(setImmediate); f.draw();
   assert.deepEqual(f.state.requests.map(request => [request.url, request.body.action]), [["/api/context/apply", "resume"], ["/api/context/apply", "apply"]]);
   assert.equal(f.state.requests.at(-1).body.previewId, preview.previewId); assert.equal(f.state.requests.at(-1).body.approvalHash, preview.approvalHash);
+  assert.ok(intelligence.markup.includes(escapeText(f.i18n.t("context.changes.appliedHint"))));
 });
 
 test("a read-only containing surface cannot grant its author actor generation or human-authoring controls", async () => {
@@ -1041,6 +1045,25 @@ test("authorization withdrawn at the review update handoff cannot focus or refre
   assert.ok(!f.renderer.markup.includes(preview.review.sourceText));
   assert.ok(!f.trace.includes("refresh-events")); assert.equal(f.renderer.query(null, "dialog[open]").length, 0);
   assert.deepEqual(f.state.requests.map(request => request.body.action), ["resume"]);
+});
+
+test("shared authoring preview preserves explicit reader guidance and the exact completed receipt", async () => {
+  const { renderAuthoringPreview } = await loadActual("src/components/authoring-preview.ts");
+  for (const locale of ["en", "fr", "ar", "ja"]) for (const readOnly of [undefined, false, true]) for (const status of ["review", "applying", "applied"]) {
+    const f = fixture(locale), preview = savedContextReview("decision-0", { text: "Exact café — العربية 日本語.\n".repeat(100) });
+    const id = "shared-review-" + locale + "-" + status + "-" + readOnly;
+    f.renderer.draw(f.host, () => renderAuthoringPreview(preview, f.i18n, { id, status, ...(readOnly === undefined ? {} : { readOnly }) }));
+    const markup = f.renderer.markup, description = locale + " / " + status + " / " + readOnly;
+    assert.equal(markup.includes(escapeText(f.i18n.t("context.changes.atomic"))), status !== "applied" && readOnly !== true, description);
+    assert.equal(markup.includes(escapeText(f.i18n.t("context.changes.appliedHint"))), status === "applied", description);
+    assert.ok(markup.includes(escapeText(preview.changes[0].text)), "exact Unicode proposal is never shortened: " + description);
+    assert.ok(markup.includes(escapeText(JSON.stringify(preview.events, null, 2))), "exact event inspection is retained: " + description);
+    assert.ok(markup.includes(preview.sourceHash) && markup.includes(preview.expiresAt));
+    assert.equal(f.renderer.ownNodes(f.host, "h3")[0].attributes.id, id, "the existing focus target survives extraction");
+    assert.equal(f.renderer.ownNodes(f.host, "section")[0].attributes["aria-labelledby"], id);
+    for (const tag of ["input", "select", "textarea", "form", "button"]) assert.equal(f.renderer.ownNodes(f.host, tag).length, 0, "shared display never invents authority: " + tag);
+    assert.equal(f.state.requests.length, 0, "rendering is free and never executes a request");
+  }
 });
 
 
