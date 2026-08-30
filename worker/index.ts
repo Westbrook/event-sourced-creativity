@@ -7,6 +7,7 @@ import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from
 import { handleDocumentJobs } from "./document-jobs-api";
 import { handleDocumentDuplication } from "./document-duplication-api";
 import { handleCanvasArrangements } from "./canvas-arrangements";
+import { handleAdaptiveProposalApplication } from "./adaptive-proposal-application-api";
 import { handleOutputRequirements } from "./output-requirements-api";
 import { outputDocumentExecutionBridge } from "./output-document-execution";
 import { observeScheduledRetention, schedulePrivateContentRetention, streamHead, type WorkerExecutionContext } from "./runtime";
@@ -32,6 +33,7 @@ import { negotiateMarketingLocale, renderMarketingDocument } from "./marketing-l
 import { parseMarketingRoute } from "../src/marketing/profiles";
 import { handleContextIntelligence } from "./context-intelligence-api";
 import { handleContextApplication } from "./context-application-api";
+import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -124,6 +126,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/context/decompose")return handleContextIntelligence(request,env,"decompose");
     if(url.pathname==="/api/context/research")return handleContextIntelligence(request,env,"research");
     if(url.pathname==="/api/context/apply")return handleContextApplication(request,env);
+    if(url.pathname==="/api/workspace/quick-edit")return handleWorkspaceLocalProposal(request,env);
     const assistantProposal=url.pathname.match(/^\/api\/assistant\/proposals\/([^/]+)\/(accept|reject)$/);
     if(assistantProposal)return handleAssistantProposal(request,env,assistantProposal[1]!,assistantProposal[2]!);
     const assistantTask=url.pathname.match(/^\/api\/assistant\/tasks\/([^/]+)\/(cancel|reconcile)$/);
@@ -159,6 +162,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
     if(url.pathname==="/api/documents/duplicate")return handleDocumentDuplication(request,env);
     if(url.pathname==="/api/canvas/arrangements")return handleCanvasArrangements(request,env);
+    if(url.pathname==="/api/context/adaptive/apply")return handleAdaptiveProposalApplication(request,env);
     if(url.pathname.startsWith("/api/artifacts/")){
       const segments=url.pathname.slice("/api/artifacts/".length).split("/").map((segment)=>decodeURIComponent(segment));
       return handleArtifactEdit(request,env,segments[0]??"",segments.slice(1));

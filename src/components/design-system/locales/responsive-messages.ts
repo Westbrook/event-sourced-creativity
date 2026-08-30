@@ -1,4 +1,5 @@
 import { SCENE_COST_MESSAGES } from "./scene-cost-messages.ts";
+import { ADAPTIVE_PROPOSAL_MESSAGES } from "./adaptive-proposal-messages.ts";
 import { ARTIFACT_DELIVERY_MESSAGES } from "./artifact-delivery-messages.ts";
 import { ACTIVITY_ISSUE_MESSAGES } from "./activity-issue-messages.ts";
 import { ASSISTANT_MESSAGES } from "./assistant-messages.ts";
@@ -7,6 +8,7 @@ import { PRESENTATION_CANDIDATE_MESSAGES } from "./presentation-candidate-messag
 const english = {
   ...ACTIVITY_ISSUE_MESSAGES.en,
   ...ARTIFACT_DELIVERY_MESSAGES.en,
+  ...ADAPTIVE_PROPOSAL_MESSAGES.en,
   ...ASSISTANT_MESSAGES.en,
   ...PRESENTATION_CANDIDATE_MESSAGES.en,
   "generation.planningLimit.title": "This request exceeds its planning allowance",
@@ -147,6 +149,7 @@ type ResponsiveMessages = Record<keyof typeof english, string>;
 const french: ResponsiveMessages = {
   ...ACTIVITY_ISSUE_MESSAGES.fr,
   ...ARTIFACT_DELIVERY_MESSAGES.fr,
+  ...ADAPTIVE_PROPOSAL_MESSAGES.fr,
   ...ASSISTANT_MESSAGES.fr,
   ...PRESENTATION_CANDIDATE_MESSAGES.fr,
   "generation.planningLimit.title": "Cette demande dépasse son allocation de planification",
@@ -285,6 +288,7 @@ const french: ResponsiveMessages = {
 const arabic: ResponsiveMessages = {
   ...ACTIVITY_ISSUE_MESSAGES.ar,
   ...ARTIFACT_DELIVERY_MESSAGES.ar,
+  ...ADAPTIVE_PROPOSAL_MESSAGES.ar,
   ...ASSISTANT_MESSAGES.ar,
   ...PRESENTATION_CANDIDATE_MESSAGES.ar,
   "generation.planningLimit.title": "يتجاوز هذا الطلب مخصصات التخطيط الخاصة به",
@@ -423,6 +427,7 @@ const arabic: ResponsiveMessages = {
 const japanese: ResponsiveMessages = {
   ...ACTIVITY_ISSUE_MESSAGES.ja,
   ...ARTIFACT_DELIVERY_MESSAGES.ja,
+  ...ADAPTIVE_PROPOSAL_MESSAGES.ja,
   ...ASSISTANT_MESSAGES.ja,
   ...PRESENTATION_CANDIDATE_MESSAGES.ja,
   "generation.planningLimit.title": "このリクエストは計画処理の上限を超えています",

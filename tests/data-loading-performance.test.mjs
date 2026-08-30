@@ -915,12 +915,12 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const body = await response.json();
   assert.ok(body.report.source.eventCount > 0);
   const batch = database.calls.find((call) => call.kind === "batch");
-  assert.equal(batch?.statements.length, 4);
+  assert.equal(batch?.statements.length, 7);
   assert.match(batch.statements[2].sql, /stream_id NOT IN \(SELECT fictional_stream_id/);
   assert.match(batch.statements[2].sql, /SELECT event_id e,stream_id s,sequence q,occurred_at o,actor a,type t,CASE/);
   assert.match(batch.statements[2].sql, /json_remove\(payload,'\$\.compiled_snapshot'\)/);
   assert.doesNotMatch(batch.statements[2].sql, /SELECT \* FROM events/);
-  assert.ok(database.calls.length <= 2, `expected admin authentication plus one dashboard batch, received ${database.calls.length}`);
+  assert.ok(database.calls.length <= 3, `expected admin authentication plus one combined dashboard/live batch and a final access proof, received ${database.calls.length}`);
   assert.equal(database.writeCount(), 0);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   await drainBackground();
@@ -928,7 +928,7 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const synthetic = await request("/api/analytics?days=all&includeSynthetic=true");
   assert.equal(synthetic.status, 200);
   const included = database.calls.find((call) => call.kind === "batch");
-  assert.equal(included?.statements.length, 4);
+  assert.equal(included?.statements.length, 7);
   assert.doesNotMatch(included.statements[2].sql, /NOT IN/);
   await drainBackground();
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
@@ -961,13 +961,13 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   assert.deepEqual(unchangedBody.report.source, initialBody.report.source);
   assert.deepEqual(unchangedBody.report.totals, initialBody.report.totals);
   const incremental = database.calls.find((call) => call.kind === "batch");
-  assert.equal(incremental?.statements.length, 3);
+  assert.equal(incremental?.statements.length, 6);
   const delta = incremental.statements[2];
   assert.match(delta.sql, /rowid>\?/);
   assert.match(database.sqlite.prepare(`EXPLAIN QUERY PLAN ${delta.sql}`).all(...delta.values).map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
   const deltaBytes = JSON.stringify(database.sqlite.prepare(delta.sql).all(...delta.values)).length;
   assert.ok(deltaBytes < coldBytes / 20, `expected meaningful transfer reduction: ${coldBytes} -> ${deltaBytes}`);
-  assert.ok(database.calls.length <= 2,`cold analytics should use at most two D1 round trips; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
+  assert.ok(database.calls.length <= 3,`cold analytics should use at most three D1 round trips including the final access proof; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
   assert.equal(database.writeCount(), 0);
 
   addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "analytics-new-event");
@@ -1019,12 +1019,12 @@ test("analytics restores exact owner-bound evidence across cold worker instances
   assert.equal(cold.headers.get("cache-control"), "private, no-store");
   assert.equal(current.source.eventCount, baseline.source.eventCount + 1);
   const batch = database.calls.find((call) => call.kind === "batch");
-  assert.equal(batch?.statements.length, 4);
+  assert.equal(batch?.statements.length, 7);
   assert.match(batch.statements[2].sql, /WITH snapshot\(head\) AS MATERIALIZED/);
   const plan = database.sqlite.prepare(`EXPLAIN QUERY PLAN ${batch.statements[2].sql}`).all(...batch.statements[2].values);
   assert.match(plan.map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
   assert.match(plan.map((step) => step.detail).join(" "), /idx_events_nonphantom_stream_sequence/);
-  assert.ok(database.calls.length <= 2,`cold analytics should use at most two D1 round trips; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
+  assert.ok(database.calls.length <= 3,`cold analytics should use at most three D1 round trips including the final access proof; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
   assert.equal(database.writeCount(), 0);
 
   database.reset();
@@ -1212,7 +1212,7 @@ test("production-shaped idle histories collapse to one scoped page while raw aud
     assert.match(plan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/,profile);
   }
   database.reset();const analytics=await(await request("/api/analytics?days=all")).json();
-  assert.ok(analytics.report.source.eventCount<5_000);assert.match(database.calls.find((call)=>call.kind==="batch")?.statements[2].sql??"",/capture_version/);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+  assert.ok(analytics.report.source.eventCount<5_000);assert.match(database.calls.find((call)=>call.kind==="batch")?.statements[2].sql??"",/capture_version/);assert.ok(database.calls.length<=3);assert.equal(database.writeCount(),0);
   const analyticsStatement=database.calls.find((call)=>call.kind==="batch")?.statements[2];const analyticsPlan=database.sqlite.prepare(`EXPLAIN QUERY PLAN ${analyticsStatement.sql}`).all(...analyticsStatement.values);
   assert.match(analyticsPlan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/);
 
@@ -3469,4 +3469,254 @@ test("capability and delivery migrations safely replay after runtime initializat
 test("creator provenance defaults to human-readable history and exposes Engineering handoffs only to exact event specialists",async()=>{
   const sources=await Promise.all(["forma-workspace.ts","event-inspector.ts"].map((name)=>readFile(new URL(`../src/components/${name}`,import.meta.url),"utf8")));
   for(const source of sources){assert.match(source,/capabilities\?\.includes\("engineering\.events\.read"\)===true/);assert.match(source,/\$\{engineering\?html`<details class="provenance-technical"/);assert.match(source,/workspace\.provenance\.description/);assert.match(source,/setRoute\("\/engineering\/events"\)/);assert.doesNotMatch(source,/Open in Operations|setRoute\("\/operations\/events"\)/);}
+});
+
+// Live metadata shares the real dashboard batch; these controls keep the
+// separate post-snapshot proof and safe-source cache boundary observable.
+async function analyticsLiveFixture() {
+  const fixture = await productionWorker();
+  await fixture.drainBackground();
+  fixture.database.reset();
+  return fixture;
+}
+
+function assertAnalyticsLiveBatchCalls(database, sizes) {
+  assert.deepEqual(database.calls.map((call) => call.kind), ["first", ...sizes.map(() => "batch"), "first"]);
+  const batches = database.calls.filter((call) => call.kind === "batch");
+  assert.deepEqual(batches.map((call) => call.statements.length), sizes);
+  for (const batch of batches) {
+    assert.match(batch.statements[0].sql, /AS analytics_head/);
+    assert.match(batch.statements[1].sql, /FROM replay_personas WHERE owner_id=\?/);
+    assert.match(batch.statements[2].sql, /FROM events/);
+    if (batch.statements.length === 7) assert.match(batch.statements[3].sql, /^SELECT content FROM external_content WHERE content_id=\? AND owner_id=\?$/);
+    const live = batch.statements.slice(-3);
+    assert.match(live[0].sql, /^SELECT 1 AS authorized WHERE EXISTS/);
+    assert.match(live[1].sql, /FROM cost_budget_reservations WHERE owner_id=\?/);
+    assert.match(live[2].sql, /^WITH visible AS/);
+    assert.ok(batch.statements.every((statement) => /^\s*(?:SELECT|WITH)/.test(statement.sql)));
+    assert.ok(batch.statements.every((statement) => statement.values.length <= 100));
+    assert.equal(database.calls.at(-1).sql, live[0].sql, "the final proof is a separate read of the same current-authority guard");
+  }
+  assert.equal(database.writeCount(), 0, "no foreground analytics D1 writes");
+}
+
+function addAnalyticsLiveHold(database, id) {
+  const stamp = new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO cost_budget_reservations(reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,NULL,?)")
+    .run(id, "dev-local-creative", "forma", "creative:dev-local-creative", id + ":correlation", "document-render:video", "2026-08", 19_644_000, 0, "executing", stamp, stamp);
+}
+
+async function analyticsLiveColdRequest(fixture) {
+  const binding = { prepare: (sql) => fixture.database.DB.prepare(sql), batch: (statements) => fixture.database.DB.batch(statements) };
+  const environment = { ...fixture.environment, DB: binding };
+  const request = (path) => worker.fetch(new Request(`http://localhost${path}`), environment, fixture.context);
+  assert.equal((await request("/api/session")).status, 200);
+  await fixture.drainBackground();
+  fixture.database.reset();
+  return request;
+}
+
+for (const mode of ["cold", "warm", "durable"]) {
+  test(`analytics live batch ${mode} discards the entire routed response after post-snapshot revocation`, async () => {
+    const fixture = await analyticsLiveFixture();
+    const { database, context, drainBackground } = fixture;
+    addAnalyticsLiveHold(database, "private-held-" + mode);
+    if (mode !== "cold") {
+      assert.equal((await fixture.request("/api/analytics?days=all")).status, 200);
+      await drainBackground();
+    }
+    const request = mode === "durable" ? await analyticsLiveColdRequest(fixture) : fixture.request;
+    addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "revoked-new-event-" + mode);
+    const checkpoints = () => database.sqlite.prepare("SELECT content_id,owner_id,content FROM external_content ORDER BY content_id").all();
+    const before = checkpoints();
+    let scheduled = 0, revoked = false;
+    const waitUntil = context.waitUntil;
+    context.waitUntil = (promise) => { scheduled += 1; waitUntil(promise); };
+    const batch = database.DB.batch;
+    database.DB.batch = async (statements) => {
+      const rows = await batch(statements);
+      if (statements.some((statement) => statement.sql.includes("FROM cost_budget_reservations WHERE owner_id=?"))) {
+        assert.equal(revoked, false);
+        revoked = true;
+        // This is an actual SQLite mutation after the measured transaction's
+        // COMMIT, not fabricated guard output or an in-batch revocation.
+        database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
+      }
+      return rows;
+    };
+    database.reset();
+    let response;
+    try { response = await request("/api/analytics?days=all"); }
+    finally { database.DB.batch = batch; }
+    assert.equal(revoked, true);
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "analytics_access_changed" });
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assertAnalyticsLiveBatchCalls(database, [mode === "warm" ? 6 : 7]);
+    assert.equal(scheduled, 0, "denied evidence cannot schedule a source checkpoint");
+    await drainBackground();
+    assert.equal(database.writeCount(), 0);
+    assert.deepEqual(checkpoints(), before);
+
+    database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("dev-local-creative");
+    database.reset();
+    const recovered = await request("/api/analytics?days=all");
+    assert.equal(recovered.status, 200);
+    assert.equal(recovered.headers.get("x-forma-analytics-cache"), mode === "cold" ? "miss" : mode === "warm" ? "delta" : "durable",
+      "the denied batch never publishes a new in-memory source entry");
+    if (mode !== "cold") assert.equal(recovered.headers.get("x-forma-analytics-source-rows"), "1");
+    assert.equal((await recovered.json()).report.outcomes.live.finance.heldMicrousd, 19_644_000);
+    assertAnalyticsLiveBatchCalls(database, [mode === "warm" ? 6 : 7]);
+    await drainBackground();
+  });
+}
+
+test("analytics live batch refreshes the ledger on a routed zero-event delta without caching live evidence", async () => {
+  const { database, request, drainBackground } = await analyticsLiveFixture();
+  const id = "private-ledger-not-event-evidence";
+  addAnalyticsLiveHold(database, id);
+  const first = await request("/api/analytics?days=all");
+  assert.equal(first.status, 200);
+  const initial = (await first.json()).report;
+  assert.equal(initial.outcomes.live.finance.heldMicrousd, 19_644_000);
+  assertAnalyticsLiveBatchCalls(database, [7]);
+  await drainBackground();
+  const saved = JSON.parse(database.sqlite.prepare("SELECT content FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get().content);
+  assert.deepEqual(Object.keys(saved).sort(), ["schema", "outcomeBindings", "owner", "epoch", "synthetic", "pricing", "head", "personas", "count", "payload"].sort());
+  const compressed = Uint8Array.from(atob(saved.payload), (value) => value.charCodeAt(0));
+  const payload = await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  assert.equal(payload.includes(id), false);
+  assert.equal(saved.live, undefined);
+  assert.equal(saved.finance, undefined);
+  assert.equal(saved.jobs, undefined);
+  database.sqlite.prepare("UPDATE cost_budget_reservations SET status='settled',used_microusd=3000000,settled_at=? WHERE reservation_id=?").run(new Date().toISOString(), id);
+  database.reset();
+  const second = await request("/api/analytics?days=all");
+  assert.equal(second.status, 200);
+  assert.equal(second.headers.get("x-forma-analytics-cache"), "delta");
+  assert.equal(second.headers.get("x-forma-analytics-source-rows"), "0");
+  const current = (await second.json()).report;
+  assert.deepEqual(current.source, initial.source);
+  assert.deepEqual(current.totals, initial.totals);
+  assert.equal(current.outcomes.live.finance.heldMicrousd, 0);
+  assert.equal(current.outcomes.live.finance.settledMicrousd, 3_000_000);
+  assert.equal(current.outcomes.usage.recordedMicrousd, initial.outcomes.usage.recordedMicrousd);
+  assertAnalyticsLiveBatchCalls(database, [6]);
+  await drainBackground();
+});
+
+test("analytics live batch corrupt-source fallback uses the latest ledger and retention snapshot in four explicit trips", async () => {
+  const fixture = await analyticsLiveFixture();
+  const { database, drainBackground } = fixture;
+  const id = "fallback-live-hold", jobId = "fallback-live-job";
+  addAnalyticsLiveHold(database, id);
+  const documentId = "fallback-live-document";
+  // The legacy seed document has no project_id; create the required personal
+  // document anchor through the real public event route, not by repairing it.
+  const created = await fixture.request("/api/events", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "append", event: { type: "DocumentCreated", payload: {
+      project_id: "project-atmosphere", document_id: documentId, title: "Fallback live snapshot",
+    } } }),
+  });
+  const createdBody = await created.json();
+  assert.equal(created.status, 200, JSON.stringify(createdBody));
+  assert.deepEqual(createdBody.rejected, []);
+  assert.deepEqual(createdBody.appended.map((event) => [event.type, event.payload.document_id, event.payload.project_id]),
+    [["DocumentCreated", documentId, "project-atmosphere"]]);
+  await drainBackground();
+  database.reset();
+  const stamp = new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,expires_at,updated_at) VALUES(?,?,?,?,'render_document','completed','test',?,1,'{}',?,1,?,?,?)")
+    .run(jobId, "dev-local-creative", "creative:dev-local-creative", documentId, jobId + ":correlation", JSON.stringify({ body: "PRIVATE checkpoint", media_url: "https://private.invalid/media" }), stamp, "2100-01-01T00:00:00.000Z", stamp);
+  const first = await fixture.request("/api/analytics?days=all");
+  assert.equal(first.status, 200);
+  const initial = (await first.json()).report;
+  assert.equal(initial.outcomes.live.finance.heldMicrousd, 19_644_000);
+  assert.ok(initial.outcomes.live.jobs.retainedCheckpointCount >= 1);
+  await drainBackground();
+  const saved = database.sqlite.prepare("SELECT content_id,content FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get();
+  const corrupt = { ...JSON.parse(saved.content), payload: "not-valid-gzip" };
+  database.sqlite.prepare("UPDATE external_content SET content=? WHERE content_id=?").run(JSON.stringify(corrupt), saved.content_id);
+  const request = await analyticsLiveColdRequest(fixture);
+  const batch = database.DB.batch;
+  let combined = 0;
+  database.DB.batch = async (statements) => {
+    const rows = await batch(statements);
+    if (statements.some((statement) => statement.sql.includes("FROM cost_budget_reservations WHERE owner_id=?")) && ++combined === 1) {
+      database.sqlite.prepare("UPDATE cost_budget_reservations SET status='settled',used_microusd=3000000,settled_at=? WHERE reservation_id=?").run(stamp, id);
+      database.sqlite.prepare("UPDATE document_jobs SET expires_at=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z", jobId);
+    }
+    return rows;
+  };
+  let response;
+  try { response = await request("/api/analytics?days=all"); }
+  finally { database.DB.batch = batch; }
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-forma-analytics-cache"), "miss");
+  const current = (await response.json()).report;
+  assert.deepEqual(current.totals, initial.totals);
+  assert.equal(current.outcomes.live.finance.heldMicrousd, 0);
+  assert.equal(current.outcomes.live.finance.settledMicrousd, 3_000_000);
+  assert.equal(current.outcomes.live.jobs.total, initial.outcomes.live.jobs.total - 1);
+  assert.equal(current.outcomes.live.jobs.retainedCheckpointCount, initial.outcomes.live.jobs.retainedCheckpointCount - 1);
+  assert.equal(current.outcomes.live.jobs.usableResultCount, null);
+  assert.equal(current.outcomes.live.jobs.mediaAvailability, "not-checked");
+  assert.ok(!/PRIVATE checkpoint|private.invalid/.test(JSON.stringify(current)));
+  assert.equal(combined, 2);
+  assertAnalyticsLiveBatchCalls(database, [7, 6]);
+  await drainBackground();
+});
+
+test("analytics live batch schedules no checkpoint while its separate final proof is pending", { timeout: 30_000 }, async () => {
+  const { database, request, context, drainBackground } = await analyticsLiveFixture();
+  let enter, release, scheduled = 0;
+  const entered = new Promise((resolve) => { enter = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const waitUntil = context.waitUntil;
+  context.waitUntil = (promise) => { scheduled += 1; waitUntil(promise); };
+  const prepare = database.DB.prepare;
+  database.DB.prepare = (sql) => {
+    const statement = prepare(sql), bind = statement.bind;
+    statement.bind = (...values) => {
+      const bound = bind.apply(statement, values);
+      if (/^SELECT 1 AS authorized WHERE EXISTS/.test(sql)) {
+        const first = bound.first;
+        bound.first = async (...args) => { enter(); await gate; return first.apply(bound, args); };
+      }
+      return bound;
+    };
+    return statement;
+  };
+  const pending = request("/api/analytics?days=all");
+  try {
+    await entered;
+    assert.deepEqual(database.calls.map((call) => call.kind), ["first", "batch"]);
+    assert.equal(scheduled, 0);
+    assert.equal(database.writeCount(), 0);
+    assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get().count, 0);
+  } finally { release(); database.DB.prepare = prepare; }
+  const response = await pending;
+  assert.equal(response.status, 200);
+  assertAnalyticsLiveBatchCalls(database, [7]);
+  assert.equal(scheduled, 1);
+  await drainBackground();
+  assert.equal(database.writeCount(), 1, "only the existing post-response safe-source checkpoint is persisted");
+});
+
+test("analytics live batch fails closed without cache publication when the combined native SQL read fails", async () => {
+  const { database, request, context, drainBackground } = await analyticsLiveFixture();
+  let scheduled = 0;
+  const waitUntil = context.waitUntil;
+  context.waitUntil = (promise) => { scheduled += 1; waitUntil(promise); };
+  database.sqlite.exec("DROP TABLE cost_budget_reservations");
+  const response = await request("/api/analytics?days=all");
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "outcome_telemetry_unavailable" });
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(database.calls.map((call) => call.kind), ["first", "batch"]);
+  assert.equal(database.calls[1].statements.length, 7);
+  assert.equal(database.writeCount(), 0);
+  assert.equal(scheduled, 0);
+  await drainBackground();
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get().count, 0);
 });

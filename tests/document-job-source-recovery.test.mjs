@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {file,money,privateView,sourceView,privateJob,presentationSetup,audioSetup,deny,operations,sceneDeferred} from "./helpers/document-job-source-recovery-fixture.mjs";
+import {observeActualSceneResumeReads} from "./helpers/actual-scene-resume-read.mjs";
 
 const acknowledged="The server acknowledged the original change. Its private view is unavailable.";
 const http=rows=>rows.map(row=>({url:row.url,method:row.init.method??"GET"}));
@@ -32,10 +33,10 @@ async function holdOperation(x,operation,{bodyPending=false,invalid=null}={}){
   await Promise.race([entered.promise,pending.then(value=>{throw new Error("Original operation ended before actual Worker response: "+String(value));})]);
   return {pending,wire,before,afterDelivery,target,baseIntercept:h.intercept,
     release(){released=true;release.resolve();},
-    verify(){assert.deepEqual(money(fixture),accounting,"canonical reservations, settled usage and unknown holds remain exact after original acknowledgement");
+    verify(isReadOnlyResume=()=>false){assert.deepEqual(money(fixture),accounting,"canonical reservations, settled usage and unknown holds remain exact after original acknowledgement");
       assert.equal(x.calls.length,providerAfterOriginal,"no provider request after the original response");
       assert.equal(x.calls.slice(providerStart).filter(call=>call.method==="POST").length,0,"recovery never purchases another provider request");
-      assert.deepEqual(h.requests.slice(requestStart).filter(row=>(row.init.method??"GET")!=="GET").map(row=>row.url),[target],"only the one deliberate original operation");}};
+      assert.deepEqual(h.requests.slice(requestStart).filter(row=>(row.init.method??"GET")!=="GET"&&!isReadOnlyResume(row)).map(row=>row.url),[target],"only the one deliberate original operation");}};
 }
 
 function referenceOnly(job,wire){
@@ -153,13 +154,21 @@ test("late job recovery full Shell retains no old private body across withdrawal
   h.store.events.set(original.events);h.store.content.set(original.content);h.store.head.set(original.head);h.store.session.set(original.session);h.store.route.set("/document/"+job.documentId+"/late-recovery-proof");
   const dispatch=h.window.dispatchEvent;h.window.dispatchEvent=function(event){const result=dispatch.call(this,event);for(const callback of[...(full.listeners.get(event.type)??[])])callback(event);return result;};t.after(()=>{h.window.dispatchEvent=dispatch;});
   await full.settle();assert.equal(h.store.session.get(),original.session);assert.ok(h.store.routeDataReady());x.originalAuth=h.store.captureAuthorizationScope();x.originalSource=h.store.captureSourceOwnership();
+  const resumeReads=observeActualSceneResumeReads(h);t.after(()=>resumeReads.restore());
   const held=await holdOperation(x,operations.dismiss);await deny(x);await full.settle();
   assert.equal(full.components().filter(component=>component.tag==="forma-workspace").length,0);
   held.release();assert.equal(await held.pending,true);await full.settle();referenceOnly(privateJob(h,job.jobId),held.wire.job);
   assert.equal(h.store.routeDataReady(),false);assert.equal(full.components().filter(component=>component.tag==="forma-workspace").length,0);assert.ok(!full.renderer.markup.includes("Original felt piano"));
   x.restore();const before=h.requests.length;await h.store.refreshEvents();await full.settle();
   assert.equal(h.store.routeDataReady(),true);assert.equal(full.components().filter(component=>component.tag==="forma-workspace").length,1);
-  referenceOnly(privateJob(h,job.jobId),held.wire.job);assert.ok(!full.renderer.markup.includes("Original felt piano"));held.verify();
+  referenceOnly(privateJob(h,job.jobId),held.wire.job);assert.ok(!full.renderer.markup.includes("Original felt piano"));
+  t.diagnostic(JSON.stringify({actualResumeReads:resumeReads.observations(),originalOperation:held.target,
+    qualification:"One original routed response observed; clone-json await adds latency; total_changes is connection-wide, not per-request attribution."}));
+  assert.equal(h.requests.slice(before).filter(resumeReads.isReadOnlyResume).length,1,"exactly one certified original Resume follows fresh source restoration/remount");
+  assert.equal(h.requests.slice(0,before).filter(resumeReads.isReadOnlyResume).length,0,"no earlier unavailable-source request acquires read certification");
+  assert.equal(resumeReads.isReadOnlyResume(h.requests.find(row=>row.url===held.target)),false,"the original operation is never exempted");
+  assert.equal(resumeReads.observations().length,1,"the observer records only the one current-destination Resume");
+  held.verify(resumeReads.isReadOnlyResume);
   t.diagnostic(JSON.stringify({source:sourceView(h),restoration:http(h.requests.slice(before)),privateBodyRetained:false,nativePixelClaim:false}));
 });
 

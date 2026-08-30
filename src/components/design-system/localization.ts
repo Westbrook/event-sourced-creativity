@@ -4,6 +4,7 @@ import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { formaSystemMessageId } from "./system-message-id.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./locales/responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./locales/next-action-messages.ts";
+import { FORMA_OUTCOME_MESSAGES } from "./locales/outcome-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./locales/context-controls-messages.ts";
 import { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
 
@@ -14,6 +15,7 @@ export type FormaMessageCatalog = Readonly<Record<string, string>>;
 export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
+  ...FORMA_OUTCOME_MESSAGES.en,
   ...FORMA_NEXT_ACTION_MESSAGES.en,
   ...FORMA_CONTEXT_CONTROL_MESSAGES.en,
   ...FORMA_RESPONSIVE_MESSAGES.en,
@@ -150,6 +152,7 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "document.copy.recoveredRevision": "This is the saved review for the original request. Compare its name and folder before applying. No replacement request was started.",
   "document.copy.revisedDraft": "Your unsubmitted revised draft",
   "document.copy.retired": "This review was erased without saving a copy. Choose {done} to finish this request. To make a copy, start a new review and then choose {apply}.",
+  "document.copy.retiredReadOnly": "This review was erased without saving a copy. Choose {done} to finish this request.",
   "document.copy.discard": "Discard preview",
   "document.copy.open": "Open copied document",
   "document.copy.preserved": "The original stays unchanged. The copy preserves decisions, locks, typed relationships, rights information, and source evidence.",
@@ -370,6 +373,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "canvas.zoomOut":"Zoom out",
   "canvas.zoomIn":"Zoom in",
   "canvas.returnToBoard":"Return to board",
+  "canvas.presence.otherTab": "Your other tab · this browser",
+  "canvas.presence.localOnly": "Last board position from another tab for this account in this browser.",
   "projects.viewerFirstResult":"A project editor can create the first shared result.",
   "generation.contactAdministrator":"Contact your project administrator",
   "generation.reviewOrganizationSpending":"Review organization spending",
@@ -754,9 +759,12 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "workspace.provenance.source": "Saved creative history",
   "workspace.provenance.close": "Close creative history",
   "workspace.provenance.description": "This creative decision is saved to your private document and remains available for future results.",
-  "workspace.provenance.author": "Created by",
+  "workspace.provenance.author": "Recorded actor",
   "workspace.provenance.you": "You",
-  "workspace.provenance.assistance": "Approved creative assistance",
+  "workspace.provenance.human": "User account",
+  "workspace.provenance.assistance": "Model assistance",
+  "workspace.provenance.system": "System process",
+  "workspace.provenance.unknown": "Origin not identified",
   "workspace.provenance.saved": "Saved",
   "workspace.provenance.change": "Creative change",
   "workspace.provenance.technical": "Technical details for engineering",
@@ -2494,6 +2502,16 @@ export class FormaUiLocale extends HTMLElement {
       composed: true,
     }));
   }
+}
+
+/** Display-only recorded actor; never proof of content authorship, approval or authority. */
+export function provenanceActorMessage(actor: unknown, principalUserId: unknown): string {
+  const named=(prefix:string)=>typeof actor==="string"&&actor.startsWith(prefix)&&Boolean(actor.slice(prefix.length).trim());
+  if(typeof principalUserId==="string"&&principalUserId.trim()&&actor==="user:"+principalUserId)return "workspace.provenance.you";
+  if(actor==="user"||named("user:"))return "workspace.provenance.human";
+  if(actor==="model"||named("model:"))return "workspace.provenance.assistance";
+  if(actor==="worker"||actor==="system"||named("worker:")||named("system:"))return "workspace.provenance.system";
+  return "workspace.provenance.unknown";
 }
 
 export class FormaLocaleController implements ReactiveController {

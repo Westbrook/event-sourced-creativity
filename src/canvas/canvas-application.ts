@@ -4,6 +4,9 @@ import { outputSourceReadiness } from "../components/output-source-readiness";
 import { FORMA_OUTPUT_DELIVERY_MESSAGES, outputDeliveryLabelKey, type OutputDeliveryLabelCategory } from "../components/design-system/locales/output-delivery-messages";
 import { documentContextBlockRoute, documentIdFromRoute, withDocumentInRoute } from "../model/routes";
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
+import { canonicalAdaptiveSelection, createAdaptiveProposalReview, type AdaptiveProposalReadNavigation, type AdaptiveProposalReadOperation, type AdaptiveProposalReadControl } from "../components/adaptive-proposal-review";
+import { closeAdaptiveProposalDialog, renderAdaptiveProposalDialog } from "../components/adaptive-proposal-dialog";
+import { libraryFocusRoute } from "../model/routes";
 import { renderOutcomeDesk, renderOutcomeArrangementReview, restoreOutcomeDeskFocus } from "../components/outcome-desk";
 import { outcomeDeskCopy } from "../components/design-system/locales/outcome-recipe-messages";
 import { outcomeDeskIntegrationCopy, outcomeDeskLocale } from "../components/design-system/locales/outcome-desk-integration-messages";
@@ -26,7 +29,7 @@ import { ensureModalDialog } from "../components/modal-dialog";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
 import { renderVideoReel } from "../components/video-reel";
 import { renderAudioPlayer, renderIncludedSoundtrackTranscripts, renderSoundtrackCompanions as renderAudioCompanions } from "../components/audio-playback";
-import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type AdaptiveStructure, type BlockGroup, type BlockKind } from "../model/block-types";
+import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockGroup, type BlockKind } from "../model/block-types";
 import { generationHistoryItems, outputQualityLabel, type CreativeBlock, type CreativeEvent, type CreativeOutput, type EventInput } from "../model/events";
 import { PROMPT_TECHNIQUES, promptTechniqueDefinition } from "../model/prompt-structures";
 import { CANVAS_INTERACTION_DEFINITIONS, type CanvasInteractionId } from "../model/canvas-interactions";
@@ -75,7 +78,6 @@ type AddKind="start"|"document"|"context"|"output"|"reference"|"composite";
 type CanvasRenderKind="preview"|"generate"|"preview_fan"|"generate_fan";
 type ResizeCorner="nw"|"ne"|"sw"|"se";
 type Source={kind:CanvasSourceKind;id:string;title:string;body:string;blockType:string};
-type SuggestedBlock=AdaptiveStructure["suggested_blocks"][number]|AdaptiveStructure["active_decision"];
 
 const DRAG_THRESHOLD_PX=4;
 const RENDER_OVERSCAN_PX=800;
@@ -188,10 +190,160 @@ export class CanvasApplication extends FormaElement {
   #renderDocumentItemId="";
   #intent="";
   #intentSubmitting=false;
+  #proposalResultNavigation?:AdaptiveProposalReadNavigation&{current:()=>boolean;close:()=>void;focus:OutputNavigationFocusLease;dispose:()=>void};
+  #currentProposalResultNavigation(){
+    const navigation=this.#proposalResultNavigation;
+    if(navigation&&!navigation.current()){navigation.dispose();this.#proposalResultNavigation=undefined;}
+    return this.#proposalResultNavigation;
+  }
+  #proposalReview=createAdaptiveProposalReview(this.store,()=>({documentId:this.#anchorDocumentId(),canvasId:this.store.canvasProjection.get().selectedCanvasId||null,receiptNavigation:this.#currentProposalResultNavigation()}),()=>this.requestUpdate(),()=>this.i18n.t("adaptive.changes.title"),()=>this.#settleCanvasWrites());
+  #proposalOpener?:HTMLElement;
+  #closeProposalReview(restoreFocus=true){
+    const route=this.store.route.get(),receipt=this.#proposalReview.receipt,presentation=this.#proposalReview.presentationId;
+    this.#proposalResultNavigation?.close();
+    closeAdaptiveProposalDialog(this,this.#proposalReview,this.#proposalOpener,()=>this.querySelector<HTMLElement>(".canvas-viewport,.canvas-stage-shell"),
+      ()=>restoreFocus&&this.store.route.get()===route&&this.#proposalReview.receipt===receipt&&this.#proposalReview.presentationId===presentation);
+  }
+  #openProposalResult(kind:"block"|"canvas-item",id:string){
+    if(!this.#proposalReview.canOpen(kind,id))return;
+    const canvas=this.store.canvasProjection.get(),projection=this.store.projection.get();
+    if(kind==="block"){
+      const block=projection.libraryBlocks.find(item=>item.id===id&&!item.removed&&item.projectId===projection.projectId&&item.scope==="canvas"&&item.canvasId===canvas.selectedCanvasId);
+      if(!block){this.store.toast(this.i18n.t("adaptive.changes.resultUnavailable"));return;}
+      this.#closeProposalReview();this.#go(libraryFocusRoute("block",id,String(block.properties.label??block.handle),"/canvas/library"));return;
+    }
+    const item=canvas.items.find(candidate=>candidate.id===id);if(!item){this.store.toast(this.i18n.t("adaptive.changes.resultUnavailable"));return;}
+    const proposal=this.#proposalReview,presentation=proposal.presentationId,receipt=proposal.receipt,scope=proposal.ports.scope();
+    const source=this.store.captureSourceOwnership(),previousSelection=this.#selected,previousRoute=this.store.route.get();
+    if(!scope||scope.canvasId!==canvas.selectedCanvasId||scope.projectId!==projection.projectId||!source||!this.store.sourceOwnershipActive(source))return;
+    const block=projection.libraryBlocks.find(value=>value.id===item.sourceId&&value.projectId===scope.projectId&&!value.removed
+      &&value.scope==="canvas"&&value.canvasId===canvas.selectedCanvasId&&receipt?.blockIds.includes(value.id));
+    if(!block||!["block","sketch"].includes(item.sourceKind))return;
+    const blockIdentity=JSON.stringify(block);
+    const originalSelection=this.#currentProposalResultNavigation()?.originalSelection??[...previousSelection],authority=scope.key;
+    const route=withCanvasView(this.store.route.get(),"spatial"),canvasId=canvas.selectedCanvasId;
+    this.#closeProposalReview(false);
+    if(!this.isConnected||this.store.route.get()!==previousRoute||this.#selected!==previousSelection||!this.store.sourceOwnershipActive(source)
+      ||proposal.receipt!==receipt||proposal.presentationId!==presentation||proposal.ports.scope()?.key!==authority)return;
+    // Native Close is synchronous. Capture before selection/navigation or any
+    // awaited render, while suppressing only this handoff's delayed Close focus.
+    const focus=captureOutputNavigationFocus(this.ownerDocument),selection=new Set([item.id]),identity=JSON.stringify(item);
+    this.#proposalResultNavigation?.dispose();
+    let retired=false,unsubscribe=()=>{};
+    const receiptIdentity=(value:typeof receipt)=>value&&canonicalAdaptiveSelection({previewId:value.previewId,approvalHash:value.approvalHash,
+      executionId:value.executionId,bindingHash:value.bindingHash,selectionKey:value.selectionKey,
+      blockIds:value.blockIds,canvasItemIds:value.canvasItemIds,relationCount:value.relationCount});
+    const receiptTarget=(value:typeof receipt)=>value&&({identity:receiptIdentity(value),executionId:value.executionId,bindingHash:value.bindingHash,
+      previewId:value.previewId,approvalHash:value.approvalHash});
+    let expected=receiptTarget(receipt);
+    const pageIdentity=()=>canonicalAdaptiveSelection({receipts:proposal.receipts,nextCursor:proposal.nextCursor,discovery:proposal.receiptDiscovery});
+    let ownedPresentation=presentation,ownedReceipt=receipt,ownedVisible=false,ownedPhase=proposal.phase,ownedBusy=proposal.busy;
+    let ownedReceiptIdentity=canonicalAdaptiveSelection(receipt),ownedPage=proposal.receipts,ownedPageIdentity=pageIdentity();
+    let reading:{presentation:number;opening:boolean;kind:AdaptiveProposalReadOperation["kind"];expected:typeof expected;
+      temporary:boolean;invalid:boolean;phase:typeof proposal.phase;receipt:typeof receipt;receiptIdentity:string|null;page:typeof proposal.receipts;pageIdentity:string;
+      acceptedReceipt?:typeof receipt;acceptedReceiptIdentity?:string;acceptedPage?:{receipts:typeof proposal.receipts;identity:string}}|undefined;
+    const targetCurrent=(target:typeof expected)=>Boolean(target&&proposal.executionId===target.executionId&&proposal.bindingHash===target.bindingHash
+      &&proposal.handle?.previewId===target.previewId&&proposal.handle?.approvalHash===target.approvalHash);
+    const stable=()=>proposal.visible===ownedVisible&&proposal.presentationId===ownedPresentation&&proposal.phase===ownedPhase&&proposal.busy===ownedBusy
+      &&proposal.receipt===ownedReceipt&&canonicalAdaptiveSelection(proposal.receipt)===ownedReceiptIdentity
+      &&proposal.receipts===ownedPage&&pageIdentity()===ownedPageIdentity&&targetCurrent(expected);
+    const reviewCurrent=()=>{
+      if(!reading)return stable();
+      if(reading.invalid)return false;
+      if(reading.opening&&stable())return true;
+      if(!proposal.visible||proposal.presentationId!==reading.presentation||!targetCurrent(reading.expected))return false;
+      const samePage=proposal.receipts===reading.page&&pageIdentity()===reading.pageIdentity;
+      if(proposal.phase==="applied")return proposal.receipt===(reading.acceptedReceipt??reading.receipt)
+        &&canonicalAdaptiveSelection(proposal.receipt)===(reading.acceptedReceipt?reading.acceptedReceiptIdentity:reading.receiptIdentity)
+        &&receiptIdentity(proposal.receipt)===reading.expected?.identity&&samePage;
+      const sameReceipt=reading.kind==="choose"?proposal.receipt===null
+        :proposal.receipt===reading.receipt&&canonicalAdaptiveSelection(proposal.receipt)===reading.receiptIdentity;
+      if(!sameReceipt)return false;
+      if(reading.kind==="receipts"&&proposal.phase==="receipts"&&reading.acceptedPage)
+        return proposal.receipts===reading.acceptedPage.receipts&&pageIdentity()===reading.acceptedPage.identity;
+      return samePage
+        &&(proposal.phase===reading.phase||reading.temporary&&(proposal.phase==="unavailable"||proposal.phase==="uncertain"));
+    };
+    const adopt=(target:typeof expected)=>{
+      expected=target;ownedPresentation=proposal.presentationId;ownedVisible=proposal.visible;ownedPhase=proposal.phase;ownedBusy=proposal.busy;
+      ownedReceipt=proposal.receipt;ownedReceiptIdentity=canonicalAdaptiveSelection(proposal.receipt);ownedPage=proposal.receipts;ownedPageIdentity=pageIdentity();
+    };
+    const navigation={documentId:scope.documentId,canvasId,scopeKey:authority,originalSelection,focus,current:()=>{
+      const current=this.store.canvasProjection.get();
+      if(retired||!this.isConnected||this.store.route.get()!==route||this.#selected!==selection||selection.size!==1||!selection.has(item.id)
+        ||!reviewCurrent()
+        ||!this.store.sourceOwnershipActive(source)||this.store.projection.get().projectId!==scope.projectId
+        ||JSON.stringify(this.store.projection.get().libraryBlocks.find(value=>value.id===block.id&&!value.removed))!==blockIdentity
+        ||current.selectedCanvasId!==canvasId||JSON.stringify(current.items.find(candidate=>candidate.id===item.id))!==identity)retired=true;
+      return!retired;
+    },readPresentation:async(operation:AdaptiveProposalReadOperation,read:(control?:AdaptiveProposalReadControl)=>Promise<void>)=>{
+      if(!navigation.current()||proposal.busy||reading)return;
+      // Only a row in the current validated page may change receipt identity.
+      // Its callback cannot outlive that page, even if another row has equal IDs.
+      if(operation.kind==="choose"&&(proposal.phase!=="receipts"||!proposal.receipts.includes(operation.receipt)))return;
+      const target=operation.kind==="choose"?receiptTarget(operation.receipt):expected;
+      if(!target)return;
+      const owned={presentation:proposal.presentationId+Number(!proposal.visible),opening:true,kind:operation.kind,expected:target,
+        temporary:false,invalid:false,phase:proposal.phase,receipt:proposal.receipt,receiptIdentity:canonicalAdaptiveSelection(proposal.receipt),
+        page:proposal.receipts,pageIdentity:pageIdentity(),acceptedReceipt:undefined as typeof receipt|undefined,
+        acceptedReceiptIdentity:undefined as string|undefined,
+        acceptedPage:undefined as {receipts:typeof proposal.receipts;identity:string}|undefined};reading=owned;
+      const control={temporaryFailure:()=>{if(reading===owned&&navigation.current())owned.temporary=true;},
+        retire:()=>{if(reading===owned)owned.invalid=true;},
+        receiptAccepted:(value:NonNullable<typeof receipt>)=>{
+          if(reading!==owned||!navigation.current())return false;
+          if(operation.kind==="receipts"||receiptIdentity(value)!==target.identity){owned.invalid=true;return false;}
+          owned.acceptedReceipt=value;owned.acceptedReceiptIdentity=canonicalAdaptiveSelection(value);
+          return true;
+        },
+        pageAccepted:(receipts:typeof proposal.receipts,nextCursor:string|null,discovery:"proposal"|"destination")=>{
+          if(reading!==owned||!navigation.current())return false;
+          if(operation.kind!=="receipts"){owned.invalid=true;return false;}
+          owned.acceptedPage={receipts,identity:canonicalAdaptiveSelection({receipts,nextCursor,discovery})};
+          return true;
+        }};
+      try{const pending=read(control);owned.opening=false;await pending;}
+      finally{if(reading===owned){
+        // Restore exact reference/fingerprint guards after the declared read.
+        if(navigation.current())adopt(target);
+        reading=undefined;this.#currentProposalResultNavigation();
+      }}
+    },close:()=>{
+      if(!navigation.current()||!proposal.visible)return;
+      const target=reading?.expected??expected;reading=undefined;
+      // Cancel only this read presentation. A late completion cannot publish
+      // into a subsequent explicit Resume of the same content-free handle.
+      proposal.suspend();adopt(target);
+    },dispose:()=>{retired=true;unsubscribe();focus.dispose();}};
+    this.#proposalResultNavigation=navigation;this.#selected=selection;this.#cameraX=item.x-48;this.#cameraY=item.y-48;
+    this.#go(route);
+    if(this.#currentProposalResultNavigation()!==navigation)return;
+    // Observe each committed Store notification, not merely the next render:
+    // a route/source/authority A -> B -> A must not revive this read context.
+    const observe=()=>{
+      if(this.#currentProposalResultNavigation()!==navigation)return;
+      proposal.synchronize();this.#currentProposalResultNavigation();
+    };
+    unsubscribe=this.store.subscribe(observe);observe();this.requestUpdate();
+    void this.updateComplete.then(()=>{
+      try{
+      const current=this.store.canvasProjection.get();
+      if(this.#currentProposalResultNavigation()!==navigation||!this.isConnected||this.store.route.get()!==route||proposal.visible||proposal.presentationId!==presentation||proposal.receipt!==receipt
+        ||proposal.ports.scope()?.key!==authority||!proposal.canOpen("canvas-item",item.id)||current.selectedCanvasId!==canvasId||this.querySelector("dialog[open]")
+        ||!current.items.some(candidate=>candidate.id===item.id&&candidate.sourceId===item.sourceId&&candidate.sourceKind===item.sourceKind)||!focus.current())return;
+      const target=this.querySelector<HTMLElement>('[data-canvas-item-id="'+CSS.escape(item.id)+'"]');
+      if(target)focus.run(target,()=>{target.focus({preventScroll:true});return true;});
+      }finally{focus.dispose();}
+    },()=>navigation.dispose());
+  }
+  #proposalDialog(){return renderAdaptiveProposalDialog(this.#proposalReview,this.i18n,{id:"canvas-adaptive-proposal-title",dialog:()=>this.querySelector<HTMLDialogElement>(".adaptive-proposal-dialog"),close:()=>this.#closeProposalReview(),open:(kind,id)=>this.#openProposalResult(kind,id)});}
+  #resumeProposalReview=()=>{const active=this.ownerDocument?.activeElement;if(active instanceof HTMLElement)this.#proposalOpener=active;void this.#proposalReview.resume();};
   #offline:{count:number;bytes:number;warning:boolean;full:boolean;paused?:number;sourcePausePending?:boolean;sourcePauseFailed?:boolean;unverified?:true}={count:0,bytes:0,warning:false,full:false,unverified:true};
   #presence:CanvasPresence[]=[];
   #presenceHub?:CanvasPresenceHub;
-  #presenceCanvas="";
+
+  #presenceKey="";
+  #presenceUnsubscribe?:()=>void;
   #viewportCanvas="";
   #viewportElement?:HTMLElement;
   #viewportObserver?:ResizeObserver;
@@ -282,7 +434,7 @@ export class CanvasApplication extends FormaElement {
   }
 
   override connectedCallback(){super.connectedCallback();window.addEventListener("online",this.#online);window.addEventListener("offline",this.#online);window.addEventListener("keydown",this.#keyboard);window.addEventListener("pagehide",this.#pagehide);window.addEventListener("forma-assistant-tool-request",this.#assistantTool);window.addEventListener("forma-event-source-retired",this.#sourceRetired);this.addEventListener("click",this.#interactionClick);this.addEventListener("change",this.#interactionChange);this.addEventListener("input",this.#interactionInput);void this.#refreshQueue();this.#syncTimer=window.setInterval(()=>void this.#refreshSharedStream(),1_500);}
-  override disconnectedCallback(){this.#disposeControlsFocus();this.#closePopovers();if(this.#viewportCanvas)this.#persistViewport(this.#viewportCanvas);window.removeEventListener("online",this.#online);window.removeEventListener("offline",this.#online);window.removeEventListener("keydown",this.#keyboard);window.removeEventListener("pagehide",this.#pagehide);window.removeEventListener("forma-assistant-tool-request",this.#assistantTool);window.removeEventListener("forma-event-source-retired",this.#sourceRetired);this.removeEventListener("click",this.#interactionClick);this.removeEventListener("change",this.#interactionChange);this.removeEventListener("input",this.#interactionInput);window.clearInterval(this.#syncTimer);window.clearTimeout(this.#syncRetryTimer);window.clearTimeout(this.#zoomInteractionTimer);window.clearTimeout(this.#panInteractionTimer);window.clearTimeout(this.#viewportSaveTimer);window.clearTimeout(this.#searchInteractionTimer);this.#viewportObserver?.disconnect();this.#bindTouchViewport(this.#viewportElement,false);this.#touchPointers.clear();this.#suppressedPointers.clear();this.#touchTransform=undefined;this.#presenceHub?.disconnect();document.documentElement.removeAttribute("data-canvas-focus");super.disconnectedCallback();}
+  override disconnectedCallback(){this.#proposalResultNavigation?.dispose();this.#proposalResultNavigation=undefined;this.#disposeControlsFocus();this.#closePopovers();this.#proposalReview.suspend();if(this.#viewportCanvas)this.#persistViewport(this.#viewportCanvas);window.removeEventListener("online",this.#online);window.removeEventListener("offline",this.#online);window.removeEventListener("keydown",this.#keyboard);window.removeEventListener("pagehide",this.#pagehide);window.removeEventListener("forma-assistant-tool-request",this.#assistantTool);window.removeEventListener("forma-event-source-retired",this.#sourceRetired);this.removeEventListener("click",this.#interactionClick);this.removeEventListener("change",this.#interactionChange);this.removeEventListener("input",this.#interactionInput);window.clearInterval(this.#syncTimer);window.clearTimeout(this.#syncRetryTimer);window.clearTimeout(this.#zoomInteractionTimer);window.clearTimeout(this.#panInteractionTimer);window.clearTimeout(this.#viewportSaveTimer);window.clearTimeout(this.#searchInteractionTimer);this.#viewportObserver?.disconnect();this.#bindTouchViewport(this.#viewportElement,false);this.#touchPointers.clear();this.#suppressedPointers.clear();this.#touchTransform=undefined;this.#resetPresence();document.documentElement.removeAttribute("data-canvas-focus");super.disconnectedCallback();}
   #currentControlsScope(){
     const source=this.store.captureSourceOwnership(),authorization=source?.authorization,canvas=this.store.canvasProjection.get();
     return authorization&&canvas.selectedCanvasId&&canvas.canvases.some((board)=>board.id===canvas.selectedCanvasId)
@@ -334,6 +486,7 @@ export class CanvasApplication extends FormaElement {
     this.requestUpdate();if(restoreFocus)this.#returnControlsFocus(this.#addReturnFocus);
   }
   protected override updated(){
+    this.#proposalReview.synchronize();
     document.documentElement.toggleAttribute("data-canvas-focus",canvasFocusFromRoute(this.store.route.get()));
     this.querySelectorAll<HTMLDialogElement>("dialog.modal").forEach((dialog)=>{if(dialog.dataset.canvasTopLayer==="true")return;dialog.dataset.canvasTopLayer="true";ensureModalDialog(dialog);});
     const canvas=this.store.canvasProjection.get();const canvasId=canvas.selectedCanvasId;
@@ -349,11 +502,62 @@ export class CanvasApplication extends FormaElement {
         &&undoRequest.projectId===canvas.projectId)void this.#reviewArrangementUndo(undoRequest.operationId);
     }
     if(canvasId&&canvasId!==this.#interactionCanvas){this.#interactionCanvas=canvasId;this.#trackCanvasInteraction("board_opened",{item_count:canvas.items.length});}
-    if(canvasId&&canvasId!==this.#presenceCanvas){this.#presenceHub?.disconnect();const user=this.store.session.get()?.user;this.#presenceHub=new CanvasPresenceHub({userId:user?.userId??"anonymous",name:user?.displayName??"You"});this.#presenceHub.subscribe((presence)=>{this.#presence=presence;this.requestUpdate();});this.#presenceHub.connect(canvasId,canvas.projectId);this.#presenceCanvas=canvasId;}
+    this.#syncPresence();
     const viewport=this.querySelector<HTMLElement>(".canvas-viewport");if(viewport!==this.#viewportElement){this.#viewportObserver?.disconnect();this.#bindTouchViewport(this.#viewportElement,false);this.#viewportElement=viewport??undefined;this.#viewportSize=viewport?{width:viewport.clientWidth,height:viewport.clientHeight}:undefined;this.#bindTouchViewport(this.#viewportElement,true);if(viewport&&typeof ResizeObserver!=="undefined"){this.#viewportObserver=new ResizeObserver((entries)=>{const entry=entries[0];if(!entry)return;const next={width:entry.contentRect.width,height:entry.contentRect.height},previous=this.#viewportSize;this.#viewportSize=next;if(previous&&previous.width>0&&previous.height>0&&next.width>0&&next.height>0&&this.#touchPointers.size<2){this.#cameraX+=(previous.width-next.width)/(2*this.#zoom);this.#cameraY+=(previous.height-next.height)/(2*this.#zoom);this.#scheduleViewportPersistence();}this.requestUpdate();});this.#viewportObserver.observe(viewport);}}
     if(canvasId&&canvasId!==this.#viewportCanvas){if(this.#viewportCanvas)this.#persistViewport(this.#viewportCanvas);this.#viewportCanvas=canvasId;const restored=this.#restoreViewport(canvasId);if(restored)this.requestUpdate();else{this.#zoom=1;this.#cameraX=0;this.#cameraY=0;requestAnimationFrame(()=>{if(this.#viewportCanvas!==canvasId)return;const activeViewport=this.#viewportElement;if(!activeViewport)return;const first=canvas.items[0];this.#cameraX=(first?.x??0)-activeViewport.clientWidth*.28/this.#zoom;this.#cameraY=(first?.y??0)-activeViewport.clientHeight*.28/this.#zoom;this.#scheduleViewportPersistence(canvasId);this.requestUpdate();});}}
   }
 
+  #currentPresenceScope() {
+    if (!this.isConnected) return null;
+    const session = this.store.session.get(), canvas = this.store.canvasProjection.get();
+    const authorization = this.store.captureAuthorizationScope(), context = session?.projectContext;
+    if (!session || !session.user.userId || session.user.userId.toLowerCase() === "anonymous" || session.impersonation || !session.policy?.accepted || !session.canvas?.access ||
+      !authorization || !this.store.authorizationScopeActive(authorization) ||
+      !session.permissionEpoch || !canvas.projectId || !canvas.selectedCanvasId ||
+      !canvas.canvases.some((board) => board.id === canvas.selectedCanvasId &&
+        board.projectId === canvas.projectId && !board.removed)) return null;
+    const permissions = context?.permissions ?? session.capabilities ?? [];
+    if (!permissions.includes("project.read") || context &&
+      (context.projectId !== canvas.projectId || !permissions.includes("project.canvas.use") ||
+        !Number.isFinite(Date.parse(context.expiresAt)) || Date.parse(context.expiresAt) <= Date.now())) return null;
+    // Stable scope shared by this account's tabs; expiry stays a local lifecycle
+    // guard so separately issued sessions with the same grants can still meet.
+    const authorizationKey = JSON.stringify([authorization.key, session.user.role,
+      [...(session.capabilities ?? [])].sort(), session.policy.version, session.canvas.version,
+      context ? [context.organizationId, context.projectAccessId, context.ownerUserId,
+        context.role, [...context.permissions].sort()] : null]);
+    const scope = { userId: session.user.userId, projectId: canvas.projectId,
+      canvasId: canvas.selectedCanvasId, authorizationKey };
+    return { scope, key: JSON.stringify([scope, context?.expiresAt ?? null]) };
+  }
+  #resetPresence() {
+    const hub = this.#presenceHub, visible = this.#presence.length > 0;
+    this.#presenceHub = undefined;
+    this.#presenceKey = "";
+    this.#presenceUnsubscribe?.();
+    this.#presenceUnsubscribe = undefined;
+    this.#presence = [];
+    hub?.disconnect();
+    if (visible && this.isConnected) this.requestUpdate();
+  }
+  #syncPresence() {
+    const current = this.#currentPresenceScope(), key = current?.key ?? "";
+    if (key === this.#presenceKey) return;
+    this.#resetPresence();
+    if (!current) return;
+    const hub = new CanvasPresenceHub();
+    this.#presenceHub = hub;
+    this.#presenceKey = key;
+    this.#presenceUnsubscribe = hub.subscribe((presence) => {
+      if (this.#presenceHub !== hub) return;
+      if (this.#currentPresenceScope()?.key !== key) { this.#resetPresence(); return; }
+      if (!presence.length && !this.#presence.length) return;
+      this.#presence = presence;
+      this.requestUpdate();
+    });
+    hub.connect(current.scope, () => this.#presenceHub === hub &&
+      this.#currentPresenceScope()?.key === key);
+  }
   #go(path:string){this.#closePopovers();this.store.setRoute(path);}
   #viewportStorage(){try{return window.localStorage;}catch{return undefined;}}
   #viewportUserId(){const session=this.store.session.get();return session?.projectContext?`${session.user.userId}:${session.projectContext.projectAccessId}`:session?.user.userId??"anonymous";}
@@ -861,7 +1065,26 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
   }
   #card(item:CanvasItem){const selected=this.#selected.has(item.id);const title=this.#itemTitle(item);const facets=this.#itemFacets(item).slice(0,2);const resizing=this.#resizePreview?.itemId===item.id?this.#resizePreview:null;const frame=resizing??item;const left=(frame.x-this.#cameraX)*this.#zoom,top=(frame.y-this.#cameraY)*this.#zoom;const preview=this.#dragPreview?.itemIds.includes(item.id)?this.#dragPreview.positions.get(item.id):null;const translateX=preview?(preview.x-item.x)*this.#zoom:0,translateY=preview?(preview.y-item.y)*this.#zoom:0;const artifactLabel=item.sourceKind==="artifact"?documentArtifactDefinition(item.blockType as DocumentArtifactKind)?.label:null;return html`<article class=${`canvas-item canvas-item--${item.sourceKind}${selected?" selected":""}${resizing?" is-resizing":""}`} data-canvas-item-id=${item.id} style=${`left:${left}px;top:${top}px;width:${frame.w}px;height:${frame.h}px;z-index:${item.z.replace(/\D/g,"")||1};translate:${translateX}px ${translateY}px;transform:scale(${this.#zoom}) rotate(${item.rot}deg)`} tabindex="0" role="group" aria-label=${`${canvasItemAccessibleName({...item,title})}${selected?`, ${this.i18n.t("canvas.selected","selected")}`:""}`} @click=${(event:MouseEvent)=>{if(this.#dragClickGuard===item.id){this.#dragClickGuard="";return;}if(["select","marquee"].includes(this.#tool)&&!this.#fromCardControl(event))this.#select(item.id,event);}} @pointerdown=${(event:PointerEvent)=>this.#drag(event,item)} @wheel=${(event:WheelEvent)=>this.#cardWheel(event)}><header><div class="canvas-item-kicker"><span>${item.sourceKind==="context"?this.i18n.system("Combined context"):this.i18n.system(artifactLabel??blockTypeDefinition(item.blockType)?.label??item.blockType??item.sourceKind)}</span>${item.lockedBy?html`<small>${icon("lock")} Editing</small>`:nothing}</div><h3>${title}</h3>${this.#resizeHandles(item,["nw","ne"])}</header><div class="canvas-item-content">${this.#itemBody(item)}</div>${facets.length||selected?html`<footer class=${`${selected?"has-resize-handles":""}${selected&&!facets.length?" handles-only":""}`}>${facets.map((facet)=>html`<span>${this.i18n.system(facet.label)}: ${facet.value}</span>`)}${this.#resizeHandles(item,["sw","se"])}</footer>`:nothing}</article>`;}
   #nearbyItems(items:CanvasItem[]){const viewport=this.#viewportElement;const width=(viewport?.clientWidth||window.innerWidth)/this.#zoom,height=(viewport?.clientHeight||window.innerHeight)/this.#zoom;return canvasItemsInVirtualViewport(items,{x:this.#cameraX,y:this.#cameraY,width,height},RENDER_OVERSCAN_PX/this.#zoom);}
-  #nearbyPresence(){const viewport=this.#viewportElement;const width=(viewport?.clientWidth||window.innerWidth)/this.#zoom,height=(viewport?.clientHeight||window.innerHeight)/this.#zoom,overscan=RENDER_OVERSCAN_PX/this.#zoom;return this.#presence.filter((peer)=>peer.x>=this.#cameraX-overscan&&peer.x<=this.#cameraX+width+overscan&&peer.y>=this.#cameraY-overscan&&peer.y<=this.#cameraY+height+overscan);}
+  #nearbyPresence() {
+    if (this.#currentPresenceScope()?.key !== this.#presenceKey) return [];
+    const viewport = this.#viewportElement, now = Date.now();
+    const width = (viewport?.clientWidth || window.innerWidth) / this.#zoom;
+    const height = (viewport?.clientHeight || window.innerHeight) / this.#zoom;
+    const overscan = RENDER_OVERSCAN_PX / this.#zoom;
+    return this.#presence.filter((peer) => peer.hasPosition && peer.expiresAt > now &&
+      peer.x >= this.#cameraX - overscan && peer.x <= this.#cameraX + width + overscan &&
+      peer.y >= this.#cameraY - overscan && peer.y <= this.#cameraY + height + overscan);
+  }
+  #renderPresence() {
+    const label = this.i18n.t("canvas.presence.otherTab", "Your other tab · this browser");
+    const detail = this.i18n.t("canvas.presence.localOnly",
+      "Last board position from another tab for this account in this browser.");
+    return this.#nearbyPresence().map((peer) => html`<span class="canvas-presence" role="img"
+      aria-label=${label + ". " + detail}
+      style=${`transform:translate3d(${(peer.x-this.#cameraX)*this.#zoom}px,${(peer.y-this.#cameraY)*this.#zoom}px,0)`}>
+      <forma-ui-badge tone="neutral" .label=${label} aria-hidden="true"></forma-ui-badge>
+    </span>`);
+  }
   #orderedItems(items:CanvasItem[]){const lens=canvasLensFromRoute(this.store.route.get());let result=[...items];if(lens.filter!=="all"){if(lens.filter.startsWith("facet:")){const key=lens.filter.slice(6);result=result.filter((item)=>this.#itemFacets(item).some((facet)=>canvasFacetKey(facet)===key));}else result=result.filter((item)=>item.sourceKind===lens.filter||item.blockType===lens.filter);}if(lens.sort==="title")result.sort((a,b)=>this.#itemTitle(a).localeCompare(this.#itemTitle(b),this.i18n.locale));if(lens.sort==="type")result.sort((a,b)=>(a.blockType||a.sourceKind).localeCompare(b.blockType||b.sourceKind));if(lens.sort==="random"){const seed=Number(lens.seed)||1;result.sort((a,b)=>{const hash=(value:string)=>[...value].reduce((sum,char)=>Math.imul(sum^char.charCodeAt(0),16777619),seed);return hash(a.id)-hash(b.id);});}return result;}
   #facetGroups(items:CanvasItem[]){const counts=new Map<string,{facet:CanvasFacet;count:number}>();for(const item of items)for(const facet of this.#itemFacets(item)){const key=canvasFacetKey(facet),previous=counts.get(key);counts.set(key,{facet,count:(previous?.count??0)+1});}return[...counts.values()].filter((entry)=>entry.count>=2).sort((a,b)=>b.count-a.count||a.facet.value.localeCompare(b.facet.value)).slice(0,8);}
   #anchorDocumentId(){return this.store.canvasPlanningDocumentId([...this.#selected]);}
@@ -881,7 +1104,7 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
   #assistantTool=(event:Event)=>{const request=(event as CustomEvent<AssistantToolRequest>).detail;if(request.mode!=="plan-board")return;const session=this.store.session.get();const canvas=this.store.canvasProjection.get();const projectId=session?.projectContext?.projectId??this.store.projection.get().projectId;const permitted=!session?.projectContext||session.projectContext.permissions.includes("project.output.request");if(!session||!this.#canEditCanvas()||!permitted||request.actorUserId!==session.user.userId||request.projectId!==projectId||request.canvasId!==canvas.selectedCanvasId||request.documentId!==this.#anchorDocumentId())return;event.preventDefault();this.#intent=request.message;void this.#askIntent().then(request.resolve).catch(()=>request.resolve(false));};
   async #askIntent(){const session=this.store.session.get();if(!session||!this.#canEditCanvas()||session.projectContext&&!session.projectContext.permissions.includes("project.output.request"))return false;const originalIntent=this.#intent,intent=originalIntent.trim();const documentId=this.#anchorDocumentId();const canvasId=this.store.canvasProjection.get().selectedCanvasId;if(!intent||!documentId||!canvasId){this.store.toast(documentId?"Describe what you want to explore.":this.i18n.t("next.exact.chooseDocument","Choose a document"));return false;}if(this.#intentSubmitting)return false;this.#trackCanvasInteraction("intent_submitted",{intent_length:intent.length,selected_context_count:this.#selected.size});this.#intentSubmitting=true;this.requestUpdate();let queued=false;try{const settled=await this.#settleCanvasWrites();if(settled&&canvasId===this.store.canvasProjection.get().selectedCanvasId)queued=await this.store.structureAdaptive(intent,{documentId,sourceSurface:"canvas",projectScope:true,canvasId});return queued;}catch{return false;}finally{this.#intentSubmitting=false;const current=this.store.session.get();if(queued&&this.#intent===originalIntent&&canvasId===this.store.canvasProjection.get().selectedCanvasId&&session.user.userId===current?.user.userId&&(session.projectContext?.projectAccessId??"")===(current?.projectContext?.projectAccessId??""))this.#intent="";this.requestUpdate();}}
   #intentMatches(intent:string){const segmenter=typeof Intl.Segmenter==="function"?new Intl.Segmenter(this.i18n.locale,{granularity:"word"}):null;const tokens=segmenter?[...segmenter.segment(intent)].filter((segment)=>segment.isWordLike).map((segment)=>segment.segment.toLocaleLowerCase(this.i18n.locale)):intent.toLocaleLowerCase(this.i18n.locale).match(/[\p{L}\p{N}]+/gu)??[];const searchable=tokens.filter((token)=>/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(token)||token.length>2);const placed=new Set(this.store.canvasProjection.get().items.map((item)=>item.sourceId));return this.#sources().filter((source)=>!placed.has(source.id)).map((source)=>({source,score:searchable.filter((token)=>`${source.title} ${source.body}`.toLocaleLowerCase(this.i18n.locale).includes(token)).length})).filter((entry)=>entry.score>0).sort((a,b)=>b.score-a.score).slice(0,3).map((entry)=>entry.source);}
-  async #useSuggestion(suggestion:SuggestedBlock){if(!this.#canEditCanvas())return;const type=String(suggestion.type) as BlockKind;const title=String("label" in suggestion?suggestion.label:blockTypeDefinition(type)?.label??type);const body=String("instruction" in suggestion?suggestion.instruction:suggestion.prompt);this.#trackCanvasInteraction("suggestion_used",{block_type:type});await this.#createNativeBlock({type,title,body});}
+  async #useSuggestion(executionId:string,proposalIds:string[]){if(!this.#canEditCanvas())return;const active=this.ownerDocument?.activeElement;if(active instanceof HTMLElement)this.#proposalOpener=active;const canvas=this.store.canvasProjection.get(),point=this.#insertionPoint((canvas.items.length%5)*22);this.#proposalReview.open(executionId,proposalIds,{x:point.x,y:point.y,w:300,h:210});}
   #searchSources(value:string){this.#sourceQuery=value;window.clearTimeout(this.#searchInteractionTimer);if(value.trim()){const query=value.trim().toLocaleLowerCase();const resultCount=this.#sources().filter((source)=>(source.kind==="block"||source.kind==="sketch")&&`${source.blockType} ${source.title} ${source.body}`.toLocaleLowerCase().includes(query)).length;this.#searchInteractionTimer=window.setTimeout(()=>this.#trackCanvasInteraction("source_searched",{query_length:value.trim().length,result_count:resultCount}),500);}this.requestUpdate();}
   #batchSelectionControl(){const active=this.#tool==="marquee";return html`<aside class=${`canvas-batch-select${active?" active":""}`} aria-label="Batch selection tool"><button type="button" aria-pressed=${active} title="Batch select ideas (B)" @click=${()=>this.#toggleBatchSelection()}><span aria-hidden="true">${icon("marquee")}</span><b>${active?this.i18n.system("Selecting ideas"):this.i18n.system("Batch select")}</b><kbd>B</kbd></button>${active?html`<small>${this.#canEditCanvas()?this.i18n.system("Drag from empty canvas to select an area. Cards remain clickable and draggable. Hold Shift to add; press Escape when done."):this.i18n.t("canvas.readOnlySelectionHelp","Drag across an empty area to select cards. Hold Shift to add; press Escape when done.")} ${this.i18n.t("canvas.touchSelectionHint","Tap cards to add or remove them.")}</small>`:nothing}</aside>`;}
 
@@ -1216,20 +1439,21 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
     </dialog>`;
   }
   #workspace(){const canvas=this.store.canvasProjection.get();const project=this.store.projection.get();const selectedCanvas=canvas.canvases.find((item)=>item.id===canvas.selectedCanvasId);if(!selectedCanvas)return this.#listing();const editable=this.#canEditCanvas();const outcomes=outcomeDeskRouteState(this.store.route.get()).posture==="outcomes";const focused=canvasFocusFromRoute(this.store.route.get());const view=canvasViewFromRoute(this.store.route.get());const items=this.#orderedItems(canvas.items);const nearbyItems=view==="spatial"?this.#nearbyItems(items):items;const facets=this.#facetGroups(canvas.items);const filed=canvas.items.some((item)=>Boolean(project.membership[item.sourceId]));const enoughToOrganize=canvas.items.length>=4;const selectedItems=canvas.items.filter((item)=>this.#selected.has(item.id));const textEditable=selectedItems.length===1&&["block","reference","sketch"].includes(selectedItems[0].sourceKind);const comparable=selectedItems.filter(mediaKind).length>=2;const trackedDocumentIds=new Set(canvas.items.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId));const unplacedOutputs=project.libraryOutputs.filter((output)=>output.canvasId===canvas.selectedCanvasId&&!trackedDocumentIds.has(output.documentId)&&!this.store.events.get().some((event)=>event.type==="CanvasItemPlaced"&&event.payload.source_id===output.id));const inputOutput=project.libraryOutputs.find((output)=>output.id===this.#inputOutputId),inputArtifact=project.libraryArtifacts.find((artifact)=>artifact.id===this.#inputArtifactId),inputFailure=this.store.documentJobs.get().find((job)=>job.jobId===this.#inputFailureJobId);const gridSize=24*this.#zoom,gridX=(-this.#cameraX*this.#zoom)%gridSize,gridY=(-this.#cameraY*this.#zoom)%gridSize;return html`<section class="canvas-workspace" data-empty=${String(canvas.items.length===0)} aria-label=${selectedCanvas.name}>
-    <header class="canvas-commandbar"><div class="canvas-board-identity"><a href="/canvas" @click=${(event:MouseEvent)=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0)return;event.preventDefault();this.#go("/canvas");}} aria-label=${this.i18n.t("canvas.backToProjectBoards","Back to project boards")}><span class="ui-directional-icon">${icon("back")}</span></a><div><small dir="auto">${project.projectName}</small><h1 dir="auto">${selectedCanvas.name}</h1></div><span class=${`canvas-sync-status${this.#offline.count?" pending":""}`} role="status" aria-live="polite">${this.#syncStatus()}</span></div><div class="canvas-command-actions">${editable?html`${canvas.items.length?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button class="icon-button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" title=${this.store.canUndo()?this.i18n.system("Undo the last board action"):this.i18n.system("No board action to undo")} @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button class="icon-button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" title=${this.store.canRedo()?this.i18n.system("Redo the last undone board action"):this.i18n.system("No board action to redo")} @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}<button class="button primary compact canvas-sources-toggle" @click=${()=>this.#openAdd()} aria-haspopup="dialog">${icon("plus")} ${this.i18n.t("canvas.controls.sources","Sources")}</button>`:nothing}<forma-ui-popover class="canvas-view-menu" .label=${this.i18n.system("View")} .triggerId=${this.#viewTriggerId} .content=${html`<div class="canvas-view-actions" @click=${this.#viewMenuAction} @change=${this.#viewMenuAction}>${this.#planningDocumentControl()}<button type="button" id="canvas-outcome-toggle" aria-pressed=${outcomes} @click=${()=>this.#deskNavigate(withOutcomeDeskPosture(this.store.route.get(),outcomes?"canvas":"outcomes"),outcomes?"canvas-view-toggle":"canvas-outcome-desk-heading")}>${outcomeDeskCopy(this.i18n.locale).heading}</button>
+    <header class="canvas-commandbar"><div class="canvas-board-identity"><a href="/canvas" @click=${(event:MouseEvent)=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0)return;event.preventDefault();this.#go("/canvas");}} aria-label=${this.i18n.t("canvas.backToProjectBoards","Back to project boards")}><span class="ui-directional-icon">${icon("back")}</span></a><div><small dir="auto">${project.projectName}</small><h1 dir="auto">${selectedCanvas.name}</h1></div><span class=${`canvas-sync-status${this.#offline.count?" pending":""}`} role="status" aria-live="polite">${this.#syncStatus()}</span></div><div class="canvas-command-actions">${editable?html`${canvas.items.length?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button class="icon-button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" title=${this.store.canUndo()?this.i18n.system("Undo the last board action"):this.i18n.system("No board action to undo")} @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button class="icon-button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" title=${this.store.canRedo()?this.i18n.system("Redo the last undone board action"):this.i18n.system("No board action to redo")} @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}<button class="button primary compact canvas-sources-toggle" @click=${()=>this.#openAdd()} aria-haspopup="dialog">${icon("plus")} ${this.i18n.t("canvas.controls.sources","Sources")}</button>`:nothing}<forma-ui-popover class="canvas-view-menu" .label=${this.i18n.system("View")} .triggerId=${this.#viewTriggerId} .content=${html`<div class="canvas-view-actions" @click=${this.#viewMenuAction} @change=${this.#viewMenuAction}>${this.#planningDocumentControl()}<button type="button" @click=${this.#resumeProposalReview}>${this.i18n.t("adaptive.changes.resume")}</button><button type="button" id="canvas-outcome-toggle" aria-pressed=${outcomes} @click=${()=>this.#deskNavigate(withOutcomeDeskPosture(this.store.route.get(),outcomes?"canvas":"outcomes"),outcomes?"canvas-view-toggle":"canvas-outcome-desk-heading")}>${outcomeDeskCopy(this.i18n.locale).heading}</button>
       <button type="button" ?disabled=${!this.#canArrangeOutcome()} @click=${()=>this.#openArrangement()}>${outcomeDeskIntegrationCopy(this.i18n.locale).arrange}</button>
       ${outcomeArrangementOperationFromRoute(this.store.route.get())?html`<button type="button" @click=${()=>{this.#openArrangement();void this.#retrieveArrangement();}}>${outcomeDeskIntegrationCopy(this.i18n.locale).openReceipt}</button>`:nothing}
       ${!canvas.items.length?html`<div class="canvas-empty-tools">${editable?html`<div class="canvas-history-actions" role="group" aria-label="Board history"><button type="button" ?disabled=${!this.store.canUndo()} aria-label="Undo board action" @click=${()=>this.#changeHistory("undo")}>${icon("undo")}</button><button type="button" ?disabled=${!this.store.canRedo()} aria-label="Redo board action" @click=${()=>this.#changeHistory("redo")}>${icon("redo")}</button></div>`:nothing}${this.#batchSelectionControl()}<button type="button" aria-label=${this.i18n.t("canvas.zoomOut","Zoom out")} @click=${()=>this.#setZoom(this.#zoom-.1)}>${icon("minus")}</button><button type="button" @click=${()=>this.#setZoom(1)}>${Math.round(this.#zoom*100)}%</button><button type="button" aria-label=${this.i18n.t("canvas.zoomIn","Zoom in")} @click=${()=>this.#setZoom(this.#zoom+.1)}>${icon("plus")}</button></div>`:nothing}<button class=${view==="spatial"?"active":""} @click=${()=>this.#setView("spatial")}>${this.i18n.t("canvas.board","Board")}</button><button class=${view==="list"?"active":""} @click=${()=>this.#setView("list")}>${this.i18n.t("canvas.readingOrder","Reading order")}</button>${filed?html`<button class=${view==="folders"?"active":""} @click=${()=>this.#setView("folders")}>Project folders</button>`:nothing}${enoughToOrganize?html`<hr><form class="canvas-view-preferences" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label>Order<select .value=${canvasLensFromRoute(this.store.route.get()).sort} @change=${(event:Event)=>this.#go(withCanvasQuery(this.store.route.get(),{sort:(event.target as HTMLSelectElement).value,seed:(event.target as HTMLSelectElement).value==="random"?String(Date.now()):null}))}><option value="authored">Board placement</option><option value="title">Title</option><option value="type">Content type</option><option value="random">Shuffle</option></select></label></form>`:nothing}${facets.length?html`<hr><span>Focus by what Forma found</span><button @click=${()=>this.#go(withCanvasQuery(this.store.route.get(),{filter:"all"}))}>Everything</button>${facets.map(({facet,count})=>html`<button @click=${()=>this.#go(withCanvasQuery(this.store.route.get(),{filter:`facet:${canvasFacetKey(facet)}`}))}>${this.i18n.system(facet.label)}: ${facet.value}<small>${count}</small></button>`)}`:nothing}<hr><button @click=${()=>{this.#memberOpen=true;this.requestUpdate();}}>${this.i18n.t("projects.sharingHeading","Project sharing")}</button><button @click=${()=>{this.#semanticOpen=true;this.requestUpdate();}}>Accessible reading order</button></div>`}></forma-ui-popover><button class="button secondary compact canvas-focus-toggle" aria-label=${focused?this.i18n.system("Exit focused Canvas view"):this.i18n.system("Enter focused Canvas view")} aria-pressed=${focused} title=${focused?this.i18n.system("Restore application navigation"):this.i18n.system("Give this project board the full workspace")} @click=${()=>this.#go(withCanvasFocus(this.store.route.get(),!focused))}><span aria-hidden="true">${icon(focused?"collapse":"expand")}</span><span>${focused?this.i18n.system("Exit focus"):this.i18n.system("Focus")}</span></button></div>${this.#queueStorageDisclosure()}</header>
     ${outcomes?this.#outcomeDesk():nothing}
     <div class="canvas-authoring-next" ?hidden=${outcomes} ?inert=${outcomes}>${this.#nextDocument()}</div>
-    <section class="canvas-stage-shell" ?hidden=${outcomes} ?inert=${outcomes} tabindex="-1" aria-label="Project board">${view==="spatial"?html`<div class="canvas-viewport" tabindex="-1" role="region" aria-roledescription="virtual project board" aria-label=${this.i18n.system("{name}, {count} items", { name: selectedCanvas.name, count: this.i18n.number(items.length) })} @wheel=${(event:WheelEvent)=>this.#canvasWheel(event)}><div class=${`canvas-plane${this.#tool==="marquee"?" is-batch-selecting":""}`} style=${`--canvas-zoom:${this.#zoom};--canvas-grid-size:${gridSize}px;--canvas-grid-x:${gridX}px;--canvas-grid-y:${gridY}px`} @pointerdown=${(event:PointerEvent)=>this.#pan(event)}>${nearbyItems.map((item)=>this.#card(item))}${this.#nearbyPresence().map((peer)=>html`<span class="canvas-presence" style=${`transform:translate3d(${(peer.x-this.#cameraX)*this.#zoom}px,${(peer.y-this.#cameraY)*this.#zoom}px,0) scale(${this.#zoom});--presence:${peer.color}`}><i></i>${peer.name}</span>`)}${this.#selectionMarquee?html`<span class="canvas-selection-marquee" aria-hidden="true" style=${`left:${this.#selectionMarquee.x}px;top:${this.#selectionMarquee.y}px;width:${this.#selectionMarquee.width}px;height:${this.#selectionMarquee.height}px`}></span>`:nothing}</div></div>`:view==="list"?this.#listView(items):view==="compare"?this.#compareView(items):this.#folderView(items)}
+    <section class="canvas-stage-shell" ?hidden=${outcomes} ?inert=${outcomes} tabindex="-1" aria-label="Project board">${view==="spatial"?html`<div class="canvas-viewport" tabindex="-1" role="region" aria-roledescription="virtual project board" aria-label=${this.i18n.system("{name}, {count} items", { name: selectedCanvas.name, count: this.i18n.number(items.length) })} @wheel=${(event:WheelEvent)=>this.#canvasWheel(event)}><div class=${`canvas-plane${this.#tool==="marquee"?" is-batch-selecting":""}`} style=${`--canvas-zoom:${this.#zoom};--canvas-grid-size:${gridSize}px;--canvas-grid-x:${gridX}px;--canvas-grid-y:${gridY}px`} @pointerdown=${(event:PointerEvent)=>this.#pan(event)}>${nearbyItems.map((item)=>this.#card(item))}${this.#renderPresence()}${this.#selectionMarquee?html`<span class="canvas-selection-marquee" aria-hidden="true" style=${`left:${this.#selectionMarquee.x}px;top:${this.#selectionMarquee.y}px;width:${this.#selectionMarquee.width}px;height:${this.#selectionMarquee.height}px`}></span>`:nothing}</div></div>`:view==="list"?this.#listView(items):view==="compare"?this.#compareView(items):this.#folderView(items)}
       ${view==="spatial"&&canvas.items.length?this.#batchSelectionControl():nothing}${view==="spatial"&&editable?this.#intentDock():nothing}${this.#selectionControls(view==="spatial"?selectedItems:[],textEditable,comparable)}${view==="spatial"&&canvas.items.length?html`<div class="canvas-zoom-hud"><button aria-label=${this.i18n.t("canvas.zoomOut","Zoom out")} @click=${()=>this.#setZoom(this.#zoom-.1)}>${icon("minus")}</button><button @click=${()=>this.#setZoom(1)}>${Math.round(this.#zoom*100)}%</button><button aria-label=${this.i18n.t("canvas.zoomIn","Zoom in")} @click=${()=>this.#setZoom(this.#zoom+.1)}>${icon("plus")}</button></div>`:nothing}${view==="spatial"&&editable&&unplacedOutputs.length?html`<button class="canvas-new-output" @click=${()=>this.#placeSource(this.#sources().find((source)=>source.id===unplacedOutputs[0].id)!)}>${icon("plus")} Place ${unplacedOutputs.length===1?this.i18n.system("new generation"):this.i18n.system("{count} new generations", { count: this.i18n.number(unplacedOutputs.length) })}</button>`:nothing}
     </section>
+    ${this.#proposalDialog()}
     <forma-document-artifacts class="canvas-shared-artifact-composer" .launcherOnly=${true} .documentId=${this.#anchorDocumentId()} source="canvas" @document-artifact-queued=${(event:CustomEvent<{documentId:string}>)=>{const target=canvas.items.find((item)=>item.sourceKind==="document"&&item.sourceId===event.detail.documentId);if(target)this.#openDocumentOutputs(target);}}></forma-document-artifacts>
     ${this.#arrangementOpen?this.#arrangementDialog():nothing}
     ${editable&&this.#addOpen?this.#addDialog():nothing}${editable&&this.#formalizeOpen?this.#formalizeDialog():nothing}${this.#memberOpen?this.#memberDialog():nothing}${editable&&this.#editOpen?this.#editDialog():nothing}${editable&&this.#documentOpen?this.#documentDialog():nothing}${editable&&this.#renderOpen?this.#renderDialog():nothing}${this.#semanticOpen?this.#semanticDialog(items):nothing}${this.#documentOutputsOpen?this.#documentOutputsDialog():nothing}${this.#viewingOutputId?this.#outputViewerDialog():nothing}${this.#viewingArtifactId?this.#artifactViewerDialog():nothing}${!this.store.session.get()?.projectContext&&inputOutput?html`<forma-generation-input-dialog .open=${true} .inspection=${outputGenerationInputInspection(inputOutput,this.store.events.get(),this.store.content.get())} @generation-input-close=${()=>{this.#inputOutputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}${!this.store.session.get()?.projectContext&&inputArtifact?html`<forma-generation-input-dialog .open=${true} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputArtifactId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}${!this.store.session.get()?.projectContext&&inputFailure?html`<forma-generation-input-dialog .open=${true} .inspection=${failedGenerationInputInspection(inputFailure,this.store.events.get(),this.store.content.get())} @generation-input-close=${()=>{this.#inputFailureJobId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}
   </section>`;}
-  #intentDock(){const scope=this.#controlsScope,route=this.store.route.get();const anchor=this.#anchorDocumentId();const canvasId=this.store.canvasProjection.get().selectedCanvasId;const suggestions=this.store.adaptiveSuggestionSetsFor(anchor,canvasId);const pendingJobs=this.store.documentJobs.get().filter((job)=>job.documentId===anchor&&job.canvasId===canvasId&&job.kind==="structure_adaptive"&&job.sourceSurface==="canvas"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).length;const working=pendingJobs>0;const session=this.store.session.get();const assistantActive=Boolean(session?.assistant?.enabled&&session.policy.accepted);const plannerReady=Boolean(session?.provider.plannerConfigured??session?.provider.configured);const canPlan=Boolean(session&&(!session.projectContext||session.projectContext.permissions.includes("project.output.request")));return html`${assistantActive?nothing:html`<forma-ui-popover class="canvas-intent-dock" .label=${this.i18n.t("assistant.mode.planBoard")} .content=${html`<form @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!scope||scope!==this.#currentControlsScope()||route!==this.store.route.get()){this.#closePopovers();return;}this.querySelector<FormaUiPopover>(".canvas-intent-dock")?.close(true);void this.#askIntent();}}><span>${icon("spark")}</span><input aria-label="Describe what you want to explore" maxlength="2000" dir="auto" ?disabled=${!canPlan} placeholder=${!canPlan?plannerReady?this.i18n.t("workspace.admin.readOnlyGeneration"):this.i18n.t("assistant.creativeUnavailable"):working?this.i18n.system("You can prepare the next intent…"):this.i18n.system("What do you want to explore?")} .value=${this.#intent} @input=${(event:InputEvent)=>{this.#intent=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button ?disabled=${this.#intentSubmitting||!canPlan||!this.#intent.trim()} aria-label=${working?this.i18n.system("Forma is preparing suggestions"):this.i18n.t("assistant.mode.planBoardSubmit")}>${working?icon("dots"):icon("send")}</button></form>`}></forma-ui-popover>`}${suggestions.length||working?html`<aside class="canvas-intent-stack" aria-label="Suggested next moves" aria-live="polite">${working?html`<div class="canvas-intent-pending" role="status"><span>${icon("spark")}</span><div><b>Considering your intent</b><small>Suggestions will join this stack when they are ready.</small></div></div>`:nothing}<div class="canvas-intent-cards">${[...suggestions].reverse().map((suggestion,index)=>{const structure=suggestion.structure;const matches=this.#intentMatches(`${suggestion.intent} ${structure.interpretation}`);return html`<article class="canvas-intent-response" data-suggestion-id=${suggestion.id}><header><div><small>${index===0?this.i18n.system("Latest suggestions"):this.i18n.system("Earlier suggestions")}</small>${suggestion.intent?html`<q>${suggestion.intent}</q>`:nothing}<p>${structure.interpretation}</p></div><button aria-label=${(suggestion.intent ? this.i18n.system("Dismiss suggestions for {intent}", { intent: suggestion.intent }) : this.i18n.system("Dismiss suggestions"))} @click=${()=>this.store.dismissAdaptiveSuggestion(anchor,suggestion.id)}>${icon("close")}</button></header><div>${matches.map((source)=>html`<button @click=${()=>this.#placeSource(source)}><span>Add from project</span><b>${source.title}</b></button>`)}<button @click=${()=>this.#useSuggestion(structure.active_decision)}><span>Shape the next decision</span><b>${structure.active_decision.label}</b></button>${structure.suggested_blocks.slice(0,3).map((item)=>html`<button @click=${()=>this.#useSuggestion(item)}><span>${this.i18n.system(blockTypeDefinition(item.type)?.label??item.type)}</span><b>${item.label}</b></button>`)}</div></article>`;})}</div></aside>`:nothing}`;}
+  #intentDock(){const scope=this.#controlsScope,route=this.store.route.get();const anchor=this.#anchorDocumentId();const canvasId=this.store.canvasProjection.get().selectedCanvasId;const suggestions=this.store.adaptiveSuggestionSetsFor(anchor,canvasId);const pendingJobs=this.store.documentJobs.get().filter((job)=>job.documentId===anchor&&job.canvasId===canvasId&&job.kind==="structure_adaptive"&&job.sourceSurface==="canvas"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).length;const working=pendingJobs>0;const session=this.store.session.get();const assistantActive=Boolean(session?.assistant?.enabled&&session.policy.accepted);const plannerReady=Boolean(session?.provider.plannerConfigured??session?.provider.configured);const canPlan=Boolean(session&&(!session.projectContext||session.projectContext.permissions.includes("project.output.request")));return html`${assistantActive?nothing:html`<forma-ui-popover class="canvas-intent-dock" .label=${this.i18n.t("assistant.mode.planBoard")} .content=${html`<form @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!scope||scope!==this.#currentControlsScope()||route!==this.store.route.get()){this.#closePopovers();return;}this.querySelector<FormaUiPopover>(".canvas-intent-dock")?.close(true);void this.#askIntent();}}><span>${icon("spark")}</span><input aria-label="Describe what you want to explore" maxlength="2000" dir="auto" ?disabled=${!canPlan} placeholder=${!canPlan?plannerReady?this.i18n.t("workspace.admin.readOnlyGeneration"):this.i18n.t("assistant.creativeUnavailable"):working?this.i18n.system("You can prepare the next intent…"):this.i18n.system("What do you want to explore?")} .value=${this.#intent} @input=${(event:InputEvent)=>{this.#intent=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button ?disabled=${this.#intentSubmitting||!canPlan||!this.#intent.trim()} aria-label=${working?this.i18n.system("Forma is preparing suggestions"):this.i18n.t("assistant.mode.planBoardSubmit")}>${working?icon("dots"):icon("send")}</button></form>`}></forma-ui-popover>`}${suggestions.length||working?html`<aside class="canvas-intent-stack" aria-label="Suggested next moves" aria-live="polite">${working?html`<div class="canvas-intent-pending" role="status"><span>${icon("spark")}</span><div><b>Considering your intent</b><small>Suggestions will join this stack when they are ready.</small></div></div>`:nothing}<div class="canvas-intent-cards">${[...suggestions].reverse().map((suggestion,index)=>{const structure=suggestion.structure;const matches=this.#intentMatches(`${suggestion.intent} ${structure.interpretation}`);return html`<article class="canvas-intent-response" data-suggestion-id=${suggestion.id}><header><div><small>${index===0?this.i18n.system("Latest suggestions"):this.i18n.system("Earlier suggestions")}</small>${suggestion.intent?html`<q>${suggestion.intent}</q>`:nothing}<p>${structure.interpretation}</p></div><button aria-label=${(suggestion.intent ? this.i18n.system("Dismiss suggestions for {intent}", { intent: suggestion.intent }) : this.i18n.system("Dismiss suggestions"))} @click=${()=>this.store.dismissAdaptiveSuggestion(anchor,suggestion.id)}>${icon("close")}</button></header><div>${matches.map((source)=>html`<button @click=${()=>this.#placeSource(source)}><span>Add from project</span><b>${source.title}</b></button>`)}<button @click=${()=>this.#useSuggestion(suggestion.id,["/active_decision"])}><span>${this.i18n.t("adaptive.changes.reviewNext")}</span><b>${structure.active_decision.label}</b></button>${structure.suggested_blocks.slice(0,3).map((item,proposalIndex)=>html`<button @click=${()=>this.#useSuggestion(suggestion.id,["/suggested_blocks/"+proposalIndex])}><span>${this.i18n.system(blockTypeDefinition(item.type)?.label??item.type)}</span><b>${item.label}</b></button>`)}<button @click=${()=>this.#useSuggestion(suggestion.id,["/active_decision",...structure.suggested_blocks.map((_item,proposalIndex)=>"/suggested_blocks/"+proposalIndex)])}>${this.i18n.t("adaptive.changes.reviewAll")}</button></div></article>`;})}</div></aside>`:nothing}`;}
   #selectionControls(items:CanvasItem[],textEditable:boolean,comparable:boolean){
     const projection=this.store.projection.get(),single=items.length===1?items[0]:null;
     const block=single&&projection.libraryBlocks.find((candidate)=>candidate.id===single.sourceId);

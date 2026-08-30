@@ -2,20 +2,25 @@ import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon } from "./forma-element";
+import { provenanceActorMessage } from "./design-system/localization";
 import { blockIconName } from "./icon-semantics";
 import { ensureModalDialog } from "./modal-dialog";
+import { contextControlName } from "./context-controls";
 import { contextDiff, generationHistoryItems, outputQualityLabel, type GenerationHistoryItem, shortEventType, type CreativeBlock, type EventInput } from "../model/events";
 import { sampleImageFile } from "../model/image-sample";
 import { DEFAULT_REFERENCE_FINDINGS, REFERENCE_FINDING_OPTIONS, type ImageSample, type ReferenceFindingKind } from "../model/extractors";
 import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
+import { workspaceQuickEditNeedsTarget } from "../model/workspace-local-proposal";
+import { WorkspaceLocalProposal, type WorkspaceQuickEditScope } from "./workspace-local-proposal";
+import { workspaceLocalProposalCopy } from "./design-system/localized-workspace-proposal";
 import { BLOCK_GROUPS, BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
 import { localizedSpatialScopeLabel } from "./design-system/localized-spatial-scope";
 import { DEFAULT_IMAGE_FORMAT, IMAGE_FORMAT_PRESETS, imageFormatForPreset, type ImageFormat } from "../model/image-format";
-import { documentContextBlockFromRoute, withDocumentInRoute } from "../model/routes";
+import { documentContextBlockFromRoute, documentIdFromRoute, documentViewFromRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import type { AssistantToolRequest } from "../model/assistant-route-policy";
 import { inferDocumentArtifactKind } from "../model/document-output-intent";
 import { combinedContextGroups, isContextCompositionRelation } from "../model/combined-context";
-import { creativeActionSourceRevision, creativeNextActions, creativeNextTargetAvailable, creativePreparationChoice, creativePreparationTargetAvailable, describeCreativeProposal, followCreativeNextTarget, type CreativeNextAction, type CreativeMedium, type CreativeNextTarget, type CreativePreparationStage } from "../model/workspace-intelligence";
+import { creativeActionSourceRevision, creativeNextActions, creativeNextTargetAvailable, creativePreparationChoice, creativePreparationTargetAvailable, followCreativeNextTarget, type CreativeNextAction, type CreativeMedium, type CreativeNextTarget, type CreativePreparationStage } from "../model/workspace-intelligence";
 import type { OutputVisual } from "./output-visual";
 import { outputComparisonHistory } from "../model/output-comparison";
 import { nextActionFacts } from "../state/next-action-context";
@@ -48,7 +53,13 @@ export class FormaWorkspace extends FormaElement {
   #nextOutputTarget:Extract<CreativeNextTarget,{kind:"output"}>|null=null;
   #blockDraft: BlockDraft | null = null;
   #documentName: string | null = null;
-  #proposal: { prompt: string; events: EventInput[]; proposalId?: string; exemplars: RetrievedExemplar[] } | null = null;
+  #proposalResumeKey="";
+  // Content-free ownership only; related private text is always derived from the current Store.
+  #quickEditReferenceInspection:{eventId:string;resolve:()=>{item:RetrievedExemplar;label:string}|null}|null=null;
+  #localProposal=new WorkspaceLocalProposal({
+    scope:()=>this.#quickEditScope(),changed:()=>this.requestUpdate(),applied:()=>this.store.refreshEvents(),
+    request:(body)=>this.store.guardedFetch("/api/workspace/quick-edit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)},workspaceLocalProposalCopy(this.i18n.locale).title),
+  });
   #uploading = false; #pendingUpload: File | null = null; #uploadDocumentId = ""; #rightsConfirmed = false;
   #referenceFindingKinds = new Set<ReferenceFindingKind>(DEFAULT_REFERENCE_FINDINGS);
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
@@ -66,7 +77,25 @@ export class FormaWorkspace extends FormaElement {
   #workbenchPane:"write"|"result"|"review"="write";
   #inspectorObserver?:ResizeObserver;
   #inspectorObserved?:Element;
-  #assistantTool=(event:Event)=>{const request=(event as CustomEvent<AssistantToolRequest>).detail;if(request.mode!=="quick-edit")return;const session=this.store.session.get();const projection=this.store.projection.get();if(!session||session.projectContext||request.actorUserId!==session.user.userId||request.projectId!==projection.projectId||request.documentId!==projection.documentId||request.canvasId)return;event.preventDefault();this.#prompt=request.message;void this.#suggestQuickAction().then((accepted)=>{if(accepted){this.#selectWorkbenchPane("write");void this.updateComplete.then(()=>{const review=this.querySelector<HTMLElement>(".document-quick-edit-review");review?.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});review?.focus({preventScroll:true});});}request.resolve(accepted);}).catch(()=>request.resolve(false));};
+  #assistantTool=(event:Event)=>{
+    const request=(event as CustomEvent<AssistantToolRequest>).detail;if(request.mode!=="quick-edit")return;
+    const session=this.store.session.get(),projection=this.store.projection.get();
+    if(!session||session.projectContext||request.actorUserId!==session.user.userId||request.projectId!==projection.projectId||request.documentId!==projection.documentId||request.canvasId)return;
+    event.preventDefault();
+    // Preparation may finish after another ordinary pane/focus choice. Retain
+    // its actual result, but never acquire a new presentation grant on arrival.
+    const focus=captureOutputNavigationFocus(this.ownerDocument),source=this.store.captureSourceOwnership();
+    const route=this.store.route.get(),scope=this.#quickEditScope();
+    const current=()=>this.isConnected&&this.store.route.get()===route&&this.store.sourceOwnershipActive(source)
+      &&this.#quickEditScope()?.key===scope?.key&&this.store.projection.get().documentId===request.documentId&&focus.current();
+    this.#prompt=request.message;
+    void this.#suggestQuickAction().then((accepted)=>{
+      if(accepted&&current())this.#selectWorkbenchPane("write");
+      // The assistant's original gesture owns the single close/focus handoff.
+      // A retained preview is still successful when presentation was superseded.
+      request.resolve(accepted);
+    }).catch(()=>request.resolve(false)).finally(()=>focus.dispose());
+  };
 
   #syncInspectorPosture=(entries:ResizeObserverEntry[])=>{
     const width=entries[0]?.contentRect.width;
@@ -146,12 +175,14 @@ export class FormaWorkspace extends FormaElement {
 
   override disconnectedCallback(){
     window.removeEventListener("forma-assistant-tool-request",this.#assistantTool);
+    this.#localProposal.reset();this.#proposalResumeKey="";
     this.#inspectorObserver?.disconnect();
     this.#inspectorObserved=undefined;
     super.disconnectedCallback();
   }
 
   protected override updated() {
+    this.#syncQuickEditReview();
     const currentFacts=nextActionFacts(this.store,this.store.projection.get().documentId);
     if(this.#formatTarget&&!creativeNextTargetAvailable(this.#formatTarget,currentFacts))void this.#closeFormatChoice(false);
     if(this.#nextOutputTarget&&!creativeNextTargetAvailable(this.#nextOutputTarget,currentFacts)){this.#nextOutputTarget=null;this.requestUpdate();}
@@ -286,14 +317,6 @@ export class FormaWorkspace extends FormaElement {
       ${!draft.type?html`<div class="block-type-catalog">${BLOCK_GROUPS.map((group)=>{const options=BLOCK_TYPES.filter((option)=>option.group===group.id);return html`<section class="block-type-group" aria-labelledby=${`block-group-${group.id}`}><header><div><h4 id=${`block-group-${group.id}`}>${this.i18n.system(group.label)}</h4><p>${this.i18n.system(group.description)}</p></div><span>${options.length} ${options.length===1?this.i18n.system("type"):this.i18n.system("types")}</span></header><div class="block-type-grid">${options.map((option)=>html`<forma-ui-choice-card compact .label=${this.i18n.system(option.label)} .detail=${this.i18n.system(option.description)} .iconName=${blockIconName(option.type)} .value=${option.type} @forma-action=${()=>{draft.type=option.type;draft.subtype=option.subtypes[0];if(option.type==="format")draft.text=this.#formatDraftText(draft);this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".block-composer textarea,.block-composer input")?.focus());}}></forma-ui-choice-card>`)}</div></section>`;})}</div>`:html`<fieldset class="subtype-picker"><legend>System-suggested subtype</legend>${selected?.subtypes.map((subtype)=>html`<label><input type="radio" name="block-subtype" .value=${subtype} .checked=${draft.subtype===subtype} @change=${()=>{draft.subtype=subtype;this.requestUpdate();}}><span>${this.i18n.system(subtype)}</span></label>`)}</fieldset>${draft.type==="reference"?html`<div class="reference-choice"><span>${icon("image")}</span><div><b>Choose an image or source document</b><small>Images, PDF, text, Markdown, CSV, JSON, and Office documents stay private; rights are confirmed before upload.</small></div><label class="button primary">Choose source<input type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx" @change=${this.#queueUpload}></label></div>`:draft.type==="palette"?html`<label class="block-draft-copy">Palette name<input maxlength="120" placeholder=${selected?.prompt && this.i18n.system(selected.prompt)} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><div class="draft-palette">${draft.colors.map((color,index)=>html`<label><input type="color" .value=${color} @input=${(event:InputEvent)=>{draft.colors=draft.colors.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.requestUpdate();}}><span style=${`--swatch:${color}`}></span><small>${color}</small></label>`)}</div>`:html`${draft.type==="audio"?html`<div class="reference-choice"><span>${icon("audio")}</span><div><b>${this.i18n.t("audio.reference.private","Private audio reference")}</b><small>${this.i18n.t("audio.upload.rightsNotice","I also confirm this recording contains no sensitive information. Upload remains private; creative influence, accompaniment, and provider transfer each require separate approval.")}</small></div><label class="button primary">${this.i18n.t("artifact.audio.label","Audio")}<input type="file" accept="audio/*" @change=${this.#queueUpload}></label></div>`:nothing}${draft.type==="format"&&this.#formatDraftUsesImageFrame(draft)?html`<div class="block-draft-format"><label>${draft.outputKind==="storyboard"?"Storyboard frame":"Image frame"}<select @change=${(event:Event)=>{const preset=String((event.target as HTMLSelectElement).value);draft.imageFormat=imageFormatForPreset(preset);draft.text=this.#formatDraftText(draft,preset);this.requestUpdate();}}>${IMAGE_FORMAT_PRESETS.map((preset)=>html`<option value=${preset.id}>${preset.id} · ${this.i18n.system(preset.label)} · ${preset.dimensions.width} × ${preset.dimensions.height}</option>`)}</select></label><span>${draft.imageFormat.dimensions.width} × ${draft.imageFormat.dimensions.height} px</span></div>`:nothing}<label class="block-draft-copy">${selected?.label} content<textarea rows="3" placeholder=${selected?.prompt && this.i18n.system(selected.prompt)} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>`}`}
       <footer><button type="button" class="button ghost" @click=${this.#closeBlock}>Cancel</button>${draft.type&&draft.type!=="reference"?html`<button type="submit" class="button primary" ?disabled=${!draft.text.trim()}>Add ${selected?.label.toLowerCase()}</button>`:nothing}</footer></form></dialog>`;
   }
-  #proposedEvents(prompt:string):EventInput[]{
-    const projection=this.store.projection.get();const palette=projection.blocks.find((block)=>block.type==="palette");const lower=prompt.toLowerCase();
-    if(/warm|cool|temperature/.test(lower)&&palette)return[{type:"BlockPropertyEdited",payload:{block_id:palette.id,property_path:"temperature",old_value:palette.properties.temperature??"neutral",new_value:/cool/.test(lower)?"cooler":"warmer"}}];
-    const type:BlockKind=/avoid|exclude|without|no\s/.test(lower)?"exclusion":/composit|framing|layout|balance/.test(lower)?"composition":/light|shadow|dusk|daylight/.test(lower)?"lighting":/palette|color|colour|hue/.test(lower)?"palette":/subject|depict|show|feature/.test(lower)?"subject":/style|texture|treatment|aesthetic/.test(lower)?"style":"direction";
-    const blockId=crypto.randomUUID();const slug=prompt.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,38)||`chat-${this.store.head.get()}`;
-    const properties=type==="palette"?{label:prompt,colors:["#27252b","#e9a073","#e8d7bd","#8a6571"],subtype:suggestedSubtype(type),authority:"authored",weight:.7}:{text:prompt,subtype:suggestedSubtype(type),authority:"authored",weight:.7};
-    return[{type:"BlockCreated",payload:{block_id:blockId,document_id:projection.documentId,type,handle:`${type}/${slug}`,position:`z${this.store.head.get()}`,properties}}];
-  }
   async #ask() {
     const session=this.store.session.get();const prompt=this.#prompt.trim();if(!prompt||this.#asking||!(session?.provider.plannerConfigured??session?.provider.configured)||session.projectContext&&!session.projectContext.permissions.includes("project.output.request"))return;
     this.#asking=true;this.requestUpdate();try{
@@ -306,22 +329,101 @@ export class FormaWorkspace extends FormaElement {
       }
     }finally{this.#asking=false;this.requestUpdate();}
   }
+  #quickEditScope(): WorkspaceQuickEditScope | null {
+    const session=this.store.session.get(),authorization=this.store.captureAuthorizationScope(),projection=this.store.projection.get();
+    if(!this.isConnected||!session||session.projectContext||!authorization||!this.store.routeDataReady()||!projection.projectId||!projection.documentId)return null;
+    return{key:authorization.key,projectId:projection.projectId,documentId:projection.documentId};
+  }
+  #syncQuickEditReview(){
+    const scope=this.#quickEditScope(),key=scope?JSON.stringify(scope):"";
+    if(key===this.#proposalResumeKey)return;
+    if(this.#proposalResumeKey)this.#prompt="";
+    this.#proposalResumeKey=key;
+    if(!this.#localProposal.value){this.#localProposal.reset();if(scope)void this.#localProposal.resume();}
+  }
+  get #proposal(){const state=this.#localProposal.value;return state&&(state.intent||state.applied||state.notice)?state:null;}
   async #suggestQuickAction(){
-    const prompt=this.#prompt.trim();if(!prompt||this.#asking||this.store.session.get()?.projectContext)return false;
-    const events=this.#proposedEvents(prompt);
-    const exemplars = retrieveFewShotExemplars(this.store.events.get(), prompt, this.store.content.get(), { limit: 3, projectId: this.store.projection.get().projectId });
-    const exemplarRefs = exemplars.map((item) => ({ exemplar_id: item.exemplarId, evidence_refs: item.citations, similarity: Number(item.score.toFixed(3)), kind: item.kind }));
-    const proposal = await this.store.propose(prompt, events, exemplarRefs);if(!proposal)return false;this.#proposal = { prompt, events, proposalId: proposal.eventId, exemplars }; this.#prompt = ""; this.requestUpdate();return true;
+    if(this.#asking||this.store.session.get()?.projectContext)return false;
+    const projection=this.store.projection.get(),focused=this.store.ui.focusBlockId;
+    const target=workspaceQuickEditNeedsTarget(this.#prompt)?projection.blocks.find((block)=>block.id===focused&&block.type==="palette"&&!block.removed)?.id??null:null;
+    return this.#localProposal.start(this.#prompt,target);
   }
-
-  #proposalPreview(){if(!this.#proposal)return nothing;return html`<div class="proposal-preview"><div><span class="eyebrow">Suggested change · waiting for your approval</span><b>${describeCreativeProposal(this.#proposal.events).join(" + ")}</b><small>Your document stays unchanged until you accept.</small>${this.#proposal.exemplars.length ? html`<div class="proposal-corpus"><span>${icon("branch")} ${this.#proposal.exemplars.length} related decision${this.#proposal.exemplars.length===1?"":"s"}</span>${this.#proposal.exemplars.map((item)=>html`<button title="Inspect the related creative decision" @click=${()=>{this.store.patchUi({selectedEventId:item.citations[0],inspectorOpen:true});}}>${item.label} · ${Math.round(item.score*100)}% related</button>`)}</div>` : html`<small class="corpus-empty">This is a new direction for your work.</small>`}</div><button class="button ghost" @click=${this.#rejectProposal}>Decline</button><button class="button primary" @click=${this.#acceptProposal}>Accept change</button></div>`;}
-  async #acceptProposal() {
-    if (!this.#proposal) return; const proposal = this.#proposal;
-    await this.store.appendBatch([{ type: "ProposalAccepted", payload: { proposal_event_id: proposal.proposalId, expected_sequence: this.store.head.get() } }, ...proposal.events]); this.#proposal = null; this.requestUpdate();
+  #editQuickEdit(prompt:string,targetBlockId:string|null){this.#prompt=prompt;this.#localProposal.edit(prompt,workspaceQuickEditNeedsTarget(prompt)?targetBlockId:null);}
+  #proposalPreview(){
+    const state=this.#proposal;if(!state)return nothing;
+    const copy=workspaceLocalProposalCopy(this.i18n.locale),canAuthor=this.store.session.get()?.capabilities?.includes("project.author")??false;
+    const palettes=this.store.projection.get().blocks.filter((block)=>block.type==="palette"&&!block.removed);
+    const editable=!state.pending&&!state.uncertain&&!state.applied;
+    const notice=state.notice==="target"?copy.targetNotice:copy[state.notice as keyof typeof copy]??"";
+    const referenceSource=this.isConnected?this.store.captureSourceOwnership():null;
+    const referenceRoute=this.isConnected?this.store.route.get():"";
+    const referencePreviewId=state.previewId,referenceApprovalHash=state.approvalHash;
+    const referenceDocumentId=documentIdFromRoute(referenceRoute);
+    const referenceView=documentViewFromRoute(referenceRoute)==="document"
+      || /^\/creative\/create(?:\/[^/]+)*$/u.test(routePathname(referenceRoute));
+    // References are not inputs to the deterministic edit or its approval. A
+    // later activation re-derives them; neither an excerpt nor a result list is cached.
+    const currentReferences=()=>{
+      const current=this.#proposal,preview=current?.preview,projection=this.store.projection.get();
+      if(!this.isConnected||!referenceSource||!referenceView||!this.store.sourceOwnershipActive(referenceSource)
+        ||referenceDocumentId!==null&&referenceDocumentId!==projection.documentId
+        ||this.store.route.get()!==referenceRoute||!this.store.routeDataReady()
+        ||!this.store.session.get()?.capabilities?.includes("project.read")||this.store.session.get()?.projectContext
+        ||!current||current.pending||current.uncertain||current.applied||current.stale||!preview?.localReview
+        ||current.previewId!==referencePreviewId||current.approvalHash!==referenceApprovalHash
+        ||preview.previewId!==referencePreviewId||preview.approvalHash!==referenceApprovalHash
+        ||preview.projectId!==projection.projectId||preview.documentId!==projection.documentId
+        ||preview.localReview.sourceHead!==this.store.head.get()||!(Date.parse(preview.expiresAt)>Date.now()))return[];
+      return retrieveFewShotExemplars(this.store.events.get(),preview.localReview.prompt,this.store.content.get(),{limit:3,projectId: this.store.projection.get().projectId})
+        .filter(item=>item.citations.length>0&&item.citations.every(id=>this.store.events.get().some(event=>event.eventId===id)));
+    };
+    const references=currentReferences();
+    const comparableReference=(value:string)=>value.normalize("NFKC").replace(/\p{Cf}/gu,"").replace(/\s+/gu," ").trim().toLowerCase();
+    const referenceKind=(item:RetrievedExemplar)=>{
+      const currentCopy=workspaceLocalProposalCopy(this.i18n.locale);
+      return item.kind==="accepted-proposal"?currentCopy.referenceAccepted:item.kind==="authored-correction"?currentCopy.referenceCorrection:currentCopy.referenceKept;
+    };
+    const referenceName=(item:RetrievedExemplar,index:number,items:RetrievedExemplar[])=>{
+      const name=referenceKind(item),unique=new Set(items.map(value=>comparableReference(referenceKind(value)))).size===items.length;
+      return unique?name:this.i18n.t("context.controls.disambiguated","{ordinal} · {name}",{ordinal:this.i18n.number(index+1),name});
+    };
+    const inspectReference=(exemplarId:string,eventId:string)=>{
+      const resolve=()=>{
+        const items=currentReferences(),index=items.findIndex(item=>item.exemplarId===exemplarId&&item.citations.includes(eventId));
+        return index<0?null:{item:items[index]!,label:referenceName(items[index]!,index,items)};
+      };
+      if(!resolve())return;
+      this.#quickEditReferenceInspection={eventId,resolve};
+      this.store.patchUi({selectedEventId:eventId,inspectorOpen:true});
+    };
+    return html`<div class="proposal-preview" aria-busy=${state.pending}><div>
+      <span class="eyebrow">${copy.title}</span><small>${copy.free}</small>
+      ${state.preview?.localReview?html`<bdi>${state.preview.localReview.documentTitle}</bdi>`:nothing}
+      ${state.draft||editable?html`<label>${copy.draft}<textarea rows="3" maxlength="1200" .value=${state.draft} ?disabled=${!editable||!canAuthor}
+        @input=${(event:InputEvent)=>this.#editQuickEdit((event.target as HTMLTextAreaElement).value,this.#proposal?.targetBlockId??null)}></textarea></label>`:nothing}
+      ${workspaceQuickEditNeedsTarget(state.draft)?html`<label>${copy.target}<select .value=${state.targetBlockId??""} ?disabled=${!editable||!canAuthor}
+        @change=${(event:Event)=>this.#editQuickEdit(this.#proposal?.draft??"",(event.target as HTMLSelectElement).value||null)}>
+        <option value="">${copy.chooseTarget}</option>${palettes.map((block)=>html`<option value=${block.id}>${contextControlName(candidate=>`\u2068${String(candidate.properties.label??candidate.handle)}\u2069`,block,palettes,this.i18n)}</option>`)}
+      </select></label>${!palettes.length?html`<small>${copy.noTarget}</small>`:nothing}`:nothing}
+      ${state.preview?.changes.map((change)=>html`<p><bdi>${change.label}</bdi> · <bdi>${change.text}</bdi></p>`)}
+      ${references.length?html`<details class="proposal-corpus"><summary>${copy.related}</summary><p>${copy.referenceOnly}</p>
+        ${references.map((item,index)=>{const exemplarId=item.exemplarId,eventId=exemplarId.slice(exemplarId.indexOf(":")+1);
+          const label=referenceName(item,index,references);
+          return html`<article><p><bdi>${item.summary}</bdi></p><button type="button" class="button ghost compact" data-quick-edit-reference=${exemplarId}
+            @click=${()=>inspectReference(exemplarId,eventId)}>${copy.inspectReference}: <bdi>${label}</bdi></button></article>`;
+        })}
+      </details>`:nothing}
+      ${state.pending||notice?html`<p role="status">${state.pending?copy.pending:notice}</p>`:nothing}
+      ${!state.applied&&!state.uncertain?html`<small>${copy.unchanged}</small>`:nothing}
+    </div>
+    ${state.uncertain?html`<button type="button" class="button secondary" ?disabled=${state.pending} @click=${()=>this.#localProposal.check()}>${copy.check}</button>`:html`
+      <button type="button" class="button ghost" ?disabled=${state.pending} @click=${this.#rejectProposal}>${state.applied?copy.done:copy.decline}</button>
+      ${!state.applied?state.stale?html`<button type="button" class="button primary" ?disabled=${state.pending||!canAuthor} @click=${()=>this.#localProposal.preview(true)}>${copy.fresh}</button>`:state.preview?html`<button type="button" class="button primary" ?disabled=${state.pending||!canAuthor} @click=${this.#acceptProposal}>${state.notice==="retryable"?copy.retryAccept:copy.accept}</button>`:html`<button type="button" class="button primary" ?disabled=${state.pending||!canAuthor||!state.draft.trim()||workspaceQuickEditNeedsTarget(state.draft)&&!state.targetBlockId} @click=${()=>this.#localProposal.preview()}>${copy.preview}</button>`:nothing}
+    `}
+    </div>`;
   }
-  async #rejectProposal() {
-    if (!this.#proposal) return; await this.store.append({ type: "ProposalRejected", payload: { proposal_event_id: this.#proposal.proposalId, reason_ref: null } }); this.#proposal = null; this.requestUpdate();
-  }
+  async #acceptProposal(){await this.#localProposal.accept();}
+  async #rejectProposal(){await this.#localProposal.dismiss();}
   #openProjectSettings(){const projection=this.store.projection.get();this.#projectName=projection.projectName;this.#projectState=projection.projectState;this.#projectSettings=true;this.requestUpdate();}
   #closeProjectSettings(){this.querySelector<HTMLDialogElement>(".project-settings-dialog")?.close();this.#projectSettings=false;this.requestUpdate();}
   #openDeleteDocument(){if(this.store.projection.get().documents.length<=1){this.store.toast("Create another document before removing the project’s final document.");return;}this.#deleteDocument=true;this.requestUpdate();}
@@ -383,11 +485,17 @@ export class FormaWorkspace extends FormaElement {
     return html`<dialog class="modal workspace-modal comparison-modal" tabindex="-1" closedby="any" aria-labelledby="compare-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.patchUi({compareOpen:false});}} @cancel=${(event:Event)=>{event.preventDefault();this.store.patchUi({compareOpen:false});}} @close=${()=>{if(this.store.ui.compareOpen)this.store.patchUi({compareOpen:false});}}><div class="modal-card wide comparison-card"><button class="icon-button modal-close" aria-label="Close comparison" @click=${() => this.store.patchUi({ compareOpen:false })}>${icon("close")}</button><span class="eyebrow">Side-by-side comparison</span><h2 id="compare-title">Compare two creative results</h2><p>${this.i18n.t("next.exact.comparison.caveat","This compares document history when each result was saved. It does not establish the submitted inputs or what caused the images to differ.")}</p><div class="comparison-grid">${outputs.map((o,i) => html`<div><div class="output-art"><forma-output-visual .output=${o} .interactive=${true}></forma-output-visual></div><b>${comparison.available&&!comparison.tied?this.i18n.system(i?"Current result":"Previous result"):this.i18n.t(i?"next.exact.comparison.second":"next.exact.comparison.first",i?"Result B":"Result A")}</b><small>${this.i18n.system(outputQualityLabel(o))} · ${o.width??1536} × ${o.height??1024}</small></div>`)}</div><section class="diff-list" aria-labelledby="comparison-changes-title"><header><div><span class="eyebrow">What changed</span><h3 id="comparison-changes-title">${this.i18n.t("next.exact.comparison.heading","Recorded document changes between these results")}</h3></div>${comparison.available?html`<strong>${diff.length} change${diff.length===1?"":"s"}</strong>`:nothing}</header>${!comparison.available?html`<p>${this.i18n.t("next.exact.comparison.unavailable","Historical comparison evidence is unavailable for one or both results. You can still inspect the saved images.")}</p>`:diff.length ? diff.map((change) => {const description=this.#comparisonChange(change);return html`<article class=${`diff-change ${change.status}`}><span class=${`status-dot ${change.status}`} aria-hidden="true"></span><div><b>${description.title}</b><p>${description.detail}</p><small>${description.scope}</small></div><em>${this.i18n.system(change.status)}</em></article>`;}) : html`<p>${this.i18n.t("next.exact.comparison.empty","No document changes were recorded between these receipts.")}</p>`}</section></div></dialog>`;
   }
   #inspector() {
-    const event = this.store.events.get().find((e) => e.eventId === this.store.ui.selectedEventId) ?? this.store.events.get().at(-1);
-    if (!event) return nothing;
-    const engineering=this.store.session.get()?.capabilities?.includes("engineering.events.read")===true;
-    const author=event.actor==="user"?this.i18n.t("workspace.provenance.you","You"):this.i18n.t("workspace.provenance.assistance","Approved creative assistance");
-    return html`<aside class="inspector-panel" aria-label=${this.i18n.t("workspace.provenance.inspector","Creative history")}><header><div><span class="eyebrow">${this.i18n.t("workspace.provenance.source","Saved creative history")}</span><h2>${shortEventType(event.type)}</h2></div><button class="icon-button" aria-label=${this.i18n.t("workspace.provenance.close","Close creative history")} @click=${() => this.store.patchUi({ inspectorOpen:false })}>${icon("close")}</button></header><p>${this.i18n.t("workspace.provenance.description","This creative decision is saved to your private document and remains available for future results.")}</p><dl><dt>${this.i18n.t("workspace.provenance.author","Created by")}</dt><dd>${author}</dd><dt>${this.i18n.t("workspace.provenance.saved","Saved")}</dt><dd>${this.i18n.date(new Date(event.occurredAt),{dateStyle:"medium",timeStyle:"short"})}</dd><dt>${this.i18n.t("workspace.provenance.change","Creative change")}</dt><dd>${shortEventType(event.type)}</dd></dl>${engineering?html`<details class="provenance-technical"><summary>${this.i18n.t("workspace.provenance.technical","Technical details for engineering")}</summary><dl><dt>Sequence</dt><dd>#${event.sequence}</dd><dt>Actor</dt><dd>${event.actor}</dd><dt>Client</dt><dd>${event.clientId}</dd><dt>Correlation</dt><dd>${event.correlationId}</dd></dl><pre>${JSON.stringify(event.payload,null,2)}</pre><div class="inspector-actions"><button @click=${() => this.store.setRoute("/engineering/events")}>${this.i18n.t("workspace.provenance.engineering","Open Engineering Diagnostics")} ${icon("arrow")}</button><button @click=${() => navigator.clipboard.writeText(event.eventId)}>${this.i18n.t("workspace.provenance.copy","Copy technical event ID")}</button></div></details>`:nothing}</aside>`;
+    const selected=this.store.ui.selectedEventId,inspection=this.#quickEditReferenceInspection;
+    const event=selected?this.store.events.get().find(e=>e.eventId===selected):this.store.events.get().at(-1);
+    const reference=inspection?.eventId===selected?inspection.resolve():null;
+    if(selected&&(!event||inspection?.eventId===selected&&!reference))return html`<aside class="inspector-panel" aria-label=${this.i18n.t("workspace.provenance.inspector","Creative history")}>
+      <p role="status">${workspaceLocalProposalCopy(this.i18n.locale).referenceUnavailable}</p>
+      <button type="button" class="button secondary" @click=${()=>{this.#quickEditReferenceInspection=null;this.store.patchUi({inspectorOpen:false,selectedEventId:""});}}>${this.i18n.t("workspace.provenance.close","Close creative history")}</button>
+    </aside>`;
+    if(!event)return nothing;
+    const session=this.store.session.get(),engineering=session?.capabilities?.includes("engineering.events.read")===true;
+    const author=this.i18n.t(provenanceActorMessage(event.actor,session?.impersonation?.actor.userId??session?.user?.userId));
+    return html`<aside class="inspector-panel" aria-label=${this.i18n.t("workspace.provenance.inspector","Creative history")}><header><div><span class="eyebrow">${this.i18n.t("workspace.provenance.source","Saved creative history")}</span><h2>${reference?reference.label:shortEventType(event.type)}</h2></div><button class="icon-button" aria-label=${this.i18n.t("workspace.provenance.close","Close creative history")} @click=${() => this.store.patchUi({ inspectorOpen:false })}>${icon("close")}</button></header>${reference?html`<section class="provenance-reference-context"><h3>${workspaceLocalProposalCopy(this.i18n.locale).referenceContext}</h3><p dir="auto">${reference.item.summary}</p><small>${workspaceLocalProposalCopy(this.i18n.locale).referenceOnly}</small></section>`:html`<p>${this.i18n.t("workspace.provenance.description","This creative decision is saved to your private document and remains available for future results.")}</p>`}<dl><dt>${this.i18n.t("workspace.provenance.author","Recorded actor")}</dt><dd>${author}</dd><dt>${this.i18n.t("workspace.provenance.saved","Saved")}</dt><dd>${this.i18n.date(new Date(event.occurredAt),{dateStyle:"medium",timeStyle:"short"})}</dd><dt>${this.i18n.t("workspace.provenance.change","Creative change")}</dt><dd>${shortEventType(event.type)}</dd></dl>${engineering?html`<details class="provenance-technical"><summary>${this.i18n.t("workspace.provenance.technical","Technical details for engineering")}</summary><dl><dt>Sequence</dt><dd>#${event.sequence}</dd><dt>Actor</dt><dd>${event.actor}</dd><dt>Client</dt><dd>${event.clientId}</dd><dt>Correlation</dt><dd>${event.correlationId}</dd></dl><pre>${JSON.stringify(event.payload,null,2)}</pre><div class="inspector-actions"><button @click=${() => this.store.setRoute("/engineering/events")}>${this.i18n.t("workspace.provenance.engineering","Open Engineering Diagnostics")} ${icon("arrow")}</button><button @click=${() => navigator.clipboard.writeText(event.eventId)}>${this.i18n.t("workspace.provenance.copy","Copy technical event ID")}</button></div></details>`:nothing}</aside>`;
   }
 
   async #followNextAction(action:CreativeNextAction){
@@ -483,7 +591,7 @@ export class FormaWorkspace extends FormaElement {
         </div>
         <div class="studio-grid" data-inspector-open=${String(this.#workbenchInspectorOpen)} data-workbench-mode=${this.#workbenchPane}>
           <section id="document-context-panel" class="context-column" aria-labelledby="context-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane!=="write"}><div class="section-heading"><div><span class="eyebrow">${p.blocks.length?p.blocks.length===1?this.i18n.system("1 creative decision"):`${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}`:this.i18n.system("Ready when you are")}</span><h2 id="context-title">Creative context</h2></div><span class="health-pill" title=${health.issues.length?health.issues.map((issue)=>this.#healthIssueCopy(issue,"label")).join(" · "):this.i18n.system("Objective, audience, delivery, rights, and evidence are complete")}><i></i> ${this.i18n.number(health.score)}/100</span></div>
-            ${assistantActive&&this.#proposal?html`<aside class="document-quick-edit-review" tabindex="-1" aria-live="polite" aria-label=${this.i18n.t("assistant.mode.quickEdit")}>${this.#proposalPreview()}</aside>`:nothing}
+            ${this.#proposal?html`<aside class="document-quick-edit-review" tabindex="-1" aria-live="polite" aria-label=${this.i18n.t("assistant.mode.quickEdit")}>${this.#proposalPreview()}</aside>`:nothing}
             ${blockingIssue?html`<aside class="document-workbench-critical" role="status"><span>${this.#healthIssueCopy(blockingIssue,"label")}</span>${canAuthor?html`<button type="button" class="button secondary compact" @click=${()=>this.#repairContext(blockingIssue)}>${this.i18n.t("context.health.severity.warning","Review")}</button>`:nothing}</aside>`:nothing}
             ${p.blocks.length ? html`<div class="block-list" data-forma-content="primary">${this.#contextBlocks(visibleBlocks)}</div>` : this.#blockDraft === null ? html`<div class="blank-context" data-forma-empty-state><span>${icon("plus")}</span><h3>This document is empty</h3><p>${canAuthor?this.i18n.system("Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf."):this.i18n.system("There are no creative decisions in this shared document yet.")}</p>${canAuthor?html`<button class="button primary" @click=${this.#beginBlock}>Add context</button>`:nothing}</div>` : nothing}
             <forma-output-requirements .documentId=${p.documentId}></forma-output-requirements>
@@ -494,7 +602,7 @@ export class FormaWorkspace extends FormaElement {
             ${canAuthor?this.#blockComposer():nothing}
             ${canAuthor&&this.#blockDraft===null&&p.blocks.length?html`<button class="add-block" @click=${this.#beginBlock}>${icon("plus")} Add context</button>`:nothing}
             ${p.blocks.length?html`<div class="document-insight"><span>${icon("branch")}</span><p>${documentInsight}</p>${canAuthor?html`<button @click=${()=>this.store.setRoute("/studio/board")}>See spatially ${icon("arrow")}</button>`:nothing}</div>`:nothing}
-            <details class="context-provenance"><summary>How these decisions are preserved</summary><div class="compile-bridge"><span>${icon("branch")}</span><div><b>Traceable creative history</b><small>${p.latestCompile ? this.i18n.system("The latest result retains its exact creative inputs") : this.i18n.system("Every decision will remain available with its next result")}</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div></details>
+            <details class="context-provenance"><summary>How these decisions are preserved</summary><div class="compile-bridge"><span>${icon("branch")}</span><div><b>Traceable creative history</b><small>${p.latestCompile ? this.i18n.system("The latest result retains its exact creative inputs") : this.i18n.system("Every decision will remain available with its next result")}</small></div><button @click=${() => {this.#quickEditReferenceInspection=null;this.store.patchUi({ inspectorOpen:true,selectedEventId:"" });}}>Inspect</button></div></details>
           </section>
           <section id="document-results-panel" class="output-column" aria-labelledby="output-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane==="write"&&!this.#artifactViewerOpen}><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `${this.i18n.system("Images, stories, presentations & motion")} · ${this.i18n.t("artifact.audio.label", "Audio")}` : this.store.session.get()?.provider.plannerConfigured ? this.i18n.t("assistant.previewUnavailable") : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>this.#toggleWorkbenchInspector()}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
             ${canAuthor&&canGenerate?html`<section class="document-result-generation" aria-label=${this.i18n.system("Generation choices")}><forma-generation-actions source="document" .selected=${output??null} compact></forma-generation-actions></section>`:nothing}
@@ -510,8 +618,7 @@ export class FormaWorkspace extends FormaElement {
       </div>
       ${this.store.ui.inspectorOpen ? this.#inspector() : nothing}
       ${!assistantActive&&canAuthor&&canGenerate?html`<div class="composer-dock">
-        ${this.#proposalPreview()}
-        <div class="composer"><form class="composer-command" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(this.#prompt.trim())void this.#ask();}}><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Ask a question, explain an objective, or describe a change…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value;this.requestUpdate(); }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing&&!e.metaKey&&!e.ctrlKey&&!e.altKey) { e.preventDefault(); const submitter=(e.currentTarget as HTMLTextAreaElement).form?.querySelector<HTMLButtonElement>('button[type="submit"]');if(submitter&&!submitter.disabled)submitter.form?.requestSubmit(submitter); } }}></textarea><label class="icon-button add-ref" title=${this.i18n.t("audio.upload.add","Add a licensed image, audio recording, or source document")}><input type="file" accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx" @change=${this.#queueUpload}>${icon("plus")}</label>${!projectContext?html`<button type="button" class="button ghost compact" title="Propose one local rule-based edit without calling a model" ?disabled=${!this.#prompt.trim()||this.#asking} @click=${()=>void this.#suggestQuickAction()}>Quick edit</button>`:nothing}<button type="submit" class="button secondary ask" title=${this.store.session.get()?.provider.plannerConfigured??this.store.session.get()?.provider.configured?this.i18n.t("assistant.mode.creativeChatSubmit"):this.i18n.t("assistant.creativeUnavailable")} ?disabled=${!this.#prompt.trim()||this.#asking||!(this.store.session.get()?.provider.plannerConfigured??this.store.session.get()?.provider.configured)}>${this.#asking?this.i18n.system("Asking Forma…"):this.i18n.system("Ask Forma")}</button></form><forma-generation-actions source="document" .selected=${output??null} compact></forma-generation-actions></div>
+        <div class="composer"><form class="composer-command" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(this.#prompt.trim())void this.#ask();}}><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Ask a question, explain an objective, or describe a change…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value;this.requestUpdate(); }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing&&!e.metaKey&&!e.ctrlKey&&!e.altKey) { e.preventDefault(); const submitter=(e.currentTarget as HTMLTextAreaElement).form?.querySelector<HTMLButtonElement>('button[type="submit"]');if(submitter&&!submitter.disabled)submitter.form?.requestSubmit(submitter); } }}></textarea><label class="icon-button add-ref" title=${this.i18n.t("audio.upload.add","Add a licensed image, audio recording, or source document")}><input type="file" accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx" @change=${this.#queueUpload}>${icon("plus")}</label>${!projectContext?html`<button type="button" class="button ghost compact" title=${this.i18n.t("assistant.mode.quickEditDetail")} ?disabled=${!this.#prompt.trim()||this.#asking} @click=${()=>{this.#selectWorkbenchPane("write");void this.#suggestQuickAction();}}>Quick edit</button>`:nothing}<button type="submit" class="button secondary ask" title=${this.store.session.get()?.provider.plannerConfigured??this.store.session.get()?.provider.configured?this.i18n.t("assistant.mode.creativeChatSubmit"):this.i18n.t("assistant.creativeUnavailable")} ?disabled=${!this.#prompt.trim()||this.#asking||!(this.store.session.get()?.provider.plannerConfigured??this.store.session.get()?.provider.configured)}>${this.#asking?this.i18n.system("Asking Forma…"):this.i18n.system("Ask Forma")}</button></form><forma-generation-actions source="document" .selected=${output??null} compact></forma-generation-actions></div>
       </div>`:nothing}
       ${this.store.ui.compareOpen ? this.#comparison() : nothing}
       ${this.#projectSettings&&!projectContext?html`<dialog class="modal workspace-modal project-settings-dialog" closedby="any" aria-labelledby="project-settings-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeProjectSettings();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeProjectSettings();}} @close=${()=>{if(this.#projectSettings){this.#projectSettings=false;this.requestUpdate();}}}><form class="modal-card project-settings-form" @submit=${this.#saveProject}><button type="button" class="icon-button modal-close" aria-label="Close project settings" @click=${this.#closeProjectSettings}>${icon("close")}</button><span class="eyebrow">Project settings</span><h2 id="project-settings-title">Edit ${p.projectName}</h2><label>Project name<input maxlength="80" required .value=${this.#projectName} @input=${(event:InputEvent)=>{this.#projectName=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>Project state<select .value=${this.#projectState} @change=${(event:Event)=>{this.#projectState=(event.target as HTMLSelectElement).value;}}><option value="active">Active</option><option value="archived">Archived</option><option value="paused">Paused</option></select><small>State changes are reversible events; they never delete project history.</small></label><footer><button type="button" class="button ghost" @click=${this.#closeProjectSettings}>Cancel</button><button class="button primary" ?disabled=${!this.#projectName.trim()}>Save project</button></footer></form></dialog>`:nothing}

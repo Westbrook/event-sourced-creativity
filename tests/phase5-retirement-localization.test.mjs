@@ -3,6 +3,7 @@ import test from "node:test";
 import { createUnusedSceneFixture } from "./helpers/scene-unused-fixture.mjs";
 import { createSceneCostFixture, createSceneStoreHost, accountCachePort, financial, sceneDeferred, eventRequest, appendAuditEvent } from "./helpers/event-source-retirement-fixture.mjs";
 import { createCalmFullPage, calmFullPageNativePorts as ports } from "./helpers/calm-full-page-fixture.mjs";
+import { certifyActualOutputFixtureResumeReads } from "./helpers/output-reachability-fixture.mjs";
 import { FORMA_RESPONSIVE_MESSAGES as copies } from "../src/components/design-system/locales/responsive-messages.ts";
 
 // Full production Shell/Activity classes, Store, Worker, shipped catalogs and
@@ -53,6 +54,13 @@ async function fixture(t, locale, { empty = false } = {}) {
   const original = { events: h.store.events.get(), content: h.store.content.get(), head: h.store.head.get(), session: h.store.session.get() };
   const beforeMoney = financial(worker), requestStart = h.requests.length;
   const full = await createCalmFullPage(t, { locale, storeHost: h });
+  // Certify only captured bootstrap reads against this original Worker/SQL,
+  // before restoring source and changing the destination to Activity.
+  assert.equal(full.storeHost, h, "the full page retains this exact transport host");
+  assert.equal(h.worker, worker, "the transport retains this exact native SQL Worker");
+  assert.equal(h.transport, null, "no synthetic response transport replaces the Worker");
+  assert.equal(h.intercept, null, "no interceptor manufactures the bootstrap response");
+  const isReadOnlyResume = await certifyActualOutputFixtureResumeReads(full);
   // The reusable layout fixture writes synthetic layout state. Restore the
   // exact Worker event/content/session snapshot before any audited observation.
   h.store.events.set(original.events); h.store.content.set(original.content);
@@ -89,7 +97,7 @@ async function fixture(t, locale, { empty = false } = {}) {
   };
   assertReadOnly = () => {
     assert.deepEqual(financial(worker), beforeMoney, "original jobs, exact IDs and all financial rows remain unchanged");
-    assert.deepEqual(h.requests.slice(requestStart).filter(request => request.init.method && request.init.method !== "GET"), [],
+    assert.deepEqual(h.requests.slice(requestStart).filter(request => request.init.method && request.init.method !== "GET" && !isReadOnlyResume(request)), [],
       "presentation/revalidation never submits, retries, runs, acknowledges, or reconciles an operation");
     assert.equal(unexpectedExternalCalls, 0);
   };

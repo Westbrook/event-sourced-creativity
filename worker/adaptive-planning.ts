@@ -1,11 +1,12 @@
 import { adaptiveRequestKey, adaptiveRequestLocale } from "../src/model/adaptive-request.ts";
+import { foldEvents } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { audioRightsAllowed } from "../src/model/audio.ts";
 import { blockIntentFor } from "../src/model/block-types.ts";
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import { prepareDocumentAuthority, readDocumentExecutionAuthority } from "./context-authoring-authority.ts";
-import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "./context-package-rights.ts";
+import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard, type SourceRightsAuthoringSuffix } from "./context-package-rights.ts";
 import { synchronizeProjectScope } from "./project-access.ts";
 import { beginConsequentialStep, canonicalConsent, completeConsequentialExecution, consequentialUsageSettled, consentHash, executionAdmissionGuard, executionContentCustodyGuard, failConsequentialExecution, proveConsequentialStepNotSubmitted, quoteConsequentialExecution, readConsequentialExecution, readConsequentialIntentExecution, reconcileConsequentialUsage, reserveConsequentialSteps, settleConsequentialStep, type ConsequentialBinding, type ConsequentialPreview, type ExecutionRow } from "./consequential-consent.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
@@ -189,17 +190,22 @@ async function materializeAdaptiveReceipt(env:WorkerEnv,row:DocumentJobRow,retai
 }
 /** Purchase-only proof: expiry never invalidates retrieval of an already paid retained result. */
 const sourceRightsDeadlineGuard=(validUntil:string|null):BudgetReservationGuard=>validUntil===null?{sql:"1",bindings:[]}:{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[validUntil]};
-async function prepareFromAuthority(env:WorkerEnv,authority:Authority,settings:Settings):Promise<AdaptivePlanningPrepared>{
+function adaptivePlanningSourceParts(authority:Authority,settings:Settings){
   const{principal,projection,scope,events}=authority,{projectId,documentId,canvasId}=authority.binding;
-  const allowed=scope?hasCapability(principal,"project.author",scope)&&hasCapability(principal,"project.output.request",scope):principal.access.capabilities.includes("project.author")&&principal.access.capabilities.includes("project.output.request");
-  if(!allowed)fail("adaptive_project_denied");
-  const allowance=await pilotExecutionAllowance(env,principal.userId,scope),purchaseUnavailableReasons=allowance.allowed?[]:["adaptive_pilot_denied"];
   const candidates=(settings.projectScope?projection.libraryBlocks:projection.blocks).filter((block)=>block.projectId===projectId&&!block.removed),blocks=candidates.filter(promptFactIsActive),blockIds=new Set(blocks.map((block)=>block.id));
   const relationships=(settings.projectScope?projection.libraryBlockRelations:projection.blockRelations).filter((relation)=>!relation.removed&&blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId));
   const referenceIds=new Set(blocks.map((block)=>String(block.properties.reference_id??"")).filter(Boolean));
   const rights=events.filter((event)=>["RightsAsserted","ReferenceIngested"].includes(event.type)&&referenceIds.has(String(event.payload.reference_id??""))),storageOwner=scope?.ownerUserId??principal.userId;
+  return{candidates,blocks,relationships,rights,storageOwner,title:settings.projectScope?`${projection.projectName} project`:projection.documentTitle,projectId,documentId,canvasId};
+}
+async function adaptivePlanningSourceHash(authority:Authority,settings:Settings){
+  const{projectId,documentId,canvasId,title,blocks,relationships,rights}=adaptivePlanningSourceParts(authority,settings);
+  return consentHash({projectId,documentId,canvasId,title,blocks,relationships,rights:rights.map((event)=>({id:event.eventId,payload:event.payload}))});
+}
+async function adaptivePlanningSourceRights(env:WorkerEnv,authority:Authority,blocks:ReturnType<typeof adaptivePlanningSourceParts>["blocks"],rights:Authority["events"]){
+  const{principal,scope}=authority,storageOwner=scope?.ownerUserId??principal.userId;
   // Never discard a protected or unlicensed active fact merely to make a request fit.
-  const sourceRightsDeadlines:string[]=[];let sourceRightsDispatchProof:BudgetReservationGuard={sql:"1",bindings:[]};
+  const sourceRightsDeadlines:string[]=[];let sourceRightsDispatchProof:BudgetReservationGuard={sql:"1",bindings:[]},governedValidity:Awaited<ReturnType<typeof governedPackageSourceRightsValidity>>|undefined;
   for(const block of blocks){
     const validity=creativeContextRightsValidity(block.properties);
     if(validity.issue)fail("adaptive_source_rights_unavailable");
@@ -217,10 +223,19 @@ async function prepareFromAuthority(env:WorkerEnv,authority:Authority,settings:S
     if(!scope)fail("adaptive_source_rights_unavailable");
     const validity=await governedPackageSourceRightsValidity(env,scope.organizationId,blocks,(source)=>synchronizeProjectScope(env,source));
     if(!validity.current)fail("adaptive_source_rights_unavailable");
-    sourceRightsDispatchProof=sourceRightsDispatchGuard(validity);
+    governedValidity=validity;sourceRightsDispatchProof=sourceRightsDispatchGuard(validity);
     if(validity.validUntil)sourceRightsDeadlines.push(validity.validUntil);
   }
   const sourceRightsValidUntil=sourceRightsDeadlines.length?new Date(Math.min(...sourceRightsDeadlines.map((value)=>Date.parse(value)))).toISOString():null;
+  return{sourceRightsValidUntil,sourceRightsDispatchProof,sourceRightsProofForAuthoring:(suffix:SourceRightsAuthoringSuffix)=>governedValidity?sourceRightsDispatchGuard(governedValidity,suffix):{sql:"1",bindings:[]} as BudgetReservationGuard};
+}
+async function prepareFromAuthority(env:WorkerEnv,authority:Authority,settings:Settings):Promise<AdaptivePlanningPrepared>{
+  const{principal,projection,scope,events}=authority,{projectId,documentId,canvasId}=authority.binding;
+  const allowed=scope?hasCapability(principal,"project.author",scope)&&hasCapability(principal,"project.output.request",scope):principal.access.capabilities.includes("project.author")&&principal.access.capabilities.includes("project.output.request");
+  if(!allowed)fail("adaptive_project_denied");
+  const allowance=await pilotExecutionAllowance(env,principal.userId,scope),purchaseUnavailableReasons=allowance.allowed?[]:["adaptive_pilot_denied"];
+  const{candidates,blocks,relationships,rights,storageOwner}=adaptivePlanningSourceParts(authority,settings);
+  const{sourceRightsValidUntil,sourceRightsDispatchProof}=await adaptivePlanningSourceRights(env,authority,blocks,rights);
   if(allowance.pilot&&!await managedPilotSourceClassificationValid(env,storageOwner,allowance.pilot.cohort_id,blocks,scope?.projectAccessId??""))purchaseUnavailableReasons.push("adaptive_pilot_source_denied");
   const model=env.OPENAI_MODEL??"gpt-5.6-terra";if(!hasKnownTextModelPricing(model))fail("adaptive_model_pricing_unavailable");
   const input:AdaptivePlanningInput={intent:settings.prompt,locale:settings.locale,documentTitle:settings.projectScope?`${projection.projectName} project`:projection.documentTitle,
@@ -230,7 +245,7 @@ async function prepareFromAuthority(env:WorkerEnv,authority:Authority,settings:S
   const bytes=new TextEncoder().encode(JSON.stringify(providerRequest)).byteLength;if(bytes>MAX_REQUEST_BYTES)fail("adaptive_source_too_large");
   // Byte-token upper bound plus framing allowance stays below long-context pricing.
   const inputTokens=bytes+1_024,maximumMicrousd=priceTextUsageBreakdownMicrousd(model,{inputTokens,outputTokens:OUTPUT_TOKENS,totalTokens:inputTokens+OUTPUT_TOKENS}).totalMicrousd;
-  const sourceHash=await consentHash({projectId,documentId,canvasId,title:input.documentTitle,blocks,relationships,rights:rights.map((event)=>({id:event.eventId,payload:event.payload}))});
+  const sourceHash=await adaptivePlanningSourceHash(authority,settings);
   const requestKey=await adaptiveRequestKey({projectId,documentId,canvasId,...settings});
   const intentHash=await consentHash({version:ADAPTIVE_CONSENT_VERSION,operation:OPERATION,actorUserId:principal.userId,streamId:authority.binding.streamId,scope:scope??null,projectId,documentId,canvasId,requestKey,sourceHash,model});
   const request:AdaptiveConsentRequest={schema:1,...settings,requestKey,providerRequest,pricingVersion:"openai-standard-2026-08-27",sourcePolicy:"all-active-authorized-facts-v1",sourceRightsValidUntil};
@@ -247,24 +262,26 @@ export async function preparedAdaptivePlanning(request:Request,env:WorkerEnv,bod
 }
 function sameReadScope(current:ConsequentialBinding,original:ConsequentialBinding){return current.actorUserId===original.actorUserId&&current.streamId===original.streamId&&current.projectId===original.projectId&&current.documentId===original.documentId&&current.canvasId===original.canvasId&&canonicalConsent(current.scope)===canonicalConsent(original.scope);}
 async function readResult(env:WorkerEnv,user:PilotUser,currentBinding:ConsequentialBinding,retained:RetainedConsent,reconcile=true){
-  let proof=joinProof(executionAdmissionGuard(user,currentBinding,null),consentRetentionProof(retained));
+  const proofParts:BudgetReservationGuard[]=[executionAdmissionGuard(user,currentBinding,null),consentRetentionProof(retained)];
+  let proof=joinProof(...proofParts);
   if(!await env.DB.prepare(`SELECT 1 AS readable WHERE ${proof.sql}`).bind(...proof.bindings).first())fail("adaptive_read_authorization_changed");
   if(reconcile)await reconcileConsequentialUsage(env,user.userId,retained.row.execution_id);
   const row=await readConsequentialExecution(env,user.userId,retained.row.execution_id);if(!row)fail("adaptive_execution_unavailable");
   if(row.status!=="quoted"){
     const job=await env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?").bind(row.execution_id,user.userId).first<DocumentJobRow>();
-    if(!job)fail("adaptive_job_unavailable");assertJobBinding(job,retained);proof=joinProof(proof,jobRetentionProof(job,retained.binding));
+    if(!job)fail("adaptive_job_unavailable");assertJobBinding(job,retained);const jobProof=jobRetentionProof(job,retained.binding);proofParts.push(jobProof);proof=joinProof(proof,jobProof);
   }
   const custody=executionContentCustodyGuard(retained.binding),savedCustody=executionContentCustodyGuard(retained.binding,"saved");
   const content=row.result_ref?await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='context-proposal' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${proof.sql} AND ${custody.sql}`).bind(row.result_ref,user.userId,...proof.bindings,...custody.bindings).first<{content:string}>():null;
   if(row.result_ref&&!content)fail("adaptive_result_unavailable");
-  if(content&&row.result_ref)proof=joinProof(proof,{sql:`EXISTS(SELECT 1 FROM consequential_executions execution JOIN private_content saved ON saved.content_id=execution.result_ref AND saved.owner_id=execution.actor_user_id
-    WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.result_ref=? AND saved.kind='context-proposal' AND saved.content=? AND saved.redacted_at IS NULL AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${savedCustody.sql})`,bindings:[row.execution_id,user.userId,row.binding_hash,row.result_ref,content.content,...savedCustody.bindings]});
+  if(content&&row.result_ref){const resultProof:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM consequential_executions execution JOIN private_content saved ON saved.content_id=execution.result_ref AND saved.owner_id=execution.actor_user_id
+    WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.result_ref=? AND saved.kind='context-proposal' AND saved.content=? AND saved.redacted_at IS NULL AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${savedCustody.sql})`,bindings:[row.execution_id,user.userId,row.binding_hash,row.result_ref,content.content,...savedCustody.bindings]};proofParts.push(resultProof);proof=joinProof(proof,resultProof);}
   const result=content?record(JSON.parse(content.content)):null;
   if(result&&(result.executionId!==row.execution_id||result.bindingHash!==row.binding_hash||result.sourceHash!==retained.binding.sourceHash||result.requestKey!==retained.request.requestKey))fail("adaptive_result_identity_invalid");
   const pending=await env.DB.prepare(`SELECT 1 FROM consequential_execution_steps WHERE execution_id=? AND status IN('reserved','submitting','uncertain','usage-recorded') LIMIT 1`).bind(row.execution_id).first();
   if(!await env.DB.prepare(`SELECT 1 AS readable WHERE ${proof.sql}`).bind(...proof.bindings).first())fail("adaptive_read_authorization_changed");
-  return{row,result,serializedResult:content?.content??null,billingStatus:pending?"pending":"settled",proof};
+  // Server-only proof fragments reuse the exact guards above; never serialize them into a response.
+  return{row,result,serializedResult:content?.content??null,billingStatus:pending?"pending":"settled",proof,proofParts:Object.freeze(proofParts)};
 }
 async function retrieve(env:WorkerEnv,authority:Authority,retained:RetainedConsent,ports:AdaptivePlanningPorts,requestedExecutionId=retained.row.execution_id){
   if(!sameReadScope(authority.binding,retained.binding))fail("adaptive_read_scope_denied");
@@ -393,6 +410,53 @@ export async function readAdaptivePlanningJobResult(env:WorkerEnv,user:PilotUser
   const proof=current.proof;if(!await env.DB.prepare(`SELECT 1 AS retained WHERE ${proof.sql}`).bind(...proof.bindings).first())return null;
   return{result:{...current.result,billingStatus:current.billingStatus,quote:{...retained.preview,status:current.row.status,providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:false,canPrepareNew:current.row.status==="completed"&&current.billingStatus==="settled"&&canPrepareNewPlanning(user,readBinding)}},proof};
 }
+/** Read-only bridge for human authorship. It never reconciles usage or materializes a raw provider receipt. */
+export async function readAdaptiveAuthoringProposal(env:WorkerEnv,authority:Authority,executionId:string,bindingHash:string,verifySources=true){
+  const retained=await retainedConsent(env,authority.principal,executionId);
+  if(!retained||retained.row.binding_hash!==bindingHash||!sameReadScope(authority.binding,retained.binding))fail("adaptive_changes_proposal_unavailable");
+  const current=await readResult(env,authority.principal,authority.binding,retained,false);
+  if(current.row.status!=="completed"||!current.result?.structure)fail("adaptive_changes_proposal_unavailable");
+  const structure=decodeAdaptivePlanningResponse(JSON.stringify(current.result.structure));
+  const job=await env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?").bind(executionId,authority.principal.userId).first<DocumentJobRow>();
+  if(!job||!Number.isSafeInteger(job.requested_sequence)||job.requested_sequence<0)fail("adaptive_changes_source_unavailable");
+  assertJobBinding(job,retained);
+  const complete:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM consequential_executions execution JOIN document_jobs job ON job.job_id=execution.execution_id
+    AND job.owner_id=execution.actor_user_id WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=?
+    AND execution.status='completed' AND execution.result_ref IS NOT NULL AND job.requested_sequence=?)`,
+    bindings:[executionId,authority.principal.userId,bindingHash,job.requested_sequence]};
+  let proof=joinProof(current.proof,complete),proofParts:readonly BudgetReservationGuard[]=[...current.proofParts,complete],currentSourceHash:string|null=null,sourceRightsValidUntil=retained.request.sourceRightsValidUntil??null;
+  let proofForAuthoring:(suffix:SourceRightsAuthoringSuffix)=>BudgetReservationGuard=()=>proof;
+  let proofPartsForAuthoring:(suffix:SourceRightsAuthoringSuffix)=>readonly BudgetReservationGuard[]=()=>proofParts;
+  if(verifySources){
+    const historicalEvents=authority.events.filter(event=>event.sequence<=job.requested_sequence);
+    const historical={...authority,events:historicalEvents,projection:foldEvents(historicalEvents,Infinity,retained.binding.documentId,retained.binding.projectId)};
+    if(await adaptivePlanningSourceHash(historical,retained.request)!==retained.binding.sourceHash)fail("adaptive_changes_original_source_unavailable");
+    const original=adaptivePlanningSourceParts(historical,retained.request),present=adaptivePlanningSourceParts(authority,retained.request);
+    const sourceIds=new Set([...original.blocks,...present.blocks].map(block=>String(block.properties.reference_id??"")).filter(Boolean));
+    const rights=authority.events.filter(event=>["RightsAsserted","ReferenceIngested"].includes(event.type)&&sourceIds.has(String(event.payload.reference_id??"")));
+    const licensed=(properties:Record<string,unknown>)=>Object.keys(properties).some(key=>["reference_id","rights_class","rights_status","rights_revoked","source_rights_revoked","source_evidence_hash","source_expires_at","license_expires_at","rights_expires_at"].includes(key));
+    for(const originalBlock of original.blocks){
+      const live=authority.projection.libraryBlocks.find(block=>block.id===originalBlock.id&&block.projectId===authority.binding.projectId&&!block.removed);
+      if((licensed(originalBlock.properties)||originalBlock.type==="reference")&&!live)fail("adaptive_changes_original_source_unavailable");
+      if(live&&creativeContextRightsValidity(live.properties).issue)fail("adaptive_source_rights_unavailable");
+    }
+    const originalRights=await adaptivePlanningSourceRights(env,authority,original.blocks,rights);
+    const currentRights=await adaptivePlanningSourceRights(env,authority,present.blocks,rights);
+    const deadlines=[retained.request.sourceRightsValidUntil??null,originalRights.sourceRightsValidUntil,currentRights.sourceRightsValidUntil];
+    if(deadlines.some(value=>value!==null&&value<=new Date().toISOString()))fail("adaptive_source_rights_unavailable");
+    const deadline:BudgetReservationGuard={sql:"NOT EXISTS(SELECT 1 FROM json_each(?) deadline WHERE deadline.value IS NOT NULL AND deadline.value<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[JSON.stringify(deadlines)]};
+    const immutable=proof,immutableParts=proofParts;
+    proof=joinProof(immutable,originalRights.sourceRightsDispatchProof,currentRights.sourceRightsDispatchProof,deadline);
+    proofParts=[...immutableParts,originalRights.sourceRightsDispatchProof,currentRights.sourceRightsDispatchProof,deadline];
+    proofForAuthoring=(suffix)=>joinProof(immutable,originalRights.sourceRightsProofForAuthoring(suffix),currentRights.sourceRightsProofForAuthoring(suffix),deadline);
+    proofPartsForAuthoring=(suffix)=>[...immutableParts,originalRights.sourceRightsProofForAuthoring(suffix),currentRights.sourceRightsProofForAuthoring(suffix),deadline];
+    const retainedDeadlines=deadlines.filter((value):value is string=>value!==null);sourceRightsValidUntil=retainedDeadlines.length?retainedDeadlines.sort()[0]!:null;
+    currentSourceHash=await adaptivePlanningSourceHash(authority,retained.request);
+  }
+  if(!await env.DB.prepare("SELECT 1 AS adaptive_authoring_source_retained WHERE "+proof.sql).bind(...proof.bindings).first())fail("adaptive_changes_proposal_unavailable");
+  return{structure,proof,proofParts,proofForAuthoring,proofPartsForAuthoring,originalSourceHash:retained.binding.sourceHash,currentSourceHash,originalRightsValidUntil:retained.request.sourceRightsValidUntil??null,sourceRightsValidUntil};
+}
+
 const outputText=(provider:Record<string,unknown>)=>{
   if(typeof provider.output_text==="string")return provider.output_text;
   return(Array.isArray(provider.output)?provider.output:[]).flatMap((item)=>Array.isArray(record(item).content)?record(item).content as unknown[]:[]).filter((item)=>record(item).type==="output_text").map((item)=>typeof record(item).text==="string"?String(record(item).text):"").join("");

@@ -3,9 +3,11 @@ import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages
 import systemMessages from "./system-ar.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
+import { FORMA_OUTCOME_MESSAGES } from "./outcome-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
 
 const messages: Record<string, string> = {
+  ...FORMA_OUTCOME_MESSAGES.ar,
   ...FORMA_NEXT_ACTION_MESSAGES.ar,
   ...FORMA_CONTEXT_CONTROL_MESSAGES.ar,
   ...FORMA_RESPONSIVE_MESSAGES.ar,
@@ -142,6 +144,7 @@ const messages: Record<string, string> = {
   "document.copy.recoveredRevision": "هذه هي المراجعة المحفوظة للطلب الأصلي. قارن اسمها ومجلدها قبل التطبيق. لم يبدأ أي طلب بديل.",
   "document.copy.revisedDraft": "مسودتك المعدّلة غير المرسلة",
   "document.copy.retired": "حُذفت هذه المراجعة دون حفظ نسخة. اختر {done} لإنهاء هذا الطلب. لإنشاء نسخة، ابدأ مراجعة جديدة ثم اختر {apply}.",
+  "document.copy.retiredReadOnly": "حُذفت هذه المراجعة دون حفظ نسخة. اختر {done} لإنهاء هذا الطلب.",
   "document.copy.discard": "تجاهل المعاينة",
   "document.copy.open": "فتح المستند المنسوخ",
   "document.copy.preserved": "يبقى الأصل دون تغيير. تحتفظ النسخة بالقرارات والأقفال والعلاقات المصنّفة ومعلومات الحقوق وأدلة المصدر.",
@@ -362,6 +365,8 @@ const messages: Record<string, string> = {
   "canvas.zoomOut":"تصغير",
   "canvas.zoomIn":"تكبير",
   "canvas.returnToBoard":"العودة إلى اللوحة",
+  "canvas.presence.otherTab": "علامة تبويب أخرى لك · هذا المتصفح",
+  "canvas.presence.localOnly": "آخر موضع على اللوحة من علامة تبويب أخرى لهذا الحساب في هذا المتصفح.",
   "projects.viewerFirstResult":"يمكن لأحد محرري المشروع إنشاء أول نتيجة مشتركة.",
   "generation.contactAdministrator":"تواصل مع مسؤول المشروع",
   "generation.reviewOrganizationSpending":"مراجعة إنفاق المؤسسة",
@@ -746,9 +751,12 @@ const messages: Record<string, string> = {
   "workspace.provenance.source": "السجل الإبداعي المحفوظ",
   "workspace.provenance.close": "إغلاق السجل الإبداعي",
   "workspace.provenance.description": "تم حفظ هذا القرار الإبداعي في مستندك الخاص ويبقى متاحًا للنتائج المستقبلية.",
-  "workspace.provenance.author": "أنشأه",
+  "workspace.provenance.author": "الجهة المسجّلة",
   "workspace.provenance.you": "أنت",
-  "workspace.provenance.assistance": "المساعدة الإبداعية المعتمدة",
+  "workspace.provenance.human": "حساب مستخدم",
+  "workspace.provenance.assistance": "مساعدة نموذج",
+  "workspace.provenance.system": "عملية نظام",
+  "workspace.provenance.unknown": "المصدر غير محدد",
   "workspace.provenance.saved": "وقت الحفظ",
   "workspace.provenance.change": "التغيير الإبداعي",
   "workspace.provenance.technical": "التفاصيل التقنية للهندسة",

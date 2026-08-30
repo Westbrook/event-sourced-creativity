@@ -6,7 +6,7 @@ import { installOutputNavigationFocusNative } from "./helpers/output-navigation-
 import { captureOutputNavigation } from "../src/model/output-navigation.ts";
 const test=(name,run)=>nativeTest(name,async t=>{try{return await run(t);}catch(error){if(typeof error?.stack==="string")error.stack=error.stack.replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/gu,"full-class-fixture");throw error;}});
 const deferred=()=>{let resolve;const promise=new Promise(yes=>{resolve=yes;});return{promise,resolve};};
-const noCommands=f=>assert.deepEqual(f.storeHost.requests.filter(row=>(row.init.method??"GET")!=="GET"),[],"the handoff does not create, preflight, authorize, match, review, or purchase");
+const noCommands=f=>assert.deepEqual(f.storeHost.requests.filter(row=>(row.init.method??"GET")!=="GET"&&!f.isReadOnlyResume(row)),[],"the handoff does not create, preflight, authorize, match, review, or purchase");
 const focusRows=f=>f.trace.filter(value=>/^focus:output-/u.test(value));
 async function canvasPage(t,{locale="en",state="confirmed"}={}){
  const f=await createOutputReachabilityPage(t,{locale,state}),h=f.storeHost,session=f.store.session.get(),documentId=f.outputSnapshot().documentId;

@@ -284,7 +284,7 @@ test("creation, sharing, project editing, and image inspection remain complete a
   assert.match(shell,/result:latestResult\?\?null/);
   assert.match(shell,/text, image, or video providers/);
   assert.match(workspace,/openContextComposer\(\)/);
-  assert.match(workspace,/describeCreativeProposal\(this\.#proposal\.events\)/);
+  assert.match(workspace,/\$\{state\.preview\?\.changes\.map\(\(change\)=>html`<p><bdi>\$\{change\.label\}<\/bdi> · <bdi>\$\{change\.text\}<\/bdi><\/p>`\)\}/,"quick edits render the server preview's exact readable change labels and text");
   assert.match(workspace,/retrieveFewShotExemplars\([^\n]*projectId: this\.store\.projection\.get\(\)\.projectId/);
   assert.doesNotMatch(workspace,/Proposed events · inert until accepted|Expected sequence \$\{this\.store\.head\.get\(\)\}/);
   assert.match(rail,/documentViewFromRoute\(route\)==="document"/);

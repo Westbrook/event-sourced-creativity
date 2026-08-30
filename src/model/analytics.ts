@@ -1,4 +1,5 @@
 import type { CreativeEvent } from "./events.ts";
+import { buildOutcomeTelemetry, type OutcomeTelemetry, type OutcomeTelemetryLiveEvidence } from "./outcome-telemetry.ts";
 import { documentViewForSurface, DOCUMENT_VIEW_LABELS, DOCUMENT_VIEWS } from "./document-view-signals.ts";
 import { normalizePromptTechnique, type PromptTechnique } from "./prompt-structures.ts";
 import { documentSlug } from "./routes.ts";
@@ -32,6 +33,7 @@ export type AnalyticsReport={
   source:{eventCount:number;streamCount:number;truncated:boolean;exactCostReceipts:number;estimatedCostReceipts:number};
   totals:{events:number;users:number;projects:number;documents:number;generations:number;generationSets:number;uploads:number;retainedOutcomes:number;failures:number;costMicrousd:number;activeMinutes:number};
   improvement:AnalyticsInsight[];benefits:AnalyticsInsight[];
+  outcomes:OutcomeTelemetry;
   generations:{quality:Record<"low"|"medium"|"high",number>;techniques:Record<PromptTechnique,number>;fanSets:number;promotions:number;draftPromotions:number;finalizationPreference:Record<PromptTechnique,number>;failed:number;referencePixelUses:number;studyLocks:number;studyCompositions:number};
   artifacts:{completed:number;viewed:number;exported:number;failed:number;medianRenderMs:number|null;p90RenderMs:number|null;byKind:Record<DocumentArtifactKind,number>};
   reliability:{terminalFailures:number;interruptedAttempts:number;retryingInterruptions:number;administrativeStops:number;userCanceled:number;byCategory:Array<{id:AnalyticsFailureCategory;label:string;count:number}>;bySurface:Array<{id:string;label:string;count:number}>};
@@ -100,12 +102,12 @@ function legacyCost(payload:Record<string,unknown>){
 }
 
 function eventCost(payload:Record<string,unknown>){
-  const exact=number(payload.cost_microusd);const breakdown=record(payload.cost_breakdown_microusd);
-  if(exact>0)return{exact:true,total:exact,parts:{planningInput:number(breakdown.text_input_microusd),planningOutput:number(breakdown.text_output_microusd),imagePromptInput:number(breakdown.image_text_input_microusd),referenceImageInput:number(breakdown.image_input_microusd),imageOutput:number(breakdown.image_output_microusd),unclassified:0}};
+  const exact=payload.cost_microusd;const breakdown=record(payload.cost_breakdown_microusd);
+  if(typeof exact==="number"&&Number.isSafeInteger(exact)&&exact>=0)return{exact:true,total:exact,parts:{planningInput:number(breakdown.text_input_microusd),planningOutput:number(breakdown.text_output_microusd),imagePromptInput:number(breakdown.image_text_input_microusd),referenceImageInput:number(breakdown.image_input_microusd),imageOutput:number(breakdown.image_output_microusd),unclassified:0}};
   const estimated=legacyCost(payload);return{exact:false,total:estimated,parts:{planningInput:0,planningOutput:0,imagePromptInput:0,referenceImageInput:0,imageOutput:0,unclassified:estimated}};
 }
 
-export function buildAnalyticsReport(streams:AnalyticsStream[],options:{rangeDays?:number|null;includeSynthetic?:boolean;now?:number;truncated?:boolean;pricingVersion?:string}={}):AnalyticsReport {
+export function buildAnalyticsReport(streams:AnalyticsStream[],options:{rangeDays?:number|null;includeSynthetic?:boolean;now?:number;truncated?:boolean;pricingVersion?:string;outcomeLiveEvidence?:OutcomeTelemetryLiveEvidence}={}):AnalyticsReport {
   const now=options.now??Date.now();const rangeDays=options.rangeDays&&options.rangeDays>0?Math.round(options.rangeDays):null;const rangeStart=rangeDays?new Date(now-rangeDays*86_400_000).toISOString():null;const includeSynthetic=Boolean(options.includeSynthetic);
   const dimensions={organization:new Map<string,DimensionAccumulator>(),user:new Map<string,DimensionAccumulator>(),project:new Map<string,DimensionAccumulator>(),document:new Map<string,DimensionAccumulator>()};
   const projectMeta=new Map<string,{id:string;name:string;userId:string;organizationId:string;fictional:boolean}>();const documentMeta=new Map<string,{id:string;title:string;projectId:string;userId:string;organizationId:string;fictional:boolean;createdAt:string;removed:boolean}>();const blockState=new Map<string,BlockState>();const generationScope=new Map<string,Scope>();const objectGeneration=new Map<string,string>();const compiledBlocks=new Set<string>();
@@ -225,6 +227,7 @@ export function buildAnalyticsReport(streams:AnalyticsStream[],options:{rangeDay
     source:{eventCount:totalEvents,streamCount:selectedStreams.length,truncated:Boolean(options.truncated),exactCostReceipts,estimatedCostReceipts},
     totals:{events:totalEvents,users:new Set(selectedStreams.map((stream)=>stream.userId)).size,projects:projectCount,documents:documentCount,generations:generationCount,generationSets:generationSets.size,uploads,retainedOutcomes,failures,costMicrousd:totalCost,activeMinutes:round(activeMs/60_000,1)},
     improvement,benefits,
+    outcomes:buildOutcomeTelemetry(streams,{now,rangeStart,includeSynthetic,truncated:options.truncated,liveEvidence:options.outcomeLiveEvidence}),
     generations:{quality,techniques,fanSets:fanIds.size,promotions,draftPromotions,finalizationPreference,failed:failures,referencePixelUses,studyLocks,studyCompositions},
     artifacts:{completed:artifactsCompleted,viewed:artifactsViewed,exported:artifactsExported,failed:artifactsFailed,medianRenderMs:percentile(artifactLatencies,.5),p90RenderMs:percentile(artifactLatencies,.9),byKind:artifactByKind},
     reliability:{terminalFailures:failures,interruptedAttempts:interruptionEvents.size,retryingInterruptions,administrativeStops:administrativeStops.size,userCanceled:userCanceled.size,byCategory:reliabilityByCategory,bySurface:reliabilityBySurface},

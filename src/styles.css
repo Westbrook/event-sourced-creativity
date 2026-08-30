@@ -609,9 +609,18 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .proposal-preview > div { min-width: 0; flex: 1; }
 .proposal-preview b, .proposal-preview small { display: block; }
 .proposal-preview small { color: var(--muted); font: var(--type-micro) var(--mono); }
-.proposal-corpus { display: flex; align-items: center; gap: 5px; margin-top: 7px; overflow-x: auto; }
-.proposal-corpus > span { flex: none; color: var(--forest-2); font: var(--type-micro) var(--mono); text-transform: uppercase; }
-.proposal-corpus button { flex: none; padding: 3px 6px; color: #4e5a53; background: var(--mint); border-radius: 4px; font: var(--type-micro) var(--mono); }
+.document-quick-edit-review { min-inline-size: 0; max-inline-size: 100%; margin-block-end: 1rem; }
+.document-quick-edit-review .proposal-preview { align-items: flex-start; flex-wrap: wrap; max-inline-size: 100%; margin: 0; box-shadow: none; }
+.document-quick-edit-review .proposal-preview > div { flex-basis: 100%; }
+.document-quick-edit-review .proposal-preview > button { white-space: normal; }
+details.proposal-corpus { display: block; min-inline-size: 0; margin-block-start: .75rem; border-block-start: 1px solid var(--line); }
+details.proposal-corpus > summary { min-block-size: 44px; padding-block: .75rem; cursor: pointer; overflow-wrap: anywhere; }
+details.proposal-corpus > article { display: grid; min-inline-size: 0; gap: .5rem; padding-block: .75rem; border-block-start: 1px solid var(--line); }
+details.proposal-corpus p { margin: 0; overflow-wrap: anywhere; }
+details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min-block-size: 44px; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.provenance-reference-context { min-inline-size: 0; overflow-wrap: anywhere; }
+.provenance-reference-context p { white-space: pre-wrap; }
+.provenance-reference-context small { display: block; color: var(--muted); }
 .corpus-empty { margin-top: 5px; color: #875940 !important; }
 .inspector-panel { position: fixed; z-index: 40; top: 62px; right: 0; bottom: 0; width: 340px; overflow: auto; padding: 21px; background: var(--panel); border-left: 1px solid var(--line-strong); box-shadow: -16px 0 40px rgba(29,33,29,.13); }
 .inspector-panel header { display: flex; justify-content: space-between; }

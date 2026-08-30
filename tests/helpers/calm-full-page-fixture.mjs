@@ -28,7 +28,39 @@ replacePort('class { observe() {} disconnect() {} }, () => ({ direction: activeF
 replacePort("return \"<\" + tag + \" data-rendered-port=\\\"true\\\"\" + raw + \">\" + child + content + \"</\" + tag + \">\";","return \"<\" + tag + \" data-rendered-port=\\\"true\\\" data-fixture-component=\" + this.reference(id,owner) + raw + \">\" + child + content + \"</\" + tag + \">\";");
 fixtureModule=fixtureModule.replaceAll("instance.updated?.();","instance.updated?.(new Map());");
 replacePort('const child = this.value(instance.render(), instance, id, caches);','const child = typeof instance.render==="function"?this.value(instance.render(), instance, id, caches):serializeNative(instance.children??[],this,instance);');
+// Observe only the actual factory return inside an explicitly opted-in host construction.
+replacePort("else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });","else if (/\\/adaptive-proposal-review(?:\\.ts)?$/u.test(specifier)) {\n      const actual = await loadActual(\"src/components/adaptive-proposal-review.ts\");\n      dependencies.set(specifier, { ...actual, createAdaptiveProposalReview(...args) {\n        const controller = Reflect.apply(actual.createAdaptiveProposalReview, this, args);\n        if (adaptiveProposalConstruction) {\n          assert.equal(args[0], adaptiveProposalConstruction.fixture.store, \"observe the actual owning Store argument\");\n          assert.ok(controller instanceof actual.AdaptiveProposalReviewController, \"observe the actual factory result\");\n          adaptiveProposalConstruction.controllers.push(controller);\n        }\n        return controller;\n      } });\n    }\n    else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });");
+replacePort('const instance = new this.registry[tag]();','const instance = constructObservedComponent(this.fixture, tag, this.registry[tag]);');
 const fullPageNativePorts=String.raw`
+// Opt-in read-only observation of the exact controller constructed by the
+// current complete host. Neither host nor controller gains an accessor.
+const adaptiveProposalControllers = new WeakMap();
+let adaptiveProposalConstruction;
+function constructObservedComponent(fixture, tag, Constructor) {
+  if (!fixture.observeAdaptiveProposals || !["forma-canvas-surface", "forma-adaptive-path"].includes(tag)) return new Constructor();
+  const previous = adaptiveProposalConstruction, capture = { fixture, controllers: [] };
+  adaptiveProposalConstruction = capture;
+  let instance;
+  try { instance = new Constructor(); }
+  finally { adaptiveProposalConstruction = previous; }
+  assert.equal(instance.fixture, fixture, "actual complete host uses this fixture");
+  assert.equal(capture.controllers.length, 1, "one original factory invocation belongs to this host construction");
+  assert.equal(adaptiveProposalControllers.has(instance), false);
+  adaptiveProposalControllers.set(instance, capture.controllers[0]);
+  return instance;
+}
+function readAdaptiveProposalEvidence(host) {
+  assert.equal(host?.fixture?.observeAdaptiveProposals, true, "controller observation was explicitly enabled");
+  const value = adaptiveProposalControllers.get(host), store = host.store;
+  assert.ok(value, "the actual host/controller pair was observed during native construction");
+  // Freeze only the evidence envelope. preview identity is itself an original
+  // regression observation; never clone or freeze controller-owned objects.
+  return Object.freeze({visible:value.visible,busy:value.busy,phase:value.phase,notice:value.notice,
+    presentationId:value.presentationId,uncertain:value.uncertain,executionId:value.executionId,bindingHash:value.bindingHash,
+    handle:value.handle,preview:value.preview,receipt:value.receipt,originalCount:value.originals.length,
+    canEdit:value.canEdit,canPreview:value.canPreview,canApply:value.canApply,outputEditorRequired:value.outputEditorRequired,
+    draftCount:value.drafts.length,canAuthor:Boolean(value.ports.scope()?.canAuthor),policyAccepted:store.session.get()?.policy.accepted===true});
+}
 class FixtureObserver {constructor(callback){this.callback=callback;}observe(){}unobserve(){}disconnect(){}}
 class FixtureResizeObserver extends FixtureObserver {observe(element){activeFixture?.resizeTargets.set(this,element);}disconnect(){activeFixture?.resizeTargets.delete(this);}}
 const fixtureStorage={getItem:key=>activeFixture?.storage.get(key)??null,setItem:(key,value)=>activeFixture?.storage.set(key,String(value)),removeItem:key=>activeFixture?.storage.delete(key)};
@@ -71,14 +103,15 @@ windowPort.visualViewport={width:790,height:882,offsetLeft:0,offsetTop:0,addEven
 moduleCache.set("src/route-loader.ts",{loadRouteComponent:async route=>activeFixture?.trace.push("route-module:"+route)});
 `;
 replacePort("const { FormaUiPopover } = await loadActual",fullPageNativePorts+"\nconst { FormaUiPopover } = await loadActual");
-fixtureModule+="\nexport {RendererPort,ElementPort,loadActual,documentPort,windowPort,FormaLocaleController,FORMA_DEFAULT_MESSAGES,localeCatalogs,moduleCache,FixtureObserver};\nexport function bindFixture(value){activeFixture=value;}\n";
+fixtureModule+="\nexport {RendererPort,ElementPort,loadActual,documentPort,windowPort,FormaLocaleController,FORMA_DEFAULT_MESSAGES,localeCatalogs,moduleCache,FixtureObserver,readAdaptiveProposalEvidence};\nexport function bindFixture(value){activeFixture=value;}\n";
 const ports=await import("data:text/javascript;base64,"+Buffer.from(fixtureModule).toString("base64"));
 // Expose native DOM ports for focused host extensions; component implementations stay actual.
 export { ports as calmFullPageNativePorts };
+export const readAdaptiveProposalEvidence = ports.readAdaptiveProposalEvidence;
 const componentManifest=JSON.parse(fs.readFileSync(new URL("../../custom-elements.json",import.meta.url),"utf8"));
 const componentModules=new Map(componentManifest.modules.flatMap(module=>(module.declarations??[]).filter(declaration=>declaration.tagName).map(declaration=>[declaration.tagName,{file:module.path,name:declaration.name}])));
 export const STUDY_SHAPED_TYPES=Object.freeze(["direction","audience","message","format","exclusion","subject","environment","emotion","style","composition","accessibility","direction","direction","audio"]);
-export async function createCalmFullPage(t,{locale="en",reader=false,assistant=false,storeHost:providedStoreHost=null}={}){
+export async function createCalmFullPage(t,{locale="en",reader=false,assistant=false,storeHost:providedStoreHost=null,observeAdaptiveProposals=false}={}){
   const storeHost=providedStoreHost??await createSceneStoreHost();t.after(()=>storeHost.close());
   const store=storeHost.store,id=storeHost.request.documentId,projectId=storeHost.worker.projectId;
   const events=store.events.get().filter(event=>event.payload.document_id!==id||event.type==="DocumentCreated");
@@ -88,7 +121,7 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
   const session=store.session.get();
   store.session.set({...session,...(assistant?{assistant:{enabled:true,phase:"read-only",capabilities:["project.assistant.read"]}}:{assistant:undefined}),
     ...(reader?{projectContext:{organizationId:"synthetic-org",projectAccessId:"synthetic-access",projectId,ownerUserId:session.user.userId,role:"viewer",permissions:["project.read"],expiresAt:new Date(Date.now()+3600_000).toISOString()}}:{})});
-  const f={store,storeHost,locale,trace:[],clipboard:[],listeners:new Map(),changed:new Map(),steps:0,requested:false,resizeTargets:new Map(),frames:new Map(),timers:new Map(),timerSequence:0,storage:new Map()};
+  const f={store,storeHost,locale,observeAdaptiveProposals,trace:[],clipboard:[],listeners:new Map(),changed:new Map(),steps:0,requested:false,resizeTargets:new Map(),frames:new Map(),timers:new Map(),timerSequence:0,storage:new Map()};
   ports.bindFixture(f);
   const messages={...ports.FORMA_DEFAULT_MESSAGES,...ports.localeCatalogs[locale]};
   f.i18n=new ports.FormaLocaleController({addController(){},requestUpdate(){},dispatchEvent(event){event.callback({locale,formatLocale:locale,direction:locale==="ar"?"rtl":"ltr",timeZone:"UTC",messages,revision:1},()=>{});return true;}});
@@ -146,7 +179,7 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
   f.find=(tag,predicate)=>{const found=f.tree().visible(tag).filter(predicate);assert.equal(found.length,1,"one visible "+tag+" matches predicate");return found[0];};
   f.act=async(node,eventName="click",event={})=>{assert.ok(!node.hiddenBy,"cannot use a hidden control");assert.ok(node.port,"exact native control port exists");assert.ok(!Object.hasOwn(node.attributes,"disabled"),"executor is not disabled");const handler=node.handlers[eventName];assert.equal(typeof handler,"function","actual "+eventName+" handler");await handler.call(node.owner,{target:node.port,currentTarget:node.port,preventDefault(){},stopPropagation(){},...event});await f.settle();};
   await f.settle();
-  assert.equal(store.projection.get().blocks.length,14);
+  assert.equal(STUDY_SHAPED_TYPES.filter((type,index)=>store.projection.get().blocks.some(block=>block.id==="synthetic-"+index&&block.type===type)).length,14);
   return f;
 }
 

@@ -105,7 +105,7 @@ export function canvasQueueDatabase(){
 export function canvasLegacySourceOwnership(store){
   const source=fs.readFileSync(new URL("../../src/state/store.ts",import.meta.url),"utf8"),tree=ts.createSourceFile("store.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
   const owner=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="FormaStore");
-  const names=["#sourceGeneration","#sourceRetired","#sourceOwners","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceDeadlineCurrent","#sourceExpiryValid"];
+  const names=["#sourceGeneration","#sourceRetired","#sourceOwners","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceDeadlineCurrent","#sourceExpiryValid","#planningRecoverySequence","captureAdaptiveProposalRead"];
   const members=names.map(name=>{const member=owner.members.find(node=>node.name?.getText(tree)===name);assert.ok(member,"actual Store source member "+name);return member.getText(tree);});
   // Legacy component tests retain their original mock authorization boundary,
   // but the new source ownership methods/brand are read byte-for-byte from Store.

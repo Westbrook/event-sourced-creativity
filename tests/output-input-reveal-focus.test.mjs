@@ -50,7 +50,9 @@ async function fixture(t,locale="en",{warm=true,derived=false}={}){
     return{pending,callback:frame?.[1].callback,run(){if(!frame)return false;for(const[key,timer]of host.timers)if(timer.callback===frame[1].callback){host.timers.delete(key);timer.callback();return true;}return false;},
       runCaptured(){if(frame){for(const[key,timer]of host.timers)if(timer.callback===frame[1].callback)host.timers.delete(key);frame[1].callback();}},remaining(){return frame?[...host.timers.values()].filter(timer=>timer.callback===frame[1].callback).length:0;}};
   };
-  const noCommands=from=>assert.deepEqual(host.requests.slice(from).filter(row=>(row.init.method??"GET")!=="GET"),[],"no authored/paid API command");
+  // An owned Canvas-to-Document arrival can mount Workspace and resume its
+  // exact current-document read. Reuse only the fixture's recorded-init classifier.
+  const noCommands=from=>assert.deepEqual(host.requests.slice(from).filter(row=>(row.init.method??"GET")!=="GET"&&!f.isReadOnlyResume(row)),[],"no authored/paid API command");
   return{f,host,native,select,controls,language,pane,target,start,noCommands};
 }
 const gestureModes=["control","focus","pointerdown","keydown","focus-away-body","selection-aba","editing-aba","route-aba","same-route-navigation","new-request"];

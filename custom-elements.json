@@ -2635,7 +2635,7 @@
               "kind": "field",
               "name": "guidanceDelivery",
               "type": {
-                "text": "\"\" | \"sending\" | \"uncertain\""
+                "text": "\"\" | \"uncertain\" | \"sending\""
               },
               "attribute": "guidancedelivery"
             },
@@ -2821,7 +2821,7 @@
               "name": "guidancedelivery",
               "fieldName": "guidanceDelivery",
               "type": {
-                "text": "\"\" | \"sending\" | \"uncertain\""
+                "text": "\"\" | \"uncertain\" | \"sending\""
               }
             },
             {
@@ -11665,7 +11665,7 @@
               "kind": "field",
               "name": "resourceState",
               "type": {
-                "text": "\"loading\" | \"unavailable\" | \"ready\" | \"refreshing\""
+                "text": "\"loading\" | \"ready\" | \"refreshing\" | \"unavailable\""
               },
               "default": "\"loading\""
             },
@@ -11845,7 +11845,7 @@
               "kind": "field",
               "name": "surface",
               "type": {
-                "text": "\"document\" | \"deliver\" | \"project\""
+                "text": "\"document\" | \"project\" | \"deliver\""
               }
             }
           ],

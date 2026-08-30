@@ -3,9 +3,11 @@ import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages
 import systemMessages from "./system-ja.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
+import { FORMA_OUTCOME_MESSAGES } from "./outcome-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
 
 const messages: Record<string, string> = {
+  ...FORMA_OUTCOME_MESSAGES.ja,
   ...FORMA_NEXT_ACTION_MESSAGES.ja,
   ...FORMA_CONTEXT_CONTROL_MESSAGES.ja,
   ...FORMA_RESPONSIVE_MESSAGES.ja,
@@ -142,6 +144,7 @@ const messages: Record<string, string> = {
   "document.copy.recoveredRevision": "これは元の依頼に対して保存されたレビューです。適用する前に名前とフォルダーを確認してください。代わりの依頼は開始されていません。",
   "document.copy.revisedDraft": "未送信の変更済み下書き",
   "document.copy.retired": "このレビューはコピーを保存せずに消去されました。{done} を選択してこのリクエストを終了してください。コピーを作成する場合は、新しいレビューを開始してから {apply} を選択してください。",
+  "document.copy.retiredReadOnly": "このレビューはコピーを保存せずに消去されました。{done} を選択してこのリクエストを終了してください。",
   "document.copy.discard": "プレビューを破棄",
   "document.copy.open": "コピーしたドキュメントを開く",
   "document.copy.preserved": "元のドキュメントは変更されません。コピーには判断、ロック、型付きの関係、権利情報、出典の証拠が保持されます。",
@@ -362,6 +365,8 @@ const messages: Record<string, string> = {
   "canvas.zoomOut":"縮小",
   "canvas.zoomIn":"拡大",
   "canvas.returnToBoard":"ボードに戻る",
+  "canvas.presence.otherTab": "別のタブ · このブラウザー",
+  "canvas.presence.localOnly": "このブラウザーで同じアカウントを使用する別のタブの、ボード上の最後の位置です。",
   "projects.viewerFirstResult":"プロジェクトの編集権限を持つメンバーが、最初の共有結果を作成できます。",
   "generation.contactAdministrator":"プロジェクト管理者に問い合わせる",
   "generation.reviewOrganizationSpending":"組織の利用額を確認",
@@ -746,9 +751,12 @@ const messages: Record<string, string> = {
   "workspace.provenance.source": "保存済みのクリエイティブ履歴",
   "workspace.provenance.close": "クリエイティブ履歴を閉じる",
   "workspace.provenance.description": "このクリエイティブな判断は非公開のドキュメントに保存され、今後の成果にも引き続き活用できます。",
-  "workspace.provenance.author": "作成者",
+  "workspace.provenance.author": "記録上の実行者",
   "workspace.provenance.you": "あなた",
-  "workspace.provenance.assistance": "承認済みのクリエイティブ支援",
+  "workspace.provenance.human": "ユーザーアカウント",
+  "workspace.provenance.assistance": "モデルによる支援",
+  "workspace.provenance.system": "システム処理",
+  "workspace.provenance.unknown": "作成元を特定できません",
   "workspace.provenance.saved": "保存済み",
   "workspace.provenance.change": "クリエイティブの変更",
   "workspace.provenance.technical": "エンジニアリング向けの技術情報",

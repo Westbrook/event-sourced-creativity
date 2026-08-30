@@ -72,7 +72,7 @@ for(const state of ["unconfirmed","confirmed","multi-target","unknown","reviewer
  }
  assert.equal(tree.nodes.filter(node=>withinOutput(node)&&Object.hasOwn(node.attributes,"popover")).length,0,"genuine inline work is not turned into a menu");
  assert.ok(tree.nodes.filter(node=>node.tag==="forma-output-requirement-card").every(node=>node.component&&node.children.some(child=>typeof child!=="string")));
- assert.equal(f.outputRequests.filter(request=>request.method!=="GET").length,0);
+ assert.equal(f.outputRequests.filter(request=>request.method!=="GET"&&!f.isReadOnlyResume(request)).length,0);
  t.diagnostic(JSON.stringify({state,surface,locale,page:tree.controls(),output:f.outputControls(),targets:tree.nodes.filter(node=>node.attributes["data-output-target"]).length}));
 });
 
@@ -100,7 +100,7 @@ for(const surface of ["document","deliver"])test("unavailable Output transport s
  assert.equal(f.outputCards().length,0,"the actual unknown-response branch does not fabricate requirement cards");
  assert.equal(f.outputTree().filter(node=>node.attributes["data-output-target"]).length,0);
  assert.ok(f.outputTree().some(node=>node.attributes.role==="alert"&&!node.hiddenBy));
- assert.equal(f.outputRequests.filter(request=>request.method!=="GET").length,0);
+ assert.equal(f.outputRequests.filter(request=>request.method!=="GET"&&!f.isReadOnlyResume(request)).length,0);
 });
 
 for(const surface of ["document","deliver"])test("retained uncertain operation receipt is not hidden or remounted by disclosure on "+surface,async t=>{
@@ -119,7 +119,7 @@ for(const surface of ["document","deliver"])test("retained uncertain operation r
  f.toggleSummary(provenance.children.find(node=>typeof node!=="string"&&node.tag==="summary"));
  assert.deepEqual(f.outputControllers(),instances);
  assert.equal(JSON.stringify(FIXTURE_DOCUMENT_IDS.map(id=>f.adapter.snapshot(id))),before);
- assert.equal(f.outputRequests.filter(request=>request.method!=="GET").length,0);
+ assert.equal(f.outputRequests.filter(request=>request.method!=="GET"&&!f.isReadOnlyResume(request)).length,0);
  assert.ok(receipts.every(receipt=>f.tree().nodes.find(node=>node.port===receipt.port).open));
 });
 
@@ -132,7 +132,7 @@ for(const surface of ["document","deliver"])for(const locale of ["en","fr","ar",
  assert.ok(fields.length);assert.ok(fields.some(node=>node.attributes.name==="originalText"&&node.port.value===card.snapshot.originalText),"real live() value is preserved");
  assert.ok(f.outputControls().textarea>before.textarea);
  summaryContract(f.tree());
- assert.equal(f.outputRequests.filter(request=>request.method!=="GET").length,0);
+ assert.equal(f.outputRequests.filter(request=>request.method!=="GET"&&!f.isReadOnlyResume(request)).length,0);
  t.diagnostic("Expanded child editor: "+JSON.stringify(f.outputControls())+"; all fields counted, not a stub or collapsed-only claim.");
 });
 
@@ -195,6 +195,6 @@ for(const surface of ["document","deliver"])test("native disclosure retains the 
  assert.equal(commands.length,2);assert.deepEqual(commands[1],commands[0],"the actual private uncertainCommand survives native disclosure; exact mutation ID and revision are reused");
  assert.equal(responses[1].replayed,true,"the actual domain fixture returns its original saved receipt");
  assert.equal(f.outputSnapshot(controller.documentId).confirmedPlan.revisionId,responses[0].snapshot.confirmedPlan.revisionId);
- const writes=f.outputRequests.filter(request=>request.method!=="GET");
+ const writes=f.outputRequests.filter(request=>request.method!=="GET"&&!f.isReadOnlyResume(request));
  assert.equal(writes.length,2);assert.ok(writes.every(request=>JSON.parse(request.body).action==="confirm"),"only the two explicit free confirmation attempts occurred; no preflight, grant or paid run");
 });

@@ -1,3 +1,4 @@
+import { validWorkspaceQuickEditEvents } from "../src/model/workspace-local-proposal.ts";
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { FORMA_CAPABILITIES, type FormaCapability } from "../src/platform/capabilities.ts";
@@ -937,7 +938,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
-  authoringOperation?:"context-proposal"|"document-duplicate"|"canvas-arrangement";
+  authoringOperation?:"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
@@ -946,7 +947,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if(atomicSidecars?.authoringOperation&&(!atomicSidecars.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)
     ||(atomicSidecars.authoringOperation==="canvas-arrangement"
       ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
-      : original.some((event)=>!["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"].includes(String(event.type))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
+      : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
   const assistantAcceptance=atomicSidecars?.assistantAcceptance;
   if(assistantAcceptance){
     const accepted=original[0],mutation=original[1],payload=accepted?.payload??{};
@@ -1070,7 +1071,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const canvasAction=action==="canvas_sync"||original.some((event)=>PROJECT_CANVAS_MUTATION_TYPES.has(String(event.type??""))||Boolean(event.payload?.canvas_id));
   if(canvasAction&&!hasCapability(principal,"project.canvas.use",{organizationId:context.organizationId,projectAccessId:context.projectAccessId}))return Response.json({error:"project_canvas_access_required"},{status:403});
-  const maximumEvents=atomicSidecars?.authoringOperation==="canvas-arrangement"?CANVAS_ARRANGEMENT_MAX_EVENTS:atomicSidecars?.authoringOperation?512:action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
+  const maximumEvents=atomicSidecars?.authoringOperation==="canvas-arrangement"?CANVAS_ARRANGEMENT_MAX_EVENTS:atomicSidecars?.authoringOperation==="workspace-quick-edit"?2:atomicSidecars?.authoringOperation?512:action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
   if(!original.length||original.length>maximumEvents)return Response.json({error:"invalid_project_event_batch",maximum:maximumEvents},{status:400});
   if(action==="canvas_sync"&&original.some((event)=>!String(event.payload?.client_event_id??"")))return Response.json({error:"client_event_id_required"},{status:400});
   if(original.some((event)=>event.type==="ArtifactApproved")&&original.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??""))))return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
@@ -1199,7 +1200,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
   }
   for(const [index,event] of incoming.entries()){
-    if(assistantAcceptance&&index===0&&event.type==="ProposalAccepted")continue;
+    if((assistantAcceptance||atomicSidecars?.authoringOperation==="workspace-quick-edit")&&index===0&&event.type==="ProposalAccepted")continue;
     const reason=await validateProjectMutation(env,context,event,pending,principal,canvasAction);if(reason)return Response.json({error:reason},{status:403});
     if(reviewEvents&&ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??""))){
       const type=String(event.type),artifactId=String(event.payload?.artifact_id??"");

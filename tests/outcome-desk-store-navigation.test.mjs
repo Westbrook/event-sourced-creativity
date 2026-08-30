@@ -10,7 +10,7 @@ async function navigationFixture(t){
  const session=structuredClone(f.store.session.get()),source="/canvas/board-original/board-original?posture=outcomes&outcome=target%3Aoriginal",destination=documentContextBlockRoute(doc,"Synthetic Document A",block);
  f.store.route.set(source);h.location.pathname="/canvas/board-original/board-original";h.location.search="?posture=outcomes&outcome=target%3Aoriginal";
  const previousHistory=globalThis.history,historyWrites=[];globalThis.history={pushState(_state,_unused,url){historyWrites.push(url);const next=new URL(url,"http://localhost");Object.assign(h.location,{pathname:next.pathname,search:next.search,hash:next.hash});},replaceState(_state,_unused,url){this.pushState(_state,_unused,url);}};
- t.after(()=>{globalThis.history=previousHistory;assert.deepEqual(h.requests.filter(row=>(row.init.method??"GET")!=="GET"),[],"navigation never writes events, purchases, or settles costs");});
+ t.after(()=>{globalThis.history=previousHistory;assert.deepEqual(h.requests.filter(row=>(row.init.method??"GET")!=="GET"&&!f.isReadOnlyResume(row)),[],"navigation never writes events, purchases, or settles costs");});
  return{...f,h,doc,session,source,destination,historyWrites};
 }
 test("actual Store optional Desk guard allows one deliberate Canvas→Creator transition without writes",async t=>{

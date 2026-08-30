@@ -1041,6 +1041,14 @@ The ten-impression floor permits review; it is not automatic proof. Phases 8 and
 - Collection filters affect retrieval without mutating authored organization.
 - Replacing the embedding model requires no rewrite of durable events.
 
+Current implementation qualification: project-scoped precedent search is
+available in Library. Local quick edits use deterministic rules, not a model;
+read-only reference inspection is not evidence that a chat request includes
+retrieved exemplars. The cited-chat done condition above remains unverified,
+not satisfied or removed. The new local-rule acceptance receipt is also not
+automatically a legacy accepted-command exemplar; that extension requires its
+own indexing and citation verification.
+
 ### Do not
 
 - Treat similarity as taste.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { enforceD1ExpressionDepth } from "./d1-expression-depth.mjs";
 import { createCalmFullPage, fullPageTree } from "./calm-full-page-fixture.mjs";
 import { createSceneStoreHost } from "./scene-cost-store-host.mjs";
 import { createOutputControllerFixture, FIXTURE_DOCUMENT_IDS, FIXTURE_ACTOR, FIXTURE_PROJECT, FIXTURE_PROJECT_ACCESS } from "../output-controller-fixture-model.mjs";
@@ -20,6 +21,47 @@ const liveType=live("")._$litDirective$;
 const isWithin=(node,ancestor)=>{for(let current=node;current;current=current.parent)if(ancestor(current))return true;return false;};
 export const withinOutput=node=>isWithin(node,current=>current.tag==="forma-output-requirements");
 
+
+/** Test transport classification only; never an application permission or server receipt. */
+export function isOutputFixtureReadOnlyResume(request, scope) {
+  if (request?.url !== "/api/workspace/quick-edit" || request?.init?.method !== "POST"
+    || typeof request.init.body !== "string" || !scope?.projectId || !scope?.documentId) return false;
+  let body; try { body = JSON.parse(request.init.body); } catch { return false; }
+  return Boolean(body && typeof body === "object" && !Array.isArray(body)
+    && JSON.stringify(Object.keys(body).sort()) === JSON.stringify(["action","documentId","projectId"])
+    && body.action === "resume" && body.projectId === scope.projectId && body.documentId === scope.documentId);
+}
+
+
+/** Exact existing requests, replayed against the fixture's real Worker and SQL.
+ * This certifies only these captured resume reads; later or cloned requests
+ * must not inherit an exemption merely because their URL or body resembles one.
+ */
+export async function certifyActualOutputFixtureResumeReads(f) {
+  const scope={projectId:f.store.projection.get().projectId,documentId:f.store.projection.get().documentId};
+  const captured=new Map(),worker=f.storeHost.worker;
+  const requests=f.storeHost.requests.filter(request=>(request.init.method??"GET")!=="GET");
+  if(!requests.length)return()=>false; // A read-only actor mounted no resume; certify nothing.
+  const before=worker.sqlite.prepare("SELECT total_changes() AS changes").get().changes;
+  const depth=enforceD1ExpressionDepth({env:worker.env,sqlite:worker.sqlite});
+  try {
+    for(const request of requests){
+      assert.ok(isOutputFixtureReadOnlyResume(request,scope),"all other non-GET requests remain forbidden");
+      const body=request.init.body;
+      const response=await worker.request(request.url,request.init);
+      assert.equal(response.status,200);assert.equal((await response.json()).status,"none");
+      assert.equal(request.init.body,body,"the exact captured input is unchanged");
+      captured.set(request,{body,scope});
+    }
+    assert.equal(worker.sqlite.prepare("SELECT total_changes() AS changes").get().changes,before);
+    depth.assertVerified();
+  } finally { depth.restore(); }
+  return request=>{
+    const proof=captured.get(request);
+    return Boolean(proof&&request.init.body===proof.body&&isOutputFixtureReadOnlyResume(request,proof.scope));
+  };
+}
+
 function syntheticSession(state) {
   const reviewing=state==="reviewer"||state==="read-only";
   const permissions=reviewing?["project.read",...(state==="reviewer"?["project.review.approve"]:[])]:[...CREATOR_CAPABILITIES];
@@ -36,7 +78,7 @@ function syntheticSession(state) {
   };
 }
 
-export async function createOutputReachabilityPage(t,{state="confirmed",surface="document",locale="en",unavailable=false}={}) {
+export async function createOutputReachabilityPage(t,{state="confirmed",surface="document",locale="en",unavailable=false,retainedOriginalRequests=null}={}) {
   assert.ok(Object.hasOwn(OUTPUT_REACHABILITY_STATES,state));
   assert.ok(["document","deliver"].includes(surface));
   const previousFetch=globalThis.fetch,external=[];
@@ -48,13 +90,31 @@ export async function createOutputReachabilityPage(t,{state="confirmed",surface=
   const append=(type,payload)=>events.push({eventId:"output-reachability-seed-"+events.length,streamId,sequence:events.length+1,occurredAt:"2026-08-27T00:00:00Z",recordedAt:"2026-08-27T00:00:00Z",actor:"user",correlationId:"synthetic-output-reachability",type,payload});
   append("ProjectCreated",{project_id:FIXTURE_PROJECT,name:"Synthetic Output project"});
   for(const [index,id] of FIXTURE_DOCUMENT_IDS.entries())append("DocumentCreated",{project_id:FIXTURE_PROJECT,document_id:id,title:"Synthetic Document "+String.fromCharCode(65+index)});
-  const requests=[],unexpected=[];
+  const requests=[],unexpected=[],readOnlyResumes=new Map();
+  let storeHost;
+  const isReadOnlyResume=request=>{
+    // Optional fixture setup evidence, never an application permission. The
+    // caller records only the exact original POST already validated by Store.
+    const original=retainedOriginalRequests?.get(request);
+    if(original&&request.init===original.init&&request.url==="/api/document-jobs/adaptive"
+      &&request.init.method==="POST"&&request.init.body===original.body)return true;
+    const scope=readOnlyResumes.get(request.init??request);const value=request.init?request:{url:request.path+(request.search??""),init:{method:request.method,body:request.body}};return Boolean(scope&&isOutputFixtureReadOnlyResume(value,scope));
+  };
   const workerFixture={
     projectId:FIXTURE_PROJECT,documentId:FIXTURE_DOCUMENT_IDS[0],owner:FIXTURE_ACTOR,streamId,
     requestId:"unused-scene-fixture",payload:{workflowSources:[]},events,contentRef:"",content:"",close(){},
     async request(input,init={}){
-      const url=new URL(String(input),"https://fixture.invalid"),method=init.method??"GET";requests.push({path:url.pathname,search:url.search,method,body:init.body});
+      const url=new URL(String(input),"https://fixture.invalid"),method=init.method??"GET",entry={path:url.pathname,search:url.search,method,body:init.body};requests.push(entry);
       if(url.pathname.startsWith("/api/output-requirements"))return unavailable&&method==="GET"?Response.json({error:"output_client_load_failed"},{status:503}):adapter.fetch(url.pathname+url.search,init);
+      if(url.pathname==="/api/workspace/quick-edit"){
+        const projection=storeHost?.store.projection.get(),scope=projection?{projectId:projection.projectId,documentId:projection.documentId}:null;
+        const request={url:url.pathname+url.search,init};
+        assert.ok(isOutputFixtureReadOnlyResume(request,scope),"only the exact current-destination free resume is a read");
+        readOnlyResumes.set(init,scope);readOnlyResumes.set(entry,scope);
+        // Explicitly synthetic empty-state evidence, not a routed server resume
+        // or custody/recovery proof. The actual backend has separate SQLite tests.
+        return Response.json({status:"none"});
+      }
       assert.equal(method,"GET","non-Output transport is read-only");
       if(url.pathname==="/api/session")return Response.json(session);
       if(url.pathname==="/api/events")return Response.json({events,head:events.length,content:{}});
@@ -66,11 +126,11 @@ export async function createOutputReachabilityPage(t,{state="confirmed",surface=
       unexpected.push(url.pathname);throw Error("Unimplemented read-only full-page transport: "+url.pathname);
     },
   };
-  const storeHost=await createSceneStoreHost({workerFixture});
+  storeHost=await createSceneStoreHost({workerFixture});
   t.after(()=>assert.deepEqual(storeHost.requests.filter(request=>
-    (request.init.method??"GET")!=="GET"
+    (request.init.method??"GET")!=="GET"&&!isReadOnlyResume(request)
     && !(request.url==="/api/output-requirements"&&request.init.method==="POST"&&request.body?.action==="confirm")),
-  [],"all actual Store transports are read-only except explicit free confirmations; no events, grant or provider driver"));
+  [],"actual Store transports are reads or explicit free confirmations, never events, grants or provider work"));
 
   // The supplied store keeps the production authority, fold, wrappers and
   // OutputRequirementsClient; this factory creates no Scene database.
@@ -83,6 +143,7 @@ export async function createOutputReachabilityPage(t,{state="confirmed",surface=
     for(const [key,value] of Object.entries(parsed.properties))if(value?._$litDirective$===liveType)parsed.properties[key]=value.values[0];
     return parsed;
   };
+  f.isReadOnlyResume=isReadOnlyResume;
   f.adapter=adapter;f.outputRecords=records;f.outputRequests=requests;f.outputState=state;f.outputSurface=surface;
   for(const id of FIXTURE_DOCUMENT_IDS){
     const snapshot=adapter.snapshot(id),row=snapshot.requirements[0];

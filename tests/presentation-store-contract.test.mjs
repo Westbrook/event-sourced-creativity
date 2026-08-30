@@ -117,6 +117,9 @@ export class PresentationStoreHarness {
   ${actualMethod("#referencedPlanningJobIds")}
   ${actualMethod("#trimDocumentJobDetails")}
   ${actualMethod("#withdrawAdaptiveRead")}
+  ${actualMethod("#publicDocumentJobDetail")}
+  ${actualMethod("#adaptiveProposalOriginalMatches")}
+  ${actualMethod("#cacheDocumentJobDetail")}
   ${actualMethod("loadDocumentJobDetail")}
   ${actualMethod("loadActorDocumentGenerationReceipt")}
   ${actualMethod("loadPreservedPresentationCandidateJobs")}

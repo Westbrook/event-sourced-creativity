@@ -168,6 +168,10 @@ export class FormaProjectContents extends FormaElement {
       document.id===state.receipt!.documentId&&document.projectId===target?.projectId&&!document.removed):null;
     const pending=state&&["recovering","previewing","applying"].includes(state.phase);
     const needsCheck=!state||!state.busy&&(["uncertain","applying","unavailable"].includes(state.phase)||state.stale||Boolean(state.issue)||state.phase==="applied"&&!copied);
+    const privateUnavailable=Boolean(state&&!state.preview&&state.issue==="document_copy_unavailable");
+    const alertMessage=privateUnavailable&&state?.phase==="uncertain"?"document.copy.uncertain":
+      privateUnavailable&&state?.phase==="unavailable"&&(!state.previewId||!state.approvalHash)?"document.copy.unavailable":
+      state?documentCopyIssueMessage(state):"";
     return html`<dialog class="modal project-document-dialog new-document-dialog document-copy-dialog" closedby="any"
       aria-labelledby="new-document-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeNew();}}
       @cancel=${(event:Event)=>{event.preventDefault();this.#closeNew();}} @close=${this.#newDocumentCloseHandler()}>
@@ -187,7 +191,7 @@ export class FormaProjectContents extends FormaElement {
           </select></label>`:state?.intent?html`<p>${this.i18n.t("document.copy.name","Copy name")}: <span dir="auto">${state.intent.title}</span></p>`:nothing}`:nothing}
         ${access.canRead&&!access.canAuthor&&state?.phase==="draft"?html`<p role="status">${this.i18n.t("document.copy.none","No saved copy review is available for this document.")}</p>`:nothing}
         ${access.canRead&&!access.canAuthor&&state?.previewId?html`<p>${this.i18n.t("document.copy.readOnly","Your access allows checking and dismissing saved copy reviews. Creating a copy requires author access.")}</p>`:nothing}
-        ${state?.phase==="retired"&&state.retirement?html`<p class="document-copy-retired" role="status">${this.i18n.t("document.copy.retired",undefined,{done:this.i18n.t("context.changes.done"),apply:this.i18n.t("document.copy.apply")})}</p>`:nothing}
+        ${state?.phase==="retired"&&state.retirement?html`<p class="document-copy-retired" role="status">${this.i18n.t(access.canAuthor?"document.copy.retired":"document.copy.retiredReadOnly",undefined,{done:this.i18n.t("context.changes.done"),apply:this.i18n.t("document.copy.apply")})}</p>`:nothing}
         ${state?.phase==="editing"?html`<p role="status">${this.i18n.t("document.copy.reviseHint")}</p>`:nothing}
         ${state?.reviewDisposition==="saved-original"?html`<p role="status">${this.i18n.t("document.copy.savedOriginal")}</p>`:state?.reviewDisposition==="recovered"?html`<p role="status">${this.i18n.t("document.copy.recoveredRevision")}</p>`:nothing}
         ${state?.reviewDisposition==="saved-original"&&state.revisedIntent?html`<p>${this.i18n.t("document.copy.revisedDraft")}: <span dir="auto">${state.revisedIntent.title}</span> · <span dir="auto">${Object.hasOwn(state.revisedIntent,"collectionId")?(state.revisedIntent.collectionId===null?this.i18n.t("document.copy.rootFolder"):this.#copyFolders().find(folder=>folder.id===state.revisedIntent!.collectionId)?.name??state.revisedIntent.collectionId):this.i18n.t("document.copy.sourceFolder")}</span></p>`:nothing}
@@ -195,10 +199,10 @@ export class FormaProjectContents extends FormaElement {
         ${pending&&!state?.preview?html`<p role="status">${this.i18n.t(state?.phase==="previewing"?"document.copy.previewing":state?.phase==="applying"?"context.changes.applying":"document.copy.recovering")}</p>`:nothing}
         ${state?.preview?html`<p>${this.i18n.t("document.copy.folder","Destination folder")}: <span dir="auto">${state.preview.duplication!.collectionPath.join(" / ")||this.i18n.t("document.copy.rootFolder","Project root")}</span></p>
           ${renderAuthoringPreview(state.preview,this.i18n,{id:"document-copy-preview",status:state.phase==="applied"?"applied":state.phase==="applying"?"applying":"review",
-            ...(state.phase==="uncertain"?{summary:this.i18n.t("document.copy.uncertain")}:{}),
-            readOnly:["applying","uncertain"].includes(state.phase),destinationDocumentId:documentCopyDestination(state.preview)})}`:nothing}
+            ...(state.phase==="uncertain"?{summary:this.i18n.t("document.copy.uncertain")}:!access.canAuthor&&state.phase==="review"?{summary:this.i18n.t("document.copy.reviewTitle")}:{}),
+            readOnly:!access.canAuthor||["applying","uncertain"].includes(state.phase),destinationDocumentId:documentCopyDestination(state.preview)})}`:nothing}
         ${state?.phase==="applied"&&!state.preview?html`<p class="document-copy-receipt" tabindex="-1" role="status">${this.i18n.t("document.copy.applied","This copy is saved. Reopening this review does not create another copy.")}</p>`:nothing}
-        ${state&&(state.issue||state.stale)&&!(access.canRead&&!access.canAuthor&&state.stale&&(!state.issue||state.issue==="document_copy_stale"))?html`<p role="alert">${this.i18n.t(documentCopyIssueMessage(state))}</p>`:nothing}
+        ${state&&(state.issue||state.stale)&&!(access.canRead&&!access.canAuthor&&state.stale&&(!state.issue||state.issue==="document_copy_stale"))?html`<p role="alert">${this.i18n.t(alertMessage)}</p>`:nothing}
         <footer>
           <button type="button" class="button ghost" @click=${()=>this.#closeNew()}>${this.i18n.t("action.close")}</button>
           ${canDismiss&&state?html`<button type="button" class="button ghost"

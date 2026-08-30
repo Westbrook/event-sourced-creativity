@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProjectRailNativeFixture } from "./helpers/project-rail-native-fixture.mjs";
+import { isOutputFixtureReadOnlyResume } from "./helpers/output-reachability-fixture.mjs";
 
 const hasClass=name=>node=>String(node.attributes.class??"").split(/\s+/u).includes(name);
 async function fixture(t,options={}){
@@ -211,9 +212,16 @@ test("native collection Create uses the existing mounted editor rather than clos
  assert.equal(f.storeHost.requests.length,before,"opening native navigation/collection form is read-only");
  assert.equal(f.renderer.openPopovers.has(f.panel().attributes.id),true,"valid child form handoff is not blanket-dismissed by capture guard");
  const old=create;
+ const scope={projectId:f.store.projection.get().projectId,documentId:f.store.projection.get().documentId};
  f.store.session.set({...f.store.session.get(),permissionEpoch:"collection-withdrawn"});await f.settle();
  assert.equal(f.dom.visible("dialog").filter(node=>node.owner.tag==="forma-collection-tree").length,0);
- const refreshed=f.storeHost.requests.slice(before);
+ const boundary=f.storeHost.requests.slice(before);
+ assert.deepEqual({projectId:f.store.projection.get().projectId,documentId:f.store.projection.get().documentId},scope,"permission refresh retains this exact project and document");
+ const resumes=boundary.filter(request=>isOutputFixtureReadOnlyResume(request,scope));
+ assert.equal(resumes.length,1,"exactly one scoped free Resume accompanies this permission-epoch refresh");
+ assert.deepEqual(resumes[0].body,{action:"resume",projectId:scope.projectId,documentId:scope.documentId},"the captured Store request has only the exact Resume identity");
+ assert.equal(boundary.length,2,"only the one Output refresh and the one exact current-document Resume are allowed");
+ const refreshed=boundary.filter(request=>request!==resumes[0]);
  assert.equal(refreshed.length,1,"current Output controller refreshes once at the permission-epoch boundary");
  assert.equal(refreshed[0].init.method??"GET","GET");
  assert.equal(refreshed[0].url,"/api/output-requirements?documentId="+encodeURIComponent(f.store.projection.get().documentId));

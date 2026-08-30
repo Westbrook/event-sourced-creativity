@@ -19,15 +19,15 @@ for(const locale of ["en","fr","ar","ja"])test("Desk exact current target opens 
  assert.equal(row.object.value,target);
  const actions=outcomeDeskHostActions(input,row.key,ports(f));assert.ok(actions.length);assert.ok(actions.every(action=>action.target.kind==="canonical-output"));
  const controller=f.outputControllers().find(value=>value.documentId===snapshot.documentId&&!value.blockId);
- const before=JSON.stringify(f.adapter.snapshot(snapshot.documentId)),events=JSON.stringify(f.store.events.get()),requests=f.outputRequests.filter(row=>row.method!=="GET").length;
+ const before=JSON.stringify(f.adapter.snapshot(snapshot.documentId)),events=JSON.stringify(f.store.events.get()),requests=f.outputRequests.filter(row=>row.method!=="GET"&&!f.isReadOnlyResume(row)).length;
  const ref=captureOutputNavigation(snapshot,f.store.captureAuthorizationScope().key,"target",target.id);
 
  assert.equal(await controller.focusOutputReference(ref,{current:()=>true}),true);
  assert.equal(JSON.stringify(f.adapter.snapshot(snapshot.documentId)),before);assert.equal(JSON.stringify(f.store.events.get()),events);
- assert.equal(f.outputRequests.filter(row=>row.method!=="GET").length,requests);
+ assert.equal(f.outputRequests.filter(row=>row.method!=="GET"&&!f.isReadOnlyResume(row)).length,requests);
 });
 
-const noCommands=f=>assert.deepEqual(f.outputRequests.filter(row=>row.method!=="GET"),[]);
+const noCommands=f=>assert.deepEqual(f.outputRequests.filter(row=>row.method!=="GET"&&!f.isReadOnlyResume(row)),[]);
 const controllerFor=f=>f.outputControllers().find(value=>value.documentId===f.outputSnapshot().documentId&&!value.blockId);
 const currentReference=(f,kind,id)=>captureOutputNavigation(f.outputSnapshot(),f.store.captureAuthorizationScope().key,kind,id);
 const targetRow=f=>projectOutcomeDesk(currentInput(f)).rows.find(row=>row.object.kind==="target");
@@ -158,7 +158,7 @@ test("historical operation reveals only the hidden Write panel and never substit
  await f.act(f.find("button",node=>node.owner===controller&&node.text===f.i18n.t("output.delivery.reviewPlan")));
  await f.act(f.find("form",node=>{if(node.owner!==controller)return false;for(let parent=node.parent;parent;parent=parent.parent)if(String(parent.attributes.class??"").split(/\\s+/u).includes("output-plan-review"))return true;return false;}),"submit");
  assert.notEqual(f.outputSnapshot().confirmedPlan.revisionId,originalPlan);
- const commandCount=f.outputRequests.filter(row=>row.method!=="GET").length;assert.equal(commandCount,1);
+ const commandCount=f.outputRequests.filter(row=>row.method!=="GET"&&!f.isReadOnlyResume(row)).length;assert.equal(commandCount,1);
  const ref=currentReference(f,"operation",operation.id),originalControllers=[...f.outputControllers()];
  assert.equal(ref.planRevisionId,originalPlan);assert.equal(ref.blockId,null,"old operation cannot target the new current requirement");
  const resultTab=f.tree().visible("button").find(node=>node.attributes["data-workbench-pane"]==="result");assert.ok(resultTab);await f.act(resultTab);
@@ -180,7 +180,7 @@ test("historical operation reveals only the hidden Write panel and never substit
  assert.equal(controller.closest("#document-context-panel").hidden,false);
  assert.ok(f.trace.slice(before).includes("focus:output-operation"));assert.equal(f.store.ui.focusBlockId??"","");
  assert.deepEqual(f.outputControllers(),originalControllers);assert.equal(JSON.stringify(f.store.events.get()),events);
- assert.equal(f.outputRequests.filter(row=>row.method!=="GET").length,commandCount,"navigation adds no command to the earlier explicit free confirmation");
+ assert.equal(f.outputRequests.filter(row=>row.method!=="GET"&&!f.isReadOnlyResume(row)).length,commandCount,"navigation adds no command to the earlier explicit free confirmation");
 });
 test("retained canonical Output read cannot become actionable with malformed identity data",async t=>{
  const f=await createOutputReachabilityPage(t),input=currentInput(f);

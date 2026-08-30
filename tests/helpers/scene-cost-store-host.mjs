@@ -32,7 +32,7 @@ class ElementPort {
 }
 const allElements=element=>[element,...element.children.flatMap(child=>child instanceof ElementPort?allElements(child):[])];
 /** Full production class/modules; only native DOM, HTTP, timers and private gate state are deterministic ports. */
-export async function createSceneStoreHost({count=9,medium="visual",shared=false,workerFixture=null}={}){
+export async function createSceneStoreHost({count=9,medium="visual",shared=false,workerFixture=null,exposeSceneTestAccessors=true}={}){
   const worker=workerFixture??await createSceneCostFixture(count,medium,{shared});
   const host={worker,requests:[],timers:new Map(),domReads:[],transport:null,intercept:null,closed:false};
   const documentPort=new ElementPort("document");documentPort.documentElement={lang:"en",dir:"ltr",dataset:{}};documentPort.body=new ElementPort("body");documentPort.visibilityState="hidden";
@@ -65,7 +65,7 @@ export async function createSceneStoreHost({count=9,medium="visual",shared=false
       }else dependencies.set(specifier,await import(specifier));
     }
     let text=source;
-    if(relative==="src/state/store.ts"){
+    if(relative==="src/state/store.ts"&&exposeSceneTestAccessors){
       const owner=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="FormaStore");assert.ok(owner,"Full production Store class");
       // Exposes private state, not replacement behavior; every production method remains byte-for-byte intact.
       text=source.slice(0,owner.end-1)+"\nsceneGateForTest(kind:string,pending:Promise<any>){if(kind==='append')this.#appendPipeline=pending;else if(kind==='navigation')this.#navigationCommit=pending;else throw new Error('Unknown test gate');}\nsceneEstimateForTest(payload:Record<string,unknown>){return this.#generationEstimate('render_document',payload);}\n"+source.slice(owner.end-1);

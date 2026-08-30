@@ -3,9 +3,11 @@ import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages
 import systemMessages from "./system-fr.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
+import { FORMA_OUTCOME_MESSAGES } from "./outcome-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
 
 const messages: Record<string, string> = {
+  ...FORMA_OUTCOME_MESSAGES.fr,
   ...FORMA_NEXT_ACTION_MESSAGES.fr,
   ...FORMA_CONTEXT_CONTROL_MESSAGES.fr,
   ...FORMA_RESPONSIVE_MESSAGES.fr,
@@ -142,6 +144,7 @@ const messages: Record<string, string> = {
   "document.copy.recoveredRevision": "Voici la revue enregistrée pour la demande d’origine. Vérifiez son nom et son dossier avant de l’appliquer. Aucune demande de remplacement n’a été lancée.",
   "document.copy.revisedDraft": "Votre brouillon modifié non soumis",
   "document.copy.retired": "Cette revue a été effacée sans qu’une copie soit enregistrée. Choisissez {done} pour clore cette demande. Pour créer une copie, commencez une nouvelle revue, puis choisissez {apply}.",
+  "document.copy.retiredReadOnly": "Cette revue a été effacée sans qu’une copie soit enregistrée. Choisissez {done} pour clore cette demande.",
   "document.copy.discard": "Abandonner l’aperçu",
   "document.copy.open": "Ouvrir le document copié",
   "document.copy.preserved": "L’original reste inchangé. La copie préserve les décisions, les verrous, les relations typées, les informations sur les droits et les preuves sources.",
@@ -362,6 +365,8 @@ const messages: Record<string, string> = {
   "canvas.zoomOut":"Réduire le zoom",
   "canvas.zoomIn":"Augmenter le zoom",
   "canvas.returnToBoard":"Revenir au tableau",
+  "canvas.presence.otherTab": "Votre autre onglet · ce navigateur",
+  "canvas.presence.localOnly": "Dernière position sur le tableau depuis un autre onglet de ce compte dans ce navigateur.",
   "projects.viewerFirstResult":"Une personne autorisée à modifier le projet peut créer le premier résultat partagé.",
   "generation.contactAdministrator":"Contacter l’administration du projet",
   "generation.reviewOrganizationSpending":"Consulter les dépenses de l’organisation",
@@ -746,9 +751,12 @@ const messages: Record<string, string> = {
   "workspace.provenance.source": "Historique créatif enregistré",
   "workspace.provenance.close": "Fermer l’historique créatif",
   "workspace.provenance.description": "Cette décision créative est enregistrée dans votre document privé et reste disponible pour vos futurs résultats.",
-  "workspace.provenance.author": "Créé par",
+  "workspace.provenance.author": "Acteur enregistré",
   "workspace.provenance.you": "Vous",
-  "workspace.provenance.assistance": "Assistance créative autorisée",
+  "workspace.provenance.human": "Compte utilisateur",
+  "workspace.provenance.assistance": "Assistance d’un modèle",
+  "workspace.provenance.system": "Processus système",
+  "workspace.provenance.unknown": "Origine non identifiée",
   "workspace.provenance.saved": "Enregistré",
   "workspace.provenance.change": "Modification créative",
   "workspace.provenance.technical": "Détails techniques pour l’ingénierie",

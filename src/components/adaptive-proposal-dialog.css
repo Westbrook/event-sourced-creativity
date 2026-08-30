@@ -1,0 +1,12 @@
+.adaptive-proposal-dialog .modal-card{inline-size:min(100%,48rem);min-inline-size:0}
+.adaptive-proposal-fields{display:grid;gap:1.5rem;margin-block:1rem}
+.adaptive-proposal-fields section{min-inline-size:0;display:grid;gap:.75rem}
+.adaptive-proposal-fields :is(label,fieldset){min-inline-size:0}
+.adaptive-proposal-fields label{display:grid;gap:.5rem}
+.adaptive-proposal-fields :is(input,select,textarea){inline-size:100%;min-inline-size:0;min-block-size:44px}
+.adaptive-proposal-placement{display:grid;grid-template-columns:repeat(auto-fit,minmax(7rem,1fr));gap:.75rem}
+.adaptive-proposal-dialog :is(summary,button){min-block-size:44px}
+.adaptive-proposal-dialog :is(p,dd,code,li){overflow-wrap:anywhere}
+.adaptive-proposal-dialog dd{margin-inline-start:0}
+.adaptive-proposal-dialog .context-intelligence-actions{display:flex;flex-wrap:wrap;gap:.5rem}
+.adaptive-model-actions{display:flex;flex-wrap:wrap;gap:.5rem}

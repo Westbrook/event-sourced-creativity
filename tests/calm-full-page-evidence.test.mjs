@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import nativeTest from "node:test";
 import { createCalmFullPage, fullPageTree, STUDY_SHAPED_TYPES } from "./helpers/calm-full-page-fixture.mjs";
+import { certifyActualOutputFixtureResumeReads } from "./helpers/output-reachability-fixture.mjs";
 
 // Data-URL fixture frames are labels, not megabytes of copied fixture source.
 const test=(name,run)=>nativeTest(name,async context=>{try{return await run(context);}catch(error){if(typeof error?.stack==="string")error.stack=error.stack.replace(new RegExp("data:text/javascript;base64,[A-Za-z0-9+/=]+","gu"),"full-class-fixture");throw error;}});
@@ -15,7 +16,7 @@ const job=(f,index,status="running",kind="render_document")=>({
 async function full(t,options){
  const previous=globalThis.fetch;let external=0;
  globalThis.fetch=async()=>{external++;throw new Error("External/provider calls are forbidden in full-page evidence");};
- let fixture;try{fixture=await createCalmFullPage(t,options);}catch(error){globalThis.fetch=previous;throw error;}
+ let fixture;try{fixture=await createCalmFullPage(t,options);fixture.isReadOnlyResume=await certifyActualOutputFixtureResumeReads(fixture);}catch(error){globalThis.fetch=previous;throw error;}
  t.after(()=>{globalThis.fetch=previous;assert.equal(external,0,"no external or provider calls");});
  return fixture;
 }
@@ -47,7 +48,7 @@ test("synthetic14 full Shell, real Creative route and all emitted descendants se
  assert.equal(tree.nodes.filter(node=>node.tag==="button").length,38,"raw DOM includes hidden contributors, once per element");
  assert.equal(tree.nodes.filter(node=>node.tag==="select").length,2);
  assert.equal(tree.visible("button").filter(node=>Object.hasOwn(node.attributes,"disabled")).length,4,"disabled controls are not subtracted");
- assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST").length,0);
+ assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0);
  t.diagnostic("Synthetic full hierarchy:25B/1S structurally visible;38B/2S emitted. Functional 718px studio/16px root ports, not browser geometry or the production study.");
 });
 
@@ -61,6 +62,14 @@ test("visibility negatives reject omitted nested components and expose actual hi
  const controls=original.visible("button");assert.ok(controls.some(node=>node.owner.tag==="forma-shell"));assert.ok(controls.some(node=>node.owner.tag==="forma-project-rail"));assert.ok(controls.some(node=>node.owner.tag==="forma-generation-actions"));
 });
 
+// Independent literal oracles for the optional Phase8 entry-copy supplement.
+// Existing actual full-page fixtures and every prior matrix assertion remain intact.
+const quickEditEntryCopy=Object.freeze({
+ en:{detail:"Free local rules, no model: add one decision, or enter the literal word warmer or cooler for a palette you choose. Review the proposal, then approve to apply it.",placeholder:"Write one new decision, or enter warmer or cooler for a chosen palette…"},
+ fr:{detail:"Règles locales gratuites, sans modèle : ajoutez une décision ou saisissez le mot anglais warmer ou cooler pour une palette de votre choix. Examinez la proposition, puis approuvez-la pour l’appliquer.",placeholder:"Rédigez une nouvelle décision, ou saisissez warmer ou cooler pour la palette choisie…"},
+ ar:{detail:"قواعد محلية مجانية، بلا نموذج: أضف قرارًا واحدًا، أو اكتب حرفيًا \u2068warmer\u2069 أو \u2068cooler\u2069 للوحة ألوان تختارها. راجع الاقتراح، ثم وافق عليه لتطبيقه.",placeholder:"اكتب قرارًا جديدًا واحدًا، أو \u2068warmer\u2069 أو \u2068cooler\u2069 للوحة الألوان المختارة…"},
+ ja:{detail:"無料のローカルルールで、モデルは使いません。決定事項を1つ追加するか、選んだパレットに対して英単語 warmer または cooler をそのまま入力します。提案を確認し、別途承認して適用します。",placeholder:"新しい決定事項を1つ、または選んだパレットに warmer か cooler を入力…"},
+});
 for(const locale of ["en","fr","ar","ja"])for(const reader of [false,true])for(const assistant of [false,true]){
  test("full hierarchy contribution matrix "+JSON.stringify({locale,reader,assistant}),async t=>{
   const f=await full(t,{locale,reader,assistant});const counts=resting(f),tree=f.tree();
@@ -70,6 +79,59 @@ for(const locale of ["en","fr","ar","ja"])for(const reader of [false,true])for(c
   assert.equal(tree.visible("button").filter(node=>node.attributes.title==="Rename document").length,reader?0:1);
   assert.equal(tree.visible("button").filter(node=>byClass("context-set-trigger")(node)).length,reader?0:1);
   assert.equal(tree.visible("button").filter(node=>Object.hasOwn(node.attributes,"data-workbench-pane")).length,3);
+  if(!reader){
+   const expected=quickEditEntryCopy[locale],source=f.store.projection.get().blocks.map(block=>[block.id,block.properties.text]);
+   assert.equal(f.i18n.t("assistant.mode.quickEditDetail"),expected.detail);
+   assert.equal(f.i18n.t("assistant.mode.quickEditPlaceholder"),expected.placeholder);
+   for(const value of [expected.detail,expected.placeholder]){
+    assert.match(value,/\bwarmer\b/u);assert.match(value,/\bcooler\b/u);
+    if(locale==="ar"){assert.ok(value.includes("\u2068warmer\u2069"));assert.ok(value.includes("\u2068cooler\u2069"));
+     assert.equal((value.match(/\u2068/gu)??[]).length,2);assert.equal((value.match(/\u2069/gu)??[]).length,2);}
+   }
+   if(assistant){
+    // The actual host opens with an absolute, private GET. Route only that
+    // exact current fixture request through the existing RAM Worker transport.
+    const denied=globalThis.fetch,reads=[];
+    globalThis.fetch=(input,init={})=>{
+     const url=new URL(String(input),"https://fixture.invalid");
+     if(url.origin!=="https://fixture.invalid"||url.pathname!=="/api/assistant"||(init.method??"GET")!=="GET")return denied(input,init);
+     assert.equal(url.searchParams.get("route"),f.store.route.get());assert.equal(url.searchParams.get("projectId"),f.store.projection.get().projectId);
+     const reading=f.storeHost.fetch(url.pathname+url.search,init).then(response=>{assert.equal(response.status,200,"actual scoped assistant read");return response;});
+     reads.push(reading);return reading;
+    };
+    try{
+     await f.act(f.find("button",byClass("forma-assistant-launcher")));await Promise.all(reads);await f.settle();assert.ok(reads.length>0);
+     const panel=f.components().find(component=>component.tag==="forma-assistant-panel");assert.ok(panel);
+     const field=()=>f.find("textarea",node=>node.owner.tag==="forma-ui-conversation-composer"&&byClass("forma-assistant-input")(node));
+     const submit=()=>f.find("button",node=>node.owner===field().owner);
+     const modes=()=>rendered(f.tree(),"button",node=>node.owner===panel&&byClass("forma-assistant-mode")(node)).map(node=>node.text);
+     const mode=label=>f.find("button",node=>node.owner===panel&&byClass("forma-assistant-mode")(node)&&node.text===label);
+     const view=()=>({label:field().attributes["aria-label"],placeholder:field().attributes.placeholder,submit:submit().attributes["aria-label"],
+      detail:rendered(f.tree(),"p",node=>node.owner===panel&&byClass("forma-assistant-mode-detail")(node)).map(node=>node.text)});
+     const labels=modes(),quick=f.i18n.t("assistant.mode.quickEdit"),ordinary=labels.filter(label=>label!==quick),saved=[];
+     assert.ok(labels.includes(quick));assert.ok(ordinary.length>0);
+     for(const label of ordinary){
+      await f.act(mode(label));const current=view(),draft="  "+label+" — Ask draft أزرق 日本語\nkeep this line  ";
+      const input=field();input.port.value=draft;await f.act(input,"input");saved.push({label,view:current,draft});
+     }
+     await f.act(mode(quick));assert.equal(field().properties.value,"","scope is shown before the first quick-edit instruction");
+     assert.deepEqual(view(),{label:quick,placeholder:expected.placeholder,submit:f.i18n.t("assistant.mode.quickEditSubmit"),detail:[expected.detail]});
+     const quickDraft="  One local decision — قرار 日本語\nkeep this line  ",input=field();input.port.value=quickDraft;await f.act(input,"input");
+     for(const prior of saved){await f.act(mode(prior.label));assert.equal(field().properties.value,prior.draft);assert.deepEqual(view(),prior.view,"other mode copy and accessible labels are unchanged");}
+     await f.act(mode(quick));assert.equal(field().properties.value,quickDraft);assert.deepEqual(modes(),labels);
+    }finally{globalThis.fetch=denied;}
+   }else{
+    const field=()=>f.find("textarea",node=>node.owner.tag==="forma-workspace"&&node.attributes.id==="creative-command");
+    const quick=()=>f.find("button",node=>node.owner.tag==="forma-workspace"&&node.text==="Quick edit");
+    const placeholder=field().attributes.placeholder,draft="  Shared Ask field — أزرق 日本語\nkeep this line  ";
+    assert.equal(field().properties.value,"");assert.equal(quick().attributes.title,expected.detail,"localized scope is on the existing fallback title before input");
+    const input=field();input.port.value=draft;await f.act(input,"input");f.store.notify();await f.settle();
+    assert.equal(field().properties.value,draft);assert.equal(field().attributes.placeholder,placeholder,"the shared Ask field is not relabeled as quick-edit-only");
+    assert.equal(quick().attributes.title,expected.detail);assert.equal(Object.hasOwn(quick().attributes,"disabled"),false);
+   }
+   assert.deepEqual(f.store.projection.get().blocks.map(block=>[block.id,block.properties.text]),source);
+   assert.equal(f.storeHost.requests.filter(request=>(request.init.method??"GET")!=="GET"&&!f.isReadOnlyResume(request)).length,0,"copy inspection and draft changes neither submit nor buy");
+  }
   t.diagnostic("Synthetic "+locale+(reader?" reader":" author")+(assistant?" assistant":" fallback")+" "+JSON.stringify(counts));
  });
 }
@@ -132,21 +194,36 @@ for(const medium of ["image","short_story","scene","slides","storyboard","video"
   assert.deepEqual(f.store.projection.get().blocks.map(block=>[block.id,block.properties.text]),blocks);
   if(medium!=="image")assert.equal(dialogs[0].owner.documentId,original.documentId);
   assert.ok(f.tree().visible("button").some(node=>nodeWithin(node,byClass(medium==="image"?"generation-details-dialog":"document-artifact-create"))&&((medium!=="image"&&(node.attributes.type??"submit")==="submit")||medium==="image"&&/^Generate full/u.test(node.text))),"actual final action retained");
-  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST").length,0,"configuration did not create, quote, execute or buy");
+  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0,"configuration did not create, quote, execute or buy");
  });
 }
 
 test("pending local quick edit uses actual Workspace and Store once; its review relocates without duplication when assistant enabled",async t=>{
  const f=await full(t),before=f.store.projection.get().blocks.map(block=>[block.id,block.properties.text]);
- f.storeHost.intercept=request=>{
-  if(request.url!=="/api/events"||request.body?.action!=="propose")return;
-  assert.equal(request.body.events.length,1);assert.equal(request.body.events[0].payload.document_id,f.store.projection.get().documentId);
-  const sequence=f.store.head.get()+1;
-  return Response.json({appended:[{eventId:"synthetic-proposal",streamId:f.storeHost.worker.streamId,sequence,occurredAt:"2026-08-27T00:00:00Z",actor:"model:forma-chat",correlationId:"synthetic-full-page",type:"MutationProposed",payload:{content_ref:"synthetic-private-proposal",proposed_events:request.body.events,expected_sequence:request.body.expectedSequence}}],head:sequence});
+ // Phase 8 persists this exact free review through the existing authoring
+ // route; the retired /api/events proposal synthesis cannot represent it.
+ const worker=f.storeHost.worker,counts=()=>Object.fromEntries(["events","authoring_commits","document_jobs","budget_reservations","cost_budget_reservations"]
+   .map(table=>[table,worker.sqlite.prepare("SELECT COUNT(*) AS n FROM "+table).get().n]));
+ const originalCounts=counts();let reviewed=null;
+ f.storeHost.transport=async request=>{
+   const response=await worker.request(request.url,request.init);
+   if(request.url==="/api/workspace/quick-edit"&&request.body?.action==="preview"){
+     assert.equal(request.init.method,"POST");
+     assert.equal(request.body.projectId,f.store.projection.get().projectId);assert.equal(request.body.documentId,f.store.projection.get().documentId);
+     assert.equal(request.body.prompt,"Use softer shadows");assert.equal(request.body.targetBlockId,null);
+     assert.equal(response.status,200);reviewed=await response.clone().json();assert.equal(reviewed.status,"not-applied");
+   }
+   return response;
  };
  const input=f.find("textarea",node=>node.attributes.id==="creative-command");input.port.value="Use softer shadows";await f.act(input,"input");
  await f.act(f.find("button",node=>node.text==="Quick edit"));
- assert.equal(f.storeHost.requests.filter(request=>request.body?.action==="propose").length,1);
+ for(let step=0;step<12&&!reviewed;step++)await f.settle();
+ assert.ok(reviewed?.preview?.previewId,"the current actual Worker retained a durable review");
+ assert.ok(worker.sqlite.prepare("SELECT content_id FROM private_content WHERE content_id=?").get(reviewed.preview.previewId));
+ assert.equal(f.storeHost.requests.filter(request=>request.url==="/api/workspace/quick-edit"&&request.body?.action==="preview").length,1);
+ assert.deepEqual(f.storeHost.requests.filter(request=>(request.init.method??"GET")!=="GET"&&!f.isReadOnlyResume(request))
+   .map(request=>[request.url,request.body?.action]),[["/api/workspace/quick-edit","preview"]],"no apply, dismiss, legacy event proposal or purchase");
+ assert.deepEqual(counts(),originalCounts,"a retained free preview does not write source, authoring commits, jobs or budgets");
  assert.deepEqual(f.store.projection.get().blocks.map(block=>[block.id,block.properties.text]),before,"pending proposal did not apply its change");
  assert.equal(f.tree().nodes.filter(byClass("proposal-preview")).length,1);
  assert.equal(f.tree().visible("button").filter(node=>["Decline","Accept change"].includes(node.text)).length,2);
@@ -176,7 +253,7 @@ test("all14 study-shaped decisions reach their actual controls in two rendered c
   resting(f);
  }
  assert.deepEqual(f.store.projection.get().blocks.map(block=>[block.id,block.properties.text]),before);
- assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST").length,0);
+ assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0);
 });
 
 for(const withdrawal of ["source","reader"]){
@@ -186,6 +263,6 @@ for(const withdrawal of ["source","reader"]){
   else{const session=f.store.session.get();f.store.session.set({...session,projectContext:{organizationId:"synthetic-org",projectAccessId:"synthetic-access",projectId:f.store.projection.get().projectId,ownerUserId:session.user.userId,role:"viewer",permissions:["project.read"],expiresAt:new Date(Date.now()+3600_000).toISOString()}});}
   await f.settle();await f.act(oldChoice);
   assert.equal(f.tree().visible("dialog").filter(byClass("document-artifact-create")).length,0);
-  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST").length,0,"stale preparation never submitted");
+  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0,"stale preparation never submitted");
  });
 }

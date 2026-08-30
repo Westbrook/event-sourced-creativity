@@ -5,6 +5,7 @@ import type { AssistantContext } from "../model/conversation-context.ts";
 import { contextConsentAction } from "../model/context-consent-state.ts";
 import { withDocumentInRoute } from "../model/routes.ts";
 import { FormaElement } from "./forma-element.ts";
+import { captureOutputNavigationFocus } from "./output-navigation-focus.ts";
 import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask, AssistantSpecialistControl, AssistantSpecialistReview, AssistantSpecialistResponse, AssistantTurnOriginalRequest, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
 import { assistantApprovedRequestCanRun, assistantApprovedRequestCanStop } from "./design-system/assistant-panel.ts";
 
@@ -820,6 +821,18 @@ export class FormaCreativeAssistant extends FormaElement {
 
     const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
     if(!documentId){this.store.toast(this.i18n.t("next.exact.chooseDocument","Choose a document"));panel.resolveToolRequest(false,input.message);return;}
+    let closingQuickEdit = false;
+    const handoffCurrent = () => this.isConnected && panel.isConnected
+      && this.querySelector<FormaAssistantPanel>("forma-assistant-panel") === panel
+      && scope === this.#scope() && this.store.sourceOwnershipActive(source);
+    // Capture before dispatch/await, not after a reply or after the user moves.
+    // Only this owned close may return to its own native launcher on the way to
+    // the review; a newer pointer/key/focus gesture permanently retires the lease.
+    const handoff = input.mode === "quick-edit" ? captureOutputNavigationFocus(this.ownerDocument, {
+      ownedRouteFocus: element => closingQuickEdit && !this.#open && handoffCurrent()
+        && element === panel.querySelector<HTMLElement>(".forma-assistant-launcher"),
+    }) : null;
+    try {
     const accepted = await new Promise<boolean>((resolve) => {
       const detail: AssistantToolRequest = {
         requestId: crypto.randomUUID(),
@@ -837,13 +850,19 @@ export class FormaCreativeAssistant extends FormaElement {
     if (scope !== this.#scope() || !this.store.sourceOwnershipActive(source)) return;
     panel.resolveToolRequest(accepted, input.message);
     if (accepted && input.mode === "quick-edit") {
+      if (!handoff || !handoffCurrent() || !handoff.current()) return;
+      closingQuickEdit = true;
       this.#open = false;
       this.requestUpdate();
-      void this.updateComplete.then(()=>requestAnimationFrame(()=>{
-        const review=document.querySelector<HTMLElement>(".document-quick-edit-review");
-        review?.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
-        review?.focus({preventScroll:true});
-      }));
+      await this.updateComplete;
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      if (!handoffCurrent() || this.#open || !handoff.current() || document.querySelector("dialog[open]")) return;
+      const review = document.querySelector<HTMLElement>(".document-quick-edit-review");
+      if (review?.isConnected) handoff.run(review, () => {
+        review.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
+        review.focus({preventScroll:true});
+        return true;
+      });
       return;
     }
     const messages:AssistantDisplayedMessage[]=[
@@ -855,6 +874,7 @@ export class FormaCreativeAssistant extends FormaElement {
     if(accepted&&["plan-document","plan-board"].includes(input.mode))this.#localToolMessages=[...this.#localToolMessages,...messages].slice(-12);
     this.#messages=[...this.#messages,...messages];
     this.requestUpdate();
+    } finally { handoff?.dispose(); }
   }
 
   #review(mode: "plan-document" | "plan-board") {

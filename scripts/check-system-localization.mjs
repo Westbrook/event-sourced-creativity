@@ -11,6 +11,7 @@ import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "../src/components/design-system/locales/responsive-messages.ts";
+import { FORMA_OUTCOME_MESSAGES } from "../src/components/design-system/locales/outcome-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "../src/components/design-system/locales/next-action-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "../src/components/design-system/locales/context-controls-messages.ts";
 import marketingEnglish from "../src/marketing/locales/en.ts";
@@ -37,6 +38,7 @@ const errors = [];
 const normalize = (value) => String(value).replace(/\s+/gu, " ").trim();
 const placeholders = (value) => [...String(value).matchAll(/\{([^{}]+)\}/gu)].map((match) => match[1]).sort().join("|");
 const sharedCatalogs=[FORMA_RESPONSIVE_MESSAGES,FORMA_NEXT_ACTION_MESSAGES,FORMA_CONTEXT_CONTROL_MESSAGES];
+sharedCatalogs.push(FORMA_OUTCOME_MESSAGES);
 const outputMessageBundles = { outputDelivery: FORMA_OUTPUT_DELIVERY_MESSAGES, outputRequirement: FORMA_OUTPUT_REQUIREMENT_MESSAGES };
 const defaults = new Map([
   ...sharedCatalogs.flatMap((catalog)=>Object.entries(catalog.en)),

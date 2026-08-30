@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { attentionEvents, attentionMetrics, ATTENTION_RETENTION_DAYS } from "../model/attention";
-import { formatGenerationUsd } from "../model/generation-budget";
+import { outcomeMoney, personalUsageReceiptDisclosure } from "./outcome-telemetry-summary";
 import { FormaElement, icon } from "./forma-element";
 
 /** Creator-owned controls remain available without entering platform administration. */
@@ -18,9 +18,9 @@ export class FormaAccountSettings extends FormaElement {
     const attention = attentionMetrics(events);
     const episodes = attentionEvents(events).slice(-5).reverse();
     const shares = this.store.shares.get().filter((share) => share.active);
-    const cost = session.costBudgets?.user;
+    const personalFinance = session.policy.accepted && !session.impersonation && !session.projectContext;
+    const cost = personalFinance ? session.costBudgets?.user : undefined;
     const tokens = session.budgets.user;
-    const usage = events.filter((event) => event.type === "GenerationUsageRecorded").slice(-6).reverse();
     const impersonating = Boolean(session.impersonation);
 
     return html`<section class="creator-settings-page page-pad" aria-labelledby="creator-settings-heading">
@@ -48,9 +48,11 @@ export class FormaAccountSettings extends FormaElement {
 
         <section class="creator-settings-card" aria-labelledby="settings-spending-heading">
           <header><h2 id="settings-spending-heading">${this.i18n.t("settings.spendingHeading", "Your production spending")}</h2><p>${this.i18n.t("settings.spendingDescription", "See your own monthly paid generation, current reservations, and remaining personal limit.")}</p></header>
-          ${cost ? html`<div class="creator-settings-budget"><div><span>${this.i18n.t("settings.spent", "Settled this month")}</span><b>${formatGenerationUsd(cost.usedMicrousd)}</b></div><div><span>${this.i18n.t("settings.reserved", "Currently reserved")}</span><b>${formatGenerationUsd(cost.reservedMicrousd)}</b></div><div><span>${this.i18n.t("settings.remaining", "Available to you")}</span><b>${formatGenerationUsd(cost.remainingMicrousd)}</b></div></div><progress max=${String(cost.limitMicrousd)} value=${String(Math.min(cost.limitMicrousd, cost.usedMicrousd + cost.reservedMicrousd))} aria-label=${this.i18n.t("settings.budgetProgress", "Personal monthly generation budget")}></progress><p class="creator-settings-budget-note">${this.i18n.t("settings.budgetLimit", "Personal monthly limit: {amount}", { amount: formatGenerationUsd(cost.limitMicrousd) })}</p>` : nothing}
+          ${personalFinance ? html`${cost ? html`<div class="creator-settings-budget"><div><span>${this.i18n.t("settings.spent", "Settled this month")}</span><b>${outcomeMoney(cost.usedMicrousd, this.i18n)}</b></div><div><span>${this.i18n.t("settings.reserved", "Currently reserved")}</span><b>${outcomeMoney(cost.reservedMicrousd, this.i18n)}</b></div><div><span>${this.i18n.t("settings.remaining", "Available to you")}</span><b>${outcomeMoney(cost.remainingMicrousd, this.i18n)}</b></div></div><progress max=${String(cost.limitMicrousd)} value=${String(Math.min(cost.limitMicrousd, cost.usedMicrousd + cost.reservedMicrousd))} aria-label=${this.i18n.t("settings.budgetProgress", "Personal monthly generation budget")}></progress><p class="creator-settings-budget-note">${this.i18n.t("settings.budgetLimit", "Personal monthly limit: {amount}", { amount: outcomeMoney(cost.limitMicrousd, this.i18n) })}</p>` : nothing}
           <div class="creator-settings-facts"><span>${this.i18n.t("settings.tokensUsed", "Token safety usage")}</span><b>${this.i18n.number(tokens.used)}</b><span>${this.i18n.t("settings.tokensReserved", "Reserved safety tokens")}</span><b>${this.i18n.number(tokens.reserved)}</b><span>${this.i18n.t("settings.period", "Accounting period")}</span><b>${session.costBudgets?.period ?? session.budgets.period}</b></div>
-          ${usage.length ? html`<h3>${this.i18n.t("settings.recentCharges", "Recent personal charges")}</h3><ol class="creator-settings-charges">${usage.map((event) => html`<li><span>${String(event.payload.artifact_kind ?? event.payload.operation ?? "Creative generation").replaceAll("_", " ").replaceAll("-", " ")}</span><b>${formatGenerationUsd(Number(event.payload.cost_microusd ?? 0))}</b></li>`)}</ol>` : html`<p class="creator-settings-empty">${this.i18n.t("settings.noCharges", "No personal generation charges have been recorded.")}</p>`}
+          <p class="creator-settings-budget-note">${this.i18n.t("outcome.currentPeriodOnly", "", { period: session.costBudgets?.period ?? session.budgets.period })}</p>
+          ${personalUsageReceiptDisclosure(events, session.user.userId, this.i18n)}
+          ` : html`<p class="creator-settings-empty">${this.i18n.t("outcome.personalUnavailable")}</p>`}
         </section>
 
         ${this.store.canManageProjectShares()?html`<section class="creator-settings-card" aria-labelledby="settings-sharing-heading">

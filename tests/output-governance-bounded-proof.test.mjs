@@ -195,7 +195,7 @@ for (const change of ["current", "renewed", "revoked", "withdrawn", "erased", "d
     assert.equal(oldCurrent, true);
     assert.equal(await finalRead(fixture, await bounded(fixture)), true);
   } else {
-    assert.equal(oldCurrent, ["erased", "repointed bytes"].includes(change), "the complete proof intentionally adds private custody and frozen byte identity to the old precheck");
+    assert.equal(oldCurrent, change === "repointed bytes", "the rights precheck rejects erased private evidence; the complete proof additionally binds frozen source bytes");
     await assert.rejects(() => bounded(fixture));
   }
 });

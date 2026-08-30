@@ -111,6 +111,11 @@ export type ArtifactRevisionSummary={revision:number;sha256:string;createdByUser
 export type ArtifactRevisionDetail={revision:number;currentRevision:number;createdAt:string;content:{markdown:string;items:Array<{title:string;body:string;notes:string}>}};
 export type PlanningConsentRequest={prompt:string;projectId:string;documentId:string;canvasId:string|null;sourceSurface:string;projectScope:boolean;locale:string;requestKey:string};
 export type PlanningConsentState={id:string;request:PlanningConsentRequest;quote:AvailableConsequentialPreview|null;working:boolean;notice:""|"failed"|"refresh"|"not-submitted"|"uncertain";submitted:boolean;recoveryExecutionId?:string;replaceExecutionId?:string;recoveredPlan?:AdaptiveStructure;readRevision?:number};
+type AdaptiveOriginalProof=Readonly<{source:CapturedSourceOwnership;quote:AvailableConsequentialPreview;structure:AdaptiveStructure;
+  identity:PlanningRecoveryIdentity;readRevision:number;certifiedRevision:number}>;
+type CachedDocumentJobDetail=DocumentJob&{adaptiveOriginalProof?:AdaptiveOriginalProof};
+type PlanningOriginalSourceRead=Readonly<{executionId:string;request:PlanningConsentRequest;source:CapturedSourceOwnership;
+  authorization:string;current:()=>boolean}>;
 
 export type SceneSubmissionResult={requestId:string;job:DocumentJob|null;preview:SceneCostPreview|null;reused:boolean;attemptSubmission:"not-submitted"|"submitted"|"unknown"};
 export type SceneSubmissionPorts={current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void};
@@ -336,7 +341,7 @@ export class FormaStore {
   #pendingJobSessionRefresh = false;
   #jobsDriving = new Set<string>();
   #presentationRecoveryAttempts = new Set<string>();
-  #jobDetails = new Map<string, DocumentJob>();
+  #jobDetails = new Map<string, CachedDocumentJobDetail>();
   #jobStarts = new Set<string>();
   #readinessInFlight = new Set<string>();
   #readinessAcknowledgements = new Set<string>();
@@ -475,6 +480,128 @@ export class FormaStore {
   canvasPlanningDocumentId(selectedIds?:readonly string[]){const canvas=this.canvasProjection.get(),scope=this.captureAuthorizationScope()?.key??"",selection=this.canvasPlanningSelection.get();return canvasDocumentTarget(this.projection.get(),canvas,selectedIds??(selection.scope===scope&&selection.canvasId===canvas.selectedCanvasId?selection.itemIds:[]),this.canvasPlanningChoices.get()[`${scope}:${canvas.selectedCanvasId}`]??"");}
   documentPreviewProgress(documentId=this.projection.get().documentId){const job=this.documentJobs.get().find((item)=>item.documentId===documentId&&item.kind==="preview"&&item.status==="running"&&item.result?.partialMediaUrl);if(!job)return null;return{jobId:job.jobId,mediaUrl:String(job.result!.partialMediaUrl),mediaType:String(job.result!.partialMediaType??"image/jpeg"),width:Number(job.result!.partialWidth??816),height:Number(job.result!.partialHeight??816),index:Number(job.result!.partialIndex??0),sourceSurface:job.sourceSurface};}
   adaptiveStructureFor(documentId=this.projection.get().documentId){return this.adaptiveStructures.get()[documentId]??null;}
+  /** Exact current-authority identity. Metadata alone supports receipt lookup, never private review or Apply. */
+  #immutableAdaptiveOriginal<T>(value:T):T{
+    const copy=structuredClone(value);
+    const freeze=(item:unknown)=>{if(item&&typeof item==="object"){for(const child of Object.values(item))freeze(child);Object.freeze(item);}};
+    freeze(copy);return copy;
+  }
+  #publicDocumentJobDetail(detail:CachedDocumentJobDetail|undefined):DocumentJob|undefined{
+    if(!detail?.adaptiveOriginalProof)return detail;
+    const job={...detail};delete job.adaptiveOriginalProof;return job;
+  }
+  #adaptiveProposalOriginalMatches(detail:CachedDocumentJobDetail|undefined,job:DocumentJob|undefined=detail){
+    const original=detail?.adaptiveOriginalProof,session=this.session.get();
+    if(!original||!job||!session||!this.sourceOwnershipActive(original.source)
+      ||this.#authorizationScope(session)!==original.source.authorization.key)return false;
+    const identity=this.#planningRecoveryIdentities.get(job.jobId),expected=original.identity,quote=original.quote,result=job.result;
+    const matches=(value:PlanningRecoveryIdentity|DocumentJob)=>value.jobId===expected.jobId&&value.kind==="structure_adaptive"
+      &&value.planningExecutionId===expected.jobId&&value.documentId===expected.documentId&&(value.canvasId??null)===(expected.canvasId??null)
+      &&value.sourceSurface===expected.sourceSurface&&value.requestKey===expected.requestKey
+      &&value.planningLocale===expected.planningLocale&&value.planningProjectScope===expected.planningProjectScope;
+    return Boolean(identity&&identity.authorization===original.source.authorization.key&&matches(identity.identity)&&matches(job)
+      &&original.certifiedRevision>(identity.withdrawalRevision??0)&&(identity.detailRevision??0)>=original.certifiedRevision
+      &&quote.projectId===this.projection.get().projectId&&job.status==="completed"&&result?.planningReviewAvailable===true
+      &&result.resultUnavailable!==true&&result.executionId===quote.executionId&&result.bindingHash===quote.bindingHash
+      &&result.sourceHash===quote.sourceHash&&result.requestKey===expected.requestKey
+      &&JSON.stringify(result.structure)===JSON.stringify(original.structure));
+  }
+  #cacheDocumentJobDetail(job:DocumentJob){
+    const publicJob=this.#publicDocumentJobDetail(job)!;
+    const previous=this.#jobDetails.get(job.jobId);
+    this.#jobDetails.set(job.jobId,this.#adaptiveProposalOriginalMatches(previous,publicJob)
+      ?{...publicJob,adaptiveOriginalProof:previous!.adaptiveOriginalProof}:publicJob);
+  }
+  #certifyAdaptiveProposalOriginal(job:DocumentJob,quote:AvailableConsequentialPreview|null|undefined,request:PlanningConsentRequest,source:CapturedSourceOwnership|null,readRevision:number,originalJob:DocumentJob|undefined){
+    const session=this.session.get(),identity=this.#planningRecoveryIdentities.get(job.jobId),result=job.result,originalResult=originalJob?.result;
+    if(!source||!session||!this.sourceOwnershipActive(source)||this.#authorizationScope(session)!==source.authorization.key
+      ||!identity||identity.authorization!==source.authorization.key||identity.deliberateReadRevision!==readRevision
+      ||identity.revision<=(identity.withdrawalRevision??0)||!quote||quote.operation!=="adaptive-structure"||quote.status!=="completed"
+      ||quote.executionId!==job.jobId||quote.projectId!==request.projectId||quote.projectId!==this.projection.get().projectId
+      ||quote.documentId!==request.documentId||(quote.canvasId??null)!==request.canvasId||!/^[a-f0-9]{64}$/u.test(quote.bindingHash)
+      ||typeof quote.sourceHash!=="string"||!/^[a-f0-9]{64}$/u.test(quote.sourceHash)
+      ||job.planningExecutionId!==job.jobId||!adaptiveJobMatchesRequest(job,request)||job.planningLocale!==request.locale
+      ||job.planningProjectScope!==request.projectScope||job.status!=="completed"||result?.planningReviewAvailable!==true
+      ||result.resultUnavailable===true||result.executionId!==quote.executionId||result.bindingHash!==quote.bindingHash
+      ||result.sourceHash!==quote.sourceHash||result.requestKey!==request.requestKey||!result.structure||typeof result.structure!=="object"
+      ||Array.isArray(result.structure)||!originalJob||originalJob.jobId!==job.jobId||originalJob.planningExecutionId!==job.jobId
+      ||!adaptiveJobMatchesRequest(originalJob,request)||originalJob.planningLocale!==request.locale||originalJob.planningProjectScope!==request.projectScope
+      ||originalJob.status!=="completed"||originalResult?.planningReviewAvailable!==true||originalResult.resultUnavailable===true
+      ||originalResult.executionId!==quote.executionId||originalResult.bindingHash!==quote.bindingHash||originalResult.sourceHash!==quote.sourceHash
+      ||originalResult.requestKey!==request.requestKey||JSON.stringify(originalResult.structure)!==JSON.stringify(result.structure))return false;
+    const proof:AdaptiveOriginalProof=Object.freeze({source,quote:this.#immutableAdaptiveOriginal(quote),
+      structure:this.#immutableAdaptiveOriginal(originalResult.structure as AdaptiveStructure),
+      identity:Object.freeze({...identity.identity}),readRevision,certifiedRevision:identity.revision});
+    const publicJob=this.#publicDocumentJobDetail(job)!;
+    this.#jobDetails.set(job.jobId,{...publicJob,adaptiveOriginalProof:proof});
+    return true;
+  }
+  /** Explicit original-only read: the existing consent validator owns every response.
+   * This descriptor is never published as a native consent or a new operation. */
+  async loadAdaptiveProposalOriginal(executionId:string){
+    const source=this.captureSourceOwnership(),authorization=source?.authorization.key??"",route=this.route.get(),localeRevision=this.#planningLocaleRevision;
+    const known=this.documentJobs.get().find(job=>job.jobId===executionId)??this.#publicDocumentJobDetail(this.#jobDetails.get(executionId))
+      ??this.planningRecoveryEntries().find(job=>job.jobId===executionId),projection=this.projection.get();
+    if(!source||!this.sourceOwnershipActive(source)||!this.#canReadProjectJobs()||this.planningConsent.get()
+      ||!known||known.kind!=="structure_adaptive"||known.planningExecutionId!==executionId||!known.sourceSurface||!known.requestKey
+      ||!known.planningLocale||typeof known.planningProjectScope!=="boolean"
+      ||!projection.documents.some(document=>document.id===known.documentId&&document.projectId===projection.projectId))throw new Error("planning_result_unavailable");
+    const request:PlanningConsentRequest={projectId:projection.projectId,documentId:known.documentId,canvasId:known.canvasId??null,
+      sourceSurface:known.sourceSurface,projectScope:known.planningProjectScope,locale:known.planningLocale,requestKey:known.requestKey,prompt:""};
+    const current=()=>{
+      if(!this.sourceOwnershipActive(source)||!this.#scopeStillActive(authorization)||this.route.get()!==route
+        ||this.#planningLocaleRevision!==localeRevision||this.planningConsent.get()||!this.#canReadProjectJobs())return false;
+      const view=this.projection.get(),job=this.documentJobs.get().find(item=>item.jobId===executionId)
+        ??this.#publicDocumentJobDetail(this.#jobDetails.get(executionId))??this.planningRecoveryEntries().find(item=>item.jobId===executionId);
+      return Boolean(view.projectId===request.projectId&&view.documents.some(document=>document.id===request.documentId&&document.projectId===request.projectId)
+        &&(request.canvasId?this.canvasProjection.get().selectedCanvasId===request.canvasId&&this.canvasPlanningDocumentId()===request.documentId:view.documentId===request.documentId)
+        &&job&&adaptiveJobMatchesRequest(job as DocumentJob,request)&&job.jobId===executionId&&job.planningExecutionId===executionId
+        &&job.planningLocale===request.locale&&job.planningProjectScope===request.projectScope);
+    };
+    if(!current())throw new Error("planning_result_unavailable");
+    const completed=await this.#requestPlanningConsent("resume",{executionId,request,source,authorization,current});
+    if(completed!==true||!current())throw new Error("planning_result_unavailable");
+  }
+  /** A cold original read observes the existing revision clock; it never selects or certifies a job. */
+  captureAdaptiveProposalRead(){
+    const source=this.captureSourceOwnership();if(!source||!this.sourceOwnershipActive(source))return null;
+    return Object.freeze({revision:this.#planningRecoverySequence,current:()=>this.sourceOwnershipActive(source)});
+  }
+  adaptiveProposalSource(documentId=this.projection.get().documentId,canvasId:string|null=null,executionId?:string){
+    const session=this.session.get(),projection=this.projection.get();
+    if(!session||!this.#canReadProjectJobs()||!projection.documents.some(item=>item.id===documentId&&item.projectId===projection.projectId))return null;
+    const id=executionId??(canvasId?undefined:this.#adaptiveStructureJobIds.get(documentId));if(!id)return null;
+    const authorization=this.#authorizationScope(session),proof=this.#planningRecoveryIdentities.get(id),known=proof?.identity;
+    if(!proof||proof.authorization!==authorization||!known||known.jobId!==id||known.planningExecutionId!==id||known.documentId!==documentId||(known.canvasId??null)!==canvasId
+      ||canvasId&&this.canvasProjection.get().selectedCanvasId!==canvasId)return null;
+    const current=this.documentJobs.get().find(job=>job.jobId===id),cached=this.#jobDetails.get(id);
+    const matches=(job:DocumentJob|PlanningRecoveryIdentity|undefined)=>Boolean(job&&job.jobId===id&&job.kind==="structure_adaptive"&&job.planningExecutionId===id&&job.documentId===documentId
+      &&(job.canvasId??null)===canvasId&&job.sourceSurface===known.sourceSurface&&job.requestKey===known.requestKey
+      &&job.planningLocale===known.planningLocale&&job.planningProjectScope===known.planningProjectScope);
+    if(current&&!matches(current))return null;
+    const metadataHash=matches(current)&&current?.status==="completed"&&typeof current.result?.bindingHash==="string"
+      &&/^[a-f0-9]{64}$/u.test(current.result.bindingHash)?current.result.bindingHash:null;
+    const withdrawn=current?.result?.planningReviewAvailable===false||current?.result?.resultUnavailable===true;
+    // The public job/inspection contract intentionally omits private quotes.
+    // Only an exact original response can create this private, generation-owned
+    // proof. Generic rows can merely confirm the same body; never recertify it.
+    const original=cached?.adaptiveOriginalProof;
+    const originalMatches=Boolean(original&&this.sourceOwnershipActive(original.source)&&original.source.authorization.key===authorization
+      &&original.certifiedRevision>(proof.withdrawalRevision??0)&&(proof.detailRevision??0)>=original.certifiedRevision
+      &&matches(original.identity)&&matches(cached)&&cached?.status==="completed"&&cached.result?.planningReviewAvailable===true&&cached.result.resultUnavailable!==true
+      &&cached.result.executionId===original.quote.executionId&&cached.result.bindingHash===original.quote.bindingHash
+      &&cached.result.sourceHash===original.quote.sourceHash&&cached.result.requestKey===original.identity.requestKey
+      &&JSON.stringify(cached.result.structure)===JSON.stringify(original.structure)
+      &&(!current?.result?.structure||JSON.stringify(current.result.structure)===JSON.stringify(original.structure))
+      &&(current?.result?.sourceHash===undefined||current.result.sourceHash===original.quote.sourceHash));
+    const privateCandidate=originalMatches?{...cached!,result:{...cached!.result,quote:original!.quote,structure:original!.structure}}:undefined;
+    const candidate=withdrawn?undefined:privateCandidate;
+    const quote=candidate?.result?.quote as AvailableConsequentialPreview|undefined;
+    const readable=Boolean(quote&&quote.executionId===id&&/^[a-f0-9]{64}$/u.test(quote.bindingHash)&&quote.operation==="adaptive-structure"
+      &&quote.status==="completed"&&quote.projectId===projection.projectId&&quote.documentId===documentId&&(quote.canvasId??null)===canvasId&&(!metadataHash||metadataHash===quote.bindingHash));
+    return{executionId:id,bindingHash:readable?quote!.bindingHash:metadataHash,structure:readable?structuredClone(original!.structure):null,
+      readable,withdrawalRevision:proof.withdrawalRevision??0};
+  }
   #clearPendingAdaptiveSelection(documentId:string,replacementId?:string){
     for(const entry of this.#planningRecoveryIdentities.values())if(entry.identity.documentId===documentId&&entry.selectOnCompletion){
       if(entry.identity.jobId!==replacementId)this.#dismissedAdaptiveSuggestions.add(entry.identity.jobId);
@@ -646,7 +773,7 @@ export class FormaStore {
         // epoch. Do not republish its older status or financial receipt. A
         // genuinely certified completion and explicit withdrawal stay distinct.
         if(job.status!=="completed"&&(this.#planningRecoveryIdentities.get(id)?.terminalRevision??0)!==terminalRevision)return null;
-        this.#rememberPlanningRecovery(job);this.#observeAdaptivePlanningJob(job);this.#jobDetails.set(id,job);
+        this.#rememberPlanningRecovery(job);this.#observeAdaptivePlanningJob(job);this.#cacheDocumentJobDetail(job);
         const certified=this.#planningRecoveryIdentities.get(id);if(certified)certified.detailRevision=certified.revision;
         this.#trimDocumentJobDetails();
         return{job,revision:this.#planningRecoveryIdentities.get(id)?.revision,terminalRevision:this.#planningRecoveryIdentities.get(id)?.terminalRevision??0,deliberateReadRevision};
@@ -726,7 +853,7 @@ export class FormaStore {
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const cached=this.#jobDetails.get(jobId);
-    if(cached&&cached.kind!=="structure_adaptive"&&cached.updatedAt===current?.updatedAt){if(cached.jobId!==jobId||cached.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");await this.#hydrateDocumentJobGenerationReceipt(cached,authorization);return cached;}
+    if(cached&&cached.kind!=="structure_adaptive"&&cached.updatedAt===current?.updatedAt){if(cached.jobId!==jobId||cached.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");await this.#hydrateDocumentJobGenerationReceipt(cached,authorization);return this.#publicDocumentJobDetail(cached)!;}
     const known=current??cached??this.planningRecoveryEntries().find(entry=>entry.jobId===jobId);
     const adaptive=known?.kind==="structure_adaptive"&&known.planningExecutionId===jobId;
     if(adaptive)this.#rememberPlanningRecovery(known);
@@ -771,7 +898,7 @@ export class FormaStore {
         if(job.status!=="completed"&&(this.#planningRecoveryIdentities.get(jobId)?.terminalRevision??0)!==terminalRevision)throw new Error("planning_result_superseded");
         this.#observeAdaptivePlanningJob(job);
       }
-      this.#jobDetails.set(jobId,job);
+      this.#cacheDocumentJobDetail(job);
       if(signed){const certified=this.#planningRecoveryIdentities.get(jobId);if(certified){certified.detailRevision=certified.revision;certified.certifiedReadRevision=Math.max(certified.certifiedReadRevision??0,deliberateReadRevision);delete certified.preservedReadRevision;}}
       this.#trimDocumentJobDetails();
       this.documentJobs.set(this.documentJobs.get().map((entry)=>entry.jobId===jobId?job:entry));
@@ -1161,7 +1288,7 @@ export class FormaStore {
         &&typeof job.updatedAt==="string"&&Number.isFinite(Date.parse(job.updatedAt))
         &&typeof job.requestedAt==="string"&&Number.isFinite(Date.parse(job.requestedAt))
         &&Array.isArray(job.members)&&(job.result===null||typeof job.result==="object"&&!Array.isArray(job.result));
-      if(complete){this.#jobDetails.set(jobId,job);this.#trimDocumentJobDetails();}
+      if(complete){this.#cacheDocumentJobDetail(job);this.#trimDocumentJobDetails();}
       else this.#jobDetails.delete(jobId);
       return job;
     }
@@ -2048,7 +2175,11 @@ async syncDocumentJobs(){
       const jobs=(body.jobs??[]).map(job=>{
         const detail=this.#jobDetails.get(job.jobId);
         if(detail&&job.kind!=="structure_adaptive"&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};
-        if(detail)this.#jobDetails.delete(job.jobId);return job;
+        if(detail){
+          if(this.#adaptiveProposalOriginalMatches(detail,job))this.#cacheDocumentJobDetail(job);
+          else this.#jobDetails.delete(job.jobId);
+        }
+        return job;
       });
       this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
       for(const job of jobs)this.#observeAdaptivePlanningJob(job);
@@ -3607,13 +3738,19 @@ async syncDocumentJobs(){
   }
   async previewPlanningConsent(){return this.#requestPlanningConsent(this.planningConsent.get()?.recoveryExecutionId?"resume":"quote");}
   async approvePlanningConsent(){const state=this.planningConsent.get();if(!state?.quote)return;const action=state.submitted||state.recoveryExecutionId?{action:"retrieve" as const,disabled:false}:contextConsentAction(state.quote.status,state.quote.providerAvailable,state.quote.canExecute);if(!action.disabled)return this.#requestPlanningConsent(action.action);}
-  async #requestPlanningConsent(action:"quote"|"resume"|ContextConsentAction){
-    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
-    const state=this.planningConsent.get(),authorization=this.#planningConsentScope,selectionLocaleRevision=this.#planningLocaleRevision;
+  async #requestPlanningConsent(action:"quote"|"resume"|ContextConsentAction,originalRead?:PlanningOriginalSourceRead){
+    const sourceOwner=originalRead?.source??this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
+    if(originalRead&&(action!=="resume"||!originalRead.current()))return false;
+    let originalCompleted=false;
+    // The empty native id is never published or used as an ownership proof.
+    // The silent descriptor is owned by the captured Source and existing read revision.
+    const state:PlanningConsentState|null=originalRead?{id:"",request:originalRead.request,quote:null,working:false,notice:"",submitted:true,recoveryExecutionId:originalRead.executionId}:this.planningConsent.get();
+    const authorization=originalRead?.authorization??this.#planningConsentScope,selectionLocaleRevision=this.#planningLocaleRevision;
     if(!state||state.working||!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner)||action==="resume"&&!state.recoveryExecutionId||action!=="quote"&&action!=="resume"&&!state.quote)return;
     const replacing=action==="quote"&&Boolean(state.replaceExecutionId)&&state.quote?.status==="completed";
     const trackedId=state.recoveryExecutionId??state.replaceExecutionId??state.quote?.executionId;
     if(trackedId)this.#rememberPlanningRecovery({jobId:trackedId,kind:"structure_adaptive",planningExecutionId:trackedId,documentId:state.request.documentId,canvasId:state.request.canvasId,sourceSurface:state.request.sourceSurface,requestKey:state.request.requestKey,planningLocale:state.request.locale,planningProjectScope:state.request.projectScope},state.submitted||Boolean(state.recoveryExecutionId)||state.quote?.status!=="quoted");
+    const priorOriginalProof=originalRead?this.#jobDetails.get(originalRead.executionId)?.adaptiveOriginalProof:undefined;
     const tracked=trackedId?this.#planningRecoveryIdentities.get(trackedId):undefined;
     const startedReadAt=++this.#planningRecoverySequence;
     if(tracked){tracked.revision=startedReadAt;tracked.deliberateReadRevision=startedReadAt;tracked.pendingReadRevision=startedReadAt;delete tracked.preservedReadRevision;delete tracked.terminalReadRevision;
@@ -3623,7 +3760,7 @@ async syncDocumentJobs(){
     }
     const readRevision=tracked?.revision??0;
     const privateWithdrawn=()=>trackedId&&(this.#planningRecoveryIdentities.get(trackedId)?.withdrawalRevision??0)>startedReadAt;
-    const retainedQuote=()=>this.planningConsent.get()?.quote??(privateWithdrawn()?null:state.quote);
+    const retainedQuote=()=>originalRead?null:this.planningConsent.get()?.quote??(privateWithdrawn()?null:state.quote);
     const failureFor=(quote:AvailableConsequentialPreview|null,outcome:Parameters<typeof contextConsentFailure>[1])=>{
       const result=contextConsentFailure(quote,outcome),id=quote?.executionId??trackedId;
       const job=id?this.documentJobs.get().find(item=>item.jobId===id)??this.#jobDetails.get(id):undefined;
@@ -3632,10 +3769,10 @@ async syncDocumentJobs(){
       // whose current original receipt already proves settlement or release.
       return result.notice==="uncertain"&&job&&adaptiveJobMatchesRequest(job,state.request)&&documentJobHasNoBudgetHold(budget)?{...result,notice:"failed" as const}:result;
     };
-    const update=(patch:Partial<PlanningConsentState>)=>{const current=this.planningConsent.get();if(current?.id!==state.id||!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return false;this.planningConsent.set({...current,...patch});this.notify();return true;};
+    const update=(patch:Partial<PlanningConsentState>)=>{if(originalRead)return originalRead.current()&&this.sourceOwnershipActive(sourceOwner);const current=this.planningConsent.get();if(current?.id!==state.id||!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return false;this.planningConsent.set({...current,...patch});this.notify();return true;};
     update({working:true,notice:"",submitted:state.submitted||action==="execute",readRevision:startedReadAt});
     try{
-      const response=await this.guardedFetch("/api/document-jobs/adaptive",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...state.request,action,...(action==="resume"?{executionId:state.recoveryExecutionId}:action!=="quote"?{executionId:state.quote!.executionId,approvedBindingHash:state.quote!.bindingHash}:state.replaceExecutionId?{replaceExecutionId:state.replaceExecutionId}:{})})},this.#systemNotice("Review this exact planning request"));
+      const response=await this.guardedFetch("/api/document-jobs/adaptive",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...state.request,action,...(action==="resume"?{executionId:state.recoveryExecutionId}:action!=="quote"?{executionId:state.quote!.executionId,approvedBindingHash:state.quote!.bindingHash}:state.replaceExecutionId?{replaceExecutionId:state.replaceExecutionId}:{})})},this.#systemNotice("Review this exact planning request"),originalRead?{current:originalRead.current}:undefined);
       if(!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner))return;
       if((action==="resume"||action==="retrieve")&&trackedId&&!response.ok&&[401,403,404,410].includes(response.status)){
         this.#withdrawAdaptiveRead(trackedId,startedReadAt);
@@ -3669,7 +3806,7 @@ async syncDocumentJobs(){
         if(cleared&&redirected&&(!trackedId||(this.#planningRecoveryIdentities.get(trackedId)?.deliberateReadRevision??0)===startedReadAt))update({quote:null,request:{...effectiveRequest,prompt:""},recoveryExecutionId:returnedId,replaceExecutionId:undefined,recoveredPlan:undefined,submitted:true,working:false,notice:"failed"});
         return;
       }
-      if(this.planningConsent.get()?.id!==state.id)return;
+      if(originalRead?!originalRead.current():this.planningConsent.get()?.id!==state.id)return;
       if(trackedId&&(this.#planningRecoveryIdentities.get(trackedId)?.deliberateReadRevision??0)!==startedReadAt)return;
       // Access proof is independent of the execution outcome: an authorized
       // uncertain receipt (409) and a free lookup reusing paid work both read
@@ -3700,7 +3837,7 @@ async syncDocumentJobs(){
       if(returnedId&&(observed?.revision??0)>startedReadAt&&!completedReceipt&&!redirected&&!recertifiesOlderDenial)return;
       if(body.quote&&body.quote.status!=="quoted")this.#rememberPlanningRecovery({jobId:body.quote.executionId,kind:"structure_adaptive",planningExecutionId:body.quote.executionId,documentId:effectiveRequest.documentId,canvasId:effectiveRequest.canvasId,sourceSurface:effectiveRequest.sourceSurface,requestKey:effectiveRequest.requestKey,planningLocale:effectiveRequest.locale,planningProjectScope:effectiveRequest.projectScope});
       if((exactRetainedReceipt||reusedPaidQuote)&&returnedId){const certified=this.#planningRecoveryIdentities.get(returnedId);if(certified){certified.certifiedReadRevision=Math.max(certified.certifiedReadRevision??0,startedReadAt);delete certified.preservedReadRevision;}}
-      const currentWinner=returnedId?this.documentJobs.get().find(job=>job.jobId===returnedId)??this.#jobDetails.get(returnedId):undefined;
+      const currentWinner=returnedId?this.documentJobs.get().find(job=>job.jobId===returnedId)??this.#publicDocumentJobDetail(this.#jobDetails.get(returnedId)):undefined;
       const currentTerminal=currentWinner&&documentJobTerminal(currentWinner)&&adaptiveJobMatchesRequest(currentWinner,effectiveRequest);
       const newerStopped=body.job?.status!=="completed"&&body.quote?.status!=="completed"&&(
         currentTerminal&&currentWinner.status!=="completed"&&body.job&&!documentJobTerminal(body.job)
@@ -3731,6 +3868,22 @@ async syncDocumentJobs(){
       this.#rememberPlanningRecovery(job);
       if(job.result?.planningReviewAvailable===false||job.result?.resultUnavailable===true){this.#clearAdaptivePrivatePresentation(job.jobId,undefined,undefined,true);this.notify();return;}
       const certified=this.#planningRecoveryIdentities.get(job.jobId);if(certified){certified.certifiedReadRevision=Math.max(certified.certifiedReadRevision??0,startedReadAt);delete certified.preservedReadRevision;}
+      if(originalRead){
+        // A silent source read never borrows another native consent, changes its
+        // presentation, or substitutes a different paid execution.
+        if(!originalRead.current()||!exactRetainedReceipt||job.jobId!==originalRead.executionId
+          ||body.quote?.status!=="completed"||job.status!=="completed"||!job.result?.structure)return false;
+        const publicJob=this.#publicDocumentJobDetail(job)!;
+        this.documentJobs.set([publicJob,...this.documentJobs.get().filter(existing=>existing.jobId!==publicJob.jobId)]);
+        this.#observeAdaptivePlanningJob(publicJob);
+        if(!originalRead.current())return false;
+        const proof=this.#planningRecoveryIdentities.get(publicJob.jobId);
+        if(proof)proof.detailRevision=proof.revision;
+        originalCompleted=this.#certifyAdaptiveProposalOriginal(publicJob,body.quote,effectiveRequest,sourceOwner,startedReadAt,body.job);
+        this.#trimDocumentJobDetails();
+        if(originalCompleted)this.notify();
+        return originalCompleted;
+      }
       this.#pendingAdaptiveIntents.set(job.jobId,typeof job.result?.intent==="string"?job.result.intent:effectiveRequest.prompt);
       const jobs=[job,...this.documentJobs.get().filter((existing)=>existing.jobId!==job.jobId)];this.documentJobs.set(jobs);
       const selectionLocaleChanged=selectionLocaleRevision!==this.#planningLocaleRevision;
@@ -3758,7 +3911,7 @@ async syncDocumentJobs(){
         // of other still-authorized cards omitted from the current feed.
         this.#observeAdaptivePlanningJob(job);
       }else this.#observeAdaptivePlanningJob(job);
-      if(exactRetainedReceipt){this.#jobDetails.set(job.jobId,job);const proof=this.#planningRecoveryIdentities.get(job.jobId);if(proof)proof.detailRevision=proof.revision;this.#trimDocumentJobDetails();}
+      if(exactRetainedReceipt){this.#cacheDocumentJobDetail(job);const proof=this.#planningRecoveryIdentities.get(job.jobId);if(proof)proof.detailRevision=proof.revision;this.#certifyAdaptiveProposalOriginal(job,body.quote,effectiveRequest,sourceOwner,startedReadAt,body.job);this.#trimDocumentJobDetails();}
       const resultlessTerminal=documentJobTerminal(job)&&!(job.status==="completed"&&job.result?.structure);
       if(state.recoveryExecutionId||redirected||resultlessTerminal||selectionLocaleChanged){
         update({quote:effectiveQuote,request:effectiveRequest,recoveryExecutionId:effectiveQuote.executionId,replaceExecutionId:undefined,submitted:true,working:false,recoveredPlan:!selectionLocaleChanged&&job.status==="completed"&&job.result?.structure?job.result.structure as AdaptiveStructure:undefined,notice:job.status==="completed"?"":failureFor(effectiveQuote,{...body,status:effectiveQuote.status}).notice});
@@ -3775,6 +3928,12 @@ async syncDocumentJobs(){
       else{const outcome=failureFor(retainedQuote(),{transport:true});update({quote:outcome.quote,notice:outcome.notice});}
     }finally{
       if((trackedId?(this.#planningRecoveryIdentities.get(trackedId)?.revision??0):0)===readRevision)update({working:false});
+      if(originalRead&&!originalCompleted&&originalRead.current()
+        &&this.#planningRecoveryIdentities.get(originalRead.executionId)?.deliberateReadRevision===startedReadAt){
+        const detail=this.#jobDetails.get(originalRead.executionId);
+        if(detail?.adaptiveOriginalProof===priorOriginalProof&&detail?.adaptiveOriginalProof)
+          this.#jobDetails.set(originalRead.executionId,this.#publicDocumentJobDetail(detail)!);
+      }
       const finished=trackedId?this.#planningRecoveryIdentities.get(trackedId):undefined;if(finished?.pendingReadRevision===startedReadAt){delete finished.pendingReadRevision;delete finished.preservedReadRevision;}
     }
   }

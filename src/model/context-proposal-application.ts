@@ -7,7 +7,7 @@ import type { CreativeBlock, CreativeProjection, EventInput } from "./events.ts"
 
 export type ContextProposalSelection={executionId:string;bindingHash:string;proposalId:string;edit?:{type?:string;subtype?:string;label?:string;text?:string;participants?:DecompositionProposal["participants"]}};
 export type ApprovedContextProposal={key:string;executionId:string;proposalId:string;decomposition?:DecompositionProposal;research?:ContextResearchSuggestion;edit?:ContextProposalSelection["edit"]};
-export type ContextChange={kind:"create"|"copy"|"link"|"group"|"participant";label:string;text:string;type?:string;sourceId?:string;targetId?:string};
+export type ContextChange={kind:"create"|"copy"|"link"|"group"|"participant"|"edit"|"place";label:string;text:string;type?:string;sourceId?:string;targetId?:string};
 export type ContextApplicationPlan={events:EventInput[];changes:ContextChange[];blockIds:string[];relationCount:number};
 const participantKey=(value:string)=>value.toLocaleLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/gu,"").replace(/[^\p{L}\p{N}]+/gu,"-").replace(/(^-|-$)/gu,"");
 const participantMentions=(text:string)=>[...text.normalize("NFC").matchAll(/@([\p{L}\p{M}\p{N}_/-]+)/gu)].map((match)=>participantKey(match[1].split("/").at(-1)??match[1]));

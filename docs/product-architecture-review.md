@@ -134,8 +134,12 @@ family IDs, anchor claims, removed members, and prompt-fan variants must never
 accidentally merge work from another project or collapse four distinct creative
 approaches into indistinguishable labels.
 Accepted-proposal precedents, authored corrections, and retained-image examples
-follow the same project boundary both when shown in the Library and when added
-to a document assistant's model context. Account-wide retrieval is an explicit
+follow the active-project boundary in Library. Any inclusion in a document
+assistant's model context must preserve that same boundary, but the current
+local-rule quick-edit path neither calls a model nor demonstrates cited-chat
+conditioning. Optional read-only reference inspection does not satisfy that
+separate requirement. The cited-chat implementation/evidence gate remains open.
+Account-wide retrieval is an explicit
 future capability, never the accidental consequence of one shared event stream.
 
 The global Create entry resolves an existing document in the current project,

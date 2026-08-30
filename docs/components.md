@@ -587,3 +587,47 @@ separately. Unmanaged legacy outputs without a source manifest retain a clearly
 labeled **Export unreviewed draft** path, with current access, rights, private
 retention, and exact bytes checked. They are never counted as independently
 approved delivery, and inspecting or exporting them does not require new spending.
+
+## Exact paid adaptive proposal changes
+
+Document Adaptive path and Canvas paid suggestion buttons share the
+component-lifetime `AdaptiveProposalReviewController` and
+`renderAdaptiveProposalDialog`. The latter consumes the same
+`renderAuthoringPreview` as Context Intelligence and free document copying;
+it does not create a second approval model or authoring store.
+
+The read-only `FormaStore.adaptiveProposalSource` exposes only an exact
+current-authority paid execution and its retained binding proof. General job
+pages do not supply that private proof. A surviving exact job’s metadata
+binding hash supports receipt lookup only, with no private structure or Apply
+authority. The explicit **Retrieve this original proposal** action uses the
+existing exact job inspection, never a new quote or provider execution. Suggestions keep their immutable JSON-pointer IDs;
+new native decisions are the default, edits require a named same-destination
+native target, and Canvas creation previews include the reviewed placement.
+
+Only `/api/context/adaptive/apply` applies paid suggestions. A server preview
+discloses original/current source hashes, exact destinations and changes.
+Apply submits only its immutable preview ID and approval hash. The hosts do not
+append client events or treat a partial append as success. Closing preserves
+the current component's own draft and exact handle; a lost response permits
+read-only retrieval, not automatic reapplication. Source/permission withdrawal
+removes private review bytes while retaining content-free recovery identity.
+A certified expired lease permits only an explicit same-handle retry; a stale
+expired lease permits explicit same-handle dismissal before a fresh review.
+Read-only checking recognizes a completed dismissal after a lost response.
+
+Fresh hosts can resume a retained unapplied review. If legacy resume returns a
+latest applied result without an exact handle or selection, it only offers
+explicit receipt discovery; it does not select that latest result. After private
+preview expiry, exact
+paid-execution receipt discovery shows explicit paginated choices without
+reconstructing private edits or selecting a latest result. This lookup requires
+the exact paid execution and binding identity. Private-content erasure does
+not itself erase the job’s metadata binding; that existing metadata is reused
+first when available. If the job has also expired or its identity is absent,
+explicit destination-scoped metadata discovery lists only the current actor’s
+canonical receipts in this exact destination. Each row remains an explicit read-only choice; neither path invents
+a missing hash or reconstructs text from the current document. Canonical receipts
+confirm authorship, never independent approval, export, delivery, provider
+quality, or ROI. Native dialog and keyboard/assistive-technology verification
+remains an integration obligation, separate from mocked host tests.

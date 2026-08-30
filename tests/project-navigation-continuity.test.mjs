@@ -7,6 +7,7 @@ import { artifactFocusOptionsFromRoute, libraryFocusFromRoute, documentIdFromRou
 import { creativeCreationHref } from "../src/platform/applications.ts";
 import { artifactDeliveryFor } from "../src/state/artifact-delivery-context.ts";
 import { createCalmFullPage } from "./helpers/calm-full-page-fixture.mjs";
+import { observeActualSceneResumeReads } from "./helpers/actual-scene-resume-read.mjs";
 
 test("unavailable task href fallback preserves exact ordered values and never overrides explicit destinations or selections", () => {
   const values = ["", " unknown\u00a0", "known", "known"], source = new URL("/deliver", "https://fixture.invalid");
@@ -481,6 +482,7 @@ test("late Canvas " + outcome + " cannot replace feedback after newer " + change
 
 async function navigationPage(t, locale) {
   const h = await navigationFixture(t), events = h.store.events.get(), head = h.store.head.get(), content = h.store.content.get();
+  h.navigationResumeReads = observeActualSceneResumeReads(h); t.after(() => h.navigationResumeReads.restore());
   const f = await createCalmFullPage(t, { locale, storeHost: h });
   // Reuse the full actual Shell/route/nested renderer, then restore this test's
   // actual Worker records instead of treating the 14-block presentation sample as source proof.
@@ -525,7 +527,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("actual " + locale + " full 
   await f.act(deliver, "click", { button: 0, metaKey: true, preventDefault() { prevented++; } });
   assert.equal(prevented, 0); assert.equal(h.store.route.get(), prior);
   await f.act(deliver, "click", { button: 0 }); h.exact();
-  assert.equal(h.requests.filter(row => row.init.method === "POST").length, 0, "All real component→Store actions are navigation or free reads only");
+  assert.equal(h.requests.filter(row => row.init.method === "POST" && !h.navigationResumeReads.isReadOnlyResume(row)).length, 0, "All real component→Store actions are navigation or free reads only");
 });
 
 for (const shared of [false, true]) test("task-to-task navigation retains an unavailable original address instead of substituting current history / shared=" + shared, async t => {
@@ -567,7 +569,7 @@ for (const state of ["removed", "unknown", "duplicate"]) test("actual Shell nati
     assert.deepEqual(new URL(h.store.route.get(), "https://fixture.invalid").searchParams.getAll("document"), values);
     assert.equal(h.store.projection.get().projectId, "");
   }
-  assert.equal(h.requests.filter(row => row.init.method === "POST").length, 0);
+  assert.equal(h.requests.filter(row => row.init.method === "POST" && !h.navigationResumeReads.isReadOnlyResume(row)).length, 0);
 });
 
 for (const outcome of ["pending-expiry", "success", "transport-failure", "new-commit", "new-commit-aba"])
@@ -634,6 +636,7 @@ async function secondaryNavigationDeliver(t, locale) {
 
 async function secondaryNavigationColdTab(t, f, href) {
   const h = f.navigationHost, cold = await createSceneStoreHost({ workerFixture: { ...h.worker, close() {} } });
+  cold.navigationResumeReads = observeActualSceneResumeReads(cold); t.after(() => cold.navigationResumeReads.restore());
   const events = cold.store.events.get(), head = cold.store.head.get(), content = cold.store.content.get();
   const previousHistory = globalThis.history;
   globalThis.history = {
@@ -646,7 +649,7 @@ async function secondaryNavigationColdTab(t, f, href) {
     // captured Worker records. A new native URL must not inherit Store.setRoute.
     cold.store.events.set(events); cold.store.head.set(head); cold.store.content.set(content); cold.store.route.set(href);
     await cold.store.syncDocumentFromRoute(); await page.settle();
-    assert.equal(cold.requests.filter(row => row.init.method === "POST").length, 0);
+    assert.equal(cold.requests.filter(row => row.init.method === "POST" && !cold.navigationResumeReads.isReadOnlyResume(row)).length, 0);
     const projection = cold.store.projection.get();
     return { route: cold.store.route.get(), projectId: projection.projectId, documentId: projection.documentId,
       historicalBVisible: page.tree().root.text.includes("Historical project B"),
@@ -656,7 +659,7 @@ async function secondaryNavigationColdTab(t, f, href) {
 }
 
 const secondaryNavigationHeader = f => f.find("a", node => node.owner.tag === "forma-deliver" && node.text.includes(f.i18n.t("deliver.reviewActivity", "Review activity")));
-const secondaryNavigationNoPosts = h => assert.equal(h.requests.filter(row => row.init.method === "POST").length, 0, "Navigation sends no source, approval, job or financial mutation");
+const secondaryNavigationNoPosts = h => assert.equal(h.requests.filter(row => row.init.method === "POST" && !h.navigationResumeReads.isReadOnlyResume(row)).length, 0, "Navigation sends no source, approval, job or financial mutation");
 
 async function secondaryNavigationNativeGuards(f, findLink) {
   const h = f.navigationHost, before = h.store.route.get();
@@ -739,5 +742,12 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("secondary navigation / " + 
   await f.act(f.task("/deliver"), "click", { button: 0 }); h.exact(project, document);
   await f.act(f.find("button", node => node.owner.tag === "forma-deliver" && node.text === f.i18n.t("deliver.return", "Open the current document")));
   h.exact(project, document); assert.equal(documentIdFromRoute(h.store.route.get()), document);
+  const requestCount = h.requests.length, settled = await h.navigationResumeReads.settleOriginalRequests();
+  await f.settle();
+  assert.equal(h.requests.length, requestCount, "Settling existing original reads does not issue another request");
+  assert.equal(h.navigationResumeReads.pendingOriginalCount(), 0, "The exact response evidence has finished before request accounting");
+  assert.ok(settled.every(({ request, status, responseStatus }) => status === "fulfilled"
+    && ((request.init.method ?? "GET") === "GET" || responseStatus === 200 && h.navigationResumeReads.isReadOnlyResume(request))),
+  "Every settled non-GET is the original current-dispatch read with an actual exact200:none response and unchanged SQL counter");
   secondaryNavigationNoPosts(h); assert.deepEqual(await h.history(), history);
 });

@@ -1,3 +1,5 @@
+import type { WorkspaceQuickEditReview } from "../src/model/workspace-local-proposal.ts";
+import type { AdaptiveProposalReview } from "../src/model/adaptive-proposal-application.ts";
 import type { ApprovedContextProposal, ContextChange, ContextProposalSelection } from "../src/model/context-proposal-application.ts";
 import type { EventInput } from "../src/model/events.ts";
 import { canonicalConsent, consentHash, executionAdmissionGuard, executionAuthorityCurrent, executionContentCustodyGuard, type ConsequentialBinding } from "./consequential-consent.ts";
@@ -7,8 +9,8 @@ import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, type EventRow, type
 import { authoringEventProof } from "./authoring-event-proof.ts";
 import { prepareAuthoringEventBatch } from "./authoring-event-batches.ts";
 
-export type AuthoringPlan={operation:"context-proposal"|"document-duplicate"|"canvas-arrangement";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};duplication?:{operationId:string;title:string;collectionId:string|null;collectionMode:"source"|"explicit";collectionPath:string[];sourceTitle:string;copyMode:"independent-snapshot";excluded:["outputs","approvals","generation-jobs","review-assignments"]};arrangement?:import("./canvas-arrangements.ts").RetainedCanvasArrangement;result:{blockIds:string[];relationCount:number;documentId?:string;operationId?:string;requestHash?:string;arrangementId?:string;itemCount?:number;dismissed?:boolean};expiresAt:string};
-export type AuthoringPreview={previewId:string;approvalHash:string;sourceHash:string;projectId:string;documentId:string;canvasId:string|null;blockId:string;changes:ContextChange[];events:EventInput[];review?:AuthoringPlan["review"];duplication?:AuthoringPlan["duplication"];blockCount:number;relationCount:number;expiresAt:string};
+export type AuthoringPlan={operation:"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";binding:ConsequentialBinding;sourceHead:number;events:EventInput[];changes:ContextChange[];review?:{sourceText:string;proposals:ApprovedContextProposal[];selections:ContextProposalSelection[]};duplication?:{operationId:string;title:string;collectionId:string|null;collectionMode:"source"|"explicit";collectionPath:string[];sourceTitle:string;copyMode:"independent-snapshot";excluded:["outputs","approvals","generation-jobs","review-assignments"]};adaptiveReview?:AdaptiveProposalReview;localReview?:WorkspaceQuickEditReview;arrangement?:import("./canvas-arrangements.ts").RetainedCanvasArrangement;result:{blockIds:string[];relationCount:number;documentId?:string;operationId?:string;requestHash?:string;arrangementId?:string;itemCount?:number;dismissed?:boolean;canvasItemIds?:string[];selectionKey?:string;executionId?:string;bindingHash?:string};expiresAt:string};
+export type AuthoringPreview={previewId:string;approvalHash:string;sourceHash:string;projectId:string;documentId:string;canvasId:string|null;blockId:string;changes:ContextChange[];events:EventInput[];review?:AuthoringPlan["review"];duplication?:AuthoringPlan["duplication"];adaptiveReview?:AdaptiveProposalReview;localReview?:WorkspaceQuickEditReview;blockCount:number;relationCount:number;expiresAt:string};
 export type RetainedAuthoringPreview={plan:AuthoringPlan;approvalHash:string;state?:"review"|"applying"|"applied"|"dismissed";leaseId?:string;leaseExpiresAt?:string};
 const correlationFor=(userId:string,id:string)=>`authoring:${userId}:${id}`;
 // Retention erases content to an empty string. CASE keeps every JSON predicate safe even
@@ -45,7 +47,7 @@ export async function storeAuthoringPreview(env:WorkerEnv,user:PilotUser,plan:Au
   return authoringPreview(saved.contentId,approvalHash,plan);
 }
 export function authoringPreview(previewId:string,approvalHash:string,plan:AuthoringPlan):AuthoringPreview{
-  return{previewId,approvalHash,sourceHash:plan.binding.sourceHash,projectId:plan.binding.projectId,documentId:plan.binding.documentId,canvasId:plan.binding.canvasId,blockId:plan.binding.blockId,changes:plan.changes,events:plan.events,...(plan.review?{review:plan.review}:{}),...(plan.duplication?{duplication:plan.duplication}:{}),blockCount:plan.result.blockIds.length,relationCount:plan.result.relationCount,expiresAt:plan.expiresAt};
+  return{previewId,approvalHash,sourceHash:plan.binding.sourceHash,projectId:plan.binding.projectId,documentId:plan.binding.documentId,canvasId:plan.binding.canvasId,blockId:plan.binding.blockId,changes:plan.changes,events:plan.events,...(plan.review?{review:plan.review}:{}),...(plan.duplication?{duplication:plan.duplication}:{}),...(plan.adaptiveReview?{adaptiveReview:plan.adaptiveReview}:{}),...(plan.localReview?{localReview:plan.localReview}:{}),blockCount:plan.result.blockIds.length,relationCount:plan.result.relationCount,expiresAt:plan.expiresAt};
 }
 export async function readAuthoringPreview(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string){
   const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding),now=new Date().toISOString();
@@ -75,15 +77,15 @@ export async function latestAuthoringPreview(env:WorkerEnv,user:PilotUser,bindin
 }
 
 /** An expired lease is reusable only after an atomic state change prevents its old worker from ever committing. */
-export async function releaseExpiredAuthoringLease(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string){
+export async function releaseExpiredAuthoringLease(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,additional:BudgetReservationGuard={sql:"1",bindings:[]}){
   const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding);
   await env.DB.prepare(`UPDATE private_content SET content=json_set(content,'$.state','review','$.leaseId','') WHERE content_id=? AND owner_id=? AND kind='authoring-preview'
     AND json_extract(${privateJson},'$.state')='applying' AND json_extract(${privateJson},'$.leaseExpiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
     AND json_extract(${privateJson},'$.plan.operation')=? AND json_extract(${privateJson},'$.plan.binding.projectId')=? AND json_extract(${privateJson},'$.plan.binding.documentId')=?
     AND json_extract(${privateJson},'$.plan.binding.blockId')=? AND COALESCE(json_extract(${privateJson},'$.plan.binding.canvasId'),'')=?
     AND COALESCE(json_extract(${privateJson},'$.plan.binding.scope.organizationId'),'')=? AND COALESCE(json_extract(${privateJson},'$.plan.binding.scope.projectAccessId'),'')=?
-    AND NOT EXISTS(SELECT 1 FROM authoring_commits WHERE preview_id=?) AND ${custody.sql} AND ${guard.sql}`)
-    .bind(id,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",id,...custody.bindings,...guard.bindings).run();
+    AND NOT EXISTS(SELECT 1 FROM authoring_commits WHERE preview_id=?) AND ${custody.sql} AND ${guard.sql} AND (${additional.sql})`)
+    .bind(id,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",id,...custody.bindings,...guard.bindings,...additional.bindings).run();
 }
 
 /** Read execution outcome and review visibility in one SQL snapshot. Dismissing or expiring
@@ -91,7 +93,7 @@ export async function releaseExpiredAuthoringLease(env:WorkerEnv,user:PilotUser,
 export async function readAuthoringState(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,options:{readOnly?:boolean}={}){
   if(!options.readOnly)await releaseExpiredAuthoringLease(env,user,binding,id);
   const guard=executionAdmissionGuard(user,binding,null),custody=executionContentCustodyGuard(binding,"saved");
-  const row=await env.DB.prepare(`SELECT saved.content AS preview_content,receipt.result_json AS receipt_result_json,receipt.approval_hash AS receipt_approval_hash
+  const row=await env.DB.prepare(`SELECT saved.content AS preview_content,receipt.result_json AS receipt_result_json,receipt.approval_hash AS receipt_approval_hash,strftime('%Y-%m-%dT%H:%M:%fZ','now') AS database_now
     FROM(SELECT ? AS preview_id) requested
     LEFT JOIN private_content saved ON saved.content_id=requested.preview_id AND saved.owner_id=? AND saved.kind='authoring-preview'
       AND saved.redacted_at IS NULL AND json_valid(saved.content) AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql}
@@ -100,12 +102,26 @@ export async function readAuthoringState(env:WorkerEnv,user:PilotUser,binding:Co
       AND COALESCE(receipt.organization_id,'')=? AND COALESCE(receipt.project_access_id,'')=?
     WHERE ${guard.sql}`)
     .bind(id,user.userId,...custody.bindings,user.userId,binding.operation,binding.projectId,binding.documentId,binding.blockId,binding.canvasId??"",binding.scope?.organizationId??"",binding.scope?.projectAccessId??"",...guard.bindings)
-    .first<{preview_content:string|null;receipt_result_json:string|null;receipt_approval_hash:string|null}>();
-  if(!row||!await executionAuthorityCurrent(env,user,binding,null))return null;
+    .first<{preview_content:string|null;receipt_result_json:string|null;receipt_approval_hash:string|null;database_now:string}>();
+  if(!row)return null;
   const saved=row.preview_content?JSON.parse(row.preview_content) as RetainedAuthoringPreview:null;
   const committed=row.receipt_result_json&&row.receipt_approval_hash?{result:JSON.parse(row.receipt_result_json) as AuthoringPlan["result"],approvalHash:row.receipt_approval_hash}:null;
   const receiptPending=!committed&&saved?.state==="applied";
-  return{committed,saved,retainedContent:row.preview_content,receiptPending,status:committed?"applied" as const:saved?.state==="applying"||receiptPending?"applying" as const:"not-applied" as const};
+  // Receipt absence and expiry are observed together. A prior lease cannot pass the final DB-time guard again.
+  let leaseExpired=!committed&&!receiptPending&&saved?.state==="applying"&&typeof saved.leaseId==="string"&&Boolean(saved.leaseId)
+    &&typeof saved.leaseExpiresAt==="string"&&Number.isFinite(Date.parse(saved.leaseExpiresAt))&&saved.leaseExpiresAt<=row.database_now;
+  if(leaseExpired){
+    // Reuse the existing final authority query to certify the same lease bytes and receipt absence.
+    // A concurrently claimed replacement or committed winner remains conservatively applying.
+    const certified=await env.DB.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM private_content saved
+      WHERE saved.content_id=? AND saved.owner_id=? AND saved.kind='authoring-preview' AND saved.redacted_at IS NULL
+        AND saved.content=? AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql}
+        AND json_extract(CASE WHEN json_valid(saved.content) THEN saved.content ELSE '{}' END,'$.leaseExpiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND NOT EXISTS(SELECT 1 FROM authoring_commits WHERE preview_id=?) THEN 1 ELSE 0 END AS lease_expired WHERE ${guard.sql}`)
+      .bind(id,user.userId,row.preview_content,...custody.bindings,id,...guard.bindings).first<{lease_expired:number}>();
+    if(!certified)return null;leaseExpired=Number(certified.lease_expired)===1;
+  }else if(!await executionAuthorityCurrent(env,user,binding,null))return null;
+  return{committed,saved,retainedContent:row.preview_content,receiptPending,leaseExpired,status:committed?"applied" as const:saved?.state==="applying"||receiptPending?"applying" as const:"not-applied" as const};
 }
 /** Dismissal hides review UI only; its canonical outcome remains retrievable by exact receipt. */
 export async function dismissAuthoringPreview(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,hash:string){

@@ -12,6 +12,8 @@ import { keyed } from "lit/directives/keyed.js";
 import { repeat } from "lit/directives/repeat.js";
 import { foldEvents } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
+import { CanvasPresenceHub as ProductionHub } from "../src/canvas/presence.ts";
+import { createPresenceBrowser } from "./helpers/canvas-presence-runtime.mjs";
 import { canvasDocumentTarget } from "../src/model/canvas-document-target.ts";
 import { localizeTemplateResult } from "../src/components/design-system/localized-template.ts";
 import enMessages from "../src/components/design-system/locales/system-en.ts";
@@ -64,6 +66,7 @@ class ElementPort {
   matches(selector) { return selector === ":dir(rtl)" ? this.i18n?.direction === "rtl" : selector.split(",").some(part=>part.trim()===this.tag||part.trim().startsWith(".")&&String(this.attributes?.class??"").split(/\s+/).includes(part.trim().slice(1))); }
   getAttribute(name) { return this.attributes?.[name] ?? null; }
   setAttribute(name, value) { (this.attributes ??= {})[name] = String(value); }
+  removeAttribute(name) { if (this.attributes) delete this.attributes[name]; }
   closest(selector) { if (selector === "forma-workspace") return this.fixture.workspace; let owner = this.parentElement; while (owner) { if (owner.tag === selector) return owner; owner = owner.parentElement; } return null; }
   dispatchEvent(event) {
     // Native CustomEvent dispatch identifies its actual emitting component.
@@ -81,8 +84,8 @@ class ElementPort {
   }
   focus() { this.fixture.trace.push("focus:" + this.tag); }
 }
-const documentPort = { activeElement: null, body:{isConnected:true,tag:"body"}, documentElement: { lang: "en", dataset: {}, toggleAttribute() {}, removeAttribute() {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
-const windowPort = { innerWidth: 1280, innerHeight: 720, localStorage: { getItem() { return null; }, setItem() {} }, setTimeout() { return 1; }, clearTimeout() {}, setInterval() { return 1; }, clearInterval() {}, requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
+const documentPort = { activeElement: null, body:{isConnected:true,tag:"body"}, visibilityState: "visible", documentElement: { lang: "en", dataset: {}, toggleAttribute() {}, removeAttribute() {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
+const windowPort = { innerWidth: 1280, innerHeight: 720, localStorage: { getItem() { return null; }, setItem() {} }, setTimeout() { return 1; }, clearTimeout() {}, setInterval(callback, milliseconds) { const id = ++activeFixture.timerId; activeFixture.canvasIntervals.set(id, { callback, milliseconds }); return id; }, clearInterval(id) { activeFixture.canvasIntervals.delete(id); }, requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
 documentPort.defaultView=windowPort;
 documentPort.addEventListener=(...args)=>windowPort.addEventListener(...args);
 documentPort.removeEventListener=(...args)=>windowPort.removeEventListener(...args);
@@ -93,7 +96,10 @@ documentPort.emit=(type,target=documentPort.activeElement,extra={})=>{
 windowPort.getComputedStyle=()=>({width:"384px",getPropertyValue:()=>"0px",direction:activeFixture?.locale==="ar"?"rtl":"ltr",fontSize:"16px"});
 const navigatorPort = { onLine: true };
 const offlinePort = { async enqueueBatch(events) { const batch = { id: "batch-" + activeFixture.state.batches.length, events, createdAt: new Date().toISOString() }; activeFixture.state.batches.push(batch); return batch; }, async summary() { return { count: 0, bytes: 0, warning: false, full: false }; }, async listBatches() { return []; }, async removeBatch() {} };
-const presencePort = class { subscribe() {} connect() {} disconnect() {} update() {} };
+const DatePort = class extends globalThis.Date { static now() { return activeFixture?.presence?.now() ?? globalThis.Date.now(); } };
+const presencePort = class extends ProductionHub {
+  constructor() { super(activeFixture.presence?.runtime("host-tab") ?? { channel: () => null }); }
+};
 const modalPort = { ensureModalDialog(dialog) { if (!dialog) return false; if (!dialog.open) { dialog.open = true; activeFixture.trace.push("open:" + dialog.attributes.class); } return true; }, requestDialogText: async () => null };
 
 async function loadActual(relative) {
@@ -111,6 +117,14 @@ async function loadActual(relative) {
     else if (specifier.endsWith("/modal-dialog")) dependencies.set(specifier, modalPort);
     else if (specifier.endsWith("/slotted-element")) dependencies.set(specifier, { FormaSlottedElement: ElementPort });
     else if (specifier === "./presence") dependencies.set(specifier, { CanvasPresenceHub: presencePort });
+    else if (specifier.endsWith("/adaptive-proposal-review")) {
+      const actual = await loadActual("src/components/adaptive-proposal-review.ts");
+      dependencies.set(specifier, { ...actual, createAdaptiveProposalReview(...args) {
+        const controller = actual.createAdaptiveProposalReview(...args);
+        activeFixture.proposalReview = controller; // Observe the real instance; do not replace its lifecycle.
+        return controller;
+      } });
+    }
     else if (specifier.endsWith("/canvas-offline-queue")) dependencies.set(specifier, { canvasOfflineQueue: offlinePort });
     else if (/\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });
     else if (specifier.includes("?raw")) dependencies.set(specifier, { default: "" });
@@ -127,8 +141,8 @@ async function loadActual(relative) {
   const code = ts.transpileModule(sourceText(relative), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports = {}, registry = { get() { return true; }, define() {} };
   const require = specifier => dependencies.get(specifier) ?? {};
-  new Function("require", "exports", "customElements", "document", "window", "HTMLElement", "Element", "CSS", "location", "ResizeObserver", "getComputedStyle", "matchMedia", "InputEvent", "navigator", "requestAnimationFrame", code)(
-    require, exports, registry, documentPort, windowPort, ElementPort, ElementPort, { escape: String }, { origin: "https://fixture.invalid" }, class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" }), () => ({ matches: true }), class InputEvent {}, navigatorPort, callback => callback(),
+  new Function("require", "exports", "customElements", "document", "window", "HTMLElement", "Element", "CSS", "location", "ResizeObserver", "getComputedStyle", "matchMedia", "InputEvent", "navigator", "requestAnimationFrame", "Date", code)(
+    require, exports, registry, documentPort, windowPort, ElementPort, ElementPort, { escape: String }, { origin: "https://fixture.invalid" }, class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" }), () => ({ matches: true }), class InputEvent {}, navigatorPort, callback => callback(), DatePort,
   );
   moduleCache.set(relative, exports);
   return exports;
@@ -311,7 +325,8 @@ function canvasLegacySubscriptions() {
 
 function fixture(options = {}) {
   const state = { authorization:"actor-a", viewer:Boolean(options.viewer), boardId:"board-a", chosen:options.chosen ?? "", selected:[], events:[], batches:[], requests:[], replies:[], assistant:Boolean(options.assistant), documentCount:options.documentCount ?? 1 };
-  const f = {state,locale:options.locale ?? "en",trace:[],listeners:new Map(),clipboard:[],openPopovers:new Set(),openDetails:new Set(),changed:new Map(),steps:0};
+  const f = {state,locale:options.locale ?? "en",trace:[],listeners:new Map(),clipboard:[],openPopovers:new Set(),openDetails:new Set(),changed:new Map(),steps:0,
+    presence:options.presence?createPresenceBrowser():undefined,canvasIntervals:new Map(),timerId:0,proposalSourceReads:[]};
   const messages = {...FORMA_DEFAULT_MESSAGES,...localeCatalogs[f.locale]};
   f.i18n = new FormaLocaleController({addController(){},requestUpdate(){},dispatchEvent(event){event.callback({locale:f.locale,formatLocale:f.locale,direction:f.locale==="ar"?"rtl":"ltr",timeZone:"UTC",messages,revision:0},()=>{});return true;}});
   f.i18n.hostConnected();
@@ -346,11 +361,33 @@ function fixture(options = {}) {
     setCanvasPlanningSelection:ids=>{state.selected=[...ids];},
     documentJobs:cell([]),projectNotifications:cell([]),reviewInbox:cell([]),generationReadiness:cell({}),
     documentGenerationJobs:()=>[],documentRenderJobs:()=>[],adaptiveSuggestionSetsFor:()=>[],
+    // Presence integration has no paid source or private planning payload. These
+    // real-controller ports permit inspection only; paid logic has its own suite.
+    adaptiveProposalSource:(documentId,canvasId,executionId)=>{f.proposalSourceReads.push({documentId,canvasId,executionId});return null;},
+    loadDocumentJobDetail:async()=>assert.fail("No private planning source is available in the presence fixture"),
     stageOptimisticCanvasEvents:inputs=>inputs.map(append),discardOptimisticCanvasEvents(){},syncCanvasBatch:async()=>assert.fail("The in-memory queue must never reach a network boundary"),
     append:async input=>[append(input)],appendBatch:async inputs=>inputs.map(append),toast:message=>f.trace.push("toast:"+message),
-    guardedFetch:async(url,options)=>{const body=JSON.parse(options.body);state.requests.push({url,body});const reply=state.replies.shift();assert.ok(reply,"Mock response prepared for "+url);return{ok:reply.ok!==false,json:async()=>reply.body??reply};},
+    guardedFetch:async(url,options)=>{const body=JSON.parse(options.body);if(url==="/api/context/adaptive/apply")assert.ok(["resume","retrieve","receipts"].includes(body.action),"Presence integration permits only free adaptive reads");state.requests.push({url,body});const reply=state.replies.shift();assert.ok(reply,"Mock response prepared for "+url);return{ok:reply.ok!==false,json:async()=>reply.body??reply};},
     structureAdaptive:async(...args)=>{state.requests.push({kind:"adaptive",args});return false;},ensurePrivateContent:async()=>assert.fail("Fixture content is already hydrated"),
   };
+  if (f.presence) {
+    const getSession = f.store.session.get;
+    f.store.session.get = () => {
+      const session = Object.hasOwn(state, "presenceSession") ? state.presenceSession : getSession();
+      return session ? { permissionEpoch: "permission-1", ...session } : session;
+    };
+    // The ordinary host fixture abbreviates this key; the real store includes
+    // actor and permission epoch, which this presence port must preserve.
+    f.store.captureAuthorizationScope = () => {
+      const session = f.store.session.get();
+      return state.authorization && session ? { key: JSON.stringify([state.authorization,
+        session.user.userId, session.permissionEpoch]), shared: Boolean(session.projectContext) } : null;
+    };
+    f.store.authorizationScopeActive = captured => {
+      const current = f.store.captureAuthorizationScope();
+      return Boolean(current && captured?.key === current.key && captured.shared === current.shared);
+    };
+  }
   if(options.storeHost)f.store=options.storeHost.store;else canvasLegacySourceOwnership(f.store);
   f.renderer = new RendererPort(f,registry);
   f.tick = async()=>{await Promise.resolve();f.draw();return true;};
@@ -1426,6 +1463,312 @@ test("native arrangement opening and Close use the current View trigger without 
   const dialog=arrangementNode(f);assert.ok(dialog);dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
   assert.equal(documentPort.activeElement?.id,owned.trigger.attributes.id);
   assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+});
+
+// Phase8 integration: the entire staged Canvas class (willUpdate/render/updated/
+// disconnect), its real arrangement controller, and the actual presence hub.
+// The channel, clock, focus and DOM ports remain in-memory; this is not a native,
+// cross-person, remote-device, server-authorization or live-provider certificate.
+function localPresenceCursors(f) {
+  return f.renderer.ownNodes(f.host, "span").filter(node => node.attributes.class === "canvas-presence");
+}
+function meetLocalPresence(f, tabId = "other-tab") {
+  const channel = f.presence.channels.filter(value => !value.closed &&
+    value.posts.some(frame => frame.tabId === "host-tab")).at(-1);
+  assert.ok(channel, "actual updated opened the scoped local channel");
+  const { userId, projectId, canvasId, authorizationKey } = channel.posts.at(-1);
+  const peer = f.presence.hub(tabId, { userId, projectId, canvasId, authorizationKey });
+  peer.hub.update({ x: 24, y: 60, selectedItemId: "item-document-1" });
+  f.presence.flush(); f.draw();
+  assert.equal(localPresenceCursors(f).length, 1);
+  return { ...peer, hostChannel: channel };
+}
+function disconnectPresenceFixture(f, peer) {
+  f.host.isConnected = false; f.host.disconnectedCallback();
+  assert.equal(f.presence.channels.filter(channel => !channel.closed &&
+    channel.posts.some(frame => frame.tabId === "host-tab")).length, 0, "disconnect closes owned channels before a peer leaves");
+  peer.hub.disconnect(); f.presence.flush();
+  assert.equal(f.canvasIntervals.size, 0);
+  assert.equal(f.presence.timers.size, 0);
+}
+
+for (const locale of ["en", "fr", "ar", "ja"]) test("actual " + locale + " Canvas renders only local-tab presence without changing authored selection", async () => {
+  const f = fixture({ presence: true, populated: true, documentCount: 2, chosen: "document-0", locale, undo: true });
+  await f.select(0);
+  const events = JSON.stringify(f.state.events), selected = [...f.state.selected];
+  const peer = meetLocalPresence(f), frame = peer.channel.posts.at(-1);
+  f.presence.inject(peer.hostChannel, { ...frame, sequence: frame.sequence + 1,
+    name: "Untrusted <script>sender</script>", color: "url(https://untrusted.invalid/)" });
+  f.draw();
+  const cursor = localPresenceCursors(f)[0];
+  assert.equal(cursor.attributes.role, "img");
+  assert.equal(cursor.attributes["aria-label"], f.i18n.t("canvas.presence.otherTab") + ". " + f.i18n.t("canvas.presence.localOnly"));
+  assert.equal(cursor.attributes["aria-live"], undefined);
+  assert.ok(!f.renderer.markup.includes("Untrusted <script>sender</script>"));
+  assert.ok(!f.renderer.markup.includes("untrusted.invalid"));
+  assert.deepEqual(f.state.selected, selected);
+  assert.equal(JSON.stringify(f.state.events), events);
+  assert.equal(f.state.requests.length, 0); assert.equal(f.state.batches.length, 0);
+  assert.equal(f.store.canvasArrangementUndoRequest.get(), null);
+  disconnectPresenceFixture(f, peer);
+});
+
+test("actual composed Canvas clears local peers on the same-board actor, project and permission boundaries", async () => {
+  const transitions = [
+    ["actor", f => { f.state.presenceSession = { ...f.store.session.get(), user: { userId: "other-account", role: "user" } }; }, true],
+    ["project", f => {
+      const canvas = f.store.canvasProjection.get(), projection = f.store.projection.get();
+      f.store.canvasProjection.get = () => ({ ...canvas, projectId: "other-project",
+        canvases: canvas.canvases.map(board => ({ ...board, projectId: "other-project" })) });
+      f.store.projection.get = () => ({ ...projection, projectId: "other-project" });
+    }, true],
+    ["authorization", f => { f.state.authorization = "replacement-session"; }, true],
+    ["permission epoch", f => { f.state.presenceSession = { ...f.store.session.get(), permissionEpoch: "permission-2" }; }, true],
+    ["read-only grant", f => { f.state.presenceSession = { ...f.store.session.get(), capabilities: ["project.read", "project.canvas.use"] }; }, true],
+    ["read revoked", f => { f.state.presenceSession = { ...f.store.session.get(), capabilities: [] }; }, false],
+    ["Canvas revoked", f => { f.state.presenceSession = { ...f.store.session.get(), canvas: { ...f.store.session.get().canvas, access: false } }; }, false],
+    ["anonymous", f => { f.state.presenceSession = { ...f.store.session.get(), user: { userId: "anonymous", role: "user" } }; }, false],
+    ["sign-out", f => { f.state.presenceSession = null; f.state.authorization = ""; }, false],
+  ];
+  for (const [label, change, reconnect] of transitions) {
+    const f = fixture({ presence: true, populated: true, chosen: "document-0" });
+    const peer = meetLocalPresence(f), callback = peer.hostChannel.onmessage;
+    const oldFrame = peer.channel.posts.at(-1), events = JSON.stringify(f.state.events);
+    change(f); f.draw();
+    assert.equal(peer.hostChannel.closed, true, label);
+    assert.equal(localPresenceCursors(f).length, 0, label);
+    callback?.({ data: { ...oldFrame, sequence: oldFrame.sequence + 100 } }); f.draw();
+    assert.equal(localPresenceCursors(f).length, 0, label + " rejects late old-channel callbacks");
+    assert.equal(f.presence.channels.filter(channel => !channel.closed && channel !== peer.channel).length, reconnect ? 1 : 0, label);
+    assert.equal(JSON.stringify(f.state.events), events, label);
+    assert.equal(f.state.requests.length, 0, label); assert.equal(f.state.batches.length, 0, label);
+    disconnectPresenceFixture(f, peer);
+  }
+});
+
+test("actual Canvas board changes and removed boards reset presence without creating a replacement selection", () => {
+  for (const remove of [false, true]) {
+    const f = fixture({ presence: true, populated: true, chosen: "document-0" }), peer = meetLocalPresence(f);
+    if (remove) f.append({ type: "CanvasRemoved", payload: { project_id: "p", canvas_id: "board-a", reason: "fixture" } });
+    else f.state.boardId = "board-b";
+    const before = JSON.stringify(f.state.events);
+    f.draw();
+    assert.equal(peer.hostChannel.closed, true);
+    assert.equal(localPresenceCursors(f).length, 0);
+    assert.deepEqual(f.state.selected, []);
+    assert.equal(JSON.stringify(f.state.events), before);
+    assert.equal(f.state.requests.length, 0); assert.equal(f.state.batches.length, 0);
+    disconnectPresenceFixture(f, peer);
+  }
+});
+
+test("actual Canvas rendering checks TTL and shared expiry even before a local heartbeat", () => {
+  const personal = fixture({ presence: true, populated: true, chosen: "document-0" });
+  const peer = meetLocalPresence(personal);
+  personal.presence.advance(6_001, false); personal.draw();
+  assert.equal(localPresenceCursors(personal).length, 0);
+  assert.equal(personal.state.requests.length, 0); assert.equal(personal.state.batches.length, 0);
+  disconnectPresenceFixture(personal, peer);
+
+  const shared = fixture({ presence: true, populated: true, viewer: true, chosen: "document-0" });
+  const session = shared.store.session.get();
+  shared.state.presenceSession = { ...session, projectContext: { ...session.projectContext,
+    expiresAt: new Date(shared.presence.now() + 5_000).toISOString() } };
+  shared.draw();
+  const viewerPeer = meetLocalPresence(shared);
+  shared.presence.advance(5_001, false); shared.draw();
+  assert.equal(viewerPeer.hostChannel.closed, true);
+  assert.equal(localPresenceCursors(shared).length, 0);
+  assert.equal(shared.state.requests.length, 0); assert.equal(shared.state.batches.length, 0);
+  disconnectPresenceFixture(shared, viewerPeer);
+});
+
+test("actual Canvas keeps canonical polling independent and reconnects local presence after disconnect", async () => {
+  const f = fixture({ presence: true, populated: true, chosen: "document-0" }), peer = meetLocalPresence(f);
+  const oldCallback = peer.hostChannel.onmessage, oldFrame = peer.channel.posts.at(-1);
+  const timer = [...f.canvasIntervals.values()].find(value => value.milliseconds === 1_500);
+  assert.ok(timer, "actual connectedCallback scheduled the existing canonical read");
+  let refreshes = 0; f.store.refreshEvents = async () => { refreshes++; };
+  f.state.presenceSession = { ...f.store.session.get(), permissionEpoch: "new-current-grants" }; f.draw();
+  assert.equal(peer.hostChannel.closed, true);
+  assert.ok([...f.canvasIntervals.values()].includes(timer));
+  await timer.callback(); await Promise.resolve();
+  assert.equal(refreshes, 1);
+  assert.equal(f.state.requests.length, 0); assert.equal(f.state.batches.length, 0);
+  f.host.isConnected = false; f.host.disconnectedCallback();
+  assert.equal(f.canvasIntervals.size, 0);
+  oldCallback?.({ data: { ...oldFrame, sequence: oldFrame.sequence + 100 } });
+  f.host.isConnected = true; f.host.connectedCallback(); f.draw();
+  assert.equal(localPresenceCursors(f).length, 0);
+  assert.equal(f.canvasIntervals.size, 1);
+  assert.ok(f.presence.channels.some(channel => !channel.closed && channel !== peer.channel));
+  const current = meetLocalPresence(f, "current-other-tab");
+  peer.hub.disconnect(); disconnectPresenceFixture(f, current);
+});
+
+
+// Phase8 composition: use the real adaptive controller, dialog and complete Canvas
+// class with an explicitly empty, read-only source port. No preview/apply/provider
+// request is allowed here. The paid-flow suite owns its authoring behavior.
+const { AdaptiveProposalReviewController: ActualAdaptiveProposalReview } = await loadActual("src/components/adaptive-proposal-review.ts");
+const adaptiveDialog = f => f.native("dialog", node => node.classList.contains("adaptive-proposal-dialog"));
+const resumeAdaptiveButton = node => node.handlers.click?.name === "#resumeProposalReview";
+const proposalReceiptReads = f => f.state.requests.filter(request => request.url === "/api/context/adaptive/apply");
+function assertFreeProposalReads(f, count) {
+  assert.equal(f.state.requests.length, count, "no authored or cost request accompanies free inspection");
+  assert.equal(proposalReceiptReads(f).length, count);
+  for (const { body } of proposalReceiptReads(f)) {
+    assert.equal(body.action, "resume");
+    assert.deepEqual(Object.keys(body).sort(), ["action", "canvasId", "documentId", "projectId"]);
+    assert.equal(body.projectId, "p"); assert.equal(body.documentId, "document-0"); assert.equal(body.canvasId, "board-a");
+  }
+  assert.equal(f.state.batches.length, 0);
+}
+async function openEmptyAdaptiveReview(f) {
+  assert.ok(f.proposalReview instanceof ActualAdaptiveProposalReview);
+  assert.equal(f.proposalReview.synchronize, ActualAdaptiveProposalReview.prototype.synchronize);
+  assert.equal(f.proposalReview.suspend, ActualAdaptiveProposalReview.prototype.suspend);
+  f.state.replies.push({ status: "none" });
+  const opener = await f.click("button", resumeAdaptiveButton);
+  await flushUntil(f, () => f.proposalReview.visible && !f.proposalReview.busy);
+  assert.ok(adaptiveDialog(f)?.open, "the real dialog was rendered and reached actual updated");
+  assert.equal(f.proposalReview.notice, "adaptive.changes.none");
+  assert.equal(f.proposalReview.canPreview, false); assert.equal(f.proposalReview.canApply, false);
+  assert.equal(f.proposalReview.handle, null); assert.equal(f.proposalReview.executionId, "");
+  assert.deepEqual(f.proposalReview.originals, []);
+  assert.ok(f.proposalSourceReads.length > 0);
+  assert.ok(f.proposalSourceReads.every(read => read.documentId === "document-0" && read.canvasId === "board-a"));
+  return opener;
+}
+
+for (const locale of ["en", "fr", "ar", "ja"]) test("composed " + locale + " Canvas keeps local presence truthful beside an actual free read-only proposal dialog", async () => {
+  const f = fixture({ presence: true, populated: true, chosen: "document-0", locale });
+  await f.select(0);
+  f.state.presenceSession = { ...f.store.session.get(), capabilities: ["project.read", "project.canvas.use"] }; f.draw();
+  const events = JSON.stringify(f.state.events), selected = [...f.state.selected], peer = meetLocalPresence(f);
+  assert.equal(f.state.requests.length, 0);
+  const opener = await openEmptyAdaptiveReview(f), review = f.proposalReview;
+  assert.equal(review.ports.scope().canAuthor, false);
+  assertFreeProposalReads(f, 1);
+  assert.ok(f.renderer.markup.includes(escapeText(f.i18n.t("adaptive.changes.free"))));
+  assert.ok(f.renderer.markup.includes(escapeText(f.i18n.t("adaptive.changes.readOnly"))));
+  const frame = peer.channel.posts.at(-1);
+  f.presence.inject(peer.hostChannel, { ...frame, sequence: frame.sequence + 1,
+    name: "FAKE_REMOTE_PERSON", color: "url(https://forged.invalid)",
+    executionId: "forged-paid-source", action: "apply", selectedItemId: "item-document-1",
+    events: [{ type: "BlockCreated", payload: { text: "FORGED_AUTHORED_TEXT" } }] });
+  f.draw();
+  const cursor = localPresenceCursors(f)[0];
+  assert.equal(cursor.attributes["aria-label"], f.i18n.t("canvas.presence.otherTab") + ". " + f.i18n.t("canvas.presence.localOnly"));
+  assert.equal(cursor.attributes["aria-live"], undefined);
+  assert.ok(!f.renderer.markup.includes("FAKE_REMOTE_PERSON") && !f.renderer.markup.includes("forged.invalid") && !f.renderer.markup.includes("FORGED_AUTHORED_TEXT"));
+  assert.equal(review.executionId, ""); assert.equal(review.visible, true);
+  assertFreeProposalReads(f, 1); assert.deepEqual(f.state.selected, selected);
+  assert.equal(JSON.stringify(f.state.events), events);
+  const previousFocus = f.trace.filter(value => value === "focus:button").length;
+  const dialog = adaptiveDialog(f);
+  dialog.handlers.cancel.call(f.host, { type: "cancel", target: dialog, currentTarget: dialog, preventDefault() {} });
+  await f.flush();
+  assert.equal(review.visible, false); assert.equal(adaptiveDialog(f), undefined);
+  assert.equal(f.trace.filter(value => value === "focus:button").length, previousFocus + 1, "the owned Resume opener receives focus");
+  assert.equal(opener.attributes.tabindex, undefined, "the temporary focus attribute is removed by the real close helper");
+  assertFreeProposalReads(f, 1); disconnectPresenceFixture(f, peer);
+});
+
+test("composed Canvas does not request a proposal when the exact destination or current authority is absent", async () => {
+  for (const missing of ["destination", "authority"]) {
+    const f = fixture({ presence: true, populated: true, documentCount: 2, chosen: missing === "destination" ? "" : "document-0" });
+    if (missing === "authority") { f.state.authorization = ""; f.draw(); }
+    await f.click("button", resumeAdaptiveButton); await f.flush();
+    assert.equal(f.proposalReview.visible, false, missing);
+    assert.equal(f.proposalSourceReads.length, 0, missing);
+    assert.equal(f.state.requests.length, 0, missing); assert.equal(f.state.batches.length, 0, missing);
+    f.host.isConnected = false; f.host.disconnectedCallback();
+    assert.equal(f.canvasIntervals.size, 0); assert.equal(f.presence.timers.size, 0);
+  }
+});
+
+test("actual updated conceals an owned adaptive review and old-tab presence on actor and permission renewal before render", async () => {
+  for (const boundary of ["actor", "permission"]) {
+    const f = fixture({ presence: true, populated: true, chosen: "document-0" });
+    const peer = meetLocalPresence(f), events = JSON.stringify(f.state.events);
+    await openEmptyAdaptiveReview(f);
+    const review = f.proposalReview, callback = peer.hostChannel.onmessage, frame = peer.channel.posts.at(-1);
+    f.state.presenceSession = boundary === "actor"
+      ? { ...f.store.session.get(), user: { userId: "next-actor", role: "user" } }
+      : { ...f.store.session.get(), permissionEpoch: "next-permission" };
+    // Do not render first: both production updated hooks must act themselves.
+    f.host.updated();
+    assert.equal(review.visible, false, boundary); assert.equal(review.phase, "unavailable", boundary);
+    assert.equal(review.preview, null); assert.deepEqual(review.originals, []);
+    assert.equal(peer.hostChannel.closed, true, boundary);
+    callback?.({ data: { ...frame, sequence: frame.sequence + 100 } }); f.draw();
+    assert.equal(adaptiveDialog(f), undefined); assert.equal(localPresenceCursors(f).length, 0);
+    assertFreeProposalReads(f, 1); assert.equal(JSON.stringify(f.state.events), events);
+    disconnectPresenceFixture(f, peer);
+  }
+});
+
+test("actual disconnect suspends an in-flight free review before local presence and prevents a late response reopening it", async () => {
+  const f = fixture({ presence: true, populated: true, chosen: "document-0" });
+  const peer = meetLocalPresence(f), events = JSON.stringify(f.state.events), response = Promise.withResolvers();
+  const oldCallback = peer.hostChannel.onmessage, oldFrame = peer.channel.posts.at(-1);
+  f.store.guardedFetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(url, "/api/context/adaptive/apply"); assert.equal(body.action, "resume");
+    f.state.requests.push({ url, body }); return response.promise;
+  };
+  await f.click("button", resumeAdaptiveButton);
+  assert.equal(f.proposalReview.visible, true); assert.equal(f.proposalReview.busy, true);
+  f.host.isConnected = false; f.host.disconnectedCallback();
+  assert.equal(f.proposalReview.visible, false); assert.equal(f.proposalReview.busy, false);
+  assert.equal(peer.hostChannel.closed, true); assert.equal(f.canvasIntervals.size, 0);
+  f.host.isConnected = true; f.host.connectedCallback(); f.draw();
+  const before = JSON.stringify({ phase: f.proposalReview.phase, visible: f.proposalReview.visible,
+    busy: f.proposalReview.busy, handle: f.proposalReview.handle, executionId: f.proposalReview.executionId });
+  response.resolve(Response.json({ status: "none" })); await f.flush();
+  oldCallback?.({ data: { ...oldFrame, sequence: oldFrame.sequence + 100 } }); f.draw();
+  assert.equal(JSON.stringify({ phase: f.proposalReview.phase, visible: f.proposalReview.visible,
+    busy: f.proposalReview.busy, handle: f.proposalReview.handle, executionId: f.proposalReview.executionId }), before);
+  assert.equal(adaptiveDialog(f), undefined); assert.equal(localPresenceCursors(f).length, 0);
+  assertFreeProposalReads(f, 1); assert.equal(JSON.stringify(f.state.events), events);
+  const current = meetLocalPresence(f, "current-tab");
+  peer.hub.disconnect(); disconnectPresenceFixture(f, current);
+});
+
+test("canonical Canvas polling still runs while a real empty review is open and a local cursor expires", async () => {
+  const f = fixture({ presence: true, populated: true, chosen: "document-0" }), peer = meetLocalPresence(f);
+  await openEmptyAdaptiveReview(f);
+  const timer = [...f.canvasIntervals.values()].find(value => value.milliseconds === 1_500), events = JSON.stringify(f.state.events);
+  assert.ok(timer); let refreshes = 0;
+  f.store.refreshEvents = async () => { refreshes++; };
+  f.presence.advance(6_001, false); f.draw();
+  assert.equal(localPresenceCursors(f).length, 0);
+  assert.equal(f.proposalReview.visible, true); assert.ok(adaptiveDialog(f)?.open);
+  await timer.callback(); await Promise.resolve();
+  assert.equal(refreshes, 1); assertFreeProposalReads(f, 1);
+  assert.equal(JSON.stringify(f.state.events), events);
+  disconnectPresenceFixture(f, peer);
+});
+
+
+
+for(const boundary of ["permission","route"])test("fully composed native View cleanup and local presence preserve the canonical poll at "+boundary,async()=>{
+  const f=fixture({presence:true,populated:true,documentCount:2,chosen:"document-0"});
+  const peer=meetLocalPresence(f),owned=openOwnedPopover(f,"canvas-view-menu"),oldCallback=peer.hostChannel.onmessage;
+  const before=JSON.stringify(f.state.events),selection=[...f.state.selected],polls=[...f.canvasIntervals];
+  assert.equal(polls.length,1);assert.equal(polls[0][1].milliseconds,1500);
+  if(boundary==="permission")f.state.presenceSession={...f.store.session.get(),permissionEpoch:"permission-new"};
+  else f.route="/canvas/projects";
+  f.draw();
+  assert.equal(f.openPopovers.has(owned.panel.attributes.id),false);
+  if(boundary==="permission")assert.equal(ownedPopover(f,"canvas-view-menu").trigger.attributes["aria-expanded"],"false");
+  else {assert.equal(f.renderer.query(f.host,"forma-ui-popover").filter(child=>child.attributes.class==="canvas-view-menu").length,0);assert.equal(owned.menu.isConnected,false);}
+  oldCallback?.({data:peer.channel.posts.at(-1)});f.draw();assert.equal(localPresenceCursors(f).length,0);
+  assert.deepEqual([...f.canvasIntervals],polls,"native popup/presence changes do not replace canonical synchronization");
+  assert.equal(JSON.stringify(f.state.events),before);assert.deepEqual(f.state.selected,selection);
+  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+  disconnectPresenceFixture(f,peer);
 });
 
 

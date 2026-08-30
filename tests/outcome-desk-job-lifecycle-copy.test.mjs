@@ -43,6 +43,8 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const status of ["queued", "
     assert.equal(new URL(f.store.route.get(), "http://localhost").searchParams.get("outcome"), "job:" + original.jobId);
     if (terminal) assert.ok(actions[0].text.includes(f.i18n.t("next.exact.inspect-terminal-job.reason")));
     assert.deepEqual({ events: JSON.stringify(f.store.events.get()), jobs: JSON.stringify(f.store.documentJobs.get()), output: JSON.stringify(f.outputSnapshot()) }, before);
-    assert.deepEqual(f.storeHost.requests.filter(row => (row.init.method ?? "GET") !== "GET"), []);
+    // Full-page setup mounts Workspace before Canvas. Reuse only the existing
+    // init-identity/current-scope read classifier; every other command stays forbidden.
+    assert.deepEqual(f.storeHost.requests.filter(row => (row.init.method ?? "GET") !== "GET" && !f.isReadOnlyResume(row)), []);
   });
 }

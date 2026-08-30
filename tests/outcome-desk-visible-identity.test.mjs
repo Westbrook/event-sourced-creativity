@@ -50,7 +50,9 @@ const capture = f => ({ events: JSON.stringify(f.store.events.get()), output: JS
 const noWrites = (f, before) => {
   assert.equal(JSON.stringify(f.store.events.get()), before.events, "presentation/navigation cannot author or rename");
   assert.equal(JSON.stringify(f.outputSnapshot()), before.output, "canonical Output state stays unchanged");
-  assert.deepEqual(f.storeHost.requests.filter(row => (row.init.method ?? "GET") !== "GET"), [],
+  // Same exact recorded-read classifier as the shared canvasPage noCommands
+  // oracle; synthetic bootstrap evidence, never a Worker or blanket POST exemption.
+  assert.deepEqual(f.storeHost.requests.filter(row => (row.init.method ?? "GET") !== "GET" && !f.isReadOnlyResume(row)), [],
     "no command, provider, generation, matching, preflight or paid work");
 };
 async function selectedLabels(f, wanted, expected) {

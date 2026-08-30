@@ -3958,6 +3958,21 @@ img, video, canvas { max-width: 100%; }
 .analytics-dimension-tabs button { padding: .5rem .7rem; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 5px; font: inherit; cursor: pointer; }
 .analytics-dimension-tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel-2); border-color: var(--line); }
 .analytics-table-wrap { width: 100%; overflow-x: auto; }
+.outcome-telemetry { min-inline-size: 0; margin-block: 1rem; }
+.outcome-telemetry > summary { display: list-item; min-block-size: var(--forma-control-min-size, 2.75rem); align-content: center; overflow-wrap: anywhere; list-style: revert; }
+.outcome-telemetry > p { color: var(--muted); font-size: var(--type-small); }
+.outcome-telemetry .workspace-settings-facts { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+.outcome-telemetry dt,.outcome-telemetry dd { min-inline-size: 0; overflow-wrap: anywhere; }
+.outcome-telemetry dd { text-align: end; }
+.outcome-telemetry .analytics-table-wrap { max-inline-size: 100%; margin-block: 1rem; }
+.outcome-telemetry table { inline-size: 100%; min-inline-size: 38rem; border-collapse: collapse; text-align: start; }
+.outcome-telemetry caption { padding-block: .5rem; text-align: start; font-weight: 600; }
+.outcome-telemetry th,.outcome-telemetry td { padding: .7rem; border-block-end: 1px solid var(--line); vertical-align: top; font-size: var(--type-small); font-variant-numeric: tabular-nums; }
+.outcome-telemetry .analytics-table-wrap:focus-visible { outline: var(--forma-focus-ring-width, 3px) solid var(--forma-focus-ring-color, var(--orange)); outline-offset: 2px; }
+@media (max-width: 40rem) {
+  .outcome-telemetry .workspace-settings-facts { grid-template-columns: minmax(0,1fr); gap: .35rem; }
+  .outcome-telemetry dd { margin-block-end: .65rem; text-align: start; }
+}
 .analytics-dimensions table { width: 100%; min-width: 62rem; border-collapse: collapse; text-align: right; }
 .analytics-dimensions th,.analytics-dimensions td { padding: .8rem .65rem; border-bottom: 1px solid var(--line); font-size: var(--type-small); font-variant-numeric: tabular-nums; }
 .analytics-dimensions thead th { color: var(--muted); font-weight: 500; white-space: nowrap; }.analytics-dimensions th:first-child { min-width: 13rem; text-align: left; }
