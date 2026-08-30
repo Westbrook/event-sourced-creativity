@@ -4,6 +4,7 @@ import { platformSession } from "../platform/session-controller";
 import { loadRouteComponent } from "../route-loader";
 import { formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import { FormaPresentationalElement } from "./presentational-element";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { beginRoutePopulation,completeRoutePopulation,recordPopulationSource } from "../performance";
 import "./design-system/navigation";
 import "./design-system/language-picker";
@@ -15,6 +16,8 @@ export class FormaPlatformShell extends FormaPresentationalElement {
   #loading = true;
   #unsubscribe?: () => void;
   #announcement="";
+  #loadRevision = 0;
+  #loadFocus: OutputNavigationFocusLease | null = null;
   #popstate = () => { void this.#load(); };
   #syncKeyboard = () => {
     const viewport = window.visualViewport;
@@ -33,6 +36,7 @@ export class FormaPlatformShell extends FormaPresentationalElement {
   }
 
   override disconnectedCallback() {
+    this.#retireLoad();
     this.#unsubscribe?.();
     window.removeEventListener("popstate", this.#popstate);
     window.visualViewport?.removeEventListener("resize", this.#syncKeyboard);
@@ -40,32 +44,70 @@ export class FormaPlatformShell extends FormaPresentationalElement {
     super.disconnectedCallback();
   }
 
+  #retireLoad() {
+    this.#loadRevision++;
+    this.#loadFocus?.dispose();
+    this.#loadFocus = null;
+  }
+
   async #load() {
+    if (!this.isConnected) return;
+    this.#retireLoad();
+    const revision = this.#loadRevision;
+    const focus = captureOutputNavigationFocus(this.ownerDocument);
+    this.#loadFocus = focus;
+    let route = location.pathname + location.search + location.hash;
+    const current = () => this.isConnected && revision === this.#loadRevision
+      && route === location.pathname + location.search + location.hash;
     this.#loading = true;
+    this.#error = "";
+    this.#announcement = "";
     beginRoutePopulation(location.pathname);
     this.requestUpdate();
     try {
       const application = applicationIdFromRoute(location.pathname);
-      const session=await platformSession.load(application);
-      const pathname=location.pathname.replace(/\/+$/,"")||"/";
-      if(pathname===applicationDefinition(application).home){
-        const destination=authorizedApplicationHome(application,{role:session.user.role,capabilities:session.capabilities,canvasAccess:session.canvas?.access});
-        if(destination!==pathname){history.replaceState({},"",destination);beginRoutePopulation(destination);}
+      const session = await platformSession.load(application);
+      if (!current()) return;
+      const pathname = location.pathname.replace(/\/+$/, "") || "/";
+      if (pathname === applicationDefinition(application).home) {
+        const destination = authorizedApplicationHome(application, { role: session.user.role, capabilities: session.capabilities, canvasAccess: session.canvas?.access });
+        if (destination !== pathname) {
+          history.replaceState({}, "", destination);
+          route = location.pathname + location.search + location.hash;
+          beginRoutePopulation(destination);
+        }
       }
       await loadRouteComponent(location.pathname);
-      this.#error = "";
-      recordPopulationSource("miss",0);
+      if (!current()) return;
+      recordPopulationSource("miss", 0);
       this.#updateTitle();
     } catch (error) {
+      if (!current()) return;
       this.#error = error instanceof Error ? error.message : "This workspace could not be opened.";
+      this.#updateTitle();
     } finally {
-      this.#loading = false;
-      this.requestUpdate();
-      await this.updateComplete;
-      this.querySelector<HTMLElement>("#main-content")?.focus({ preventScroll: true });
-      completeRoutePopulation(location.pathname);
-      this.#announcement=document.title.replace(/\s— Forma$/,"");
-      this.requestUpdate();
+      try {
+        if (current()) {
+          this.#loading = false;
+          this.requestUpdate();
+          await this.updateComplete;
+          if (current()) {
+            const main = this.querySelector<HTMLElement>("#main-content");
+            if (main) focus.run(main, () => { main.focus({ preventScroll: true }); return true; });
+            // Focus listeners may navigate synchronously. Completion belongs
+            // only to the load that still owns this exact route and opening.
+            if (current()) {
+              completeRoutePopulation(location.pathname);
+              this.#announcement = this.#error ? this.i18n.t("shell.accessUnavailable", "Workspace unavailable")
+                : document.title.replace(/\s— Forma$/, "");
+              this.requestUpdate();
+            }
+          }
+        }
+      } finally {
+        focus.dispose();
+        if (this.#loadFocus === focus) this.#loadFocus = null;
+      }
     }
   }
 
@@ -84,6 +126,7 @@ export class FormaPlatformShell extends FormaPresentationalElement {
   #navigate(event: Event, path: string) {
     event.preventDefault();
     if (applicationIdFromRoute(path) !== applicationIdFromRoute(location.pathname)) {
+      this.#retireLoad();
       location.assign(path);
       return;
     }

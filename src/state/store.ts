@@ -3692,9 +3692,15 @@ async syncDocumentJobs(){
   }
 
   async chat(message:string,livePreview=true,locale=document.documentElement.lang||"en") {
+    const sourceOwner=this.captureSourceOwnership(),documentId=this.projection.get().documentId,route=this.route.get();
+    const current=()=>this.sourceOwnershipActive(sourceOwner)&&this.projection.get().documentId===documentId&&this.route.get()===route;
     try{
-      const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,locale,promptTechnique:this.promptTechniquePreference().technique},"chat");return true;
-    }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return false;}
+      const {reused}=await this.#startDocumentJob("chat",{message,livePreview,documentId,locale,promptTechnique:this.promptTechniquePreference().technique},"chat");
+      // An active same-document chat is useful original work, not admission of
+      // this message. All composers already preserve their draft on false.
+      if(reused){if(current())this.toast(this.#systemNotice("A question is already in progress for this document. No additional question was queued; your draft remains in the message field."));return false;}
+      return true;
+    }catch(error){if(current())this.toast(error instanceof Error?error.message:"Forma could not respond");return false;}
   }
 
   async structureAdaptive(prompt:string,options:{documentId?:string;sourceSurface?:string;projectScope?:boolean;canvasId?:string;locale?:string}={}) {

@@ -7,7 +7,12 @@ import { keyed } from "lit/directives/keyed.js";
 import { ASSISTANT_CONTEXT_LIMITS } from "../src/model/conversation-context.ts";
 import { contextConsentAction } from "../src/model/context-consent-state.ts";
 import { ensureNativeModalDialog } from "../src/components/design-system/native-dialog.ts";
+import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 import { ASSISTANT_MESSAGES } from "../src/components/design-system/locales/assistant-messages.ts";
+
+const focusImports = registerOutputSourceImports();
+const { captureOutputNavigationFocus } = await import("../src/components/output-navigation-focus.ts");
+focusImports.deregister();
 
 // Actual production panel class and consequential preview renderer, with only
 // native dialog/focus/frame and localized application inputs supplied in memory.
@@ -90,6 +95,7 @@ function fixture(locale = "en") {
     "../../model/context-consent-state.ts": { contextConsentAction },
     "../presentational-element.ts": { FormaPresentationalElement: Base }, "../icons.ts": { icon: () => lit.nothing },
     "../consequential-preview.ts": previewExports, "./native-dialog.ts": { ensureNativeModalDialog },
+    "../output-navigation-focus.ts": { captureOutputNavigationFocus },
     "./conversation-composer.ts": {}, "./assistant-panel.css": {},
   };
   const exports = {};

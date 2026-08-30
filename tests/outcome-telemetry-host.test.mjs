@@ -9,6 +9,7 @@ import { PROMPT_TECHNIQUES, promptTechniqueDefinition } from "../src/model/promp
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition } from "../src/model/document-artifacts.ts";
 import { attentionEvents, attentionMetrics, ATTENTION_RETENTION_DAYS } from "../src/model/attention.ts";
 import { routePathname } from "../src/model/routes.ts";
+import { qualifyDisplayCollisions } from "../src/model/output-naming.ts";
 import { FORMA_OUTCOME_MESSAGES } from "../src/components/design-system/locales/outcome-messages.ts";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -127,7 +128,7 @@ function fixture(locale = "en") {
   const sourceDependencies = {
     buildOutcomeTelemetry, PROMPT_TECHNIQUES, promptTechniqueDefinition,
     DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition,
-    attentionEvents, attentionMetrics, ATTENTION_RETENTION_DAYS, routePathname,
+    attentionEvents, attentionMetrics, ATTENTION_RETENTION_DAYS, routePathname, qualifyDisplayCollisions,
     icon, html, window, fetch, consumeRoutePrefetch, readAnalyticsSnapshot,
     writeAnalyticsSnapshot, clearAnalyticsSnapshots, Base, sections,
   };

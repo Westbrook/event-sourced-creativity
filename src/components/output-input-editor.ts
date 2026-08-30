@@ -110,7 +110,7 @@ export class OutputInputEditor extends FormaElement {
 
   #items(draft: OutputInputDraft) {
     if (!draft.items.length) return nothing;
-    const noun = draft.kind === "storyboard" ? "Frame" : draft.kind === "slides" ? "Slide" : draft.kind === "scene" ? "Scene section" : draft.kind === "video" ? "Video scene" : "Story section";
+    const noun = draft.kind === "storyboard" ? "Frame" : draft.kind === "slides" ? "Slide" : draft.kind === "scene" ? "Scene section" : draft.kind === "video" ? "Video scene" : draft.kind === "audio" ? "Audio section" : "Story section";
     const open = (draft.kind === "storyboard" || draft.kind === "slides" || draft.kind === "video") && draft.items.length <= 6;
     const ownedFrameIds=new Set(this.store.projection.get().libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===this.block.id).map((relation)=>relation.toBlockId));
     return html`<details class="output-input-sections" ?open=${open}><summary>${this.i18n.system(draft.items.length===1?"{count} editable {noun}":"{count} editable {noun}s",{count:this.i18n.number(draft.items.length),noun:this.i18n.system(noun).toLocaleLowerCase(this.i18n.locale)})}</summary>
@@ -145,9 +145,9 @@ export class OutputInputEditor extends FormaElement {
     const draft = this.#draft;
     if (!draft) return nothing;
     const label = this.i18n.system(documentArtifactDefinition(draft.kind).label);
-    const narrative = draft.kind === "short_story" ? "Story manuscript" : draft.kind === "scene" ? "Scene and dialogue" : draft.kind === "storyboard" ? "Storyboard narrative" : draft.kind === "slides" ? "Presentation narrative" : "Video direction and transcript";
+    const narrative = draft.kind === "short_story" ? "Story manuscript" : draft.kind === "scene" ? "Scene and dialogue" : draft.kind === "storyboard" ? "Storyboard narrative" : draft.kind === "slides" ? "Presentation narrative" : draft.kind === "audio" ? "Audio transcript, lyrics, and direction" : "Video direction and transcript";
     return html`<section class="output-input-editor" aria-label=${this.i18n.system("{label} input editor", { label: label })} @compositionstart=${()=>{this.#composing=true;}} @compositionend=${()=>{this.#composing=false;this.requestUpdate();}}>
-      <header><div><span>${label} input</span><p>The original stays unchanged. Every saved edit becomes part of future work.</p></div></header>
+      <header><div><span>${label} input</span><p>${draft.kind === "audio" ? this.i18n.t("output.input.audioGuidance", "Edits change only this reusable text, not the original recording. Saving does not generate audio or enable provider audio transfer.") : this.i18n.system("The original stays unchanged. Every saved edit becomes part of future work.")}</p></div></header>
       ${draft.kind === "video" ? renderVideoReel(draft.items, typeof this.block.properties.media_url === "string" ? this.block.properties.media_url : null, draft.title, this.i18n) : nothing}
       <fieldset class="output-input-primary" ?disabled=${this.block.locked || this.#saving}>
         <label>${label} title<input .value=${draft.title} @input=${(event: InputEvent) => this.#change({ ...draft, title: (event.target as HTMLInputElement).value })}></label>

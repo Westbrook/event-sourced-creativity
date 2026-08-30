@@ -7,6 +7,7 @@ import { FormaLocaleController } from "./design-system/localization";
 import { FormaPresentationalElement } from "./presentational-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { completeRoutePopulation } from "../performance";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { renderVideoReel, type VideoReelItem } from "./video-reel";
 import { renderAudioPlayer, renderIncludedSoundtrackTranscripts, renderSoundtrackCompanions } from "./audio-playback";
 import "./artifact-summary";
@@ -18,8 +19,23 @@ type SharedExperience={revision:string;artifacts:SharedArtifact[]};
 const OPAQUE_SHARED_SOURCE_LABEL=/^(?:(?:blk|grp|clm|source|context|decision)[_-]\d+|context_group_\d+|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i;
 
 export class FormaSharedView extends FormaPresentationalElement {
-  static properties = { token: { type: String } };
-  token = ""; #loading = true; #error = ""; #projection: SharedProjection | null = null; #expiresAt = "";
+  static properties = { token: { type: String, noAccessor: true } };
+  #token = ""; #loading = true; #error: "" | "unavailable" | "expired" = ""; #projection: SharedProjection | null = null; #expiresAt = "";
+  #loadRevision = 0;
+  #loadFocus: OutputNavigationFocusLease | null = null;
+  get token() { return this.#token; }
+  set token(value: string) {
+    if (value === this.#token) return;
+    const previous = this.#token;
+    this.#token = value;
+    // Retire on each identity change, including A → B → A before a render.
+    this.#retireLoad();
+    this.#clearLoadedView();
+    this.#loading = true;
+    this.#error = "";
+    this.requestUpdate("token", previous);
+    if (this.isConnected) void this.#load();
+  }
   #i18n = new FormaLocaleController(this);
   #activeImage:{url:string;label:string;fan:Array<{url:string;label:string}>;index:number}|null=null;
   #imageFocused=false;
@@ -47,6 +63,7 @@ export class FormaSharedView extends FormaPresentationalElement {
     this.#presentationPostureFrame=requestAnimationFrame(()=>{this.#presentationPostureFrame=0;if(this.isConnected)this.requestUpdate();});
   };
   protected override updated(){
+    if (!this.isConnected) return;
     document.title=this.#projection?`${this.#projection.documentTitle} — ${this.#i18n.t("shared.review","Shared review")} — Forma`:`${this.#i18n.t(this.#error?"shared.unavailable":"shared.loading",this.#error?"Link unavailable":"Opening shared review")} — Forma`;
     const stage=this.querySelector(".shared-presentation-stage");
     if(stage===this.#presentationObserved)return;
@@ -58,7 +75,11 @@ export class FormaSharedView extends FormaPresentationalElement {
     }
   }
   override connectedCallback() { super.connectedCallback(); void this.#load(); }
-  override disconnectedCallback(){this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;if(this.#presentationPostureFrame)cancelAnimationFrame(this.#presentationPostureFrame);this.#presentationPostureFrame=0;super.disconnectedCallback();}
+  override disconnectedCallback() {
+    this.#retireLoad();
+    this.#clearLoadedView();
+    super.disconnectedCallback();
+  }
 
   async #openImage(event:MouseEvent,url:string,label:string,approvedFan:Array<{url:string;label:string}>=[]){
     let parsed:URL;try{parsed=new URL(url,location.origin);}catch{return;}
@@ -112,10 +133,78 @@ export class FormaSharedView extends FormaPresentationalElement {
   #presentationPointerUp(event:PointerEvent){const start=this.#presentationTouchStart;this.#presentationTouchStart=null;if(event.pointerType!=="touch"||!start||!this.#activePresentation)return;const horizontal=event.clientX-start.x,vertical=event.clientY-start.y;if(Math.abs(horizontal)<48||Math.abs(horizontal)<Math.abs(vertical)*1.5)return;const direction=this.matches(":dir(rtl)")?(horizontal<0?-1:1):(horizontal<0?1:-1);this.#navigatePresentation(this.#activePresentation.index+direction);}
 
   #image(url:string,label:string,fan:Array<{url:string;label:string}>=[]){return html`<button class="shared-image-trigger" type="button" aria-haspopup="dialog" aria-label=${fan.length>1?`${label} · ${this.#i18n.t("output.openComparison","Open the image at full size and navigate its {count}-image comparison",{count:this.#i18n.number(fan.length)})}`:this.#i18n.t("shared.inspectImage","Inspect image: {title}",{title:label})} @click=${(event:MouseEvent)=>this.#openImage(event,url,label,fan)}><img class="shared-reference-image" src=${url} alt=${label} loading="lazy"></button>`;}
+  #retireLoad() {
+    this.#loadRevision++;
+    this.#loadFocus?.dispose();
+    this.#loadFocus = null;
+  }
+
+  #clearLoadedView() {
+    this.#projection = null;
+    this.#expiresAt = "";
+    this.#selectedExperienceKind = "";
+    this.#activeImage = null;
+    this.#imageFocused = false;
+    this.#returnFocus = undefined;
+    this.#activePresentation = null;
+    this.#presentationFocused = false;
+    this.#presentationReading = false;
+    this.#presentationReadingPreference = null;
+    this.#presentationContentOverflow = false;
+    this.#presentationReturnFocus = undefined;
+    this.#presentationTouchStart = null;
+    this.#presentationObserver?.disconnect();
+    this.#presentationObserved = undefined;
+    if (this.#presentationPostureFrame) cancelAnimationFrame(this.#presentationPostureFrame);
+    this.#presentationPostureFrame = 0;
+  }
+
   async #load() {
-    try {if(!this.token.trim())throw new Error("Shared view unavailable");const response = await fetch(`/api/shared/${encodeURIComponent(this.token)}`); const body = await response.json() as { projection?: SharedProjection; share?: { expiresAt: string }; error?: string }; if (!response.ok || !body.projection) throw new Error(body.error ?? "Shared view unavailable"); this.#projection = body.projection; this.#expiresAt = body.share?.expiresAt ?? ""; }
-    catch (error) { this.#error = error instanceof Error ? error.message : "Shared view unavailable"; }
-    finally { this.#loading = false;this.requestUpdate();void this.updateComplete.then(()=>{this.querySelector<HTMLElement>("#main-content")?.focus({preventScroll:true});completeRoutePopulation(location.pathname);}); }
+    if (!this.isConnected) return;
+    this.#retireLoad();
+    const revision = this.#loadRevision, token = this.token;
+    const route = location.pathname + location.search;
+    const focus = captureOutputNavigationFocus(this.ownerDocument);
+    this.#loadFocus = focus;
+    const current = () => this.isConnected && revision === this.#loadRevision && this.token === token
+      && route === location.pathname + location.search;
+    this.#clearLoadedView();
+    this.#loading = true;
+    this.#error = "";
+    this.requestUpdate();
+    try {
+      if (!token.trim()) throw new Error("Shared view unavailable");
+      const response = await fetch(`/api/shared/${encodeURIComponent(token)}`);
+      if (!current()) return;
+      const body = await response.json() as { projection?: SharedProjection; share?: { expiresAt: string }; error?: string };
+      if (!current()) return;
+      if (!response.ok || !body?.projection) {
+        // Only this endpoint's exact denial contract establishes link expiry.
+        this.#error = response.status === 404 && body?.error === "share_expired_or_revoked" ? "expired" : "unavailable";
+        return;
+      }
+      this.#projection = body.projection;
+      this.#expiresAt = body.share?.expiresAt ?? "";
+    } catch {
+      if (!current()) return;
+      this.#error = "unavailable";
+    } finally {
+      try {
+        if (current()) {
+          this.#loading = false;
+          this.requestUpdate();
+          await this.updateComplete;
+          if (current()) {
+            const main = this.querySelector<HTMLElement>("#main-content");
+            if (main) focus.run(main, () => { main.focus({ preventScroll: true }); return true; });
+            if (current()) completeRoutePopulation(location.pathname);
+          }
+        }
+      } finally {
+        focus.dispose();
+        if (this.#loadFocus === focus) this.#loadFocus = null;
+      }
+    }
   }
 
   #results(projection: SharedProjection): SharedResult[] {
@@ -221,7 +310,18 @@ export class FormaSharedView extends FormaPresentationalElement {
 
   override render() {
     if (this.#loading) return html`<main id="main-content" tabindex="-1" class="shared-view"><div class="shared-status" role="status">${this.#i18n.t("shared.loading", "Opening this shared creative document…")}</div></main>`;
-    if (this.#error || !this.#projection) return html`<main id="main-content" tabindex="-1" class="shared-view"><div class="shared-status"><span>${this.#i18n.t("shared.unavailable", "Link unavailable")}</span><h1>${this.#i18n.t("shared.expired", "This view has expired or been revoked.")}</h1><p>${this.#i18n.t("shared.noData", "No project data was returned.")}</p></div></main>`;
+    if (this.#error || !this.#projection) {
+      const expired = this.#error === "expired", revision = this.#loadRevision;
+      const route = location.pathname + location.search;
+      return html`<main id="main-content" tabindex="-1" class="shared-view"><div class="shared-status">
+        <span>${expired ? this.#i18n.t("shared.unavailable", "Link unavailable") : this.#i18n.t("shared.review", "Shared review")}</span>
+        <h1>${expired ? this.#i18n.t("shared.expired", "This view has expired or been revoked.") : this.#i18n.t("shared.unavailable", "Link unavailable")}</h1>
+        <p>${expired ? this.#i18n.t("shared.noData", "No project data was returned.") : this.#i18n.t("shared.readFailed", "This shared review could not be loaded. Try again.")}</p>
+        ${expired ? nothing : html`<button type="button" class="button secondary" @click=${() => {
+          if (!this.#loading && revision === this.#loadRevision && route === location.pathname + location.search) void this.#load();
+        }}>${this.#i18n.t("action.retry", "Retry")}</button>`}
+      </div></main>`;
+    }
     const p = this.#projection;
     const results = this.#results(p);
     const experience=this.#experience(p);

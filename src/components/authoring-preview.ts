@@ -20,6 +20,7 @@ export function renderAuthoringPreview(
   options: AuthoringPreviewOptions,
 ) {
   const applied = options.status === "applied", applying = options.status === "applying";
+  // Counts describe affected decisions, including edits; they are not creation counts.
   return html`<section class="context-change-preview" aria-labelledby=${options.id}>
     <h3 tabindex="-1" id=${options.id}>${i18n.t("context.changes.title")}</h3>
     <p role="status">${options.summary ?? i18n.t(applied ? "context.changes.applied" : applying ? "context.changes.applying" : "context.changes.summary", "",

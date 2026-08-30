@@ -19,7 +19,7 @@ replacePort("import { documentArtifactRevision } from \"../src/model/document-ar
 replacePort(/(from\s+|import\s*\()(["'])([^"']+)\2/gu,(_match,prefix,_quote,specifier)=>prefix+JSON.stringify(specifier.startsWith(".")?new URL(specifier,fixtureUrl).href:specifier.startsWith("node:")?specifier:import.meta.resolve(specifier)));
 fixtureModule=fixtureModule.replaceAll("import.meta.url",JSON.stringify(fixtureUrl.href));
 replacePort("await import(specifier)","await import(new URL(specifier.slice(4),"+JSON.stringify(new URL("./",import.meta.resolve("lit")).href)+").href)");
-replacePort('{ origin: "https://fixture.invalid" }','{ origin: "https://fixture.invalid",get pathname(){return activeFixture?.store.route.get().split(/[?#]/)[0]??"/";},get search(){return "";},get hash(){return "";} }');
+replacePort('{ origin: "https://fixture.invalid" }','{ origin: "https://fixture.invalid",get pathname(){return activeFixture?.store.route.get().split(/[?#]/)[0]??"/";},get search(){return activeFixture?.nativeUrlParts?new URL(activeFixture.store.route.get(),"https://fixture.invalid").search:"";},get hash(){return activeFixture?.nativeUrlParts?new URL(activeFixture.store.route.get(),"https://fixture.invalid").hash:"";} }');
 replacePort('/(?:forma-element|presentational-element)$/','/(?:forma-element|presentational-element)(?:\\.ts)?$/');
 replacePort('else if (specifier === "./consequential-preview") dependencies.set(specifier, { consequentialPreview: () => nothing });','');
 replacePort('getComputedStyle", "matchMedia", "InputEvent", code)(','getComputedStyle", "matchMedia", "InputEvent", "MutationObserver", "IntersectionObserver", "requestAnimationFrame", "cancelAnimationFrame", "localStorage", "navigator", "innerWidth", "innerHeight", code)(');

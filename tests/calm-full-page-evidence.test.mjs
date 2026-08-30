@@ -44,12 +44,12 @@ test("synthetic14 full Shell, real Creative route and all emitted descendants se
  assert.equal(f.components().filter(component=>component.tag==="forma-context-block").length,14);
  assert.equal(f.components().find(component=>component.tag==="forma-document-artifacts").launcherOnly,false,"not the old launcher-only fixture");
  assert.equal(tree.visible("input").filter(node=>node.attributes.type==="radio"&&node.owner.tag==="forma-context-block").length,14);
- const counts=resting(f);assert.deepEqual(counts,{button:25,select:1});
- assert.equal(tree.nodes.filter(node=>node.tag==="button").length,38,"raw DOM includes hidden contributors, once per element");
+ const counts=resting(f);assert.deepEqual(counts,{button:22,select:1});
+ assert.equal(tree.nodes.filter(node=>node.tag==="button").length,35,"raw DOM includes hidden contributors, once per element; the duplicate composer generation owner is removed");
  assert.equal(tree.nodes.filter(node=>node.tag==="select").length,2);
  assert.equal(tree.visible("button").filter(node=>Object.hasOwn(node.attributes,"disabled")).length,4,"disabled controls are not subtracted");
  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0);
- t.diagnostic("Synthetic full hierarchy:25B/1S structurally visible;38B/2S emitted. Functional 718px studio/16px root ports, not browser geometry or the production study.");
+ t.diagnostic("Synthetic full hierarchy:22B/1S structurally visible;35B/2S emitted. One retained generation owner in Results. Functional 718px studio/16px root ports, not browser geometry or the production study.");
 });
 
 test("visibility negatives reject omitted nested components and expose actual hidden Results/closed details contributors",async t=>{
@@ -59,7 +59,9 @@ test("visibility negatives reject omitted nested components and expose actual hi
  assert.ok(flattened.controls().button>original.controls().button,"removing actual ancestor guard increases count");
  assert.equal(flattened.nodes.filter(node=>node.tag==="select"&&nodeWithin(node,candidate=>candidate.attributes.id===results.attributes.id)&&!node.hiddenBy).length,0,"closed production-path details still hide their select");
  assert.throws(()=>fullPageTree(f,f.renderer.markup.replace(/data-fixture-component=__bound_\d+__/u,"")),/full hierarchy includes actual/u,"a dropped renderer is not silently accepted");
- const controls=original.visible("button");assert.ok(controls.some(node=>node.owner.tag==="forma-shell"));assert.ok(controls.some(node=>node.owner.tag==="forma-project-rail"));assert.ok(controls.some(node=>node.owner.tag==="forma-generation-actions"));
+ const controls=original.visible("button");assert.ok(controls.some(node=>node.owner.tag==="forma-shell"));assert.ok(controls.some(node=>node.owner.tag==="forma-project-rail"));
+ assert.equal(controls.some(node=>node.owner.tag==="forma-generation-actions"),false,"the single generation owner remains inside hidden Results, not a duplicate in Write");
+ assert.ok(flattened.visible("button").some(node=>node.owner.tag==="forma-generation-actions"),"removing only the actual Results guard exposes its real generation controls");
 });
 
 // Independent literal oracles for the optional Phase8 entry-copy supplement.
@@ -170,8 +172,10 @@ test("current shared author notifications and synthetic jobs count by actual bra
  assert.equal(tree.visible("button").filter(node=>nodeWithin(node,byClass("project-followup-actions"))).length,4);
  const artifactControls=tree.nodes.filter(node=>node.tag==="button"&&node.owner.tag==="forma-document-artifacts");assert.ok(artifactControls.length>5);
  assert.ok(artifactControls.every(node=>node.hiddenBy==="document-results-panel"),"mounted job/result descendants are zero in narrow Write");
- assert.ok(tree.visible("button").some(node=>node.owner.tag==="forma-generation-actions"&&/queue/i.test(String(node.attributes.title??"")+" "+node.text)),"active image queue is a visible fallback contributor");
+ assert.ok(tree.visible("button").some(byChoice("check-job")),"the current work-in-progress continuation remains visible in Write");
+ assert.equal(f.components().filter(component=>component.tag==="forma-generation-actions").length,1,"pending jobs do not restore a duplicate owner");
  await f.act(f.find("button",node=>node.attributes["data-workbench-pane"]==="result"));
+ assert.ok(f.tree().visible("button").some(node=>node.owner.tag==="forma-generation-actions"&&byClass("generation-queue-trigger")(node)),"one Results activation exposes the same current image queue");
  assert.ok(f.tree().visible("button").some(node=>node.text==="Stop"));
  assert.ok(f.tree().visible("button").some(node=>node.text==="Inspect inputs"));
  f.store.session.set({...f.store.session.get(),projectContext:{...f.store.session.get().projectContext,role:"viewer",permissions:["project.read"]}});

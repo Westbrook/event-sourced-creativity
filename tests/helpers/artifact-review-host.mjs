@@ -113,16 +113,25 @@ async function shareWithIndependentReviewer(worker) {
   return { ownerHeaders, reviewerHeaders, base, reviewer };
 }
 
-export async function createReviewHost(t, { locale = "en", shared = false, legacy = null, final = false, unverified = false } = {}) {
+export async function createReviewHost(t, { locale = "en", shared = false, legacy = null, final = false, unverified = false, artifactKind = "short_story", costReceipts = [], managed = false } = {}) {
   const worker = await createSceneCostFixture(1, "visual", { depth: true });
   const original = (await readWorkspaceEvents(worker.env, worker.streamId)).find(event => event.type === "DocumentRenderCompleted" && event.payload.artifact_id === "saved-scene-story");
   assert.ok(original && !("_private_ref" in original.payload), "clone the actual retained source, never its redacted public envelope");
   // Append fixture history through the existing server helper; never rewrite
   // append-only history or synthesize a successful client acknowledgment.
-  const completionPayload = { ...original.payload, artifact_id: "review-source-story", title: "Exact review source", requested_by_user_id: worker.owner,
+  const completionPayload = { ...original.payload, artifact_id: "review-source-story", artifact_kind: artifactKind, title: "Exact review source", requested_by_user_id: worker.owner,
+    // Opt-in synthetic production metadata; no team, provider or charge is inferred.
+    ...(managed ? { settings: { ...(original.payload.settings ?? {}), production_mode: "managed" } } : {}),
     ...(final ? { workflow_id: worker.workflow.id, workflow_stage_id: "short_story-final", workflow_sources: [] } : {}) };
   if (unverified) delete completionPayload.source_block_versions;
   const completed = await appendAuditEvent(worker.env, worker.streamId, "worker:renderer", "DocumentRenderCompleted", completionPayload);
+  // Optional synthetic reporting metadata; no provider execution or ledger
+  // settlement is simulated. Existing fixture callers keep their exact defaults.
+  for (const receipt of costReceipts) await appendAuditEvent(worker.env, worker.streamId, "worker:policy", "GenerationUsageRecorded", {
+    ...receipt, operation: "document-render:" + artifactKind, artifact_kind: artifactKind,
+    project_id: worker.projectId, document_id: worker.documentId,
+    artifact_id: completionPayload.artifact_id, requested_by_user_id: worker.owner,
+  }, completed.correlationId);
   const workflow = final
     ? recommendProductionWorkflow({ id: worker.workflow.id, documentId: worker.documentId, projectId: worker.projectId, target: "short_story", approvalRequired: true })
     : structuredClone(worker.workflow);

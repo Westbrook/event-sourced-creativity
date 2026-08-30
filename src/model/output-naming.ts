@@ -201,7 +201,7 @@ const displayCollisionKey = (value: string) => value.replace(/[\u2066-\u2069]/gu
 const scopedOutputKey = (candidate: OutputNamingCandidate) => JSON.stringify([candidate.documentId ?? "", kindOf(candidate), candidate.id]);
 const outputTitle = (value: OutputPresentation) => value.disambiguator ? value.disambiguator + " — " + value.title : value.title;
 
-function qualifyDisplayCollisions(rows: readonly DisplayLabel[], format: (number: number) => string) {
+export function qualifyDisplayCollisions(rows: readonly DisplayLabel[], format: (number: number) => string, identityFallback?: (key: string) => string) {
   const unique = [...new Map(rows.map(row => [row.key, row])).values()];
   const groups = new Map<string, DisplayLabel[]>();
   for (const row of unique) { const key = displayCollisionKey(row.label); groups.set(key, [...(groups.get(key) ?? []), row]); }
@@ -219,7 +219,28 @@ function qualifyDisplayCollisions(rows: readonly DisplayLabel[], format: (number
     if (!next.length) break;
     for (const row of next) qualifiers.set(row.key, format(ranks.get(row.key)!));
   }
-  return new Map(unique.map(row => [row.key, { label: label(row), qualifier: qualifiers.get(row.key) ?? "" }]));
+  const result = new Map(unique.map(row => [row.key, { label: label(row), qualifier: qualifiers.get(row.key) ?? "" }]));
+  // Optional final fallback only after human context and stable ordinal qualifiers
+  // still collide. Callers must use a non-secret, injectively encoded exact ID.
+  // Existing Output callers omit this argument and keep their presentation unchanged.
+  if (identityFallback) {
+    const identified = new Set<string>();
+    for (let remaining = unique.length; remaining > 0; remaining--) {
+      const composed = new Map<string, DisplayLabel[]>();
+      for (const row of unique) {
+        const key = displayCollisionKey(result.get(row.key)!.label);
+        composed.set(key, [...(composed.get(key) ?? []), row]);
+      }
+      const next = [...composed.values()].filter(group => group.length > 1).flat().filter(row => !identified.has(row.key));
+      if (!next.length) break;
+      for (const row of next) {
+        const current = result.get(row.key)!, identity = identityFallback(row.key);
+        result.set(row.key, { label: current.label + " · " + identity, qualifier: [current.qualifier, identity].filter(Boolean).join(" · ") });
+        identified.add(row.key);
+      }
+    }
+  }
+  return result;
 }
 
 function scopedOutputPresentations(candidates: readonly OutputNamingCandidate[], presentations: OutputPresentation[], options: OutputNamingOptions): OutputPresentation[] {

@@ -16,7 +16,7 @@ const targetId="synthetic-0";
 // Complete production Store/Shell/Workspace/Context and actual routed Worker.
 // The same-account peer client is isolated SQLite fixture data. It is not
 // a browser/AT, two-account collaboration or generated-media certificate.
-async function currentPage(t, locale, properties = {}) {
+async function currentPage(t, locale, properties = {}, { blockType } = {}) {
   let f;
   const historyBefore = Object.getOwnPropertyDescriptor(globalThis, 'history');
   // Existing native-history port shape. It changes only this RAM location and
@@ -52,8 +52,13 @@ async function currentPage(t, locale, properties = {}) {
   // Persist the full-page fixture's existing synthetic inputs through the
   // actual Worker append route before any interaction under test. No fake
   // acknowledgement or direct events-table rewrite supplies the evidence.
+  // An optional target type still goes through the unchanged real Worker validation.
   const seed = f.store.events.get().filter(event => event.type === 'BlockCreated'
-    && String(event.payload.block_id).startsWith('synthetic-')).map(event => ({ type: event.type, payload: event.payload }));
+    && String(event.payload.block_id).startsWith('synthetic-')).map(event => ({
+      type: event.type,
+      payload: blockType !== undefined && event.payload.block_id === targetId
+        ? { ...event.payload, type: blockType } : event.payload,
+    }));
   const first = await (await worker.request('/api/events?after=0&limit=2000&content=1')).json();
   const seeded = await worker.request('/api/events', json({ action: 'batch', events: seed, expectedSequence: first.head, clientId: 'web:market-fixture-seed' }));
   assert.equal(seeded.status, 200, await seeded.clone().text());

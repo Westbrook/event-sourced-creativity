@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { qualifyDisplayCollisions } from "../model/output-naming";
 import { attentionEvents, attentionMetrics, ATTENTION_RETENTION_DAYS } from "../model/attention";
 import { outcomeMoney, personalUsageReceiptDisclosure } from "./outcome-telemetry-summary";
 import { FormaElement, icon } from "./forma-element";
@@ -17,7 +18,19 @@ export class FormaAccountSettings extends FormaElement {
     const events = this.store.events.get();
     const attention = attentionMetrics(events);
     const episodes = attentionEvents(events).slice(-5).reverse();
-    const shares = this.store.shares.get().filter((share) => share.active);
+    const shares = this.store.canManageProjectShares() ? this.store.shares.get().filter((share) => share.active) : [];
+    const isolate=(text:string)=>"\u2068"+text+"\u2069";
+    const shareContext=new Map(shares.map((share)=>{
+      const title=this.store.projection.get().documents.find((document)=>document.id===share.resourceId)?.title??this.i18n.t("settings.sharedDocument","Shared document");
+      const expiry=this.i18n.t("share.expires","Expires {date}",{date:isolate(this.i18n.date(new Date(share.expiresAt),{dateStyle:"medium",timeStyle:"short"}))});
+      return [share.shareId,{title,expiry}] as const;
+    }));
+    const revokeNames=qualifyDisplayCollisions(shares.map((share)=>({
+      key:share.shareId,label:this.i18n.t("share.revokeNamed","{action} — {document} · {expiry}",{
+        action:this.i18n.t("share.revoke","Revoke"),document:isolate(shareContext.get(share.shareId)!.title),expiry:shareContext.get(share.shareId)!.expiry,
+      }),
+    })),number=>this.i18n.t("share.linkQualifier","Review link {number}",{number:this.i18n.number(number)}),
+    id=>this.i18n.t("share.linkIdentity","Review link ID {id}",{id:isolate("["+encodeURIComponent(id)+"]")}));
     const personalFinance = session.policy.accepted && !session.impersonation && !session.projectContext;
     const cost = personalFinance ? session.costBudgets?.user : undefined;
     const tokens = session.budgets.user;
@@ -58,8 +71,8 @@ export class FormaAccountSettings extends FormaElement {
         ${this.store.canManageProjectShares()?html`<section class="creator-settings-card" aria-labelledby="settings-sharing-heading">
           <header><h2 id="settings-sharing-heading">${this.i18n.t("settings.sharingHeading", "Your active review links")}</h2><p>${this.i18n.t("settings.sharingDescription", "Each private link opens exactly one approved document and its current authorized media. Close a link here whenever review is finished.")}</p></header>
           ${shares.length ? html`<ol class="creator-settings-shares">${shares.map((share) => {
-            const document = this.store.projection.get().documents.find((candidate) => candidate.id === share.resourceId);
-            return html`<li><div><b>${document?.title ?? this.i18n.t("settings.sharedDocument", "Shared document")}</b><span>${this.i18n.t("share.expires", "Expires {date}", { date: this.i18n.date(new Date(share.expiresAt), { dateStyle: "medium", timeStyle: "short" }) })}</span></div><button type="button" class="button secondary compact" @click=${() => this.store.revokeShare(share.shareId)}>${this.i18n.t("share.revoke", "Revoke")}</button></li>`;
+            const context=shareContext.get(share.shareId)!,name=revokeNames.get(share.shareId)!;
+            return html`<li><div><b><bdi>${context.title}</bdi></b><span>${context.expiry}${name.qualifier?html` · ${name.qualifier}`:nothing}</span></div><button type="button" class="button secondary compact" aria-label=${name.label} @click=${() => this.store.revokeShare(share.shareId)}>${this.i18n.t("share.revoke", "Revoke")}</button></li>`;
           })}</ol>` : html`<p class="creator-settings-empty">${this.i18n.t("settings.noShares", "You have no active private review links.")}</p>`}
         </section>`:nothing}
 

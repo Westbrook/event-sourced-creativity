@@ -2747,11 +2747,17 @@
                   "type": {
                     "text": "string"
                   }
+                },
+                {
+                  "name": "controls",
+                  "type": {
+                    "text": "{ current?: () => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
                 }
               ],
               "return": {
                 "type": {
-                  "text": "void"
+                  "text": "Promise<void>"
                 }
               }
             },
@@ -8638,7 +8644,7 @@
               "kind": "field",
               "name": "alignment",
               "type": {
-                "text": "string"
+                "text": "\"center\" | \"stretch\""
               },
               "default": "\"center\"",
               "attribute": "alignment",
@@ -8660,7 +8666,7 @@
               "name": "alignment",
               "fieldName": "alignment",
               "type": {
-                "text": "string"
+                "text": "\"center\" | \"stretch\""
               },
               "default": "\"center\""
             },
@@ -12284,7 +12290,6 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\"",
               "attribute": "token"
             }
           ],
@@ -12294,8 +12299,7 @@
               "fieldName": "token",
               "type": {
                 "text": "string"
-              },
-              "default": "\"\""
+              }
             }
           ],
           "x-forma": {

@@ -812,10 +812,20 @@ export class FormaCreativeAssistant extends FormaElement {
         panel.resolveToolRequest(false, input.message);
         return;
       }
-      const accepted = await this.store.chat(input.message, false);
-      if (scope !== this.#scope() || !this.store.sourceOwnershipActive(source)) return;
-      panel.resolveToolRequest(Boolean(accepted), input.message);
-      if (accepted) this.store.setRoute(withDocumentInRoute("/studio/chat", projection.documentId, projection.documentTitle));
+      const handoff=captureOutputNavigationFocus(this.ownerDocument);
+      const current=()=>this.isConnected&&panel.isConnected&&this.querySelector<FormaAssistantPanel>("forma-assistant-panel")===panel
+        &&scope===this.#scope()&&this.store.sourceOwnershipActive(source);
+      try{
+        const accepted=await this.store.chat(input.message,false);
+        if(!current())return;
+        await panel.resolveToolRequest(Boolean(accepted),input.message,{current,focus:handoff});
+        if(!current())return;
+        if(accepted){
+          this.store.toast(`${this.i18n.t("activity.kind.chat")} · ${this.i18n.t("activity.inProgress")} · ${this.i18n.t("shell.navigation.activity")}`);
+          if(this.#open&&panel.open&&handoff.current()&&!this.ownerDocument.querySelector("dialog[open]"))
+            this.store.setRoute(withDocumentInRoute("/studio/chat",projection.documentId,projection.documentTitle));
+        }
+      }finally{handoff.dispose();}
       return;
     }
 
@@ -828,10 +838,10 @@ export class FormaCreativeAssistant extends FormaElement {
     // Capture before dispatch/await, not after a reply or after the user moves.
     // Only this owned close may return to its own native launcher on the way to
     // the review; a newer pointer/key/focus gesture permanently retires the lease.
-    const handoff = input.mode === "quick-edit" ? captureOutputNavigationFocus(this.ownerDocument, {
+    const handoff = captureOutputNavigationFocus(this.ownerDocument, {
       ownedRouteFocus: element => closingQuickEdit && !this.#open && handoffCurrent()
         && element === panel.querySelector<HTMLElement>(".forma-assistant-launcher"),
-    }) : null;
+    });
     try {
     const accepted = await new Promise<boolean>((resolve) => {
       const detail: AssistantToolRequest = {
@@ -848,7 +858,8 @@ export class FormaCreativeAssistant extends FormaElement {
       if (window.dispatchEvent(event)) resolve(false);
     });
     if (scope !== this.#scope() || !this.store.sourceOwnershipActive(source)) return;
-    panel.resolveToolRequest(accepted, input.message);
+    await panel.resolveToolRequest(accepted, input.message, {current:handoffCurrent,focus:handoff});
+    if(!handoffCurrent())return;
     if (accepted && input.mode === "quick-edit") {
       if (!handoff || !handoffCurrent() || !handoff.current()) return;
       closingQuickEdit = true;

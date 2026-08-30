@@ -443,7 +443,9 @@ test("settles generation capacity by reservation identity and repairs orphaned f
   assert.match(eventsApi,/settleBudget\(env,billingOwnerId,reservation\.reservationId/);
   assert.match(eventsApi,/const plannerCharge=\(failedBillableTokens>0\|\|failedActualCost>0\)\?makeEvent/);
   assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked&&budgetNoteVisible\?this\.#budgetNoteId:nothing\}/);
-  assert.match(actions,/Failed work releases its reservation automatically/);
+  assert.match(actions,/const reservationMessage=this\.i18n\.t\("generation\.reservationUncertainty"/);
+  assert.match(actions,/\$\{reservationMessage\}/);
+  assert.doesNotMatch(actions,/Failed work releases its (?:unused )?reservation automatically/);
   assert.match(actions,/Dismiss generation capacity notification/);
   assert.match(actions,/sessionStorage\.setItem\(key,"dismissed"\)/);
   assert.match(actions,/budgetBand/);

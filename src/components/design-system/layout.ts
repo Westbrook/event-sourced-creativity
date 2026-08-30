@@ -22,7 +22,9 @@ export class FormaUiStack extends FormaPresentationalElement {
  */
 export class FormaUiCluster extends FormaPresentationalElement {
   static properties = { gap: { type: String, reflect: true }, alignment: { type: String, reflect: true } };
-  gap = "medium"; alignment = "center";
+  gap = "medium";
+  // Center mixed content by default; stretch only peer actions within each wrapped row.
+  alignment: "center" | "stretch" = "center";
   override render() { return nothing; }
 }
 
@@ -85,11 +87,13 @@ export class FormaUiListItem extends FormaSlottedElement {
   label = ""; detail = ""; action = ""; value = ""; iconName: FormaIconName | "" = "";
   override render() {
     return html`<div class="ui-list-item">
-      <slot name="leading">${this.iconName ? html`<span aria-hidden="true">${icon(this.iconName)}</span>` : nothing}</slot>
-      <div class="ui-list-item-copy">
-        <slot name="heading">${this.label ? html`<strong>${this.label}</strong>` : nothing}</slot>
-        ${this.detail ? html`<span class="ui-list-item-detail">${this.detail}</span>` : nothing}
-        <slot></slot>
+      <div class="ui-list-item-main">
+        <slot name="leading">${this.iconName ? html`<span aria-hidden="true">${icon(this.iconName)}</span>` : nothing}</slot>
+        <div class="ui-list-item-copy">
+          <slot name="heading">${this.label ? html`<strong>${this.label}</strong>` : nothing}</slot>
+          ${this.detail ? html`<span class="ui-list-item-detail">${this.detail}</span>` : nothing}
+          <slot></slot>
+        </div>
       </div>
       <div class="ui-list-item-trailing"><slot name="trailing">${this.action ? html`<button type="button" class="button ghost" @click=${() => emitFormaEvent(this, "forma-action", { value: this.value })}>${this.action}</button>` : nothing}</slot></div>
     </div>`;

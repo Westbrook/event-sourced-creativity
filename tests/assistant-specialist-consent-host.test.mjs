@@ -559,7 +559,7 @@ test("native-modal failure disables paid approval and expired previews cannot be
 
 test("new review surfaces preserve 44px controls, bounded overflow and all locale placeholder contracts", () => {
   const styles = read("../src/components/design-system/assistant-panel.css");
-  assert.match(styles, /\.forma-assistant-specialist summary\s*\{\s*min-block-size:\s*2\.75rem/u);
+  assert.match(styles, /\.forma-assistant-specialist summary\s*\{\s*min-block-size:\s*var\(--forma-control-min-size,\s*2\.75rem\)/u);
   assert.match(styles, /\.forma-assistant-specialist\s*\{[\s\S]*?--forma-keyboard-offset[\s\S]*?overflow: auto/u);
   assert.match(styles, /\.forma-assistant-specialist footer\s*\{[^}]*flex-wrap: wrap/u);
   const english = ASSISTANT_MESSAGES.en;

@@ -49,6 +49,7 @@ export class FormaDeliver extends FormaElement {
 
     return html`<section class="workspace-page studio-subpage forma-deliver-page"><forma-project-rail surface="studio" destination="/deliver" quiet></forma-project-rail>
       <div class="studio-main forma-deliver-main"><header class="page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${projection.projectName} / ${this.i18n.t("deliver.eyebrow", "Present and deliver")}</span><h1>${this.i18n.t("shell.navigation.deliver", "Deliver")}</h1><p>${this.i18n.t("deliver.description", "Review the real creative results produced in this project, then open the exact artifact to present, review, share, or export it when authorized.")}</p></div><a class="button secondary" href=${activityHref} @click=${(event: MouseEvent) => this.#follow(event,activityHref)}>${this.i18n.t("deliver.reviewActivity", "Review activity")} ${icon("arrow")}</a></header>
+        <div class="forma-deliver-body">
         ${repeat(activity.documents, document => document.id, document => html`<forma-output-requirements .documentId=${document.id} .documentName=${document.title} .surface=${"deliver"}></forma-output-requirements>`)}
         <section aria-label=${this.i18n.t("artifact.delivery.resultsSection", "Creative results")}>
           <div class="forma-deliver-section"><p><b>${this.i18n.t("artifact.delivery.resultsSection", "Creative results")}</b> · ${this.i18n.t("artifact.delivery.resultsScope", "Counts cover the document artifacts and visual results in this section; Output requirements track fulfillment separately.")}</p></div>
@@ -59,6 +60,7 @@ export class FormaDeliver extends FormaElement {
         ${!artifacts.length && !outputs.length ? html`<div class="forma-responsive-empty" data-forma-empty-state><span aria-hidden="true">${icon("spark")}</span><h2>${this.i18n.t("artifact.delivery.resultsEmpty", "No creative results in this section")}</h2><p>${this.i18n.t("artifact.delivery.resultsEmptyDescription", "Document artifacts and visual results appear here when available.")}</p><button type="button" class="button secondary" @click=${() => this.#open("/")}>${this.i18n.t("deliver.return", "Open the current document")}</button></div>` : nothing}
         <div class="forma-deliver-summary" role="group" aria-label=${this.i18n.t("artifact.delivery.resultsSummary", "Creative result counts for this section")}><div><b>${artifacts.length}</b><span>${this.i18n.t("artifact.delivery.documentCount", "Document artifacts")}</span></div><div><b>${outputs.length}</b><span>${this.i18n.t("deliver.visuals", "Visual results")}</span></div><div><b>${reviewed}</b><span>${this.i18n.t("artifact.delivery.approvalCount","Independent approval records")}</span></div><div><b>${exportAcknowledgments}</b><span>${this.i18n.t("artifact.delivery.exportCount","Export acknowledgments")}</span></div></div><p>${this.i18n.t("artifact.delivery.notDelivered","Export authorization does not confirm download or recipient delivery.")}</p>
         </section>
+        </div>
       </div>
     </section>`;
   }

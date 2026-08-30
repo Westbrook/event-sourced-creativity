@@ -20,6 +20,18 @@ export type CreatorProductionSummary = {
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const finiteAmount = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
 
+/** Missing or unsafe usage is unknown, never a settled zero or partial total. */
+function actualCostMicrousd(usage: readonly CreativeEvent[]): number | null {
+  if (!usage.length) return null;
+  let total = 0;
+  for (const event of usage) {
+    const amount = event.payload.cost_microusd;
+    if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount < 0 || amount > Number.MAX_SAFE_INTEGER - total) return null;
+    total += amount;
+  }
+  return total;
+}
+
 /** A creator-safe projection from existing owner-bound artifact and cost receipts. */
 export function creatorProductionSummary(artifact: DocumentArtifact, events: readonly CreativeEvent[]): CreatorProductionSummary {
   const related = events.filter((event) => String(event.payload.artifact_id ?? "") === artifact.id);
@@ -45,7 +57,7 @@ export function creatorProductionSummary(artifact: DocumentArtifact, events: rea
     itemCount: artifact.itemCount,
     estimatedMicrousd: finiteAmount(requested?.payload.estimated_cost_microusd),
     reservedMicrousd: finiteAmount(reservation?.payload.reserved_microusd ?? usage[0]?.payload.reserved_microusd),
-    actualMicrousd: usage.length ? usage.reduce((total, event) => total + (finiteAmount(event.payload.cost_microusd) ?? 0), 0) : null,
+    actualMicrousd: actualCostMicrousd(usage),
     evidenceBasis: typeof evidence.basis === "string" ? evidence.basis : null,
     measuredWeight: typeof evidence.measured_weight === "number" && Number.isFinite(evidence.measured_weight) ? Math.max(0, Math.min(1, evidence.measured_weight)) : null,
     fullyEvaluated: evidence.fully_evaluated === true,

@@ -191,7 +191,7 @@ test("retained work leads failures and retains explicit, scoped, paid-once recov
   assert.match(artifacts, /documentJobCanRecoverPresentation\(job\)/,"only validated or safely repairable paid slideshow responses advertise free recovery");
   assert.match(artifacts, /documentJobCanRecoverProviderRender/);
   assert.match(artifacts, /session&&!session\.impersonation/);
-  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\)/, "settled generation costs remain owner-only across every paid presentation, audio, storyboard, and video output");
+  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\|\|artifact\.kind==="short_story"\|\|artifact\.kind==="scene"\)/, "settled generation costs remain owner-only across all six artifact families, including Story and Scene");
 });
 
 test("independent approval freshness resolves the exact artifact source document, not an identically named block elsewhere", () => {

@@ -8,6 +8,7 @@ import type { AvailableConsequentialPreview } from "../../../worker/consequentia
 import { contextConsentAction } from "../../model/context-consent-state.ts";
 import { consequentialPreview } from "../consequential-preview.ts";
 import { ensureNativeModalDialog } from "./native-dialog.ts";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "../output-navigation-focus.ts";
 import "./conversation-composer.ts";
 import "./assistant-panel.css";
 
@@ -337,17 +338,29 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.requestUpdate();
   }
 
-  resolveToolRequest(accepted: boolean, message: string) {
+  async resolveToolRequest(accepted: boolean, message: string, controls: { current?: () => boolean; focus?: OutputNavigationFocusLease } = {}) {
     this.#toolSubmitting = false;
     this.#draft = accepted ? "" : message.slice(0, this.#maximumLength());
     this.requestUpdate();
     if (!accepted) {
       const draft=this.#draft;
+      // Immediate refusals also yield to a newer gesture before the native frame.
+      // A supplied lease stays owned by the caller; only our local fallback ends here.
+      const focus=controls.focus??captureOutputNavigationFocus(this.ownerDocument);
+      try{
       // The containing host must first clear its busy mode and re-enable the
       // field. Focusing in the previous microtask silently targeted a disabled input.
-      void this.updateComplete.then(()=>requestAnimationFrame(()=>{
-        if(this.isConnected&&this.open&&this.#draft===draft&&!this.#toolSubmitting&&!document.querySelector("dialog:modal"))this.querySelector<HTMLTextAreaElement>(".forma-assistant-input")?.focus({preventScroll:true});
-      }));
+      await this.updateComplete;
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      if(this.isConnected&&this.open&&this.#draft===draft&&!this.#toolSubmitting
+        &&controls.current?.()!==false&&!document.querySelector("dialog:modal")){
+        const field=this.querySelector<HTMLTextAreaElement>(".forma-assistant-input");
+        if(field){
+          const restore=()=>{field.focus({preventScroll:true});return true;};
+          focus.run(field,restore);
+        }
+      }
+      }finally{if(!controls.focus)focus.dispose();}
     }
   }
 

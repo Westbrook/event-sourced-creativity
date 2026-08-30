@@ -54,9 +54,13 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
 
 .button {
   min-height: 2.75rem;
+  min-inline-size: var(--forma-control-min-size, 2.75rem);
+  padding-block: var(--forma-space-2, var(--space-2));
   padding-inline: 1rem;
-  border-radius: 6px;
-  font-size: var(--type-small);
+  border: 1px solid transparent;
+  border-radius: var(--forma-radius-small, 6px);
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  line-height: var(--forma-body-line-height, 1.6);
   font-weight: 600;
   letter-spacing: -.01em;
 }
@@ -112,11 +116,13 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), textarea, select) {
   min-height: 2.75rem;
-  padding: .7rem .8rem;
+  padding: var(--forma-space-2, var(--space-2)) var(--forma-control-inset-inline, var(--forma-space-3, var(--space-3)));
   color: var(--ink);
   background: var(--panel);
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--forma-radius-small, 6px);
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  line-height: var(--forma-body-line-height, 1.6);
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), textarea, select):focus {
@@ -246,7 +252,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
   }
 }
 
-textarea { line-height: 1.55; }
+textarea { line-height: var(--forma-body-line-height, 1.6); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 
 .segmented {
@@ -258,8 +264,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 }
 
 .segmented button {
-  min-height: 2.25rem;
-  padding: .45rem .8rem;
+  min-height: var(--forma-control-min-size, 2.75rem);
+  min-inline-size: var(--forma-control-min-size, 2.75rem);
+  padding: var(--forma-space-2, var(--space-2)) var(--forma-space-3, var(--space-3));
   border-radius: 6px;
   font-size: var(--type-small);
 }
@@ -356,7 +363,7 @@ forma-ui-audience-navigation:empty { display: none; }
 .platform-context > span { overflow: hidden; color: var(--muted); font-size: var(--type-caption); text-overflow: ellipsis; white-space: nowrap; }
 .platform-topbar > forma-ui-workspace-switcher { margin-inline-start: auto; }
 .role-dashboard { display: grid; max-inline-size: 85rem; gap: clamp(1.25rem, 3vw, 2.5rem); margin-inline: auto; padding-block: clamp(2rem, 5vw, 4rem); }
-.role-dashboard > .page-header--hero { align-items: center; padding: clamp(1.5rem, 4vw, 3rem); background: var(--admin-chrome); }
+.role-dashboard > .page-header--hero { align-items: center; padding-block: clamp(1.5rem, 4vw, 3rem); padding-inline: var(--page-gutter); background: var(--admin-chrome); }
 .role-dashboard-scope { margin: 0; color: var(--muted); font-size: var(--type-small); }
 .role-dashboard-error { padding: var(--forma-space-4, 1rem); color: var(--danger); border: 1px solid currentColor; }
 .role-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: var(--forma-space-4, 1rem); }
@@ -371,10 +378,10 @@ forma-ui-audience-navigation:empty { display: none; }
 .role-evidence-state--passed { color: var(--positive); }
 .role-evidence-state--blocked { color: var(--danger); }
 .delivery-planning,.qualification-evidence,.synthetic-replay,.actual-replay,.adapter-preview { display: grid; max-inline-size: 85rem; gap: var(--forma-space-5, 1.25rem); margin-inline: auto; padding-block-end: clamp(2rem, 5vw, 4rem); }
-.delivery-decision-form,.synthetic-replay-controls,.actual-replay form,.adapter-preview-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); align-items: end; gap: var(--forma-space-4, 1rem); }
-.delivery-decision-form label,.synthetic-replay-controls label,.actual-replay form label,.adapter-preview-form label { display: grid; gap: var(--forma-space-2, .5rem); }
-.delivery-decision-form :is(input,select,textarea),.synthetic-replay-controls select,.actual-replay form :is(input:not([type="checkbox"]),textarea),.adapter-preview-form :is(input,select) { min-block-size: var(--forma-control-min-size, 2.75rem); inline-size: 100%; padding: var(--forma-space-2, .5rem); color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); }
-.delivery-decision-form textarea,.actual-replay form textarea { min-block-size: 6rem; resize: vertical; }
+.delivery-decision-form,.synthetic-replay-controls,.actual-replay > section > form,.adapter-preview-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); align-items: end; gap: var(--forma-space-4, 1rem); }
+.delivery-decision-form label,.synthetic-replay-controls label,.actual-replay > section > form label,.adapter-preview-form label { display: grid; gap: var(--forma-space-2, .5rem); }
+.delivery-decision-form :is(input,select,textarea),.synthetic-replay-controls select,.actual-replay > section > form :is(input:not([type="checkbox"]),textarea),.adapter-preview-form :is(input,select) { min-block-size: var(--forma-control-min-size, 2.75rem); inline-size: 100%; padding: var(--forma-space-2, .5rem); color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); }
+.delivery-decision-form textarea,.actual-replay > section > form textarea { min-block-size: 6rem; resize: vertical; }
 .delivery-decision-list,.actual-replay-sessions { display: grid; gap: var(--forma-space-4, 1rem); margin: 0; padding: 0; list-style: none; }
 .delivery-decision-list > li > article,.actual-replay-sessions > li > article { padding: var(--forma-space-5, 1.25rem); background: var(--panel); border: 1px solid var(--line); }
 .delivery-decision-list article > header,.actual-replay-sessions article > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--forma-space-3, .75rem); }
@@ -846,7 +853,31 @@ forma-project-rail {
 .page-header--library .eyebrow,
 .page-header--document .eyebrow { display: none; }
 
-.page-header-actions { flex-wrap: wrap; }
+.page-header-actions { min-inline-size: 0; flex-wrap: wrap; }
+/* Center mixed metadata, but let actual peer controls share each row's height. */
+:is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions) > :is(.button,.icon-button,forma-ui-button,forma-ui-icon-button,forma-ui-link) { align-self: stretch; }
+/* A sole file-picker label is one peer action, not a multi-field form. */
+.file-button:has(> input[type="file"]:focus-visible) {
+  outline: var(--forma-focus-ring-width, 3px) solid var(--forma-focus-ring-color, var(--orange));
+  outline-offset: 3px;
+}
+@media (forced-colors: active) {
+  .file-button:has(> input[type="file"]:focus-visible) { outline-color: Highlight; }
+}
+:is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions) > form:has(> label.button.file-button:only-child > input[type="file"]) {
+  display: flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  align-self: stretch;
+}
+:is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions) > form:has(> label.button.file-button:only-child > input[type="file"]) > label.button.file-button {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex: 1 1 auto;
+  align-self: stretch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 .section-heading {
   align-items: flex-end;
@@ -1076,6 +1107,8 @@ forma-project-rail {
 
 .library-output-actions {
   display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: .5rem;
   padding: .85rem 0 0;
@@ -4712,8 +4745,8 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-pagination { display: inline-flex; align-items: center; gap: var(--forma-space-3,var(--space-3)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
 .ui-pagination > button,.ui-toolbar > button { border: 1px solid var(--forma-color-border-strong,var(--line-strong)); border-radius: var(--forma-radius-small,var(--radius-small)); }
 .ui-toolbar { display: flex; flex-wrap: wrap; gap: var(--forma-space-2,var(--space-2)); }
-.ui-toolbar > button { padding-inline: var(--forma-space-3,var(--space-3)); }
-.ui-link { display: inline-flex; min-inline-size: var(--forma-control-min-size,2.75rem); min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; color: var(--forma-color-accent-text,var(--accent-strong)); text-decoration: underline; text-underline-offset: .2em; }
+.ui-toolbar > button { padding-block: var(--forma-space-2,var(--space-2)); padding-inline: var(--forma-space-3,var(--space-3)); line-height: var(--forma-body-line-height,1.6); }
+.ui-link { display: inline-flex; min-inline-size: var(--forma-control-min-size,2.75rem); min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; padding-block: var(--forma-space-2,var(--space-2)); border: 1px solid transparent; font-size: var(--forma-font-size-supporting,var(--type-small)); line-height: var(--forma-body-line-height,1.6); color: var(--forma-color-accent-text,var(--accent-strong)); text-decoration: underline; text-underline-offset: .2em; }
 
 .ui-popover { display: inline-block; }
 .ui-popover-panel[popover],.tree-menu[popover],.presentation-deck-export-menu[popover] {
@@ -4746,6 +4779,19 @@ forma-ui-stack[alignment="start"] { justify-items: start; }
 forma-ui-cluster { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: center; gap: var(--forma-cluster-gap,var(--forma-space-3,var(--space-3))); }
 forma-ui-cluster[gap="small"] { --forma-cluster-gap: var(--forma-space-2,var(--space-2)); }
 forma-ui-cluster[gap="large"] { --forma-cluster-gap: var(--forma-space-5,var(--space-5)); }
+forma-ui-cluster > :is(button,a,forma-ui-button,forma-ui-icon-button,forma-ui-link) { flex: 0 1 auto; max-inline-size: 100%; }
+forma-ui-cluster > :is(button,a),
+forma-ui-cluster > :is(forma-ui-button,forma-ui-icon-button,forma-ui-link) > :is(button,a) { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+/* Opt-in peer action sizing. Default clusters and noninteractive badges stay centered. */
+forma-ui-cluster[alignment="stretch"] { align-items: stretch; }
+:is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions) > :is(forma-ui-button,forma-ui-icon-button,forma-ui-link),
+forma-ui-cluster[alignment="stretch"] > :is(forma-ui-button,forma-ui-icon-button,forma-ui-link),
+:is(forma-ui-button,forma-ui-icon-button,forma-ui-link)[slot="actions"],
+:is(forma-ui-button,forma-ui-icon-button,forma-ui-link)[slot="trailing"] { display: flex; min-inline-size: 0; }
+:is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions) > :is(forma-ui-button,forma-ui-icon-button,forma-ui-link) > :is(button,a),
+forma-ui-cluster[alignment="stretch"] > :is(forma-ui-button,forma-ui-icon-button,forma-ui-link) > :is(button,a),
+:is(forma-ui-button,forma-ui-icon-button,forma-ui-link)[slot="actions"] > :is(button,a),
+:is(forma-ui-button,forma-ui-icon-button,forma-ui-link)[slot="trailing"] > :is(button,a) { flex: 1 1 auto; align-self: stretch; }
 forma-ui-surface { display: block; min-inline-size: 0; color: var(--forma-color-text,var(--ink)); background: var(--forma-color-surface,var(--panel)); border-radius: var(--forma-radius-medium,var(--radius-medium)); }
 forma-ui-surface[bordered] { border: 1px solid var(--forma-color-border,var(--line)); }
 forma-ui-surface[padded] { padding: var(--forma-space-5,var(--space-5)); }

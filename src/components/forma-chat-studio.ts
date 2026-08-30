@@ -4,6 +4,7 @@ import { blockIconName } from "./icon-semantics";
 import { blockTypeDefinition, type BlockKind } from "../model/block-types";
 import { generationHistoryItemIsDraft, generationHistoryItems, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
+import { captureOutputNavigationFocus } from "./output-navigation-focus";
 import "./project-rail";
 import "./studio-navigation";
 import "./output-visual";
@@ -35,7 +36,30 @@ export class FormaChatStudio extends FormaElement {
     return [...lines.values()].sort((left,right)=>left.sequence-right.sequence);
   }
 
-  async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.#sending||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#sending=true;this.requestUpdate();try{const accepted=await this.store.chat(message,this.#livePreview&&Boolean(this.store.session.get()?.provider.configured));if(accepted){this.#draft="";await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"end"});}else this.querySelector<HTMLTextAreaElement>(".chat-composer textarea")?.focus({preventScroll:true});}finally{this.#sending=false;this.requestUpdate();}}
+  async #send(event:SubmitEvent){
+    event.preventDefault();
+    const draft=this.#draft,message=draft.trim();
+    if(!message||this.#sending||this.store.busy.get()||this.store.documentJobActive("chat"))return;
+    const source=this.store.captureSourceOwnership(),route=this.store.route.get(),documentId=this.store.projection.get().documentId;
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&this.store.route.get()===route
+      &&this.store.projection.get().documentId===documentId;
+    const presentationCurrent=()=>current()&&focus.current()&&!this.ownerDocument.querySelector("dialog[open]");
+    this.#sending=true;this.requestUpdate();
+    try{
+      const accepted=await this.store.chat(message,this.#livePreview&&Boolean(this.store.session.get()?.provider.configured));
+      if(!current())return;
+      if(accepted){
+        if(this.#draft===draft)this.#draft="";
+        await this.updateComplete;
+        const end=this.querySelector<HTMLElement>(".chat-thread-end");
+        if(end&&presentationCurrent())focus.run(end,()=>{end.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"end"});return true;});
+      }else{
+        const field=this.querySelector<HTMLTextAreaElement>(".chat-composer textarea");
+        if(field&&presentationCurrent())focus.run(field,()=>{field.focus({preventScroll:true});return true;});
+      }
+    }finally{focus.dispose();this.#sending=false;this.requestUpdate();}
+  }
 
   #prepareContext(type: BlockKind) {
     const definition = blockTypeDefinition(type);

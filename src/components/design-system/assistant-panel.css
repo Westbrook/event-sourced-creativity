@@ -195,18 +195,23 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 
 .forma-assistant-model > label:first-child {
   display: grid;
-  gap: .3rem;
-  font-size: .78rem;
+  min-inline-size: 0;
+  gap: var(--forma-space-1, .25rem);
+  font-size: var(--forma-font-size-supporting, .875rem);
 }
 
 .forma-assistant-model select {
-  min-block-size: 2.75rem;
-  padding-inline: .65rem;
+  min-inline-size: 0;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  max-inline-size: 100%;
+  padding: var(--forma-space-2, .5rem) var(--forma-control-inset-inline, .75rem);
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
   border-radius: .55rem;
   background: transparent;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
+  font-size: var(--forma-font-size-supporting, .875rem);
+  line-height: var(--forma-body-line-height, 1.6);
 }
 
 .forma-assistant-premium {
@@ -367,7 +372,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 .forma-assistant-specialist button,
 .forma-assistant-specialist select,
 .forma-assistant-specialist summary {
-  min-block-size: 2.75rem;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
 }
 .forma-assistant-specialist {
   pointer-events: auto;
@@ -399,8 +404,8 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   align-content: center;
   cursor: pointer;
 }
-.forma-assistant-specialist footer { display: flex; flex-wrap: wrap; gap: .75rem; }
-.forma-assistant-specialist footer button { flex: 1 1 12rem; white-space: normal; }
+.forma-assistant-specialist footer { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: stretch; gap: var(--forma-cluster-gap, .75rem); }
+.forma-assistant-specialist footer button { min-inline-size: 0; max-inline-size: 100%; flex: 1 1 12rem; white-space: normal; overflow-wrap: anywhere; }
 .forma-assistant-specialist-result p { white-space: pre-wrap; }
 @media (forced-colors: active) {
   .forma-assistant-specialist { border: 1px solid CanvasText; }
