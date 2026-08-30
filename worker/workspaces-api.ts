@@ -1,6 +1,6 @@
 import { POLICY_VERSION, hasCapability, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
-import { appendProjectEvents, projectContextCookie, readProjectEventPage, readProjectRequestContext, recordOrganizationAudit, synchronizeProjectScope, type ProjectRequestContext } from "./project-access.ts";
+import { appendProjectEvents, hasProjectContextCookie, projectContextCookie, readProjectEventPage, readProjectRequestContext, recordOrganizationAudit, synchronizeProjectScope, type ProjectRequestContext } from "./project-access.ts";
 import { cancelProjectActorJobs } from "./document-jobs-api.ts";
 import { handleContextPackages } from "./context-packages-api.ts";
 import { handleProjectAutomation, handleReviewInbox } from "./review-automation-api.ts";
@@ -728,7 +728,7 @@ export async function handleWorkspaces(request: Request, env: WorkerEnv, path: s
     const row=await env.DB.prepare("SELECT project.owner_user_id FROM organization_projects project JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.status='active' JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL WHERE project.project_access_id=? AND project.organization_id=? AND project.status='active'").bind(path[2],organizationId).first<{owner_user_id:string}>();
     if(!row)return workspaceDenied();
     let context:ProjectRequestContext={contextId:"",organizationId,projectAccessId:path[2]!,projectId:project.projectId,ownerUserId:row.owner_user_id,principalUserId:actor.userId,role:project.role,permissions:actor.access.capabilities.filter((capability)=>capability.startsWith("project.")&&hasCapability(actor,capability,{organizationId,projectAccessId:path[2]})),expiresAt:""};
-    if(/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"")){
+    if(hasProjectContextCookie(request)){
       const selected=await readProjectRequestContext(request,env,actor);
       if(selected.response)return selected.response;
       if(!selected.context)return workspaceDenied();

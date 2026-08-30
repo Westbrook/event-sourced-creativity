@@ -7,7 +7,7 @@ import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, readSlideCountPolicy, resolvePresentationCountRequest, sameSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import { approvedAudioVideoReference, handleEvents } from "./events-api";
 import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, settleDocumentGenerationBudgets, storePrivateContent, preparePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
-import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
+import { hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
 import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import { adaptiveRequestKey, adaptiveRequestLocale } from "../src/model/adaptive-request";
@@ -2126,7 +2126,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   let sceneInspection=false;
   if(request.method==="POST"&&!path){try{const inspected=await request.clone().json() as {kind?:unknown;payload?:Record<string,unknown>};sceneInspection=inspected.kind==="render_document"&&inspected.payload?.artifactKind==="scene"&&inspected.payload.sceneCostPreview===true;}catch{/* The normal admission parser still rejects malformed input. */}}
   if(request.method!=="GET"&&!sceneInspection)await ensureOutputRequirementsSchema(env);
-  const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+  const scoped=hasProjectContextCookie(request);
   const auth=await readOutputAdmissionValue(outputPreparation?.readScope,"principal",()=>requireUser(request,env,scoped||sceneInspection?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{}));
   if(auth.response||!auth.user)return auth.response!;
   const principal=auth.user,selected=scoped?await readOutputAdmissionValue(outputPreparation?.readScope,"project-selection",()=>readProjectRequestContext(request,env,principal)):{context:null,response:null};

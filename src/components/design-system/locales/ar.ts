@@ -2463,4 +2463,12 @@ Object.assign(messages, {
   "system.auto.1bop32q.183": "راجع النص المحفوظ وتوجيهات الصوت الإلزامية وحدود النموذج قبل بدء طلب معدّل. لم يُرسل أي طلب لتوليد الصوت؛ ويظل أي استخدام ناتج عن التخطيط المكتمل مسجّلًا.",
 });
 
+Object.assign(messages, {
+  "projects.checkOriginal": "التحقّق من الإنشاء الأصلي",
+  "projects.retryOriginal": "إعادة محاولة الإنشاء نفسه",
+  "projects.originalUnconfirmed": "لم يُحسم إنشاء المشروع الأصلي. تحقّق منه أو أعد محاولة الإنشاء نفسه؛ لن يُنشأ مشروع بديل.",
+});
+
+messages["projects.originalConfirmedUnavailable"]="تم تأكيد الإنشاء. لا يمكن فتح المستند الأصلي حاليًا. تحقّق من توفره؛ لن يتم إنشاء مشروع جديد.";
+messages["projects.checkOriginalAvailability"]="التحقّق من توفر المستند الأصلي";
 export default messages;

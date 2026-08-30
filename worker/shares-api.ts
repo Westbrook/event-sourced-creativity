@@ -5,7 +5,7 @@ import { documentShareScope, sanitizeSharedValue, shareAllowsCurrentAudio, share
 import { requireConsent, requireUser } from "./pilot-policy";
 import { applySafeMediaResponseHeaders } from "./media-api";
 import { appendAuditEvent, ensureSchema, readWorkspaceEvents, streamHead, uuidV7, type WorkerEnv } from "./runtime";
-import { readProjectRequestContext, readProjectSourceEvents, recordOrganizationAudit } from "./project-access";
+import { hasProjectContextCookie, readProjectRequestContext, readProjectSourceEvents, recordOrganizationAudit } from "./project-access";
 import { artifactReviewState, artifactSourceVersions } from "../src/model/context-health.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 
@@ -60,7 +60,7 @@ function audienceContextRevision(artifactId:string,documentId:string,events:Para
 }
 
 export async function handleShares(request: Request, env: WorkerEnv, shareId = "") {
-  const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+  const scoped=hasProjectContextCookie(request);
   const auth=await requireUser(request,env,scoped?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
   if(auth.response||!auth.user)return auth.response!;
   const user=auth.user,selected=scoped?await readProjectRequestContext(request,env,user):{context:null,response:null};

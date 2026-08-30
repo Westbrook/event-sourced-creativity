@@ -111,6 +111,9 @@ const readCookie=(request:Request,name:string)=>{
   try{return decodeURIComponent(value);}catch{return"";}
 };
 
+/** Presence only, using the resolver's exact first-cookie/decode semantics; not authority. */
+export const hasProjectContextCookie=(request:Request)=>Boolean(readCookie(request,CONTEXT_COOKIE));
+
 export const projectContextCookie=(request:Request,value:string,maxAge:number)=>`${CONTEXT_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol==="https:"?"; Secure":""}`;
 
 export function rejectProjectContext(request:Request,error="project_access_revoked"){

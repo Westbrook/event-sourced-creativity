@@ -69,6 +69,34 @@ async function activeImpersonation(request:Request,env:WorkerEnv,actor:PilotUser
   return{impersonationId:String(row.impersonation_id),personaId:String(row.persona_id),replaySessionId:String(row.replay_session_id),actor,fictionalUser,startedAt:String(row.started_at),expiresAt:String(row.expires_at)};
 }
 
+/** Read-only final-boundary equivalent of requireUser's configured pilot entry.
+ * Preserve successor admission, explicit breakglass and the exact owner-recovery
+ * exception. No consent, authoring capability, paid quota or reservation is granted. */
+export function configuredPilotAdmissionGuard(env:WorkerEnv,principal:Pick<PilotUser,"userId"|"email">):BudgetReservationGuard{
+  const configured=env.FORMA_PILOT_COHORT_ID?.trim()??"";
+  const breakglass=new Set((env.FORMA_ADMIN_EMAILS??"").split(",").map(value=>value.trim().toLowerCase()).filter(Boolean));
+  if(!configured||breakglass.has(principal.email.toLowerCase()))return{sql:"1",bindings:[]};
+  return{sql:`(EXISTS(SELECT 1 FROM pilot_cohorts cohort
+      JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
+      JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+      WHERE cohort.organization_id=(SELECT selected.organization_id FROM pilot_cohorts selected WHERE selected.cohort_id=?)
+        AND cohort.status IN('active','paused')
+        AND cohort.starts_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        AND participant.email_normalized=? AND participant.status='active' AND participant.revoked_at IS NULL
+        AND (participant.user_id IS NULL OR participant.user_id=?))
+    OR EXISTS(SELECT 1 FROM pilot_cohorts cohort
+      JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
+      JOIN organization_memberships member ON member.organization_id=cohort.organization_id AND member.user_id=? AND member.role='owner'
+        AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+      JOIN users owner ON owner.user_id=member.user_id AND owner.email=?
+      WHERE cohort.cohort_id=?
+        AND (cohort.status='closed' OR cohort.ends_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR cohort.starts_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        AND NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id
+          AND successor.status IN('active','paused') AND successor.starts_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND successor.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))`,
+    bindings:[configured,principal.email.toLowerCase(),principal.userId,principal.userId,principal.email.toLowerCase(),configured]};
+}
+
 export async function requireUser(request: Request, env: WorkerEnv, minimum: PilotRole = "viewer", options:{account?:"effective"|"principal"}={}) {
   await ensureSchema(env);
   const identity = identityFromRequest(request);

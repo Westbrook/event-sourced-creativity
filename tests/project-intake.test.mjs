@@ -181,16 +181,24 @@ test("project creation refuses unlicensed passages and keeps every intake contro
   assert.equal(plan(draft({ source: "Unlicensed evidence", sourceRights: false })), null);
   assert.equal(plan(draft({ name: "   " })), null);
 
-  assert.match(source, /this\.store\.appendBatch\(brief\.events\)/);
+  assert.match(source, /this\.store\.commitProjectIntake\(attempt\.brief\.events,\{current\}\)/);
+  assert.match(source, /this\.store\.checkProjectIntake\(attempt\.brief\.events,\{current\}\)/);
   assert.match(source, /\.label=\$\{this\.i18n\.system\("Document name"\)\}/);
   assert.match(source, /this\.i18n\.system\("What should remain with them\?"\)/);
-  assert.match(source, /textarea rows="4" maxlength="12000"/);
+  assert.match(source, /textarea \?disabled=\$\{Boolean\(this\.#intake\)\} rows="4" maxlength="12000"/);
   assert.match(source, /this\.i18n\.system\("Exact value"\)/);
   assert.match(source, /max-length="500" \.value=\$\{this\.#protectedPhrase\}/);
   assert.match(source, /\?disabled=\$\{this\.#submitting\|\|!this\.#name\.trim\(\)\|\|Boolean\(this\.#source\.trim\(\)&&!this\.#sourceRights\)\}/);
-  assert.match(source,/if\(this\.#submitting\)return;/,"concurrent submissions cannot create duplicate projects");
-  assert.match(source,/#openCreate\(\)\{this\.#creating=true;this\.requestUpdate\(\)/,"reopening the dialog preserves its in-memory authored draft");
-  assert.match(source,/if\(appended\.length\)\{this\.#submitting=false;this\.#clearDraft\(\)/,"licensed project briefs are cleared only after confirmed persistence");
+  assert.match(source,/if\(this\.#submitting\|\|!this\.#creating\|\|this\.#intake\?\.confirmed\)return;/,"concurrent submissions and confirmed originals cannot create duplicate projects");
+  const projects=parsed.statements.find(statement=>typescript.isClassDeclaration(statement)&&statement.name?.text==="FormaProjects");
+  const method=name=>{const member=projects?.members.find(member=>member.name?.getText(parsed)===name);assert.ok(member);return member.getText(parsed);};
+  const opening=method("#openCreate");
+  assert.match(opening,/const opening=\{\};this\.#intakeOpening=opening;this\.#creating=true;/,"reopening preserves the draft under a fresh presentation owner");
+  assert.match(opening,/captureOutputNavigationFocus\(this\.ownerDocument\)/,"the opening owns focus before render yields");
+  assert.match(opening,/this\.#intakeOpening!==opening\|\|this\.#draftScopeKey\(\)!==scope/,"a later opening or changed custody cannot inherit focus");
+  assert.match(opening,/!this\.store\.sourceOwnershipActive\(source\)/,"current Source remains required after render");
+  const intake=method("#runIntake"),completeGuard="if(!complete){this.#intakeIssue=true;return;}",cleanup="this.#submitting=false;this.#intake=null;this.#draftScope=\"\";this.#clearDraft();";
+  assert.ok(intake.includes(completeGuard)&&intake.includes(cleanup)&&intake.indexOf(completeGuard)<intake.indexOf(cleanup),"successful creation clears its retained draft only after the complete original receipt; separate custody retirement may discard private drafts");
 });
 
 test("the visible organization-package selection limit and the actual authoring guard both support 128 decisions",async()=>{

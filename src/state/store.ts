@@ -1,3 +1,4 @@
+import { projectIntake, type ProjectIntake } from "../model/project-intake";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
 import { OutputRequirementsClient } from "./output-requirements-client";
@@ -69,7 +70,7 @@ type OwnedDocumentCopyReview = DocumentCopyReview & { sourceOwner:CapturedSource
 export type EventSourceRetirement = Readonly<{ source:CapturedSourceOwnership; generation:number; status:401|403|404 }>;
 export type EventWriteOwner = Readonly<{ authorizationKey:string; actorUserId:string; projectId:string|null; sourceGeneration:number }>;
 export type CommittedEventIdentity = Readonly<{ eventId:string; type:CreativeEvent["type"]; sequence:number; clientEventId:string|null }>;
-export type EventWriteAcknowledgment = Readonly<{ observationId:string; owner:EventWriteOwner; action:"append"|"batch"|"canvas_sync"; requestedClientEventIds:readonly string[]; committed:readonly CommittedEventIdentity[]; rejectedIndices:readonly number[]; outcome:"not-attempted"|"observed"|"unconfirmed"; observedHead:number|null; privateUnavailable:boolean }>;
+export type EventWriteAcknowledgment = Readonly<{ observationId:string; owner:EventWriteOwner; action:"append"|"batch"|"canvas_sync"|"project_intake"; requestedClientEventIds:readonly string[]; committed:readonly CommittedEventIdentity[]; rejectedIndices:readonly number[]; outcome:"not-attempted"|"observed"|"unconfirmed"; observedHead:number|null; privateUnavailable:boolean }>;
 export type EventWriteResult = Readonly<{ appended:CreativeEvent[]; acknowledgment:EventWriteAcknowledgment; publication:"published"|"withheld"|"none" }>;
 export type WithheldEventWrite = Readonly<{publication:"withheld";acknowledgment:EventWriteAcknowledgment}>;
 export type AppendOptions = { expected?:number; remember?:boolean; rebaseAttempts?:number; silent?:boolean; background?:boolean; onAcknowledgment?:(receipt:EventWriteAcknowledgment)=>void };
@@ -1760,9 +1761,9 @@ export class FormaStore {
       this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};
     }
   }
-  async #refreshEvents(){
+  async #refreshEvents(options:{fromStart?:boolean}={}){
     const baseProfile=this.#historyProfile,wasRetired=this.#sourceRetired,previous=wasRetired?[]:this.events.get(),known=new Set(previous.map(event=>event.eventId));
-    const after=wasRetired?0:this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();
+    const after=options.fromStart===true||wasRetired?0:this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();
     let replace=after===0,body=await this.#readEventPages(after);
     this.#assertSourceRead(body.read);
     if(body.head<after){body=await this.#readEventPages(0,body.read);this.#assertSourceRead(body.read);replace=true;}
@@ -1778,7 +1779,7 @@ export class FormaStore {
     if(changed)this.#publishAppended(complete.filter(event=>!known.has(event.eventId)),body.read);
     return changed;
   }
-  async refreshEvents(){if(await this.#refreshEvents())this.notify();}
+  async refreshEvents(options:{fromStart?:boolean}={}){if(await this.#refreshEvents(options))this.notify();}
 
   /** One direct receipt-bound transport. Never appendBatch, Canvas queue or optimistic events. */
   async canvasArrangementRequest(command: OutcomeArrangementCommand, controls: { current?: () => boolean; onDispatch?: () => void; onNotDispatchedAtConfirmation?: () => void } = {}): Promise<OutcomeArrangementHttp> {
@@ -3216,6 +3217,76 @@ async syncDocumentJobs(){
       &&String(receipt.payload.artifact_id??receipt.payload.object_id??"")===resource);
     if(!accepted)this.toast("The download was canceled because your project access could not be confirmed.");
     return accepted;
+  }
+
+  /** Explicit intake commands reuse the original event receipt/source owner, not Canvas sync. */
+  commitProjectIntake(events:EventInput[],controls:{current?:()=>boolean}={}):Promise<EventWriteResult|null>{
+    return this.#projectIntakeRequest(events,"commit",controls);
+  }
+  checkProjectIntake(events:EventInput[],controls:{current?:()=>boolean}={}):Promise<EventWriteResult|null>{
+    return this.#projectIntakeRequest(events,"check",controls);
+  }
+  async #projectIntakeRequest(inputs:EventInput[],mode:"commit"|"check",controls:{current?:()=>boolean}={}):Promise<EventWriteResult|null>{
+    const intake=projectIntake(inputs);
+    if(!intake||this.session.get()?.projectContext||controls.current&&!controls.current())return null;
+    const admission=await this.#admitEventWrite(intake.events,"project_intake");
+    let observation=admission.observation;
+    if(!admission.admitted){
+      if(!admission.reused||observation.pending||!this.sourceOwnershipScopeActive(observation.source))
+        return this.#withheldEventWrite(observation);
+      if(!this.sourceOwnershipActive(observation.source)||observation.paused){
+        // Only this exact reused intake signature/IDs, still owned by its
+        // original authorization scope, may get a deliberate fresh Check or
+        // Retry. The private clone never unpauses the generic observation.
+        // Unknown is not unused: the atomic server adjudicates the original.
+        const source=this.captureSourceOwnership();
+        if(!this.sourceOwnershipActive(source))return this.#withheldEventWrite(observation);
+        observation={...observation,source,read:this.#beginSourceRead("full"),pending:true,delivered:false,
+          receipt:this.#eventWriteReceipt(observation,{owner:this.#eventWriteOwner(source)} )};
+      }else{
+        if(observation.paused||!this.sourceOwnershipActive(observation.source))return this.#withheldEventWrite(observation);
+        observation.pending=true;observation.delivered=false;
+      }
+    }
+    const pending=this.#appendPipeline.then(()=>this.#projectIntakeNow(intake,mode,controls,observation));
+    this.#appendPipeline=pending.then(()=>undefined,()=>undefined);
+    return pending;
+  }
+  async #projectIntakeNow(intake:ProjectIntake,mode:"commit"|"check",controls:{current?:()=>boolean},observation:EventWriteObservation):Promise<EventWriteResult>{
+    const source=observation.source,sourceCurrent=()=>this.sourceOwnershipActive(source),
+      current=()=>sourceCurrent()&&(!controls.current||controls.current());
+    const finish=(patch:Partial<EventWriteAcknowledgment>,appended:CreativeEvent[]=[],publication:EventWriteResult["publication"]="none")=>
+      this.#finishEventWrite(observation,patch,appended,publication,{silent:true});
+    if(!current())return finish({outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!sourceCurrent()},[],"withheld");
+    const busy=mode==="check"?"check-project-intake":"project-intake";
+    this.busy.set(busy);this.notify();
+    try{
+      const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({action:"project_intake",intakeAction:mode,events:intake.events})},
+        mode==="check"?"check the original project creation":"create this original project",
+        {current,onDispatch:()=>{if(mode==="commit")observation.attempted=true;}});
+      if([401,403,404].includes(response.status)){
+        if(observation.read)this.#retireOwnedSource(observation.read,response.status as 401|403|404);
+        return finish({outcome:"unconfirmed",privateUnavailable:!sourceCurrent()},[],sourceCurrent()?"none":"withheld");
+      }
+      const body=await response.json() as Record<string,unknown>;
+      const exact=Boolean(response.ok&&body&&typeof body==="object"&&!Array.isArray(body)
+        &&Object.keys(body).length===6&&Object.keys(body).every(key=>["status","projectId","documentId","appended","rejected","head"].includes(key))
+        &&body.status==="complete"&&body.projectId===intake.projectId&&body.documentId===intake.documentId);
+      const receipt=exact?this.#validateEventWriteBody(body,intake.events,observation):null;
+      const complete=Boolean(receipt?.complete&&!receipt.rejectedIndices.length&&receipt.appended.length===intake.events.length);
+      const patch:Partial<EventWriteAcknowledgment>={outcome:complete?"observed":"unconfirmed",
+        committed:receipt?.committed??[],rejectedIndices:receipt?.rejectedIndices??[],observedHead:receipt?.head??null,
+        privateUnavailable:!sourceCurrent()};
+      if(!current())return finish(patch,[],"withheld");
+      if(!complete||!receipt)return finish(patch);
+      this.#mergeConfirmed(receipt.appended,receipt.head,true);this.#reflectDocumentInRoute();
+      return finish(patch,receipt.appended,"published");
+    }catch{
+      return finish({outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!sourceCurrent()},[],sourceCurrent()?"none":"withheld");
+    }finally{
+      if(this.sourceOwnershipScopeActive(source)&&this.busy.get()===busy){this.busy.set("");this.notify();}
+    }
   }
 
   async appendBatch(events:EventInput[],options:AppendOptions={}):Promise<CreativeEvent[]>{return(await this.appendBatchWithReceipt(events,options)).appended;}

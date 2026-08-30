@@ -11,7 +11,7 @@ import { readGeneratedImageReference } from "./media-api.ts";
 import { moderateGenerationSnapshot, moderatePromptTechniqueSet } from "./openai-moderation.ts";
 import type { ImageReference } from "./openai-adapter.ts";
 import { hasCapability, readAccountBudgets, readBudgets, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
-import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
+import { hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
 import { classifyProviderFailure, type ProviderFailureDetail } from "./provider-errors.ts";
 import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { validateFalImageSize } from "./fal-image-adapter.ts";
@@ -247,7 +247,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
 
 export async function handleGenerationReadiness(request:Request,env:WorkerEnv,path=""){
   await ensureSchema(env);
-  const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+  const scoped=hasProjectContextCookie(request);
   const auth=await requireUser(request,env,scoped?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
   if(auth.response||!auth.user)return auth.response!;
   const principal=auth.user,selected=scoped?await readProjectRequestContext(request,env,principal):{context:null,response:null};

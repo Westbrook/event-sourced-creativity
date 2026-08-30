@@ -2424,4 +2424,12 @@ Object.assign(messages, {
   "system.auto.1bop32q.183": "Vérifiez le script conservé, les consignes vocales obligatoires et les limites du modèle avant de lancer une demande modifiée. Aucune génération audio n’a été soumise ; toute consommation liée à la planification déjà effectuée reste enregistrée.",
 });
 
+Object.assign(messages, {
+  "projects.checkOriginal": "Vérifier la création initiale",
+  "projects.retryOriginal": "Réessayer la même création",
+  "projects.originalUnconfirmed": "La création initiale reste sans confirmation. Vérifiez-la ou réessayez cette même création ; aucun projet de remplacement ne sera créé.",
+});
+
+messages["projects.originalConfirmedUnavailable"]="Création confirmée. Le document d’origine ne peut pas être ouvert pour le moment. Vérifiez sa disponibilité ; aucun nouveau projet ne sera créé.";
+messages["projects.checkOriginalAvailability"]="Vérifier la disponibilité de l’original";
 export default messages;

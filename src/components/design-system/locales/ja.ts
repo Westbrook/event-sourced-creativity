@@ -2299,4 +2299,12 @@ Object.assign(messages, {
   "system.auto.1bop32q.183": "リクエストを変更して開始する前に、保存された台本、必須の音声指示、モデルの制限を確認してください。音声生成リクエストは送信されていません。完了したプランニングの使用量は記録に残ります。",
 });
 
+Object.assign(messages, {
+  "projects.checkOriginal": "最初の作成を確認",
+  "projects.retryOriginal": "同じ作成を再試行",
+  "projects.originalUnconfirmed": "最初の作成は未確認です。確認するか同じ作成を再試行してください。代わりのプロジェクトは作成されません。",
+});
+
+messages["projects.originalConfirmedUnavailable"]="作成は確認済みです。現在、元のドキュメントを開けません。利用可能か確認してください。新しいプロジェクトは作成されません。";
+messages["projects.checkOriginalAvailability"]="元のドキュメントの利用可否を確認";
 export default messages;

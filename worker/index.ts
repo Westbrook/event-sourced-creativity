@@ -20,7 +20,7 @@ import { handlePortfolio } from "./portfolio-api";
 import { readCanvasGovernance } from "./canvas-governance-policy";
 import { handleCapabilityGrants } from "./access-api";
 import { handleWorkspaces } from "./workspaces-api";
-import { readProjectRequestContext } from "./project-access";
+import { hasProjectContextCookie, readProjectRequestContext } from "./project-access";
 import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
@@ -99,7 +99,9 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       return new Response(renderMarketingDocument(await asset.text(),locale,marketingRoute.profile),{status:asset.status,statusText:asset.statusText,headers});
     }
     if(url.pathname.startsWith("/welcome/"))return new Response(null,{status:404,headers:{"cache-control":"public, max-age=0, must-revalidate"}});
-    const scopedCookie=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+    // Raw presence remains conservative for response caching, never for account selection.
+    const projectCookieHeaderPresent=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+    const scopedCookie=hasProjectContextCookie(request);
     const accountOnly=url.pathname.startsWith("/api/generation-readiness/")||url.pathname==="/api/analytics"||url.pathname.startsWith("/api/portfolio/")||url.pathname.startsWith("/api/replay-sessions")||url.pathname.startsWith("/api/replay-approval");
     if(scopedCookie&&accountOnly){
       const principal=await requireUser(request,env,"viewer",{account:"principal"});
@@ -169,7 +171,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     }
     if(url.pathname==="/api/events"||url.pathname==="/api/events/hot"){
       const response=await handleEvents(request,env,url.pathname.endsWith("/hot"));
-      if(!scopedCookie)return response;
+      if(!projectCookieHeaderPresent)return response;
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }

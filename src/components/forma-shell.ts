@@ -1,4 +1,5 @@
 import { html, noChange, nothing } from "lit";
+import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon, downloadJson, copyTextToClipboard } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentInRoute, withProjectTaskDocumentInRoute } from "../model/routes";
@@ -343,6 +344,14 @@ export class FormaShell extends FormaElement {
     const pathname=path.split(/[?#]/)[0]||"/";
     if(pathname==="/share"||pathname.startsWith("/share/"))return html`<a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a><div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(pathname.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
     const session=this.store.session.get();const impersonation=session?.impersonation;const shared=Boolean(session?.projectContext);const canAuthor=!shared||Boolean(session?.projectContext?.permissions.includes("project.author"));
+    const sourceReady=!(this.store.loading.get()&&!this.store.events.get().length)&&this.store.routeDataReady();
+    // Keep only this existing personal intake owner through a same-route Source
+    // interruption. Its own render withdraws private content while unavailable.
+    // A changed authorization or actual route destroys this keyed subtree.
+    const personalProjects=Boolean(session&&!shared&&(isCreative&&(pathname.startsWith("/projects")||pathname==="/creative")
+      ||isCanvas&&(pathname==="/canvas/projects"||pathname.startsWith("/canvas/projects/"))));
+    const projectsOwnerKey=(this.store.captureAuthorizationScope()?.key??"")+"\u0000"+path.split("#")[0];
+    const sourceLoading=html`<section class="application-loading" role="status"><span aria-hidden="true"></span><div><b>${this.i18n.t("shell.loading","",{application:this.i18n.t("shell."+applicationId,application.label)})}</b><p>${this.i18n.t("shell.loadingDetail")}</p></div></section>`;
     const canAdminister=!impersonation&&session?.user.role==="admin";
     const access={role:session?.user.role,principalRole:impersonation?session?.user.role:undefined,canvasAccess:session?.canvas.access,capabilities:session?.capabilities};
     const availableApplications=APPLICATIONS.filter((candidate)=>applicationAccessible(candidate.id,access));
@@ -390,7 +399,7 @@ export class FormaShell extends FormaElement {
       ${shared?html`<aside class="impersonation-banner workspace-shared-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</b>${canAuthor?nothing:html`<span>${this.i18n.t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")}</span>`}</div><button type="button" class="button secondary compact" @click=${()=>void this.store.leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${errorMessage} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
-      <main id="main-content" tabindex="-1" aria-busy=${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?"true":"false"}>${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?html`<section class="application-loading" role="status"><span aria-hidden="true"></span><div><b>${this.i18n.t("shell.loading","",{application:this.i18n.t("shell."+applicationId,application.label)})}</b><p>${this.i18n.t("shell.loadingDetail")}</p></div></section>`:this.#page()}</main>
+      <main id="main-content" tabindex="-1" aria-busy=${sourceReady?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourceLoading}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourceLoading}</main>
       ${session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}

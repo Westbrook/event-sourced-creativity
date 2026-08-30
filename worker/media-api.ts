@@ -1,5 +1,5 @@
 import { hasCapability, requireConsent, requireUser } from "./pilot-policy.ts";
-import { readProjectRequestContext, synchronizeProjectScope } from "./project-access.ts";
+import { hasProjectContextCookie, readProjectRequestContext, synchronizeProjectScope } from "./project-access.ts";
 import { mediaKeyMatchesOwnerNamespace, ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { canonicalSourceDocumentMime, extractSourceDocument, sourceDocumentEvidence, sourceDocumentEvidenceDigest, sourceDocumentEvidenceFromProperties } from "../src/model/source-documents.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
@@ -148,7 +148,7 @@ export async function managedPilotSourceClassificationValid(env:WorkerEnv,ownerI
 }
 
 export async function uploadMedia(request: Request, env: WorkerEnv) {
-  const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+  const scoped=hasProjectContextCookie(request);
   const auth=await requireUser(request,env,scoped?"viewer":"creator",scoped?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;const consent=requireConsent(auth.user);if(consent)return consent;
   const selected=scoped?await readProjectRequestContext(request,env,auth.user):{context:null,response:null};
   if(selected.response)return selected.response;
@@ -204,7 +204,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:isAudio?"audio":SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",size:file.size,...(timing?{durationSeconds:timing.durationSeconds}:{}),...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
 }
 export async function getMedia(request:Request,key:string,env:WorkerEnv){
-  const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+  const scoped=hasProjectContextCookie(request);
   const auth=await requireUser(request,env,"viewer",scoped?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
   const selected=scoped?await readProjectRequestContext(request,env,auth.user):{context:null,response:null};
   if(selected.response)return selected.response;
