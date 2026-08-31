@@ -4,6 +4,8 @@ import type { AssistantContext } from "../model/conversation-context.ts";
 import { applicationDefinition, navigationItemActive } from "../platform/applications.ts";
 import { platformSession } from "../platform/session-controller.ts";
 import type { AssistantDisplayedMessage, AssistantDisplayedProposal, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
+import type { CommandDeparture } from "./command-departure.ts";
+import type { FormaPlatformShell } from "./forma-platform-shell.ts";
 import "./design-system/assistant-panel.ts";
 import { FormaPresentationalElement } from "./presentational-element.ts";
 
@@ -19,6 +21,7 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
   #proposals: AssistantDisplayedProposal[] = [];
   #pending = new Set<string>();
   #loadedScope = "";
+  #departureGeneration = 0;
   #unsubscribe?: () => void;
 
   constructor() {
@@ -32,12 +35,14 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
   }
 
   override disconnectedCallback() {
+    this.#departureGeneration += 1;
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
     super.disconnectedCallback();
   }
 
   #sessionChanged() {
+    this.#departureGeneration += 1;
     const current = platformSession.get();
     if (!this.#loadedScope && !this.#messages.length && !this.#pending.size) {
       this.requestUpdate();
@@ -58,6 +63,7 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
 
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
+    if (changed.has("route")) this.#departureGeneration += 1;
     if (!changed.has("route") || !this.#loadedScope || this.#loadedScope === this.#scope()) return;
     this.#loadedScope = "";
     this.#context = null;
@@ -70,6 +76,21 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
   #scope() {
     const session = platformSession.get();
     return [session?.user.userId ?? "", session?.audience ?? "", session?.permissionEpoch ?? "", this.route].join("\u0000");
+  }
+
+  captureCommandDeparture(): Omit<CommandDeparture, "element"> & { readonly element: HTMLElement } {
+    const generation = this.#departureGeneration, scope = this.#scope(), session = platformSession.get();
+    const panel = this.querySelector<FormaAssistantPanel>("forma-assistant-panel"), panelScope = panel?.conversationScope;
+    let retired = false;
+    const current = () => {
+      if (retired) return false;
+      if (!this.isConnected || generation !== this.#departureGeneration || scope !== this.#scope()
+        || session !== platformSession.get() || panel !== this.querySelector<FormaAssistantPanel>("forma-assistant-panel")
+        || panel && (!panel.isConnected || panel.parentElement !== this || panel.conversationScope !== panelScope)) retired = true;
+      return !retired;
+    };
+    return { element: this, current, blocked: () => Boolean(this.#pending.size || panel?.commandDepartureBlocked),
+      reason: () => "next.lifecycle.assistantOwnsWork" };
   }
 
   #request() {
@@ -128,18 +149,23 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
   }
 
   #proposal(detail: { proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }) {
-    this.#proposals = this.#proposals.filter((item) => item.id !== detail.proposal.id);
-    this.requestUpdate();
-    if (detail.action !== "accept" || detail.proposal.kind !== "navigate" || !detail.proposal.route) return;
+    const proposal = this.#proposals.find(item => item === detail.proposal);
+    if (!proposal) return;
+    if (detail.action === "dismiss") {
+      this.#proposals = this.#proposals.filter(item => item !== proposal);
+      this.requestUpdate(); return;
+    }
+    if (proposal.kind !== "navigate" || !proposal.route) return;
     const session = platformSession.get();
-    const destination = assistantSurfaceForRoute(detail.proposal.route);
+    const destination = assistantSurfaceForRoute(proposal.route);
     if (!session || destination.host !== "platform" || !destination.available
       || destination.application === session.audience && !destination.requiredCapabilities.some((capability) => session.capabilities.includes(capability))
       || destination.application !== session.audience && !session.availableApplications?.some((application) => application.id === destination.application)
       || ["/product/evaluation/actual", "/admin/events/replay"].includes(destination.canonicalFamily) && session.user.role !== "admin") return;
-    if (destination.application !== session.audience) { location.assign(destination.route); return; }
-    history.pushState({}, "", destination.route);
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    const host = this.closest<FormaPlatformShell>("forma-platform-shell");
+    if (!host?.navigateFrom(this, destination.route)) return;
+    this.#proposals = this.#proposals.filter(item => item !== proposal);
+    this.requestUpdate();
   }
 
   #pageLabel() {

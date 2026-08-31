@@ -96,7 +96,7 @@ test("modality-specific context choices keep deliberate adoption, roles, and con
   assert.match(alternatives, /class="guided-subtype">Starting point/);
 
   assert.match(editors, /#newTypeSelected=false/);
-  assert.match(editors, /if\(!text\|\|!this\.#newTypeSelected\)return/);
+  assert.match(editors, /async #createLayer\(event:SubmitEvent\)\{\s*event\.preventDefault\(\);\s*const raw=this\.#newText,rawHandle=this\.#newHandle,type=this\.#newType,subtype=this\.#newSubtype,weight=this\.#newWeight;\s*const text=raw\.trim\(\);if\(!text\|\|!this\.#creating\|\|!this\.#newTypeSelected\)return;/);
   assert.match(editors, /class="block-type-catalog layer-type-catalog"/);
   assert.match(editors, /class="adaptive-choices">\$\{this\.#options\(current\.type\)\.map/);
   assert.match(editors, /@forma-action=\$\{\(\) => this\.#commit\(current\.type/);

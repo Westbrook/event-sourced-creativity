@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { navigateInApp } from "./command-departure";
 import "./icons-authoring";
 import "./icons-navigation";
 import { ensureModalDialog } from "./modal-dialog";
@@ -82,8 +83,16 @@ export class CollectionTree extends FormaElement {
     const appended=await this.store.append({type:membership?"CollectionItemMoved":"CollectionItemAdded",payload:membership?{item_ref:itemRef,from_collection_id:membership.collectionId,to_collection_id:collectionId,position:"a0"}:{collection_id:collectionId,item_ref:itemRef,position:"a0"}});
     if(appended.length)this.store.toast(this.i18n.system(membership?(this.itemKind==="block"?"Block moved to this collection.":"Current document moved to this collection."):(this.itemKind==="block"?"Block filed in this collection.":"Current document filed in this collection.")));
   }
-  #openCollection(id: string) { this.store.patchUi({focusCollectionId:id});this.store.setRoute(this.destination);window.scrollTo({top:0}); }
-  #clearCollection(){this.store.patchUi({focusCollectionId:""});this.store.setRoute(this.destination);window.scrollTo({top:0});}
+  #openCollection(id:string){
+    if(this.store.ui.focusCollectionId===id&&this.store.route.get()===this.destination){window.scrollTo({top:0});return;}
+    void navigateInApp(this,async navigation=>{
+      this.store.patchUi({focusCollectionId:id});
+      const opened=await navigation.route(this.destination);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
+  }
+  #clearCollection(){this.#openCollection("");}
 
   override render() {
     const p=this.store.projection.get();const roots=p.collections.filter((collection)=>!collection.parentId);const children=(id:string)=>p.collections.filter((collection)=>collection.parentId===id);const activeCollection=p.collections.find((collection)=>collection.id===this.store.ui.focusCollectionId);const subjectId=this.itemKind==="block"?this.itemId:p.documentId;const currentMembership=subjectId?p.membership[subjectId]:undefined;const subjectName=this.itemKind==="block"?(this.itemLabel||this.i18n.system("Block")):this.i18n.system("Document");const fileLabel=this.itemKind==="block"?"File this block":"File open document";const context=this.store.session.get()?.projectContext;const canAuthor=!context||context.permissions.includes("project.author");

@@ -1,8 +1,11 @@
 .exact-next-actions { display:grid; gap:.5rem; margin-block:.75rem; }
+.exact-next-actions > forma-ui-choice-card { display:grid; }
+.context-column > .lifecycle-next-actions { min-inline-size:0; margin-inline:var(--forma-pane-inset); }
 .exact-next-actions > forma-ui-choice-card[data-primary=true] .ui-choice-card { border-color:var(--forma-color-accent); background:var(--forma-color-accent-subtle,var(--accent-wash)); }
 .exact-next-actions .ui-choice-card-copy { min-inline-size:0; overflow-wrap:anywhere; }
-.canvas-next-document { display:flex; align-items:center; gap:1rem; padding:.5rem 1rem; min-inline-size:0; background:var(--surface); }
-.canvas-next-document > .exact-next-actions { flex:1; min-inline-size:0; }
+.canvas-next-document { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:.5rem 1rem; min-inline-size:0; background:var(--surface); }
+.canvas-next-document > .canvas-planning-summary { flex:1 1 18rem; min-inline-size:0; }
+.canvas-next-document > .exact-next-actions { flex:2 1 28rem; min-inline-size:0; }
 .canvas-next-document > label { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
 .canvas-next-document select { min-block-size:44px; min-inline-size:12rem; max-inline-size:100%; }
 .canvas-next-document .exact-next-actions { grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr)); }

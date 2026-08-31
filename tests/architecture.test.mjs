@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createRequire, registerHooks } from "node:module";
 import ts from "typescript";
 import { libraryBlockEditorRoute } from "../src/model/routes.ts";
+import { navigateInApp } from "../src/components/command-departure.ts";
 import test from "node:test";
 import { exportArchive, importArchive } from "../src/model/archive.ts";
 import { buildReplayScenario, buildScenario, explainReplayEvent, REPLAY_SCENARIOS, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
@@ -570,13 +571,42 @@ test("keeps document-view workflow evidence durable and separate from aesthetic 
   assert.match(classification,/DocumentViewVisited,behavioral,structured_only,user,immutable/);
 });
 
+function literalDialogStartTags(source) {
+  const tree = ts.createSourceFile("dialog-contract.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const dialogs = [];
+  const visit = node => {
+    if (ts.isTaggedTemplateExpression(node) && node.tag.getText(tree) === "html") {
+      // Reuse the existing source-template literal-parts pattern. JavaScript
+      // arrows/strings are expressions, not HTML attribute delimiters.
+      const parts = ts.isNoSubstitutionTemplateLiteral(node.template) ? [node.template]
+        : [node.template.head, ...node.template.templateSpans.map(span => span.literal)];
+      const skeleton = parts.map(part => part.text).join("__expression__");
+      dialogs.push(...(skeleton.match(/<dialog\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/gu) ?? []));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return dialogs;
+}
+
 test("makes closeable dialogs light-dismissable with a compatibility fallback", async () => {
   const sources = await Promise.all([
     "forma-shell.ts", "forma-workspace.ts", "forma-library.ts", "collection-tree.ts", "reference-image.ts", "reference-palette-picker.ts",
   ].map((file) => readFile(new URL(`../src/components/${file}`, import.meta.url), "utf8")));
-  const dialogs = sources.flatMap((source) => source.match(/<dialog[^>]*>/g) ?? []);
+  const dialogs = sources.flatMap(literalDialogStartTags);
   assert.ok(dialogs.length >= 7); assert.ok(dialogs.every((dialog) => /closedby="(?:any|none)"/.test(dialog)));
   assert.ok(dialogs.filter((dialog) => /closedby="any"/.test(dialog)).every((dialog) => /@click=/.test(dialog)));
+});
+
+test("dialog source contracts distinguish inline arrow bindings from a genuinely missing backdrop fallback", () => {
+  const valid = 'const view = html`<dialog closedby="any" aria-label="A > B" @cancel=${(event: Event) => { event.preventDefault(); }} @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) close(); }}></dialog>`;';
+  const missing = 'const view = html`<dialog closedby="any" @cancel=${(event: Event) => { const decoy = "@click="; event.preventDefault(); }}></dialog>`;';
+  const positive = literalDialogStartTags(valid), negative = literalDialogStartTags(missing);
+  assert.equal(positive.length, 1); assert.equal(negative.length, 1);
+  assert.match(positive[0], /closedby="any"/); assert.match(negative[0], /closedby="any"/);
+  assert.match(positive[0], /@click=/, "an inline arrow before the real binding cannot truncate its start tag");
+  assert.doesNotMatch(negative[0], /@click=/, "an interpolation's text is not an actual backdrop binding");
+  assert.doesNotMatch(positive[0] + negative[0], /=>|event\.preventDefault|decoy/);
 });
 
 test("connects the final Library and Studio affordances to explicit destinations", async()=>{
@@ -601,7 +631,29 @@ test("connects the final Library and Studio affordances to explicit destinations
     readFile(new URL("../src/model/block-types.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(library,/@click=\$\{\(\)=>this\.store\.addArtifactAsContext\(artifact\.id,projection\.documentId,"library"\)\}>\$\{this\.#inputLabel\(adopted\)\}/);
+  assert.ok(library.includes('@click=${(event:MouseEvent)=>this.#useArtifactInput(artifact,event)}>${this.#inputLabel(adopted)}'), "the named native action forwards its exact artifact and actual event");
+  const libraryTree = ts.createSourceFile("forma-library.ts", library, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const libraryOwner = libraryTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaLibrary");
+  const copyMethods = libraryOwner?.members.filter(node => ts.isMethodDeclaration(node) && node.name?.getText(libraryTree) === "#useArtifactInput") ?? [];
+  assert.equal(copyMethods.length, 1); const copyMethod = copyMethods[0];
+  assert.deepEqual(copyMethod.parameters.map(parameter => parameter.name.getText(libraryTree)), ["artifact", "event"]);
+  const statements = copyMethod.body.statements; assert.equal(statements.length, 2);
+  assert.equal(statements[0].getText(libraryTree).replace(/\s+/gu, ""), "constdestination=this.store.projection.get().documentId;");
+  assert.ok(ts.isExpressionStatement(statements[1]) && ts.isAwaitExpression(statements[1].expression));
+  const admission = statements[1].expression.expression; assert.ok(ts.isCallExpression(admission));
+  assert.equal(admission.expression.getText(libraryTree), "reuseManualOutput"); assert.equal(admission.arguments.length, 5);
+  assert.deepEqual(admission.arguments.slice(0, 4).map(argument => argument.getText(libraryTree)), ["this", "this.store", "this.#outputReuse", "event"]);
+  const options = admission.arguments[4]; assert.ok(ts.isObjectLiteralExpression(options));
+  assert.deepEqual(options.properties.map(property => property.name?.getText(libraryTree)), ["destinationDocumentId", "current", "copy"]);
+  assert.ok(options.properties.every(property => ts.isPropertyAssignment(property)));
+  assert.equal(options.properties[0].initializer.getText(libraryTree), "destination");
+  assert.equal(options.properties[1].initializer.getText(libraryTree).replace(/\s+/gu, ""), "()=>this.store.projection.get().libraryArtifacts.some(value=>value.id===artifact.id&&value.documentId===artifact.documentId&&value.sequence===artifact.sequence&&value.sourceEventId===artifact.sourceEventId&&value.contentRef===artifact.contentRef)");
+  const copy = options.properties[2].initializer; assert.ok(ts.isArrowFunction(copy) && ts.isCallExpression(copy.body));
+  assert.equal(copy.body.expression.getText(libraryTree), "this.store.addArtifactAsContext");
+  assert.deepEqual(copy.body.arguments.map(argument => argument.getText(libraryTree).replace(/\s+/gu, "")), ["artifact.id", "destination", '"library"', "{reveal:false}"]);
+  // This is exact source binding, not a simulated successful copy. Actual Shell,
+  // original receipt and exact editable arrival are covered by the three
+  // "C Library artifact Use & edit original custody" cases in library-ack-continuity.
   assert.match(library,/aria-label=\$\{this\.#inputAction\(adopted,artifact\.title\)\}/);
   assert.match(library,/aria-label=\$\{this\.#libraryAction\(artifact\.library,name\)\}/);assert.match(library,/focused preview/i);assert.match(library,/Created using this decision/);assert.match(library,/Open family lightbox/);
   assert.match(library,/Keep for reuse/);assert.match(library,/A four-image fan remains one result/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
@@ -611,9 +663,9 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(eventsModel,/DocumentRemoved/);assert.match(eventsApi,/DocumentRemoved/);assert.match(store,/removeDocument/);assert.match(classification,/DocumentRemoved,user_content/);
   assert.match(collections,/File open document/);assert.match(collections,/New nested collection/);assert.match(collections,/>\$\{icon\("edit"\)\} Rename</);assert.match(collections,/tree-menu/);assert.doesNotMatch(collections,/tree-actions/);assert.match(collections,/collection-dialog/);assert.doesNotMatch(collections,/window\.prompt/);
   assert.match(workspace,/project-settings-dialog/);assert.match(workspace,/type:\s*BlockKind/);assert.match(workspace,/block-composer-dialog/);
-  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Project overview/);assert.match(projectRail,/projectRailDocuments\(projection\)/);assert.match(projectRail,/this\.store\.openDocument\(documentId, destination, "project-rail"\)/);assert.doesNotMatch(projectRail,/All documents|Library overview|No auto-filing/);assert.match(projectRail,/rail-collapse-toggle/);
+  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Project overview/);assert.match(projectRail,/projectRailDocuments\(projection\)/);assert.match(projectRail,/this\.store\.openDocument\(documentId,\s*destination,\s*"project-rail",\s*navigation\)/);assert.doesNotMatch(projectRail,/All documents|Library overview|No auto-filing/);assert.match(projectRail,/rail-collapse-toggle/);
   assert.match(workspace,/studio-document-delete-dialog/);assert.match(contents,/project-document-delete-dialog/);assert.match(`${workspace}${contents}`,/Remove document/);
-  assert.match(shell,/this\.#route\("\/projects"\)/);assert.match(projects,/New project/);assert.match(navigation,/Context board/);assert.match(navigation,/Guided brief/);assert.match(navigation,/Reality layers/);assert.match(navigation,/Adaptive path/);
+  assert.match(shell,/this\.#route\(isCanvas\?"\/canvas\/projects":"\/projects"\)/);assert.match(projects,/New project/);assert.match(navigation,/Context board/);assert.match(navigation,/Guided brief/);assert.match(navigation,/Reality layers/);assert.match(navigation,/Adaptive path/);
   assert.match(alternatives,/created_from:\s*"context-board"/);assert.match(alternatives,/created_from:\s*"guided-brief"/);assert.match(alternatives,/forma-studio-navigator/);
   assert.match(editorAlternatives,/application\/x-forma-reality/);assert.match(editorAlternatives,/created_from:"reality-layers"/);assert.match(editorAlternatives,/BlockWeightSet/);assert.match(editorAlternatives,/created_from:"adaptive-path"/);assert.match(editorAlternatives,/related_block_ids/);
   assert.match(editorAlternatives,/layer-create-dialog/);assert.match(editorAlternatives,/Save layer/);assert.match(editorAlternatives,/Duplicate/);assert.match(editorAlternatives,/structureAdaptive/);assert.match(eventsApi,/structure_adaptive/);assert.match(adapter,/forma_adaptive_structure/);
@@ -638,7 +690,7 @@ test("keeps creator, canvas, operations, product, design, and engineering scopes
   assert.match(shell,/<forma-ui-audience-navigation class=\$\{`application-task-navigation area-navigation--\$\{applicationId\}`\}/);assert.match(shell,/\$\{audienceNavigation\}[\s\S]*\$\{this\.store\.error/);assert.doesNotMatch(shell,/\$\{isCreative\?html`<nav class="global-nav"/);
   assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls=\$\{this\.#contentId\}/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/offline\|\|synchronizing/);assert.doesNotMatch(rail,/Your work is saved|No auto-filing/);
   assert.match(navigation,/aria-label="Document views"/);assert.doesNotMatch(navigation,/Project-level|studio-project-overview/);assert.match(navigation,/studio-breadcrumbs/);assert.match(navigation,/Projects/);
-  assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(rail,/surface==="library"\?libraryRoute:overviewRoute/);assert.match(rail,/canvasWorkspace\?"\/canvas":"\/studio\/project"/);assert.match(collections,/setRoute\(this\.destination\)/);
+  assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(rail,/surface==="library"\?libraryRoute:overviewRoute/);assert.match(rail,/canvasWorkspace\?"\/canvas":"\/studio\/project"/);assert.match(collections,/void navigateInApp\(this,\s*async navigation\s*=>\s*\{\s*this\.store\.patchUi\(\{focusCollectionId:id\}\);\s*const opened=await navigation\.route\(this\.destination\);\s*if\(opened&&navigation\.current\(\)\)window\.scrollTo\(\{top:0\}\);/);
   for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));
   assert.match(system,/system-page administrative-page/);assert.match(system,/system-page-content page-pad/);assert.match(admin,/admin-page administrative-page/);
   assert.match(system,/area="operations" active="system"/);assert.match(admin,/laboratory\?"laboratory":"operations"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/applicationDefinition\("operations"\)/);assert.match(areas,/applicationDefinition\(area\)/);assert.match(areas,/navigationItemAccessible/);
@@ -735,6 +787,20 @@ const libraryFixtureSource = await readFile(libraryFixtureUrl, "utf8");
 const libraryFixtureTree = ts.createSourceFile(libraryFixtureUrl.pathname, libraryFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const firstLibraryFixtureTest = libraryFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(libraryFixtureTree) === "test");
 assert.ok(firstLibraryFixtureTest, "the existing actual Library fixture precedes its tests");
+// Consumer-local prerequisite: use the same actual identity-member bridge as
+// the inactive host fixture; it does not grant authoring or replace a handler.
+const libraryIdentitySetup = `
+const architectureIdentityTree = syntax("src/components/forma-element.ts");
+const architectureIdentityOwner = architectureIdentityTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaElement");
+const architectureIdentityMember = architectureIdentityOwner?.members.find(node => ts.isMethodDeclaration(node) && node.name?.getText(architectureIdentityTree) === "hasStoreIdentity"
+  && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.StaticKeyword));
+assert.ok(architectureIdentityMember, "the architecture native base forwards the actual Store-identity predicate");
+const architectureIdentityCode = ts.transpileModule("class ArchitectureLibraryIdentityPort {" + architectureIdentityMember.getText(architectureIdentityTree) + "}", {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
+const architectureIdentityPort = new Function(architectureIdentityCode + "; return ArchitectureLibraryIdentityPort;")();
+Object.defineProperty(ElementPort, "hasStoreIdentity", Object.getOwnPropertyDescriptor(architectureIdentityPort, "hasStoreIdentity"));
+`;
 const libraryFixtureModuleUrl = new URL(libraryFixtureUrl);
 libraryFixtureModuleUrl.searchParams.set("library-architecture-contract", "1");
 const libraryFixtureHook = registerHooks({
@@ -745,7 +811,7 @@ const libraryFixtureHook = registerHooks({
   load(url, context, next) {
     if (url === libraryFixtureModuleUrl.href) return {
       format: "module",
-      source: libraryFixtureSource.slice(0, firstLibraryFixtureTest.getFullStart()) + "\nexport { localeCatalogs, FORMA_DEFAULT_MESSAGES };\nexport function libraryFixture(locale,route){const f=fixture(locale);f.state.route=route;activeFixture=f;f.host=new FormaLibrary();f.draw();return f;}\n",
+      source: libraryFixtureSource.slice(0, firstLibraryFixtureTest.getFullStart()) + libraryIdentitySetup + "\nexport { localeCatalogs, FORMA_DEFAULT_MESSAGES };\nexport function libraryFixture(locale,route){const f=fixture(locale);f.state.route=route;activeFixture=f;f.host=new FormaLibrary();f.host.tag=\"forma-library\";f.draw();assert.equal(ElementPort.hasStoreIdentity(f.host,f.store),true);assert.equal(ElementPort.hasStoreIdentity(f.host,{}),false);return f;}\n",
       shortCircuit: true,
     };
     return next(url, context);
@@ -827,7 +893,7 @@ test("localized Library controls preserve the independent fork destination and a
   }
 });
 
-test("localized Library artifact labels map every destination, adoption, and kept state to the exact original action", async () => {
+test("localized Library artifact labels retain exact source bindings and kept actions across standalone destination states", async () => {
   for (const locale of ["en", "fr", "ar", "ja"]) for (const route of ["/library", "/canvas/library"]) for (const adopted of [false, true]) for (const kept of [false, true]) {
     const f = libraryPorts.libraryFixture(locale, route);
     try {
@@ -835,11 +901,9 @@ test("localized Library artifact labels map every destination, adoption, and kep
       await f.store.append({ type: "DocumentRenderCompleted", payload: { project_id: "project-a", document_id: "document-a", artifact_id: id, artifact_kind: "short_story", title, summary: "Exact retained result", content_ref: "exact-content", item_count: 0, items: [], requested_by_user_id: "owner" } });
       if (adopted) f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === "decision-0").payload.properties.source_artifact_id = id;
       if (kept) await f.store.append({ type: "AddedToLibrary", payload: { object_id: id, item_id: id, document_id: "document-a", meaning: "personal-reusable-output" } });
-      const inputCalls = [];
-      f.store.addArtifactAsContext = async (...args) => { inputCalls.push(args); return true; };
       f.store.patchUi({ libraryView: "outputs" });
       f.draw();
-      const input = f.renderer.ownNodes(f.host, "button").find(node => node.handlers.click?.toString().includes("addArtifactAsContext"));
+      const input = f.renderer.ownNodes(f.host, "button").find(node => node.handlers.click?.toString().includes("#useArtifactInput"));
       const keep = f.renderer.ownNodes(f.host, "button").find(node => node.handlers.click?.toString().includes("#toggleLibrary"));
       assert.ok(input && keep, "the actual author view renders both semantic actions");
       const canvas = route === "/canvas/library";
@@ -852,8 +916,14 @@ test("localized Library artifact labels map every destination, adoption, and kep
       assert.equal(libraryButtonText(f, keep), libraryMessage(locale, keepKey));
       assert.equal(keep.attributes["aria-label"], libraryMessage(locale, keepNamedKey).replace("{name}", name));
       assert.equal(keep.attributes["aria-pressed"], kept);
-      await input.handlers.click.call(f.host, {});
-      assert.deepEqual(inputCalls, [[id, "document-a", "library"]], "localized wording cannot change the artifact, open document, or source surface");
+      assert.equal(input.handlers.click.toString().replace(/\s+/gu, ""), "(event)=>this.#useArtifactInput(artifact,event)", "the actual emitted handler retains the source-bound artifact and native event parameters");
+      // This reduced renderer has no Shell/native visibility composition. Do not
+      // substitute a successful Store copy or manufacture a native admission.
+      // Exercise the actual standalone bridge separately; this is not a copy pass.
+      assert.equal(f.host.closest("forma-shell"), null);
+      const standaloneEvents = structuredClone(f.state.events);
+      assert.equal(await navigateInApp(f.host, () => assert.fail("a standalone Library cannot dispatch a navigation callback")), false);
+      assert.equal(f.state.route, route); assert.deepEqual(f.state.events, standaloneEvents);
       const before = f.state.events.length;
       await keep.handlers.click.call(f.host, {});
       const changes = f.state.events.slice(before);
@@ -861,7 +931,7 @@ test("localized Library artifact labels map every destination, adoption, and kep
       assert.equal(changes[0].type, kept ? "RemovedFromLibrary" : "AddedToLibrary");
       assert.deepEqual(changes[0].payload, { object_id: id, item_id: id, document_id: "document-a", meaning: "personal-reusable-output" });
       f.state.viewer = true; f.draw();
-      assert.equal(f.renderer.ownNodes(f.host, "button").some(node => node.handlers.click?.toString().includes("addArtifactAsContext") || node.handlers.click?.toString().includes("#toggleLibrary")), false, "read-only inspection exposes neither authoring action");
+      assert.equal(f.renderer.ownNodes(f.host, "button").some(node => node.handlers.click?.toString().includes("#useArtifactInput") || node.handlers.click?.toString().includes("#toggleLibrary")), false, "read-only inspection exposes neither authoring action");
       assert.equal(f.state.requests.length, 0);
     } finally { closeLibraryFixture(f); }
   }

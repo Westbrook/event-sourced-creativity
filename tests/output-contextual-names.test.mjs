@@ -145,7 +145,7 @@ async function contextualFixture(t, locale, options = {}) {
   f.renderer.query = (owner, selector) => {
     if (!/^#[^ ,]+$/u.test(selector)) return query(owner, selector);
     const nodes = f.renderer.nodes.filter(node => node.owner === owner && node.attributes.id === selector.slice(1));
-    for (const node of nodes) node.focus = () => { documentPort.activeElement = node; f.trace.push("focus-id:" + node.attributes.id); };
+    for (const node of nodes) node.focus = () => { documentPort.focus(node); f.trace.push("focus-id:" + node.attributes.id); };
     return nodes;
   };
   f.nodes = owner => semanticNodes(f, owner ?? f.host);

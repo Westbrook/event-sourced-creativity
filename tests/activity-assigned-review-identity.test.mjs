@@ -7,6 +7,9 @@ import { registerHooks } from "node:module";
 // Complete current Activity + registered IssuePanel, actual scoped models and
 // LocaleController/catalogs. The existing history/DOM/Store-boundary ports are
 // not browser/AT, Worker task insertion, context navigation, or server approval.
+// Guarded Open below is source/rendered-handler binding coverage plus refusal
+// without a Shell. Actual closed-over task dispatch and current/raw navigation
+// remain the separately gated complete-host assigned-review tests.
 const fixtureUrl = new URL("./activity-notification-identity.test.mjs", import.meta.url);
 const original = fs.readFileSync(fixtureUrl, "utf8");
 const tree = ts.createSourceFile(fixtureUrl.pathname, original, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -68,13 +71,28 @@ function rows(f, nodes = f.draw()) {
     };
   });
 }
-function openOriginal(f, current) {
+function assertOriginalOpenBinding(f, current) {
+  const source = fs.readFileSync(new URL("../src/components/forma-activity.ts", import.meta.url), "utf8");
+  const start = source.indexOf("  #review(task: AssignedReviewTask, presentation: OutputPresentation) {");
+  const end = source.indexOf("\n  #notification(", start);
+  assert.ok(start >= 0 && end > start, "inspect the actual task-owned review renderer, not an unrelated source occurrence");
+  const review = source.slice(start, end);
+  assert.match(source, /import \{ navigateInApp, type CommandDeparture \} from "\.\/command-departure";/);
+  assert.ok(review.includes('<forma-activity-issue-panel .review=${task} .reviewContext=${reviewContext}>'));
+  assert.ok(review.includes('@click=${() => void navigateInApp(this,navigation=>navigation.openAssignedReview(task))}'));
+  assert.equal((review.match(/@click=\$\{/gu) ?? []).length, 1, "the original Open action is the review renderer's exact click binding");
+  assert.equal(f.host.closest("forma-shell"), null, "this presentation fixture has no actual Shell admission owner");
   for (const row of current) {
-    const count = f.forwarded.length;
-    row.open.handlers.click.call(f.host, { currentTarget: row.open, target: row.open });
-    assert.equal(f.forwarded.length, count + 1);
-    assert.strictEqual(f.forwarded.at(-1), row.task, "forward the unchanged original task object, not its presentation adapter");
+    const handler = row.open.handlers.click.toString().replace(/\s+/gu, "").replace(/\(navigation\)=>/gu, "navigation=>");
+    // The existing actual-module loader emits this one observed CommonJS import spelling.
+    // Accept only the exact source call or that exact emitted call, not arbitrary namespace removal.
+    assert.ok(handler === "()=>voidnavigateInApp(this,navigation=>navigation.openAssignedReview(task))"
+      || handler === "()=>void(0,command_departure_1.navigateInApp)(this,navigation=>navigation.openAssignedReview(task))",
+    "the actual Open handler retains the exact imported guard and original task argument");
+    assert.strictEqual(row.panel.review, row.task, "the actual inline child retains this visible card's original task object");
     assert.ok(f.store.reviewInbox.get().includes(row.task));
+    row.open.handlers.click.call(f.host, { currentTarget: row.open, target: row.open });
+    assert.deepEqual(f.forwarded, [], "without a Shell the real guard must not reach the Store spy; this is not task-dispatch proof");
   }
 }
 function named(f, label, context) { return f.i18n.t("artifact.delivery.namedAction", "{action} — {name}", { action: label, name: context }); }
@@ -152,16 +170,16 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
   for (const scenario of ["same-document", "duplicate-documents"]) {
     test("assigned review full card and inline names: " + locale + "/" + scenario, t => {
       const f = setup(t, locale, scenario), before = snapshot(f), current = rows(f);
-      assert.equal(current.length, 2); assertIdentities(f, current); openOriginal(f, current);
+      assert.equal(current.length, 2); assertIdentities(f, current); assertOriginalOpenBinding(f, current);
       assert.deepEqual(snapshot(f), before); noCalls(f);
     });
   }
 
-  test("assigned review healthy distinct-card and exact-forwarding control: " + locale, t => {
+  test("assigned review healthy distinct-card and exact-binding control: " + locale, t => {
     const f = setup(t, locale, "healthy-distinct-context"), before = snapshot(f), current = rows(f);
     assert.equal(current.length, 2); assert.equal(new Set(current.map(row => normalize(row.card.visibleLabel()))).size, 2);
     assert.ok(current.every(row => row.section && row.note && row.approve && row.changes));
-    openOriginal(f, current);
+    assertOriginalOpenBinding(f, current);
     for (const row of current) {
       assert.equal(row.task.revision, 0); assert.equal(row.task.contentSha256, f.hashes.get(row.task.artifactId));
       assert.equal(row.note.attributes.required, ""); assert.equal(row.note.attributes.maxlength, "500");
@@ -173,8 +191,8 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
     test("assigned review private projection absent: " + locale + "/" + (crossOrganization ? "cross-organization" : "cross-project"), t => {
       const f = setup(t, locale, "duplicate-documents"); allAssignments(f, crossOrganization);
       const before = snapshot(f), current = rows(f);
-      assert.equal(current.length, 2); assertIdentities(f, current, false); openOriginal(f, current);
-      assert.equal(new Set(f.forwarded.map(task => task.projectAccessId)).size, 2);
+      assert.equal(current.length, 2); assertIdentities(f, current, false); assertOriginalOpenBinding(f, current);
+      assert.equal(new Set(current.map(row => row.task.projectAccessId)).size, 2, "the actual visible presentation inventory spans both project accesses");
       assert.deepEqual(snapshot(f), before); noCalls(f);
     });
   }
@@ -191,7 +209,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
     assertIdentities(f, current);
     for (const row of current) assert.ok([1, 2].some(number => row.card.visibleLabel().includes(
       f.i18n.t("artifact.delivery.resultQualifier", "Result {number}", { number: f.i18n.number(number) }))));
-    openOriginal(f, current); assert.deepEqual(snapshot(f), before); noCalls(f);
+    assertOriginalOpenBinding(f, current); assert.deepEqual(snapshot(f), before); noCalls(f);
   });
 
   test("assigned review authored Unicode remains visible and unmodified: " + locale, t => {
@@ -201,7 +219,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
       projectName: "Cafe\u0301 · مشروع · 同じ計画", organizationName: "Cafe\u0301 · مؤسسة · 同じ組織",
     })));
     const before = snapshot(f), current = rows(f);
-    assertIdentities(f, current); openOriginal(f, current);
+    assertIdentities(f, current); assertOriginalOpenBinding(f, current);
     assert.deepEqual(snapshot(f), before); noCalls(f);
   });
 
@@ -213,7 +231,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
     assert.deepEqual(new Map(current.map(row => [row.task.id, normalize(row.open.name())])), initial);
     f.store.reviewInbox.set(f.store.reviewInbox.get().map((task, index) => ({ ...task, artifactTitle: "Renamed مخرج 成果 " + index })));
     for (const next of ["en", "fr", "ar", "ja"]) {
-      f.changeLocale(next); current = rows(f); assertIdentities(f, current); openOriginal(f, current);
+      f.changeLocale(next); current = rows(f); assertIdentities(f, current); assertOriginalOpenBinding(f, current);
       assert.equal(f.i18n.locale, next); assert.equal(f.i18n.direction, next === "ar" ? "rtl" : "ltr");
     }
     noCalls(f);

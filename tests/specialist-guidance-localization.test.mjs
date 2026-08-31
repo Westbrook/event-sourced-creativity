@@ -125,17 +125,32 @@ const grants = [
   { grant_id: "grant-expiry", user_id: "user-A", display_name: person, email: "same@example.test", capability: "design.catalog.read", scope_type: "platform", expires_at: "2026-09-02T12:30:00Z" },
   { grant_id: "grant-scope", user_id: "user-A", display_name: person, email: "same@example.test", capability: "design.catalog.read", scope_type: "project", expires_at: null },
 ];
-async function access(t, locale, initialGrants = grants) {
+async function access(t, locale, initialGrantsOrOptions = grants) {
+  const options = Array.isArray(initialGrantsOrOptions) ? { grants: initialGrantsOrOptions } : initialGrantsOrOptions;
+  const initialGrants = options.grants ?? grants;
   const f = mount(t, locale, FormaAccessManagement); f.currentGrants = structuredClone(initialGrants);
-  f.transport = async call => {
-    if (call.url === "/api/admin/users" && call.method === "GET") return reply({ users: initialGrants.map(grant => ({
-      user_id: grant.user_id, email: grant.email, display_name: grant.display_name, role: "creator" })) });
+  f.currentUsers = structuredClone(options.users ?? initialGrants.map(grant => ({
+    user_id: grant.user_id, email: grant.email, display_name: grant.display_name, role: "creator" })));
+  f.location = { pathname: "/operations/access", search: "", hash: "" };
+  const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", { configurable: true, writable: true, value: f.location });
+  t.after(() => { if (locationDescriptor) Object.defineProperty(globalThis, "location", locationDescriptor); else delete globalThis.location; });
+  f.currentSession = { user: { userId: "operator-A", email: "operator@example.invalid", displayName: "Operator", role: "admin" },
+    audience: "operations", permissionEpoch: "scope-A", capabilities: ["platform.identity.manage"], organizations: [] };
+  const subscribers = new Set();
+  t.mock.method(platformSession, "get", () => f.currentSession);
+  t.mock.method(platformSession, "subscribe", callback => { subscribers.add(callback); return () => subscribers.delete(callback); });
+  f.setSession = session => { f.currentSession = session; for (const callback of [...subscribers]) callback(); f.draw(); };
+  f.navigate = pathname => { f.location.pathname = pathname; for (const callback of f.listeners.get("popstate") ?? []) callback(); f.draw(); };
+  f.defaultAccessTransport = async call => {
+    if (call.url === "/api/admin/users" && call.method === "GET") return reply({ users: f.currentUsers });
     if (call.url === "/api/platform/access" && call.method === "GET") return reply({ grants: f.currentGrants });
     assert.equal(call.method, "DELETE");
     const match = f.currentGrants.find(grant => call.url === "/api/platform/access/" + encodeURIComponent(grant.grant_id));
     assert.ok(match, "Exact original grant target");
-    f.currentGrants = f.currentGrants.filter(grant => grant !== match); return reply({ revoked: true });
+    f.currentGrants = f.currentGrants.filter(grant => grant !== match); return reply({ ok: true });
   };
+  f.transport = call => options.transport ? options.transport(call, f, f.defaultAccessTransport) : f.defaultAccessTransport(call);
   f.host.connectedCallback(); await f.flush(); return f;
 }
 const documentTitle = "Same document مستند 同じ文書";
@@ -150,6 +165,9 @@ const shares = [
   createdAt: "2026-08-29T00:00:00Z", active: true, token: "PRIVATE-TOKEN-NOT-A-NAME-" + index, ...row }));
 async function account(t, locale) {
   const f = mount(t, locale, FormaAccountSettings);
+  const subscribers = new Set();
+  f.store.subscribe = callback => { subscribers.add(callback); return () => subscribers.delete(callback); };
+  f.store.notify = () => subscribers.forEach(callback => callback());
   f.store.session = { get: () => ({ user: { userId: "owner", role: "creator" }, policy: { accepted: false, retentionDays: 30 },
     budgets: { period: "2026-08", user: { used: 0, reserved: 0 } }, organizations: [], projects: [] }) };
   f.currentShares = structuredClone(shares); f.store.shares = { get: () => f.currentShares }; f.store.canManageProjectShares = () => true;

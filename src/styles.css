@@ -943,11 +943,14 @@ details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min
 .brief-actions { display: flex; align-items: center; gap: 5px; }
 .brief-actions .button { min-height: 34px; padding: 0 10px; }
 .brief-card > footer { display: flex; align-items: center; justify-content: space-between; margin-top: 15px; }
-.blank-document-form { display: grid; grid-template-columns: minmax(180px,1fr) minmax(180px,1fr) auto; align-items: end; gap: 10px; margin-top: 14px; padding: 14px; background: var(--mint); border: 1px solid #b8ccb8; border-radius: 7px; }
-.blank-document-form label b { display: block; margin-top: 4px; font: 600 var(--type-body) var(--serif); }
-.blank-document-form input { width: 100%; min-height: 38px; padding: 8px 10px; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
+.blank-document-form { display: grid; min-inline-size: 0; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: end; gap: var(--forma-cluster-gap); margin-top: 14px; padding: 14px; background: var(--mint); border: 1px solid #b8ccb8; border-radius: 7px; }
+.blank-document-form > :is(label,input) { min-inline-size: 0; max-inline-size: 100%; }
+.blank-document-form label b { display: block; margin-top: 4px; overflow-wrap: anywhere; font: 600 var(--type-body) var(--serif); }
+.blank-document-form input { width: 100%; min-height: var(--forma-hit-target); min-block-size: var(--forma-hit-target); padding: var(--forma-space-2, var(--space-2)) var(--forma-control-inset-inline); background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
 .blank-document-form input:focus { border-color: var(--orange); outline: 3px solid var(--orange-soft); }
-.blank-document-form > div { display: flex; gap: 5px; }
+.blank-document-form > div { grid-column: 1 / -1; display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: stretch; gap: var(--forma-cluster-gap); }
+.blank-document-form > div > .button { flex: 0 1 auto; max-inline-size: 100%; align-self: stretch; white-space: normal; overflow-wrap: anywhere; }
+.blank-document-form > [role="status"] { grid-column: 1 / -1; min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
 .session-state { align-self: center; padding: 5px 7px; border-radius: 4px; font: var(--type-micro) var(--mono); text-transform: uppercase; }.session-state.open { color: #315c3d; background: #dcebdc; }.session-state.closed { color: #7b3320; background: var(--orange-soft); }
 .health-pill.waiting i { background: #b68758; }
 .brief-empty { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 14px; min-height: 150px; padding: 20px; background: var(--panel-2); border: 1px dashed #c7c9c0; border-radius: 7px; }.brief-empty > span { color: var(--orange); font-size: var(--type-heading); }.brief-empty h3 { margin: 0 0 5px; font: 600 var(--type-lede) var(--serif); }.brief-empty p { max-width: 660px; margin: 0; color: var(--muted); font-size: var(--type-caption); }
@@ -1201,7 +1204,7 @@ details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min
 .belief-actions { display: flex; gap: 5px; }
 .preference-author { display: grid; grid-template-columns: .65fr 1.35fr; gap: 22px; }.preference-author form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; }.preference-value, .preference-author form .button { grid-column: 1 / -1; }
 .condition-list { display: grid; gap: 6px; }.condition-list article { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }.condition-list article > span { display: grid; width: 28px; height: 28px; place-items: center; color: var(--orange); background: var(--orange-soft); border-radius: 50%; }.condition-list article.fired { opacity: .72; }.condition-list b, .condition-list small { display: block; }.condition-list small { margin-top: 2px; color: var(--muted); }
-.condition-author { display: grid; grid-template-columns: minmax(220px,1fr) 150px 100px auto; align-items: end; gap: 7px; margin-top: 10px; padding: 13px; background: var(--panel-2); border-radius: 7px; }
+.condition-author { display: grid; grid-template-columns: minmax(220px,1fr) 150px 100px; align-items: end; gap: 7px; margin-top: 10px; padding: 13px; background: var(--panel-2); border-radius: 7px; }
 .critique-ledger h2, .history-viewer h2 { margin: 7px 0 12px; font-size: var(--type-lede); }
 .compiler-blame-intro { margin-bottom: 16px; color: var(--muted); font-size: var(--type-small); }
 .axis-ledger > div { display: grid; grid-template-columns: 1fr 30px 30px; padding: 7px 0; border-top: 1px solid var(--line); font-size: var(--type-caption); }.axis-ledger b,.blame-axis-chips b { color: var(--forest-2); }.axis-ledger em,.blame-axis-chips em { color: var(--orange); font-style: normal; }

@@ -61,6 +61,14 @@ class ElementPort {
     return this.fixture.renderer.query(this, selector)[0] ?? null;
   }
   querySelectorAll(selector) { return this.fixture.renderer.query(this, selector); }
+  contains(node) {
+    // Native containment follows ancestry (including self and detached
+    // subtrees). An ancestor and descendant share connection lifetime; the
+    // renderer already retires absent native ports and cached owners.
+    if (!node || Boolean(node.isConnected) !== Boolean(this.isConnected)) return false;
+    for (let current = node; current; current = current.parentElement) if (current === this) return true;
+    return false;
+  }
   addEventListener() {}
   removeEventListener() {}
   matches(selector) { return selector === ":dir(rtl)" ? this.i18n?.direction === "rtl" : selector.split(",").some(part=>part.trim()===this.tag||part.trim().startsWith(".")&&String(this.attributes?.class??"").split(/\s+/).includes(part.trim().slice(1))); }
@@ -359,6 +367,13 @@ function fixture(options = {}) {
     canvasPlanningDocumentId:ids=>canvasDocumentTarget(projection(),canvas(),ids??state.selected,state.chosen),
     chooseCanvasPlanningDocument:id=>{if(!projection().documents.some(doc=>doc.id===id))return false;state.chosen=id;return true;},
     setCanvasPlanningSelection:ids=>{state.selected=[...ids];},
+    // No Output read is modeled here. Preserve unknown scope without a fetch,
+    // matching the real client default and related not-yet-read host ports.
+    outputRequirements: {
+      resource: () => ({ state: "loading", snapshot: null, error: null }),
+      // This finite client cannot certify Output scope or start a transport.
+      ensure: async documentId => f.store.outputRequirements.resource(documentId),
+    },
     documentJobs:cell([]),projectNotifications:cell([]),reviewInbox:cell([]),generationReadiness:cell({}),
     documentGenerationJobs:()=>[],documentRenderJobs:()=>[],adaptiveSuggestionSetsFor:()=>[],
     // Presence integration has no paid source or private planning payload. These
@@ -947,36 +962,34 @@ const { outcomeDeskIntegrationCopy } = await loadActual("src/components/design-s
 const { outcomeArrangementRevisions, previewOutcomeArrangement } = await import("../src/canvas/outcome-arrangements.ts");
 const flushUntil = async (f, ready) => { for(let n=0;n<30&&!ready();n++)await f.flush(); assert.ok(ready(),"bounded host settlement "+JSON.stringify({requests:f.state.requests,trace:f.trace.slice(-8),markup:f.renderer.markup.slice(-5000)})); };
 
-for(const locale of ["en","fr","ar","ja"])test("actual "+locale+" Canvas Desk switch and recipe preserve mounted authoring and original draft", async () => {
-  const f=fixture({populated:true,chosen:"document-0",locale});
-  await f.select(0);
-  const editor=f.renderer.query(f.host,"forma-context-intelligence")[0];
-  const field=f.native("input",node=>node.attributes.maxlength==="2000"),draft="User-authored intent — do not submit or translate";
-  field.handlers.input.call(f.host,{target:{value:draft}});f.draw();
-  const before=JSON.stringify(f.state.events),selection=[...f.state.selected];
-  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");await f.flush();
-  assert.ok(f.route.includes("posture=outcomes"));
-  const stage=f.native("section",node=>node.attributes.class==="canvas-stage-shell");
-  assert.ok(Object.hasOwn(stage.attributes,"hidden"));assert.ok(Object.hasOwn(stage.attributes,"inert"));
-  assert.equal(f.renderer.query(f.host,"forma-context-intelligence")[0],editor);
-  assert.equal(f.native("input",node=>node.attributes.maxlength==="2000").value,draft);
-  assert.ok(f.renderer.markup.includes(escapeText(outcomeDeskCopy(locale).heading)));
-  assert.equal(f.renderer.query(f.host,"forma-ui-choice-card").filter(choice=>String(choice.value??"").includes(":delivery:")).length,0,"no first object chosen");
-  const section=f.native("section",node=>node.attributes.class==="outcome-desk");
-  assert.equal(section.attributes.dir,locale==="ar"?"rtl":"ltr");
-  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
-  const recipe=f.native("select",node=>node.handlers.change?.toString().includes("outcomeRecipe"));
-  assert.ok(recipe);
-  recipe.handlers.change.call(f.host,{target:{value:"film-continuity"}});f.draw();
-  assert.ok(f.route.includes("recipe=film-continuity"));
-  assert.equal(JSON.stringify(f.state.events),before);assert.deepEqual(f.state.selected,selection);
-  const dialog=f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog"));
-  dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
-  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");await f.flush();
-  assert.ok(!f.route.includes("posture=outcomes"));
-  assert.equal(f.native("input",node=>node.attributes.maxlength==="2000").value,draft);
-  assert.equal(f.renderer.query(f.host,"forma-context-intelligence")[0],editor);
-  assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+for(const locale of ["en","fr","ar","ja"])test("actual "+locale+" Canvas Desk switch and recipe preserve mounted authoring and original draft", {concurrency:false,timeout:60_000}, async t => {
+  await withCanvasCalmNavigation(t,{selected:true,locale},async p=>{
+    await p.select();
+    const {f,canvas}=p,editor=p.editor(),draft="User-authored intent — do not submit or translate";
+    await p.setIntent(draft);
+    const before=JSON.stringify(f.store.events.get()),selection=p.selected();
+    await p.desk();
+    assert.ok(f.store.route.get().includes("posture=outcomes"));
+    const stage=p.row("section",node=>node.owner===canvas&&node.attributes.class==="canvas-stage-shell",false);
+    assert.ok(Object.hasOwn(stage.attributes,"hidden"));assert.ok(Object.hasOwn(stage.attributes,"inert"));
+    assert.equal(p.editor(),editor);
+    assert.equal(p.intent().port.value,draft);
+    assert.ok(f.renderer.markup.includes(escapeText(outcomeDeskCopy(locale).heading)));
+    assert.equal(f.components().filter(choice=>choice.tag==="forma-ui-choice-card"&&String(choice.value??"").includes(":delivery:")).length,0,"no first object chosen");
+    const section=p.row("section",node=>node.owner===canvas&&node.attributes.class==="outcome-desk");
+    assert.equal(section.attributes.dir,locale==="ar"?"rtl":"ltr");
+    await p.openArrangement();
+    const recipe=p.row("select",node=>node.owner===canvas&&String(node.handlers.change).includes("outcomeRecipe"));
+    assert.ok(recipe);recipe.port.value="film-continuity";await f.act(recipe,"change");await p.settle();
+    assert.ok(f.store.route.get().includes("recipe=film-continuity"));
+    assert.equal(JSON.stringify(f.store.events.get()),before);assert.deepEqual(p.selected(),selection);
+    await p.cancelArrangement();
+    await p.desk();
+    assert.ok(!f.store.route.get().includes("posture=outcomes"));
+    assert.equal(p.intent().port.value,draft);
+    assert.equal(p.editor(),editor);
+    await p.quiet();
+  });
 });
 
 test("actual Canvas receipt review enables an exact Apply and only retrieval after HTTP uncertainty", async () => {
@@ -1077,26 +1090,29 @@ test("arrangement name drafts remain same-board state and are concealed on autho
 });
 
 
-test("Desk and arrangement-dialog keyboard events never mutate the hidden board selection", async () => {
-  const f=fixture({populated:true,chosen:"document-0"});await f.select(0);
-  const before=JSON.stringify(f.state.events),selection=[...f.state.selected];
-  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");await f.flush();
-  const heading=f.native("h2",node=>node.attributes.id==="canvas-outcome-desk-heading");
-  const keydown=f.listeners.get("keydown")[0];
-  assert.ok(heading);assert.equal(typeof keydown,"function");
-  for(const key of ["ArrowLeft","ArrowDown","Delete","Backspace","f","e","n","d","b","Escape"]){
-    keydown({key,composedPath:()=>[heading],metaKey:false,ctrlKey:false,altKey:false,shiftKey:false,
-      preventDefault(){assert.fail("Desk must not intercept board shortcuts");},stopPropagation(){}});
-  }
-  f.draw();assert.deepEqual(f.state.selected,selection);assert.equal(JSON.stringify(f.state.events),before);
-  await f.click("button",node=>node.attributes.id==="canvas-outcome-toggle");
-  await f.click("button",node=>node.handlers.click?.toString().includes("#openArrangement()")&&!node.handlers.click?.toString().includes("#retrieveArrangement()"));
-  const dialogHeading=f.native("h2",node=>node.attributes.id==="canvas-arrangement-heading");
-  keydown({key:"Escape",composedPath:()=>[dialogHeading],metaKey:false,ctrlKey:false,altKey:false,
-    preventDefault(){assert.fail("The native dialog owns Escape");},stopPropagation(){}});
-  const dialog=f.native("dialog",node=>node.attributes.class?.includes("canvas-outcome-arrangement-dialog"));
-  dialog.handlers.cancel.call(f.host,{preventDefault(){}});await f.flush();
-  assert.deepEqual(f.state.selected,selection);assert.equal(f.state.batches.length,0);assert.equal(f.state.requests.length,0);
+test("Desk and arrangement-dialog keyboard events never mutate the hidden board selection", {concurrency:false,timeout:60_000}, async t => {
+  await withCanvasCalmNavigation(t,{selected:true},async p=>{
+    await p.select();
+    const {f,canvas}=p,before=JSON.stringify(f.store.events.get()),selection=p.selected();
+    await p.desk();
+    const heading=p.row("h2",node=>node.owner===canvas&&node.attributes.id==="canvas-outcome-desk-heading");
+    // This is the original Canvas callback observed at actual native registration,
+    // not listeners[0] (which now correctly belongs to the full Shell).
+    const keydown=p.keyboard;
+    assert.ok(heading);assert.equal(typeof keydown,"function");
+    for(const key of ["ArrowLeft","ArrowDown","Delete","Backspace","f","e","n","d","b","Escape"]){
+      keydown({key,composedPath:()=>[heading.port],metaKey:false,ctrlKey:false,altKey:false,shiftKey:false,
+        preventDefault(){assert.fail("Desk must not intercept board shortcuts");},stopPropagation(){}});
+    }
+    await p.settle();assert.deepEqual(p.selected(),selection);assert.equal(JSON.stringify(f.store.events.get()),before);
+    await p.desk();
+    await p.openArrangement();
+    const dialogHeading=p.row("h2",node=>node.owner===canvas&&node.attributes.id==="canvas-arrangement-heading");
+    keydown({key:"Escape",composedPath:()=>[dialogHeading.port],metaKey:false,ctrlKey:false,altKey:false,
+      preventDefault(){assert.fail("The native dialog owns Escape");},stopPropagation(){}});
+    await p.cancelArrangement();
+    assert.deepEqual(p.selected(),selection);await p.quiet();
+  });
 });
 
 
@@ -1438,21 +1454,41 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("actual " + locale + " arran
   f.host.disconnectedCallback();
 });
 
-for(const locale of ["en","ar"])test("native View returns Desk focus to its exact instance invoker in "+locale,async()=>{
-  const f=fixture({populated:true,locale}),initial=ownedPopover(f,"canvas-view-menu"),id=initial.trigger.attributes.id,before=JSON.stringify(f.state.events);
-  assert.ok(id&&id!=="canvas-view-toggle");
-  for(const expectedDesk of [true,false]){
-    const owned=openOwnedPopover(f,"canvas-view-menu"),group=f.renderer.ownNodes(owned.menu,"div").find(node=>node.attributes.class==="canvas-view-actions");
-    const toggle=f.renderer.ownNodes(owned.menu,"button").find(node=>node.attributes.id==="canvas-outcome-toggle");
-    assert.ok(toggle);runPortHandler(group.handlers.click,owned.menu,{type:"click",target:toggle,preventDefault(){assert.fail("current native View action remains available");},stopImmediatePropagation(){assert.fail("current View scope");}});
-    toggle.handlers.click.call(f.host,{target:toggle,currentTarget:toggle});await f.flush();
-    assert.equal(f.openPopovers.has(owned.panel.attributes.id),false);
-    assert.equal(new URL(f.route,"https://fixture.invalid").searchParams.get("posture")==="outcomes",expectedDesk);
-    assert.equal(documentPort.activeElement?.id,expectedDesk?"canvas-outcome-desk-heading":id);
-  }
-  const another=fixture({populated:true,locale});assert.notEqual(ownedPopover(another,"canvas-view-menu").trigger.attributes.id,id);
-  assert.equal(JSON.stringify(f.state.events),before);assert.equal(f.state.requests.length,0);assert.equal(f.state.batches.length,0);
+for(const locale of ["en","ar"])test("native View returns Desk focus to its exact instance invoker in "+locale,{concurrency:false,timeout:60_000},async t=>{
+  let id;
+  await withCanvasCalmNavigation(t,{locale},async p=>{
+    const {f}=p;id=p.viewTrigger().attributes.id;const before=JSON.stringify(f.store.events.get());
+    assert.ok(id&&id!=="canvas-view-toggle");
+    for(const expectedDesk of [true,false]){
+      const owned=await p.desk();
+      assert.equal(f.renderer.openPopovers.has(owned.panelId),false);
+      assert.equal(new URL(f.store.route.get(),"https://fixture.invalid").searchParams.get("posture")==="outcomes",expectedDesk);
+      const active = f.native.document.activeElement, write = f.native.nativeFocus.at(-1);
+      const witness = p.focusEvidence.findLast(value => value.node === active && value.write === write);
+      const expectedId = expectedDesk ? "canvas-outcome-desk-heading" : id;
+      t.diagnostic("CANVAS_CALM_NATIVE_VIEW_FOCUS " + JSON.stringify({ expectedId, reflectedId: active?.id,
+        attributeId: active?.getAttribute?.("id"), exactOriginalWrite: write?.node === active,
+        connectedAtCall: witness?.connectedAtCall, exactCurrentRowsAtCall: witness?.exactCurrentRows,
+        sameCanvasAtCall: witness?.sameCanvas, matchingIdsAtCall: witness?.matchingIds,
+        currentRowsAfterSettlement: f.tree().nodes.filter(value => value.port === active).length,
+        evidence: "original native focus write, not a remapped activeElement or browser lifetime certificate" }));
+      assert.strictEqual(write?.node, active); assert.ok(witness);
+      assert.equal(witness.connectedAtCall, true); assert.equal(witness.exactCurrentRows, 1);
+      assert.equal(witness.sameCanvas, true); assert.equal(witness.matchingIds, 1);
+      assert.strictEqual(witness.owner, expectedDesk ? p.canvas : p.popover("canvas-view-menu"));
+      assert.equal(witness.id, expectedId); assert.equal(witness.attributeId, expectedId);
+      assert.equal(active?.getAttribute?.("id"), expectedId);
+      assert.equal(f.native.document.activeElement?.id,expectedDesk?"canvas-outcome-desk-heading":id);
+    }
+    assert.equal(JSON.stringify(f.store.events.get()),before);await p.quiet();
+  });
+  // A separately mounted actual full host still has its own original invoker ID.
+  // Retire the first fixture before installing another native document boundary.
+  await withCanvasCalmNavigation(t,{locale},async another=>{
+    assert.notEqual(another.viewTrigger().attributes.id,id);await another.quiet();
+  });
 });
+
 
 test("native arrangement opening and Close use the current View trigger without a stale summary target",async()=>{
   const f=fixture({populated:true}),owned=openOwnedPopover(f,"canvas-view-menu"),group=f.renderer.ownNodes(owned.menu,"div").find(node=>node.attributes.class==="canvas-view-actions");
@@ -2028,3 +2064,292 @@ test("Organize CSS keeps only its native panel floating and its controls bounded
   assert.match(css,/\.canvas-organize-control \.canvas-organize-menu button\{[^}]*min-inline-size:[^;]*2\.75rem[^}]*min-block-size:[^;]*2\.75rem/u);
   assert.match(system,/\.ui-popover-panel\[popover\]:not\(:popover-open\)[^{]+\{\s*display:none/u);
 });
+
+// C218 prerequisite only: seven existing journeys now use the same complete
+// Shell/Store/Canvas fixture as the actual ordinary-exit witnesses. Keep this
+// declaration after the legacy test/fixture prefix so its reduced consumers do
+// not acquire a new host, native port, import, or setup operation.
+async function withCanvasCalmNavigation(t, { locale = "en", selected = false } = {}, run) {
+  const { boardPage, BOARD, drain, classed, inside, ports } = await import("./helpers/board-lifecycle-navigation-fixture.mjs");
+  const { accountCachePort, financial, readWorkspaceEvents } = await import("./helpers/event-source-retirement-fixture.mjs");
+  const { canvasQueueDatabase } = await import("./helpers/canvas-source-queue-host.mjs");
+  // Reuse the existing scoped-after pattern from the Workspace/Product fragment
+  // fixtures. Native View's second real host starts only after the first retires;
+  // it is not a nested test and does not add a case to the original 165.
+  const cleanups = [], network = [], mockRestores = [], cleanupErrors = [];
+  const setup = { diagnostic: value => t.diagnostic(value), after: callback => cleanups.push(callback),
+    mock: { method(...args) {
+      const observed = t.mock.method(...args);
+      if (args[0] === globalThis && args[1] === "fetch") network.push(observed);
+      mockRestores.push(() => observed.mock.restore());
+      return observed;
+    } } };
+  let result, failure;
+  try {
+    accountCachePort(setup);
+    const accountIndexedDB = globalThis.indexedDB, queue = canvasQueueDatabase();
+    globalThis.indexedDB = { open(name, version) {
+      return name === "canvas-offline-queue-v1" ? queue.indexedDB.open(name, version) : accountIndexedDB.open(name, version);
+    } };
+    // Observe the exact registered callback; do not change listener order or
+    // replace Canvas's receiver. Shell legitimately registers keydown first.
+    const registrations = [], originalAdd = ports.windowPort.addEventListener;
+    ports.windowPort.addEventListener = function(type, listener, ...rest) {
+      const value = Reflect.apply(originalAdd, this, [type, listener, ...rest]);
+      if (type === "keydown") registrations.push(listener);
+      return value;
+    };
+    let f;
+    try { f = await boardPage(setup, { locale }); }
+    finally { ports.windowPort.addEventListener = originalAdd; }
+    const h = f.storeHost, canvas = f.canvas, wrapper = canvas.closest("forma-canvas-application");
+    // C223 finite-native prerequisite. The reduced Canvas renderer reflected id
+    // from attributes; the full native base did not. Production itself reads
+    // element.id before focus.run, so an oracle-only getAttribute change cannot
+    // repair this missing platform property. No ID, focus target or currentness
+    // value is supplied by the test: both directions use the actual attribute.
+    const reflectId = node => Object.defineProperty(node, "id", { configurable: true, enumerable: true,
+      get() { return String(this.getAttribute("id") ?? ""); },
+      set(value) { this.setAttribute("id", String(value)); } });
+    const collectWithNativeId = f.renderer.collect;
+    f.renderer.collect = function(...args) {
+      const first = this.nodes.length; const value = Reflect.apply(collectWithNativeId, this, args);
+      for (const node of this.nodes.slice(first)) reflectId(node);
+      return value;
+    };
+    for (const node of f.renderer.nodes) reflectId(node);
+    setup.after(() => { f.renderer.collect = collectWithNativeId; });
+    // Observe the exact native write while its original node is connected and
+    // in the committed tree. Later finite redraws may recreate literal ports;
+    // this does not remap activeElement or manufacture a native lifetime.
+    const focusEvidence = [], removeFocusObserver = ports.documentPort.removeEventListener.bind(ports.documentPort);
+    const observeFocus = event => {
+      const node = event.target, tree = f.tree(), rows = tree.nodes.filter(value => value.port === node);
+      focusEvidence.push({ node, write: f.native.nativeFocus.at(-1), id: node?.id,
+        attributeId: node?.getAttribute?.("id"), owner: rows[0]?.owner, connectedAtCall: node?.isConnected === true,
+        exactCurrentRows: rows.length, sameCanvas: node?.closest?.("forma-canvas-surface") === canvas,
+        matchingIds: tree.nodes.filter(value => value.port && value.attributes.id === node?.id).length });
+    };
+    f.native.document.addEventListener("focusin", observeFocus);
+    setup.after(() => { ports.bindFixture(f); removeFocusObserver("focusin", observeFocus); });
+    assert.equal(f.host.tag, "forma-shell"); assert.equal(canvas.closest("forma-shell"), f.host);
+    assert.ok(ports.ElementPort.hasStoreIdentity(f.host, f.store) && ports.ElementPort.hasStoreIdentity(canvas, f.store));
+    assert.ok(wrapper?.isConnected && canvas.isConnected && f.store.routeDataReady());
+    assert.equal(f.store.ui.instrumentation, false);
+    assert.equal(f.i18n.locale, locale); assert.equal(canvas.i18n.locale, locale);
+    const sourceText = fs.readFileSync(new URL("../src/canvas/canvas-application.ts", import.meta.url), "utf8");
+    assert.ok(sourceText.includes("#keyboard=(event:KeyboardEvent)=>this.#onKey(event);"));
+    assert.ok(sourceText.includes('window.addEventListener("keydown",this.#keyboard);'));
+    const keyboards = registrations.filter(listener => typeof listener === "function"
+      && /^\(?event\)?=>this\.#onKey\(event\)$/u.test(Function.prototype.toString.call(listener).replace(/\s/gu, "")));
+    assert.equal(keyboards.length, 1, "one actual Canvas keyboard closure was registered by the current mounted class");
+    const keyboard = keyboards[0];
+    assert.equal((f.listeners.get("keydown") ?? []).filter(value => value === keyboard).length, 1);
+    const settle = async () => {
+      await drain(f, 2); await f.resume.settleOriginalRequests(); await h.worker.drainBackground(); await drain(f, 2);
+      assert.equal(f.resume.pendingOriginalCount(), 0);
+      for (const request of network) assert.equal(request.mock.callCount(), 0, "no swallowed global/provider fetch");
+    };
+    const popover = name => {
+      const owners = f.components().filter(owner => owner.tag === "forma-ui-popover" && classed(owner, name));
+      assert.equal(owners.length, 1, "one current actual " + name); return owners[0];
+    };
+    const row = (tag, predicate, visible = true) => {
+      const tree = f.tree(), rows = (visible ? tree.visible(tag) : tree.nodes.filter(value => value.tag === tag)).filter(predicate);
+      assert.equal(rows.length, 1, "one actual " + tag); assert.ok(rows[0].port?.isConnected); return rows[0];
+    };
+    const toggle = async (menu, open) => {
+      const panel = menu.querySelector(".ui-popover-panel"); assert.ok(panel?.isConnected);
+      if (panel.matches(":popover-open") !== open) {
+        const trigger = row("button", value => value.owner === menu && classed(value, "ui-popover-trigger"));
+        assert.equal(trigger.attributes.popovertarget, panel.getAttribute("id"));
+        f.native.emit("pointerdown", trigger.port); f.native.focus(trigger.port); trigger.port.click(); await settle();
+      }
+      assert.equal(menu.querySelector(".ui-popover-panel").matches(":popover-open"), open);
+      assert.equal(row("button", value => value.owner === menu && classed(value, "ui-popover-trigger")).attributes["aria-expanded"], String(open));
+    };
+    const viewTrigger = () => row("button", value => value.owner === popover("canvas-view-menu") && classed(value, "ui-popover-trigger"));
+    const intent = () => row("input", value => value.owner === popover("canvas-intent-dock") && value.attributes.maxlength === "2000", false);
+    const viewAction = async predicate => {
+      const menu = popover("canvas-view-menu"); await toggle(menu, true);
+      const tree = f.tree(), actions = tree.visible("button").filter(value => value.owner === menu && predicate(value));
+      assert.equal(actions.length, 1); const action = actions[0];
+      const groups = tree.visible("div").filter(value => value.owner === menu && classed(value, "canvas-view-actions") && inside(action, value));
+      assert.equal(groups.length, 1); const capture = groups[0];
+      assert.equal(capture.handlers.click.capture, true); assert.equal(typeof capture.handlers.click.handleEvent, "function");
+      assert.equal(typeof action.handlers.click, "function"); assert.ok(action.port.isConnected && !action.port.matches(":disabled"));
+      const path = []; for (let at = action; at; at = at.parent) {
+        const node = at.port ?? at.component; if (node && !path.includes(node)) path.push(node);
+      } path.push(f.native.document);
+      f.native.emit("pointerdown", action.port); f.native.focus(action.port);
+      const event = { type: "click", target: action.port, currentTarget: capture.port, button: 0,
+        metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, defaultPrevented: false,
+        preventDefault() { assert.fail("current native View action remains available"); }, stopPropagation() {},
+        stopImmediatePropagation() { assert.fail("current View scope"); }, composedPath: () => path };
+      // Same original capture -> target delivery as the reached Reading-order
+      // witness. No draw, replacement target or synthetic opener between them.
+      capture.handlers.click.handleEvent(event); event.currentTarget = action.port;
+      await action.handlers.click.call(action.owner, event); event.currentTarget = null; await settle();
+      assert.equal(menu.querySelector(".ui-popover-panel").matches(":popover-open"), false);
+      if (action.attributes.id === "canvas-outcome-toggle") {
+        const committed = f.store.captureWorkspaceNavigationFocus(f.store.route.get());
+        assert.ok(committed && committed.routeCurrent(), "the actual Store owns this exact committed route/focus receipt");
+        // Completion disposes that original focus lease. Do not replace it or
+        // ask current() to claim a new gesture after its lifetime has ended.
+      }
+      return { menu, panelId: menu.querySelector(".ui-popover-panel").getAttribute("id") };
+    };
+    const arrangement = () => row("dialog", value => value.owner === canvas && classed(value, "canvas-outcome-arrangement-dialog") && value.port.open);
+    let selectedItem;
+    if (selected) {
+      const direction = f.store.projection.get().libraryBlocks.find(block => block.id === "scene-reuse-direction" && !block.removed);
+      assert.ok(direction && direction.type === "direction" && direction.documentId === f.documentId);
+      await f.resume.settleOriginalRequests(); assert.equal(f.resume.pendingOriginalCount(), 0);
+      // Root-authorized declared historical fixture premise only. external()
+      // appends one audit row and refreshes the real Store; this is neither a
+      // user placement nor an HTTP200/receipt witness and creates no new block.
+      await f.external("CanvasItemPlaced", { canvas_id: BOARD, item_id: "calm-existing-direction", source_kind: "block",
+        source_id: direction.id, title: "Existing authored direction", block_type: "direction",
+        frame: { x: 0, y: 0, w: 300, h: 210, z: "c", rot: 0 } });
+      await settle();
+      const item = f.store.canvasProjection.get().items.find(value => value.id === "calm-existing-direction");
+      assert.equal(item.sourceId, direction.id); assert.equal(item.sourceKind, "block");
+      selectedItem = item;
+      t.diagnostic("CANVAS_CALM_DECLARED_PREMISE " + JSON.stringify({ locale, type: "CanvasItemPlaced", sourceId: direction.id,
+        itemId: item.id, existingBlock: true, userPlacementOrHttpReceipt: false }));
+    }
+    await settle();
+    assert.deepEqual(f.store.optimisticEvents.get(), []); assert.equal(queue.values.size, 0);
+    // C223 disclosed setup prerequisite: signal-populated Scene fixtures have
+    // not run the production private-content initialization. Certify readiness
+    // through ONE original public owned read, never by setting a private flag,
+    // replacing content, or ignoring a later post-floor request.
+    const retainedDocument = f.store.projection.get().documents.find(value => value.id === f.documentId && value.projectId === f.projectId);
+    assert.ok(retainedDocument);
+    const retainedArtifact = f.store.projection.get().libraryArtifacts.find(value => value.id === "saved-scene-story" && value.documentId === retainedDocument.id);
+    assert.ok(retainedArtifact?.contentRef); assert.equal(retainedArtifact.contentRef, h.worker.contentRef);
+    const retainedEvent = f.store.events.get().find(value => value.eventId === retainedArtifact.sourceEventId);
+    assert.equal(retainedEvent?.type, "DocumentRenderCompleted"); assert.equal(retainedEvent.payload.project_id, f.projectId);
+    assert.equal(retainedEvent.payload.document_id, f.documentId); assert.equal(retainedEvent.payload.artifact_id, retainedArtifact.id);
+    assert.equal(retainedEvent.payload.content_ref, retainedArtifact.contentRef);
+    const retainedContent = f.store.content.get()[retainedArtifact.contentRef];
+    assert.equal(typeof retainedContent, "string"); assert.equal(retainedContent, h.worker.content);
+    const readSource = f.store.captureSourceOwnership(), readAuthority = f.store.captureAuthorizationScope();
+    const readBefore = { route: f.store.route.get(), history: [...f.history], requests: h.requests.length,
+      projectionDocumentId: f.store.projection.get().documentId, planningDocumentId: f.store.canvasPlanningDocumentId(),
+      events: structuredClone(f.store.events.get()), head: f.store.head.get(), content: structuredClone(f.store.content.get()),
+      canonical: await readWorkspaceEvents(h.worker.env, h.worker.streamId), fiscal: financial(h.worker),
+      private: h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY rowid").all(),
+      receipts: h.worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all() };
+    // Canvas planning is independent of the route/history-selected Document.
+    // Retain both actual identities; never choose or rewrite the global one.
+    assert.equal(readBefore.planningDocumentId, retainedDocument.id);
+    const readUrl = "/api/events?after=" + readBefore.head + "&limit=1&content=1";
+    const readCurrent = () => f.store.sourceOwnershipActive(readSource) && f.store.authorizationScopeActive(readAuthority)
+      && f.store.route.get() === readBefore.route && f.store.projection.get().projectId === f.projectId
+      && f.store.projection.get().documentId === readBefore.projectionDocumentId
+      && f.store.canvasPlanningDocumentId() === readBefore.planningDocumentId && canvas.isConnected && canvas.store === f.store;
+    t.diagnostic("CANVAS_CALM_READ_OWNER_PREREQUISITE " + JSON.stringify({
+      projectionDocumentId: f.store.projection.get().documentId, capturedProjectionDocumentId: readBefore.projectionDocumentId,
+      planningDocumentId: f.store.canvasPlanningDocumentId(), capturedPlanningDocumentId: readBefore.planningDocumentId,
+      retainedDocumentId: retainedDocument.id, fixturePlanningDocumentId: f.documentId,
+      sourceCurrent: f.store.sourceOwnershipActive(readSource), authorityCurrent: f.store.authorizationScopeActive(readAuthority),
+      sameRoute: f.store.route.get() === readBefore.route, sameProject: f.store.projection.get().projectId === f.projectId,
+      connectedCanvas: canvas.isConnected, sameStore: canvas.store === f.store,
+      evidence: "independent current global and explicit Canvas planning identities, before the one original GET" }));
+    assert.ok(readCurrent());
+    const priorTransport = h.transport, originalReads = []; let readFailure;
+    assert.equal(typeof priorTransport, "function", "the existing original-Resume transport remains authoritative");
+    const observeRead = async request => {
+      try {
+        assert.ok(readCurrent()); assert.equal(request.url, readUrl);
+        assert.equal(request.init.method ?? "GET", "GET"); assert.equal(request.init.body, undefined); assert.equal(request.body, null);
+        assert.equal(originalReads.length, 0, "only one declared original readiness read");
+        const observed = { request, init: request.init, response: null }; originalReads.push(observed);
+        const response = await priorTransport(request); observed.response = response;
+        assert.ok(readCurrent()); assert.equal(response.status, 200);
+        const body = await response.clone().json(); assert.ok(readCurrent());
+        assert.equal(body.head, readBefore.head); assert.deepEqual(body.events, []);
+        assert.equal(body.content?.[retainedArtifact.contentRef], retainedContent);
+        assert.equal(response.bodyUsed, false, "the observer reads only a clone and returns the untouched original response");
+        return response;
+      } catch (error) { readFailure = error; throw error; }
+    };
+    h.transport = observeRead;
+    let readyContent;
+    try { readyContent = await f.store.ensurePrivateContent(retainedArtifact.contentRef, { force: true }); }
+    finally { if (h.transport === observeRead) h.transport = priorTransport; }
+    if (readFailure) throw readFailure;
+    assert.equal(readyContent, retainedContent); assert.equal(originalReads.length, 1);
+    const originalRead = originalReads[0]; assert.equal(originalRead.response?.bodyUsed, true, "the actual Store consumed that same original response");
+    assert.equal(h.requests.length, readBefore.requests + 1); assert.strictEqual(h.requests[readBefore.requests], originalRead.request);
+    assert.strictEqual(originalRead.request.init, originalRead.init); assert.equal(originalRead.request.url, readUrl);
+    await settle(); assert.ok(readCurrent()); assert.equal(h.requests.length, readBefore.requests + 1);
+    assert.equal(f.store.route.get(), readBefore.route); assert.deepEqual(f.history, readBefore.history);
+    assert.deepEqual({ events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get() },
+      { events: readBefore.events, head: readBefore.head, content: readBefore.content });
+    assert.deepEqual(await readWorkspaceEvents(h.worker.env, h.worker.streamId), readBefore.canonical);
+    assert.deepEqual(financial(h.worker), readBefore.fiscal);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY rowid").all(), readBefore.private);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(), readBefore.receipts);
+    t.diagnostic("CANVAS_CALM_ORIGINAL_READINESS " + JSON.stringify({ method: "GET", url: readUrl, status: originalRead.response.status,
+      originalRequest: h.requests[readBefore.requests] === originalRead.request, originalResponseConsumed: originalRead.response.bodyUsed,
+      sameOwnedContent: readyContent === retainedContent, sourceCurrent: readCurrent(), canonicalPrivateFiscalRouteUnchanged: true,
+      evidence: "one declared ordinary owned-content read before native selection, typing and the unchanged strict request floor" }));
+    const source = f.store.captureSourceOwnership(), authority = f.store.captureAuthorizationScope();
+    const floor = { requests: h.requests.length, queue: queue.requests.length, events: structuredClone(f.store.events.get()),
+      head: f.store.head.get(), content: structuredClone(f.store.content.get()), items: structuredClone(f.store.canvasProjection.get().items),
+      canonical: await readWorkspaceEvents(h.worker.env, h.worker.streamId), fiscal: financial(h.worker),
+      private: h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY rowid").all(),
+      receipts: h.worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all() };
+    const quiet = async () => {
+      await settle(); await f.sourceUnchanged();
+      assert.deepEqual(h.requests.slice(floor.requests), [], "the local journey starts zero application requests, including reads");
+      assert.deepEqual(queue.requests.slice(floor.queue).filter(value => value.method === "put" || value.method === "delete"), [], "no local batch was enqueued or removed");
+      assert.equal(queue.values.size, 0); assert.deepEqual(f.store.optimisticEvents.get(), []);
+      assert.deepEqual({ events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get() },
+        { events: floor.events, head: floor.head, content: floor.content });
+      assert.deepEqual(f.store.canvasProjection.get().items, floor.items);
+      assert.deepEqual(await readWorkspaceEvents(h.worker.env, h.worker.streamId), floor.canonical);
+      assert.deepEqual(financial(h.worker), floor.fiscal);
+      assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY rowid").all(), floor.private);
+      assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(), floor.receipts);
+      assert.ok(f.store.sourceOwnershipActive(source) && f.store.authorizationScopeActive(authority));
+      assert.ok(canvas.isConnected && wrapper.isConnected && canvas.closest("forma-shell") === f.host);
+      assert.equal(f.store.canvasProjection.get().selectedCanvasId, BOARD);
+    };
+    const page = { f, canvas, row, popover, toggle, viewTrigger, viewAction, intent, arrangement, keyboard, settle, quiet, focusEvidence,
+      selected: () => [...f.store.canvasPlanningSelection.get().itemIds],
+      select: async () => {
+        assert.ok(selectedItem);
+        const card = row("article", value => value.owner === canvas && value.attributes["data-canvas-item-id"] === selectedItem.id);
+        f.native.emit("pointerdown", card.port); f.native.focus(card.port);
+        await f.act(card, "click", { button: 0, shiftKey: false, composedPath: () => [card.port] }); await settle();
+        assert.deepEqual(f.store.canvasPlanningSelection.get().itemIds, [selectedItem.id]);
+      },
+      editor: () => { const editors = f.components().filter(owner => owner.tag === "forma-context-intelligence" && owner.block?.id === "scene-reuse-direction"); assert.equal(editors.length, 1); return editors[0]; },
+      desk: () => viewAction(value => value.attributes.id === "canvas-outcome-toggle"),
+      openArrangement: () => viewAction(value => String(value.handlers.click).includes("#openArrangement()") && !String(value.handlers.click).includes("#retrieveArrangement()")),
+      cancelArrangement: async () => { const dialog = arrangement(); await f.act(dialog, "cancel"); await settle(); },
+      setIntent: async value => { const dock = popover("canvas-intent-dock"); await toggle(dock, true); const field = intent();
+        assert.equal(field.hiddenBy, null); assert.equal(field.port.matches(":disabled"), false);
+        f.native.emit("keydown", field.port); f.native.focus(field.port); field.port.value = value;
+        await f.act(field, "input"); await settle(); assert.equal(intent().port.value, value); await toggle(dock, false); } };
+    result = await run(page);
+  } catch (error) { failure = error; }
+  // Run every existing fixture hook in its registration order, even after an
+  // assertion fails. No late original transport or native wrapper is abandoned.
+  for (const cleanup of cleanups) { try { await cleanup(); } catch (error) { cleanupErrors.push(error); } }
+  // The no-provider boundary remains installed through every original teardown,
+  // including a failing journey. Check swallowed calls before restoring mocks.
+  for (const request of network) {
+    try { assert.equal(request.mock.callCount(), 0, "no swallowed global/provider fetch during setup, journey or teardown"); }
+    catch (error) { cleanupErrors.push(error); }
+  }
+  for (const restore of mockRestores.reverse()) { try { restore(); } catch (error) { cleanupErrors.push(error); } }
+  if (failure || cleanupErrors.length) {
+    if (failure && !cleanupErrors.length) throw failure;
+    throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors], "Canvas full-host journey/cleanup failed");
+  }
+  return result;
+}

@@ -38,7 +38,9 @@ test("every privileged page gets an independent accessible platform host with no
   assert.match(host, /\.models=\$\{\[\]\}/u);
   assert.match(host, /\.pageLabel=\$\{this\.#pageLabel\(\)\}/u);
   assert.match(host, /destination\.application !== session\.audience/u);
-  assert.match(host, /location\.assign\(destination\.route\)/u);
+  assert.match(host, /if \(!host\?\.navigateFrom\(this, destination\.route\)\) return;/u);
+  assert.match(shell, /applicationIdFromRoute\(path\) !== applicationIdFromRoute\(location\.pathname\)[\s\S]*?location\.assign\(path\)/u);
+  assert.doesNotMatch(host, /history\.pushState|location\.assign/u);
   assert.match(host, /session\.availableApplications\?\.some/u);
   assert.match(host, /platformSession\.subscribe\(\(\) => \{ this\.#sessionChanged\(\); \}\)/u);
   assert.match(host, /this\.#unsubscribe\?\.\(\)/u);
@@ -53,11 +55,12 @@ test("every privileged page gets an independent accessible platform host with no
 });
 
 test("free guidance separates exact specialist approval, durable task recovery and legacy financial controls", async () => {
-  const [panel, host, policy, composer] = await Promise.all([
+  const [panel, host, policy, composer, assistantApi] = await Promise.all([
     read("src/components/design-system/assistant-panel.ts"),
     read("src/components/forma-creative-assistant.ts"),
     read("worker/pilot-policy.ts"),
     read("src/components/design-system/conversation-composer.ts"),
+    read("worker/assistant-api.ts"),
   ]);
   assert.match(panel, /#specialistView\(\)/u);
   assert.match(panel, /consequentialPreview\(quote, this\.i18n\)/u);
@@ -77,7 +80,14 @@ test("free guidance separates exact specialist approval, durable task recovery a
   assert.match(host, /approvedBindingHash: approvedHash/u);
   assert.match(host, /request\.turnId, message: request\.message, locale: request\.locale/u);
   assert.doesNotMatch(host, /premiumApproval:\s*true/u);
-  assert.match(host, /confirmedNoProviderCharge:\s*true/u);
+  assert.match(host, /if \(detail\.action !== "cancel"\) return;/u);
+  assert.match(host, /\.canReconcile=\$\{false\}/u);
+  assert.doesNotMatch(host, /confirmedNoProviderCharge|\/reconcile/u);
+  const actorTask = assistantApi.slice(assistantApi.indexOf("export async function handleAssistantTask("), assistantApi.indexOf("/** The historical no-charge attestation"));
+  assert.match(actorTask, /if \(operation === "reconcile"\) \{[\s\S]*?return json\(\{ error: "assistant_independent_reviewer_required" \}, 403\);/u);
+  const billing = assistantApi.slice(assistantApi.indexOf("export async function handleAssistantBillingReconciliation("));
+  assert.match(billing, /actorUserId === reviewer\.userId/u);
+  assert.match(billing, /body\.confirmedNoProviderCharge !== true/u);
   assert.match(host, /if \(detail\.task\.executionId\) \{[\s\S]*assistantApprovedRequestCanStop/u);
   assert.match(panel, /assistant\.specialist\.stopLabel/u);
   assert.match(host, /action === "stop" \? undefined : \{ action/u);

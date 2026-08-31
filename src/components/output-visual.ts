@@ -11,12 +11,18 @@ export class OutputVisual extends FormaElement {
   static properties={output:{attribute:false},fanOutputs:{attribute:false},compact:{type:Boolean},interactive:{type:Boolean},readOnly:{type:Boolean,attribute:"read-only"},viewerOnly:{type:Boolean,attribute:"viewer-only"}};
   output?:CreativeOutput;fanOutputs:CreativeOutput[]=[];compact=false;interactive=false;readOnly=false;viewerOnly=false;#open=false;#focused=false;#returnFocus?:HTMLElement;#activeOutputId="";#comparisonId="";#navigationDescriptionId=`fan-image-navigation-${crypto.randomUUID()}`;#viewEventQueue:Promise<void>=Promise.resolve();
 
+  // This callback owns only deferred native promotion, never the admitted viewer's editing lifetime.
+  #openingCurrent:(()=>boolean)|null=null;
+
   protected override updated(){
     const dialog=this.querySelector<HTMLDialogElement>(".generated-image-viewer");
-    if(this.#open)ensureModalDialog(dialog);
+    if(!this.#open)return;
+    const opening=this.#openingCurrent;
+    if(opening&&!opening()){this.#returnFocus=undefined;this.#close();return;}
+    if(ensureModalDialog(dialog)&&dialog?.open&&this.#openingCurrent===opening)this.#openingCurrent=null;
   }
 
-  #close(){this.querySelector<HTMLDialogElement>(".generated-image-viewer")?.close();this.#open=false;this.#focused=false;this.#activeOutputId="";this.#comparisonId="";const opener=this.#returnFocus;this.#returnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}
+  #close(){this.#openingCurrent=null;this.querySelector<HTMLDialogElement>(".generated-image-viewer")?.close();this.#open=false;this.#focused=false;this.#activeOutputId="";this.#comparisonId="";const opener=this.#returnFocus;this.#returnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}
   #setFocused(focused:boolean){this.#focused=focused;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".image-lightbox-focus-toggle")?.focus({preventScroll:true}));}
 
   #fan(output:CreativeOutput){
@@ -31,8 +37,14 @@ export class OutputVisual extends FormaElement {
     if(this.readOnly||this.store.session.get()?.projectContext||!this.store.ui.instrumentation)return;const fan=this.#fan(output);this.#queueViewEvent({type:"ObjectViewed",payload:{object_id:output.id,view_id:viewId,comparison_id:output.promptFanId?viewId:null,source_surface:"fan-image-dialog",interaction,navigation_method:navigationMethod,prompt_fan_id:output.promptFanId,fan_index:fan.findIndex((candidate)=>candidate.id===output.id)+1,fan_count:fan.length,prompt_technique:output.promptTechnique,previous_object_id:previous?.id??null,direction:direction===-1?"previous":direction===1?"next":null}});
   }
 
-  #openViewer(output:CreativeOutput,opener?:HTMLElement){this.#returnFocus=opener??(document.activeElement instanceof HTMLElement?document.activeElement:undefined);this.#focused=false;this.#activeOutputId=output.id;const comparisonId=crypto.randomUUID();this.#comparisonId=comparisonId;this.#open=true;const fan=this.#fan(output);if(!this.readOnly&&this.store.ui.instrumentation&&output.promptFanId&&fan.length>1)this.#queueViewEvent({type:"ComparisonOpened",payload:{comparison_id:comparisonId,comparison_kind:"prompt_fan_image_viewer",prompt_fan_id:output.promptFanId,object_ids:fan.map((candidate)=>candidate.id),starting_object_id:output.id,source_surface:"fan-image-dialog"}});this.#recordView(output,"open","trigger",undefined,undefined,comparisonId);this.requestUpdate();}
-  openImageViewer(opener?:HTMLElement){if(this.output?.mediaUrl)this.#openViewer(this.output,opener);}
+  #openViewer(output:CreativeOutput,opener?:HTMLElement,current:(()=>boolean)|null=null){this.#openingCurrent=current;this.#returnFocus=opener??(document.activeElement instanceof HTMLElement?document.activeElement:undefined);this.#focused=false;this.#activeOutputId=output.id;const comparisonId=crypto.randomUUID();this.#comparisonId=comparisonId;this.#open=true;const fan=this.#fan(output);if(!this.readOnly&&this.store.ui.instrumentation&&output.promptFanId&&fan.length>1)this.#queueViewEvent({type:"ComparisonOpened",payload:{comparison_id:comparisonId,comparison_kind:"prompt_fan_image_viewer",prompt_fan_id:output.promptFanId,object_ids:fan.map((candidate)=>candidate.id),starting_object_id:output.id,source_surface:"fan-image-dialog"}});this.#recordView(output,"open","trigger",undefined,undefined,comparisonId);this.requestUpdate();}
+  openImageViewer(opener?:HTMLElement,options:{current?:()=>boolean}={}){
+    const output=this.output;if(!output?.mediaUrl||options.current&&!options.current())return false;
+    const {id,documentId,sequence,mediaUrl}=output;
+    const current=options.current?()=>Boolean(options.current?.()&&this.output?.id===id
+      &&this.output.documentId===documentId&&this.output.sequence===sequence&&this.output.mediaUrl===mediaUrl):null;
+    this.#openViewer(output,opener,current);return true;
+  }
 
   #navigateFan(direction:-1|1,navigationMethod:"keyboard"|"button"){
     const origin=this.output;if(!origin)return;const fan=this.#fan(origin);if(fan.length<2)return;const currentIndex=Math.max(0,fan.findIndex((candidate)=>candidate.id===(this.#activeOutputId||origin.id)));const next=fan[(currentIndex+direction+fan.length)%fan.length];const previous=fan[currentIndex];this.#activeOutputId=next.id;this.#recordView(next,"navigate",navigationMethod,previous,direction);this.dispatchEvent(new CustomEvent("forma-fan-image-navigated",{bubbles:true,composed:true,detail:{comparisonId:this.#comparisonId,promptFanId:origin.promptFanId,objectId:next.id,previousObjectId:previous.id,direction:direction===-1?"previous":"next",navigationMethod,index:fan.indexOf(next)+1,count:fan.length}}));this.requestUpdate();

@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { navigateInApp } from "./command-departure";
 import { observeNativePopoverPosition, positionNativePopover } from "./native-popover";
 import { documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute, withProjectTaskDocumentInRoute } from "../model/routes";
 import { generationHistoryItems } from "../model/events";
@@ -164,31 +165,49 @@ export class ProjectRail extends FormaElement {
   #go(event: MouseEvent, path: string) {
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     event.preventDefault();
-    this.#closeNative();
-    this.store.setRoute(path);
-    window.scrollTo({ top: 0 });
+    if(path===this.store.route.get()){this.#closeNative();return;}
+    void navigateInApp(this,async navigation=>{
+      this.#closeNative();
+      const opened=await navigation.route(path);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
   }
 
   #openLibrary(event: MouseEvent, view: LibraryView) {
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     event.preventDefault();
-    this.#closeNative();
-    this.store.patchUi({ libraryView: view, focusCollectionId: "" });
-    this.store.setRoute(libraryBaseRoute(this.store.route.get()));
-    window.scrollTo({ top: 0 });
+    const path=libraryBaseRoute(this.store.route.get());
+    void navigateInApp(this,async navigation=>{
+      this.#closeNative();
+      this.store.patchUi({ libraryView: view, focusCollectionId: "" });
+      const opened=await navigation.route(path);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
   }
 
   #openDocument(event: MouseEvent, documentId: string, destination: string) {
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     event.preventDefault();
-    this.#closeNative();
-    void this.store.openDocument(documentId, destination, "project-rail");
-    window.scrollTo({ top: 0 });
+    void navigateInApp(this,async navigation=>{
+      this.#closeNative();
+      const opened=await this.store.openDocument(documentId,destination,"project-rail",navigation);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
   }
 
   #openBlockEditor(event:MouseEvent) {
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
-    event.preventDefault();this.#closeNative();this.store.patchUi({libraryView:"blocks",focusCollectionId:""});this.store.setRoute(libraryBlockEditorRoute("",this.store.route.get()));window.scrollTo({top:0});
+    event.preventDefault();
+    const path=libraryBlockEditorRoute("",this.store.route.get());
+    void navigateInApp(this,async navigation=>{
+      this.#closeNative();this.store.patchUi({libraryView:"blocks",focusCollectionId:""});
+      const opened=await navigation.route(path);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
   }
 
   #editProject() {

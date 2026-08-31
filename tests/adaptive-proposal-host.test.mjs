@@ -6,7 +6,7 @@ import ts from "typescript";
 import { adaptiveProposalOptions, buildAdaptiveProposalApplication } from "../src/model/adaptive-proposal-application.ts";
 import { blockTypeDefinition, suggestedSubtype } from "../src/model/block-types.ts";
 import { withCanvasView } from "../src/canvas/routes.ts";
-import { documentContextBlockRoute, libraryFocusRoute } from "../src/model/routes.ts";
+import { libraryFocusRoute, withDocumentInRoute } from "../src/model/routes.ts";
 import { ADAPTIVE_PROPOSAL_MESSAGES } from "../src/components/design-system/locales/adaptive-proposal-messages.ts";
 import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 
@@ -83,11 +83,30 @@ function member(tree,owner,name){
 }
 function entry(f,surface){
   const store={projection:{get:()=>f.state.projection},head:{get:()=>0},appendBatch:async()=>{throw new Error("GENERIC_PARTIAL_APPEND");},outputBlockTextEvents:()=>{throw new Error("GUESS_FIRST_TARGET");},canvasProjection:{get:()=>({selectedCanvasId:f.state.scope.canvasId,items:[]})}};
+  if(surface==="document"){
+    // The real manual delegate now reads its current connected Source/route.
+    // Reuse the existing finite scope and branded port; do not bypass current().
+    store.route={get:()=>withDocumentInRoute("/adaptive",f.state.scope.documentId,f.state.projection.documentTitle)};
+    store.captureAuthorizationScope=()=>{const value=f.ports.scope();return value?{key:JSON.stringify([value.key,value.owner,value.actorUserId,
+      value.projectId,value.documentId,value.canvasId,value.canAuthor]),shared:false}:null;};
+    store.authorizationScopeActive=scope=>Boolean(scope&&store.captureAuthorizationScope()?.key===scope.key);
+    installSourceOwnershipPort(store);
+    const subscribers=new Set();store.subscribe=listener=>{subscribers.add(listener);return()=>subscribers.delete(listener);};
+    store.notify=()=>{subscribers.forEach(listener=>listener());};
+  }
+  // Include the exact current lexical definitions used by the manual delegate.
+  const lexical=name=>{
+    const declarations=docSyntax.statements.filter(ts.isVariableStatement).flatMap(statement=>[...statement.declarationList.declarations])
+      .filter(declaration=>declaration.name.getText(docSyntax)===name);
+    assert.equal(declarations.length,1,"one actual lexical dependency "+name);assert.ok(declarations[0].initializer);
+    return eval(stripTypeScriptTypes("("+declarations[0].initializer.getText(docSyntax)+")"));
+  };
+  const DECISIONS=lexical("DECISIONS"),layerLabel=lexical("layerLabel");
   const proposed=f.controller,HTMLElement=class{},ownerDocument={activeElement:null};let remembered=0;
   const code=surface==="document"?
-    '(class {store=store;ownerDocument=ownerDocument;#proposalReview=proposed;#activeType="";#custom="";#rememberProposalOpener(){remembered++;}requestUpdate(){}commit(...args){return this.#commit(...args);}'+member(docSyntax,"FormaAdaptivePath","#commit")+'})':
+    '(class {isConnected=true;store=store;ownerDocument=ownerDocument;#proposalReview=proposed;#activeType="";#custom="";#rememberProposalOpener(){remembered++;}requestUpdate(){}commit(...args){return this.#commit(...args);}'+["#answerEdit","#answerIntent","#pendingAnswers","#commitManual","#commit"].map(name=>member(docSyntax,"FormaAdaptivePath",name)).join("")+'})':
     '(class {store=store;ownerDocument=ownerDocument;#proposalReview=proposed;#proposalOpener;#canEditCanvas(){return true;}#insertionPoint(){return{x:-120,y:340};}#createNativeBlock(){throw new Error("GENERIC_CANVAS_APPEND");}use(id,ids){return this.#useSuggestion(id,ids);}'+member(canvasSyntax,"CanvasApplication","#useSuggestion")+'})';
-  const makeSlug=value=>value;void{proposed,HTMLElement,ownerDocument,makeSlug};const Probe=eval(stripTypeScriptTypes(code));
+  const makeSlug=value=>value;void{proposed,HTMLElement,ownerDocument,makeSlug,DECISIONS,layerLabel};const Probe=eval(stripTypeScriptTypes(code));
   return{host:new Probe(),store,remembered:()=>remembered};
 }
 // These older handler probes keep their original scope/reply boundaries. Add
@@ -324,12 +343,24 @@ test("actual Canvas factory settles native writes and rechecks destination befor
   const pending=controller.ports.request({action:"preview",projectId:"project-a",documentId:"doc-a",canvasId:"board-a"});
   state.canvasId="board-b";ready.resolve(true);await assert.rejects(pending,/scope_changed/);assert.equal(calls.length,0);
 });
-test("actual Document result handler opens only the exact receipt-owned native block",async()=>{
+test("Document result preflight rejects unrelated or withdrawn receipts and requires a native invoker",async t=>{
   const f=fixture(),preview=await saved(f);const applying=f.controller.request("apply"),call=await f.take();await f.reply(call,receiptFor(preview));await applying;
   const id=f.controller.receipt.blockIds[0];f.state.projection.libraryBlocks.push(nativeBlock(id));const routes=[],proposed=f.controller,store={projection:{get:()=>f.state.projection},setRoute:route=>routes.push(route),toast:()=>{}};
-  void{proposed,store};const Probe=eval(stripTypeScriptTypes('(class {store=store;#proposalReview=proposed;i18n={t:x=>x};#closeProposalReview(){}open(kind,id){this.#openProposalResult(kind,id);}'+member(docSyntax,"FormaAdaptivePath","#openProposalResult")+'})'));
-  const host=new Probe();host.open("block","unrelated");assert.deepEqual(routes,[]);host.open("block",id);assert.deepEqual(routes,[documentContextBlockRoute("doc-a","Document",id)]);
-  f.state.scope={...f.state.scope,key:"withdrawn"};host.open("block",id);assert.equal(routes.length,1);
+  const receipt=proposed.receipt,requestCount=f.calls.length,canOpen=proposed.canOpen,decisions=[];
+  t.mock.method(proposed,"canOpen",function(...args){const result=Reflect.apply(canOpen,this,args);decisions.push({args:[...args],result});return result;});
+  // This reduced probe has no native presentation, Shell or navigation port.
+  // Positive raw-clear/exact-block arrival remains in the unchanged full-host
+  // "C Adaptive applied result" case in layers-adaptive-command-origin-continuity.
+  void{proposed,store};const Probe=eval(stripTypeScriptTypes('(class {store=store;#proposalReview=proposed;i18n={t:x=>x};#closeProposalReview(){assert.fail("Preflight cannot close an absent native presentation");}open(kind,id,event){return this.#openProposalResult(kind,id,event);}'+["#proposalOpener","#openProposalResult"].map(name=>member(docSyntax,"FormaAdaptivePath",name)).join("")+'})'));
+  const host=new Probe();
+  assert.equal(host.open("block","unrelated"),undefined);assert.deepEqual(routes,[]);
+  assert.deepEqual(decisions,[{args:["block","unrelated"],result:false}]);assert.equal(proposed.receipt,receipt);
+  assert.equal(host.open("block",id),undefined,"A valid receipt is not an omitted-native-invoker navigation grant");
+  assert.deepEqual(routes,[]);assert.equal(proposed.receipt,receipt);assert.equal(proposed.phase,"applied");assert.equal(proposed.visible,true);
+  assert.deepEqual(decisions,[{args:["block","unrelated"],result:false},{args:["block",id],result:true}]);
+  f.state.scope={...f.state.scope,key:"withdrawn"};assert.equal(host.open("block",id),undefined);assert.deepEqual(routes,[]);
+  assert.deepEqual(decisions,[{args:["block","unrelated"],result:false},{args:["block",id],result:true},{args:["block",id],result:false}]);
+  assert.equal(proposed.receipt,null);assert.equal(proposed.phase,"unavailable");assert.equal(f.calls.length,requestCount);
 });
 test("actual paid button bindings preserve immutable IDs in both Document renderers and Canvas",()=>{
   for(const name of["render","legacyRender"]){

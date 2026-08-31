@@ -67,6 +67,23 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
 
 .button.compact { min-height: 2.75rem; }
 
+/* Local Platform form peers wrap and share a growing row height. */
+.platform-form-actions {
+  display: flex;
+  min-inline-size: 0;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-space-3, var(--space-3));
+}
+.platform-form-actions > .button {
+  flex: 0 1 auto;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .button.primary {
   color: var(--on-strong);
   background: var(--ink);
@@ -379,6 +396,8 @@ forma-ui-audience-navigation:empty { display: none; }
 .role-evidence-state--blocked { color: var(--danger); }
 .delivery-planning,.qualification-evidence,.synthetic-replay,.actual-replay,.adapter-preview { display: grid; max-inline-size: 85rem; gap: var(--forma-space-5, 1.25rem); margin-inline: auto; padding-block-end: clamp(2rem, 5vw, 4rem); }
 .delivery-decision-form,.synthetic-replay-controls,.actual-replay > section > form,.adapter-preview-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); align-items: end; gap: var(--forma-space-4, 1rem); }
+.delivery-decision-form[hidden] { display: none !important; }
+.delivery-decision-list[hidden] { display: none !important; }
 .delivery-decision-form label,.synthetic-replay-controls label,.actual-replay > section > form label,.adapter-preview-form label { display: grid; gap: var(--forma-space-2, .5rem); }
 .delivery-decision-form :is(input,select,textarea),.synthetic-replay-controls select,.actual-replay > section > form :is(input:not([type="checkbox"]),textarea),.adapter-preview-form :is(input,select) { min-block-size: var(--forma-control-min-size, 2.75rem); inline-size: 100%; padding: var(--forma-space-2, .5rem); color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); }
 .delivery-decision-form textarea,.actual-replay > section > form textarea { min-block-size: 6rem; resize: vertical; }
@@ -3585,7 +3604,7 @@ img, video, canvas { max-width: 100%; }
 .workspace-settings-navigation a[aria-current="page"] { border-block-end-color: var(--forma-color-accent,var(--forest)); font-weight: 650; }
 .workspace-settings-list,.workspace-settings-project-list,.workspace-settings-audit { display: grid; gap: var(--forma-space-3,.75rem); margin: 0; padding: 0; list-style: none; }
 .workspace-settings-list > li { display: flex; min-inline-size: 0; align-items: center; justify-content: space-between; gap: var(--forma-space-3,.75rem); }
-.workspace-settings-list > li > div { display: grid; min-inline-size: 0; gap: .2rem; }
+.workspace-settings-list > li > div { display: grid; min-inline-size: 0; overflow-wrap: anywhere; gap: .2rem; }
 .workspace-project-canvas-permission { min-inline-size: 0; max-inline-size: 100%; }
 .workspace-settings-list > li > div > span { color: var(--forma-color-text-muted,var(--muted)); }
 .workspace-settings-project-list > li { display: grid; gap: var(--forma-space-3,.75rem); padding-block: var(--forma-space-3,.75rem); border-block-start: 1px solid var(--forma-color-border,var(--line)); }
@@ -4102,14 +4121,44 @@ dialog.command-dialog > :first-child {
 
 dialog.command-dialog > .command-card {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
+dialog.command-dialog .command-search { grid-row: 1; }
+dialog.command-dialog #command-scope {
+  grid-row: 2;
+  margin: 0;
+  padding: var(--forma-space-2, var(--space-2)) var(--forma-space-4, var(--space-4));
+  color: var(--muted);
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+}
+dialog.command-dialog .command-card > footer { grid-row: 4; }
+
 dialog.command-dialog .command-results {
+  grid-row: 3;
+  min-inline-size: 0;
   min-height: 0;
   max-height: none;
   overflow: auto;
 }
+dialog.command-dialog .command-results > p { margin: 0; padding: var(--forma-space-3, var(--space-3)); }
+dialog.command-dialog .command-row {
+  min-inline-size: 0;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--forma-space-1, var(--space-1)) var(--forma-space-3, var(--space-3));
+  padding: var(--forma-space-3, var(--space-3));
+  text-align: start;
+}
+dialog.command-dialog .command-row > :is(span, small) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+dialog.command-dialog .command-row > span { flex: 2 1 18ch; }
+dialog.command-dialog .command-row > small { flex: 1 1 24ch; }
 
 /* Canvas release governance: evidence first, with one server-owned gate. */
 .canvas-governance-content { display: grid; gap: clamp(2rem,4vw,4rem); }
@@ -4768,7 +4817,7 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-dialog-card > header,.ui-dialog-card > footer { display: flex; align-items: center; justify-content: space-between; gap: var(--forma-space-3,var(--space-3)); }
 .ui-dialog-card > header h2,.ui-dialog-card > p { margin: 0; }
 .ui-dialog-card > p { color: var(--forma-color-text-muted,var(--muted)); }
-.ui-dialog-card > footer { justify-content: flex-end; flex-wrap: wrap; }
+.ui-dialog-card > footer { align-items: stretch; justify-content: flex-end; flex-wrap: wrap; }
 .ui-copy { display: grid; justify-items: start; gap: var(--forma-space-1,var(--space-1)); }
 .ui-copy-status { min-block-size: 1.5em; color: var(--forma-color-text-muted,var(--muted)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
 

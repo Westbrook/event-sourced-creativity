@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { FormaPresentationalElement } from "./presentational-element";
 import { icon } from "./icons";
 import type { CreativeOutput } from "../model/events";
+import type { FormaPlatformShell } from "./forma-platform-shell";
 import { CURRENT_FOCAL_POINT_METHOD, focalPointCss, type ImageFocalPoint } from "../model/focal-point";
 import { diverseFocalPointCandidates } from "../model/focal-point-lab";
 import { resolveImageFocalComparison, type ImageFocalComparison } from "../model/image-focus";
@@ -81,6 +82,17 @@ export class FormaFocalPointLab extends FormaPresentationalElement {
   #verdicts = new Map<string, Verdict>();
   #comparisons = new Map<string, ImageFocalComparison>();
   #pending = new Set<string>();
+
+  #openPatterns(event: MouseEvent) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.currentTarget as HTMLAnchorElement;
+    const path = "/knowledge/patterns", target = anchor.getAttribute("target");
+    if (anchor.getAttribute("href") !== path || anchor.hasAttribute("download") || target && target.toLowerCase() !== "_self") return;
+    const host = this.closest<FormaPlatformShell>("forma-platform-shell");
+    if (!host) return;
+    event.preventDefault();
+    host.navigateFrom(this, path);
+  }
 
   protected override updated() {
     for (const candidate of this.#rawCandidates()) {
@@ -182,7 +194,7 @@ export class FormaFocalPointLab extends FormaPresentationalElement {
     const unresolved = rawCandidates.filter((candidate) => !candidate.focalPoint).length;
     const availableProject = rawCandidates.filter((candidate) => candidate.source !== "provided diagnostic").length;
     return html`<section class="focal-point-lab page-pad">
-      <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${this.i18n.t("shell.knowledge","Design & Knowledge")} / ${this.i18n.t("shell.navigation.patterns","Patterns")}</span><h1>${this.i18n.t("knowledge.focal.heading","Focal-point comparison")}</h1><p>${this.i18n.t("knowledge.focal.description","Compare local focal-point calculations using approved fictional images only. Creator projects, generated images, and private references are never loaded.")}</p></div><div class="page-header-actions"><a class="button secondary" href="/knowledge/patterns">${this.i18n.t("knowledge.focal.return","Return to patterns")} ${icon("arrow")}</a></div></header>
+      <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${this.i18n.t("shell.knowledge","Design & Knowledge")} / ${this.i18n.t("shell.navigation.patterns","Patterns")}</span><h1>${this.i18n.t("knowledge.focal.heading","Focal-point comparison")}</h1><p>${this.i18n.t("knowledge.focal.description","Compare local focal-point calculations using approved fictional images only. Creator projects, generated images, and private references are never loaded.")}</p></div><div class="page-header-actions"><a class="button secondary" href="/knowledge/patterns" @click=${this.#openPatterns}>${this.i18n.t("knowledge.focal.return","Return to patterns")} ${icon("arrow")}</a></div></header>
       <section class="focal-lab-controls" aria-label="Focal-point review controls"><div class="focal-lab-filter-groups"><div class="focal-lab-filter"><span>Crop shape</span><div role="group" aria-label="Crop shape">${(["wide", "square", "portrait"] as const).map((shape) => html`<button aria-pressed=${this.#shape === shape} @click=${() => { this.#shape = shape; this.requestUpdate(); }}>${shape}</button>`)}</div></div><div class="focal-lab-filter"><span>Image set</span><div role="group" aria-label="Image set">${(["representative", "expanded", "all"] as const).map((density) => html`<button aria-pressed=${this.#density === density} @click=${() => { this.#density = density; this.requestUpdate(); }}>${density === "representative" ? "8" : density === "expanded" ? "16" : this.i18n.system("All")}</button>`)}</div></div></div><dl><div><dt>Visible</dt><dd>${assets.length}/${rawCandidates.length}</dd></div><div><dt>Reviewed</dt><dd>${visibleVerdicts.length}</dd></div><div><dt>Attention</dt><dd>${attention}</dd></div><div><dt>Saliency</dt><dd>${saliency}</dd></div><div><dt>Neither</dt><dd>${neither}</dd></div></dl></section>
       <section class="focal-lab-method" aria-labelledby="focal-method-title"><header><span>Implementation tradeoffs</span><h2 id="focal-method-title">Two calculations, one crop contract</h2><p>Both approaches run in the browser and send no pixels to a provider. Times shown with each image are observed runs that include loading, decoding, sampling, and calculation; they are device- and cache-dependent.</p></header><div class="focal-lab-implementations"><article><span>Current production</span><h3>Attention regions</h3><p>Preserves aspect ratio, scores local visual evidence, compares coherent regions at several scales, and anchors the crop at the winning region’s weighted center.</p><dl><div><dt>Provider cost</dt><dd>$0.000000</dd></div><div><dt>Privacy</dt><dd>Pixels stay local</dd></div></dl></article><article><span>Baseline</span><h3>Saliency centroid</h3><p>Uses the original square sample and averages thresholded high-contrast pixels. It is simpler and often faster, but can drift toward canopy, sky, or image edges.</p><dl><div><dt>Provider cost</dt><dd>$0.000000</dd></div><div><dt>Privacy</dt><dd>Pixels stay local</dd></div></dl></article></div></section>
       <aside class="focal-lab-reading-note"><b>How to read each comparison</b><p>The source overlays both calculations: the orange rectangle and solid marker represent attention regions; the hollow marker represents the saliency centroid. The two adjacent previews apply those points to the same crop shape, making output quality and computational tradeoffs directly comparable.</p></aside>

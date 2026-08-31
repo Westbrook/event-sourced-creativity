@@ -20,6 +20,14 @@ import { eventMatchesProfile } from "../src/model/event-profiles.ts";
 import { captureAccountSnapshotFence, accountSnapshotFenceCurrent } from "../src/state/account-cache.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
+import { calmFullPageNativePorts as lifecyclePorts } from "./helpers/calm-full-page-fixture.mjs";
+
+// Complete current module exports; no copied resolver or substitute destination.
+const { nextActionFacts } = await lifecyclePorts.loadActual("src/state/next-action-context.ts");
+const { creativeNextActions } = await lifecyclePorts.loadActual("src/model/workspace-intelligence.ts");
+const { renderLifecycleNextActionCards } = await lifecyclePorts.loadActual("src/components/next-action-cards.ts");
+const { openCreativeNextActionDestination } = await lifecyclePorts.loadActual("src/components/creative-next-action-navigation.ts");
+const { navigateInApp } = await lifecyclePorts.loadActual("src/components/command-departure.ts");
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
@@ -38,6 +46,8 @@ const [storeSource, activitySource, deliverSource, localizationSource] = await P
 
 const runtimeKey = Symbol.for("forma.activity-navigation-test.runtime");
 globalThis[runtimeKey] = {
+  navigateInApp,
+  nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
   formaActivityJobNeedsAttention,
   formaActivityUnread,
   scopedFormaActivity,
@@ -64,7 +74,7 @@ function actualMethod(source, className, methodName) {
   const syntax = ts.createSourceFile(`${className}.ts`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const declaration = syntax.statements.find((statement) => ts.isClassDeclaration(statement) && statement.name?.text === className);
   assert.ok(declaration, `the actual ${className} class remains available`);
-  const method = declaration.members.find((member) => ts.isMethodDeclaration(member) && member.name.getText(syntax) === methodName);
+  const method = declaration.members.find((member) => (ts.isMethodDeclaration(member) || ts.isPropertyDeclaration(member)) && member.name.getText(syntax) === methodName);
   assert.ok(method, `the actual ${className}.${methodName} method remains available`);
   return method.getText(syntax);
 }
@@ -79,6 +89,8 @@ function actualStoreSourceField(name) {
 
 const harnessSource = `
 const {
+  navigateInApp,
+  nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
   formaActivityJobNeedsAttention,
   formaActivityUnread,
   scopedFormaActivity,
@@ -157,7 +169,7 @@ export class RouteStoreHarness {
   #pauseWorkspace = false;
   // Exact production source ownership and publication closure. The existing
   // session/profile/cache I/O ports below remain explicitly simulated.
-  ${["#sourceGeneration","#sourceRetired","#retiredSourceProjectId","#sourceOwners","#sourceReadSequence","#sourcePublishedRead","#sourceContentReadIds","#sourceCertifiedCoverage"].map(actualStoreSourceField).join("\n")}
+  ${["#projectContextLatest","#projectContextCookieGeneration","#projectContextSessionGeneration","#sourceGeneration","#sourceRetired","#retiredSourceProjectId","#sourceOwners","#sourceReadSequence","#sourcePublishedRead","#sourceContentReadIds","#sourceCertifiedCoverage"].map(actualStoreSourceField).join("\n")}
   ${["#activeAuthorizationScope","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceReadOwned","#sourceExpiryValid","#sourceDeadlineCurrent","#sourceReadCurrent","#assertSourceRead","#beginSourceRead","#sourceCacheGuard","#sourceContentReferences","#mergeSourceContent","#publishSourceRead"].map(name => actualMethod(storeSource, "FormaStore", name)).join("\n")}
 
   constructor() {
@@ -250,8 +262,13 @@ class ActivityBase {
 }
 
 export class ActivityLifecycleHarness extends ActivityBase {
+  ${actualMethod(activitySource, "FormaActivity", "#lifecycleOpening")}
+  ${actualMethod(activitySource, "FormaActivity", "#nextContext")}
+  ${actualMethod(activitySource, "FormaActivity", "#navigationBlocked")}
+  ${actualMethod(activitySource, "FormaActivity", "#followLifecycleAction")}
   ${actualMethod(activitySource, "FormaActivity", "connectedCallback")}
   ${actualMethod(activitySource, "FormaActivity", "#open")}
+  ${actualMethod(activitySource, "FormaActivity", "#openDocument")}
   ${actualMethod(activitySource, "FormaActivity", "#review")}
   ${actualMethod(activitySource, "FormaActivity", "#notification")}
   ${actualMethod(activitySource, "FormaActivity", "#planningRecovery")}
@@ -698,18 +715,20 @@ test("Activity exposes the exact existing planning job to a current reader witho
   const legacy=activity.renderJob({...saved,planningExecutionId:undefined},"Original destination");assert.doesNotMatch(visibleText(legacy),/Retrieve existing plan/);
 });
 
-test("Activity safely recovers a previously paid presentation without starting another generation", () => {
+test("Activity binds saved presentation recovery and dismissal without starting another generation", () => {
   const activity = new ActivityLifecycleHarness({ capabilities: [] });
   const result = activity.renderJob(generationJob({ result: { artifactKind: "slides", recoverablePresentationCandidate: true } }), "Investor deck");
   const handlers = actionHandlers(result);
 
   assert.match(visibleText(result), /Paid once · replay without another provider call/);
   assert.match(visibleText(result), /Recover saved render/);
+  assert.equal(handlers.length, 3, "Recovery, Open document and Dismiss remain distinct current bindings");
+  // The real Open binding now requires Shell admission. Its exact destination
+  // and no-write proof live in activity-recovery-open-navigation.test.mjs.
   handlers[0]();
-  handlers[1]();
   handlers[2]();
 
-  assert.deepEqual(activity.calls, ["presentation:job-1", "open:document-1:/", "dismiss:job-1"]);
+  assert.deepEqual(activity.calls, ["presentation:job-1", "dismiss:job-1"]);
 });
 
 test("Activity never promises free slideshow recovery for a source-invalid retained response",()=>{

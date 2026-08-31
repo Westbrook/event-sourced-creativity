@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { hasBlockingNavigationDialog, navigateInApp, type CommandDeparture, type NavigationPresentationContext } from "./command-departure";
 import { repeat } from "lit/directives/repeat.js";
 import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon } from "./forma-element";
@@ -24,6 +25,8 @@ import { creativeActionSourceRevision, creativeNextActions, creativeNextTargetAv
 import type { OutputVisual } from "./output-visual";
 import { outputComparisonHistory } from "../model/output-comparison";
 import { nextActionFacts } from "../state/next-action-context";
+import { artifactDeliveryFor } from "../state/artifact-delivery-context";
+import { artifactDeliveryFactsProof } from "../model/artifact-delivery-facts";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition } from "../model/document-artifacts";
 import { assessCreativeContext, type ContextHealthIssue } from "../model/context-health";
 import { scopedFormaActivity } from "../model/activity";
@@ -40,7 +43,8 @@ import "./design-system/choice-card";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./document-artifacts";
-import { renderNextActionCards } from "./next-action-cards";
+import { renderLifecycleNextActionCards } from "./next-action-cards";
+import { openCreativeNextActionDestination } from "./creative-next-action-navigation";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 
 type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[]; imageFormat: ImageFormat; outputKind: ReturnType<typeof inferDocumentArtifactKind>; documentId: string; documentTitle: string };
@@ -50,9 +54,13 @@ export class FormaWorkspace extends FormaElement {
   #asking=false;
   #formatChoiceOpen=false;#formatReturnFocus:HTMLElement|null=null;#preparationRoute="";
   #formatTarget:Extract<CreativeNextTarget,{kind:"configure"}>|null=null;
+  #formatRequired:((stage:CreativePreparationStage)=>boolean)|null=null;
+  // One pending native presentation only; existing draft/viewer fields remain the owners.
+  #nextOpening:{current:(stage:CreativePreparationStage)=>boolean;retire:()=>void;ready:boolean}|null=null;
   #nextOutputTarget:Extract<CreativeNextTarget,{kind:"output"}>|null=null;
   #blockDraft: BlockDraft | null = null;
   #documentName: string | null = null;
+  #documentNameRevision = 0;
   #proposalResumeKey="";
   // Content-free ownership only; related private text is always derived from the current Store.
   #quickEditReferenceInspection:{eventId:string;resolve:()=>{item:RetrievedExemplar;label:string}|null}|null=null;
@@ -183,10 +191,17 @@ export class FormaWorkspace extends FormaElement {
 
   protected override updated() {
     this.#syncQuickEditReview();
-    const currentFacts=nextActionFacts(this.store,this.store.projection.get().documentId);
-    if(this.#formatTarget&&!creativeNextTargetAvailable(this.#formatTarget,currentFacts))void this.#closeFormatChoice(false);
-    if(this.#nextOutputTarget&&!creativeNextTargetAvailable(this.#nextOutputTarget,currentFacts)){this.#nextOutputTarget=null;this.requestUpdate();}
-    this.querySelectorAll<HTMLDialogElement>("dialog.workspace-modal").forEach((dialog)=>ensureModalDialog(dialog));
+    const opening=this.#nextOpening;
+    if(opening&&!opening.current(opening.ready?"editing":"opening")){this.#nextOpening=null;opening.retire();}
+    if(this.#formatTarget&&(!creativeNextTargetAvailable(this.#formatTarget,this.#nextFacts(this.#formatTarget))
+      ||this.#formatRequired&&!this.#formatRequired("opening")))void this.#closeFormatChoice(false);
+    if(this.#nextOutputTarget&&!creativeNextTargetAvailable(this.#nextOutputTarget,this.#nextFacts(this.#nextOutputTarget))){this.#nextOutputTarget=null;this.requestUpdate();}
+    this.querySelectorAll<HTMLDialogElement>("dialog.workspace-modal").forEach((dialog)=>{
+      // Retirement above may precede the render that removes this exact dialog.
+      if(dialog.matches(".block-composer-dialog")&&!this.#blockDraft)return;
+      ensureModalDialog(dialog);
+    });
+    if(opening&&this.#nextOpening===opening&&this.querySelector<HTMLDialogElement>(".block-composer-dialog,.comparison-modal,.next-format-dialog")?.open)opening.ready=true;
     const preparationUrl=new URL(this.store.route.get(),location.origin),preparation=preparationUrl.searchParams.get("prepare");
     if(preparation&&this.#preparationRoute!==this.store.route.get()&&this.store.routeDataReady()){
       this.#preparationRoute=this.store.route.get();
@@ -267,7 +282,18 @@ export class FormaWorkspace extends FormaElement {
     }
   }
   /** Shared entry point: choosing a command never creates placeholder content. */
-  openContextComposer(){if(this.store.projection.get().documentId){if(this.#workbenchPane!=="write")this.#selectWorkbenchPane("write");this.#beginBlock();}}
+  openContextComposer():void;
+  openContextComposer(options:{current:(stage:CreativePreparationStage)=>boolean;focus?:OutputNavigationFocusLease}):Promise<boolean>;
+  openContextComposer(options?:{current:(stage:CreativePreparationStage)=>boolean;focus?:OutputNavigationFocusLease}):void|Promise<boolean>{
+    if(options){
+      const facts=nextActionFacts(this.store,this.store.projection.get().documentId,null,{lifecycle:true});
+      return this.#openOwnedNextAction({id:"add-context",label:"",reason:"",title:"",priority:0,evidence:0,target:{
+        kind:"context",projectId:facts.projectId,documentId:facts.documentId,canvasId:null,authorityKey:facts.authorityKey,
+        sourceGeneration:facts.sourceGeneration,sourceRevision:creativeActionSourceRevision(facts),
+      }},options);
+    }
+    if(this.store.projection.get().documentId){if(this.#workbenchPane!=="write")this.#selectWorkbenchPane("write");this.#beginBlock();}
+  }
   #closeBlock(){this.querySelector<HTMLDialogElement>(".block-composer-dialog")?.close();this.#blockDraft=null;this.requestUpdate();}
   async #addBlock(event: SubmitEvent) {
     event.preventDefault(); const draft = this.#blockDraft; const text = draft?.text.trim(); if (!draft?.type || draft.type === "reference" || !text) return;
@@ -442,16 +468,45 @@ export class FormaWorkspace extends FormaElement {
   async #confirmDeleteDocument(){const appended=await this.store.removeDocument(this.store.projection.get().documentId);if(appended.length)this.#closeDeleteDocument();}
   async #saveProject(event:SubmitEvent){event.preventDefault();const projection=this.store.projection.get();const name=this.#projectName.trim();if(!name)return;const changes:EventInput[]=[];if(name!==projection.projectName)changes.push({type:"ProjectRenamed",payload:{project_id:projection.projectId,old_name:projection.projectName,new_name:name}});if(this.#projectState!==projection.projectState)changes.push({type:"ProjectStateChanged",payload:{project_id:projection.projectId,state:this.#projectState,previous_state:projection.projectState}});if(changes.length){const appended=await this.store.appendBatch(changes);if(!appended.length)return;}this.#closeProjectSettings();}
   #beginDocumentRename(title: string) {
-    this.#documentName = title; this.requestUpdate();
-    void this.updateComplete.then(() => this.querySelector<HTMLInputElement>(".document-title-editor input")?.select());
+    const store = this.store, { projectId, documentId } = store.projection.get(), route = store.route.get();
+    const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
+    const focus = captureOutputNavigationFocus(this.ownerDocument), revision = ++this.#documentNameRevision;
+    this.#documentName = title;
+    let retired = false;
+    const current = () => !retired && this.isConnected && this.store === store && store.route.get() === route
+      && store.projection.get().projectId === projectId && store.projection.get().documentId === documentId
+      && store.sourceOwnershipActive(source) && Boolean(authorization && store.authorizationScopeActive(authorization))
+      && this.#documentNameRevision === revision && this.#documentName === title;
+    const unsubscribe = store.subscribe(() => { if (!current()) retired = true; });
+    this.requestUpdate();
+    void this.updateComplete.then(() => {
+      if (!current()) return;
+      const field = this.querySelector<HTMLInputElement>(".document-title-editor input");
+      // Preserve select-only behavior; this gesture does not manufacture focus.
+      if (field && field.value === title) focus.run(field, () => { field.select(); return true; });
+    }, () => undefined).finally(() => { unsubscribe(); focus.dispose(); });
   }
   async #renameDocument(event: SubmitEvent, documentId: string, currentTitle: string) {
-    event.preventDefault(); const title = this.#documentName?.trim(); if (!title) return;
-    if (title === currentTitle) { this.#documentName = null; this.requestUpdate(); return; }
-    const appended = await this.store.append({ type: "DocumentRenamed", payload: { document_id: documentId, old_title: currentTitle, new_title: title } });
-    if (appended.length) { this.#documentName = null; this.requestUpdate(); }
+    event.preventDefault();
+    const raw = this.#documentName, title = raw?.trim(), revision = this.#documentNameRevision;
+    if (!title) return;
+    const store = this.store, projectId = store.projection.get().projectId, route = store.route.get();
+    const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
+    const current = (expectedRoute = route) => this.isConnected && this.store === store && store.route.get() === expectedRoute
+      && store.sourceOwnershipActive(source) && store.authorizationScopeActive(authorization)
+      && store.projection.get().projectId === projectId && store.projection.get().documentId === documentId;
+    if (!current()) return;
+    if (title === currentTitle) { this.#documentNameRevision++; this.#documentName = null; this.requestUpdate(); return; }
+    const appended = await store.append({ type: "DocumentRenamed", payload: { document_id: documentId, old_title: currentTitle, new_title: title } });
+    if (!appended.length || (!current() && !current(withDocumentInRoute(route, documentId, title)))) return;
+    if (this.#documentNameRevision === revision && this.#documentName === raw) {
+      this.#documentNameRevision++; this.#documentName = null; this.requestUpdate();
+    } else if (this.#documentName !== null) {
+      store.toast(this.i18n.t("guided.save.newerEditsKept", "The earlier submission was saved. Your newer edits are still here."));
+    }
   }
   #compare() {
+    this.#nextOpening=null; // A new explicit comparison owns its own existing pair.
     const out = generationHistoryItems(this.store.projection.get().outputs).filter((item) => item.kind === "output").slice(0,2).map((item) => item.output); if (out.length < 2) return this.store.toast("Promote a fan result or generate one more stand-alone output to compare.");
     const ids = out.map((o) => o.id);if(!this.store.session.get()?.projectContext)void this.store.append({ type: "ComparisonOpened", payload: { object_ids: ids, source_surface: "studio" } });this.store.patchUi({ compareOpen: true, comparisonOutputIds: ids.join("|") });
   }
@@ -506,46 +561,196 @@ export class FormaWorkspace extends FormaElement {
     if(!event)return nothing;
     const session=this.store.session.get(),engineering=session?.capabilities?.includes("engineering.events.read")===true;
     const author=this.i18n.t(provenanceActorMessage(event.actor,session?.impersonation?.actor.userId??session?.user?.userId));
-    return html`<aside class="inspector-panel" aria-label=${this.i18n.t("workspace.provenance.inspector","Creative history")}><header><div><span class="eyebrow">${this.i18n.t("workspace.provenance.source","Saved creative history")}</span><h2>${reference?reference.label:shortEventType(event.type)}</h2></div><button class="icon-button" aria-label=${this.i18n.t("workspace.provenance.close","Close creative history")} @click=${() => this.store.patchUi({ inspectorOpen:false })}>${icon("close")}</button></header>${reference?html`<section class="provenance-reference-context"><h3>${workspaceLocalProposalCopy(this.i18n.locale).referenceContext}</h3><p dir="auto">${reference.item.summary}</p><small>${workspaceLocalProposalCopy(this.i18n.locale).referenceOnly}</small></section>`:html`<p>${this.i18n.t("workspace.provenance.description","This creative decision is saved to your private document and remains available for future results.")}</p>`}<dl><dt>${this.i18n.t("workspace.provenance.author","Recorded actor")}</dt><dd>${author}</dd><dt>${this.i18n.t("workspace.provenance.saved","Saved")}</dt><dd>${this.i18n.date(new Date(event.occurredAt),{dateStyle:"medium",timeStyle:"short"})}</dd><dt>${this.i18n.t("workspace.provenance.change","Creative change")}</dt><dd>${shortEventType(event.type)}</dd></dl>${engineering?html`<details class="provenance-technical"><summary>${this.i18n.t("workspace.provenance.technical","Technical details for engineering")}</summary><dl><dt>Sequence</dt><dd>#${event.sequence}</dd><dt>Actor</dt><dd>${event.actor}</dd><dt>Client</dt><dd>${event.clientId}</dd><dt>Correlation</dt><dd>${event.correlationId}</dd></dl><pre>${JSON.stringify(event.payload,null,2)}</pre><div class="inspector-actions"><button @click=${() => this.store.setRoute("/engineering/events")}>${this.i18n.t("workspace.provenance.engineering","Open Engineering Diagnostics")} ${icon("arrow")}</button><button @click=${() => navigator.clipboard.writeText(event.eventId)}>${this.i18n.t("workspace.provenance.copy","Copy technical event ID")}</button></div></details>`:nothing}</aside>`;
+    return html`<aside class="inspector-panel" aria-label=${this.i18n.t("workspace.provenance.inspector","Creative history")}><header><div><span class="eyebrow">${this.i18n.t("workspace.provenance.source","Saved creative history")}</span><h2>${reference?reference.label:shortEventType(event.type)}</h2></div><button class="icon-button" aria-label=${this.i18n.t("workspace.provenance.close","Close creative history")} @click=${() => this.store.patchUi({ inspectorOpen:false })}>${icon("close")}</button></header>${reference?html`<section class="provenance-reference-context"><h3>${workspaceLocalProposalCopy(this.i18n.locale).referenceContext}</h3><p dir="auto">${reference.item.summary}</p><small>${workspaceLocalProposalCopy(this.i18n.locale).referenceOnly}</small></section>`:html`<p>${this.i18n.t("workspace.provenance.description","This creative decision is saved to your private document and remains available for future results.")}</p>`}<dl><dt>${this.i18n.t("workspace.provenance.author","Recorded actor")}</dt><dd>${author}</dd><dt>${this.i18n.t("workspace.provenance.saved","Saved")}</dt><dd>${this.i18n.date(new Date(event.occurredAt),{dateStyle:"medium",timeStyle:"short"})}</dd><dt>${this.i18n.t("workspace.provenance.change","Creative change")}</dt><dd>${shortEventType(event.type)}</dd></dl>${engineering?html`<details class="provenance-technical"><summary>${this.i18n.t("workspace.provenance.technical","Technical details for engineering")}</summary><dl><dt>Sequence</dt><dd>#${event.sequence}</dd><dt>Actor</dt><dd>${event.actor}</dd><dt>Client</dt><dd>${event.clientId}</dd><dt>Correlation</dt><dd>${event.correlationId}</dd></dl><pre>${JSON.stringify(event.payload,null,2)}</pre><div class="inspector-actions"><button @click=${() => navigateInApp(this,navigation=>navigation.route("/engineering/events"))}>${this.i18n.t("workspace.provenance.engineering","Open Engineering Diagnostics")} ${icon("arrow")}</button><button @click=${() => navigator.clipboard.writeText(event.eventId)}>${this.i18n.t("workspace.provenance.copy","Copy technical event ID")}</button></div></details>`:nothing}</aside>`;
   }
 
-  async #followNextAction(action:CreativeNextAction){
-    try{const followed=await followCreativeNextTarget(action.target,()=>nextActionFacts(this.store,this.store.projection.get().documentId),{
-      context:()=>this.openContextComposer(),configure:(target)=>this.#prepareFormat(target),
-      output:(target)=>this.#openNextOutput(target),
-      artifact:(target)=>this.querySelector("forma-document-artifacts")!.openArtifactById(target.artifactId,{expectedRevision:target.revision}),
-      job:(target)=>this.querySelector("forma-document-artifacts")!.openJobById(target.jobId),
-      compare:(target)=>this.store.patchUi({compareOpen:true,comparisonOutputIds:target.outputIds.join("|")}),
-    });if(!followed)this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));}catch{this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));}
+  #lifecycleOpening=0;
+  #contextWorkDepartures():CommandDeparture[] {
+    return [...this.querySelectorAll("forma-context-block")]
+      .filter(child=>child.isConnected&&FormaElement.hasStoreIdentity(child,this.store))
+      .map(child=>child.captureCommandDeparture());
   }
-  async #openNextOutput(target:Extract<CreativeNextTarget,{kind:"output"}>){
+  #nextActionBlocked(departure=false,context?:NavigationPresentationContext){
+    if(this.#nextOpening||this.#blockDraft||this.#proposal||this.#formatChoiceOpen
+      ||this.#artifactViewerOpen&&![...this.querySelectorAll("forma-document-artifacts")].some(viewer=>
+        viewer.isConnected&&viewer.closest("forma-workspace")===this&&FormaElement.hasStoreIdentity(viewer,this.store)
+        &&viewer.allowsNavigationPresentation(context))
+      ||this.#documentName!==null||this.#pendingUpload||this.#uploading||this.#asking
+      ||hasBlockingNavigationDialog(this.ownerDocument,context)
+      ||this.ownerDocument.querySelector(".output-requirement-form,.output-plan-review"))return true;
+    if(this.#contextWorkDepartures().some(child=>child.blocked()))return true;
+    return [...this.querySelectorAll("forma-output-requirements")]
+      .some(controller=>controller.isConnected&&FormaElement.hasStoreIdentity(controller,this.store)
+        &&(departure?controller.commandDepartureBlocked:controller.navigationBlocked));
+  }
+  captureCommandDeparture():CommandDeparture {
+    const pane=this.#workbenchPane,documentId=this.#inspectorDocumentId,contexts=this.#contextWorkDepartures();
+    return {element:this,current:()=>{
+      if(!this.isConnected||this.#workbenchPane!==pane||this.#inspectorDocumentId!==documentId)return false;
+      const current=this.#contextWorkDepartures();
+      return current.length===contexts.length&&contexts.every(child=>child.current()&&current.some(value=>value.element===child.element));
+    },blocked:context=>Boolean(this.#prompt||this.#nextActionBlocked(true,context)),reason:()=>"next.lifecycle.currentWorkOpen"};
+  }
+  /** Rendered recommendations use the complete shared route adapter; local receivers below never recurse into it. */
+  async #followLifecycleAction(action:CreativeNextAction){
+    const projection=this.store.projection.get(),route=this.store.route.get(),pane=this.#workbenchPane;
+    if(!this.isConnected||!this.store.routeDataReady()||action.target.documentId!==projection.documentId
+      ||action.target.projectId!==projection.projectId)return false;
+    if(this.#prompt||this.#nextActionBlocked()){
+      this.store.toast(this.i18n.t("next.lifecycle.currentWorkOpen","Save or discard local edits, clear unsent text, or check the current request before continuing. Closing a panel may retain work; wait if the request is running."));
+      return false;
+    }
+    const request=++this.#lifecycleOpening;
+    const originCurrent=()=>this.isConnected&&request===this.#lifecycleOpening&&this.store.route.get()===route
+      &&this.#workbenchPane===pane&&this.store.projection.get().projectId===action.target.projectId
+      &&this.store.projection.get().documentId===action.target.documentId&&!this.#prompt&&!this.#nextActionBlocked();
+    let opened=false,navigationRefusal="";
+    try{opened=await openCreativeNextActionDestination(this.store,this.ownerDocument,action,{
+      origin:this,originCurrent,navigationCurrent:()=>request===this.#lifecycleOpening,
+      onRefusal:reason=>{navigationRefusal=reason;},
+    });}catch{ /* Unavailable is not a completed handoff. */ }
+    if(!opened&&navigationRefusal!=="current-work"&&originCurrent())this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));
+    return opened;
+  }
+
+  #nextFacts(target?:CreativeNextTarget|null){
+    return nextActionFacts(this.store,this.store.projection.get().documentId,null,
+      target?.sourceGeneration===undefined?{}:{lifecycle:true});
+  }
+  /** Existing preparation entry, with caller ownership retained through its native opening. */
+  async openOutputPreparation(target:Extract<CreativeNextTarget,{kind:"configure"}>,
+    options:{current:(stage:CreativePreparationStage)=>boolean;focus?:OutputNavigationFocusLease}):Promise<boolean>{
+    return this.openCreativeNextAction({id:"configure-output",label:"",reason:"",title:"",priority:0,evidence:0,target},options);
+  }
+  /** Same existing local executor. Cross-surface routing remains the stateless opening helper's job. */
+  async openCreativeNextAction(action:CreativeNextAction,
+    options:{current:(stage:CreativePreparationStage)=>boolean;focus?:OutputNavigationFocusLease}):Promise<boolean>{
+    if(this.#prompt)return false;
+    return this.#openOwnedNextAction(action,options);
+  }
+  /** Context's explicit command may coexist with Ask text; all other admission checks stay shared. */
+  async #openOwnedNextAction(action:CreativeNextAction,
+    options:{current:(stage:CreativePreparationStage)=>boolean;focus?:OutputNavigationFocusLease}):Promise<boolean>{
+    if(!this.isConnected||!options.current("opening")||this.#nextActionBlocked())return false;
+    let block:BlockDraft|null=null;
+    const pair=action.target.kind==="compare"?action.target.outputIds.join("|"):"";
+    const opening={current:options.current,ready:false,retire:()=>{
+      if(block&&this.#blockDraft===block){this.#blockDraft=null;this.querySelector<HTMLDialogElement>(".block-composer-dialog")?.close();}
+      if(this.#formatTarget===action.target)void this.#closeFormatChoice(false);
+      if(this.#nextOutputTarget===action.target){this.#nextOutputTarget=null;this.requestUpdate();}
+      if(pair&&this.store.ui.compareOpen&&this.store.ui.comparisonOutputIds===pair){
+        this.store.patchUi({compareOpen:false});this.querySelector<HTMLDialogElement>(".comparison-modal")?.close();
+      }
+      this.requestUpdate();
+    }};
+    this.#nextOpening=opening;
+    const required=(stage:CreativePreparationStage)=>this.#nextOpening===opening
+      ?options.current(opening.ready?"editing":stage):opening.ready&&options.current("editing");
+    try{
+      const pending=this.#followNextAction(action,{...options,current:required,contextOpened:()=>{block=this.#blockDraft;}});
+      const followed=await pending;
+      if(!followed||!options.current("editing"))return false;
+      opening.ready=true;return true;
+    }finally{
+      if(this.#nextOpening===opening){this.#nextOpening=null;if(!opening.ready)opening.retire();}
+    }
+  }
+  async #followNextAction(action:CreativeNextAction,options?:{current:(stage:CreativePreparationStage)=>boolean;focus?:OutputNavigationFocusLease;contextOpened?:()=>void}){
+    const current=(stage:CreativePreparationStage="opening")=>(!options||options.current(stage))
+      &&(action.target.kind==="configure"?creativePreparationTargetAvailable(action.target,this.#nextFacts(action.target),stage)
+        :stage==="editing"||creativeNextTargetAvailable(action.target,this.#nextFacts(action.target)));
+    try{
+      if(!current())return false;
+      const followed=await followCreativeNextTarget(action.target,()=>this.#nextFacts(action.target),{
+        context:async()=>{this.openContextComposer();options?.contextOpened?.();if(!options)return;
+          await this.updateComplete;return current("editing")&&Boolean(this.querySelector<HTMLDialogElement>(".block-composer-dialog")?.open);},
+        configure:(target)=>this.#prepareFormat(target,options?.current,options?.focus),
+        output:(target)=>this.#openNextOutput(target,options?.current),
+        artifact:(target)=>this.querySelector("forma-document-artifacts")!.openArtifactById(target.artifactId,{
+          expectedRevision:target.revision,...(options?{current:(stage:CreativePreparationStage)=>current(stage)}:{})}),
+        "artifact-delivery":(target)=>{
+          const artifact=this.store.projection.get().libraryArtifacts.find(value=>value.id===target.artifactId&&value.documentId===target.documentId);
+          if(!artifact)return false;const delivery=artifactDeliveryFor(this.store,artifact);
+          if(artifactDeliveryFactsProof(delivery)!==target.proof||delivery.revision!==target.revision||delivery.intent!==target.intent)return false;
+          const host=this.querySelector("forma-document-artifacts");return host?host.openArtifactById(target.artifactId,{
+            expectedRevision:target.revision,...(delivery.contentSha256?{expectedContentSha256:delivery.contentSha256}:{}),
+            intent:target.intent,...(options?{current:(stage:CreativePreparationStage)=>current(stage)}:{})}):false;
+        },
+        job:async(target)=>{const host=this.querySelector("forma-document-artifacts");if(!host)return false;
+          if(!options)return host.openJobById(target.jobId);
+          let opened=false;const result=await host.openJobById(target.jobId,{current:()=>current(opened?"editing":"opening")});
+          opened=result===true;return opened;},
+        compare:async(target)=>{this.store.patchUi({compareOpen:true,comparisonOutputIds:target.outputIds.join("|")});if(!options)return;
+          await this.updateComplete;return current("editing")&&this.store.ui.comparisonOutputIds===target.outputIds.join("|")
+            &&Boolean(this.querySelector<HTMLDialogElement>(".comparison-modal")?.open);},
+      });
+      if(!followed&&(!options||options.current("editing")))this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));
+      return followed;
+    }catch{
+      if(!options||options.current("editing"))this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));
+      return false;
+    }
+  }
+  async #openNextOutput(target:Extract<CreativeNextTarget,{kind:"output"}>,required?:(stage:CreativePreparationStage)=>boolean){
+    const current=()=>!required||required("opening");
+    if(!current()||!creativeNextTargetAvailable(target,this.#nextFacts(target)))return false;
     this.#nextOutputTarget=target;this.requestUpdate();await this.updateComplete;
-    if(!creativeNextTargetAvailable(target,nextActionFacts(this.store,this.store.projection.get().documentId)))return false;
+    if(!current()||!creativeNextTargetAvailable(target,this.#nextFacts(target)))return false;
     const viewer=this.querySelector<OutputVisual>(".next-output-viewer");
     if(!viewer||viewer.output?.id!==target.outputId)return false;
     await viewer.updateComplete;
-    if(!creativeNextTargetAvailable(target,nextActionFacts(this.store,this.store.projection.get().documentId))||viewer!==this.querySelector(".next-output-viewer")||viewer.output?.id!==target.outputId)return false;
-    viewer.openImageViewer();return true;
+    const exact=()=>creativeNextTargetAvailable(target,this.#nextFacts(target))&&viewer===this.querySelector(".next-output-viewer")&&viewer.output?.id===target.outputId;
+    if(!current()||!exact())return false;
+    if(!required){viewer.openImageViewer();return true;}
+    if(!viewer.openImageViewer(undefined,{current:()=>current()&&exact()}))return false;
+    await viewer.updateComplete;
+    return required("editing")&&exact()&&Boolean(viewer.querySelector<HTMLDialogElement>(`[aria-labelledby="generated-image-title-${target.outputId}"]`)?.open);
   }
-  async #prepareFormat(target:Extract<CreativeNextTarget,{kind:"configure"}>){
-    if(!creativeNextTargetAvailable(target,nextActionFacts(this.store,this.store.projection.get().documentId)))return false;
-    if(!target.medium){this.#formatTarget=target;this.#formatReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;this.#formatChoiceOpen=true;this.requestUpdate();return true;}
-    await this.#closeFormatChoice(false);this.#selectWorkbenchPane("result");await this.updateComplete;
-    if(!creativeNextTargetAvailable(target,nextActionFacts(this.store,this.store.projection.get().documentId)))return false;
-    this.querySelector<HTMLElement>('[data-workbench-pane="result"]')?.focus({preventScroll:true});
-    const current=(stage:CreativePreparationStage)=>creativePreparationTargetAvailable(target,nextActionFacts(this.store,this.store.projection.get().documentId),stage);
+  async #prepareFormat(target:Extract<CreativeNextTarget,{kind:"configure"}>,required?:(stage:CreativePreparationStage)=>boolean,focus?:OutputNavigationFocusLease){
+    const current=(stage:CreativePreparationStage)=>(!required||required(stage))&&creativePreparationTargetAvailable(target,this.#nextFacts(target),stage);
+    if(!current("opening"))return false;
+    if(!target.medium){
+      this.#formatTarget=target;this.#formatRequired=required??null;this.#formatReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+      this.#formatChoiceOpen=true;this.requestUpdate();
+      if(!required)return true;
+      await this.updateComplete;return current("editing")&&Boolean(this.querySelector<HTMLDialogElement>(".next-format-dialog")?.open);
+    }
+    await this.#closeFormatChoice(false);if(!current("opening"))return false;
+    this.#selectWorkbenchPane("result");await this.updateComplete;if(!current("opening"))return false;
+    const pane=this.querySelector<HTMLElement>('[data-workbench-pane="result"]');
+    if(focus){if(!pane||!focus.run(pane,()=>{if(!current("opening"))return false;pane.focus({preventScroll:true});return current("opening");}))return false;}
+    else pane?.focus({preventScroll:true});
     if(target.medium==="image"){const host=this.querySelector("forma-generation-actions");return host?await host.openConfiguration(current):false;}
     const host=this.querySelector("forma-document-artifacts");return host?await host.openRender(target.medium,target.documentId,{current}):false;
   }
   async #chooseFormat(medium:CreativeMedium){
-    const target=creativePreparationChoice(this.#formatTarget,medium,nextActionFacts(this.store,this.store.projection.get().documentId));
-    if(!target||!await this.#prepareFormat(target)){await this.#closeFormatChoice();this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));}
+    const original=this.#formatTarget,required=this.#formatRequired;
+    const target=creativePreparationChoice(original,medium,this.#nextFacts(original));
+    if(required&&!required("opening")){await this.#closeFormatChoice(false);return;}
+    const focus=required?captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>{
+      const dialog=element.closest("dialog");
+      return Boolean(target&&required("editing")&&this.contains(element)
+        &&(this.#workbenchPane==="result"&&element===this.querySelector<HTMLElement>('[data-workbench-pane="result"]')
+          ||dialog&&dialog.matches(target.medium==="image"?".generation-details-dialog":".document-artifact-create")));
+    }}):null;
+    try{
+      const current=required?(stage:CreativePreparationStage)=>required(stage)&&(stage==="editing"||Boolean(focus?.current())):undefined;
+      if(!target||!await this.#prepareFormat(target,current,focus??undefined)){
+        if(this.#formatTarget&&this.#formatTarget!==original)return;
+        await this.#closeFormatChoice();this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));
+      }
+    }finally{focus?.dispose();}
   }
   async #closeFormatChoice(restoreFocus=true){
     if(!this.#formatChoiceOpen&&!this.#formatTarget)return;
-    const opener=this.#formatReturnFocus;this.#formatReturnFocus=null;this.#formatTarget=null;this.#formatChoiceOpen=false;
+    const opener=this.#formatReturnFocus,required=this.#formatRequired;
+    const focus=restoreFocus&&required?captureOutputNavigationFocus(this.ownerDocument):null;
+    this.#formatReturnFocus=null;this.#formatTarget=null;this.#formatRequired=null;this.#formatChoiceOpen=false;
     this.querySelector<HTMLDialogElement>(".next-format-dialog")?.close();this.requestUpdate();await this.updateComplete;
-    if(restoreFocus){const fallback=this.querySelector<HTMLElement>(`[data-workbench-pane="${this.#workbenchPane}"]`);(opener?.isConnected&&opener.getClientRects().length?opener:fallback)?.focus({preventScroll:true});}
+    try{if(restoreFocus&&(!required||required("editing"))){
+      const fallback=this.querySelector<HTMLElement>(`[data-workbench-pane="${this.#workbenchPane}"]`),target=opener?.isConnected&&opener.getClientRects().length?opener:fallback;
+      if(target){if(focus)focus.run(target,()=>{target.focus({preventScroll:true});return true;});else target.focus({preventScroll:true});}
+    }}finally{focus?.dispose();}
   }
   #formatChoiceDialog(){return this.#formatChoiceOpen?html`<dialog class="modal workspace-modal next-format-dialog" aria-labelledby="next-format-title" closedby="any" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)void this.#closeFormatChoice();}} @cancel=${(event:Event)=>{event.preventDefault();void this.#closeFormatChoice();}} @close=${()=>void this.#closeFormatChoice()}><div class="modal-card"><h2 id="next-format-title">${this.i18n.t("next.exact.formats","Choose the next output")}</h2><p>${this.i18n.t("next.exact.configure-output.reason","Choose and review this document’s output settings. Nothing is generated yet.")}</p><div class="exact-next-actions">${(["image",...DOCUMENT_ARTIFACT_KINDS] as const).map((kind)=>html`<forma-ui-choice-card .compact=${true} .label=${kind==="image"?this.i18n.t("artifact.image.label","Image"):this.i18n.system(documentArtifactDefinition(kind).label)} .value=${kind} icon-name="arrow" @forma-action=${()=>void this.#chooseFormat(kind)}></forma-ui-choice-card>`)}</div><button type="button" class="button secondary" @click=${()=>void this.#closeFormatChoice()}>${this.i18n.t("action.close","Close")}</button></div></dialog>`:nothing;}
 
@@ -569,7 +774,7 @@ export class FormaWorkspace extends FormaElement {
   }
 
   override render() {
-    const p = this.store.projection.get();const history=generationHistoryItems(p.outputs);const selectedItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const output=selectedItem?.kind==="output"?selectedItem.output:undefined;const previewProgress=this.store.documentPreviewProgress(p.documentId);const canCompare=history.filter((item)=>item.kind==="output").length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const facts=p.blocks.map((block)=>({block_id:block.id,type:block.type,role:block.type,handle:block.handle,active:Number(block.properties.weight??.5)>0,properties:block.properties}));const relationships=p.blockRelations.map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties}));const combinedGroups=combinedContextGroups({facts,relationships});const nestedBlockIds=new Set(p.blockRelations.filter((relation)=>isContextCompositionRelation(relation.kind)).map((relation)=>relation.toBlockId));const rootBlocks=p.blocks.filter((block)=>!nestedBlockIds.has(block.id));const visibleBlocks=rootBlocks.length?rootBlocks:p.blocks;const documentInsight=contextGroups.size>=4?this.i18n.t("workspace.insight.complete","{count} independently editable decisions are working together. Each can still be refined or reused on its own.",{count:this.i18n.number(p.blocks.length)}):this.i18n.t("workspace.insight.partial","This document currently covers {covered} of {total} creative areas. Add another perspective only when it helps the work.",{covered:this.i18n.number(contextGroups.size),total:this.i18n.number(5)});const nextActions=creativeNextActions(nextActionFacts(this.store,p.documentId));
+    const p = this.store.projection.get();const history=generationHistoryItems(p.outputs);const selectedItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const output=selectedItem?.kind==="output"?selectedItem.output:undefined;const previewProgress=this.store.documentPreviewProgress(p.documentId);const canCompare=history.filter((item)=>item.kind==="output").length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const facts=p.blocks.map((block)=>({block_id:block.id,type:block.type,role:block.type,handle:block.handle,active:Number(block.properties.weight??.5)>0,properties:block.properties}));const relationships=p.blockRelations.map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties}));const combinedGroups=combinedContextGroups({facts,relationships});const nestedBlockIds=new Set(p.blockRelations.filter((relation)=>isContextCompositionRelation(relation.kind)).map((relation)=>relation.toBlockId));const rootBlocks=p.blocks.filter((block)=>!nestedBlockIds.has(block.id));const visibleBlocks=rootBlocks.length?rootBlocks:p.blocks;const documentInsight=contextGroups.size>=4?this.i18n.t("workspace.insight.complete","{count} independently editable decisions are working together. Each can still be refined or reused on its own.",{count:this.i18n.number(p.blocks.length)}):this.i18n.t("workspace.insight.partial","This document currently covers {covered} of {total} creative areas. Add another perspective only when it helps the work.",{covered:this.i18n.number(contextGroups.size),total:this.i18n.number(5)});const nextFacts=this.store.routeDataReady()?nextActionFacts(this.store,p.documentId,null,{lifecycle:true}):null;const nextActions=nextFacts?creativeNextActions(nextFacts):[];
     const projectContext=this.store.session.get()?.projectContext;
     const canAuthor=!projectContext||projectContext.permissions.includes("project.author");
     const canGenerate=!projectContext||projectContext.permissions.includes("project.output.request");
@@ -591,11 +796,11 @@ export class FormaWorkspace extends FormaElement {
     const artifactFirst=!previewProgress&&(failedTasks.length>0&&!selectedItem||p.artifacts.length>0&&(!selectedItem||(!this.store.ui.selectedOutputId&&p.artifacts[0]!.sequence>=selectedItem.sequence)));
     const artifactGallery=html`<forma-document-artifacts compact source="document" .documentId=${p.documentId} @document-artifact-open=${()=>{if(this.#workbenchPane==="write")this.#selectWorkbenchPane("result");}} @document-artifact-viewer-open=${()=>this.#setArtifactViewerOpen(true)} @document-artifact-close=${()=>this.#setArtifactViewerOpen(false)}></forma-document-artifacts>`;
     const visualResult=previewProgress?html`<div class="output-card primary streaming-output-card" data-forma-content="primary"><div class="output-art"><div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div></div><div class="output-info"><div><span class="output-quality draft">Draft arriving</span><b>The plan is becoming visible</b><small>The finished draft will appear here automatically.</small></div></div></div>`:selectedItem?.kind==="fan"?html`<article class="output-card primary prompt-fan-output-card" data-forma-content="primary"><forma-prompt-fan-visual .outputs=${selectedItem.outputs}></forma-prompt-fan-visual><div class="output-info"><div><span class=${`output-quality ${selectedItem.purpose==="ideate"?"draft":"full"}`}>${selectedItem.purpose==="ideate"?this.i18n.system("Draft fan"):this.i18n.system("Full-quality fan")}</span><b>One generation · four prompt processes</b><small>${selectedItem.complete} of 4 ready · ${selectedItem.standaloneCount} promoted to stand alone</small></div></div><forma-prompt-fan-review .fanId=${selectedItem.id}></forma-prompt-fan-review></article>`:output ? html`<forma-output-card data-forma-content="primary" .output=${output} .primary=${true}></forma-output-card>` : p.artifacts.length ? nothing : html`<div class="empty-output" data-forma-empty-state><span>${icon("image")}</span><h3>${p.blocks.length ? this.i18n.system("Context is ready") : this.i18n.system("A genuinely blank canvas")}</h3><p>${p.blocks.length ? this.i18n.system("Your creative decisions are ready to become an image or another finished result.") : this.i18n.system("Nothing has been added yet. Start only when you are ready.")}</p></div>`;
-    return html`${this.#formatChoiceDialog()}${this.#nextOutputTarget&&creativeNextTargetAvailable(this.#nextOutputTarget,nextActionFacts(this.store,p.documentId))?html`<forma-output-visual class="next-output-viewer" .viewerOnly=${true} .output=${p.libraryOutputs.find((candidate)=>candidate.id===this.#nextOutputTarget?.outputId)}></forma-output-visual>`:nothing}<section class="workspace-page" data-workbench="document">
+    return html`${this.#formatChoiceDialog()}${this.#nextOutputTarget&&creativeNextTargetAvailable(this.#nextOutputTarget,this.#nextFacts(this.#nextOutputTarget))?html`<forma-output-visual class="next-output-viewer" .viewerOnly=${true} .output=${p.libraryOutputs.find((candidate)=>candidate.id===this.#nextOutputTarget?.outputId)}></forma-output-visual>`:nothing}<section class="workspace-page" data-workbench="document">
       <forma-project-rail surface="studio" destination="/" @edit-project=${()=>this.#openProjectSettings()}></forma-project-rail>
       <div class="studio-main">
         <div class="studio-header-stack">
-          <div class="document-bar page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${p.projectName} / Document</span>${this.#documentName===null||!canAuthor?html`<div class="document-title-row"><h1>${p.documentTitle}</h1>${canAuthor?html`<button class="icon-button" aria-label=${this.i18n.system("Rename {documentTitle}", { documentTitle: p.documentTitle })} title="Rename document" @click=${()=>this.#beginDocumentRename(p.documentTitle)}>${icon("edit")}</button>`:nothing}</div>`:html`<form class="document-title-editor" @submit=${(event:SubmitEvent)=>this.#renameDocument(event,p.documentId,p.documentTitle)}><label class="sr-only" for="document-title-input">Document name</label><input id="document-title-input" maxlength="80" .value=${this.#documentName} @input=${(event:InputEvent)=>{this.#documentName=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button type="button" class="button ghost compact" @click=${()=>{this.#documentName=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary compact" ?disabled=${!this.#documentName.trim()}>Save name</button></form>`}</div><div class="document-actions page-header-actions">${canAuthor?html`<button class="icon-button labeled" ?disabled=${!this.store.canUndo()} title=${this.store.canUndo()?this.i18n.system("Undo the latest reversible authored change"):this.i18n.system("No reversible authored change")} @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button><button class="icon-button labeled" ?disabled=${!this.store.canRedo()} title=${this.store.canRedo()?this.i18n.system("Redo the last undone change"):this.i18n.system("Nothing has been undone in this session")} @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button>`:nothing}<button class="button secondary compact" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare the two latest outputs"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>${icon("compare")} Compare</button>${canAuthor?html`<button class="icon-button labeled danger-quiet" ?disabled=${p.documents.length<=1} title=${p.documents.length<=1?this.i18n.system("Create another document before removing the final document"):this.i18n.system("Remove this document")} @click=${this.#openDeleteDocument}>${icon("trash")}<span>Remove</span></button>`:nothing}</div></div>
+          <div class="document-bar page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${p.projectName} / Document</span>${this.#documentName===null||!canAuthor?html`<div class="document-title-row"><h1>${p.documentTitle}</h1>${canAuthor?html`<button class="icon-button" aria-label=${this.i18n.system("Rename {documentTitle}", { documentTitle: p.documentTitle })} title="Rename document" @click=${()=>this.#beginDocumentRename(p.documentTitle)}>${icon("edit")}</button>`:nothing}</div>`:html`<form class="document-title-editor" @submit=${(event:SubmitEvent)=>this.#renameDocument(event,p.documentId,p.documentTitle)}><label class="sr-only" for="document-title-input">Document name</label><input id="document-title-input" maxlength="80" .value=${this.#documentName} @input=${(event:InputEvent)=>{this.#documentName=(event.target as HTMLInputElement).value;this.#documentNameRevision++;this.requestUpdate();}}><button type="button" class="button ghost compact" @click=${()=>{this.#documentNameRevision++;this.#documentName=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary compact" ?disabled=${!this.#documentName.trim()}>Save name</button></form>`}</div><div class="document-actions page-header-actions">${canAuthor?html`<button class="icon-button labeled" ?disabled=${!this.store.canUndo()} title=${this.store.canUndo()?this.i18n.system("Undo the latest reversible authored change"):this.i18n.system("No reversible authored change")} @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button><button class="icon-button labeled" ?disabled=${!this.store.canRedo()} title=${this.store.canRedo()?this.i18n.system("Redo the last undone change"):this.i18n.system("Nothing has been undone in this session")} @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button>`:nothing}<button class="button secondary compact" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare the two latest outputs"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>${icon("compare")} Compare</button>${canAuthor?html`<button class="icon-button labeled danger-quiet" ?disabled=${p.documents.length<=1} title=${p.documents.length<=1?this.i18n.system("Create another document before removing the final document"):this.i18n.system("Remove this document")} @click=${this.#openDeleteDocument}>${icon("trash")}<span>Remove</span></button>`:nothing}</div></div>
           <forma-studio-mode-nav active="document"></forma-studio-mode-nav>
         </div>
         <div class="document-workbench-tasks" data-has-reviews=${String(documentReviews.length>0)} role="group" aria-label=${this.i18n.t("workbench.inspector","Document overview")} @keydown=${this.#navigateWorkbenchPanes}>
@@ -609,23 +814,23 @@ export class FormaWorkspace extends FormaElement {
             <forma-output-requirements .documentId=${p.documentId}></forma-output-requirements>
             ${notifications.length?html`<aside class="context-next-actions project-followup-actions" aria-label=${this.i18n.t("notifications.actions","Automatic project follow-up")}>${notifications.map((notification)=>html`<button type="button" @click=${()=>{void this.store.acknowledgeProjectNotification(notification.id);if(notification.artifactId){const artifact=this.querySelector("forma-document-artifacts") as HTMLElement&{openArtifactById?:(id:string)=>Promise<unknown>};void artifact?.openArtifactById?.(notification.artifactId);}}}><span><b>${this.i18n.t(`notifications.${notification.kind}.label`,this.i18n.system(notification.kind.replaceAll("_"," ")))}</b><small>${notification.kind==="changes_requested"&&notification.message?notification.message:this.i18n.t(`notifications.${notification.kind}.detail`,this.i18n.system(notification.message))}</small></span>${icon("arrow")}</button>`)}</aside>`:nothing}
             ${p.blocks.length&&health.issues.length?html`<aside class="context-next-actions context-health-actions" aria-label=${this.i18n.t("context.health.actions","Actionable context health")}>${health.issues.slice(0,3).map((issue)=>html`<button type="button" ?disabled=${!canAuthor} @click=${()=>this.#repairContext(issue)}><span><b>${this.i18n.t(`context.health.severity.${issue.severity}`,issue.severity)} · ${this.#healthIssueCopy(issue,"label")}</b><small>${this.#healthIssueCopy(issue,"detail")}</small></span>${icon("arrow")}</button>`)}</aside>`:nothing}
-            ${renderNextActionCards(nextActions,this.i18n,(action)=>void this.#followNextAction(action))}
+            ${renderLifecycleNextActionCards(nextActions,this.i18n,(action)=>void this.#followLifecycleAction(action),{projectName:p.projectName,documentTitle:p.documentTitle,scopeUnknown:nextFacts?.lifecycle?.output.scopeKnown!==true})}
             ${combinedGroups.length?html`<details class="document-combined-contexts"><summary><span>${icon("branch")} <b>${combinedGroups.length} Combined Context${combinedGroups.length===1?"":"s"}</b></span><small>Review how decisions travel together</small></summary><div>${combinedGroups.map((group)=>html`<article><header><span><b>${group.name}</b><small>${group.role.replaceAll("_"," ")} · ${group.application.replaceAll("_"," ")}</small></span><strong>${Math.round(group.relativity*100)}%</strong></header><p>Applies only to <b>${group.target}</b></p><small>${group.members.length} ordered decision${group.members.length===1?"":"s"}: ${group.members.map((member)=>member.label).join(" · ")}</small></article>`)}</div></details>`:nothing}
             ${canAuthor?this.#blockComposer():nothing}
             ${canAuthor&&this.#blockDraft===null&&p.blocks.length?html`<button class="add-block" @click=${this.#beginBlock}>${icon("plus")} Add context</button>`:nothing}
-            ${p.blocks.length?html`<div class="document-insight"><span>${icon("branch")}</span><p>${documentInsight}</p>${canAuthor?html`<button @click=${()=>this.store.setRoute("/studio/board")}>See spatially ${icon("arrow")}</button>`:nothing}</div>`:nothing}
+            ${p.blocks.length?html`<div class="document-insight"><span>${icon("branch")}</span><p>${documentInsight}</p>${canAuthor?html`<button @click=${()=>navigateInApp(this,navigation=>navigation.route("/studio/board"))}>See spatially ${icon("arrow")}</button>`:nothing}</div>`:nothing}
             <details class="context-provenance"><summary>How these decisions are preserved</summary><div class="compile-bridge"><span>${icon("branch")}</span><div><b>Traceable creative history</b><small>${p.latestCompile ? this.i18n.system("The latest result retains its exact creative inputs") : this.i18n.system("Every decision will remain available with its next result")}</small></div><button @click=${() => {this.#quickEditReferenceInspection=null;this.store.patchUi({ inspectorOpen:true,selectedEventId:"" });}}>Inspect</button></div></details>
           </section>
           <section id="document-results-panel" class="output-column" aria-labelledby="output-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane==="write"&&!this.#artifactViewerOpen}><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `${this.i18n.system("Images, stories, presentations & motion")} · ${this.i18n.t("artifact.audio.label", "Audio")}` : this.store.session.get()?.provider.plannerConfigured ? this.i18n.t("assistant.previewUnavailable") : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>this.#toggleWorkbenchInspector()}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
             ${canAuthor&&canGenerate?html`<section class="document-result-generation" aria-label=${this.i18n.system("Generation choices")}><forma-generation-actions source="document" .selected=${output??null} compact></forma-generation-actions></section>`:nothing}
-            ${this.#workbenchPane==="review"?html`<section class="document-workbench-review" aria-label=${this.i18n.t("workbench.reviewQueue","Review queue")}>${documentReviews.length?documentReviews.map((review)=>html`<article data-forma-content="primary"><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void this.store.openAssignedReview(review)}>${this.i18n.t("activity.openReview","Open assigned review")}</button></article>`):html`<p data-forma-empty-state>${this.i18n.t("workbench.noTasks","No active tasks")}</p>`}</section>`:nothing}
+            ${this.#workbenchPane==="review"?html`<section class="document-workbench-review" aria-label=${this.i18n.t("workbench.reviewQueue","Review queue")}>${documentReviews.length?documentReviews.map((review)=>html`<article data-forma-content="primary"><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void navigateInApp(this,navigation=>navigation.openAssignedReview(review))}>${this.i18n.t("activity.openReview","Open assigned review")}</button></article>`):html`<p data-forma-empty-state>${this.i18n.t("workbench.noTasks","No active tasks")}</p>`}</section>`:nothing}
             ${artifactFirst?nothing:visualResult}
             ${artifactGallery}
             ${artifactFirst?visualResult:nothing}
             ${history.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous generations">${history.slice(1,5).map((item:GenerationHistoryItem)=>{const id=item.kind==="fan"?`fan:${item.id}`:item.id;return html`<button class="mini-output ${this.store.ui.selectedOutputId===id?"selected":""}" aria-label=${item.kind==="fan"?this.i18n.system("Select fan generation"):this.i18n.system("Select {id}", { id: item.id })} aria-pressed=${this.store.ui.selectedOutputId===id} @click=${() => { this.store.patchUi({ selectedOutputId:id }); if (!projectContext&&item.kind==="output"&&this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:item.id}}); }}>${item.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${item.outputs} .compact=${true}></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${item.output} .compact=${true}></forma-output-visual>`}</button>`;})}</div>` : nothing}
             ${canAuthor?html`<form class="reference-picker-form" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label class="dropzone" @dragover=${(event:DragEvent)=>event.preventDefault()} @drop=${(event:DragEvent)=>{event.preventDefault();const file=event.dataTransfer?.files[0];if(file)this.#queueUpload(file);}}><input type="file" accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx" @change=${this.#queueUpload}><span>${icon("plus")}</span><b>${this.#uploading ? this.i18n.system("Uploading…") : this.i18n.t("audio.upload.choose","Choose an image, audio recording, or source document")}</b><small>${this.i18n.t("audio.reference.private","Private audio reference")} · ${this.i18n.system("Private, rights-confirmed evidence with a verifiable content hash.")}</small></label></form>`:nothing}
           </section>
-          <aside id="document-workbench-inspector" class="document-workbench-inspector" ?hidden=${!this.#workbenchInspectorOpen} aria-labelledby="document-workbench-inspector-heading" @keydown=${(event:KeyboardEvent)=>{if(this.#compactInspector&&event.key==="Escape"){event.preventDefault();this.#toggleWorkbenchInspector(false);}}}><header>${this.#compactInspector?html`<button type="button" class="icon-button document-inspector-close" aria-label=${this.i18n.t("workbench.hideInspector","Hide overview")} @click=${()=>this.#toggleWorkbenchInspector(false)}>${icon("close")}</button>`:nothing}<span class="eyebrow">${p.projectName}</span><h2 id="document-workbench-inspector-heading">${this.i18n.t("workbench.inspector","Document overview")}</h2><p dir="auto">${p.documentTitle}</p></header><section><h3>${this.i18n.t("workbench.contextHealth","Context health")}</h3><strong>${this.i18n.number(health.score)}/100</strong><small>${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}</small>${health.issues.length?html`<ul>${health.issues.slice(0,3).map((issue)=>html`<li>${this.#healthIssueCopy(issue,"label")}</li>`)}</ul>`:nothing}</section><section><h3>${this.i18n.t("workbench.activeTasks","Active tasks")}</h3>${documentTasks.length?html`<ul>${documentTasks.map((job)=>html`<li><span>${this.i18n.t(`activity.kind.${job.kind}`,job.kind)}</span><small>${this.i18n.t(`activity.status.${job.status}`,job.status)}</small></li>`)}</ul>`:html`<small>${this.i18n.t("workbench.noTasks","No active tasks")}</small>`}</section><section><h3>${this.i18n.t("workbench.reviewQueue","Review queue")}</h3>${documentReviews.length?html`<ul>${documentReviews.map((review)=>html`<li><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void this.store.openAssignedReview(review)}>${this.i18n.t("activity.openReview","Open assigned review")}</button></li>`)}</ul>`:html`<small>${this.i18n.number(0)}</small>`}</section><section><h3>${this.i18n.t("workbench.creativeResults","Creative results")}</h3><strong>${this.i18n.number(history.length+p.artifacts.length)}</strong><button type="button" class="button secondary compact" @click=${()=>this.store.setRoute("/deliver")}>${this.i18n.t("shell.navigation.deliver","Deliver")} ${icon("arrow")}</button></section><button type="button" class="button ghost compact" @click=${()=>this.store.setRoute("/activity")}>${this.i18n.t("shell.navigation.activity","Activity")} ${icon("arrow")}</button></aside>
+          <aside id="document-workbench-inspector" class="document-workbench-inspector" ?hidden=${!this.#workbenchInspectorOpen} aria-labelledby="document-workbench-inspector-heading" @keydown=${(event:KeyboardEvent)=>{if(this.#compactInspector&&event.key==="Escape"){event.preventDefault();this.#toggleWorkbenchInspector(false);}}}><header>${this.#compactInspector?html`<button type="button" class="icon-button document-inspector-close" aria-label=${this.i18n.t("workbench.hideInspector","Hide overview")} @click=${()=>this.#toggleWorkbenchInspector(false)}>${icon("close")}</button>`:nothing}<span class="eyebrow">${p.projectName}</span><h2 id="document-workbench-inspector-heading">${this.i18n.t("workbench.inspector","Document overview")}</h2><p dir="auto">${p.documentTitle}</p></header><section><h3>${this.i18n.t("workbench.contextHealth","Context health")}</h3><strong>${this.i18n.number(health.score)}/100</strong><small>${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}</small>${health.issues.length?html`<ul>${health.issues.slice(0,3).map((issue)=>html`<li>${this.#healthIssueCopy(issue,"label")}</li>`)}</ul>`:nothing}</section><section><h3>${this.i18n.t("workbench.activeTasks","Active tasks")}</h3>${documentTasks.length?html`<ul>${documentTasks.map((job)=>html`<li><span>${this.i18n.t(`activity.kind.${job.kind}`,job.kind)}</span><small>${this.i18n.t(`activity.status.${job.status}`,job.status)}</small></li>`)}</ul>`:html`<small>${this.i18n.t("workbench.noTasks","No active tasks")}</small>`}</section><section><h3>${this.i18n.t("workbench.reviewQueue","Review queue")}</h3>${documentReviews.length?html`<ul>${documentReviews.map((review)=>html`<li><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void navigateInApp(this,navigation=>navigation.openAssignedReview(review))}>${this.i18n.t("activity.openReview","Open assigned review")}</button></li>`)}</ul>`:html`<small>${this.i18n.number(0)}</small>`}</section><section><h3>${this.i18n.t("workbench.creativeResults","Creative results")}</h3><strong>${this.i18n.number(history.length+p.artifacts.length)}</strong><button type="button" class="button secondary compact" @click=${()=>navigateInApp(this,navigation=>navigation.route("/deliver"))}>${this.i18n.t("shell.navigation.deliver","Deliver")} ${icon("arrow")}</button></section><button type="button" class="button ghost compact" @click=${()=>navigateInApp(this,navigation=>navigation.route("/activity"))}>${this.i18n.t("shell.navigation.activity","Activity")} ${icon("arrow")}</button></aside>
         </div>
       </div>
       ${this.store.ui.inspectorOpen ? this.#inspector() : nothing}

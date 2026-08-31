@@ -6,6 +6,7 @@ import ts from "typescript";
 import { adaptiveSuggestionsForCanvas } from "../src/model/block-types.ts";
 import { adaptiveRequestKey, adaptiveJobMatchesRequest } from "../src/model/adaptive-request.ts";
 import { contextConsentAction, contextConsentFailure } from "../src/model/context-consent-state.ts";
+import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 import { DOCUMENT_JOB_KINDS, documentJobStopBudgetMessage, documentJobTerminal, documentJobHasNoBudgetHold, planningStopBudget } from "../src/model/document-jobs.ts";
 import { isDocumentArtifactKind } from "../src/model/document-artifacts.ts";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
@@ -13,6 +14,14 @@ import englishSystemMessages from "../src/components/design-system/locales/syste
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
+
+const {captureOutputNavigationFocus}=await(async()=>{
+  const imports=registerOutputSourceImports();
+  try{return await import("../src/components/output-navigation-focus.ts");}
+  finally{imports.deregister();}
+})();
+// This real import is consumed by the extracted Shell methods inside eval.
+assert.equal(typeof captureOutputNavigationFocus,"function");
 
 const {FORMA_DEFAULT_MESSAGES}=await(async()=>{
   const previousElement=globalThis.HTMLElement,previousRegistry=globalThis.customElements;
@@ -32,7 +41,7 @@ function member(syntax,className,name){const owner=syntax.statements.find(node=>
 const actualStore=["#immutableAdaptiveOriginal","#publicDocumentJobDetail","#adaptiveProposalOriginalMatches","#cacheDocumentJobDetail","#certifyAdaptiveProposalOriginal","subscribe","loadDocumentJobDetail","#hydrateDocumentJobGenerationReceipt","#systemNotice","stopDocumentJob","structureAdaptive","#finishPlanningConsent","closePlanningConsent","reviewPlanningJob","newPlanningPreview","previewPlanningConsent","approvePlanningConsent","#requestPlanningConsent","#canReadProjectJobs","#canRequestProjectOutputs","canPreparePlanning","notify","#snapshotIdentity","#authorizationScope","#activeAuthorizationScope","#scopeStillActive","#assertAuthorizationScope","captureAuthorizationScope","authorizationScopeActive","guardedFetch","#adaptiveIntentForJob","#syncAdaptiveSuggestionSets","#withdrawAdaptiveRead","#clearAdaptivePrivatePresentation","#observeAdaptivePlanningJob","#referencedPlanningJobIds","#trimDocumentJobDetails","#rememberPlanningRecovery","planningRecoveryEntries","dismissAdaptiveStructure","dismissAdaptiveSuggestion","adaptiveSuggestionSetsFor"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n");
 // The selected-member host must execute the real Store ownership/deadline
 // implementation; it is not a fallback or a newly invented authority port.
-const actualSourceOwnershipStore=["#sourcePausedJobs","#sourceOwnedJobResponse","#privateJobReference","#sourceGeneration","#sourceRetired","#sourceOwners","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceExpiryValid","#sourceDeadlineCurrent","#assertSourceOwnership"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n");
+const actualSourceOwnershipStore=["#projectContextCookieGeneration","#projectContextSessionGeneration","#sourcePausedJobs","#sourceOwnedJobResponse","#privateJobReference","#sourceGeneration","#sourceRetired","#sourceOwners","captureSourceOwnership","sourceOwnershipScopeActive","sourceOwnershipActive","#sourceExpiryValid","#sourceDeadlineCurrent","#assertSourceOwnership"].map(name=>member(storeSyntax,"FormaStore",name)).join("\n");
 const cell=value=>({get:()=>value,set:next=>{value=next;}});
 function deferred(){let resolve,reject;const promise=new Promise((accept,fail)=>{resolve=accept;reject=fail;});return{promise,resolve,reject};}
 const turn=()=>new Promise(setImmediate),document={documentElement:{lang:"en"}};
@@ -104,15 +113,38 @@ function planningShellMembers() {
   return owner.members.filter(node=>included.has(node.name?.getText(shellSyntax))).map(node=>node.getText(shellSyntax)).join("\n");
 }
 
+// Only the native add/remove surface consumed by the actual focus lease.
+// Existing explicit input ports keep their own listener delivery unchanged.
+// No focus/current implementation, activeElement write or render gate is added.
+function planningFocusDocument(ownerDocument){
+  if(typeof ownerDocument.addEventListener==="function"&&typeof ownerDocument.removeEventListener==="function")return ownerDocument;
+  assert.equal(typeof ownerDocument.addEventListener,"undefined");
+  assert.equal(typeof ownerDocument.removeEventListener,"undefined");
+  const listeners=new Map();
+  const capture=options=>typeof options==="boolean"?options:Boolean(options?.capture);
+  ownerDocument.addEventListener=(type,callback,options=false)=>{
+    const rows=listeners.get(type)??[],capturing=capture(options);
+    if(!rows.some(row=>row.callback===callback&&row.capture===capturing))rows.push({callback,capture:capturing});
+    listeners.set(type,rows);
+  };
+  ownerDocument.removeEventListener=(type,callback,options=false)=>{
+    const capturing=capture(options);
+    listeners.set(type,(listeners.get(type)??[]).filter(row=>row.callback!==callback||row.capture!==capturing));
+  };
+  return ownerDocument;
+}
+
 function render(f,focusPort={}){
   const handlers=[],nothing=Symbol("nothing"),value=item=>Array.isArray(item)?item.map(value).join(""):typeof item==="function"?`__handler_${handlers.push(item)-1}__`:item===nothing?"":String(item??"");
   const html=(parts,...values)=>parts.reduce((result,part,index)=>result+part+(index<values.length?value(values[index]):""),""),icon=()=>"",i18n={t:(key,_fallback,values)=>values?key+JSON.stringify(values):key,number:String};
   const functionNode=previewSyntax.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="consequentialPreview");assert.ok(functionNode);
   const consequentialPreview=eval(stripTypeScriptTypes("("+functionNode.getText(previewSyntax).replace(/^export\s+/,"")+")"));
   const dialog=focusPort.dialog??{open:true,close(){this.open=false;f.trace.push(["dialog-close"]);}},store=f.host;
+  const nativeDocument=planningFocusDocument(focusPort.ownerDocument??document);
   // Fixture request identifiers are plain ASCII; no browser selector behavior is claimed.
   const CSS={escape:value=>String(value)};
-  const Probe=eval(stripTypeScriptTypes(`(class {store=store;i18n=i18n;get isConnected(){return focusPort.connected!==false;}get updateComplete(){return focusPort.updateComplete??Promise.resolve(true);}get ownerDocument(){return focusPort.ownerDocument??document;}requestUpdate(){}querySelector(selector){if(selector===".planning-consent-dialog")return dialog;return focusPort.querySelector?.(selector)??null;}querySelectorAll(selector){return focusPort.querySelectorAll?.(selector)??[];}render(){return this.#planningConsent();}${planningShellMembers()}})`)),probe=new Probe(),markup=probe.render();
+  const Probe=eval(stripTypeScriptTypes(`(class {store=store;i18n=i18n;get isConnected(){return focusPort.connected!==false;}get updateComplete(){return focusPort.updateComplete??Promise.resolve(true);}get ownerDocument(){return nativeDocument;}requestUpdate(){}querySelector(selector){if(selector===".planning-consent-dialog")return dialog;return focusPort.querySelector?.(selector)??null;}querySelectorAll(selector){return focusPort.querySelectorAll?.(selector)??[];}render(){return this.#planningConsent();}${planningShellMembers()}})`)),probe=new Probe(),markup=probe.render();
+  assert.equal(probe.ownerDocument,nativeDocument,"The extracted Shell keeps the actual native focus document");
   const buttons=[...markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].map(([,attrs,label])=>({label,disabled:/\?disabled=true\b/.test(attrs),click:handlers[Number(attrs.match(/@click=__handler_(\d+)__/)?.[1])]}));
   return{markup,buttons,probe,nativeClose:handlers[Number(markup.match(/@close=__handler_(\d+)__/)?.[1])],cancel:handlers[Number(markup.match(/@cancel=__handler_(\d+)__/)?.[1])],keydown:handlers[Number(markup.match(/@keydown=__handler_(\d+)__/)?.[1])]};
 }
@@ -5154,3 +5186,92 @@ for(const locale of["fr","ja","ar"]){
     assertBootstrapFreeR18(state,{recovery:true});
   });
 }
+
+// Two finite native-close continuation witnesses. Reuse the original recovered
+// review, actual extracted Shell binding and pre-existing render gate. These
+// are not full-page, physical-history, Worker, provider or paid execution proof.
+function cPlanningCloseNativeInputR2(t,port) {
+  const ownerDocument=port.ownerDocument,listeners=new Map(),events=[];
+  const saved=new Map(["addEventListener","removeEventListener"].map(name=>[name,Object.getOwnPropertyDescriptor(ownerDocument,name)]));
+  assert.equal(typeof ownerDocument.addEventListener,"undefined");
+  assert.equal(typeof ownerDocument.removeEventListener,"undefined");
+  ownerDocument.addEventListener=(type,callback,options=false)=>{
+    const capture=typeof options==="boolean"?options:Boolean(options?.capture);
+    const entries=listeners.get(type)??[];
+    if(!entries.some(entry=>entry.callback===callback&&entry.capture===capture))entries.push({callback,capture});
+    listeners.set(type,entries);
+  };
+  ownerDocument.removeEventListener=(type,callback,options=false)=>{
+    const capture=typeof options==="boolean"?options:Boolean(options?.capture);
+    listeners.set(type,(listeners.get(type)??[]).filter(entry=>entry.callback!==callback||entry.capture!==capture));
+  };
+  t.after(()=>{for(const[name,descriptor]of saved){if(descriptor)Object.defineProperty(ownerDocument,name,descriptor);else delete ownerDocument[name];}listeners.clear();});
+  return{events,pointer(target){
+    assert.equal(target,port.querySelector("#main-content h1,main h1,[role='main'] h1"));
+    assert.equal(target.hasAttribute("tabindex"),false,"The actual current heading is not authored as a focus target");
+    assert.ok(target.isConnected&&!target.hidden&&!target.disabled&&target.getClientRects().length);
+    const event={type:"pointerdown",target,currentTarget:ownerDocument,button:0,
+      metaKey:false,ctrlKey:false,shiftKey:false,altKey:false,defaultPrevented:false,
+      preventDefault(){this.defaultPrevented=true;},stopPropagation(){},composedPath:()=>[target,ownerDocument]};
+    const callbacks=[...(listeners.get(event.type)??[])];
+    events.push({type:event.type,target:target.name,callbacks:callbacks.length});
+    for(const entry of callbacks)if((listeners.get(event.type)??[]).includes(entry)){
+      if(typeof entry.callback==="function")entry.callback.call(ownerDocument,event);else entry.callback.handleEvent(event);
+    }
+  }};
+}
+
+for(const boundary of["newer-pointer","route-aba"])test("planning focus C190: delayed native Close preserves "+boundary,{timeout:3000},async t=>{
+  const {f,saved}=await recoveredPlanningFocus(t),port=planningFocusPort(f,saved.executionId,{matching:false});
+  // The same pre-existing render completion remains the sole delayed port.
+  // Release it on any failure; do not replace updateComplete or a production method.
+  t.after(()=>port.complete());
+  const native=cPlanningCloseNativeInputR2(t,port),view=render(f,port),state=f.host.planningConsent.get();
+  const route=f.host.route.get(),authorization=f.host.captureAuthorizationScope(),source=f.host.captureSourceOwnership();
+  const calls=f.calls.length,history=structuredClone(f.host.events.get()),jobs=structuredClone(f.host.documentJobs.get());
+  assert.ok(state&&state.recoveryExecutionId===saved.executionId);
+  assert.ok(f.host.authorizationScopeActive(authorization)&&f.host.sourceOwnershipActive(source));
+  assert.equal(route,"/activity");assert.equal(port.heading.hasAttribute("tabindex"),false);
+  assert.equal(port.ownerDocument.activeElement,null);
+  assert.equal(typeof view.nativeClose,"function");
+
+  port.dialog.close();
+  assert.equal(f.host.planningConsent.get().id,state.id,"Native close changes open before its actual close notification");
+  view.nativeClose({type:"close",target:port.dialog,currentTarget:port.dialog});
+  assert.equal(port.dialog.open,false);assert.equal(f.host.planningConsent.get(),null);
+  await turn();
+  assert.deepEqual(port.focusCalls,[],"The existing original continuation is still waiting for its declared render gate");
+  assert.equal(port.ownerDocument.activeElement,null);
+
+  const routeWrites=[];
+  if(boundary==="newer-pointer"){
+    // A deliberate pointer on an already present, nonfocusable background
+    // heading need not choose a different activeElement to retire old intent.
+    native.pointer(port.heading);
+    assert.deepEqual(native.events.map(event=>[event.type,event.target]),[["pointerdown","current-heading"]]);
+    assert.equal(port.ownerDocument.activeElement,null,"The native input port never remaps focus");
+  }else{
+    // The existing fixture exposes route state plus the actual Store notifier.
+    // This is a finite owned-state ABA, not browser Back/Forward evidence.
+    for(const path of["/document/doc-b/other-work",route]){
+      f.host.route.set(path);routeWrites.push(f.host.route.get());f.host.notify();
+    }
+    assert.deepEqual(routeWrites,["/document/doc-b/other-work","/activity"]);
+    assert.equal(f.host.route.get(),route);
+  }
+
+  await port.complete();
+  assert.equal(f.host.route.get(),route);assert.equal(f.host.planningConsent.get(),null);
+  assert.ok(f.host.authorizationScopeActive(authorization)&&f.host.sourceOwnershipActive(source));
+  assert.equal(f.calls.length,calls,"Closing or local interruption cannot request another read, quote, execute or provider operation");
+  assertOnlyOriginalPlanningReads(f,saved);
+  assert.deepEqual(f.host.events.get(),history);assert.deepEqual(f.host.documentJobs.get(),jobs);
+  assert.equal(f.trace.filter(entry=>entry[0]==="dialog-close").length,1);
+  t.diagnostic("C190_PLANNING_CLOSE_CONTINUATION "+JSON.stringify({boundary,native:native.events,routeWrites,
+    sameRoute:f.host.route.get()===route,reviewClosed:f.host.planningConsent.get()===null,
+    focusCalls:port.focusCalls.map(call=>({name:call.name,rendered:call.rendered,dialogOpen:call.dialogOpen})),
+    requestsSinceClose:f.calls.length-calls,finiteSelectedMethodHost:true,physicalOrWorkerProof:false}));
+  assert.deepEqual(port.focusCalls,[],"An old Close continuation must not focus the heading after a newer interaction or route lifetime");
+  assert.equal(port.ownerDocument.activeElement,null);
+  assert.equal(port.heading.hasAttribute("tabindex"),false,"A retired continuation must not alter the fallback heading");
+});

@@ -10,6 +10,7 @@ import { setTimeout as deadline, clearTimeout as clearDeadline } from "node:time
 import { createCalmFullPage, calmFullPageNativePorts as ports } from "./helpers/calm-full-page-fixture.mjs";
 import { createSceneStoreHost, sceneDeferred } from "./helpers/scene-cost-store-host.mjs";
 import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
+import { installImageFormatNativeLifetime } from "./helpers/image-format-native-lifetime.mjs";
 import { withDocumentInRoute, withProjectTaskDocumentInRoute } from "../src/model/routes.ts";
 const { handleDocumentJobs } = await import("../worker/document-jobs-api.ts");
 
@@ -1054,3 +1055,183 @@ for (const variant of ["same-question", "modified-B"]) {
       } finally { x.release.resolve(); }
     });
 }
+
+// Ordinary Chat's own send, not fallback Ask: one real held 202, then the same
+// queued original. The pre-existing handler omits background execution context;
+// its foreground /run port is fenced. No provider response is manufactured.
+test("C ordinary Chat command departure / pending send then accepted background job", { timeout: 45_000, concurrency: false }, async t => {
+  const x = await mountedFallback(t, "en"), { f, h, native, worker } = x;
+  const chatHref = withDocumentInRoute("/studio/chat", worker.documentId, h.store.projection.get().documentTitle);
+  const link = f.find("a", node => node.owner.tag === "forma-studio-mode-nav" && node.attributes.href === chatHref);
+  native.emit("pointerdown", link.port); native.focus(link.port);
+  await f.act(link, "click", { button: 0 }); await f.settle();
+  const owners = f.components().filter(component => component.tag === "forma-chat-studio");
+  assert.equal(owners.length, 1); const owner = owners[0];
+  const Constructor = f.modules.get("src/components/forma-chat-studio.ts")?.FormaChatStudio;
+  assert.equal(typeof Constructor, "function"); assert.ok(owner instanceof Constructor && owner.isConnected && owner.store === h.store);
+  assert.equal(h.store.route.get(), chatHref);
+  assert.equal(h.store.projection.get().documentId, worker.documentId);
+  assert.equal(h.store.projection.get().projectId, worker.projectId);
+  assert.ok(h.store.sourceOwnershipActive(x.source));
+  // This actual sibling keeps its same-template form through palette updates.
+  // Reuse the existing finite native lifetime/elements port, not a clean guard.
+  installImageFormatNativeLifetime({ f, h, after: callback => t.after(callback) });
+  // Drain the Chat route's already-scheduled read work before the send/command
+  // observation. The held admission itself is never released by this setup.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await f.settle();
+    for (const [id, timer] of [...h.timers]) if (timer.delay === 16) { h.timers.delete(id); timer.callback(0); }
+    await new Promise(setImmediate);
+  }
+  await f.settle(); await worker.drainBackground();
+  assert.equal([...h.timers.values()].filter(timer => timer.delay === 16).length, 0);
+  const setupRequests = h.requests.length; await f.settle(); await new Promise(setImmediate);
+  assert.equal(h.requests.length, setupRequests, "Setup reads settle before the ordinary Chat gesture");
+  const clientReceipts = worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all();
+  const controls = (raw, disabled) => {
+    const tree = f.tree(), forms = tree.visible("form").filter(node => node.owner === owner && classed(node, "chat-composer"));
+    const fields = tree.visible("textarea").filter(node => node.attributes.id === "creative-chat-message"
+      && node.owner.tag === "forma-ui-conversation-composer" && node.owner.parentElement === owner);
+    assert.equal(forms.length, 1); assert.equal(fields.length, 1);
+    const field = fields[0], form = forms[0], composer = field.owner;
+    const Composer = f.modules.get("src/components/design-system/conversation-composer.ts")?.FormaUiConversationComposer;
+    assert.equal(typeof Composer, "function"); assert.ok(composer instanceof Composer);
+    assert.ok(owner.isConnected && field.port?.isConnected && form.port?.isConnected && inside(field, form));
+    assert.equal(composer.value, raw); assert.equal(field.properties.value, raw); assert.equal(field.port.value, raw);
+    assert.equal(field.port.matches(":disabled"), disabled);
+    return { field, form, tree };
+  };
+  const initial = controls("", false).field;
+  native.emit("pointerdown", initial.port); native.focus(initial.port);
+  initial.port.value = PROMPT; await f.act(initial, "input"); controls(PROMPT, false);
+  const preview = f.find("input", node => node.owner === owner && node.attributes.type === "checkbox");
+  assert.equal(preview.port.matches(":disabled"), false);
+  preview.port.checked = false; await f.act(preview, "change");
+  assert.equal(f.find("input", node => node.owner === owner && node.attributes.type === "checkbox").port.checked, false);
+  const submit = controls(PROMPT, false);
+  const buttons = submit.tree.visible("button").filter(node => node.owner.tag === "forma-ui-conversation-composer"
+    && node.owner.parentElement === owner && node.attributes.type === "submit" && inside(node, submit.form));
+  assert.equal(buttons.length, 1); assert.equal(buttons[0].port.matches(":disabled"), false);
+  native.emit("pointerdown", buttons[0].port); native.focus(buttons[0].port);
+  const pending = f.act(submit.form, "submit", { submitter: buttons[0].port });
+  pending.catch(() => {});
+  // Diagnostic only: retain the exact original public operations and returned
+  // departure records. Do not substitute a current/blocked/focus predicate.
+  const feedbackCalls = [], departures = [], commandStages = [];
+  const originalToast = h.store.toast, originalDeparture = owner.captureCommandDeparture;
+  t.mock.method(h.store, "toast", function (...args) {
+    const record = { message: args[0], before: this.ui.toast }; feedbackCalls.push(record);
+    const result = originalToast.apply(this, args); record.after = this.ui.toast; return result;
+  });
+  t.mock.method(owner, "captureCommandDeparture", function (...args) {
+    const departure = originalDeparture.apply(this, args); departures.push(departure); return departure;
+  });
+  const siblingDepartures = [];
+  const siblingOrigins = f.components().filter(candidate => candidate !== owner && typeof candidate.captureCommandDeparture === "function");
+  for (const element of siblingOrigins) {
+    const capture = element.captureCommandDeparture;
+    t.mock.method(element, "captureCommandDeparture", function (...args) {
+      const departure = capture.apply(this, args);
+      const form = this.tag === "forma-image-format-editor" ? this.querySelector(".image-format-form") : null;
+      siblingDepartures.push({ element: this, departure, form }); return departure;
+    });
+  }
+  const diagnosticValue = read => { try { return { value: read() }; } catch (error) { return { error: String(error) }; } };
+  const nativeIdentity = node => node ? { tag: node.tag ?? node.tagName,
+    id: node.getAttribute?.("id") ?? node.attributes?.id ?? null,
+    class: node.getAttribute?.("class") ?? node.attributes?.class ?? null,
+    connected: node.isConnected, currentPort: f.renderer.nodes.includes(node) } : null;
+  const commandStage = stage => commandStages.push({ stage, route: h.store.route.get(),
+    toast: h.store.ui.toast, commandOpen: h.store.ui.commandOpen,
+    originalSourceActive: h.store.sourceOwnershipActive(x.source),
+    authorityKey: h.store.captureAuthorizationScope()?.key ?? null,
+    sameChat: owner.isConnected && owner.store === h.store,
+    queriedChat: [...f.host.querySelectorAll("forma-chat-studio")].map(candidate => ({ same: candidate === owner, connected: candidate.isConnected, sameStore: candidate.store === h.store })),
+    actualOrigins: f.components().filter(candidate => typeof candidate.captureCommandDeparture === "function").map(candidate => candidate.tag),
+    sameFocusDocument: owner.ownerDocument === native.document && f.host.ownerDocument === native.document,
+    active: nativeIdentity(native.document.activeElement),
+    actualDepartures: departures.map(departure => ({ sameElement: departure.element === owner,
+      current: departure.current(), blocked: departure.blocked(), reason: departure.reason() })),
+    siblingDepartures: siblingDepartures.map(({ element, departure, form }) => {
+      const currentForm = element.tag === "forma-image-format-editor" ? element.querySelector(".image-format-form") : null;
+      return { tag: element.tag, sameElement: departure.element === element, connected: element.isConnected,
+        sameStore: element.store === h.store, current: diagnosticValue(() => departure.current()),
+        blocked: diagnosticValue(() => departure.blocked()), reason: departure.reason(),
+        capturedForm: nativeIdentity(form), currentForm: nativeIdentity(currentForm), sameForm: currentForm === form,
+        namedItemPort: typeof currentForm?.elements?.namedItem };
+    }),
+    queuedToastExpiryTimers: [...h.timers.values()].filter(timer => timer.delay === 2800).length });
+  const libraryCommand = async () => {
+    const stageStart = commandStages.length, feedbackStart = feedbackCalls.length, focusStart = native.nativeFocus.length;
+    commandStage("before-open");
+    const trigger = f.find("button", node => node.owner === f.host && classed(node, "command-trigger"));
+    native.emit("pointerdown", trigger.port); native.focus(trigger.port); await f.act(trigger);
+    commandStage("after-open");
+    const query = f.find("input", node => node.owner === f.host && node.attributes.id === "command-search");
+    const label = f.i18n.t("command.openLibrary", "Open reusable library");
+    query.port.value = label; await f.act(query, "input");
+    const rows = f.tree().visible("button").filter(node => node.owner === f.host && node.attributes.role === "option"
+      && node.children.some(child => typeof child !== "string" && child.tag === "span" && child.text === label));
+    assert.equal(rows.length, 1, "One exact existing Library command, not a first-match fallback");
+    assert.ok(rows[0].port?.isConnected && f.renderer.nodes.includes(rows[0].port));
+    assert.equal(rows[0].port.matches(":disabled"), false);
+    native.emit("pointerdown", rows[0].port); native.focus(rows[0].port);
+    commandStage("before-choice");
+    await f.act(rows[0], "click", { button: 0 }); await f.settle();
+    commandStage("after-choice");
+    t.diagnostic("C_ORDINARY_CHAT_COMMAND_FEEDBACK " + JSON.stringify({ stages: commandStages.slice(stageStart),
+      feedback: feedbackCalls.slice(feedbackStart), focus: native.nativeFocus.slice(focusStart).map(value => ({
+        target: nativeIdentity(value.node), previous: nativeIdentity(value.previous), previousConnected: value.previousConnected })),
+      original202Held: x.delivered === 0, diagnosticOnly: true }));
+    assert.equal(h.store.ui.commandOpen, false);
+  };
+  try {
+    await join(x.entered.promise, "ordinary Chat's actual original held 202"); await f.settle();
+    assert.equal(x.admissions.length, 1); assert.equal(x.delivered, 0);
+    const original = x.admissions[0];
+    assert.equal(original.body.accepted, true); assert.equal(original.retained.row.status, "queued");
+    assert.equal(original.retained.row.attempt_count, 0);
+    controls(PROMPT, true);
+    assert.equal(h.store.documentJobs.get().some(job => job.jobId === original.body.job.jobId), false,
+      "The actual server admission is not yet acknowledged by Store");
+    const beforeRequests = h.requests.length, source = h.store.captureSourceOwnership(), authority = h.store.captureAuthorizationScope();
+    assert.ok(h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authority));
+    await libraryCommand();
+    t.diagnostic("C_ORDINARY_CHAT_PENDING_COMMAND " + JSON.stringify({ original202Held: x.delivered === 0,
+      sameRoute: h.store.route.get() === chatHref, originalChatConnected: owner.isConnected,
+      actualQueuedOriginal: true, independentlyIsolatedSendingLatch: false, externalAttempts: x.externalAttempts }));
+    assert.equal(h.store.route.get(), chatHref, "Pending local send and its visible raw input retain the ordinary Chat owner");
+    controls(PROMPT, true);
+    assert.equal(h.requests.length, beforeRequests, "Pending departure refusal starts no destination request");
+    assert.equal(h.store.ui.toast, f.i18n.t("next.lifecycle.currentWorkOpen"));
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+    x.release.resolve(); await pending; await f.settle();
+    assert.equal(x.delivered, 1);
+    assert.deepEqual(originalAdmission(worker, original.body.job.jobId), original.retained);
+    assert.equal(h.store.documentJobActive("chat"), true);
+    controls("", true); // Disabled by the genuine queued job, no longer by raw text or pending local send.
+    const sourceAfter = h.store.captureSourceOwnership(), authorityAfter = h.store.captureAuthorizationScope();
+    assert.ok(h.store.sourceOwnershipActive(sourceAfter) && h.store.authorizationScopeActive(authorityAfter));
+    await libraryCommand();
+    assert.equal(h.store.route.get(), withProjectTaskDocumentInRoute("/library", worker.documentId));
+    assert.equal(owner.isConnected, false);
+    const libraries = f.components().filter(component => component.tag === "forma-library");
+    assert.equal(libraries.length, 1); assert.ok(libraries[0].isConnected && libraries[0].store === h.store);
+    assert.equal(h.store.projection.get().documentId, worker.documentId);
+    assert.equal(h.store.projection.get().projectId, worker.projectId);
+    assert.ok(h.store.sourceOwnershipActive(sourceAfter) && h.store.authorizationScopeActive(authorityAfter));
+    assert.deepEqual(originalAdmission(worker, original.body.job.jobId), original.retained);
+    t.diagnostic("C_ORDINARY_CHAT_BACKGROUND_DEPARTURE " + JSON.stringify({ sameOriginalJob: original.body.job.jobId,
+      accepted202Deliveries: x.delivered, rawClearedByActualSuccess: true, queuedAttemptCount: 0,
+      exactLibraryArrived: true, providerExecution: false }));
+  } finally {
+    x.release.resolve(); await pending; await f.settle(); await worker.drainBackground();
+    assert.equal(x.admissions.length, 1); assert.equal(x.delivered, 1);
+    assert.deepEqual(originalAdmission(worker, x.admissions[0].body.job.jobId), x.admissions[0].retained);
+    assert.deepEqual(money(worker), x.beforeMoney);
+    assert.deepEqual(worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(), clientReceipts);
+    assert.deepEqual(worker.sqlite.prepare("SELECT * FROM events ORDER BY sequence").all(), x.beforeEvents);
+    assert.equal(h.requests.filter(request => request.url === "/api/document-jobs" && request.init.method === "POST").length, 1);
+    assert.equal(x.externalAttempts, 0);
+  }
+});

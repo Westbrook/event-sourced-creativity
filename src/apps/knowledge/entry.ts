@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { FormaPresentationalElement } from "../../components/presentational-element";
 import type { FormaLocaleController } from "../../components/design-system/localization";
 import { platformSession } from "../../platform/session-controller";
+import type { FormaPlatformShell } from "../../components/forma-platform-shell";
 
 let renderLandingPageCatalog: ((i18n: FormaLocaleController) => ReturnType<typeof html>) | undefined;
 
@@ -19,12 +20,22 @@ export function loadKnowledgeRoute(path: string): Promise<unknown> {
 }
 
 export class FormaKnowledgeApplication extends FormaPresentationalElement {
+  #openFocal(event: MouseEvent) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.currentTarget as HTMLAnchorElement;
+    const path = "/knowledge/focal-points", target = anchor.getAttribute("target");
+    if (anchor.getAttribute("href") !== path || anchor.hasAttribute("download") || target && target.toLowerCase() !== "_self") return;
+    const host = this.closest<FormaPlatformShell>("forma-platform-shell");
+    if (!host) return;
+    event.preventDefault();
+    host.navigateFrom(this, path);
+  }
   override render() {
     if (location.pathname.replace(/\/+$/, "") === "/knowledge/landing-pages") return renderLandingPageCatalog?.(this.i18n) ?? nothing;
     if(location.pathname.endsWith("/focal-points"))return html`<forma-focal-point-lab></forma-focal-point-lab>`;
     const view=location.pathname.startsWith("/knowledge/patterns")||location.pathname.endsWith("/focal-points")?"patterns":location.pathname.startsWith("/knowledge/guidance")?"guidance":"components";
     const focalAuthorized=view==="patterns"&&platformSession.get()?.capabilities.includes("design.catalog.read");
-    return html`<forma-design-system-lab .view=${view}></forma-design-system-lab>${focalAuthorized?html`<section class="page-pad" aria-labelledby="knowledge-focal-link-heading"><h2 id="knowledge-focal-link-heading">${this.i18n.t("knowledge.focal.heading","Focal-point comparison")}</h2><p>${this.i18n.t("knowledge.focal.description","Compare local image calculations using approved fictional examples only; creator projects and private media are never loaded.")}</p><a class="button secondary" href="/knowledge/focal-points">${this.i18n.t("knowledge.focal.open","Compare focal-point treatments")}</a></section>`:nothing}`;
+    return html`<forma-design-system-lab .view=${view}></forma-design-system-lab>${focalAuthorized?html`<section class="page-pad" aria-labelledby="knowledge-focal-link-heading"><h2 id="knowledge-focal-link-heading">${this.i18n.t("knowledge.focal.heading","Focal-point comparison")}</h2><p>${this.i18n.t("knowledge.focal.description","Compare local image calculations using approved fictional examples only; creator projects and private media are never loaded.")}</p><a class="button secondary" href="/knowledge/focal-points" @click=${this.#openFocal}>${this.i18n.t("knowledge.focal.open","Compare focal-point treatments")}</a></section>`:nothing}`;
   }
 }
 

@@ -191,10 +191,13 @@ test("keeps the account menu inside the dynamic viewport with accessible interna
   assert.match(design,/\.account-popover\s*\{[^}]*box-sizing:\s*border-box;[^}]*inline-size:\s*min\(22rem,[^;]*100dvw[^;]*safe-area-inset-left[^;]*safe-area-inset-right[^;]*\);[^}]*max-block-size:\s*calc\(100dvh\s*-\s*var\(--account-popover-top,\s*52px\)\s*-\s*max\([^;]*safe-area-inset-bottom[^;]*\)\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;[^}]*scrollbar-gutter:\s*auto;/s);
   assert.match(design,/\.account-popover bdi\s*\{\s*overflow-wrap:\s*anywhere/);
   assert.match(shell,/popovertarget="account-popover" aria-controls="account-popover" aria-expanded=\$\{this\.store\.ui\.accountOpen\}/);
-  assert.match(shell,/<div id="account-popover" class="account-popover" popover="auto" @toggle=\$\{this\.#accountToggle\}>/);
+  assert.match(shell,/<div id="account-popover" class="account-popover" popover="auto" @beforetoggle=\$\{this\.#accountBeforeToggle\} @toggle=\$\{this\.#accountToggle\}>/);
   assert.match(shell,/#accountToggle = \(event: ToggleEvent\) => \{[\s\S]*?event\.newState === "open"[\s\S]*?this\.store\.patchUi\(\{ accountOpen: open \}\)/);
   assert.match(shell,/if\(!this\.store\.ui\.accountOpen&&accountPopover\?\.matches\(":popover-open"\)\)accountPopover\.hidePopover\(\)/);
-  assert.match(shell,/const returnAccountFocus=this\.store\.ui\.accountOpen[\s\S]*?if\(returnAccountFocus\)queueMicrotask\(\(\)=>this\.querySelector<HTMLButtonElement>\("\.avatar"\)\?\.focus\(\)\)/);
+  assert.match(shell,/this\.#accountReturnFocus=Boolean\(this\.querySelector<HTMLElement>\("#account-popover"\)\?\.matches\(":popover-open"\)\)/);
+  assert.match(shell,/#accountBeforeToggle[\s\S]*?this\.#captureShellFocus\([\s\S]*?panel\.isConnected&&panel===this\.querySelector\("#account-popover"\)/);
+  assert.match(shell,/:this\.#accountReturnFocus\?this\.querySelector<HTMLButtonElement>\("\.avatar"\):null/);
+  assert.match(shell,/if\(target\)focus\.owner\.focus\.run\(target,\(\)=>\{target\.focus\(\);return true;\}\)/);
 });
 
 test("keeps document sharing reachable through the auto-dismissing account menu on narrow screens",async()=>{

@@ -101,6 +101,27 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   overscroll-behavior: contain;
 }
 
+.forma-assistant-conversation {
+  display: grid;
+  align-content: start;
+  gap: inherit;
+}
+
+.forma-assistant-continuation {
+  min-inline-size: 0;
+}
+
+.forma-assistant-continuation > fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.forma-assistant-continuation .exact-next-actions {
+  margin-block: .5rem 0;
+}
+
 .forma-assistant-message {
   max-inline-size: 95%;
   margin: 0;

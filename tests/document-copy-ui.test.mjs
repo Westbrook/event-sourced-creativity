@@ -18,9 +18,9 @@ const loader = registerHooks({
   },
 });
 const [copyModel, { buildDocumentDuplicationPlan, normalizeDocumentDuplicationTitle, documentDuplicationFolder },
-  { foldEvents }, { renderAuthoringPreview }, { withDocumentInRoute, libraryBlockEditorRoute }, { html, nothing }] = await Promise.all([
+  { foldEvents }, { renderAuthoringPreview }, { withDocumentInRoute, libraryBlockEditorRoute }, { html, nothing }, { captureOutputNavigationFocus }] = await Promise.all([
   import("../src/model/document-copy-review.ts"), import("../src/model/document-duplication.ts"),
-  import("../src/model/events.ts"), import("../src/components/authoring-preview.ts"), import("../src/model/routes.ts"), import("lit"),
+  import("../src/model/events.ts"), import("../src/components/authoring-preview.ts"), import("../src/model/routes.ts"), import("lit"), import("../src/components/output-navigation-focus.ts"),
 ]).finally(() => loader.deregister());
 const { documentCopyKey, documentCopyIntent, documentCopySourceRevision, documentCopyRequest,
   documentCopyOutcome, documentCopyDestination, documentCopyIssueMessage, documentCopyTargetValid } = copyModel;
@@ -180,19 +180,23 @@ function fixture(overrides = {}) {
     storeMethods + "\n})"))(...Object.values(storePorts));
   const store = new Store(), focus = [];
   installSourceOwnershipPort(store);
-  class HTMLElement { isConnected = true; focus() { focus.push(this); } }
+  const focusListeners = new Map();
+  class HTMLElement { isConnected = true; focus() { focus.push(this); document.activeElement = this;
+    for (const listener of [...(focusListeners.get("focusin") ?? [])]) listener({ type: "focusin", target: this, currentTarget: document }); } }
   const opener = new HTMLElement(), heading = new HTMLElement(), input = new HTMLElement();
-  const document = { activeElement: opener };
+  const document = { activeElement: opener,
+    addEventListener(type, listener) { const listeners = focusListeners.get(type) ?? new Set(); listeners.add(listener); focusListeners.set(type, listeners); },
+    removeEventListener(type, listener) { focusListeners.get(type)?.delete(listener); } };
   const dialog = { open: false, close() { this.open = false; } };
   const ensureModalDialog = value => { value.open = true; };
   const i18n = { t: (key, fallback = key, values = {}) => Object.entries(values).reduce((text, [name, value]) => text.replaceAll("{" + name + "}", String(value)), fallback),
     number: value => String(value), system: value => value };
   function createHost() {
-    const ports = { store, document, HTMLElement, ensureModalDialog, i18n, html, nothing, icon: () => "",
+    const ports = { store, document, HTMLElement, ensureModalDialog, captureOutputNavigationFocus, i18n, html, nothing, icon: () => "",
       normalizeDocumentDuplicationTitle, documentDuplicationFolder, documentCopyDestination, documentCopyIssueMessage,
       renderAuthoringPreview, withDocumentInRoute, libraryBlockEditorRoute, canvasRoute: () => "", formaActivityAttention, scopedFormaActivity, dialog, heading, input };
     const Host = Function(...Object.keys(ports), "return " + stripTypeScriptTypes("(class extends Object {\n" +
-      hostFields + "\nstore=store; i18n=i18n; isConnected=true; requestUpdate(){} get updateComplete(){return Promise.resolve();}\n" +
+      hostFields + "\nstore=store; i18n=i18n; ownerDocument=document; isConnected=true; requestUpdate(){} get updateComplete(){return Promise.resolve();}\n" +
       "querySelectorAll(){return this._newDocument?[dialog]:[];} querySelector(selector){return selector.includes(' input')?input:selector.includes('dialog')&&!selector.includes('h2')?dialog:heading;}\n" +
       hostUpdated + "\n" + hostMethods + "\n" + hostRender + "\n})"))(...Object.values(ports));
     return new Host();

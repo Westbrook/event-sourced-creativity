@@ -125,6 +125,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   #mediumChange: { deliverableId: string; kind: OutputMediaKind } | null = null;
   #conflictReviewedAt = "";
   #interpretationReviewedAt = -1;
+  get hasOpenDraft() { return this.#editing || this.#waiting || Boolean(this.#session?.dirty); }
 
   #t(key: OutputRequirementMessageKey, values: Record<string, string | number> = {}) {
     const family = formaLocaleFamily(this.i18n.locale) as keyof typeof FORMA_OUTPUT_REQUIREMENT_MESSAGES;

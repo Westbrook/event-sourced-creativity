@@ -68,6 +68,7 @@ export async function createSceneCostFixture(count=9,medium="visual",{depth=fals
     async run(jobId=requestId){const response=await request("/api/document-jobs/"+encodeURIComponent(jobId)+"/run",json({}));return{response,body:await response.json()};},
     setScopedHeaders(headers){scopedHeaders={...headers};},
     counts(){return Object.fromEntries(["document_jobs","budget_reservations","cost_budget_reservations","cost_budget_counters"].map(table=>[table,database.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));},
+    async drainBackground(){while(background.length)await Promise.all(background.splice(0));},
     close(){depthProof?.assertVerified();sceneCostFixtureProof.fixtures++;for(const proof of depthProof?.records??[])sceneCostFixtureProof.nativeQueries.add(proof.sql);sceneCostFixtureProof.maximumBindings=Math.max(sceneCostFixtureProof.maximumBindings,...database.controls.bindings);depthProof?.restore();database.sqlite.close();}
   };
 }

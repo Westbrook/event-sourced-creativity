@@ -63,7 +63,7 @@ class ElementPort {
   }
   focus() { this.fixture.trace.push("focus:" + this.tag); }
 }
-const documentPort = { activeElement: null, documentElement: { lang: "en" }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
+const documentPort = { activeElement: null, documentElement: { lang: "en" }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null, querySelectorAll: selector => activeFixture?.renderer.query(null, selector) ?? [] };
 const windowPort = { requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
 documentPort.addEventListener = (...args) => windowPort.addEventListener(...args);
 documentPort.removeEventListener = (...args) => windowPort.removeEventListener(...args);
@@ -228,9 +228,39 @@ const workspaceClass = workspaceSyntax.statements.find(node => ts.isClassDeclara
 const listMember = workspaceClass.members.find(node => node.name?.getText(workspaceSyntax) === "#contextBlocks").getText(workspaceSyntax);
 const ListHost = new Function("ElementPort", "html", "keyed", "repeat", ts.transpileModule("return class extends ElementPort { render(){return this.#contextBlocks(this.store.projection.get().blocks);} " + listMember + "}", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(ElementPort, html, keyed, repeat);
 
+// Finite Context Store port: reuse the actual listener set, registration and
+// synchronous delivery statement. Planning-consent/network behavior remains
+// outside this fixture; full Store ownership tests supply that evidence.
+const ContextStorePublication = (() => {
+  const tree = syntax("src/state/store.ts"), owner = tree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaStore");
+  assert.ok(owner, "actual Store owns the subscription contract");
+  const member = name => {
+    const matches = owner.members.filter(node => node.name?.getText(tree) === name);
+    assert.equal(matches.length, 1, "one actual Store member " + name); return matches[0];
+  };
+  const notify = member("notify");
+  const delivery = notify.body.statements.filter(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+    && node.expression.expression.getText(tree) === "this.#listeners.forEach");
+  assert.equal(delivery.length, 1, "one actual synchronous Store listener delivery");
+  const code = ts.transpileModule("return class { " + ["#listeners", "subscribe"].map(name => member(name).getText(tree)).join("\n")
+    + "\nnotify() { " + delivery[0].getText(tree) + " } }", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  return new Function(code)();
+})();
+const contextStorePublications = () => {
+  const owner = new ContextStorePublication();
+  return { subscribe: owner.subscribe.bind(owner), notify: owner.notify.bind(owner) };
+};
+
 function fixture(locale = "en", viewer = false) {
   const types = ["direction", "audience", "message", "format", "exclusion", "subject", "environment", "emotion", "style", "composition", "accessibility", "direction", "direction", "audio"];
-  const state = { authorization: "author-a", route: "/document/document-a", events: [], requests: [], replies: [], viewer };
+  const publications = contextStorePublications();
+  const state = new Proxy({ authorization: "author-a", route: "/document/document-a", events: [], requests: [], replies: [], viewer }, {
+    set(target, key, value) {
+      const changed = !Object.is(target[key], value); target[key] = value;
+      if (changed && ["authorization", "route", "viewer", "events"].includes(key)) publications.notify();
+      return true;
+    },
+  });
   const f = { state, locale, trace: [], listeners: new Map() };
   const messages = { ...FORMA_DEFAULT_MESSAGES, ...localeCatalogs[locale] };
   f.i18n = new FormaLocaleController({ addController() {}, requestUpdate() {}, dispatchEvent(event) { event.callback({ locale, formatLocale: locale, direction: locale === "ar" ? "rtl" : "ltr", timeZone: "UTC", messages, revision: 0 }, () => {}); return true; } });
@@ -242,14 +272,20 @@ function fixture(locale = "en", viewer = false) {
   for (const [index, type] of types.entries()) append({ type: "BlockCreated", payload: { project_id: "project-a", document_id: "document-a", block_id: "decision-" + index, type, handle: type + "/decision-" + index, position: "p" + String(index).padStart(3, "0"), properties: { text: type === "format" ? "Create a four scene film that preserves every authored sentence." : "Authored " + type + " evidence. ".repeat(index === 12 ? 380 : 28), subtype: suggestedSubtype(type), authority: "authored", weight: .7, ...(type === "exclusion" ? { intent: "prohibit" } : {}), ...(type === "message" ? { exact_text: "Keep this exact promise.", protected_phrases: [{ text: "Never shorten this protected phrase." }], exact_placements: ["opening", "closing"] } : {}) } } });
   const projection = () => foldEvents(state.events, Infinity, "document-a", "project-a");
   f.store = {
+    ...publications,
     ui: { focusBlockId: "", editingBlockId: "", libraryView: "blocks", libraryOutputScope: "recent", focusCollectionId: "" },
     session: { get: () => ({ user: { userId: "owner", role: "user" }, provider: { configured: true }, capabilities: ["project.read", "project.author", "project.output.request"], ...(state.viewer ? { projectContext: { organizationId: "org", projectAccessId: "access", projectId: "project-a", role: "viewer", permissions: ["project.read"] } } : {}) }) },
     projection: { get: projection }, events: { get: () => state.events }, eventView: { get: () => state.events }, asOf: cell(Infinity), content: cell({}), head: { get: () => state.events.length },
     route: { get: () => state.route }, loading: cell(false), busy: cell(""), organizationContextPackages: cell([]), organizationContextBindings: cell([]), organizationContextVersions: cell({}),
+    // The original authored stream is present. No Output read is modeled here.
+    routeDataReady: () => !f.store.loading.get() && f.store.sourceOwnershipActive(f.store.captureSourceOwnership()),
+    outputRequirements: { resource: () => ({ state: "loading", snapshot: null, error: null }) },
     projectNotifications: cell([]), reviewInbox: cell([]), documentJobs: cell([]), generationReadiness: cell({}), canvasProjection: cell({ selectedCanvasId: "", canvases: [] }),
     captureAuthorizationScope: () => ({ key: state.authorization, shared: state.viewer }), authorizationScopeActive: scope => scope?.key === state.authorization,
-    patchUi: patch => Object.assign(f.store.ui, patch), setRoute: route => { state.route = route; },
-    append: async input => [append(input)], appendBatch: async inputs => inputs.map(append), removeOutputBlock: async input => [append(input)],
+    patchUi: patch => { Object.assign(f.store.ui, patch); publications.notify(); }, setRoute: route => { state.route = route; },
+    append: async input => { const events = [append(input)]; publications.notify(); return events; },
+    appendBatch: async inputs => { const events = inputs.map(append); publications.notify(); return events; },
+    removeOutputBlock: async input => { const events = [append(input)]; publications.notify(); return events; },
     outputBlockTextEvents: (id, text, source) => [{ type: "BlockPropertyEdited", payload: { block_id: id, property_path: "text", old_value: projection().libraryBlocks.find(block => block.id === id)?.properties.text, new_value: text, source_surface: source } }],
     documentJobActive: () => false, characterGenerationRequestKey: () => "character", generationRiskAcknowledged: () => false, outputOwnedBlockCount: () => 0,
     refreshEvents: async () => f.trace.push("refresh-events"),
@@ -260,7 +296,7 @@ function fixture(locale = "en", viewer = false) {
   f.renderer = new RendererPort(f, registry);
   activeFixture = f;
   f.host = new ListHost();
-  f.draw = () => f.renderer.draw(f.host);
+  f.draw = () => { publications.notify(); return f.renderer.draw(f.host); };
   f.block = id => f.renderer.component("forma-context-block", id);
   f.select = async id => { const host = f.block(id); await f.renderer.handler(host, "input", node => node.attributes.type === "radio", "change")(); f.draw(); };
   f.toggle = async id => { const host = f.block(id); await f.renderer.handler(host, "button", node => String(node.attributes.class).includes("context-controls-toggle"))(); f.draw(); };
@@ -1810,4 +1846,81 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const kind of ["text", "imag
   assert.deepEqual(contextContinuityRead(f), kind === "image" ? { ...original, text: peerText } : peerText);
   await f.toggle("decision-0"); assert.equal(contextContinuityRetainedNote(f).length, 0);
   assert.equal(f.state.events.length, eventCount + 1); assert.equal(f.state.requests.length, 0);
+});
+
+// These two controls certify only the finite source-derived publication adapter,
+// not real Store authorization, source retirement, DOM focus or Worker behavior.
+test("finite Context Store subscriptions notify synchronously and really unsubscribe", () => {
+  const publications = contextStorePublications(), calls = [];
+  const stop = publications.subscribe(() => calls.push("first"));
+  assert.deepEqual(calls, [], "subscribe does not invoke a partially initialized owner");
+  publications.notify(); assert.deepEqual(calls, ["first"]);
+  stop(); publications.notify(); assert.deepEqual(calls, ["first"], "removed listeners do not run");
+  let stopSelf;
+  stopSelf = publications.subscribe(() => { calls.push("self"); stopSelf(); });
+  const stopOther = publications.subscribe(() => calls.push("other"));
+  publications.notify(); assert.deepEqual(calls, ["first", "self", "other"]);
+  publications.notify(); assert.deepEqual(calls, ["first", "self", "other", "other"]);
+  stopOther(); publications.notify(); assert.equal(calls.length, 4);
+});
+
+test("finite Context Store publishes route and authority ABA before redraw", async t => {
+  const f = fixture(), original = { route: f.state.route, authorization: f.state.authorization, viewer: f.state.viewer };
+  t.after(() => f.i18n.hostDisconnected());
+  const observed = [];
+  const stop = f.store.subscribe(() => observed.push({
+    route: f.state.route, authorization: f.state.authorization, viewer: f.state.viewer,
+    focusBlockId: f.store.ui.focusBlockId, events: f.state.events.length,
+  }));
+  const originalEvents = f.state.events.length;
+  assert.equal(observed.length, 0);
+  f.state.route = "/library"; f.state.route = original.route;
+  f.state.authorization = "other-authority"; f.state.authorization = original.authorization;
+  f.state.viewer = true; f.state.viewer = original.viewer;
+  assert.deepEqual(observed.map(({ route, authorization, viewer }) => ({ route, authorization, viewer })), [
+    { ...original, route: "/library" }, original,
+    { ...original, authorization: "other-authority" }, original,
+    { ...original, viewer: true }, original,
+  ], "each intervening owner is observable synchronously; returning to A does not erase B");
+  f.store.patchUi({ focusBlockId: "decision-0" });
+  assert.equal(observed.length, 7); assert.equal(observed.at(-1).focusBlockId, "decision-0");
+  await f.store.append({ type: "BlockPropertyEdited", payload: { block_id: "decision-0", property_path: "text", new_value: "Finite adapter publication" } });
+  assert.equal(observed.length, 8); assert.equal(observed.at(-1).events, originalEvents + 1);
+  f.draw(); assert.equal(observed.length, 9, "direct nested fixture setup is published at the existing draw boundary");
+  stop(); f.state.route = "/library"; f.store.patchUi({ focusBlockId: "" }); f.draw();
+  assert.equal(observed.length, 9); assert.equal(f.state.requests.length, 0);
+});
+
+// Finite document-collection contract only. The existing native renderer owns
+// every returned port; this is not a browser, Store or modal-authority proof.
+test("finite Context document collections expose current emitted dialogs and live native open state", { concurrency: false }, t => {
+  const previousFixture = activeFixture, f = fixture();
+  t.after(() => { f.i18n.hostDisconnected(); activeFixture = previousFixture; });
+  const events = structuredClone(f.state.events), requests = [...f.state.requests];
+  const host = new ElementPort(); host.tag = "fixture-document-collection";
+  const view = () => html`<section><dialog id="collection-first" open>First native dialog</dialog>
+    <dialog id="collection-second">Second native dialog</dialog><button>Ordinary native action</button></section>`;
+  f.renderer.draw(host, view);
+  const emitted = f.renderer.ownNodes(host, "dialog");
+  assert.equal(emitted.length, 2);
+  const snapshot = documentPort.querySelectorAll("dialog");
+  assert.deepEqual(snapshot, emitted, "The document exposes the existing renderer's exact committed ports");
+  assert.strictEqual(documentPort.querySelector("dialog"), emitted[0]);
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), [emitted[0]]);
+  assert.equal(modalPort.ensureModalDialog(emitted[1]), true);
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), emitted);
+  emitted[0].close();
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), [emitted[1]], "Current native close state is not replaced by an always-clean collection");
+  assert.deepEqual(snapshot, emitted, "An earlier collection keeps its native element references");
+  f.renderer.draw(host, () => html`<section><button>Only a current non-dialog action</button></section>`);
+  assert.deepEqual(documentPort.querySelectorAll("dialog"), []);
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), []);
+  assert.equal(documentPort.querySelector("dialog"), null);
+  f.renderer.draw(host, view);
+  const current = documentPort.querySelectorAll("dialog");
+  assert.equal(current.length, 2);
+  assert.ok(current.every(node => f.renderer.nodes.includes(node)));
+  assert.ok(current.every(node => !snapshot.includes(node)), "Removed ports are not returned from a later committed frame");
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), [current[0]]);
+  assert.deepEqual(f.state.events, events); assert.deepEqual(f.state.requests, requests);
 });

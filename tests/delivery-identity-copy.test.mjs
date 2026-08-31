@@ -10,8 +10,13 @@ import { artifactDeliveryFor } from "../src/state/artifact-delivery-context.ts";
 import { ARTIFACT_DELIVERY_MESSAGES } from "../src/components/design-system/locales/artifact-delivery-messages.ts";
 
 // Complete current Deliver/Activity/ArtifactSummary classes and real locale
-// controllers. Authorized history, DOM semantics and routing are fixture ports;
-// this is not full Store/Worker authority, browser, AT or provider certification.
+// controllers. These standalone owners prove names, actual hrefs where present,
+// and exact source/rendered-handler bindings, not closed-over arguments or Shell
+// navigation. Activity image buttons expose no opaque target href: their visible
+// card inventory and model inventory are not dispatch observations. Actual artifact
+// and image arrival remain separately gated in activity-delivery-exact-destinations.test.mjs
+// and activity-delivery-image-destinations.test.mjs. This reduced matrix does not
+// certify full Store/Worker authority, browser, AT or provider behavior.
 const fixtureUrl = new URL("./output-contextual-names.test.mjs", import.meta.url);
 const original = fs.readFileSync(fixtureUrl, "utf8");
 const tree = ts.createSourceFile(fixtureUrl.pathname, original, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -126,7 +131,41 @@ function artifactActions(f, nodes = f.draw()) {
 function identityNames(f) {
   return new Map(artifactActions(f).map(node => [libraryFocusFromRoute(node.attributes.href).id, normalize(node.name())]));
 }
-function noCommands(f) { assert.deepEqual(f.state.requests, []); assert.deepEqual(f.state.loads, []); }
+function noCommands(f) { assert.deepEqual(f.state.requests, []); assert.deepEqual(f.state.loads, []); assert.deepEqual(f.routes, [], "standalone names/binding proof never claims Shell navigation"); }
+function assertCurrentGuardedBinding(f, surface, control, kind) {
+  const source = fs.readFileSync(new URL("../src/components/forma-" + surface + ".ts", import.meta.url), "utf8");
+  assert.match(source, /import \{ navigateInApp, type CommandDeparture \} from "\.\/command-departure";/);
+  assert.ok(source.includes('  #open(path:string){\n    if(path===this.store.route.get())return true;\n    return navigateInApp(this,navigation=>navigation.route(path));\n  }'));
+  assert.equal(f.host.closest("forma-shell"), null, "the actual reduced owner has no Shell, not a substituted admission");
+  const handler = control.handlers.click.toString().replace(/\s+/gu, "");
+  if (surface === "deliver") {
+    assert.equal(handler, "(event)=>this.#follow(event,href)", "actual native href binds to the production guarded follow handler");
+    assert.ok(source.includes('#follow(event:MouseEvent,path:string){if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.#open(path);}'));
+    assert.equal(libraryFocusFromRoute(control.attributes.href)?.kind, kind);
+    return;
+  }
+  assert.equal(surface, "activity");
+  if (kind === "output") {
+    assert.ok(source.includes('import { artifactFocusRoute, libraryFocusRoute, withProjectTaskDocumentInRoute } from "../model/routes";'));
+    assert.ok(source.includes('const readyOutputs = projection.libraryOutputs.filter((output) => documentIds.has(output.documentId)).slice(0, 6);'));
+    const start = source.indexOf('readyOutputs.map((output) => {'), end = source.indexOf('${completedJobs.map', start);
+    assert.ok(start >= 0 && end > start, "inspect the actual output-owned Ready renderer");
+    const outputSource = source.slice(start, end);
+    assert.ok(outputSource.includes('scope=resultScope(output.documentId,"image",output.id)'));
+    assert.equal(outputSource.split('@click=${() => this.#open(libraryFocusRoute("output", output.id,title))}').length, 2);
+    // These are the source call and the existing CommonJS loader's exact import-call spelling.
+    // Neither spelling exposes the closed-over output value; no fixture order is used as an observation.
+    assert.ok(handler === '()=>this.#open(libraryFocusRoute("output",output.id,title))'
+      || handler === '()=>this.#open((0,routes_1.libraryFocusRoute)("output",output.id,title))',
+    "the actual handler retains the exact output namespace and original output.id/title parameters");
+    assert.equal(control.attributes.href, undefined, "this actual Activity button provides no href target witness");
+    return;
+  }
+  assert.equal(kind, "artifact");
+  assert.ok(handler.includes('if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.#open(href);'));
+  assert.ok(source.includes('href=artifactFocusRoute(artifact.id,artifact.title,{expectedRevision:delivery.revision,...(delivery.contentSha256?{expectedContentSha256:delivery.contentSha256}:{}),intent:delivery.intent},this.store.route.get())'));
+  assert.equal(libraryFocusFromRoute(control.attributes.href)?.kind, "artifact");
+}
 
 for (const locale of ["en", "fr", "ar", "ja"]) for (const surface of ["deliver", "activity"]) for (const stage of ["review", "export"]) {
   test(surface + " repeated exact " + stage + " actions have unique contextual names in " + locale, t => {
@@ -155,9 +194,10 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const surface of ["deliver",
       }
       let prevented = 0;
       control.handlers.click.call(f.host, { defaultPrevented: false, button: 0, preventDefault() { prevented++; } });
-      assert.equal(prevented, 1); assert.equal(f.routes.at(-1), control.attributes.href);
+      assert.equal(prevented, 1); assertCurrentGuardedBinding(f, surface, control, "artifact");
+      assert.deepEqual(f.routes, [], "the real handler refuses without an actual Shell; its native href and source binding remain exact");
     }
-    assert.equal(new Set(f.routes).size, 4);
+    assert.equal(new Set(controls.map(control => control.attributes.href)).size, 4, "four distinct actual bound hrefs, not four route passes");
     const previews = nodes.filter(node => node.tag === "a" && node.attributes.class === "forma-deliver-preview");
     if (surface === "deliver") assert.equal(new Set(previews.map(node => normalize(node.name()))).size, 4);
     assert.deepEqual({ events: f.state.events, content: f.store.content.get() }, before);
@@ -298,10 +338,20 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const surface of ["deliver",
       assert.ok(normalize(image.name()).startsWith(normalize(image.visibleLabel())));
       assert.ok(ancestor(image, "article").visibleLabel().includes(documentTitle));
       assert.ok(normalize(image.name()).includes("Exact authored image title"));
+      assertCurrentGuardedBinding(f, surface, image, "output");
       image.handlers.click.call(f.host, { defaultPrevented: false, button: 0, preventDefault() {} });
     }
-    assert.deepEqual(new Set(f.routes.map(route => libraryFocusFromRoute(route).id)), new Set(["same-namespace-id", "image-B"]));
-    assert.ok(f.routes.every(route => libraryFocusFromRoute(route).kind === "output"));
+    assert.deepEqual(new Set(projection.libraryOutputs.map(output => output.id)), new Set(["same-namespace-id", "image-B"]),
+      "authorized model inventory only, not an observation of a button's closed-over target");
+    if (surface === "deliver") {
+      const targets = images.map(image => libraryFocusFromRoute(image.attributes.href));
+      assert.deepEqual(new Set(targets.map(target => target.id)), new Set(["same-namespace-id", "image-B"]));
+      assert.ok(targets.every(target => target.kind === "output"), "Deliver exposes the exact current native output hrefs");
+    } else {
+      assert.equal(new Set(images.map(image => normalize(ancestor(image, "article").name()))).size, 2,
+        "two distinct actual Activity image-card identities; opaque target dispatch remains the separate complete-host image gate");
+    }
+    assert.deepEqual(f.routes, [], "the real standalone handler cannot provide an admitted route witness");
     assert.deepEqual({ events: f.state.events, content: f.store.content.get() }, before);
     noCommands(f);
   });

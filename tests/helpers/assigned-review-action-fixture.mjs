@@ -31,6 +31,7 @@ const sourceRows = async w => (await readWorkspaceEvents(w.env, w.streamId))
   .filter(row => !["DocumentOpened", "ProjectOpened"].includes(row.type));
 
 async function assignmentPage(t, entry, settings = {}) {
+  assert.equal(typeof (settings.projectAuthor ?? false), "boolean", "Project author membership is an explicit false-default fixture option");
   const w = await createSceneCostFixture(1, "visual", { shared: true, depth: true });
   const share = w.sharing, reviewer = "assigned-reviewer";
   const identity = { "oai-authenticated-user-id": reviewer, "oai-authenticated-user-email": "assigned-reviewer@example.invalid" };
@@ -41,8 +42,8 @@ async function assignmentPage(t, entry, settings = {}) {
     .run(reviewer, identity["oai-authenticated-user-email"], "Assigned reviewer", now, now, now);
   w.sqlite.prepare("INSERT INTO organization_memberships(membership_id,organization_id,user_id,role,status,invited_by_user_id,accepted_at,created_at,updated_at) VALUES(?,?,?,'member','active',?,?,?,?)")
     .run("assigned-reviewer-org", share.organizationId, reviewer, w.owner, now, now, now);
-  w.sqlite.prepare("INSERT INTO project_memberships(membership_id,organization_id,project_access_id,project_id,user_id,role,status,granted_by_user_id,created_at,updated_at) VALUES(?,?,?,?,?,'viewer','active',?,?,?)")
-    .run("assigned-reviewer-project", share.organizationId, share.projectAccessId, w.projectId, reviewer, w.owner, now, now);
+  w.sqlite.prepare("INSERT INTO project_memberships(membership_id,organization_id,project_access_id,project_id,user_id,role,status,granted_by_user_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'active',?,?,?)")
+    .run("assigned-reviewer-project", share.organizationId, share.projectAccessId, w.projectId, reviewer, settings.projectAuthor ? "editor" : "viewer", w.owner, now, now);
   const memberPath = "/api/workspaces/" + share.organizationId + "/projects/" + share.projectAccessId + "/members/assigned-reviewer-project";
   await responseBody(await w.request(memberPath, { ...json({ reviewAccess: true }), method: "PATCH" }));
 
@@ -165,12 +166,57 @@ async function assignmentPage(t, entry, settings = {}) {
   // Its close port is deferred until all fiscal assertions have executed.
   const f = await createCalmFullPage(t, { storeHost: { ...h, close() {} } });
   const viewerCalls = [], Viewer = f.modules.get("src/components/document-artifacts.ts").DocumentArtifacts;
+  const nativeIds = new WeakMap(); let nativeSequence = 0, drawDepth = 0;
+  const nativeId = value => {
+    if (!value || typeof value !== "object") return null;
+    if (!nativeIds.has(value)) nativeIds.set(value, ++nativeSequence);
+    return nativeIds.get(value);
+  };
+  if (settings.observeViewerOpening) {
+    const draw = f.renderer.draw;
+    f.renderer.draw = function (...args) { drawDepth++; try { return draw.apply(this, args); } finally { drawDepth--; } };
+  }
   const originalOpen = Viewer.prototype.openArtifactById;
   t.mock.method(Viewer.prototype, "openArtifactById", function (id, options) {
     // Observe the real caller's public viewer promise; do not invoke it ourselves.
     const call = { id, options, owner: this }; viewerCalls.push(call);
-    call.pending = originalOpen.call(this, id, options);
-    void call.pending.then(value => { call.result = value; }, error => { call.error = String(error); });
+    const capturedArtifact = h.store.projection.get().libraryArtifacts.find(row => row.id === id);
+    const retainedEvidence = reference => {
+      const value = typeof reference === "string" ? h.store.content.get()[reference] : undefined;
+      return { reference: reference ?? null, present: typeof value === "string",
+        sha256: typeof value === "string" ? sha(value) : null };
+    };
+    const snapshot = () => ({ drawDepth, updatingOwner: f.renderer.updatingOwner?.tag ?? null,
+      viewer: nativeId(this), viewerConnected: this.isConnected, viewerDocumentId: this.documentId,
+      parent: nativeId(this.parentElement), parentTag: this.parentElement?.tag ?? null,
+      projectionDocumentId: h.store.projection.get().documentId,
+      capturedBinding: retainedEvidence(capturedArtifact?.contentRef),
+      currentBinding: retainedEvidence(h.store.projection.get().libraryArtifacts.find(row => row.id === id)?.contentRef),
+      // The independently created fixture ref is observed, never supplied to the application.
+      originalFixtureBinding: id === artifactId ? retainedEvidence(stored.contentId) : null,
+      eventReads: h.requests.filter(row => row.url.startsWith("/api/events?")).slice(-8).map(row => row.url),
+      viewers: [...f.renderer.instances].filter(([, row]) => row.instance.tag === "forma-document-artifacts").map(([key, row]) => ({
+        id: nativeId(row.instance), parent: nativeId(row.instance.parentElement), connected: row.instance.isConnected,
+        seen: f.renderer.seen.has(key), documentId: row.instance.documentId, isCaller: row.instance === this })),
+      currentDialogs: f.renderer.nodes.filter(node => node.owner === this && node.tag === "dialog").map(node => ({
+        id: nativeId(node), className: node.attributes.class ?? "", open: node.open, connected: node.isConnected })),
+      previousDialogs: (f.renderer.previousNodes ?? []).filter(node => node.owner === this && node.tag === "dialog").map(node => ({
+        id: nativeId(node), className: node.attributes.class ?? "", open: node.open, connected: node.isConnected })),
+    });
+    const observed = settings.observeViewerOpening && typeof options?.current === "function";
+    const guards = [], watched = observed ? { ...options, current: (...args) => {
+      // Exactly one call to the original predicate, preserving its result/throw.
+      const value = options.current(...args);
+      if (guards.length < 24 || value !== true && guards.length < 32) guards.push({ stage: args[0], result: value, ...snapshot() });
+      return value;
+    } } : options;
+    const report = () => { if (settings.observeViewerOpening) t.diagnostic(JSON.stringify({
+      diagnostic: "c19-actual-viewer-current", id, expectedRevision: options?.expectedRevision,
+      expectedHash: options?.expectedContentSha256, intent: options?.intent, route: h.store.route.get(),
+      result: call.result ?? null, error: call.error ?? null, guards, settled: snapshot(),
+    })); };
+    call.pending = originalOpen.call(this, id, watched);
+    void call.pending.then(value => { call.result = value; report(); }, error => { call.error = String(error); report(); });
     return call.pending;
   });
   const definitions = JSON.parse(fs.readFileSync(ROOT + "custom-elements.json", "utf8"));

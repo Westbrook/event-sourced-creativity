@@ -35,6 +35,15 @@ const repeatType = repeat([], item => item, () => nothing)._$litDirective$;
 const templateIds = new WeakMap();
 let templateSequence = 0;
 const templateId = strings => { if (!templateIds.has(strings)) templateIds.set(strings, ++templateSequence); return templateIds.get(strings); };
+// Lit's keyed directive compares reference keys by identity, never by their
+// string representation. Keep existing primitive paths and owner/template scope.
+const keyedObjectIds = new WeakMap();
+let keyedObjectSequence = 0;
+const keyedPath = key => {
+  if (key === null || typeof key !== "object" && typeof key !== "function") return "/key:" + String(key);
+  if (!keyedObjectIds.has(key)) keyedObjectIds.set(key, ++keyedObjectSequence);
+  return "/key-object:" + keyedObjectIds.get(key);
+};
 const escapeText = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const cell = initial => { let value = initial; return { get: () => value, set: next => { value = next; } }; };
 const localeCatalogs = { en: enMessages, fr: frMessages, ar: arMessages, ja: jaMessages };
@@ -68,6 +77,18 @@ class ElementPort {
   }
   focus() { this.fixture.trace.push("focus:" + this.tag); }
 }
+// Forward the actual public identity-only predicate onto this existing native
+// base port. Do not construct another Store or replace any component behavior.
+const identityTree = syntax("src/components/forma-element.ts");
+const identityOwner = identityTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaElement");
+const identityMember = identityOwner?.members.find(node => ts.isMethodDeclaration(node) && node.name?.getText(identityTree) === "hasStoreIdentity"
+  && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.StaticKeyword));
+assert.ok(identityMember, "the native base forwards the actual public FormaElement store-identity predicate");
+const identityCode = ts.transpileModule("class FormaElementIdentityPort {" + identityMember.getText(identityTree) + "}", {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
+const identityPort = new Function(identityCode + "; return FormaElementIdentityPort;")();
+Object.defineProperty(ElementPort, "hasStoreIdentity", Object.getOwnPropertyDescriptor(identityPort, "hasStoreIdentity"));
 const documentPort = { activeElement: null, documentElement: { lang: "en", dataset: {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
 const windowPort = { requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
 documentPort.defaultView=windowPort;
@@ -77,7 +98,7 @@ windowPort.innerWidth=1280;windowPort.innerHeight=720;
 windowPort.getComputedStyle=()=>({width:"384px",getPropertyValue:()=>"0px",direction:activeFixture?.locale==="ar"?"rtl":"ltr"});
 const modalPort = { ensureModalDialog(dialog) { if (!dialog) return false; if (!dialog.open) { dialog.open = true; activeFixture.trace.push("open:" + dialog.attributes.class); } return true; }, requestDialogText: async () => null };
 
-async function loadActual(relative) {
+async function loadActual(relative, literalImportDependencies = new Map()) {
   if (moduleCache.has(relative)) return moduleCache.get(relative);
   const tree = syntax(relative), dependencies = new Map();
   for (const statement of tree.statements) {
@@ -103,6 +124,18 @@ async function loadActual(relative) {
       dependencies.set(specifier, await loadActual(targetRelative));
     } else throw new Error("Unmocked module port " + specifier);
   }
+  for (const [specifier, namespace] of literalImportDependencies) {
+    let declared = false;
+    const visit = node => {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+        && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === specifier) declared = true;
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    assert.ok(declared && !dependencies.has(specifier), "only an actual literal dynamic import gains its module dependency");
+    assert.equal(typeof namespace, "object");
+    dependencies.set(specifier, namespace);
+  }
   const code = ts.transpileModule(sourceText(relative), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports = {}, registry = { get() { return true; }, define() {} };
   const require = specifier => dependencies.get(specifier) ?? {};
@@ -115,23 +148,27 @@ async function loadActual(relative) {
 
 class RendererPort {
   constructor(fixture, registry) { this.fixture = fixture; this.registry = registry; this.instances = new Map(); this.nodes = []; this.bindings = []; this.activeCaches = new Set(); this.seen = new Set(); this.markup = ""; this.openPopovers = new Set(); }
-  reference(value, owner) { const id = this.bindings.push({ value, owner }) - 1; return "__bound_" + id + "__"; }
+  reference(value, owner, part) { const id = this.bindings.push({ value, owner, part }) - 1; return "__bound_" + id + "__"; }
   resolve(value) { const exact = value.match(/^__bound_(\d+)__$/); if (exact) return this.bindings[Number(exact[1])]?.value; return value.replace(/__bound_(\d+)__/g, (_, id) => String(this.bindings[Number(id)]?.value ?? "")); }
   attrs(raw) {
-    const attributes = {}, properties = {}, handlers = {};
+    const attributes = {}, properties = {}, propertyParts = {}, handlers = {};
     for (const [, name, double, single, bare] of raw.matchAll(/([.?@\w:-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
       const value = this.resolve(double ?? single ?? bare ?? "");
-      if (name[0] === ".") properties[name.slice(1)] = value;
+      if (name[0] === ".") {
+        properties[name.slice(1)] = value;
+        const reference = (double ?? single ?? bare ?? "").match(/^__bound_(\d+)__$/);
+        if (reference) propertyParts[name.slice(1)] = this.bindings[Number(reference[1])]?.part;
+      }
       else if (name[0] === "@") handlers[name.slice(1)] = value;
       else if (name[0] === "?") { if (value) attributes[name.slice(1)] = ""; }
       else if(value!==nothing) attributes[name] = value;
     }
-    return { attributes, properties, handlers };
+    return { attributes, properties, propertyParts, handlers };
   }
   value(value, owner, path, caches = []) {
     if (value == null || value === nothing || typeof value === "boolean") return "";
     if (Array.isArray(value)) return value.map((item, index) => this.value(item, owner, path + "/" + index, caches)).join("");
-    if (value?._$litDirective$ === keyedType) return this.value(value.values[1], owner, path + "/key:" + String(value.values[0]), caches);
+    if (value?._$litDirective$ === keyedType) return this.value(value.values[1], owner, path + keyedPath(value.values[0]), caches);
     if (value?._$litDirective$ === cacheType) { this.activeCaches.add(path); return this.value(value.values[0], owner, path + "/cached", [...caches, path]); }
     if (value?._$litDirective$ === repeatType) { const [items, identify, render] = value.values; return [...items].map((item, index) => this.value(render(item, index), owner, path + "/repeat:" + identify(item, index), caches)).join(""); }
     if (!value?.strings) return escapeText(value);
@@ -141,7 +178,7 @@ class RendererPort {
       result += value.strings[index];
       if (index < value.values.length) {
         const inTag = result.lastIndexOf("<") > result.lastIndexOf(">");
-        result += inTag ? this.reference(value.values[index], owner) : this.value(value.values[index], owner, path + "/part:" + index, caches);
+        result += inTag ? this.reference(value.values[index], owner, path + "/part:" + index) : this.value(value.values[index], owner, path + "/part:" + index, caches);
       }
     }
     let ordinal = 0;
@@ -162,23 +199,54 @@ class RendererPort {
         const definition = Object.entries(instance.constructor.properties ?? {}).find(([key, options]) => (options.attribute ?? key.toLowerCase()) === name);
         if (definition) instance[definition[0]] = definition[1].type === Boolean ? true : value;
       }
-      Object.assign(instance, props.properties);
+      // Mirror Lit's single-value PropertyPart committed value, not the child's
+      // possibly changed property. Objects/functions still recommit by design.
+      record.propertyValues ??= new Map();
+      for (const [name, value] of Object.entries(props.properties)) {
+        const previous = record.propertyValues.has(name) ? record.propertyValues.get(name) : nothing;
+        const primitive = value === null || (typeof value !== "object" && typeof value !== "function");
+        if (!primitive || (value !== previous && value !== lit.noChange)) {
+          record.propertyValues.set(name, value);
+          instance[name] = value === nothing ? undefined : value;
+        }
+      }
       if (!instance.isConnected) { instance.isConnected = true; instance.connectedCallback(); }
+      // Lit evaluates willUpdate/render before committing this update's DOM.
+      // Queries during those methods see only the prior committed tree.
+      const previousOwner = this.updatingOwner;
+      let rendered;
       this.updatingOwner = instance;
-      instance.willUpdate?.(new Map());
-      this.updatingOwner = null;
-      const child = this.value(instance.render(), instance, id, caches);
+      try { instance.willUpdate?.(new Map()); rendered = instance.render(); }
+      finally { this.updatingOwner = previousOwner; }
+      const child = this.value(rendered, instance, id, caches);
       instance.markup = child;
       this.collect(child, instance);
-      if (!record.firstRendered) { record.firstRendered = true; instance.firstUpdated?.(); }
-      instance.updated?.();
+      this.pendingUpdates.push({ instance, record });
       return "<" + tag + " data-rendered-port=\"true\"" + raw + ">" + child + content + "</" + tag + ">";
     });
     return result;
   }
   collect(markup, owner) {
     for (const [full, tag, raw] of markup.matchAll(/<([\w-]+)([^>]*)>/g)) {
-      const parsed = this.attrs(raw), node = { tag, owner, ...parsed, full, open: Object.hasOwn(parsed.attributes, "open"), isConnected: true, value: parsed.properties.value ?? parsed.attributes.value ?? "", checked: parsed.properties.checked ?? false };
+      const parsed = this.attrs(raw), node = { tag, owner, ...parsed, full, open: Object.hasOwn(parsed.attributes, "open"), isConnected: true, value: parsed.attributes.value ?? "", checked: parsed.properties.checked ?? false };
+      if (Object.hasOwn(parsed.properties, "value")) {
+        // Reuse only the same existing owner/template/keyed-or-repeat part in
+        // the previous committed tree. This preserves a property, not DOM/focus
+        // identity, and cannot revive a field absent from the intervening tree.
+        const part = parsed.propertyParts.value;
+        const matches = part === undefined ? [] : (this.previousNodes ?? []).filter(previous =>
+          previous.owner === owner && previous.tag === tag && previous.propertyParts?.value === part);
+        const previous = matches.length === 1 ? matches[0] : null;
+        node.committedValue = previous ? previous.committedValue : nothing;
+        if (previous) node.value = previous.value;
+        const value = parsed.properties.value;
+        const primitive = value === null || (typeof value !== "object" && typeof value !== "function");
+        // Same single-value PropertyPart predicate as component properties above.
+        if (!primitive || (value !== node.committedValue && value !== lit.noChange)) {
+          node.committedValue = value;
+          node.value = value === nothing ? undefined : value;
+        }
+      }
       node.setAttribute = (name, value) => { node.attributes[name] = String(value); };
       node.addEventListener = (type, handler) => { (node.listeners ??= {})[type] = handler; };
       node.removeEventListener = (type, handler) => { if (node.listeners?.[type] === handler) delete node.listeners[type]; };
@@ -194,7 +262,8 @@ class RendererPort {
       node.click=()=>{
         if(Object.hasOwn(node.attributes,"disabled"))return;
         let prevented=false;
-        const event={target:node,currentTarget:node,preventDefault(){prevented=true;},stopPropagation(){}};
+        const event={type:"click",target:node,currentTarget:node,button:0,metaKey:false,ctrlKey:false,shiftKey:false,altKey:false,
+          defaultPrevented:false,preventDefault(){prevented=true;this.defaultPrevented=true;},stopPropagation(){}};
         node.handlers.click?.call(owner,event);
         // Model only the declarative native button default; not browser proof.
         const target=this.nodes.find(candidate=>candidate.attributes.id===node.attributes.popovertarget);
@@ -210,21 +279,37 @@ class RendererPort {
   draw(host, render = () => host.render()) {
     activeFixture = this.fixture;
     this.previousNodes = this.nodes;
+    this.previousInstances = [...this.instances.values()].map(record => record.instance).filter(instance => instance.isConnected);
+    this.pendingUpdates = [];
     this.nodes = []; this.bindings = []; this.activeCaches.clear(); this.seen.clear();
-    host.isConnected = true; this.updatingOwner = host; host.willUpdate?.(this.fixture.changed ?? new Map()); this.fixture.changed = new Map(); this.updatingOwner = null;
-    this.markup = this.value(render(), host, "host");
+    host.isConnected = true;
+    const changedProperties = this.fixture.changed ?? new Map();
+    let rendered;
+    this.updatingOwner = host;
+    try { host.willUpdate?.(changedProperties); this.fixture.changed = new Map(); rendered = render(); }
+    finally { this.updatingOwner = null; }
+    this.markup = this.value(rendered, host, "host");
     host.markup = this.markup; this.collect(this.markup, host);
     for (const [id, record] of this.instances) if (!this.seen.has(id)) {
       if (record.instance.isConnected) { record.instance.isConnected = false; record.instance.disconnectedCallback(); }
       if (!record.caches.some(key => this.activeCaches.has(key))) this.instances.delete(id);
     }
-    host.updated?.();
+    // Post-update hooks must not inspect a half-collected ancestor. Retire
+    // removed ports before hooks; never transfer activeElement to a replacement.
+    const present = new Set(this.nodes);
+    for (const node of this.previousNodes) if (!present.has(node)) node.isConnected = false;
+    const updates = this.pendingUpdates; this.pendingUpdates = [];
+    for (const { instance, record } of updates) if (instance.isConnected) {
+      if (!record.firstRendered) { record.firstRendered = true; instance.firstUpdated?.(); }
+      instance.updated?.();
+    }
+    host.updated?.(changedProperties);
     return this.markup;
   }
   query(owner, selector) {
     if (selector.includes(",")) return selector.split(",").flatMap(part => this.query(owner, part.trim()));
     const within = candidate => { let current = candidate; while (current) { if (!owner || current === owner) return true; current = current.parentElement; } return false; };
-    if (/^forma-/.test(selector)) return [...this.instances.values()].map(record => record.instance).filter(instance => instance.isConnected && within(instance.parentElement) && instance.tag === selector);
+    if (/^forma-/.test(selector)) return (this.updatingOwner ? this.previousInstances : [...this.instances.values()].map(record => record.instance)).filter(instance => instance.isConnected && within(instance.parentElement) && instance.tag === selector);
     return (this.updatingOwner ? this.previousNodes : this.nodes).filter(node => within(node.owner) && (!selector.startsWith("dialog") || node.tag === "dialog") && (!selector.includes("[open]") || node.open) && (!selector.includes(".") || String(node.attributes.class ?? "").split(/\s+/).includes(selector.match(/\.([\w-]+)/)?.[1])) && (!/^[a-z]/.test(selector) || node.tag === selector.match(/^[\w-]+/)?.[0] || selector.includes(" ")));
   }
   component(tag, blockId) { return [...this.instances.values()].map(record => record.instance).find(instance => instance.tag === tag && (instance.block?.id ?? instance.blockId) === blockId); }
@@ -574,4 +659,396 @@ test("the inactive-dialog fixture loads the actual deck and native Export invoke
   if(Object.hasOwn(trigger.attributes,"disabled"))assert.fail("fixture requires at least one exact retained slide");
   trigger.click();
   assert.equal(panel.matches(":popover-open"),true);assert.equal(f.state.requests.length,0);
+});
+
+test("finite native value PropertyPart preserves raw noChange values only for its existing committed part", () => {
+  const f = { trace: [] }, renderer = new RendererPort(f, {}), owner = {};
+  const field = value => lit.html`<input .value=${value}>`;
+  const alternate = value => lit.html`<input class="alternate-template" .value=${value}>`;
+  const draw = (template, host = owner) => {
+    renderer.draw(host, () => template);
+    return renderer.ownNodes(host, "input");
+  };
+  let node = draw(field("A"))[0]; assert.equal(node.value, "A");
+  node.value = "  raw B 文書\nنور  ";
+  node = draw(field(lit.noChange))[0];
+  assert.equal(node.value, "  raw B 文書\nنور  ", "noChange must not be assigned as a native input value");
+  assert.equal(draw(field(lit.noChange))[0].value, node.value, "repeated noChange retains the raw value");
+  assert.equal(draw(field("A"))[0].value, node.value, "an unchanged committed primitive must not overwrite raw B");
+  assert.equal(draw(field("C"))[0].value, "C", "a changed committed primitive still updates the native port");
+  assert.equal(draw(field(nothing))[0].value, undefined, "PropertyPart commits undefined for nothing; no sentinel leaks");
+  assert.equal(draw(field(lit.noChange))[0].value, undefined);
+  assert.equal(draw(field("D"))[0].value, "D");
+  assert.equal(draw(alternate(lit.noChange))[0].value, "", "another template cannot borrow D");
+  node = draw(field("E"))[0]; node.value = "private raw E";
+  draw(nothing);
+  assert.equal(draw(field(lit.noChange))[0].value, "", "a removed field does not regain an old raw value");
+  draw(field("F"))[0].value = "private raw F";
+  assert.equal(draw(field(lit.noChange), {})[0].value, "", "a replacement owner cannot borrow F");
+  const list = rows => repeat(rows, row => row.id, row => field(row.value));
+  const originals = draw(list([{ id: "a", value: "A" }, { id: "b", value: "B" }]));
+  originals[0].value = "raw A"; originals[1].value = "raw B";
+  assert.deepEqual(draw(list([{ id: "b", value: lit.noChange }, { id: "a", value: lit.noChange }])).map(value => value.value),
+    ["raw B", "raw A"], "existing repeat keys, not ordinal rows, own property continuity");
+  draw(list([{ id: "b", value: lit.noChange }]));
+  assert.deepEqual(draw(list([{ id: "a", value: lit.noChange }, { id: "b", value: lit.noChange }])).map(value => value.value),
+    ["", "raw B"], "a reintroduced key is not a retained native field");
+});
+
+test("finite Shell command-trigger identity belongs to its exact current EventPart, not its class", { concurrency: false }, async t => {
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  // This is a renderer-port unit control, not a substitute Shell or browser
+  // acceptance test. The four actual Assistant controls remain unchanged.
+  const f = { trace: [], listeners: new Map(), store: {} }, owner = { tag: "forma-shell", store: f.store };
+  f.renderer = new RendererPort(f, {});
+  const native = installOutputNavigationFocusNative(t, f, { documentPort, ElementPort });
+  const control = (name, click) => lit.html`<button type="button" class="command-trigger forma-global-search" aria-label=${name} @click=${click}>Command</button>`;
+  const otherTemplate = (name, click) => lit.html`<span><button type="button" class="command-trigger forma-global-search" aria-label=${name} @click=${click}>Command</button></span>`;
+  const draw = (template, host = owner) => {
+    f.renderer.draw(host, () => template);
+    return f.renderer.ownNodes(host, "button");
+  };
+  const calls = [], listener = () => {};
+  const first = draw(control("Original", () => calls.push("old")))[0];
+  first.addEventListener("fixture-listener", listener); native.focus(first);
+  const same = draw(control("Updated", () => calls.push("current")))[0];
+  assert.strictEqual(same, first); assert.equal(same.isConnected, true);
+  assert.strictEqual(native.document.activeElement, same, "No activeElement reassignment is needed when the real part retains its node");
+  assert.equal(same.attributes["aria-label"], "Updated"); assert.strictEqual(same.listeners["fixture-listener"], listener);
+  same.handlers.click.call(owner, { target: same, currentTarget: same }); assert.deepEqual(calls, ["current"]);
+  assert.equal(native.nativeFocus.length, 1, "A redraw emits no invented focus operation");
+  const alternate = draw(otherTemplate("Updated", () => {}))[0];
+  assert.notStrictEqual(alternate, first); assert.equal(first.isConnected, false);
+  assert.strictEqual(native.document.activeElement, first, "Retirement does not remap activeElement to a lookalike");
+  const returned = draw(control("Returned", () => {}))[0];
+  assert.notStrictEqual(returned, first); assert.notStrictEqual(returned, alternate); assert.equal(alternate.isConnected, false);
+  draw(nothing); assert.equal(returned.isConnected, false);
+  const afterAbsence = draw(control("After absence", () => {}))[0]; assert.notStrictEqual(afterAbsence, returned);
+  const otherOwner = { tag: "forma-shell", store: f.store }, replaced = draw(control("Owner B", () => {}), otherOwner)[0];
+  assert.notStrictEqual(replaced, afterAbsence); assert.equal(afterAbsence.isConnected, false);
+  const keyedA = draw(keyed("A", control("Key A", () => {})), otherOwner)[0];
+  const keyedB = draw(keyed("B", control("Key B", () => {})), otherOwner)[0];
+  assert.notStrictEqual(keyedA, keyedB); assert.equal(keyedA.isConnected, false);
+  assert.notStrictEqual(draw(keyed("A", control("Key A again", () => {})), otherOwner)[0], keyedA);
+  const unique = draw(control("Unique", () => {}), otherOwner)[0];
+  assert.equal(draw([control("One", () => {}), control("Two", () => {})], otherOwner).length, 2);
+  assert.equal(unique.isConnected, false, "An ambiguous same-class emission cannot retain the former anchor");
+  const afterAmbiguity = draw(control("Unique again", () => {}), otherOwner)[0]; assert.notStrictEqual(afterAmbiguity, unique);
+  otherOwner.store = {};
+  assert.notStrictEqual(draw(control("Another Store", () => {}), otherOwner)[0], afterAmbiguity);
+  assert.equal(afterAmbiguity.isConnected, false);
+});
+
+test("finite native ancestry reuses only the current structural snapshot and reads mutable state live", { concurrency: false }, async t => {
+  const { fullPageTree, calmFullPageNativePorts: ports } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  // Direct renderer/native-port unit: no Store/Worker construction or app
+  // callback, and no browser geometry/focus/AT or timing claim.
+  const f = { trace: [], listeners: new Map(), timers: new Map(), store: {},
+    storeHost: { document: {}, window: { ...ports.windowPort } } };
+  ports.bindFixture(f); t.after(() => ports.bindFixture(null));
+  f.host = new ports.ElementPort(); f.host.tag = "fixture-owner-a";
+  f.renderer = new ports.RendererPort(f, {});
+  let builds = 0;
+  const originalTree = () => { builds++; return fullPageTree(f); };
+  f.tree = originalTree;
+  const native = installOutputNavigationFocusNative(t, f, ports);
+  const view = () => lit.html`<section id="structure-root" class="structure-root"><dialog id="structure-dialog"><fieldset id="structure-fields"><legend><button id="structure-legend">Legend</button></legend><input id="structure-field"><button id="structure-action">Action</button></fieldset></dialog><div id="structure-panel" popover="auto"><button id="structure-panel-action">Panel action</button></div></section>`;
+  const draw = () => f.renderer.draw(f.host, view);
+  const current = () => Object.fromEntries(f.renderer.nodes.filter(node => node.owner === f.host && node.attributes.id)
+    .map(node => [node.attributes.id.replace("structure-", ""), node]));
+  draw(); let nodes = current();
+  const answers = () => {
+    assert.strictEqual(nodes.field.closest("fieldset"), nodes.fields);
+    assert.strictEqual(nodes.field.closest("#structure-root"), nodes.root);
+    assert.deepEqual(nodes.fields.querySelectorAll("button"), [nodes.legend, nodes.action]);
+    assert.equal(nodes.field.matches(":disabled"), false);
+    assert.equal(f.storeHost.window.getComputedStyle(nodes.field).visibility, "visible");
+  };
+  for (let index = 0; index < 8; index++) answers();
+  assert.equal(builds, 1, "unchanged ancestry lookups share one fullPageTree reconstruction");
+  assert.strictEqual(f.tree, originalTree, "the caller's complete tree/visibility reader is not replaced");
+  nodes.field.value = "  retained raw B 文書  "; native.focus(nodes.field);
+  nodes.dialog.open = true;
+  assert.strictEqual(nodes.field.closest("[open]"), nodes.dialog);
+  assert.deepEqual(f.renderer.query(null, "dialog[open]"), [nodes.dialog]);
+  nodes.dialog.open = false;
+  assert.equal(nodes.field.closest("[open]"), null);
+  assert.deepEqual(f.renderer.query(null, "dialog[open]"), []);
+  nodes.fields.hidden = true; assert.strictEqual(nodes.field.closest("[hidden]"), nodes.fields);
+  nodes.fields.hidden = false; assert.equal(nodes.field.closest("[hidden]"), null);
+  nodes.fields.setAttribute("disabled", "");
+  assert.equal(nodes.field.matches(":disabled"), true);
+  assert.equal(nodes.legend.matches(":disabled"), false, "the first legend exception uses current ancestry");
+  nodes.fields.removeAttribute("disabled"); assert.equal(nodes.field.matches(":disabled"), false);
+  nodes.fields.disabled = true; assert.equal(nodes.field.matches(":disabled"), true);
+  nodes.fields.disabled = false;
+  nodes.field.setAttribute("disabled", ""); assert.equal(nodes.field.matches(":disabled"), true);
+  nodes.field.removeAttribute("disabled"); assert.equal(nodes.field.matches(":disabled"), false);
+  nodes.root.setAttribute("class", "changed-live-class");
+  assert.strictEqual(nodes.field.closest(".changed-live-class"), nodes.root);
+  assert.equal(nodes.field.closest(".structure-root"), null);
+  nodes.root.setAttribute("id", "changed-live-id");
+  assert.strictEqual(nodes.field.closest("#changed-live-id"), nodes.root);
+  assert.equal(nodes.field.closest("#structure-root"), null);
+  nodes.dialog.setAttribute("style", "visibility: hidden; display: none;");
+  assert.equal(f.storeHost.window.getComputedStyle(nodes.field).visibility, "hidden");
+  assert.equal(f.storeHost.window.getComputedStyle(nodes.dialog).display, "none");
+  nodes.dialog.removeAttribute("style");
+  assert.equal(f.storeHost.window.getComputedStyle(nodes.field).visibility, "visible");
+  assert.equal(f.storeHost.window.getComputedStyle(nodes.dialog).display, "block");
+  nodes.panel.showPopover(); assert.equal(nodes.panel.matches(":popover-open"), true);
+  nodes.panel.hidePopover(); assert.equal(nodes.panel.matches(":popover-open"), false);
+  assert.equal(builds, 1, "no mutable visibility, disabled or style decision is cached");
+  assert.equal(nodes.field.value, "  retained raw B 文書  ");
+  assert.strictEqual(native.document.activeElement, nodes.field); assert.equal(native.nativeFocus.length, 1);
+  assert.equal(f.tree().visible("input").length, 0);
+  nodes.dialog.open = true; assert.equal(f.tree().visible("input").length, 1);
+  assert.equal(builds, 3, "explicit full-tree callers still obtain fresh visibility on every read");
+  const old = nodes, sameMarkup = f.renderer.markup;
+  draw(); nodes = current(); answers();
+  assert.equal(f.renderer.markup, sameMarkup); assert.equal(builds, 4, "even byte-identical redraws invalidate ancestry");
+  assert.notStrictEqual(nodes.field, old.field); assert.equal(old.field.isConnected, false);
+  assert.strictEqual(native.document.activeElement, old.field, "a retired active port is never remapped or resurrected");
+  // Exercise the existing collect seam without draw: same array/length and
+  // markup, but an actual replacement port. No semantic-ID identity reuse.
+  const memberArray = f.renderer.nodes, replaced = nodes.field, position = memberArray.indexOf(replaced);
+  f.renderer.collect(replaced.full, f.host);
+  const replacement = memberArray.pop(); memberArray[position] = replacement; replaced.isConnected = false;
+  nodes = current(); answers(); assert.equal(builds, 5);
+  assert.strictEqual(f.renderer.nodes, memberArray); assert.equal(f.renderer.markup, sameMarkup);
+  assert.notStrictEqual(replacement, replaced); assert.equal(replaced.closest("fieldset"), null);
+  const removed = nodes.action;
+  memberArray.splice(memberArray.indexOf(removed), 1); removed.isConnected = false;
+  assert.equal(removed.closest("fieldset"), null); assert.equal(builds, 6);
+  assert.deepEqual(nodes.fields.querySelectorAll("button"), [nodes.legend]);
+  // Markup-only reparenting must invalidate the ancestry index independently
+  // of the unchanged native membership array and port identities.
+  f.renderer.markup = sameMarkup.replace(nodes.field.full, "").replace("</fieldset>", "</fieldset>" + nodes.field.full);
+  assert.equal(nodes.field.closest("fieldset"), null);
+  assert.strictEqual(nodes.field.closest("dialog"), nodes.dialog); assert.equal(builds, 7);
+  const previousOwner = f.host;
+  f.host = new ports.ElementPort(); f.host.tag = "fixture-owner-b";
+  draw(); nodes = current(); answers(); assert.equal(builds, 8);
+  assert.notStrictEqual(nodes.field.owner, previousOwner); assert.equal(replacement.isConnected, false);
+  draw(); nodes = current(); answers(); assert.equal(builds, 9);
+  assert.strictEqual(native.document.activeElement, old.field); assert.equal(native.nativeFocus.length, 1);
+  assert.strictEqual(f.tree, originalTree);
+});
+
+test("finite literal presentation ancestry forwards compound closest, contains and its actual joined view", { concurrency: false }, async t => {
+  const { fullPageTree, calmFullPageNativePorts: ports } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  const { navigationPresentationCurrent } = await import("../src/components/command-departure.ts");
+  // Native-port unit only: the actual stateless structural helper consumes
+  // the existing renderer's literal ancestry, not an application substitute.
+  const f = { trace: [], listeners: new Map(), timers: new Map(), store: {},
+    storeHost: { document: {}, window: { ...ports.windowPort } } };
+  ports.bindFixture(f); t.after(() => ports.bindFixture(null));
+  f.host = new ports.ElementPort(); f.host.tag = "fixture-presentation-owner";
+  f.renderer = new ports.RendererPort(f, {}); f.tree = () => fullPageTree(f);
+  const native = installOutputNavigationFocusNative(t, f, ports);
+  const view = () => lit.html`<section id="presentation-root"><dialog id="presentation-owned" open aria-labelledby="presentation-title"><div id="presentation-body"><h2 id="presentation-title">Current inspection</h2><a id="presentation-trigger" href="/settings/workspaces">Open settings</a></div></dialog><dialog id="presentation-other" open aria-labelledby="other-title"><a id="presentation-sibling" href="/projects">Other destination</a></dialog><button id="presentation-outside">Outside</button></section>`;
+  const draw = () => {
+    f.renderer.draw(f.host, view);
+    return Object.fromEntries(f.renderer.nodes.filter(node => node.attributes.id)
+      .map(node => [node.attributes.id.replace("presentation-", ""), node]));
+  };
+  let nodes = draw();
+  const witness = () => ({ owner: f.host, element: nodes.owned, trigger: nodes.trigger, current: () => true });
+  assert.strictEqual(nodes.trigger.closest('dialog[aria-labelledby="presentation-title"]'), nodes.owned);
+  assert.strictEqual(nodes.trigger.closest("dialog[open][aria-labelledby='presentation-title']"), nodes.owned);
+  assert.equal(nodes.trigger.closest('dialog[aria-labelledby="other-title"]'), null);
+  assert.equal(nodes.trigger.closest('section[aria-labelledby="presentation-title"]'), null);
+  assert.strictEqual(nodes.owned.closest('dialog[aria-labelledby="presentation-title"]'), nodes.owned);
+  assert.equal(nodes.owned.matches('[aria-labelledby="presentation-title"]'), true, "native matches must agree with the exact current sharing-label attribute");
+  assert.equal(nodes.owned.matches("[aria-labelledby='presentation-title']"), true);
+  assert.equal(nodes.owned.matches('dialog[aria-labelledby="presentation-title"]'), true);
+  assert.equal(nodes.owned.matches('section[aria-labelledby="presentation-title"]'), false);
+  assert.equal(nodes.owned.matches('[aria-labelledby="other-title"]'), false);
+  assert.equal(nodes.owned.matches('[missing-attribute]'), false);
+  assert.equal(nodes.owned.matches('dialog[open][aria-labelledby="presentation-title"]'), true);
+  nodes.owned.open = false;
+  assert.equal(nodes.owned.matches('dialog[open][aria-labelledby="presentation-title"]'), false, "current native open state, not a stale authored attribute");
+  nodes.owned.open = true;
+  nodes.owned.setAttribute("aria-labelledby", "changed-live-title");
+  assert.equal(nodes.owned.matches('[aria-labelledby="presentation-title"]'), false);
+  assert.equal(nodes.owned.matches('[aria-labelledby="changed-live-title"]'), true);
+  nodes.owned.setAttribute("aria-labelledby", "presentation-title");
+  assert.equal(nodes.owned.contains(nodes.trigger), true);
+  assert.equal(nodes.body.contains(nodes.trigger), true);
+  assert.equal(nodes.owned.contains(nodes.owned), true);
+  assert.equal(nodes.owned.contains(nodes.sibling), false);
+  assert.equal(nodes.owned.contains(nodes.outside), false);
+  assert.equal(nodes.owned.contains(null), false);
+  assert.strictEqual(nodes.trigger.ownerDocument, native.document);
+  assert.strictEqual(native.document.defaultView, f.storeHost.window);
+  assert.equal(nodes.owned.tagName, "DIALOG");
+  assert.ok(nodes.owned.getClientRects().length > 0);
+  assert.equal(native.document.defaultView.getComputedStyle(nodes.trigger).visibility, "visible");
+  assert.equal(navigationPresentationCurrent(witness()), true, "the actual helper accepts this current finite native structure");
+  nodes.body.setAttribute("inert", ""); assert.equal(navigationPresentationCurrent(witness()), false);
+  nodes.body.removeAttribute("inert");
+  nodes.body.hidden = true; assert.equal(navigationPresentationCurrent(witness()), false); nodes.body.hidden = false;
+  nodes.trigger.setAttribute("aria-disabled", "true"); assert.equal(navigationPresentationCurrent(witness()), false); nodes.trigger.removeAttribute("aria-disabled");
+  nodes.owned.setAttribute("style", "visibility: hidden;"); assert.equal(navigationPresentationCurrent(witness()), false); nodes.owned.removeAttribute("style");
+  nodes.owned.close(); assert.equal(navigationPresentationCurrent(witness()), false); nodes.owned.open = true;
+  assert.equal(navigationPresentationCurrent(witness()), true);
+  assert.equal(navigationPresentationCurrent({ ...witness(), trigger: nodes.sibling }), false);
+  const old = nodes, oldWitness = witness(); nodes = draw();
+  assert.equal(old.trigger.isConnected, false); assert.notStrictEqual(nodes.trigger, old.trigger);
+  assert.equal(nodes.owned.contains(old.trigger), false);
+  assert.equal(navigationPresentationCurrent(oldWitness), false);
+  assert.equal(navigationPresentationCurrent(witness()), true);
+  const markup = f.renderer.markup;
+  const opening = markup.indexOf(nodes.trigger.full), closing = markup.indexOf("</a>", opening);
+  assert.ok(opening >= 0 && closing > opening, "the current actual anchor has a complete emitted closing tag");
+  const triggerMarkup = markup.slice(opening, closing + "</a>".length);
+  assert.equal(markup.split(triggerMarkup).length, 2, "the complete current anchor is unique before reparenting");
+  f.renderer.markup = markup.replace(triggerMarkup, "").replace("</section>", triggerMarkup + "</section>");
+  assert.equal(nodes.owned.contains(nodes.trigger), false, "current markup ancestry, not the flattened owner, controls literal containment");
+  assert.equal(nodes.trigger.closest('dialog[aria-labelledby="presentation-title"]'), null);
+  assert.equal(navigationPresentationCurrent(witness()), false);
+  assert.equal(native.nativeFocus.length, 0, "no native field or focus is moved to satisfy a presentation contract");
+});
+
+test("finite native text selection resolves current descendants without changing raw value or native focus", { concurrency: false }, async t => {
+  const { fullPageTree, calmFullPageNativePorts: ports } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  // Direct existing-renderer unit only. It supplies the native selection span,
+  // not browser selection events, physical focus, an application or a Store.
+  const f = { trace: [], listeners: new Map(), timers: new Map(), store: {},
+    storeHost: { document: {}, window: { ...ports.windowPort } } };
+  ports.bindFixture(f); t.after(() => ports.bindFixture(null));
+  f.host = new ports.ElementPort(); f.host.tag = "fixture-selection-owner-a";
+  f.renderer = new ports.RendererPort(f, {}); f.tree = () => fullPageTree(f);
+  const native = installOutputNavigationFocusNative(t, f, ports);
+  const state = { mounted: true };
+  const view = () => lit.html`<section><button id="selection-outside">Outside</button>
+    ${state.mounted ? lit.html`<form id="selection-form" class="selection-editor"><label>Name<input id="selection-field" .value=${"A"}></label><textarea id="selection-area" .value=${"Initial note"}></textarea></form>` : nothing}
+    <form id="selection-other-form" class="other-editor"><input id="selection-other" .value=${"Other owner field"}></form></section>`;
+  const draw = () => { f.renderer.draw(f.host, view); return Object.fromEntries(f.renderer.nodes.filter(node => node.attributes.id)
+    .map(node => [node.attributes.id.replace("selection-", ""), node])); };
+  let nodes = draw();
+  assert.strictEqual(f.host.querySelector(".selection-editor input"), nodes.field, "The class ancestor is not returned as its descendant input");
+  assert.deepEqual(f.host.querySelectorAll(".selection-editor input"), [nodes.field]);
+  assert.strictEqual(f.host.querySelector(".selection-editor textarea"), nodes.area);
+  assert.equal(nodes["other-form"].querySelector(".selection-editor input"), null, "Literal-owner scoping excludes another form's current field");
+  assert.equal(typeof nodes.form.select, "undefined", "An ancestor form must never impersonate text-selection IDL");
+  assert.equal(typeof nodes.field.select, "function"); assert.equal(typeof nodes.area.select, "function");
+  const raw = "  B 🧭 文書 العربية  "; nodes.field.value = raw;
+  native.focus(nodes.outside); const active = native.document.activeElement, focusCount = native.nativeFocus.length;
+  nodes.field.select();
+  assert.equal(nodes.field.value, raw); assert.equal(nodes.field.selectionStart, 0); assert.equal(nodes.field.selectionEnd, raw.length);
+  assert.equal(nodes.field.selectionDirection, "none");
+  nodes.area.value = "  Note B\n第二行  "; nodes.area.select();
+  assert.equal(nodes.area.selectionStart, 0); assert.equal(nodes.area.selectionEnd, nodes.area.value.length);
+  assert.equal(nodes.area.value, "  Note B\n第二行  ");
+  assert.strictEqual(native.document.activeElement, active); assert.equal(native.nativeFocus.length, focusCount,
+    "Selection-span support does not fabricate a browser focus transfer");
+  nodes.form.setAttribute("class", "renamed-editor");
+  assert.equal(f.host.querySelector(".selection-editor input"), null);
+  assert.strictEqual(f.host.querySelector(".renamed-editor input"), nodes.field, "Live class changes are not cached as selector answers");
+  const old = nodes; state.mounted = false; nodes = draw();
+  assert.equal(old.field.isConnected, false); assert.equal(f.host.querySelector(".selection-editor input"), null);
+  old.field.select(); assert.equal(old.field.isConnected, false, "A retired field is not resurrected or rebound to a semantic ID");
+  state.mounted = true; nodes = draw();
+  assert.notStrictEqual(nodes.field, old.field); assert.strictEqual(f.host.querySelector(".selection-editor input"), nodes.field);
+  assert.equal(nodes.field.value, "A", "Actual remount uses its declared current PropertyPart, not the retired raw field");
+  const previousOwner = f.host;
+  f.host = new ports.ElementPort(); f.host.tag = "fixture-selection-owner-b";
+  const previousField = nodes.field; nodes = draw();
+  assert.notStrictEqual(nodes.field.owner, previousOwner); assert.equal(previousField.isConnected, false);
+  assert.strictEqual(f.host.querySelector(".selection-editor input"), nodes.field);
+  assert.equal(previousOwner.querySelector(".selection-editor input"), null);
+  assert.strictEqual(native.document.activeElement, active); assert.equal(native.nativeFocus.length, focusCount);
+});
+
+test("finite keyed object identity retains only the same owner's current keyed PropertyPart", () => {
+  const f = { trace: [] }, renderer = new RendererPort(f, {}), owner = {};
+  const firstKey = Object.freeze({ id: "same-inspector" }), otherKey = Object.freeze({ id: "same-inspector" });
+  assert.notStrictEqual(firstKey, otherKey); assert.equal(String(firstKey), String(otherKey));
+  const field = value => lit.html`<input .value=${value}>`;
+  const draw = (key, value, host = owner) => {
+    renderer.draw(host, () => keyed(key, field(value)));
+    const fields = renderer.ownNodes(host, "input"); assert.equal(fields.length, 1);
+    assert.strictEqual(fields[0].owner, host); assert.equal(fields[0].isConnected, true);
+    return fields[0];
+  };
+  const active = documentPort.activeElement;
+  let node = draw(firstKey, "Canonical A"); const firstPart = node.propertyParts.value;
+  assert.equal(typeof firstPart, "string"); assert.equal(node.value, "Canonical A");
+  node.value = "  unsent A 文書\nنور  ";
+  const same = draw(firstKey, lit.noChange);
+  assert.equal(same.propertyParts.value, firstPart);
+  assert.equal(same.value, "  unsent A 文書\nنور  ", "The same object key retains this actual native PropertyPart's raw value");
+  // Raw PropertyPart continuity is not a claim about native form/DOM lifetime.
+  node = draw(otherKey, lit.noChange);
+  assert.notEqual(node.propertyParts.value, firstPart, "Equal-shaped distinct object keys cannot alias through String(key)");
+  assert.equal(node.value, "", "A replacement keyed subtree cannot borrow the prior inspector's unsent value");
+  assert.equal(same.isConnected, false);
+  node = draw(otherKey, "Canonical B"); node.value = "unsent B";
+  node = draw(firstKey, lit.noChange);
+  assert.equal(node.value, "", "Returning to an old object key does not resurrect its earlier raw subtree");
+  node.value = "removed raw"; renderer.draw(owner, () => nothing);
+  assert.equal(node.isConnected, false);
+  node = draw(firstKey, lit.noChange);
+  assert.equal(node.value, "", "An absent keyed field cannot regain its old raw value");
+  node.value = "prior owner raw";
+  const replacement = draw(firstKey, lit.noChange, {});
+  assert.equal(replacement.value, "", "Key identity never overrides the existing exact owner boundary");
+  assert.equal(node.isConnected, false);
+  assert.strictEqual(documentPort.activeElement, active); assert.deepEqual(f.trace, [], "Key projection never invokes or remaps focus");
+});
+
+
+test("finite submit form retention follows the current owner template and object key", async t => {
+  const { retainNativeSubmitForms } = await import("./helpers/deferred-focus-invokers.mjs");
+  const f = { trace: [] }, previousFixture = activeFixture;
+  activeFixture = f; t.after(() => { activeFixture = previousFixture; });
+  const owner = new ElementPort(); owner.isConnected = true; owner.tag = "fixture-form-owner-a";
+  const owners = new Set([owner]);
+  f.renderer = new RendererPort(f, {});
+  retainNativeSubmitForms(f, owners, form => form.classList.contains("layer-inspector"));
+  const firstKey = {}, otherKey = {}, calls = [];
+  const view = (key, value, submit) => lit.html`<section>${keyed(key, lit.html`<form class="layer-inspector" id="same-form" @submit=${submit}><input .value=${value}></form>`)}</section>`;
+  const otherView = (key, value, submit) => lit.html`<aside>${keyed(key, lit.html`<form class="layer-inspector" id="same-form" @submit=${submit}><input .value=${value}></form>`)}</aside>`;
+  const draw = (template, host = owner) => {
+    f.renderer.draw(host, () => template);
+    const forms = f.renderer.ownNodes(host, "form"), fields = f.renderer.ownNodes(host, "input");
+    assert.equal(forms.length, 1); assert.equal(fields.length, 1);
+    assert.strictEqual(forms[0].owner, host); assert.equal(forms[0].isConnected, true);
+    return { form: forms[0], field: fields[0] };
+  };
+  const firstSubmit = function(event) { assert.strictEqual(this, owner); calls.push(["first", event.currentTarget]); };
+  const currentSubmit = function(event) { assert.strictEqual(this, owner); calls.push(["current", event.currentTarget]); };
+  const active = documentPort.activeElement;
+  let current = draw(view(firstKey, "Canonical", firstSubmit));
+  const original = current.form, query = original.querySelector, focus = original.focus;
+  const listener = () => {}; original.addEventListener("fixture-original", listener);
+  current.field.value = "  unsent native field  ";
+  current = draw(view(firstKey, lit.noChange, currentSubmit));
+  assert.strictEqual(current.form, original, "The same actual submit EventPart retains its native form");
+  assert.strictEqual(current.form.querySelector, query); assert.strictEqual(current.form.focus, focus);
+  assert.strictEqual(current.form.listeners["fixture-original"], listener, "Original native closures/listeners are not replaced with fresh-node closures");
+  assert.strictEqual(current.form.handlers.submit, currentSubmit, "Current application event binding still updates");
+  current.form.handlers.submit.call(owner, { type: "submit", target: current.form, currentTarget: current.form });
+  assert.deepEqual(calls, [["current", original]]);
+  assert.equal(current.field.value, "  unsent native field  ", "The existing PropertyPart, not a form raw cache, retains field value");
+  current = draw(view(otherKey, lit.noChange, currentSubmit));
+  assert.notStrictEqual(current.form, original); assert.equal(original.isConnected, false);
+  assert.equal(current.field.value, "", "A changed actual object key cannot borrow old fields despite the same form ID");
+  const keyedForm = current.form;
+  current = draw(otherView(otherKey, lit.noChange, currentSubmit));
+  assert.notStrictEqual(current.form, keyedForm); assert.equal(keyedForm.isConnected, false);
+  const differentTemplate = current.form; f.renderer.draw(owner, () => nothing);
+  assert.equal(differentTemplate.isConnected, false);
+  current = draw(otherView(otherKey, lit.noChange, currentSubmit));
+  assert.notStrictEqual(current.form, differentTemplate, "An absent form never revives from an old record");
+  const priorOwnerForm = current.form, replacementOwner = new ElementPort();
+  replacementOwner.isConnected = true; replacementOwner.tag = "fixture-form-owner-b"; owners.add(replacementOwner);
+  current = draw(otherView(otherKey, lit.noChange, currentSubmit), replacementOwner);
+  assert.notStrictEqual(current.form, priorOwnerForm); assert.equal(priorOwnerForm.isConnected, false);
+  assert.strictEqual(current.form.owner, replacementOwner);
+  assert.strictEqual(documentPort.activeElement, active); assert.deepEqual(f.trace, [], "Retention does not invoke or remap focus");
 });

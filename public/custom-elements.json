@@ -311,6 +311,17 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -352,6 +363,17 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -557,6 +579,17 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -639,6 +672,17 @@
             "name": "FormaRoleDashboard",
             "module": "src/components/forma-role-dashboard.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -885,6 +929,34 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureLocalNavigation",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "LocalNavigation | null"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -1191,6 +1263,16 @@
               "type": {
                 "text": "CreativeBlock"
               }
+            },
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              },
+              "description": "Content-free custody shared by this view's existing navigation owners."
             },
             {
               "kind": "field",
@@ -2618,10 +2700,26 @@
             },
             {
               "kind": "field",
+              "name": "commandDepartureBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Closing a settled recovery is not cancellation; raw drafts and active work still own departure."
+            },
+            {
+              "kind": "field",
               "name": "context",
               "type": {
                 "text": "AssistantContext | null"
               }
+            },
+            {
+              "kind": "field",
+              "name": "continuation",
+              "type": {
+                "text": "typeof nothing | TemplateResult"
+              },
+              "description": "Local presentation only; never a conversation message or tool request."
             },
             {
               "kind": "field",
@@ -2668,6 +2766,14 @@
               "type": {
                 "text": "readonly AssistantInteractionMode[]"
               }
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Read existing owners; navigation must not acknowledge or discard their work."
             },
             {
               "kind": "field",
@@ -10550,6 +10656,24 @@
           },
           "members": [
             {
+              "kind": "method",
+              "name": "allowsNavigationPresentation",
+              "parameters": [
+                {
+                  "name": "context",
+                  "type": {
+                    "text": "NavigationPresentationContext | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Only this exact current readonly viewer may be subtracted from its parent."
+            },
+            {
               "kind": "field",
               "name": "compact",
               "type": {
@@ -10609,11 +10733,17 @@
                   "type": {
                     "text": "string"
                   }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current?: () => boolean; }"
+                  }
                 }
               ],
               "return": {
                 "type": {
-                  "text": "Promise<false | undefined>"
+                  "text": "Promise<boolean | undefined>"
                 }
               }
             },
@@ -10962,6 +11092,14 @@
             },
             {
               "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Content-free origin admission; the original note, review and correction owners stay here."
+            },
+            {
+              "kind": "field",
               "name": "notification",
               "type": {
                 "text": "ProjectNotification | null"
@@ -11045,6 +11183,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11218,6 +11367,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11259,6 +11419,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "events": [
             {
               "name": "forma-assistant-tool-request",
@@ -11309,6 +11480,17 @@
             "name": "AlternativeStudio",
             "module": "src/components/forma-studio-alternatives.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11350,6 +11532,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11560,6 +11753,59 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "awaitArtifactRouteOpening",
+              "parameters": [
+                {
+                  "name": "target",
+                  "type": {
+                    "text": "{ artifactId: string; documentId: string; revision: number; contentSha256: string; }"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Await the same exact route opening; a successful Store route is not viewer-arrival evidence."
+            },
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              },
+              "description": "Content-free admission; the caller still owns Source, route and native focus."
+            },
+            {
+              "kind": "method",
+              "name": "captureLocalNavigation",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "LocalNavigation | null"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11601,6 +11847,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11650,6 +11907,13 @@
                 "text": "OutputCardEditorState"
               },
               "default": "{ status: \"idle\" }"
+            },
+            {
+              "kind": "field",
+              "name": "hasOpenDraft",
+              "type": {
+                "text": "boolean"
+              }
             },
             {
               "kind": "field",
@@ -11804,6 +12068,14 @@
             },
             {
               "kind": "field",
+              "name": "commandDepartureBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Departure protects local edits/in-flight work, not settled original metadata alone."
+            },
+            {
+              "kind": "field",
               "name": "documentId",
               "type": {
                 "text": "string"
@@ -11846,6 +12118,38 @@
               "type": {
                 "text": "boolean"
               }
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Local work only. A false value is not current Source, read, route, or authoring permission."
+            },
+            {
+              "kind": "method",
+              "name": "revealAuthoredRequirement",
+              "parameters": [
+                {
+                  "name": "target",
+                  "type": {
+                    "text": "{ projectId: string; documentId: string; blockId: string; }"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Reveal one current authored Output's existing status only; never create a snapshot or action grant."
             },
             {
               "kind": "field",
@@ -11918,6 +12222,15 @@
           },
           "members": [
             {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "route",
               "type": {
@@ -11976,6 +12289,32 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "navigateFrom",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "HTMLElement"
+                  }
+                },
+                {
+                  "name": "path",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Admit only a current ordinary UI departure; never gate privacy or load retirement."
+            }
+          ],
           "demos": [
             {
               "url": "/knowledge/design-system#forma-platform-shell"
@@ -12069,6 +12408,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12242,6 +12592,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12343,6 +12704,38 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "navigateFrom",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "run",
+                  "type": {
+                    "text": "InAppNavigationAction"
+                  }
+                },
+                {
+                  "name": "preferences",
+                  "type": {
+                    "text": "NavigationPresentationContext"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Deliberate UI navigation only; internal save, recovery and permission retirement do not call this."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12384,6 +12777,17 @@
             "name": "AlternativeStudio",
             "module": "src/components/forma-studio-alternatives.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12401,6 +12805,17 @@
             "name": "AlternativeStudio",
             "module": "src/components/forma-studio-alternatives.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12461,6 +12876,15 @@
           "members": [
             {
               "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "legacyRender",
               "return": {
                 "type": {
@@ -12487,6 +12911,15 @@
             "module": "src/components/forma-studio-alternatives.ts"
           },
           "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
             {
               "kind": "method",
               "name": "legacyRender",
@@ -12595,6 +13028,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "demos": [
             {
               "url": "/knowledge/design-system#forma-workspace-settings"
@@ -12650,13 +13094,78 @@
           "members": [
             {
               "kind": "method",
-              "name": "openContextComposer",
+              "name": "captureCommandDeparture",
               "return": {
                 "type": {
-                  "text": "void"
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "openContextComposer",
+              "parameters": [
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: (stage: CreativePreparationStage) => boolean; focus?: OutputNavigationFocusLease; } | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void | Promise<boolean>"
                 }
               },
               "description": "Shared entry point: choosing a command never creates placeholder content."
+            },
+            {
+              "kind": "method",
+              "name": "openCreativeNextAction",
+              "parameters": [
+                {
+                  "name": "action",
+                  "type": {
+                    "text": "CreativeNextAction"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: (stage: CreativePreparationStage) => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Same existing local executor. Cross-surface routing remains the stateless opening helper's job."
+            },
+            {
+              "kind": "method",
+              "name": "openOutputPreparation",
+              "parameters": [
+                {
+                  "name": "target",
+                  "type": {
+                    "text": "import(\"/private/tmp/forma-durable-production/src/model/workspace-intelligence\").CreativeActionScope & { kind: \"configure\"; medium: CreativeMedium | null; sourceRevision: string; }"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: (stage: CreativePreparationStage) => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Existing preparation entry, with caller ownership retained through its native opening."
             },
             {
               "kind": "method",
@@ -12859,6 +13368,14 @@
               },
               "default": "false",
               "attribute": "open"
+            },
+            {
+              "kind": "field",
+              "name": "openingCurrent",
+              "type": {
+                "text": "(() => boolean) | null"
+              },
+              "default": "null"
             }
           ],
           "attributes": [
@@ -12931,6 +13448,15 @@
               "default": "null"
             },
             {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "compact",
               "type": {
@@ -12939,6 +13465,13 @@
               "default": "false",
               "attribute": "compact",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "localWorkBlocked",
+              "type": {
+                "text": "boolean"
+              }
             },
             {
               "kind": "field",
@@ -13012,6 +13545,23 @@
           },
           "members": [
             {
+              "kind": "method",
+              "name": "allowsNavigationPresentation",
+              "parameters": [
+                {
+                  "name": "context",
+                  "type": {
+                    "text": "NavigationPresentationContext | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "blockId",
               "type": {
@@ -13019,6 +13569,13 @@
               },
               "default": "undefined",
               "description": "Pin a retained form to its original decision; undefined uses the current route."
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              }
             },
             {
               "kind": "method",
@@ -13082,6 +13639,15 @@
             "module": "src/components/forma-element.ts"
           },
           "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
             {
               "kind": "field",
               "name": "output",
@@ -13164,6 +13730,14 @@
               "type": {
                 "text": "OutputInputDraft | null"
               }
+            },
+            {
+              "kind": "field",
+              "name": "localWorkBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Existing local work only; no permission, receipt or navigation authority."
             },
             {
               "kind": "method",
@@ -13320,11 +13894,17 @@
                   "type": {
                     "text": "HTMLElement | undefined"
                   }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current?: () => boolean; }"
+                  }
                 }
               ],
               "return": {
                 "type": {
-                  "text": "void"
+                  "text": "boolean"
                 }
               }
             },

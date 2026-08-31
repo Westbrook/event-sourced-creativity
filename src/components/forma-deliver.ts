@@ -1,8 +1,14 @@
 import { html, nothing } from "lit";
+import { navigateInApp, type CommandDeparture } from "./command-departure";
 import { repeat } from "lit/directives/repeat.js";
 import { scopedFormaActivity } from "../model/activity";
 import { artifactSourceVersions } from "../model/context-health";
 import { artifactDeliveryFor } from "../state/artifact-delivery-context";
+import { nextActionFacts } from "../state/next-action-context";
+import { creativeNextActions, type CreativeNextAction } from "../model/workspace-intelligence";
+import { renderLifecycleNextActionCards } from "./next-action-cards";
+import { openCreativeNextActionDestination } from "./creative-next-action-navigation";
+import type { FormaOutputRequirements } from "./forma-output-requirements";
 import { documentArtifactDefinition } from "../model/document-artifacts";
 import { describeOutputs, imageOutputNamingCandidate } from "../model/output-naming";
 import { artifactFocusRoute, libraryFocusRoute, withProjectTaskDocumentInRoute } from "../model/routes";
@@ -13,19 +19,70 @@ import "./project-rail";
 import "./forma-output-requirements";
 
 export class FormaDeliver extends FormaElement {
+  #nextNavigation = 0;
   override connectedCallback() {
     super.connectedCallback();
     if (!this.store.session.get()) return;
     void this.store.refreshEvents().catch(() => undefined);
   }
 
-  #open(path: string) { this.store.setRoute(path); }
+  #nextContext() {
+    const projection = this.store.projection.get();
+    const document = projection.documents.find(value => value.id === projection.documentId
+      && value.projectId === projection.projectId && !value.removed);
+    if (!document || !this.store.routeDataReady()) return null;
+    const facts = nextActionFacts(this.store, document.id, null, { lifecycle: true });
+    return facts.canRead ? { facts, document, projectName: projection.projectName } : null;
+  }
+
+  #navigationBlocked() {
+    return [...this.querySelectorAll<FormaOutputRequirements>("forma-output-requirements")]
+      .some(controller => controller.isConnected && controller.navigationBlocked);
+  }
+
+  captureCommandDeparture():CommandDeparture {
+    const owned=()=>[...this.querySelectorAll<FormaOutputRequirements>("forma-output-requirements")]
+      .filter(controller=>controller.isConnected&&FormaElement.hasStoreIdentity(controller,this.store));
+    const controllers=owned().map(controller=>({controller,documentId:controller.documentId,blockId:controller.blockId,surface:controller.surface}));
+    return {element:this,current:()=>{const current=owned();return this.isConnected&&current.length===controllers.length
+      &&controllers.every(({controller,documentId,blockId,surface})=>current.includes(controller)
+        &&controller.documentId===documentId&&controller.blockId===blockId&&controller.surface===surface);},
+      blocked:()=>controllers.some(({controller})=>controller.commandDepartureBlocked),reason:()=>"next.lifecycle.currentWorkOpen"};
+  }
+
+  async #followNextAction(action: CreativeNextAction) {
+    const next = this.#nextContext(), route = this.store.route.get();
+    if (!next || action.target.documentId !== next.document.id) return false;
+    if (this.#navigationBlocked()) {
+      this.store.toast(this.i18n.t("next.lifecycle.currentWorkOpen", "Save or discard local edits, clear unsent text, or check the current request before continuing. Closing a panel may retain work; wait if the request is running."));
+      return false;
+    }
+    const request = ++this.#nextNavigation;
+    const originCurrent = () => this.isConnected && request === this.#nextNavigation
+      && this.store.route.get() === route && this.store.projection.get().projectId === action.target.projectId
+      && this.store.projection.get().documentId === action.target.documentId && !this.#navigationBlocked();
+    let opened = false, navigationRefusal = "";
+    try {
+      opened = await openCreativeNextActionDestination(this.store, this.ownerDocument, action, {
+        origin:this, originCurrent, navigationCurrent: () => request === this.#nextNavigation,
+        onRefusal: reason => { navigationRefusal = reason; },
+      });
+    } catch { /* An unavailable destination is not a completed handoff. */ }
+    if (!opened && navigationRefusal !== "current-work" && originCurrent()) this.store.toast(this.i18n.t("next.exact.unavailable", "This exact action changed or is no longer available. Review the current document."));
+    return opened;
+  }
+
+  #open(path:string){
+    if(path===this.store.route.get())return true;
+    return navigateInApp(this,navigation=>navigation.route(path));
+  }
   #follow(event:MouseEvent,path:string){if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.#open(path);}
 
   override render() {
     const session = this.store.session.get();
     const projection = this.store.projection.get();
     const currentRoute = this.store.route.get();
+    const next = this.#nextContext();
     const activityHref = withProjectTaskDocumentInRoute("/activity", projection.documentId, currentRoute);
     const activity = scopedFormaActivity(session, projection, [], [], []);
     const documentIds = new Set(activity.documents.map((document) => document.id));
@@ -50,6 +107,10 @@ export class FormaDeliver extends FormaElement {
     return html`<section class="workspace-page studio-subpage forma-deliver-page"><forma-project-rail surface="studio" destination="/deliver" quiet></forma-project-rail>
       <div class="studio-main forma-deliver-main"><header class="page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${projection.projectName} / ${this.i18n.t("deliver.eyebrow", "Present and deliver")}</span><h1>${this.i18n.t("shell.navigation.deliver", "Deliver")}</h1><p>${this.i18n.t("deliver.description", "Review the real creative results produced in this project, then open the exact artifact to present, review, share, or export it when authorized.")}</p></div><a class="button secondary" href=${activityHref} @click=${(event: MouseEvent) => this.#follow(event,activityHref)}>${this.i18n.t("deliver.reviewActivity", "Review activity")} ${icon("arrow")}</a></header>
         <div class="forma-deliver-body">
+        ${next ? renderLifecycleNextActionCards(creativeNextActions(next.facts), this.i18n, action => this.#followNextAction(action), {
+          projectName: next.projectName, documentTitle: next.document.title,
+          scopeUnknown: next.facts.lifecycle?.output.state !== "ready" || next.facts.lifecycle?.output.scopeKnown !== true,
+        }) : nothing}
         ${repeat(activity.documents, document => document.id, document => html`<forma-output-requirements .documentId=${document.id} .documentName=${document.title} .surface=${"deliver"}></forma-output-requirements>`)}
         <section aria-label=${this.i18n.t("artifact.delivery.resultsSection", "Creative results")}>
           <div class="forma-deliver-section"><p><b>${this.i18n.t("artifact.delivery.resultsSection", "Creative results")}</b> · ${this.i18n.t("artifact.delivery.resultsScope", "Counts cover the document artifacts and visual results in this section; Output requirements track fulfillment separately.")}</p></div>

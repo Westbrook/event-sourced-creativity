@@ -3,12 +3,59 @@ import { qualifyDisplayCollisions } from "../model/output-naming";
 import { attentionEvents, attentionMetrics, ATTENTION_RETENTION_DAYS } from "../model/attention";
 import { outcomeMoney, personalUsageReceiptDisclosure } from "./outcome-telemetry-summary";
 import { FormaElement, icon } from "./forma-element";
+import { navigateInApp } from "./command-departure";
+import { requestDialogConfirmation } from "./modal-dialog.ts";
 
 /** Creator-owned controls remain available without entering platform administration. */
 export class FormaAccountSettings extends FormaElement {
+  #privacyConfirmation: { controller: AbortController; current: () => boolean; sent: boolean } | null = null;
+  #unsubscribeConfirmation?: () => void;
+  #checkConfirmation = () => {
+    const pending = this.#privacyConfirmation;
+    if (pending && !pending.current()) pending.controller.abort();
+  };
   override connectedCallback() {
     super.connectedCallback();
+    this.#unsubscribeConfirmation = this.store.subscribe(this.#checkConfirmation);
     void this.store.loadShares();
+  }
+  override disconnectedCallback() {
+    this.#privacyConfirmation?.controller.abort();
+    this.#unsubscribeConfirmation?.(); this.#unsubscribeConfirmation = undefined;
+    super.disconnectedCallback();
+  }
+
+  async #confirmPrivacy(event: Event, action: "migrate" | "erase") {
+    if (this.#privacyConfirmation) return;
+    const session = this.store.session.get(), authorization = this.store.captureAuthorizationScope();
+    if (!session || !authorization || session.impersonation || session.projectContext
+      || action === "migrate" && session.user.role !== "admin") return;
+    const route = this.store.route.get(), role = session.user.role, controller = new AbortController();
+    const invoker = event.currentTarget as HTMLElement | null;
+    const pending = { controller, sent: false, current: (): boolean => {
+      const now = this.store.session.get();
+      return this.#privacyConfirmation === pending && !controller.signal.aborted && this.isConnected
+        && this.store.route.get() === route && this.store.authorizationScopeActive(authorization)
+        && Boolean(now && !now.impersonation && !now.projectContext && now.user.role === role);
+    } };
+    this.#privacyConfirmation = pending;
+    const label = this.i18n.system(action === "migrate" ? "Migrate historical event privacy" : "Erase my personal authored context");
+    try {
+      const accepted = await requestDialogConfirmation({
+        title: label, confirmLabel: label, cancelLabel: this.i18n.t("action.cancel"),
+        message: this.i18n.system(action === "migrate"
+          ? "Move historical authored event bodies into erasable owner-scoped storage? Event identities, revisions, project permissions, and finished outputs are preserved."
+          : "Permanently erase the authored context and temporary private processing data from your personal projects? Finished outputs, uploaded files, shared organization work, backups, and other devices are not deleted."),
+        locale: this.i18n.locale, direction: this.i18n.direction, owner: this, invoker,
+        signal: controller.signal, current: pending.current,
+      });
+      if (!accepted || !pending.current()) return;
+      pending.sent = true; this.requestUpdate();
+      if (action === "migrate") await this.store.migrateHistoricalEventPrivacy();
+      else await this.store.erasePersonalAuthoredContext();
+    } finally {
+      if (this.#privacyConfirmation === pending) { this.#privacyConfirmation = null; this.requestUpdate(); }
+    }
   }
 
   override render() {
@@ -56,7 +103,7 @@ export class FormaAccountSettings extends FormaElement {
           <div class="creator-settings-facts"><span>${this.i18n.t("settings.savedEpisodes", "Saved attention episodes")}</span><b>${this.i18n.number(attention.episodes)}</b><span>${this.i18n.t("settings.signalRetention", "Signal retention")}</span><b>${this.i18n.plural("account.days", ATTENTION_RETENTION_DAYS, "{count} day", "{count} days")}</b><span>${this.i18n.t("settings.contentRetention", "Temporary prompts and processing data")}</span><b>${this.i18n.plural("account.days", session.policy.retentionDays, "{count} day", "{count} days")}</b><span>${this.i18n.t("settings.outputRetention", "Finished outputs")}</span><b>${this.i18n.t("settings.outputRetentionValue", "Retained with your work")}</b><span>${this.i18n.t("settings.evidenceRetention", "Exact private input receipts")}</span><b>${this.i18n.plural("account.days", session.policy.evidenceRetentionDays??365, "{count} day", "{count} days")}</b><span>${this.i18n.t("settings.processing", "Provider processing")}</span><b>${session.policy.accepted ? this.i18n.t("settings.approved", "Approved") : this.i18n.t("settings.notApproved", "Not approved")}</b></div>
           ${episodes.length ? html`<ol class="creator-settings-episodes" aria-label=${this.i18n.t("settings.recentSignals", "Recent attention signals")}>${episodes.map((event) => html`<li><b>${String(event.payload.context ?? "Creative work").replaceAll("-", " ")}</b><span>${this.i18n.number(Math.round(Number(event.payload.active_ms ?? 0) / 1_000))}s</span></li>`)}</ol>` : html`<p class="creator-settings-empty">${this.i18n.t("settings.noSignals", "No personal attention signals are currently retained.")}</p>`}
           <button type="button" class="button ghost compact danger-quiet" @click=${() => this.store.forgetAttentionSignals()}>${this.i18n.t("settings.forget", "Forget my attention data")}</button>
-          ${!impersonating&&!session.projectContext?html`${session.user.role==="admin"?html`<button type="button" class="button secondary compact" @click=${()=>{if(window.confirm(this.i18n.system("Move historical authored event bodies into erasable owner-scoped storage? Event identities, revisions, project permissions, and finished outputs are preserved.")))void this.store.migrateHistoricalEventPrivacy();}}>Migrate historical event privacy</button>`:nothing}<button type="button" class="button ghost compact danger-quiet" @click=${()=>{if(window.confirm(this.i18n.system("Permanently erase the authored context and temporary private processing data from your personal projects? Finished outputs, uploaded files, shared organization work, backups, and other devices are not deleted.")))void this.store.erasePersonalAuthoredContext();}}>Erase my personal authored context</button><p class="creator-settings-empty">Requires historical event migration first. Shared organization work, finished outputs, uploaded files, backups, and other devices remain separate.</p>`:nothing}
+          ${!impersonating&&!session.projectContext?html`${session.user.role==="admin"?html`<button type="button" class="button secondary compact" ?disabled=${this.#privacyConfirmation?.sent ?? false} @click=${(event: Event)=>this.#confirmPrivacy(event,"migrate")}>Migrate historical event privacy</button>`:nothing}<button type="button" class="button ghost compact danger-quiet" ?disabled=${this.#privacyConfirmation?.sent ?? false} @click=${(event: Event)=>this.#confirmPrivacy(event,"erase")}>Erase my personal authored context</button><p class="creator-settings-empty">Requires historical event migration first. Shared organization work, finished outputs, uploaded files, backups, and other devices remain separate.</p>`:nothing}
         </section>
 
         <section class="creator-settings-card" aria-labelledby="settings-spending-heading">
@@ -79,7 +126,7 @@ export class FormaAccountSettings extends FormaElement {
         <section class="creator-settings-card" aria-labelledby="settings-workspaces-heading">
           <header><h2 id="settings-workspaces-heading">${this.i18n.t("workspace.admin.organizations","Your organizations")}</h2><p>${this.i18n.t("workspace.admin.settingsDescription","Review your invitations, open shared projects, or manage organizations you own.")}</p></header>
           <div class="creator-settings-facts"><span>${this.i18n.t("workspace.admin.organizations","Your organizations")}</span><b>${this.i18n.number(session.organizations?.length??0)}</b><span>${this.i18n.t("workspace.admin.sharedProjects","Projects shared with you")}</span><b>${this.i18n.number(session.projects?.length??0)}</b></div>
-          <a class="button secondary compact" href="/settings/workspaces" @click=${(event:MouseEvent)=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.store.setRoute("/settings/workspaces");}}>${this.i18n.t("workspace.admin.open","Open workspace settings")}</a>
+          <a class="button secondary compact" href="/settings/workspaces" @click=${(event:MouseEvent)=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();void navigateInApp(this,navigation=>navigation.route("/settings/workspaces"));}}>${this.i18n.t("workspace.admin.open","Open workspace settings")}</a>
         </section>
       </div>
     </section>`;

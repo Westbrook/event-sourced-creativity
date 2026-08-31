@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 import { parseOutputRequirement } from "../model/output-requirements";
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy";
 import "./forma-output-requirements";
@@ -12,6 +13,8 @@ import { outputInputDraft } from "../model/output-authoring";
 import { combinedContextMemberships } from "../model/combined-context";
 import { isImageReference, referenceMedium } from "../model/reference-media";
 import { FormaElement, icon } from "./forma-element";
+import { navigateInApp, navigationPresentationMatches, type NavigationPresentationContext } from "./command-departure";
+import { captureOutputNavigationFocus } from "./output-navigation-focus";
 import { ensureModalDialog } from "./modal-dialog";
 import { suspendContextControls } from "./context-controls";
 import "./context-block";
@@ -55,9 +58,19 @@ export class LibraryBlockEditor extends FormaElement {
   #pendingRelatedFile:File|null=null;
   #relatedRightsConfirmed=false;
   #uploading=false;
+  #pendingSaves:{current:()=>boolean;count:number}|null=null;
   #confirmRemove=false;
   #browserCollapsed=true;
   #filingCollapsed=true;
+
+  // Content-free check remains meaningful while the existing Library cache detaches this editor.
+  get navigationBlocked(){const pending=this.#pendingSaves;return this.#uploading||this.#confirmRemove
+    ||Boolean(pending&&pending.count>0&&pending.current())
+    ||Boolean(this.#cleanDraft&&this.#draftFingerprint()!==this.#cleanDraft);}
+  allowsNavigationPresentation(context?:NavigationPresentationContext){
+    return this.#selected()?.type.toLowerCase()==="output"&&!this.navigationBlocked
+      &&navigationPresentationMatches(context,this,this.querySelector(".library-block-editor"));
+  }
 
   /** Suspend owned modal layers while retaining native fields and child editors. */
   suspendControls(){this.#confirmRemove=false;suspendContextControls(this);this.requestUpdate();}
@@ -79,8 +92,10 @@ export class LibraryBlockEditor extends FormaElement {
     const revision=JSON.stringify([block,block?projection.membership[block.id]:null,block?projection.libraryBlockRelations.filter((relation)=>relation.fromBlockId===block.id):[]]);
     if(this.#loaded!==key||this.#draftFingerprint()===this.#cleanDraft&&revision!==this.#sourceRevision){this.#reset(block);this.#cleanDraft=this.#draftFingerprint();this.#sourceRevision=revision;}
   }
-  #open(blockId=""){if(!this.isConnected||!this.#canAuthor())return;this.store.setRoute(libraryBlockEditorRoute(blockId,this.store.route.get()));window.scrollTo({top:0});}
-  #close(){this.suspendControls();this.store.setRoute(libraryBaseRoute(this.store.route.get()));this.store.patchUi({libraryView:"blocks"});}
+  #localRoute(path:string){const library=this.closest<FormaElement>("forma-library");return this.isConnected&&library?.isConnected
+    &&FormaElement.hasStoreIdentity(library,this.store)?navigateInApp(library,{localRoute:path}):Promise.resolve(false);}
+  #open(blockId=""){if(!this.isConnected||!this.#canAuthor())return;return this.#localRoute(libraryBlockEditorRoute(blockId,this.store.route.get()));}
+  #close(){return this.#localRoute(libraryBaseRoute(this.store.route.get()));}
   #changeType(type:BlockKind){const previousDefault=suggestedReferenceRelation(this.#type);this.#type=type;this.#subtype=suggestedSubtype(type);this.#intent=type==="exclusion"?"avoid":"include";if(type==="reference"){this.#referenceRelations.clear();this.#pendingRelatedFile=null;this.#relatedRightsConfirmed=false;}else{const nextDefault=suggestedReferenceRelation(type);for(const [id,kind] of this.#referenceRelations)if(kind===previousDefault||kind==="visual_evidence")this.#referenceRelations.set(id,nextDefault);}this.requestUpdate();}
   #propertyEvents(block:CreativeBlock):EventInput[]{
     const events:EventInput[]=[];const add=(path:string,current:unknown,next:unknown)=>{if(JSON.stringify(current)!==JSON.stringify(next))events.push({type:"BlockPropertyEdited",payload:{block_id:block.id,property_path:path,old_value:current??null,new_value:next,source_surface:"library-block-editor"}});};
@@ -106,12 +121,49 @@ export class LibraryBlockEditor extends FormaElement {
   async #save(event:SubmitEvent){const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     event.preventDefault();if(!this.isConnected||!this.#canAuthor())return;const selected=this.#selected();if(this.#target().blockId&&!selected){this.store.toast(this.i18n.t("context.controls.unavailable","That saved decision is no longer available. Return to the Library to choose another."));return;}const adopted=selected?outputInputDraft(selected):null;if(selected?.properties.organization_context_package_binding_id){this.store.toast(this.i18n.system("Organization context"));return;}if(selected&&selected.scope!=="library"){this.store.toast("Fork a document-owned block before editing it independently.");return;}if(!this.#copy.trim()&&this.#type!=="reference"&&!adopted){this.store.toast("Add content before saving this block.");return;}if(this.#type==="reference"&&this.#pendingFile&&!this.#rightsConfirmed){this.store.toast("Confirm that you may use this image before uploading it.");return;}if(this.#pendingRelatedFile&&!this.#relatedRightsConfirmed){this.store.toast("Confirm that you may use the related reference image before uploading it.");return;}
     const workbench=this.querySelector("forma-output-input-editor");if(selected&&adopted&&workbench?.draft&&JSON.stringify(adopted)!==JSON.stringify(workbench.draft)&&!this.store.outputInputEvents(selected.id,workbench.draft,"library-block-editor").length){this.store.toast("Unlock every related storyboard frame before saving these changes.");return;}
+    // Same scoped count as Editor/Guided, owned by this exact Library target.
+    // Back may cache-detach this child without retiring its original Save.
+    let pending=this.#pendingSaves;
+    if(!pending||!pending.current()){
+      const store=this.store,library=this.closest<FormaElement>("forma-library");
+      const projectId=store.projection.get().projectId,targetId=this.#target().blockId;
+      pending={count:0,current:()=>Boolean(library?.isConnected&&this.store===store
+        &&FormaElement.hasStoreIdentity(library,store)&&store.sourceOwnershipActive(sourceOwner)
+        &&store.projection.get().projectId===projectId&&this.#target().blockId===targetId)};
+      this.#pendingSaves=pending;
+    }
+    pending.count+=1;
     try{
-      if(selected){const events=[...this.#propertyEvents(selected),...this.#relationEvents(selected.id)];const relatedUpload=await this.#uploadRelatedReference(events,selected.id,()=>this.store.sourceOwnershipActive(sourceOwner));if(!this.store.sourceOwnershipActive(sourceOwner))return;if(!events.length){this.store.toast("No block changes to save.");return;}const appended=await this.store.appendBatch(events);if(this.store.sourceOwnershipActive(sourceOwner)&&appended.length){if(this.store.sourceOwnershipActive(sourceOwner)&&relatedUpload?.sample)await this.store.extractReference(relatedUpload.referenceBlockId,relatedUpload.referenceId,relatedUpload.sample,DEFAULT_REFERENCE_FINDINGS);if(!this.store.sourceOwnershipActive(sourceOwner))return;this.#loaded="";this.store.toast("Reusable block and its connected context were updated.");}return;}
+      if(selected){
+        const submittedDraft=this.#draftFingerprint(),cleanDraft=this.#cleanDraft;
+        const currentSave=()=>this.#pendingSaves===pending&&pending.current()
+          &&this.store.sourceOwnershipActive(sourceOwner)&&this.#selected()?.id===selected.id;
+        const events=[...this.#propertyEvents(selected),...this.#relationEvents(selected.id)];
+        const relatedUpload=await this.#uploadRelatedReference(events,selected.id,()=>this.store.sourceOwnershipActive(sourceOwner));
+        if(!this.store.sourceOwnershipActive(sourceOwner))return;
+        if(!events.length){this.store.toast("No block changes to save.");return;}
+        const appended=await this.store.appendBatch(events);
+        if(this.store.sourceOwnershipActive(sourceOwner)&&appended.length){
+          if(this.store.sourceOwnershipActive(sourceOwner)&&relatedUpload?.sample)await this.store.extractReference(relatedUpload.referenceBlockId,relatedUpload.referenceId,relatedUpload.sample,DEFAULT_REFERENCE_FINDINGS);
+          if(!currentSave())return;
+          const currentDraft=this.#draftFingerprint();
+          // Reload unchanged A or a deliberate return to known canonical fields.
+          // A distinct newer raw draft remains in this same retained editor.
+          const reload=currentDraft===submittedDraft||currentDraft===cleanDraft||currentDraft===this.#cleanDraft;
+          if(reload)this.#loaded="";
+          this.store.toast(reload?"Reusable block and its connected context were updated."
+            :this.i18n.t("guided.save.newerEditsKept","The earlier submission was saved. Your newer edits are still here."));
+        }
+        return;
+      }
       const p=this.store.projection.get();const id=crypto.randomUUID();const properties:Record<string,unknown>={subtype:this.#subtype,intent:this.#intent,weight:this.#weight,authority:"authored",created_from:"library-block-editor"};if(this.#type==="palette")Object.assign(properties,{label:this.#copy.trim(),colors:this.#colors});else if(this.#type==="reference")Object.assign(properties,{label:this.#copy.trim()||this.#pendingFile?.name||"Reference",media_url:this.#mediaUrl.trim(),pixel_reference_mode:this.#pixelMode});else Object.assign(properties,{text:this.#copy.trim(),...(this.#type==="format"?{image_format:this.#imageFormat}:{}),...(this.#type==="audio"?{audio_role:"score",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false}:{})});
       const events:EventInput[]=[];const upload=this.#type==="reference"?await this.#uploadReference(events,properties,()=>this.store.sourceOwnershipActive(sourceOwner)):undefined;if(!this.store.sourceOwnershipActive(sourceOwner))return;events.push({type:"BlockCreated",payload:{block_id:id,project_id:p.projectId,scope:"library",type:this.#type,handle:this.#handle.trim()||`${this.#type}/${slug(this.#copy||this.#pendingFile?.name||"untitled",id)}`,position:`l${String(this.store.head.get()+1).padStart(6,"0")}`,properties}});if(this.#type!=="reference")events.push(...this.#relationEvents(id));const relatedUpload=await this.#uploadRelatedReference(events,id,()=>this.store.sourceOwnershipActive(sourceOwner));if(!this.store.sourceOwnershipActive(sourceOwner))return;if(this.#collectionId)events.push({type:"CollectionItemAdded",payload:{collection_id:this.#collectionId,item_ref:{block_id:id},position:"a0"}});
       const appended=await this.store.appendBatch(events);if(this.store.sourceOwnershipActive(sourceOwner)&&appended.length){if(upload?.sample)await this.store.extractReference(id,upload.referenceId,upload.sample,DEFAULT_REFERENCE_FINDINGS);if(relatedUpload?.sample)await this.store.extractReference(relatedUpload.referenceBlockId,relatedUpload.referenceId,relatedUpload.sample,DEFAULT_REFERENCE_FINDINGS);if(!this.store.sourceOwnershipActive(sourceOwner))return;this.#open(id);if(!this.store.sourceOwnershipActive(sourceOwner))return;this.#loaded="";this.store.toast(relatedUpload||this.#referenceRelations.size?"Reusable context set created. Its connected blocks can be added to a document in one action.":"Reusable project block created without attaching it to a document.");}
-    }catch(error){if(this.store.sourceOwnershipActive(sourceOwner))this.store.toast(error instanceof Error?error.message:"Block could not be saved");}finally{this.#uploading=false;this.requestUpdate();}
+    }catch(error){if(this.store.sourceOwnershipActive(sourceOwner))this.store.toast(error instanceof Error?error.message:"Block could not be saved");}finally{
+      this.#uploading=false;pending.count-=1;
+      if(pending.count===0&&this.#pendingSaves===pending)this.#pendingSaves=null;
+      this.requestUpdate();
+    }
   }
   async #fork(block:CreativeBlock){
     if(!this.isConnected||!this.#canAuthor())return;
@@ -133,17 +185,55 @@ export class LibraryBlockEditor extends FormaElement {
     }
     if(membership)events.push({type:"CollectionItemAdded",payload:{collection_id:membership.collectionId,item_ref:{block_id:id},position:membership.position}});
     const copiedIds=new Map(events.filter((event)=>event.type==="BlockCreated").map((event)=>[String((event.payload.properties as Record<string,unknown>).forked_from_block_id),String(event.payload.block_id)]));
-    const appended=await this.store.appendBatch(copyOutputRequirementCreationEvents(events,copiedIds));
-    if(appended.length){this.#open(id);this.#loaded="";this.store.toast(events.some((item)=>item.type==="BlockRelationAdded")?"Independent context set forked with its reference relationships.":"Independent fork created. Editing it will not change the source document.");}
+    const store=this.store,source=store.captureSourceOwnership(),route=store.route.get();
+    const library=this.closest<FormaElement>("forma-library"),cleanDraft=this.#cleanDraft;
+    const focus=captureOutputNavigationFocus(this.ownerDocument);let retired=false;
+    const current=()=>!retired&&this.isConnected&&this.store===store&&this.closest("forma-library")===library
+      &&Boolean(library?.isConnected&&FormaElement.hasStoreIdentity(library,store))
+      &&store.route.get()===route&&store.projection.get().projectId===p.projectId
+      &&store.projection.get().documentId===p.documentId&&this.#target().blockId===block.id
+      &&this.#selected()?.id===block.id&&store.sourceOwnershipActive(source)&&focus.current();
+    const dispose=()=>{retired=true;focus.dispose();};
+    const unsubscribe=store.subscribe(()=>{if(!current())dispose();});
+    try{
+      const appended=await this.store.appendBatch(copyOutputRequirementCreationEvents(events,copiedIds));
+      if(appended.length){
+        // A committed clone does not consume another current raw draft.
+        if(current()&&this.#draftFingerprint()===cleanDraft
+          &&store.projection.get().libraryBlocks.some(value=>value.id===id)){this.#open(id);this.#loaded="";}
+        if(store.sourceOwnershipActive(source))this.store.toast(events.some((item)=>item.type==="BlockRelationAdded")?"Independent context set forked with its reference relationships.":"Independent fork created. Editing it will not change the source document.");
+      }
+    }finally{unsubscribe();dispose();}
   }
   async #remove(){if(!this.isConnected||!this.#canAuthor())return;const block=this.#selected();if(!block||block.scope!=="library")return;const appended=await this.store.removeOutputBlock({type:"BlockRemoved",payload:{block_id:block.id,scope:"library",reason:"removed-from-library-block-editor"}});if(appended.length){this.#confirmRemove=false;this.#open();this.#loaded="";this.store.toast(appended.length>1?"The complete storyboard and its linked frames were removed together.":"Reusable block removed. Its history remains replayable.");}}
+
+  #openOutputDocument(event:MouseEvent,block:CreativeBlock){
+    const element=this.querySelector<HTMLElement>(".library-block-editor"),trigger=event.currentTarget;
+    if(!(trigger instanceof HTMLElement)||!element||!block.documentId)return;
+    const store=this.store,route=store.route.get(),projectId=store.projection.get().projectId;
+    const blockId=block.id,documentId=block.documentId;
+    const source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
+    const current=()=>{
+      const selected=this.#selected(),projection=store.projection.get();
+      return this.isConnected&&this.store===store&&store.route.get()===route&&projection.projectId===projectId
+        &&store.sourceOwnershipActive(source)&&store.authorizationScopeActive(authorization)
+        &&this.#target().blockId===blockId&&selected?.id===blockId&&selected.documentId===documentId
+        &&selected.type.toLowerCase()==="output"&&this.querySelector(".library-block-editor")===element
+        &&projection.documents.some(document=>document.id===documentId&&document.projectId===projectId&&!document.removed);
+    };
+    // This read-only section stays current until the original Store handoff.
+    // Other retained Library editors are still checked by its existing owner.
+    return navigateInApp(this,navigation=>store.openDocument(documentId,"/",undefined,navigation),{
+      presentation:{owner:this,element,trigger,current},
+    });
+  }
 
   #outputInspection(block: CreativeBlock) {
     const projection=this.store.projection.get();
     const content=String(block.properties.text??"");
     const spec=block.properties.output_spec??parseOutputRequirement({id:block.id,Type:"Output",Subtype:block.properties.subtype,Content:content}).spec;
     const snapshot={scope:{projectId:projection.projectId,documentId:block.documentId||"",authorizationScopeKey:this.store.captureAuthorizationScope()?.key??""},requirementId:block.id,revision:this.store.head.get(),label:String(block.properties.subtype??this.i18n.system("Output")),originalText:content,spec,canEdit:false,canReviewPlan:false,summary:{headline:this.i18n.t("output.delivery.chooseDocument","Add this Output requirement to a Document to plan its deliverables."),detail:this.i18n.t("output.delivery.projectScope","Open the Document to change requirements or review exact files."),overall:"unknown",requiredRemaining:null,unresolvedGroups:null,selectedResultFiles:null},sourceOptions:[]};
-    return html`<section class="library-block-editor"><header class="library-block-editor-header"><h1>${this.i18n.system("Output")}</h1><button type="button" class="button ghost" @click=${this.#close}>${this.i18n.system("Back to Library")}</button></header><p>${this.i18n.t("output.delivery.projectScope","Open the Document to change requirements or review exact files.")}</p>${block.documentId?html`<button type="button" class="button primary" @click=${()=>this.store.openDocument(block.documentId,"/")}>${this.i18n.system("Open Document")}</button><forma-output-requirements .documentId=${block.documentId} .blockId=${block.id} .inspectionOnly=${true}></forma-output-requirements>`:html`<forma-output-requirement-card .snapshot=${snapshot} .resourceState=${"ready"} .presentation=${"full"}></forma-output-requirement-card>`}</section>`;
+    return html`<section class="library-block-editor"><header class="library-block-editor-header"><h1>${this.i18n.system("Output")}</h1><button type="button" class="button ghost" @click=${this.#close}>${this.i18n.system("Back to Library")}</button></header><p>${this.i18n.t("output.delivery.projectScope","Open the Document to change requirements or review exact files.")}</p>${block.documentId?html`<button type="button" class="button primary" @click=${(event:MouseEvent)=>this.#openOutputDocument(event,block)}>${this.i18n.system("Open Document")}</button><forma-output-requirements .documentId=${block.documentId} .blockId=${block.id} .inspectionOnly=${true}></forma-output-requirements>`:html`<forma-output-requirement-card .snapshot=${snapshot} .resourceState=${"ready"} .presentation=${"full"}></forma-output-requirement-card>`}</section>`;
   }
 
   override render(){
@@ -164,7 +254,7 @@ export class LibraryBlockEditor extends FormaElement {
 
           ${block&&editable?html`<forma-context-intelligence .block=${block} surface="library"></forma-context-intelligence>`:nothing}
           <form class=${`library-block-form ${editable?"":"read-only"}`} @submit=${this.#save} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();this.#close();}}}>
-            <fieldset aria-labelledby="library-block-identity" ?disabled=${!editable||Boolean(block?.locked)}><h3 class="library-fieldset-heading" id="library-block-identity">Block identity</h3><label>Handle<input maxlength="96" placeholder=${this.i18n.system("{type}/short-name", { type: this.#type })} .value=${this.#handle} @input=${(event:InputEvent)=>{this.#handle=(event.target as HTMLInputElement).value;this.requestUpdate();}}><small>A stable, readable name. Leave blank to derive it from the content.</small></label><label>Type<select ?disabled=${block?.type==="audio"&&Boolean(block.properties.media_url)} .value=${this.#type} @change=${(event:Event)=>this.#changeType((event.target as HTMLSelectElement).value as BlockKind)}>${BLOCK_GROUPS.map((group)=>html`<optgroup label=${this.i18n.system(group.label)}>${BLOCK_TYPES.filter((item)=>item.group===group.id&&item.type!=="output").map((item)=>html`<option value=${item.type} ?selected=${item.type===this.#type}>${this.i18n.system(item.label)}</option>`)}</optgroup>`)}</select></label><label>Suggested subtype<select .value=${this.#subtype} @change=${(event:Event)=>{this.#subtype=(event.target as HTMLSelectElement).value;this.requestUpdate();}}>${[...new Set([this.#subtype,...definition.subtypes])].map((subtype)=>html`<option value=${subtype} ?selected=${subtype===this.#subtype}>${this.i18n.system(subtype)}</option>`)}</select></label><label>Intent<select .value=${this.#intent} @change=${(event:Event)=>{this.#intent=(event.target as HTMLSelectElement).value as BlockIntent;this.requestUpdate();}}>${BLOCK_INTENTS.map((intent)=>html`<option value=${intent.id} ?selected=${intent.id===this.#intent}>${this.i18n.system(intent.label)} — ${this.i18n.system(intent.description)}</option>`)}</select></label></fieldset>
+            <fieldset aria-labelledby="library-block-identity" ?disabled=${!editable||Boolean(block?.locked)}><h3 class="library-fieldset-heading" id="library-block-identity">Block identity</h3><label>Handle<input maxlength="96" placeholder=${this.i18n.system("{type}/short-name", { type: this.#type })} .value=${this.#handle} @input=${(event:InputEvent)=>{this.#handle=(event.target as HTMLInputElement).value;this.requestUpdate();}}><small>A stable, readable name. Leave blank to derive it from the content.</small></label><label>Type<select ?disabled=${block?.type==="audio"&&Boolean(block.properties.media_url)} .value=${this.#type} @change=${(event:Event)=>this.#changeType((event.target as HTMLSelectElement).value as BlockKind)}>${BLOCK_GROUPS.map((group)=>html`<optgroup label=${this.i18n.system(group.label)}>${BLOCK_TYPES.filter((item)=>item.group===group.id&&item.type!=="output").map((item)=>html`<option value=${item.type} ?selected=${item.type===this.#type}>${this.i18n.system(item.label)}</option>`)}</optgroup>`)}</select></label><label>Suggested subtype<select .value=${this.#subtype} @change=${(event:Event)=>{this.#subtype=(event.target as HTMLSelectElement).value;this.requestUpdate();}}>${repeat([...new Set([this.#subtype,...definition.subtypes])],(subtype)=>subtype,(subtype)=>html`<option value=${subtype} ?selected=${subtype===this.#subtype}>${this.i18n.system(subtype)}</option>`)}</select></label><label>Intent<select .value=${this.#intent} @change=${(event:Event)=>{this.#intent=(event.target as HTMLSelectElement).value as BlockIntent;this.requestUpdate();}}>${BLOCK_INTENTS.map((intent)=>html`<option value=${intent.id} ?selected=${intent.id===this.#intent}>${this.i18n.system(intent.label)} — ${this.i18n.system(intent.description)}</option>`)}</select></label></fieldset>
             ${this.#type==="audio"&&block?html`${renderAudioPlayer(String(block.properties.media_url??""),String(block.properties.label??block.handle),this.i18n,{transcript:String(block.properties.transcript??block.properties.lyrics??"")})}<fieldset class="audio-permissions" ?disabled=${!editable||Boolean(block.locked)}><legend>${this.i18n.t("artifact.audio.label","Audio")}</legend>${([{"path":"inform_generation","key":"inform"},{"path":"include_in_output","key":"include"},{"path":"allow_provider_audio_transfer","key":"transfer"}] as const).map(({path,key})=>{const hint=`library-audio-${block.id}-${key}`;return html`<label class="audio-permission"><input type="checkbox" aria-describedby=${hint} .checked=${block.properties[path]===true} @change=${(event:Event)=>void this.store.append({type:"BlockPropertyEdited",payload:{block_id:block.id,property_path:path,old_value:block.properties[path]===true,new_value:(event.currentTarget as HTMLInputElement).checked,source_surface:"library-audio-context"}})}><span><b>${this.i18n.t(`audio.use.${key}.label`,"")}</b><small id=${hint}>${this.i18n.t(`audio.use.${key}.description`,"")}</small></span></label>`;})}</fieldset>`:nothing}
             ${this.#type==="format"?html`<fieldset aria-labelledby="library-image-format" ?disabled=${!editable||Boolean(block?.locked)}><h3 class="library-fieldset-heading" id="library-image-format">Image frame</h3><div class="library-image-format"><label>Aspect ratio<select .value=${imageAspectRatioLabel(this.#imageFormat)} @change=${(event:Event)=>{this.#imageFormat=imageFormatForPreset((event.target as HTMLSelectElement).value);this.requestUpdate();}}>${IMAGE_FORMAT_PRESETS.map((preset)=>html`<option value=${preset.id}>${preset.id} · ${this.i18n.system(preset.label)}</option>`)}</select></label><label>Width<input type="number" min="64" max="8192" .value=${String(this.#imageFormat.dimensions.width)} @input=${(event:InputEvent)=>{this.#imageFormat=normalizeImageFormat({dimensions:{width:Number((event.target as HTMLInputElement).value),height:this.#imageFormat.dimensions.height}});this.requestUpdate();}}></label><label>Height<input type="number" min="64" max="8192" .value=${String(this.#imageFormat.dimensions.height)} @input=${(event:InputEvent)=>{this.#imageFormat=normalizeImageFormat({dimensions:{width:this.#imageFormat.dimensions.width,height:Number((event.target as HTMLInputElement).value)}});this.requestUpdate();}}></label></div><small>The target frame travels with every copy of this reusable block.</small></fieldset>`:nothing}
             <fieldset aria-labelledby="library-block-content" ?disabled=${!editable||Boolean(block?.locked)}><h3 class="library-fieldset-heading" id="library-block-content">Reusable content</h3>

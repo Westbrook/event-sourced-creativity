@@ -1,5 +1,7 @@
 export const FORMA_CONTEXT_CONTROL_MESSAGES = {
   "en": {
+    "context.controls.discardLocal": "Discard local edits",
+    "context.controls.saveRequestedHelp": "A save was already requested and may still finish. Discarding these local edits does not cancel it.",
     "context.controls.inspectReview": "Inspect saved review",
     "context.controls.savedReview": "Saved review and receipt",
     "context.controls.reviewReadOnly": "Inspect your retained review or save receipt. This does not generate or change project content.",
@@ -33,6 +35,8 @@ export const FORMA_CONTEXT_CONTROL_MESSAGES = {
     "context.controls.disambiguated": "{ordinal} · {name}"
   },
   "fr": {
+    "context.controls.discardLocal": "Abandonner les modifications locales",
+    "context.controls.saveRequestedHelp": "Un enregistrement a déjà été demandé et peut encore se terminer. Abandonner ces modifications locales ne l’annule pas.",
     "context.controls.inspectReview": "Examiner la revue enregistrée",
     "context.controls.savedReview": "Revue et justificatif enregistrés",
     "context.controls.reviewReadOnly": "Examinez votre revue conservée ou son justificatif d’enregistrement. Cette consultation ne génère ni ne modifie le contenu du projet.",
@@ -66,6 +70,8 @@ export const FORMA_CONTEXT_CONTROL_MESSAGES = {
     "context.controls.disambiguated": "{ordinal} · {name}"
   },
   "ar": {
+    "context.controls.discardLocal": "تجاهل التعديلات المحلية",
+    "context.controls.saveRequestedHelp": "طُلب الحفظ بالفعل وقد يكتمل لاحقًا. تجاهل هذه التعديلات المحلية لا يُلغي طلب الحفظ.",
     "context.controls.inspectReview": "فحص المراجعة المحفوظة",
     "context.controls.savedReview": "المراجعة والإيصال المحفوظان",
     "context.controls.reviewReadOnly": "افحص مراجعتك المحتفظ بها أو إيصال حفظها. لا يؤدي هذا إلى إنشاء محتوى المشروع أو تغييره.",
@@ -99,6 +105,8 @@ export const FORMA_CONTEXT_CONTROL_MESSAGES = {
     "context.controls.disambiguated": "{ordinal} · {name}"
   },
   "ja": {
+    "context.controls.discardLocal": "ローカルの編集を破棄",
+    "context.controls.saveRequestedHelp": "保存はすでに要求されており、完了する可能性があります。これらのローカルの編集を破棄しても、保存要求は取り消されません。",
     "context.controls.inspectReview": "保存済みレビューを確認",
     "context.controls.savedReview": "保存済みレビューと処理記録",
     "context.controls.reviewReadOnly": "保持されたレビューや保存の処理記録を確認します。プロジェクトの内容を生成または変更することはありません。",

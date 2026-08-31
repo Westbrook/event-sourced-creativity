@@ -12,6 +12,13 @@ import { contextConsentAction } from "../src/model/context-consent-state.ts";
 import { ensureNativeModalDialog } from "../src/components/design-system/native-dialog.ts";
 import { ASSISTANT_CONTEXT_LIMITS } from "../src/model/conversation-context.ts";
 import { ASSISTANT_MESSAGES } from "../src/components/design-system/locales/assistant-messages.ts";
+import { calmFullPageNativePorts as lifecyclePorts } from "./helpers/calm-full-page-fixture.mjs";
+
+// Reuse complete current module exports through the established native boundary.
+const { nextActionFacts } = await lifecyclePorts.loadActual("src/state/next-action-context.ts");
+const { creativeNextActions } = await lifecyclePorts.loadActual("src/model/workspace-intelligence.ts");
+const { renderLifecycleNextActionCards } = await lifecyclePorts.loadActual("src/components/next-action-cards.ts");
+const { openCreativeNextActionDestination } = await lifecyclePorts.loadActual("src/components/creative-next-action-navigation.ts");
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const syntax = (path) => ts.createSourceFile(path, read(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -68,7 +75,21 @@ function fixture(t, locale = "en") {
     return gate.promise;
   };
   const store = {
-    session, projection: cell({ projectId: "project-a", documentId: "doc-a" }), route: cell("/document/doc-a/alpha"),
+    // Complete only the already declared project/Document metadata. The context
+    // explicitly has zero decisions/results; no private source or Output read is invented.
+    session, projection: cell({ projectId: context.scope.projectId, projectName: "", documentId: context.scope.documentId,
+      documentTitle: context.documentTitle,
+      documents: [{ id: context.scope.documentId, projectId: context.scope.projectId, title: context.documentTitle, removed: false }],
+      blocks: [], outputs: [], artifacts: [], libraryBlocks: [], libraryOutputs: [], libraryArtifacts: [] }),
+    route: cell("/document/doc-a/alpha"), eventView: cell([]), events: cell([]), asOf: cell(Infinity),
+    projectNotifications: cell([]), reviewInbox: cell([]), documentJobs: cell([]),
+    canvasProjection: { get: () => {
+      const surface = assistantSurfaceForRoute(store.route.get()), projectId = store.projection.get().projectId;
+      return { selectedCanvasId: surface.canvasId ?? "", canvases: surface.canvasId ? [{ id: surface.canvasId, projectId }] : [] };
+    } },
+    canvasPlanningSelection: { get: () => selected },
+    routeDataReady: () => Boolean(session.get() && store.sourceOwnershipActive(store.captureSourceOwnership())),
+    outputRequirements: { resource: () => ({ state: "loading", snapshot: null, error: null }) },
     planningConsent: cell(null), canvasPlanningDocumentId: () => "doc-a",
     captureAuthorizationScope: () => ({ key: JSON.stringify([session.get()?.user.userId, session.get()?.permissionEpoch, session.get()?.projectContext?.projectAccessId]), shared: Boolean(session.get()?.projectContext) }),
     guardedFetch: (url, init, action) => { trace.push(["guarded", action]); return fetch(url, init); },
@@ -90,9 +111,16 @@ function fixture(t, locale = "en") {
   const matchMedia = () => ({ matches: true });
   const icon = () => "";
   const handlers = [], nothing = Symbol("nothing");
-  const value = (item) => item === nothing ? "" : item?._$litDirective$ === keyed("", null)._$litDirective$ ? value(item.values[1]) : Array.isArray(item) ? item.map(value).join("")
+  let continuation = nothing;
+  const value = (item) => item === nothing || typeof item === "symbol" ? "" : item?._$litDirective$ === keyed("", null)._$litDirective$ ? value(item.values[1]) : Array.isArray(item) ? item.map(value).join("")
+    : item?.strings ? html(item.strings, ...item.values)
     : typeof item === "function" ? "__handler_" + (handlers.push(item) - 1) + "__" : String(item ?? "");
-  const html = (parts, ...values) => parts.reduce((out, part, index) => out + part + (index < values.length ? value(values[index]) : ""), "");
+  const html = (parts, ...values) => {
+    // Capture the actual public binding, not a separately recomputed recommendation.
+    const slot = parts.findIndex(part => part.trimEnd().endsWith(".continuation="));
+    if (slot >= 0) continuation = values[slot];
+    return parts.reduce((out, part, index) => out + part + (index < values.length ? value(values[index]) : ""), "");
+  };
   const i18n = {
     locale, number: (value) => new Intl.NumberFormat(locale).format(value),
     system: (value) => value,
@@ -127,6 +155,14 @@ function fixture(t, locale = "en") {
     querySelectorAll(selector) { return selector === "[data-assistant-recovery]" ? recoveryControls : []; }
     dispatchEvent(event) { events.push([event.type, event.detail]); return super.dispatchEvent(event); }
   }
+  // Direct eval runs the actual production source in this lexical fixture scope.
+  // Keep its otherwise implicit dependencies explicit without calling them.
+  void [
+    assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
+    document, location, requestAnimationFrame, cancelAnimationFrame, matchMedia, icon,
+    consequentialPreview, assistantApprovedRequestCanRun, assistantApprovedRequestCanStop, Base,
+    nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
+  ];
   const Host = eval(stripTypeScriptTypes(classText(hostSyntax, "FormaCreativeAssistant", "Base", `
     async openForTest() { this.#open = true; return this.#load(); }
     closeForTest() { this.#open = false; this.#specialist = null; this.#reviewRevision += 1; }
@@ -172,6 +208,7 @@ function fixture(t, locale = "en") {
   t.after(() => host.disconnectedCallback());
   const f = {
     host, panel, store, session, calls, trace, events, context, dialog, opener, field, transcript, frames, window,
+    taskEvent(detail) { return deliverHostEvent("forma-assistant-task", { detail }); },
     select(ids) { selected = ids; }, topModal(value) { modal = value; },
     hideRecoveryControls() { recoveryControls = []; },
     flushFrames() { for (const frame of frames.splice(0)) frame(); },
@@ -189,7 +226,7 @@ function fixture(t, locale = "en") {
       // Obtain the real host's scoped props without creating an alternate controller.
       host.render();
       const fresh = host.snapshotForTest();
-      Object.assign(panel, { context: fresh.context, messages: fresh.messages, proposals: fresh.proposals, tasks: fresh.tasks,
+      Object.assign(panel, { continuation, context: fresh.context, messages: fresh.messages, proposals: fresh.proposals, tasks: fresh.tasks,
         specialist: fresh.specialist, canSpecialist: host.canRequestForTest(), models: session.get()?.assistant?.models ?? [],
         guidanceDelivery: fresh.guidance?.status ?? "", conversationScope: host.scopeForTest(),
         readOnly: !(session.get()?.projectContext?.permissions ?? session.get()?.capabilities ?? []).includes("project.author") });
@@ -3007,3 +3044,20 @@ for (const surface of ["Document", "Canvas"]) for (const closeAction of ["Escape
     assert.equal(f.calls.some(call => call.body?.action === "execute"), false);
   });
 }
+
+for(const locale of ["en","fr","ar","ja"])test("legacy assistant forged reconciliation fails closed at the actual rendered host boundary: "+locale,async t=>{
+  const f=fixture(t,locale),task=savedTask({executionId:undefined,bindingHash:undefined,status:"needs-review",submission:undefined});
+  await f.open([sampleTurn()],[task]);
+  const before=structuredClone(f.host.snapshotForTest()),calls=f.calls.length;
+  let confirmations=0;t.mock.method(f.window,"confirm",()=>{confirmations++;assert.fail("No actor-self no-charge attestation");});
+  for(const action of ["reconcile","unknown",["cancel"]]){
+    f.taskEvent({task,action});await tick();
+    assert.equal(f.calls.length,calls,"No HTTP mutation or automatic read from a forged legacy action");
+    assert.equal(confirmations,0);
+    assert.deepEqual(f.host.snapshotForTest(),before,"No false reconciled/canceled task or message publication");
+  }
+  const rendered=f.render();
+  assert.equal(rendered.buttons.some(button=>button.label===ASSISTANT_MESSAGES[locale]["assistant.task.reconcile"]),false);
+  assert.equal(rendered.markup.includes(ASSISTANT_MESSAGES[locale]["assistant.task.contactAdministrator"]),true);
+  assert.equal(rendered.markup.includes(task.id),true,"Exact original review reference remains visible");
+});

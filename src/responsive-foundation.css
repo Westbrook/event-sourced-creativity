@@ -873,12 +873,12 @@ html[data-document-focus] .studio-subpage-body {
   gap: var(--forma-row-inset-block);
 }
 
-.access-grant-form > label > select,
+.access-grant-form > label > :is(input, select),
 .access-grant-form > button {
   min-block-size: var(--forma-hit-target);
 }
 
-.access-grant-form > label > select {
+.access-grant-form > label > :is(input, select) {
   inline-size: 100%;
   min-inline-size: 0;
 }

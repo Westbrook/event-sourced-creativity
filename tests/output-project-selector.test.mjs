@@ -6,6 +6,10 @@ import ts from "typescript";
 import { html, nothing } from "lit";
 import { registerHooks } from "node:module";
 import { untilScene } from "./helpers/scene-cost-store-host.mjs";
+import { calmFullPageNativePorts as navigationPorts, fullPageTree, registerCalmFullPageComponents } from "./helpers/calm-full-page-fixture.mjs";
+import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
+import { nativeFormLifetime, nativeDefaultProperties } from "./helpers/workspace-settings-fragment-fixture.mjs";
+import { within } from "./helpers/workspace-policy-native-fixture.mjs";
 
 // Reuse the full production Store, Output controller/card and SQLite fixture.
 // Skip test registration only; production methods and imports stay intact.
@@ -21,15 +25,16 @@ const fixtureHook = registerHooks({ load(url, context, next) {
 } });
 const { sourceFixture, mountSourceController, ui, workers, cursor, authoredState, label, changeScope } = await import(sourceUrl.href);
 fixtureHook.deregister();
-const { FormaWorkspaceSettings } = await ui.loadActual("src/components/forma-workspace-settings.ts");
-const { FormaProjects } = await ui.loadActual("src/components/forma-projects.ts");
+const { FormaWorkspaceSettings } = await navigationPorts.loadActual("src/components/forma-workspace-settings.ts");
+const { FormaProjects } = await navigationPorts.loadActual("src/components/forma-projects.ts");
 const { handleSession } = await import("../worker/pilot-policy.ts");
 const { handleProjectNotifications } = await import("../worker/project-notifications-api.ts");
 
 const { documentIdFromRoute } = await import("../src/model/routes.ts");
 
-const { ProjectRail } = await ui.loadActual("src/components/project-rail.ts");
-const { CollectionTree } = await ui.loadActual("src/components/collection-tree.ts");
+const { ProjectRail } = await navigationPorts.loadActual("src/components/project-rail.ts");
+const { CollectionTree } = await navigationPorts.loadActual("src/components/collection-tree.ts");
+const { FormaShell } = await navigationPorts.loadActual("src/components/forma-shell.ts");
 
 
 const authorityState = state => Object.fromEntries(["organization_memberships", "project_memberships", "organization_projects", "capability_grants"].map(table => [table, state.sqlite.prepare('SELECT * FROM "' + table + '"').all()]));
@@ -43,6 +48,117 @@ function installHistory(t, host) {
     replaceState(state, title, route) { this.pushState(state, title, route); },
   } });
   t.after(() => previous ? Object.defineProperty(globalThis, "history", previous) : delete globalThis.history);
+}
+async function selectorNavigationParent(t, f) {
+  // Keep the original Output/SQLite/HTTP fixture. Only the already explicit
+  // Settings/Projects/Rail mounts use the existing full native renderer; the
+  // synthetic createCalmFullPage state factory is never invoked here.
+  const sourceRenderer = f.renderer, sourceDraw = f.draw;
+  const frame = { store: f.store, storeHost: f.storeHost, locale: f.locale, i18n: f.i18n,
+    trace: f.trace, clipboard: f.clipboard, listeners: new Map(), changed: new Map(),
+    frames: new Map(), timers: new Map(), resizeTargets: new Map(), storage: new Map(),
+    timerSequence: 0, requested: false, host: null, nativeHistoryLocation: f.storeHost.location };
+  frame.renderer = new navigationPorts.RendererPort(frame, {});
+  // The shared next-action renderer emits this real choice-card child outside
+  // the three parent source files. Register it before any full-tree query.
+  await registerCalmFullPageComponents(frame, ["forma-workspace-settings", "forma-projects", "forma-project-rail", "forma-ui-choice-card"]);
+  const tags = new Map([[FormaWorkspaceSettings, "forma-workspace-settings"], [FormaProjects, "forma-projects"], [ProjectRail, "forma-project-rail"]]);
+  frame.tree = () => fullPageTree(frame);
+  frame.draw = () => { navigationPorts.bindFixture(frame); return frame.host?.isConnected ? frame.renderer.draw(frame.host) : ""; };
+  frame.tick = async () => { await Promise.resolve(); frame.draw(); return true; };
+  let shell = null, formsInstalled = false;
+  const query = frame.renderer.query.bind(frame.renderer);
+  frame.renderer.query = (owner, selector) => {
+    if (selector.includes(",")) return selector.split(",").flatMap(part => frame.renderer.query(owner, part.trim()));
+    const descendants = query(owner, selector), current = frame.host;
+    // Renderer roots are not listed among child instances. Enumerate exactly
+    // this connected native root below its genuine same-Store Shell parent.
+    return shell?.isConnected && current?.isConnected && current.parentElement === shell
+      && (owner === null || owner === shell) && selector === current.tag
+      ? [current, ...descendants] : descendants;
+  };
+  const cleanups = [];
+  const native = installOutputNavigationFocusNative({ after: cleanup => cleanups.push(cleanup) }, frame, navigationPorts);
+  const retireTree = (owner, renderer) => {
+    if (!owner) return;
+    const children = [...renderer.instances.values()].map(record => record.instance), nodes = [...renderer.nodes], connected = owner.isConnected;
+    owner.isConnected = false;
+    for (const child of children) if (child.isConnected) { child.isConnected = false; child.disconnectedCallback(); }
+    if (connected) owner.disconnectedCallback();
+    owner.parentElement = null;
+    for (const node of nodes) node.isConnected = false;
+    renderer.instances.clear(); renderer.nodes = []; renderer.markup = "";
+    assert.equal(owner.isConnected, false, "Replacing the mounted view retires its exact original owner");
+    assert.ok(children.every(child => !child.isConnected) && nodes.every(node => !node.isConnected), "Removed original descendants cannot remain current");
+  };
+  frame.disconnect = () => { navigationPorts.bindFixture(frame); retireTree(frame.host, frame.renderer); };
+  const retireShell = () => {
+    if (!shell) return;
+    navigationPorts.bindFixture(frame); shell.isConnected = false; shell.disconnectedCallback(); shell = null;
+  };
+  t.after(() => {
+    try { frame.disconnect(); }
+    finally { try { retireShell(); } finally { for (const cleanup of cleanups) cleanup(); } }
+  });
+  f.draw = () => frame.host && f.host === frame.host ? frame.draw() : sourceDraw();
+  return Class => {
+    if (f.host === frame.host) frame.disconnect(); else retireTree(f.host, f.renderer);
+    const tag = tags.get(Class);
+    if (!tag) {
+      retireShell(); frame.host = null; f.renderer = sourceRenderer;
+      f.host = new Class(); f.host.isConnected = true; f.host.connectedCallback(); f.draw();
+      return f.host;
+    }
+    navigationPorts.bindFixture(frame);
+    if (!shell) {
+      shell = new FormaShell(); shell.tag = "forma-shell"; shell.attributes = {}; shell.isConnected = true;
+      shell.connectedCallback();
+    }
+    assert.equal(frame.renderer.registry[tag], Class, "Mount the same complete actual class registered from the current component manifest");
+    const element = new Class(); element.tag = tag; element.attributes = {}; element.parentElement = shell; element.isConnected = true;
+    frame.host = element; f.host = element; f.renderer = frame.renderer;
+    assert.ok(shell instanceof FormaShell, "The parent executes the complete actual Shell admission");
+    assert.equal(element.closest("forma-shell"), shell);
+    assert.ok(navigationPorts.ElementPort.hasStoreIdentity(shell, f.store));
+    assert.ok(navigationPorts.ElementPort.hasStoreIdentity(element, f.store));
+    assert.equal(shell.contains(element), true);
+    assert.equal(element.ownerDocument, native.document);
+    assert.deepEqual(shell.querySelectorAll(tag), [element]);
+    element.connectedCallback();
+    if (!formsInstalled) {
+      formsInstalled = true; frame.forms = new Map();
+      const currentOwner = () => frame.host?.isConnected && frame.host.tag === "forma-workspace-settings" ? frame.host : null;
+      // Reuse the existing raw form's sole lifetime/default owner. No field is
+      // assigned a fabricated clean value, and no current/blocked method changes.
+      nativeFormLifetime(frame, { marker: "#submitOrganization" }, { owner: currentOwner });
+      nativeDefaultProperties({ f: frame, currentOwner });
+      const draw = frame.draw;
+      frame.draw = () => {
+        if (!frame.host?.isConnected) return "";
+        const markup = draw(), owner = currentOwner();
+        if (owner) {
+          const rows = frame.tree().nodes;
+          for (const form of rows.filter(node => node.tag === "form" && node.owner === owner
+            && String(node.attributes.class ?? "").split(/\s+/u).includes("workspace-settings-form")
+            && !Object.hasOwn(node.attributes, "data-workspace-policy"))) {
+            const controls = rows.filter(node => within(node, form) && ["input", "select", "textarea", "button", "fieldset", "output", "object"].includes(node.tag));
+            assert.ok(owner.contains(form.port) && form.port.ownerDocument === owner.ownerDocument);
+            assert.deepEqual([...form.port.elements], controls.map(node => node.port), "The iterable collection contains the exact current native controls, not an empty stand-in");
+            for (const field of controls.filter(node => node.tag === "input" || node.tag === "textarea")) {
+              assert.equal(field.port.defaultValue, String(field.attributes.value ?? (field.tag === "textarea" ? field.text : "")), "Read native defaults from the actual emitted field");
+              if (field.attributes.name) assert.equal(form.port.elements.namedItem(field.attributes.name), field.port);
+            }
+          }
+        }
+        return markup;
+      };
+    }
+    f.draw();
+    if (tag === "forma-workspace-settings") assert.equal(frame.tree().visible("form").filter(node =>
+      node.owner === element && String(node.handlers.submit).includes("#submitOrganization")).length, 1,
+    "The actual selector includes its current raw organization form before admission");
+    return element;
+  };
 }
 async function selectorFixture(t, options = {}) {
   const setup = options.state ?? await workers.fixture();
@@ -77,11 +193,7 @@ async function selectorFixture(t, options = {}) {
   t.mock.method(globalThis, "fetch", (input, init) => h.fetch(input, init));
   f.jar = jar; f.responses = responses;
   f.authorityBefore = authorityState(state); const mediaBefore = structuredClone(state.media);
-  f.mount = Class => {
-    f.host.isConnected = false; f.host.disconnectedCallback();
-    f.host = new Class(); f.host.isConnected = true; f.host.connectedCallback(); f.draw();
-    return f.host;
-  };
+  f.mount = await selectorNavigationParent(t, f);
   f.nativeLink = (link, owner = f.controller) => {
     let prevented = false;
     link.handlers.click?.call(owner, { preventDefault() { prevented = true; }, button: 0 });

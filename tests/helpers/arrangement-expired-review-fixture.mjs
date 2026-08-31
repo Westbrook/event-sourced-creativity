@@ -195,7 +195,8 @@ function watchSubscriptions(t,store){
     adds++;active.add(listener);const stop=subscribe(listener);let live=true;
     return()=>{if(!live)return;live=false;removes++;active.delete(listener);stop();};
   });
-  return{active:()=>active.size,counts:()=>({adds,removes,active:active.size})};
+  return{active:()=>active.size,counts:()=>({adds,removes,active:active.size}),
+    listeners:()=>[...active],has:listener=>active.has(listener)};
 }
 export{page,openArrangement,previewArrangement,applyControl,openReceipt,sceneDeferred,untilScene,
   outcomeDeskCopy,visibleButtons,control,closeAndReenter,check,currentFrames,retained,crashAfterRealClaim,moveNativeClocks,
