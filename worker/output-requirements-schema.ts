@@ -17,7 +17,7 @@ export const OUTPUT_REQUIREMENTS_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_output_plans_document ON output_plan_revisions(scope_key,document_id,revision DESC)`,
   `CREATE TABLE IF NOT EXISTS output_plan_targets(
     scope_key TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,target_contract_digest TEXT NOT NULL,
-    media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document','unknown')),
+    media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document','model3d','unknown')),
     required INTEGER NOT NULL CHECK(required IN(0,1)),selected INTEGER NOT NULL CHECK(selected IN(0,1)),ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>=0),
     PRIMARY KEY(scope_key,plan_revision_id,target_id),
     FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id))`,
@@ -63,7 +63,7 @@ export const OUTPUT_REQUIREMENTS_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS output_assets(
     scope_key TEXT NOT NULL,asset_id TEXT NOT NULL,document_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,created_by_user_id TEXT NOT NULL,
     source_digest TEXT NOT NULL,storage_key TEXT NOT NULL,content_sha256 TEXT NOT NULL,byte_length INTEGER NOT NULL CHECK(typeof(byte_length)='integer' AND byte_length>0),
-    mime_type TEXT NOT NULL,media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document')),
+    mime_type TEXT NOT NULL,media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document','model3d')),
     created_event_id TEXT NOT NULL,created_at TEXT NOT NULL,redacted_at TEXT,
     PRIMARY KEY(scope_key,asset_id),FOREIGN KEY(created_event_id) REFERENCES events(event_id))`,
   `CREATE TABLE IF NOT EXISTS output_native_storage_writes(
@@ -75,7 +75,7 @@ export const OUTPUT_REQUIREMENTS_SCHEMA = [
     scope_key TEXT NOT NULL,asset_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,
     organization_id TEXT,project_access_id TEXT,project_id TEXT NOT NULL,document_id TEXT NOT NULL,context_id TEXT,
     command_key TEXT NOT NULL,request_digest TEXT NOT NULL,source_digest TEXT NOT NULL,
-    storage_key TEXT NOT NULL,content_sha256 TEXT NOT NULL,byte_length INTEGER NOT NULL CHECK(typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=24000000),
+    storage_key TEXT NOT NULL,content_sha256 TEXT NOT NULL,byte_length INTEGER NOT NULL CHECK(typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=67108864),
     status TEXT NOT NULL CHECK(status IN('writing','written','cleanup_pending','deleted')),write_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(write_acknowledged IN(0,1)),
     publication_event_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
     PRIMARY KEY(scope_key,asset_id),
@@ -121,3 +121,49 @@ export const OUTPUT_REQUIREMENTS_SCHEMA = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_output_asset_storage_writes_unique_2 ON output_asset_storage_writes(storage_key)`,
 ] as const;
 
+const model3dTables = {
+  output_plan_targets: "scope_key,plan_revision_id,target_id,target_contract_digest,media_kind,required,selected,ordinal",
+  output_assets: "scope_key,asset_id,document_id,owner_user_id,created_by_user_id,source_digest,storage_key,content_sha256,byte_length,mime_type,media_kind,created_event_id,created_at,redacted_at",
+  output_asset_storage_writes: "scope_key,asset_id,owner_user_id,actor_user_id,organization_id,project_access_id,project_id,document_id,context_id,command_key,request_digest,source_digest,storage_key,content_sha256,byte_length,status,write_acknowledged,publication_event_id,created_at,updated_at",
+} as const;
+
+/** CHECK predicates require a table rebuild; CREATE IF NOT EXISTS cannot upgrade them.
+ * D1 runs this entire array in one transaction. No foreign-key action on these
+ * tables cascades a deletion. Keep the original names until each replacement
+ * is populated so child-table references continue to name the canonical table.
+ */
+export const OUTPUT_MODEL3D_SCHEMA_MIGRATION: readonly string[] = [
+  "PRAGMA defer_foreign_keys=ON",
+  ...Object.entries(model3dTables).flatMap(([table, columns]) => {
+    const temporary = `__${table}_model3d`;
+    const declaration = OUTPUT_REQUIREMENTS_SCHEMA.find(sql => sql.startsWith(`CREATE TABLE IF NOT EXISTS ${table}(`));
+    if (!declaration) throw new Error("output_schema_declaration_missing");
+    return [
+      declaration.replace(`CREATE TABLE IF NOT EXISTS ${table}(`, `CREATE TABLE ${temporary}(`),
+      `INSERT INTO ${temporary}(rowid,${columns}) SELECT rowid,${columns} FROM ${table}`,
+      `DROP TABLE ${table}`,
+      `ALTER TABLE ${temporary} RENAME TO ${table}`,
+      ...OUTPUT_REQUIREMENTS_SCHEMA.filter(sql => /^CREATE (?:UNIQUE )?INDEX /u.test(sql) && sql.includes(` ON ${table}(`)),
+    ];
+  }),
+  // SQLite retains deferred DROP counters after the replacement restores the
+  // parent keys. Prove the actual graph before clearing those stale counters.
+  "INSERT INTO output_atomic_assertions(token,passed) SELECT 'output-model3d-schema-foreign-keys',CASE WHEN NOT EXISTS(SELECT 1 FROM pragma_foreign_key_check WHERE [table] LIKE 'output_%') THEN 1 ELSE 0 END",
+  "DELETE FROM output_atomic_assertions WHERE token='output-model3d-schema-foreign-keys'",
+  "PRAGMA defer_foreign_keys=OFF",
+];
+
+const model3dUpgrades = new WeakMap<object, Promise<void>>();
+/** Call after ordinary bootstrap and before marking the schema ready. */
+export async function upgradeOutputRequirementsSchema(db: D1Database): Promise<void> {
+  const existing = model3dUpgrades.get(db);
+  if (existing) return existing;
+  const upgrade = (async () => {
+    const { results } = await db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name IN('output_plan_targets','output_assets','output_asset_storage_writes')").all<{ name: string; sql: string }>();
+    if (results.length !== 3) throw new Error("output_schema_tables_missing");
+    const current = results.every(row => row.name === "output_asset_storage_writes" ? row.sql.includes("67108864") : row.sql.includes("'model3d'"));
+    if (!current) await db.batch(OUTPUT_MODEL3D_SCHEMA_MIGRATION.map(sql => db.prepare(sql)));
+  })();
+  model3dUpgrades.set(db, upgrade);
+  try { await upgrade; } catch (error) { model3dUpgrades.delete(db); throw error; }
+}

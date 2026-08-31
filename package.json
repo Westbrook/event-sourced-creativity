@@ -31,12 +31,14 @@
     "lit": "3.3.3",
     "signal-polyfill": "0.2.2",
     "signal-utils": "0.21.1",
+    "three": "0.185.1",
     "yjs": "13.6.27"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
     "@eslint/js": "9.39.4",
     "@types/node": "22.19.19",
+    "@types/three": "0.185.4",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "globals": "16.4.0",

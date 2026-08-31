@@ -75,7 +75,7 @@ type DraftSession = {
 };
 type CoverageOwner = Pick<OutputDeliverable, "id" | "source_scope" | "coverage">;
 type TextFieldOptions = { multiline?: boolean; rows?: number; help?: string; numeric?: boolean; direction?: "auto" | "ltr"; errorKey?: string; ownerId?: string; sectionLabel?: string };
-const MEDIA: OutputMediaKind[] = ["unknown", "image", "slides", "audio", "video", "document"];
+const MEDIA: OutputMediaKind[] = ["unknown", "image", "slides", "audio", "video", "document", "model3d"];
 const scopeKey = (scope: OutputCardScope, requirementId: string) => JSON.stringify([scope.authorizationScopeKey, scope.projectId, scope.documentId, requirementId]);
 
 /**

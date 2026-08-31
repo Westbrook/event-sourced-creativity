@@ -3,6 +3,7 @@ import test from "node:test";
 import { boundAssistantContext, compileAssistantContext, ASSISTANT_CONTEXT_LIMITS, ASSISTANT_OUTPUT_KINDS } from "../src/model/conversation-context.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { deriveIntentTrajectories } from "../src/model/intent-trajectories.ts";
+import { DOCUMENT_ARTIFACT_KINDS } from "../src/model/document-artifacts.ts";
 
 function event(sequence, type, payload = {}, actor = "user") {
   return { eventId: `event-${sequence}`, streamId: "creative:owner", sequence, occurredAt: "2026-01-01T00:00:00.000Z", recordedAt: "2026-01-01T00:00:00.000Z", actor, clientId: "test", correlationId: `correlation-${sequence}`, causationId: null, compensatesEventId: null, schemaVersion: 1, type, payload };
@@ -149,6 +150,36 @@ test("counts authorized images alongside all existing document-output formats", 
   assert.equal(delivery.availableOutputs.find((output) => output.kind === "image")?.id, "image-a");
 });
 
+test("3D assets are scoped assistant context and outputs without exposing model or saved-view transport", () => {
+  const { events } = fixture();
+  events.push(event(6, "BlockCreated", {
+    project_id: "project-a", document_id: "document-a", block_id: "model-a", type: "model3d",
+    handle: "Ceramic vessel", position: "a3", properties: {
+      text: "Use the vessel silhouette and handle proportions", rights_class: "owned",
+      model_url: "/api/media/private-model.glb", model_sha256: "private-model-hash",
+      reference_image_url: "/api/media/private-view.png", model3d_view: { position: [1, 2, 3] },
+    },
+  }));
+  events.push(event(7, "DocumentRenderCompleted", {
+    project_id: "project-a", document_id: "document-a", artifact_id: "model-output", artifact_kind: "model3d",
+    title: "Generated vessel", media_url: "/api/media/private-output.glb", provider: "fal", model_id: "rodin",
+  }, "worker:renderer"));
+  const projection = foldEvents(events, Number.POSITIVE_INFINITY, "document-a");
+  const context = compileAssistantContext({ route: "/document/document-a", events, projection, actorUserId: "owner" });
+  const atom = context.decisionAtoms.find(item => item.id === "model-a");
+  assert.equal(atom?.type, "model3d");
+  assert.equal(atom?.text, "Use the vessel silhouette and handle proportions");
+  assert.equal(atom?.providerVisibility, "restricted", "text-only specialists cannot edit source model evidence");
+  assert.equal(context.availableOutputs.find(output => output.id === "model-output")?.kind, "model3d");
+  assert.equal(context.totals.outputsByKind.model3d, 1);
+  assert.deepEqual(context.availableOutputKinds, ["image", ...DOCUMENT_ARTIFACT_KINDS]);
+  assert.doesNotMatch(JSON.stringify(context), /private-model|private-view|private-output|model3d_view/);
+
+  const delivery = compileAssistantContext({ route: "/deliver", events, projection, actorUserId: "owner" });
+  assert.equal(delivery.totals.outputsByKind.model3d, 1);
+  assert.deepEqual(delivery.decisionAtoms, []);
+});
+
 test("never exposes output titles whose source document is absent or belongs to another project", () => {
   const { events, projection } = fixture();
   projection.libraryArtifacts.push({ id: "foreign-artifact", documentId: "foreign-document", kind: "slides", title: "CONFIDENTIAL OTHER PROJECT TITLE", sequence: 99 });
@@ -166,5 +197,5 @@ test("audio is an existing output kind with pending and ready event-derived guid
   assert.match(pending.nextAction.label, /audio/i);
   const ready = deriveIntentTrajectories([...requested, event(4, "DocumentRenderCompleted", { ...scope, artifact_id: "audio-a", artifact_kind: "audio" }, "worker:renderer")])[0];
   assert.equal(ready.expectedOutputKind, "audio");
-  assert.equal(ASSISTANT_OUTPUT_KINDS.length, 7);
+  assert.deepEqual(ASSISTANT_OUTPUT_KINDS, ["image", ...DOCUMENT_ARTIFACT_KINDS]);
 });

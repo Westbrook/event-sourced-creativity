@@ -1,4 +1,4 @@
-import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
+import { OUTPUT_REQUIREMENTS_SCHEMA, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
 import { markOutputSchemaReady } from "./output-schema-state.ts";
 import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
@@ -471,7 +471,8 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare(PILOT_PARTICIPANT_OWNER_DELETION_TRIGGER_SQL),
     env.DB.prepare(PILOT_COHORT_DELETION_TRIGGER_SQL),
     ...OUTPUT_REQUIREMENTS_SCHEMA.map((sql) => env.DB.prepare(sql)),
-  ]).then(() => {
+  ]).then(async () => {
+    await upgradeOutputRequirementsSchema(env.DB);
     readySchemas.add(env.DB);
     markOutputSchemaReady(env.DB);
   }).catch((error: unknown) => {

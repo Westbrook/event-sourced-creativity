@@ -8,6 +8,10 @@ import { VIDEO_ADAPTER_CONTRACT, type VideoDurationSeconds } from "./video-adapt
 
 export type ProductionMode = "manual" | "managed";
 export type ProductionFormat = DocumentArtifactKind | "image";
+export type ManagedProductionFormat = Exclude<ProductionFormat, "model3d">;
+
+/** 3D models use their dedicated provider adapter without a separate planner or production team. */
+export const supportsManagedProduction = (format: ProductionFormat): format is ManagedProductionFormat => format !== "model3d";
 
 export type ArtifactProductionSelection = {
   kind: DocumentArtifactKind;
@@ -18,6 +22,9 @@ export type ArtifactProductionSelection = {
 
 /** Automatically improve storyboard continuity without changing another format's paid behavior. */
 export function selectArtifactProductionKind(selection: ArtifactProductionSelection, kind: DocumentArtifactKind): ArtifactProductionSelection {
+  if (kind === "model3d") return selection.kind === kind && selection.mode === "manual" && !selection.storyboardManagedDefault
+    ? selection
+    : { ...selection, kind, mode: "manual", storyboardManagedDefault: false };
   if (selection.kind === kind) return selection;
   const mode = selection.kind === "storyboard" && selection.storyboardManagedDefault ? "manual" : selection.mode;
   const storyboardManagedDefault = kind === "storyboard" && mode === "manual" && !selection.storyboardManualOptOut;
@@ -35,7 +42,7 @@ export type ProductionTeam = {
   id: string;
   version: string;
   label: string;
-  format: ProductionFormat;
+  format: ManagedProductionFormat;
   specialists: readonly ProductionSpecialist[];
 };
 
@@ -43,7 +50,7 @@ const specialist = (id: string, label: string, responsibility: string, deliverab
   ({ id, label, responsibility, deliverable });
 
 /** Deployable, versioned role contracts; these are not claims of autonomous model calls. */
-export const PRODUCTION_TEAMS: Readonly<Record<ProductionFormat, ProductionTeam>> = {
+export const PRODUCTION_TEAMS: Readonly<Record<ManagedProductionFormat, ProductionTeam>> = {
   audio: {
     id: "music-production-team", version: "1.0.0", label: "Music production team", format: "audio",
     specialists: [
@@ -120,8 +127,10 @@ const AUDIO_SCENE_PRODUCTION_TEAM: ProductionTeam = {
   ],
 };
 
-export const productionTeamFor = (format: ProductionFormat, sceneMedium?: SceneMedium) =>
-  format === "scene" && sceneMedium === "audio" ? AUDIO_SCENE_PRODUCTION_TEAM : PRODUCTION_TEAMS[format];
+export function productionTeamFor(format: ProductionFormat, sceneMedium?: SceneMedium): ProductionTeam {
+  if (!supportsManagedProduction(format)) throw new Error("managed_production_format_unsupported");
+  return format === "scene" && sceneMedium === "audio" ? AUDIO_SCENE_PRODUCTION_TEAM : PRODUCTION_TEAMS[format];
+}
 
 export type ProductionClaim = {
   id: string;
@@ -190,7 +199,7 @@ export type ProductionScene = {
 export type ManagedProductionPlan = {
   schemaVersion: 1;
   mode: "managed";
-  format: ProductionFormat;
+  format: ManagedProductionFormat;
   team: ProductionTeam;
   claims: ProductionClaim[];
   contextGroups: ReturnType<typeof combinedContextGroups>;
@@ -614,6 +623,7 @@ export function minimumPresentationSlideCount(snapshot: Record<string, unknown>)
 
 /** Compile the full source context without inheriting the legacy twelve-item schema cap. */
 export function buildManagedProductionPlan(format: ProductionFormat, snapshot: Record<string, unknown>, options: ProductionPlanOptions = {}): ManagedProductionPlan {
+  if (!supportsManagedProduction(format)) throw new Error("managed_production_format_unsupported");
   const sourceContract = format === "slides" ? buildPresentationSourceContract(snapshot) : null;
   const scopedSnapshot = sourceContract ? scopePresentationSourceSnapshot(snapshot, sourceContract) : snapshot;
   const sourceOutline = sourceContract?.outline ?? null;

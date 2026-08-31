@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { coldProductionDatabase, outputSchema, outputMigration, runtimeOnly } from "./output-schema-test-helpers.mjs";
+import { coldProductionDatabase, outputSchema, outputMigration, legacyOutputMigration, model3dOutputMigration, runtimeOnly } from "./output-schema-test-helpers.mjs";
 import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
-import { OUTPUT_REQUIREMENTS_SCHEMA } from "../worker/output-requirements-schema.ts";
+import { OUTPUT_REQUIREMENTS_SCHEMA, OUTPUT_MODEL3D_SCHEMA_MIGRATION } from "../worker/output-requirements-schema.ts";
 const hooks = registerOutputSourceImports();
 const { ensureOutputRequirementsSchema } = await import("../worker/output-requirements-ledger.ts");
 hooks.deregister();
@@ -41,7 +41,7 @@ const invalidChanges = [
   ["output_operation_slots", "maximum_microusd", 0], ["output_operation_slots", "maximum_calls", 1001], ["output_operation_slots", "maximum_tokens", 0], ["output_operation_slots", "attempt_ordinal", -1], ["output_operation_slots", "previous_slot_id", "slot"], ["output_operation_slots", "status", "invalid"],
   ["output_operation_routes", "maximum_calls", 0], ["output_operation_routes", "maximum_calls", 1.5], ["output_provider_calls", "reserved_microusd", 0], ["output_provider_calls", "used_microusd", -1], ["output_provider_calls", "used_microusd", 0.5], ["output_provider_calls", "status", "invalid"],
   ["output_assets", "byte_length", 0], ["output_assets", "media_kind", "unknown"], ["output_native_storage_writes", "write_acknowledged", 2], ["output_native_storage_writes", "status", "invalid"],
-  ["output_asset_storage_writes", "byte_length", 24000001], ["output_asset_storage_writes", "write_acknowledged", 2], ["output_asset_storage_writes", "status", "invalid"], ["output_asset_storage_writes", "organization_id", "org"], ["output_results", "checks_status", "invalid"], ["output_delivery_manifests", "is_partial", 2],
+  ["output_asset_storage_writes", "byte_length", 67108865], ["output_asset_storage_writes", "write_acknowledged", 2], ["output_asset_storage_writes", "status", "invalid"], ["output_asset_storage_writes", "organization_id", "org"], ["output_results", "checks_status", "invalid"], ["output_delivery_manifests", "is_partial", 2],
 ];
 
 test("production migration and runtime-only bootstrap have identical actual columns, indexes, foreign keys and CHECK predicates", () => {
@@ -117,4 +117,60 @@ test("a failed named unique index aborts the entire runtime schema batch and doe
   await ensureOutputRequirementsSchema(state.env);
   assert.equal(outputSchema(state.sqlite).length, 16, "the failed initializer was not cached as ready");
   assert.ok(state.sqlite.prepare("PRAGMA index_list(output_assets)").all().some((index) => index.name === "idx_output_assets_unique_1" && index.unique === 1));
+});
+
+function graphRows(sqlite) {
+  return Object.fromEntries(["events", ...rows].map(table => [table, sqlite.prepare(`SELECT rowid,* FROM ${quote(table)} ORDER BY rowid`).all()]));
+}
+function journaledModel3dStatements(state) {
+  return model3dOutputMigration.split("--> statement-breakpoint").map(sql => state.DB.prepare(sql.trim()));
+}
+
+test("existing Output graphs survive the journaled and runtime 3D upgrade with their original identities and foreign keys", async () => {
+  const current = coldProductionDatabase();
+  runtimeOnly(current);
+  for (const kind of ["migration", "runtime"]) {
+    const state = coldProductionDatabase();
+    state.sqlite.exec(legacyOutputMigration);
+    seedValidGraph(state.sqlite);
+    const before = graphRows(state.sqlite);
+    assert.throws(() => state.sqlite.prepare("UPDATE output_plan_targets SET media_kind='model3d'").run(), /CHECK constraint failed/u);
+    assert.throws(() => state.sqlite.prepare("UPDATE output_asset_storage_writes SET byte_length=67108864").run(), /CHECK constraint failed/u);
+    if (kind === "migration") await state.DB.batch(journaledModel3dStatements(state));
+    else await ensureOutputRequirementsSchema(state.env);
+    assert.deepEqual(graphRows(state.sqlite), before, `${kind}: all source, grant, call, acceptance and row identities survive`);
+    assert.deepEqual(outputSchema(state.sqlite), outputSchema(current.sqlite));
+    assert.deepEqual(state.sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.equal(state.sqlite.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+    state.sqlite.exec("UPDATE output_plan_targets SET media_kind='model3d'; UPDATE output_assets SET media_kind='model3d'; UPDATE output_asset_storage_writes SET byte_length=67108864");
+    for (const [table, field, value] of invalidChanges) assert.throws(() => state.sqlite.prepare(`UPDATE ${quote(table)} SET ${quote(field)}=?`).run(value), /CHECK constraint failed/u, `${kind}:${table}.${field}=${value}`);
+    assert.throws(() => state.sqlite.prepare("UPDATE output_results SET asset_id='foreign'").run(), /FOREIGN KEY constraint failed/u);
+    const upgraded = graphRows(state.sqlite);
+    // A later migration deployment may follow an earlier runtime upgrade.
+    await state.DB.batch(journaledModel3dStatements(state));
+    await ensureOutputRequirementsSchema(state.env);
+    assert.deepEqual(graphRows(state.sqlite), upgraded);
+    assert.deepEqual(state.sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+  }
+});
+
+test("a failed 3D foreign-key proof rolls back the rebuild and permits a repaired retry", async () => {
+  const state = coldProductionDatabase();
+  state.sqlite.exec(legacyOutputMigration);
+  seedValidGraph(state.sqlite);
+  state.sqlite.exec("PRAGMA foreign_keys=OFF; UPDATE output_results SET asset_id='missing'; PRAGMA foreign_keys=ON");
+  const before = graphRows(state.sqlite), schema = outputSchema(state.sqlite);
+  await assert.rejects(ensureOutputRequirementsSchema(state.env), /CHECK constraint failed/u);
+  assert.deepEqual(graphRows(state.sqlite), before);
+  assert.deepEqual(outputSchema(state.sqlite), schema);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name LIKE '__output_%_model3d'").get().count, 0);
+  state.sqlite.prepare("UPDATE output_results SET asset_id='asset'").run();
+  await ensureOutputRequirementsSchema(state.env);
+  state.sqlite.exec("UPDATE output_plan_targets SET media_kind='model3d'; UPDATE output_assets SET media_kind='model3d'");
+  assert.deepEqual(state.sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+});
+
+test("runtime 3D rebuild statements remain identical to the deployed migration", () => {
+  const actual = model3dOutputMigration.replace(/^--(?!>).*\n/gmu, "").split("--> statement-breakpoint").map(sql => sql.trim().replace(/;$/u, ""));
+  assert.deepEqual(actual, OUTPUT_MODEL3D_SCHEMA_MIGRATION);
 });
