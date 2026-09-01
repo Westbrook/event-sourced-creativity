@@ -18,9 +18,9 @@ const loader = registerHooks({
   },
 });
 const [copyModel, { buildDocumentDuplicationPlan, normalizeDocumentDuplicationTitle, documentDuplicationFolder },
-  { foldEvents }, { renderAuthoringPreview }, { withDocumentInRoute, libraryBlockEditorRoute }, { html, nothing }] = await Promise.all([
+  { foldEvents }, { renderAuthoringPreview }, { withDocumentInRoute, libraryBlockEditorRoute }, { html, nothing }, { captureOutputNavigationFocus }] = await Promise.all([
   import("../src/model/document-copy-review.ts"), import("../src/model/document-duplication.ts"),
-  import("../src/model/events.ts"), import("../src/components/authoring-preview.ts"), import("../src/model/routes.ts"), import("lit"),
+  import("../src/model/events.ts"), import("../src/components/authoring-preview.ts"), import("../src/model/routes.ts"), import("lit"), import("../src/components/output-navigation-focus.ts"),
 ]).finally(() => loader.deregister());
 const { documentCopyKey, documentCopyIntent, documentCopySourceRevision, documentCopyRequest,
   documentCopyOutcome, documentCopyDestination, documentCopyIssueMessage, documentCopyTargetValid } = copyModel;
@@ -180,20 +180,30 @@ function fixture(overrides = {}) {
     storeMethods + "\n})"))(...Object.values(storePorts));
   const store = new Store(), focus = [];
   installSourceOwnershipPort(store);
-  class HTMLElement { isConnected = true; focus() { focus.push(this); } }
+  const focusListeners = new Map();
+  class HTMLElement { isConnected = true; focus() { focus.push(this); document.activeElement = this;
+    for (const listener of [...(focusListeners.get("focusin") ?? [])]) listener({ type: "focusin", target: this, currentTarget: document }); } }
   const opener = new HTMLElement(), heading = new HTMLElement(), input = new HTMLElement();
-  const document = { activeElement: opener };
+  const document = { activeElement: opener,
+    addEventListener(type, listener) { const listeners = focusListeners.get(type) ?? new Set(); listeners.add(listener); focusListeners.set(type, listeners); },
+    removeEventListener(type, listener) { focusListeners.get(type)?.delete(listener); } };
   const dialog = { open: false, close() { this.open = false; } };
   const ensureModalDialog = value => { value.open = true; };
   const i18n = { t: (key, fallback = key, values = {}) => Object.entries(values).reduce((text, [name, value]) => text.replaceAll("{" + name + "}", String(value)), fallback),
     number: value => String(value), system: value => value };
   function createHost() {
-    const ports = { store, document, HTMLElement, ensureModalDialog, i18n, html, nothing, icon: () => "",
+    const native = overrides.nativeNavigation;
+    if (native) { Object.assign(native.frame, { store, i18n }); native.ports.bindFixture(native.frame); }
+    const ports = { store, document: native?.ports.documentPort ?? document,
+      HTMLElement: native?.ports.ElementPort ?? HTMLElement, HostBase: native?.ports.ElementPort ?? Object,
+      ensureModalDialog: native?.ports.modalPort.ensureModalDialog ?? ensureModalDialog,
+      navigateInApp: native?.navigateInApp, captureOutputNavigationFocus, i18n, html, nothing, icon: () => "",
       normalizeDocumentDuplicationTitle, documentDuplicationFolder, documentCopyDestination, documentCopyIssueMessage,
       renderAuthoringPreview, withDocumentInRoute, libraryBlockEditorRoute, canvasRoute: () => "", formaActivityAttention, scopedFormaActivity, dialog, heading, input };
-    const Host = Function(...Object.keys(ports), "return " + stripTypeScriptTypes("(class extends Object {\n" +
-      hostFields + "\nstore=store; i18n=i18n; isConnected=true; requestUpdate(){} get updateComplete(){return Promise.resolve();}\n" +
-      "querySelectorAll(){return this._newDocument?[dialog]:[];} querySelector(selector){return selector.includes(' input')?input:selector.includes('dialog')&&!selector.includes('h2')?dialog:heading;}\n" +
+    const Host = Function(...Object.keys(ports), "return " + stripTypeScriptTypes("(class extends HostBase {\n" +
+      hostFields + "\nstore=store; i18n=i18n; isConnected=true;\n" +
+      (native ? "" : "ownerDocument=document; requestUpdate(){} get updateComplete(){return Promise.resolve();}\n" +
+      "querySelectorAll(){return this._newDocument?[dialog]:[];} querySelector(selector){return selector.includes(' input')?input:selector.includes('dialog')&&!selector.includes('h2')?dialog:heading;}\n") +
       hostUpdated + "\n" + hostMethods + "\n" + hostRender + "\n})"))(...Object.values(ports));
     return new Host();
   }
@@ -209,8 +219,106 @@ function fixture(overrides = {}) {
     seenCopyCount, focus, dialog, timers, document, now: () => now, advance: milliseconds => { now += milliseconds; }, event, readProjection };
 }
 
-test("the real copy handler previews freely, then applies one complete copy and links its exact document", async () => {
-  const f = fixture(), original = structuredClone(f.state.projection);
+// Opt-in composition for the two original isolated Open-copy cases only.
+// Their gateway, extracted copy methods and synthetic openDocument completion
+// remain the original ports. This is actual Shell admission, not a full app,
+// actual Store route commit, Worker receipt or native-close scheduling claim.
+async function copyNavigationFixture(t) {
+  const { calmFullPageNativePorts: ports, fullPageTree } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  const { FormaShell } = await ports.loadActual("src/components/forma-shell.ts");
+  const { navigateInApp } = await ports.loadActual("src/components/command-departure.ts");
+  const frame = { locale: "en", trace: [], listeners: new Map(), changed: new Map(), frames: new Map(),
+    timers: new Map(), resizeTargets: new Map(), storage: new Map(), clipboard: [], timerSequence: 0, requested: false };
+  const f = fixture({ nativeNavigation: { ports, frame, navigateInApp } });
+  const original = { notify: f.store.notify, events: f.store.events,
+    subscribe: f.store.subscribe, captureWorkspaceNavigationFocus: f.store.captureWorkspaceNavigationFocus };
+  assert.equal(original.events, undefined); assert.equal(original.subscribe, undefined);
+  assert.equal(original.captureWorkspaceNavigationFocus, undefined);
+  const listeners = new Set(), cleanups = [];
+  let shell = null;
+  t.after(async () => {
+    ports.bindFixture(frame);
+    try {
+      f.host.isConnected = false; f.host.parentElement = null;
+      for (const node of frame.renderer?.nodes ?? []) node.isConnected = false;
+      if (shell) { shell.isConnected = false; shell.disconnectedCallback(); }
+      frame.frames.clear(); frame.timers.clear(); listeners.clear();
+    } finally {
+      for (const cleanup of cleanups.reverse()) await cleanup();
+      f.store.notify = original.notify;
+      delete f.store.events; delete f.store.subscribe; delete f.store.captureWorkspaceNavigationFocus;
+      ports.bindFixture(null);
+    }
+  });
+  // The old synthetic Open does not publish a workspace-navigation receipt.
+  // Reuse the real reader with its initial null slot; never fabricate arrival.
+  const reader = between(storeSource, "  captureWorkspaceNavigationFocus(", "  #loadRevision=");
+  const Navigation = Function("return " + stripTypeScriptTypes("(class {\n"
+    + "_workspaceNavigationFocus=null; _workspaceTransition=0;\n" + reader + "\n})"))();
+  const navigation = new Navigation(); navigation.route = f.store.route;
+  f.store.captureWorkspaceNavigationFocus = navigation.captureWorkspaceNavigationFocus.bind(navigation);
+  f.store.events = { get: () => f.canonical };
+  f.store.subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
+  f.store.notify = function (...args) { const result = original.notify.apply(this, args);
+    for (const listener of [...listeners]) listener(); return result; };
+  frame.renderer = new ports.RendererPort(frame, {});
+  frame.host = f.host; f.host.tag = "forma-project-contents"; f.host.attributes = {};
+  frame.draw = () => { ports.bindFixture(frame); frame.requested = false;
+    return frame.renderer.draw(f.host, () => f.host._newDocument ? f.host._copyDialog() : nothing); };
+  frame.tick = async () => { await Promise.resolve(); if (f.host.isConnected) frame.draw(); return true; };
+  frame.tree = () => fullPageTree(frame);
+  const native = installOutputNavigationFocusNative({ after: cleanup => cleanups.push(cleanup) }, frame, ports);
+  ports.bindFixture(frame);
+  shell = new FormaShell(); shell.tag = "forma-shell"; shell.attributes = {}; shell.isConnected = true;
+  f.host.parentElement = shell; shell.connectedCallback(); frame.draw();
+  assert.ok(shell instanceof FormaShell); assert.ok(f.host instanceof ports.ElementPort);
+  assert.equal(f.host.closest("forma-shell"), shell); assert.ok(shell.contains(f.host));
+  assert.ok(ports.ElementPort.hasStoreIdentity(shell, f.store) && ports.ElementPort.hasStoreIdentity(f.host, f.store));
+  assert.equal(f.host.ownerDocument, native.document);
+  f.openCopy = () => {
+    const before = { requests: structuredClone(f.requests), canonical: structuredClone(f.canonical) };
+    frame.draw();
+    assert.deepEqual(f.requests, before.requests); assert.deepEqual(f.canonical, before.canonical);
+    const review = f.store.documentCopyReview(f.target), document = f.state.projection.documents.find(value =>
+      value.id === review?.receipt?.documentId && value.projectId === f.target.projectId && !value.removed);
+    assert.equal(review?.phase, "applied"); assert.ok(document);
+    const tree = frame.tree(), dialogs = tree.visible("dialog").filter(row => row.owner === f.host
+      && row.port.classList.contains("document-copy-dialog") && row.port.open);
+    assert.equal(dialogs.length, 1); const dialog = dialogs[0];
+    const anchors = tree.visible("a").filter(row => row.owner === f.host
+      && row.attributes.href === withDocumentInRoute("/", document.id, document.title)
+      && row.text.includes(f.host.i18n.t("document.copy.open", "Open copied document")));
+    assert.equal(anchors.length, 1); const anchor = anchors[0];
+    assert.equal(typeof anchor.handlers.click, "function");
+    assert.ok(anchor.port.isConnected && frame.renderer.nodes.includes(anchor.port));
+    assert.equal(anchor.port.closest("dialog"), dialog.port); assert.ok(dialog.port.contains(anchor.port));
+    assert.equal(f.host.querySelector(".document-copy-dialog"), dialog.port);
+    assert.equal(anchor.port.ownerDocument, native.document); assert.ok(anchor.port.getClientRects().length);
+    assert.equal(anchor.port.matches(":disabled"), false);
+    native.emit("pointerdown", anchor.port); native.focus(anchor.port);
+    const event = { type: "click", target: anchor.port, currentTarget: anchor.port, button: 0,
+      metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; }, stopPropagation() {} };
+    // Observe the original extracted handler's Promise through its real emitted
+    // void callback. Return that exact Promise, including a held true result;
+    // do not coerce late completion to false and hide the host's epoch guard.
+    const originalOpen = f.host._openCopy; let pending = null, calls = 0;
+    f.host._openCopy = function (originalEvent) {
+      assert.equal(this, f.host); assert.equal(originalEvent, event); calls++;
+      pending = originalOpen.call(this, originalEvent); return pending;
+    };
+    try { anchor.handlers.click.call(anchor.owner, event); }
+    finally { f.host._openCopy = originalOpen; event.currentTarget = null; }
+    assert.equal(calls, 1); assert.ok(pending); assert.equal(event.defaultPrevented, true);
+    return pending;
+  };
+  return f;
+}
+
+
+test("the real copy handler previews freely, then applies one complete copy and links its exact document", async t => {
+  const f = await copyNavigationFixture(t), original = structuredClone(f.state.projection);
   const preview = await f.review();
   assert.equal(f.seenCopyCount(), 0);
   assert.deepEqual(f.requests.map(item => item.action), ["resume", "preview"]);
@@ -237,7 +345,7 @@ test("the real copy handler previews freely, then applies one complete copy and 
   const source = foldEvents(f.canonical, Infinity, target.documentId, target.projectId);
   assert.deepEqual(source.blocks, original.libraryBlocks.filter(block => block.documentId === target.documentId));
   assert.match(flatten(f.host._copyDialog()), new RegExp(copy.id));
-  await f.host._openCopy({ button: 0, preventDefault() {}, defaultPrevented: false });
+  await f.openCopy();
   assert.deepEqual(f.navigation, [copy.id]);
   assert.equal(f.store.documentCopyReview(target).receipt.documentId, copy.id);
   await f.host._beginDuplicate(target.documentId);
@@ -946,11 +1054,11 @@ test("late Done from an earlier opening cannot close a newer review of the same 
   assert.equal(f.host._duplicateSourceId, target.documentId);
   assert.equal(f.seenCopyCount(), 0);
 });
-test("late Open completion cannot close a newer review of the same source", async () => {
-  const f = fixture(); await f.review(); await f.host._applyCopy();
+test("late Open completion cannot close a newer review of the same source", async t => {
+  const f = await copyNavigationFixture(t); await f.review(); await f.host._applyCopy();
   let release; const gate = new Promise(resolve => { release = resolve; });
   f.store.openDocument = async id => { await gate; f.navigation.push(id); return true; };
-  const opening = f.host._openCopy({ button: 0, preventDefault() {}, defaultPrevented: false });
+  const opening = f.openCopy();
   f.host._closeNew(); await f.host._beginDuplicate(target.documentId);
   release(); await opening;
   assert.equal(f.host._newDocument, true);

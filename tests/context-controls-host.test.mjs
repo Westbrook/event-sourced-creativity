@@ -63,7 +63,7 @@ class ElementPort {
   }
   focus() { this.fixture.trace.push("focus:" + this.tag); }
 }
-const documentPort = { activeElement: null, documentElement: { lang: "en" }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
+const documentPort = { activeElement: null, documentElement: { lang: "en" }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null, querySelectorAll: selector => activeFixture?.renderer.query(null, selector) ?? [] };
 const windowPort = { requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
 documentPort.addEventListener = (...args) => windowPort.addEventListener(...args);
 documentPort.removeEventListener = (...args) => windowPort.removeEventListener(...args);
@@ -228,9 +228,39 @@ const workspaceClass = workspaceSyntax.statements.find(node => ts.isClassDeclara
 const listMember = workspaceClass.members.find(node => node.name?.getText(workspaceSyntax) === "#contextBlocks").getText(workspaceSyntax);
 const ListHost = new Function("ElementPort", "html", "keyed", "repeat", ts.transpileModule("return class extends ElementPort { render(){return this.#contextBlocks(this.store.projection.get().blocks);} " + listMember + "}", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(ElementPort, html, keyed, repeat);
 
+// Finite Context Store port: reuse the actual listener set, registration and
+// synchronous delivery statement. Planning-consent/network behavior remains
+// outside this fixture; full Store ownership tests supply that evidence.
+const ContextStorePublication = (() => {
+  const tree = syntax("src/state/store.ts"), owner = tree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaStore");
+  assert.ok(owner, "actual Store owns the subscription contract");
+  const member = name => {
+    const matches = owner.members.filter(node => node.name?.getText(tree) === name);
+    assert.equal(matches.length, 1, "one actual Store member " + name); return matches[0];
+  };
+  const notify = member("notify");
+  const delivery = notify.body.statements.filter(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+    && node.expression.expression.getText(tree) === "this.#listeners.forEach");
+  assert.equal(delivery.length, 1, "one actual synchronous Store listener delivery");
+  const code = ts.transpileModule("return class { " + ["#listeners", "subscribe"].map(name => member(name).getText(tree)).join("\n")
+    + "\nnotify() { " + delivery[0].getText(tree) + " } }", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  return new Function(code)();
+})();
+const contextStorePublications = () => {
+  const owner = new ContextStorePublication();
+  return { subscribe: owner.subscribe.bind(owner), notify: owner.notify.bind(owner) };
+};
+
 function fixture(locale = "en", viewer = false) {
   const types = ["direction", "audience", "message", "format", "exclusion", "subject", "environment", "emotion", "style", "composition", "accessibility", "direction", "direction", "audio"];
-  const state = { authorization: "author-a", route: "/document/document-a", events: [], requests: [], replies: [], viewer };
+  const publications = contextStorePublications();
+  const state = new Proxy({ authorization: "author-a", route: "/document/document-a", events: [], requests: [], replies: [], viewer }, {
+    set(target, key, value) {
+      const changed = !Object.is(target[key], value); target[key] = value;
+      if (changed && ["authorization", "route", "viewer", "events"].includes(key)) publications.notify();
+      return true;
+    },
+  });
   const f = { state, locale, trace: [], listeners: new Map() };
   const messages = { ...FORMA_DEFAULT_MESSAGES, ...localeCatalogs[locale] };
   f.i18n = new FormaLocaleController({ addController() {}, requestUpdate() {}, dispatchEvent(event) { event.callback({ locale, formatLocale: locale, direction: locale === "ar" ? "rtl" : "ltr", timeZone: "UTC", messages, revision: 0 }, () => {}); return true; } });
@@ -242,14 +272,20 @@ function fixture(locale = "en", viewer = false) {
   for (const [index, type] of types.entries()) append({ type: "BlockCreated", payload: { project_id: "project-a", document_id: "document-a", block_id: "decision-" + index, type, handle: type + "/decision-" + index, position: "p" + String(index).padStart(3, "0"), properties: { text: type === "format" ? "Create a four scene film that preserves every authored sentence." : "Authored " + type + " evidence. ".repeat(index === 12 ? 380 : 28), subtype: suggestedSubtype(type), authority: "authored", weight: .7, ...(type === "exclusion" ? { intent: "prohibit" } : {}), ...(type === "message" ? { exact_text: "Keep this exact promise.", protected_phrases: [{ text: "Never shorten this protected phrase." }], exact_placements: ["opening", "closing"] } : {}) } } });
   const projection = () => foldEvents(state.events, Infinity, "document-a", "project-a");
   f.store = {
+    ...publications,
     ui: { focusBlockId: "", editingBlockId: "", libraryView: "blocks", libraryOutputScope: "recent", focusCollectionId: "" },
     session: { get: () => ({ user: { userId: "owner", role: "user" }, provider: { configured: true }, capabilities: ["project.read", "project.author", "project.output.request"], ...(state.viewer ? { projectContext: { organizationId: "org", projectAccessId: "access", projectId: "project-a", role: "viewer", permissions: ["project.read"] } } : {}) }) },
     projection: { get: projection }, events: { get: () => state.events }, eventView: { get: () => state.events }, asOf: cell(Infinity), content: cell({}), head: { get: () => state.events.length },
     route: { get: () => state.route }, loading: cell(false), busy: cell(""), organizationContextPackages: cell([]), organizationContextBindings: cell([]), organizationContextVersions: cell({}),
+    // The original authored stream is present. No Output read is modeled here.
+    routeDataReady: () => !f.store.loading.get() && f.store.sourceOwnershipActive(f.store.captureSourceOwnership()),
+    outputRequirements: { resource: () => ({ state: "loading", snapshot: null, error: null }) },
     projectNotifications: cell([]), reviewInbox: cell([]), documentJobs: cell([]), generationReadiness: cell({}), canvasProjection: cell({ selectedCanvasId: "", canvases: [] }),
     captureAuthorizationScope: () => ({ key: state.authorization, shared: state.viewer }), authorizationScopeActive: scope => scope?.key === state.authorization,
-    patchUi: patch => Object.assign(f.store.ui, patch), setRoute: route => { state.route = route; },
-    append: async input => [append(input)], appendBatch: async inputs => inputs.map(append), removeOutputBlock: async input => [append(input)],
+    patchUi: patch => { Object.assign(f.store.ui, patch); publications.notify(); }, setRoute: route => { state.route = route; },
+    append: async input => { const events = [append(input)]; publications.notify(); return events; },
+    appendBatch: async inputs => { const events = inputs.map(append); publications.notify(); return events; },
+    removeOutputBlock: async input => { const events = [append(input)]; publications.notify(); return events; },
     outputBlockTextEvents: (id, text, source) => [{ type: "BlockPropertyEdited", payload: { block_id: id, property_path: "text", old_value: projection().libraryBlocks.find(block => block.id === id)?.properties.text, new_value: text, source_surface: source } }],
     documentJobActive: () => false, characterGenerationRequestKey: () => "character", generationRiskAcknowledged: () => false, outputOwnedBlockCount: () => 0,
     refreshEvents: async () => f.trace.push("refresh-events"),
@@ -260,7 +296,7 @@ function fixture(locale = "en", viewer = false) {
   f.renderer = new RendererPort(f, registry);
   activeFixture = f;
   f.host = new ListHost();
-  f.draw = () => f.renderer.draw(f.host);
+  f.draw = () => { publications.notify(); return f.renderer.draw(f.host); };
   f.block = id => f.renderer.component("forma-context-block", id);
   f.select = async id => { const host = f.block(id); await f.renderer.handler(host, "input", node => node.attributes.type === "radio", "change")(); f.draw(); };
   f.toggle = async id => { const host = f.block(id); await f.renderer.handler(host, "button", node => String(node.attributes.class).includes("context-controls-toggle"))(); f.draw(); };
@@ -586,26 +622,42 @@ test("Library closes its preview before detaching the gallery for the exact edit
   assert.equal(f.state.events.length, events);
 });
 
-test("Library dismisses owned removal confirmation but retains manual fields when controls close", async () => {
+test("Library dismisses owned removal confirmation but retains manual fields when controls close", async t => {
   const f = fixture(), created = f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === "decision-0");
   created.payload.scope = "library"; delete created.payload.document_id;
   f.state.route = libraryBlockEditorRoute("decision-0");
   activeFixture = f; f.host = new FormaLibrary(); f.draw();
+  await cContextLibraryNavigationParent(t, f);
   const editor = f.renderer.component("forma-library-block-editor", "decision-0");
   f.renderer.ownNodes(editor, "input").find(node => node.attributes.maxlength === "96").handlers.input.call(editor, { target: { value: "Retain the independent draft" } }); f.draw();
   await f.renderer.handler(editor, "button", node => node.attributes.class === "button danger")(); f.draw();
   const modal = f.renderer.ownNodes(editor, "dialog")[0]; assert.ok(modal?.open);
-  const events = f.state.events.length;
+  const events = f.state.events.length, route = f.state.route, requests = [...f.state.requests];
+  // This direct header-handler attempt is deliberately denied while its
+  // destructive modal owns interaction; it is not a native click through it.
+  assert.equal(await f.renderer.handler(editor, "button", node => node.attributes.class === "button ghost")(), false);
+  assert.equal(f.state.route, route); assert.ok(editor.isConnected && modal.open);
+  assert.equal(f.renderer.ownNodes(editor, "input").find(node => node.attributes.maxlength === "96").value, "Retain the independent draft");
+  assert.equal(f.state.events.length, events); assert.deepEqual(f.state.requests, requests);
+  const cancelName = f.i18n.t("projects.editorCancelRemoval", "Cancel removal");
+  const cancel = f.renderer.ownNodes(editor, "button").filter(node => node.attributes["aria-label"] === cancelName);
+  assert.equal(cancel.length, 1, "Use the current emitted removal dialog's own Cancel control");
+  await cancel[0].handlers.click.call(editor, { target: cancel[0], currentTarget: cancel[0], preventDefault() {}, stopPropagation() {} }); f.draw();
+  assert.equal(f.state.route, route); assert.ok(editor.isConnected);
+  assert.equal(f.renderer.ownNodes(editor, "dialog").length, 0);
+  assert.equal(modal.isConnected, false, "The actual committed tree removed the cancelled dialog; no open setter is fabricated");
+  // The prior modal's detached open attribute is not a visible-dialog oracle.
+  // A fresh header Back now uses the original local retention admission.
   await f.renderer.handler(editor, "button", node => node.attributes.class === "button ghost")(); f.draw();
-  assert.equal(modal.open, false);
+  assert.equal(f.state.route, "/library");
   assert.equal(editor.isConnected, false);
   f.state.route = libraryBlockEditorRoute("decision-0"); f.draw();
   assert.equal(f.renderer.component("forma-library-block-editor", "decision-0"), editor);
   assert.equal(f.renderer.ownNodes(editor, "dialog").length, 0, "re-entry never reopens a stale destructive confirmation");
   assert.equal(f.renderer.ownNodes(editor, "input").find(node => node.attributes.maxlength === "96").value, "Retain the independent draft");
   assert.equal(f.state.events.length, events, "dismissal cannot remove or save a block");
+  assert.deepEqual(f.state.requests, requests);
 });
-
 
 test("suspending while the initial review lookup is pending finishes guarded recovery without a second quote", async () => {
   const f = fixture(); await f.select("decision-0"); await f.toggle("decision-0");
@@ -739,7 +791,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
     verifyLabels();
   });
 
-  test("Library keyed cache localizes " + locale + " gallery copy and preserves exact editor drafts and read-only inspection", async () => {
+  test("Library keyed cache localizes " + locale + " gallery copy and preserves exact editor drafts and read-only inspection", async t => {
     const f = fixture(locale);
     for (const id of ["decision-0", "decision-1"]) {
       const created = f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === id);
@@ -749,6 +801,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
     evidence.exact_text = "Kind — this customer promise must stay exact.";
     const events = f.state.events.length;
     f.state.route = "/library"; activeFixture = f; f.host = new FormaLibrary(); f.draw();
+    await cContextLibraryNavigationParent(t, f);
     const galleryLabel = localeCatalogs[locale][formaSystemMessageId("Portable context")];
     const verifyGallery = () => {
       assert.ok(galleryLabel);
@@ -1165,9 +1218,10 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const viewer of [false, true
   assert.equal(JSON.stringify(f.state.events), state.authored);
 });
 
-for (const locale of ["en", "fr", "ar", "ja"]) test("selection names: " + locale + " simultaneous Library Controls keep visible labels and exact original routes", async () => {
+for (const locale of ["en", "fr", "ar", "ja"]) test("selection names: " + locale + " simultaneous Library Controls keep visible labels and exact original routes", async t => {
   const state = await selectionNameFixture(locale), { f, ids } = state;
   f.state.route = "/library"; activeFixture = f; f.host = new FormaLibrary(); f.draw();
+  await cContextLibraryNavigationParent(t, f);
   assertSelectionNames(state, "library");
   assert.equal(f.renderer.controls("input"), 1, "The existing Library input count is unchanged; no selection radios are added");
   assert.equal(selectionNameButtons(f).filter(row => row.attributes["data-context-controls-id"] && row.attributes["data-context-controls-id"] !== "__new__").length, 14);
@@ -1286,8 +1340,9 @@ function finalContextNameAssert(state) {
   assert.equal(f.state.requests.length, 0);
   return rows;
 }
-for (const locale of ["en", "fr", "ar", "ja"]) for (const surface of ["document", "library"]) for (const variant of ["id-suffix", "unicode-suffix", "empty-handle-alias", "normalized-full-ids"]) test("final context names: " + locale + " " + surface + " " + variant + " stays unique with exact actions", async () => {
+for (const locale of ["en", "fr", "ar", "ja"]) for (const surface of ["document", "library"]) for (const variant of ["id-suffix", "unicode-suffix", "empty-handle-alias", "normalized-full-ids"]) test("final context names: " + locale + " " + surface + " " + variant + " stays unique with exact actions", async t => {
   const state = await finalContextNameFixture(locale, surface, variant), { f, ids } = state;
+  if (surface === "library") await cContextLibraryNavigationParent(t, f);
   const prior = ids.map((id, index) => {
     const block = f.store.projection.get().libraryBlocks.find(candidate => candidate.id === id);
     return finalContextNameExpected(f, block, finalContextNameVisible(f, block, surface), state.identities[index]);
@@ -1811,3 +1866,208 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const kind of ["text", "imag
   await f.toggle("decision-0"); assert.equal(contextContinuityRetainedNote(f).length, 0);
   assert.equal(f.state.events.length, eventCount + 1); assert.equal(f.state.requests.length, 0);
 });
+
+// These two controls certify only the finite source-derived publication adapter,
+// not real Store authorization, source retirement, DOM focus or Worker behavior.
+test("finite Context Store subscriptions notify synchronously and really unsubscribe", () => {
+  const publications = contextStorePublications(), calls = [];
+  const stop = publications.subscribe(() => calls.push("first"));
+  assert.deepEqual(calls, [], "subscribe does not invoke a partially initialized owner");
+  publications.notify(); assert.deepEqual(calls, ["first"]);
+  stop(); publications.notify(); assert.deepEqual(calls, ["first"], "removed listeners do not run");
+  let stopSelf;
+  stopSelf = publications.subscribe(() => { calls.push("self"); stopSelf(); });
+  const stopOther = publications.subscribe(() => calls.push("other"));
+  publications.notify(); assert.deepEqual(calls, ["first", "self", "other"]);
+  publications.notify(); assert.deepEqual(calls, ["first", "self", "other", "other"]);
+  stopOther(); publications.notify(); assert.equal(calls.length, 4);
+});
+
+test("finite Context Store publishes route and authority ABA before redraw", async t => {
+  const f = fixture(), original = { route: f.state.route, authorization: f.state.authorization, viewer: f.state.viewer };
+  t.after(() => f.i18n.hostDisconnected());
+  const observed = [];
+  const stop = f.store.subscribe(() => observed.push({
+    route: f.state.route, authorization: f.state.authorization, viewer: f.state.viewer,
+    focusBlockId: f.store.ui.focusBlockId, events: f.state.events.length,
+  }));
+  const originalEvents = f.state.events.length;
+  assert.equal(observed.length, 0);
+  f.state.route = "/library"; f.state.route = original.route;
+  f.state.authorization = "other-authority"; f.state.authorization = original.authorization;
+  f.state.viewer = true; f.state.viewer = original.viewer;
+  assert.deepEqual(observed.map(({ route, authorization, viewer }) => ({ route, authorization, viewer })), [
+    { ...original, route: "/library" }, original,
+    { ...original, authorization: "other-authority" }, original,
+    { ...original, viewer: true }, original,
+  ], "each intervening owner is observable synchronously; returning to A does not erase B");
+  f.store.patchUi({ focusBlockId: "decision-0" });
+  assert.equal(observed.length, 7); assert.equal(observed.at(-1).focusBlockId, "decision-0");
+  await f.store.append({ type: "BlockPropertyEdited", payload: { block_id: "decision-0", property_path: "text", new_value: "Finite adapter publication" } });
+  assert.equal(observed.length, 8); assert.equal(observed.at(-1).events, originalEvents + 1);
+  f.draw(); assert.equal(observed.length, 9, "direct nested fixture setup is published at the existing draw boundary");
+  stop(); f.state.route = "/library"; f.store.patchUi({ focusBlockId: "" }); f.draw();
+  assert.equal(observed.length, 9); assert.equal(f.state.requests.length, 0);
+});
+
+// Finite document-collection contract only. The existing native renderer owns
+// every returned port; this is not a browser, Store or modal-authority proof.
+test("finite Context document collections expose current emitted dialogs and live native open state", { concurrency: false }, t => {
+  const previousFixture = activeFixture, f = fixture();
+  t.after(() => { f.i18n.hostDisconnected(); activeFixture = previousFixture; });
+  const events = structuredClone(f.state.events), requests = [...f.state.requests];
+  const host = new ElementPort(); host.tag = "fixture-document-collection";
+  const view = () => html`<section><dialog id="collection-first" open>First native dialog</dialog>
+    <dialog id="collection-second">Second native dialog</dialog><button>Ordinary native action</button></section>`;
+  f.renderer.draw(host, view);
+  const emitted = f.renderer.ownNodes(host, "dialog");
+  assert.equal(emitted.length, 2);
+  const snapshot = documentPort.querySelectorAll("dialog");
+  assert.deepEqual(snapshot, emitted, "The document exposes the existing renderer's exact committed ports");
+  assert.strictEqual(documentPort.querySelector("dialog"), emitted[0]);
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), [emitted[0]]);
+  assert.equal(modalPort.ensureModalDialog(emitted[1]), true);
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), emitted);
+  emitted[0].close();
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), [emitted[1]], "Current native close state is not replaced by an always-clean collection");
+  assert.deepEqual(snapshot, emitted, "An earlier collection keeps its native element references");
+  f.renderer.draw(host, () => html`<section><button>Only a current non-dialog action</button></section>`);
+  assert.deepEqual(documentPort.querySelectorAll("dialog"), []);
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), []);
+  assert.equal(documentPort.querySelector("dialog"), null);
+  f.renderer.draw(host, view);
+  const current = documentPort.querySelectorAll("dialog");
+  assert.equal(current.length, 2);
+  assert.ok(current.every(node => f.renderer.nodes.includes(node)));
+  assert.ok(current.every(node => !snapshot.includes(node)), "Removed ports are not returned from a later committed frame");
+  assert.deepEqual(documentPort.querySelectorAll("dialog[open]"), [current[0]]);
+  assert.deepEqual(f.state.events, events); assert.deepEqual(f.state.requests, requests);
+});
+
+// Opt-in prerequisite for the 25 existing isolated-Library journeys only.
+// Keep their original synthetic fourteen-decision Store/data and registered
+// child inventory. The complete actual Shell is an admission parent, not a
+// second rendered application. This is not a real Store/Worker route receipt.
+async function cContextLibraryNavigationParent(t, f) {
+  const { calmFullPageNativePorts: ports } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  const { applicationIdFromRoute } = await import("../src/platform/applications.ts");
+  const { FormaShell } = await ports.loadActual("src/components/forma-shell.ts");
+  const { FormaLibrary: CurrentLibrary } = await ports.loadActual("src/components/forma-library.ts");
+  const original = { store: f.store, state: f.state, events: JSON.stringify(f.state.events),
+    requests: [...f.state.requests], route: f.state.route, i18n: f.i18n, renderer: f.renderer, host: f.host };
+  assert.ok(original.host instanceof FormaLibrary, "Only an explicitly mounted original Library opts in");
+  assert.equal(f.store.transitionWorkspace, undefined);
+  assert.equal(f.store.captureWorkspaceNavigationFocus, undefined);
+
+  // Reuse the actual guard and actual same-lease route-record reader, but do
+  // not pretend the old finite setRoute performs Store history/HTTP work.
+  const storeTree = syntax("src/state/store.ts");
+  const storeOwner = storeTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaStore");
+  assert.ok(storeOwner);
+  const member = name => {
+    const found = storeOwner.members.filter(node => node.name?.getText(storeTree) === name);
+    assert.equal(found.length, 1, "one actual Store member " + name); return found[0].getText(storeTree);
+  };
+  const guard = storeTree.statements.filter(node => ts.isVariableStatement(node)).flatMap(node => node.declarationList.declarations)
+    .filter(node => node.name.getText(storeTree) === "workspaceNavigationCurrent");
+  assert.equal(guard.length, 1);
+  const sameApp = storeOwner.members.find(node => node.name?.getText(storeTree) === "transitionWorkspace");
+  assert.ok(sameApp?.body);
+  const branch = sameApp.body.statements.find(node => ts.isIfStatement(node) && node.expression.getText(storeTree) === "source===destination");
+  assert.ok(branch);
+  assert.ok(branch.thenStatement.getText(storeTree).includes("if(options.onOriginHandoff&&!options.onOriginHandoff())return false;"));
+  assert.ok(branch.thenStatement.getText(storeTree).includes("this.#commitRoute(path,options);return true;"));
+  const code = ts.transpileModule("const " + guard[0].getText(storeTree) + ";\nreturn class ContextUnitNavigation {\n"
+    + ["#workspaceTransition", "#workspaceNavigationFocus", "captureWorkspaceNavigationFocus"].map(member).join("\n")
+    + `
+      constructor(store) { this.store=store; this.route=store.route; }
+      retireChangedRoute() {
+        if(this.#workspaceNavigationFocus&&this.route.get()!==this.#workspaceNavigationFocus.route) {
+          this.#workspaceTransition++; this.#workspaceNavigationFocus=null;
+        }
+      }
+      async transitionWorkspace(path,options={}) {
+        const store=this.store,route=store.route.get(),source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
+        if(!workspaceNavigationCurrent(options)||!store.sourceOwnershipActive(source)||!store.authorizationScopeActive(authorization))return false;
+        assert.equal(applicationIdFromRoute(path),applicationIdFromRoute(route),"This unit port cannot stand in for an audience handoff");
+        assert.ok(path==="/library"||libraryBlockEditorFromRoute(path),"Only these existing local Library routes are modeled");
+        if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
+        if(!workspaceNavigationCurrent(options)||store.route.get()!==route||!store.sourceOwnershipActive(source)||!store.authorizationScopeActive(authorization))return false;
+        this.#workspaceTransition++;
+        this.#workspaceNavigationFocus=options.focus?{route:path,focus:options.focus,revision:this.#workspaceTransition}:null;
+        store.setRoute(path);
+        return store.route.get()===path;
+      }
+    }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  const { libraryBlockEditorFromRoute } = await import("../src/model/routes.ts");
+  const Boundary = new Function("assert", "applicationIdFromRoute", "libraryBlockEditorFromRoute", code)(assert, applicationIdFromRoute, libraryBlockEditorFromRoute);
+  const boundary = new Boundary(f.store);
+  f.store.transitionWorkspace = boundary.transitionWorkspace.bind(boundary);
+  f.store.captureWorkspaceNavigationFocus = boundary.captureWorkspaceNavigationFocus.bind(boundary);
+  const stopRoute = f.store.subscribe(() => boundary.retireChangedRoute());
+
+  const frame = { store: f.store, state: f.state, i18n: f.i18n, locale: f.locale, trace: f.trace,
+    listeners: new Map(), changed: new Map(), frames: new Map(), timers: new Map(), resizeTargets: new Map(),
+    storage: new Map(), clipboard: [], timerSequence: 0, requested: false, host: null };
+  const nativeCleanups = [];
+  let shell = null, library = null;
+  const retire = (owner, renderer) => {
+    if (!owner || !renderer) return;
+    owner.isConnected = false;
+    for (const { instance } of renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
+    owner.disconnectedCallback(); owner.parentElement = null;
+    for (const node of renderer.nodes) node.isConnected = false;
+  };
+  // Register retirement before the first asynchronous native-class load so a
+  // prerequisite assertion cannot leave shared native wrappers installed.
+  t.after(async () => {
+    ports.bindFixture(frame);
+    try {
+      retire(library, frame.renderer);
+      if (shell) { shell.isConnected = false; shell.disconnectedCallback(); }
+      await Promise.resolve();
+      assert.equal(f.store, original.store);
+    } finally {
+      stopRoute();
+      for (const cleanup of nativeCleanups.reverse()) await cleanup();
+      delete f.store.transitionWorkspace; delete f.store.captureWorkspaceNavigationFocus;
+      f.i18n.hostDisconnected();
+    }
+  });
+  const nativeRegistry = Object.fromEntries(await Promise.all(Object.entries(componentModules).map(async ([tag, [path, name]]) => {
+    const actual = await ports.loadActual(path); assert.equal(typeof actual[name], "function"); return [tag, actual[name]];
+  })));
+  assert.deepEqual(Object.keys(nativeRegistry), Object.keys(registry), "No new child panels inflate the original unit's control inventory");
+  frame.renderer = new ports.RendererPort(frame, nativeRegistry);
+  frame.tick = async () => { await Promise.resolve(); if (frame.host?.isConnected) frame.draw(); return true; };
+  frame.draw = () => { ports.bindFixture(frame); f.store.notify(); return frame.renderer.draw(frame.host); };
+  retire(original.host, original.renderer);
+  ports.bindFixture(frame);
+  shell = new FormaShell(); shell.tag = "forma-shell"; shell.attributes = {}; shell.isConnected = true;
+  library = new CurrentLibrary(); library.tag = "forma-library"; library.attributes = {}; library.parentElement = shell; library.isConnected = true;
+  frame.host = library;
+  const query = frame.renderer.query.bind(frame.renderer);
+  frame.renderer.query = (owner, selector) => {
+    if (selector.includes(",")) return selector.split(",").flatMap(part => frame.renderer.query(owner, part.trim()));
+    const descendants = query(owner, selector);
+    return selector === "forma-library" && (owner === null || owner === shell) && shell.isConnected
+      && library.isConnected && library.parentElement === shell ? [library, ...descendants] : descendants;
+  };
+  const native = installOutputNavigationFocusNative({ after: cleanup => nativeCleanups.push(cleanup) }, frame, ports);
+  // The original fixture registers an explicit component subset; it is not a
+  // fullPageTree. Existing native owner ancestry is sufficient here. Do not
+  // fabricate unregistered children or override any component blocker/current.
+  f.host = library; f.renderer = frame.renderer; f.draw = frame.draw;
+  shell.connectedCallback(); library.connectedCallback(); f.draw();
+  assert.ok(shell instanceof FormaShell && library instanceof CurrentLibrary);
+  assert.equal(library.closest("forma-shell"), shell); assert.ok(shell.contains(library));
+  assert.ok(ports.ElementPort.hasStoreIdentity(shell, original.store) && ports.ElementPort.hasStoreIdentity(library, original.store));
+  assert.deepEqual(shell.querySelectorAll("forma-library"), [library]);
+  assert.equal(library.ownerDocument, native.document);
+  assert.equal(f.store, original.store); assert.equal(f.state, original.state); assert.equal(f.i18n, original.i18n);
+  assert.equal(f.state.route, original.route); assert.equal(JSON.stringify(f.state.events), original.events);
+  assert.deepEqual(f.state.requests, original.requests);
+  f.contextLibraryNavigation = { shell, library, native, boundary: "actual Shell admission / explicitly finite original Store route port" };
+  return f.contextLibraryNavigation;
+}

@@ -16,7 +16,7 @@ function confirmedUnavailable(x,owner){
   const nodes=x.f.tree().visible("button").filter(node=>node.owner===owner);
   assert.equal(nodes.some(node=>node.text===x.f.i18n.t("projects.retryOriginal","Retry same creation")),false);
   assert.equal(nodes.some(node=>node.text===x.f.i18n.t("projects.checkOriginalAvailability","Check original availability")),true);
-  const status=x.f.find("p",node=>node.owner===owner&&node.attributes.role==="status");
+  const status=x.f.find("p",node=>node.owner===owner&&node.attributes.role==="status"&&node.parent?.tag==="form"&&node.parent.parent?.tag==="dialog"&&String(node.parent.parent.attributes.class??"").split(/\s+/u).includes("project-create-dialog"));
   assert.equal(status.text,x.f.i18n.t("projects.originalConfirmedUnavailable"));
 }
 async function laterOriginal(x,first){

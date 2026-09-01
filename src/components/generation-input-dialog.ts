@@ -9,7 +9,9 @@ import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 
 export class GenerationInputDialog extends FormaElement {
-  static properties={open:{type:Boolean},inspection:{attribute:false}};
+  static properties={open:{type:Boolean},inspection:{attribute:false},openingCurrent:{attribute:false}};
+  // The existing caller owns this check only at deferred native promotion.
+  openingCurrent:(()=>boolean)|null=null;
   open=false;inspection:GenerationInputInspection|null=null;#unavailableFrames=new Set<string>();#titleId=`generation-input-${crypto.randomUUID()}`;
   #inspectionScope="";
   protected override willUpdate(){
@@ -18,7 +20,14 @@ export class GenerationInputDialog extends FormaElement {
     this.#inspectionScope=scope;
     if(!this.open||!this.inspection)this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();
   }
-  protected override updated(){const dialog=this.renderRoot.querySelector<HTMLDialogElement>("dialog");if(this.open&&dialog&&!dialog.open)ensureModalDialog(dialog);if(!this.open&&dialog?.open)dialog.close();}
+  protected override updated(){
+    const dialog=this.renderRoot.querySelector<HTMLDialogElement>("dialog");
+    if(this.open&&dialog&&!dialog.open){
+      if(this.openingCurrent&&!this.openingCurrent()){this.#clearPrivatePreview();return;}
+      ensureModalDialog(dialog);
+    }
+    if(!this.open&&dialog?.open)dialog.close();
+  }
   #close(){this.open=false;this.#unavailableFrames.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
   #clearPrivatePreview=()=>{this.#unavailableFrames.clear();this.inspection=null;this.#close();};
   override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivatePreview);}

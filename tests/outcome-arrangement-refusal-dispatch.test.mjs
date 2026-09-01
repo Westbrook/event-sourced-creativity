@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {readyPreparation,refusedPreparation,qualifyContinuation,dispatchInitial,continuationControl,counts,
- closePreparation,switchPosture,openArrangement,sourceRetirement,canonicalEvents,previewRows,noContinuation,
+ closePreparation,openArrangement,sourceRetirement,canonicalEvents,previewRows,noContinuation,
  untilScene,confirmImpersonation,editRefusalSource,check,arrangementDialog}
  from "./helpers/arrangement-refusal-interruption-fixture.mjs";
+import {withOutcomeDeskPosture} from "../src/model/outcome-desk.ts";
 
 async function cancelConfirmation(x){
  await untilScene(()=>x.h.store.ui.impersonationConfirmOpen);await x.drain();
@@ -44,7 +45,41 @@ test("preparation actual dispatch signal respects the current confirmation / "+[
    // Deterministic current-opening input while the real modal is pending, not
    // a claim that a physical user can click through a browser modal.
    await closePreparation(x);
-   if(boundary==="posture")await switchPosture(x);
+   if(boundary==="posture"){
+    const owner=x.canvas(),f=x.f,postureRoute=withOutcomeDeskPosture(route,"outcomes");
+    const source=x.h.store.captureSourceOwnership(),authority=x.h.store.captureAuthorizationScope();
+    const pendingAction=x.h.store.ui.impersonationAction;
+    assert.ok(owner?.isConnected);assert.equal(f.host.tag,"forma-shell");
+    assert.equal(owner.closest("forma-shell"),f.host);assert.notEqual(postureRoute,route);
+    const unchanged=()=>{
+     assert.equal(x.canvas(),owner);assert.equal(owner.isConnected,true);assert.equal(arrangementDialog(x),undefined);
+     assert.equal(x.h.store.ui.impersonationConfirmOpen,true);assert.equal(x.h.store.ui.impersonationAction,pendingAction);
+     const confirmations=f.tree().visible("dialog").filter(node=>String(node.attributes.class??"").includes("impersonation-confirm-dialog"));
+     assert.equal(confirmations.length,1);assert.ok(confirmations[0].port.open&&confirmations[0].port.isConnected);
+     assert.ok(x.h.store.sourceOwnershipActive(source)&&x.h.store.authorizationScopeActive(authority));
+     assert.equal(x.operation(),operationId);assert.deepEqual(counts(x),before);assert.equal(signals,0);assert.equal(changed,false);
+     assert.deepEqual(canonicalEvents(x),events);assert.deepEqual(previewRows(x),rows);assert.deepEqual(x.ledger(),x.initialReceipts);
+    };
+    unchanged();
+    // Preserve the original deterministic emitted-control attempt. Current
+    // modal admission must refuse it; this is not physical click-through.
+    const menu=f.components().find(value=>value.tag==="forma-ui-popover"&&String(value.attributes.class??"").includes("canvas-view-menu"));
+    const trigger=f.find("button",node=>node.owner===menu&&String(node.attributes.class??"").includes("ui-popover-trigger"));
+    await f.act(trigger);const panel=f.renderer.ownNodes(menu,"section").find(node=>node.attributes.id===trigger.attributes.popovertarget);
+    assert.ok(panel);panel.showPopover();await f.settle();
+    await f.act(f.find("button",node=>node.attributes.id==="canvas-outcome-toggle"));await x.drain();
+    assert.equal(x.h.store.route.get(),route,"the real pending confirmation prevents UI posture navigation");unchanged();
+    // This dispatch-lifetime unit declares an EXTERNAL posture interruption,
+    // using the original Store and pure route transform, not admitted UI.
+    x.h.store.setRoute(postureRoute);await x.drain();
+    assert.equal(x.h.store.route.get(),postureRoute);
+    assert.equal(new URL(x.h.store.route.get(),"http://localhost").searchParams.get("posture"),"outcomes");unchanged();
+    const returnRoute=withOutcomeDeskPosture(postureRoute,"canvas");assert.equal(returnRoute,route);
+    x.h.store.setRoute(returnRoute);await x.drain();assert.equal(x.h.store.route.get(),route);unchanged();
+    t.diagnostic("ARRANGEMENT_CONFIRMATION_EXTERNAL_POSTURE "+JSON.stringify({kind,stage,operationId,
+     refusedRoute:route,externalPostureRoute:postureRoute,returnedRoute:x.h.store.route.get(),
+     confirmationPending:x.h.store.ui.impersonationConfirmOpen,dispatchSignals:signals,uiAdmission:false}));
+   }
    await openArrangement(x,{select:false,name:null,confirmation:true});
   }else if(boundary==="route-aba"){
    x.h.store.setRoute(route+"&pending-other-request=1");x.h.store.setRoute(route);await x.drain();

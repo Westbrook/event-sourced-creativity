@@ -1,7 +1,6 @@
-import type { OutputResultRow } from "../model/output-delivery-contract.ts";
-import { captureOutputNavigation, outputNavigationMatches, type OutputNavigationReference, type OutputNavigationSection } from "../model/output-navigation.ts";
-import { outputCompletedNativeChoices, outputOperationRecovery, outputReusableAcceptanceChoices } from "../components/output-controller-recovery.ts";
-import { outputDeliveryReadiness, outputNativeReadiness, outputSourceReadiness } from "../components/output-source-readiness.ts";
+import { outputNavigationMatches, type OutputNavigationReference, type OutputNavigationSection } from "../model/output-navigation.ts";
+import { outputContinuationChoices } from "../components/output-continuation.ts";
+import { creativeNextActionDisplayLabels, type CreativeNextActionDisplayLocale } from "../model/output-naming.ts";
 import type { ArtifactDeliveryIntent, artifactDeliveryState } from "../model/artifact-delivery.ts";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactRevision, type DocumentArtifact } from "../model/document-artifacts.ts";
 import {
@@ -17,6 +16,8 @@ export type OutcomeDeskTarget = { kind: "canonical-output"; reference: OutputNav
   sourceEventId: string; contentRef: string | null; intent: ArtifactDeliveryIntent; proof: string;
 };
 export type OutcomeDeskHostPorts = {
+  /** The existing current locale supplies date/number formatting, not state or authority. */
+  displayLocale?: CreativeNextActionDisplayLocale;
   localize: (id: string, fallback: string) => string;
   delivery: (artifact: DocumentArtifact) => Delivery;
 };
@@ -34,8 +35,8 @@ function wrap(row: OutcomeDeskRow, input: OutcomeDeskInput, action: CreativeNext
   copyId: string = action.id): OutcomeDeskAction<OutcomeDeskTarget> {
   return { key: row.key + ":" + action.id + ":" + JSON.stringify(action.target), subject: row.reference,
     scope: scopeFor(input), sourceRevision: creativeActionSourceRevision(input.facts), effect: "open-existing-executor",
-    label: ports.localize("next.exact." + copyId + ".label", action.label),
-    detail: ports.localize("next.exact." + copyId + ".reason", action.reason), target: { kind: "next", action } };
+    label: ports.localize(action.labelKey ?? "next.exact." + copyId + ".label", action.label),
+    detail: ports.localize(action.reasonKey ?? "next.exact." + copyId + ".reason", action.reason), target: { kind: "next", action } };
 }
 function deliveryAction(row: OutcomeDeskRow, input: OutcomeDeskInput, artifact: DocumentArtifact, ports: OutcomeDeskHostPorts): OutcomeDeskAction<OutcomeDeskTarget> {
   const delivery = ports.delivery(artifact), proof = deliveryProof(delivery);
@@ -56,69 +57,14 @@ function outputAction(row: OutcomeDeskRow, input: OutcomeDeskInput, ports: Outco
     label: ports.localize(label, fallback), detail: ports.localize(detailKey, detail),
     target: { kind: "canonical-output", reference, section, refresh } };
 }
-/** Guidance opens the existing controller; it never turns a summary action into permission to execute. */
+/** Desk identity/localization wrap the same surface-independent continuation choices. */
 function canonicalOutputActions(row: OutcomeDeskRow, input: OutcomeDeskInput, ports: OutcomeDeskHostPorts): readonly OutcomeDeskAction<OutcomeDeskTarget>[] {
-  const snapshot = outcomeDeskOutputSnapshot(input), reference = row.navigation;
-  if (!reference) return [];
-  if (row.retained) return [outputAction(row, input, ports, "inspect", "output.delivery.refresh", "Refresh outputs",
-    "output.delivery.scopeUnknown", "Delivery scope is unknown. Refresh before acting.", reference, true)];
-  if (!snapshot) return [];
-  const inspect = () => outputAction(row, input, ports, "inspect", "output.delivery.actionCheck", "Check retained work and current requirements",
-    "output.delivery.wholeScope", "Progress covers the entire confirmed plan, including unselected, unresolved, and currently unavailable work.");
-  if (row.object.kind === "requirement") return [inspect()];
-  if (row.object.kind === "operation") return [outputAction(row, input, ports, "inspect", "output.delivery.actionRecover",
-    "Review the previous attempt and recovery options", "output.delivery.retainedProviderDisclosure",
-    "Review the recorded provider and source transfer")];
-  const plan = snapshot.confirmedPlan, target = plan?.plan.targets.find(value => value.id === reference.targetId);
-  if (!target) return [];
-  const currentResult = (result: OutputResultRow) => {
-    const asset = snapshot.assets.find(value => value.id === result.assetId);
-    return Boolean(outputDeliveryReadiness(snapshot).allowed && result.planRevisionId === plan?.revisionId
-      && result.targetContractDigest === plan?.targetContractDigests?.[target.id] && result.sourceDigest === snapshot.sourceRevision
-      && asset?.available && asset.sha256 === result.sha256 && asset.inspection.status === "inspected"
-      && asset.inspection.sha256 === result.sha256 && !target.blocking_issues.length);
-  };
-  const review = (result: OutputResultRow) => {
-    const asset = snapshot.assets.find(value => value.id === result.assetId);
-    return currentResult(result) && snapshot.permissions.canReview && result.reviewAllowed === true && !result.independentReviewBlocked
-      && !(snapshot.permissions.independentReview && (result.createdByUserId === snapshot.scope.actorUserId || asset?.createdByUserId === snapshot.scope.actorUserId));
-  };
-  if (row.object.kind === "result") return [review(row.object.value)
-    ? outputAction(row, input, ports, "inspect", "output.delivery.actionReview", "Review the exact file",
-      "output.delivery.inspectionCaveat", "These are bounded structural and header checks, not proof of decoding, playback, meaningful content, source coverage, accessibility, or rights. Review the exact file before accepting it.")
-    : inspect()];
-  const state = snapshot.targetStates.find(value => value.target_id === target.id);
-  const result = state?.result_id ? snapshot.results.find(value => value.id === state.result_id && value.targetId === target.id && value.planRevisionId === plan?.revisionId) : null;
-  const actions: OutcomeDeskAction<OutcomeDeskTarget>[] = [];
-  const operations = snapshot.grants.flatMap(grant => grant.operations).filter(operation => operation.targetId === target.id);
-  const jobs = input.output?.jobs ?? [];
-  if (operations.some(operation => outputOperationRecovery(operation, jobs.find(job => job.jobId === operation.jobId), snapshot.documentId).reason !== "available"))
-    actions.push(outputAction(row, input, ports, "history", "output.delivery.actionRecover", "Review the previous attempt and recovery options",
-      "output.delivery.stopDoesNotErase", "Stopping does not remove the target or erase provider charges already incurred."));
-  if (result && currentResult(result) && result.review === "approved" && result.acceptanceId && state?.review === "accepted") {
-    const accepted = captureOutputNavigation(snapshot, reference.authorizationScopeKey, "result", result.id);
-    if (accepted) actions.push(outputAction(row, input, ports, "inspect", "output.delivery.actionDownload", "Review accepted work for delivery",
-      "output.delivery.inspectionCaveat", "These are bounded structural and header checks, not proof of decoding, playback, meaningful content, source coverage, accessibility, or rights. Review the exact file before accepting it.", accepted));
-  }
-  if ((!result || !currentResult(result)) && snapshot.permissions.canAuthor && outputDeliveryReadiness(snapshot).allowed && !target.blocking_issues.length
-    && (outputReusableAcceptanceChoices(snapshot, target).length || outputCompletedNativeChoices(snapshot, jobs, target).length
-      || snapshot.assets.some(asset => asset.available && asset.inspection.status === "inspected" && asset.mediaKind === target.media_kind)))
-    actions.push(outputAction(row, input, ports, "existing", "output.delivery.useExistingWork", "Use a completed result or an owned file",
-      "output.delivery.checkFile", "Check file against target"));
-  if (result && result.review === "pending" && review(result)) {
-    const exactResult = captureOutputNavigation(snapshot, reference.authorizationScopeKey, "result", result.id);
-    if (exactResult) actions.push(outputAction(row, input, ports, "inspect", "output.delivery.actionReview", "Review the exact file",
-      "output.delivery.inspectionCaveat", "These are bounded structural and header checks, not proof of decoding, playback, meaningful content, source coverage, accessibility, or rights. Review the exact file before accepting it.", exactResult));
-  }
-  const native = snapshot.permissions.canRequest && snapshot.capabilities.nativeGeneration && outputNativeReadiness(snapshot).allowed
-    && target.selected && !target.blocking_issues.length && ["image", "slides"].includes(target.media_kind) && state?.capability !== "unsupported";
-  if (native) actions.push(outputAction(row, input, ports, "native", "output.delivery.actionCreate", "Review how to create this output",
-    "output.delivery.checkRun", "Check availability and cost · no generation"));
-  if (snapshot.permissions.canAuthor && snapshot.capabilities.ownedFileAdoption && outputSourceReadiness(snapshot).allowed)
-    actions.push(outputAction(row, input, ports, "owned", "output.delivery.adoptTitle", "Use a file you own",
-      "output.delivery.adoptDetail", "Upload a finished file. Forma inspects the bytes; matching, content review, current rights, and acceptance are separate steps."));
-  if (!actions.length || !actions.some(action => action.target.kind === "canonical-output" && action.target.section === "inspect")) actions.push(inspect());
-  return actions;
+  const read = input.output?.resource;
+  return outputContinuationChoices({
+    read: read ? { ...read, snapshot: outcomeDeskOutputRead(input) } : null,
+    authorizationScopeKey: input.facts.authorityKey, reference: row.navigation ?? null, jobs: input.output?.jobs,
+  }).map(choice => outputAction(row, input, ports, choice.section, choice.label.key, choice.label.fallback,
+    choice.detail.key, choice.detail.fallback, choice.reference, choice.refresh));
 }
 
 /** Exact human selection. Recommendations retain the existing resolver's receipt/reuse priority. */
@@ -128,13 +74,19 @@ export function outcomeDeskHostActions(input: OutcomeDeskInput, selectedKey: str
   if (row.navigation) return canonicalOutputActions(row, input, ports);
   const scope = scopeFor(input), { object } = row;
   if (object.kind === "artifact") return [deliveryAction(row, input, object.value, ports)];
-  if (object.kind === "document") return creativeNextActions(input.facts).map((action) => {
-    if (action.target.kind === "artifact") {
-      const target = action.target, artifact = input.facts.artifacts.find((value) => value.id === target.artifactId);
-      return artifact ? deliveryAction(row, input, artifact, ports) : wrap(row, input, action, ports);
-    }
-    return wrap(row, input, action, ports);
-  });
+  if (object.kind === "document") {
+    const actions = creativeNextActions(input.facts);
+    const wrapped = actions.map((action) => {
+      if (action.target.kind === "artifact") {
+        const target = action.target, artifact = input.facts.artifacts.find((value) => value.id === target.artifactId);
+        return artifact ? deliveryAction(row, input, artifact, ports) : wrap(row, input, action, ports);
+      }
+      return wrap(row, input, action, ports);
+    });
+    if (!input.facts.lifecycle) return wrapped;
+    const labels = creativeNextActionDisplayLabels(actions, ports.displayLocale ?? { t: (id: string, fallback = "") => ports.localize(id, fallback) }, wrapped.map(action => action.label));
+    return wrapped.map((action, index) => ({ ...action, label: labels[index]! }));
+  }
   if (object.kind !== "output" && object.kind !== "job") return [];
   const target: CreativeNextTarget = object.kind === "output" ? { ...scope, kind: "output", outputId: object.value.id }
     : { ...scope, kind: "job", jobId: object.value.jobId };

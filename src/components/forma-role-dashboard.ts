@@ -24,29 +24,54 @@ export type RoleReport = {
 export abstract class FormaRoleDashboard extends FormaPresentationalElement {
   protected report: RoleReport | null = null;
   protected issue = "";
+  protected reportReadOutcome: "ready" | "unavailable" | "denied" = "unavailable";
   protected dashboardHeadingLevel:1|2=1;
   protected abstract endpoint: string;
   #refreshVersion=0;
+  #certifiedRefreshVersion=0;
 
   override connectedCallback() {
     super.connectedCallback();
     void this.updateComplete.then(()=>{if(this.isConnected)void this.refresh();});
   }
 
-  protected async refresh() {
+  protected reportDenied() {
+    this.report = null;
+    this.issue = "Approved reporting is unavailable.";
+    this.reportReadOutcome = "denied";
+    this.requestUpdate();
+  }
+
+  protected async refresh(current: () => boolean = () => true) {
+    if (!current()) return;
     const version=++this.#refreshVersion;
     const endpoint=this.endpoint;
+    let denied = false;
     try {
       const prefetched=consumeRoutePrefetch(endpoint);
       const response=(prefetched?await prefetched:null)??await fetch(endpoint, { credentials: "same-origin" });
+      if(endpoint!==this.endpoint||!this.isConnected||!current())return;
+      denied = [401, 403, 404].includes(response.status);
+      // A pending newer read is not authority. Only an already certified newer
+      // report can supersede this owner-current negative response.
+      if(denied){
+        if(version>this.#certifiedRefreshVersion){
+          this.#refreshVersion += 1;
+          this.reportDenied();
+        }
+        return;
+      }
       const body = await response.json() as { report?: RoleReport; error?: string };
-      if(version!==this.#refreshVersion||endpoint!==this.endpoint||!this.isConnected)return;
+      if(version!==this.#refreshVersion||endpoint!==this.endpoint||!this.isConnected||!current())return;
       if (!response.ok || !body.report) throw new Error(body.error ?? "Approved reporting is unavailable.");
       this.report = body.report;
+      this.#certifiedRefreshVersion = version;
       this.issue = "";
+      this.reportReadOutcome = "ready";
     } catch (error) {
-      if(version!==this.#refreshVersion||endpoint!==this.endpoint||!this.isConnected)return;
+      if(version!==this.#refreshVersion||endpoint!==this.endpoint||!this.isConnected||!current())return;
       this.issue = error instanceof Error ? error.message : "Approved reporting is unavailable.";
+      this.reportReadOutcome = denied || this.reportReadOutcome === "denied" ? "denied" : "unavailable";
     }
     this.requestUpdate();
   }

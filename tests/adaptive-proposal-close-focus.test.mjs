@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import test from "node:test";
 import ts from "typescript";
+import { canvasFocusFromRoute, withCanvasFocus } from "../src/canvas/routes.ts";
 
 const fixtureURL = new URL("./canvas-calm-controls-host.test.mjs", import.meta.url);
 const original = await readFile(fixtureURL, "utf8");
@@ -112,7 +113,20 @@ for (const locale of ["en", "ja"]) for (const change of changes)
       assert.equal(f.proposalReview.presentationId, presentation);
       assert.equal(f.proposalReview.receipt, null);
     } else if (change === "route") {
+      assert.equal(f.host.closest("forma-shell"), null, "this Close unit retains its declared standalone host");
       await f.click("button", node => node.classList.contains("canvas-focus-toggle"));
+      assert.equal(f.store.route.get(), route, "the actual standalone Focus button cannot admit navigation without a Shell");
+      assert.equal(JSON.stringify(f.state.events), events);
+      assert.equal(JSON.stringify(f.state.requests), requests);
+      assert.equal(f.state.batches.length, 0);
+      // External route interruption through the ORIGINAL finite Store port,
+      // not this refused click's default or a successful navigation receipt.
+      // This unit no longer claims positive Focus-button navigation.
+      const externalRoute = withCanvasFocus(route, !canvasFocusFromRoute(route));
+      assert.notEqual(externalRoute, route);
+      f.store.setRoute(externalRoute); f.draw();
+      assert.equal(f.store.route.get(), externalRoute, "the declared external route premise was applied exactly");
+      t.diagnostic(JSON.stringify({routePremise:"external finite Store",standaloneFocusNavigation:"refused",routeBefore:route,routeAfter:externalRoute}));
       assert.notEqual(f.store.route.get(), route);
     } else if (change === "authority") {
       f.state.authorization = "actor-b"; f.draw();

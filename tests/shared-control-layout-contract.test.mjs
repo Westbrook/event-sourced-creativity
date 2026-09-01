@@ -107,7 +107,22 @@ test("Library result rows reuse the authored-child Cluster while keeping current
   assert.ok(library.includes('import "./design-system/layout";'));
   assert.equal(library.split('<forma-ui-cluster class="library-output-actions" alignment="stretch">').length - 1, 2);
   assert.ok(library.includes('this.#navigate(event,"output",output.id)'));
-  assert.ok(library.includes('this.store.addArtifactAsContext(artifact.id,projection.documentId,"library")'));
+  // Source binding only: the actual native control now enters shared admission.
+  // Original copy execution remains the full-host Library ACK suite's evidence.
+  assert.ok(library.includes('${canAuthor?html`<forma-ui-cluster class="library-output-actions" alignment="stretch"><button type="button" class="button secondary compact" aria-label=${this.#inputAction(adopted,artifact.title)} @click=${(event:MouseEvent)=>this.#useArtifactInput(artifact,event)}>${this.#inputLabel(adopted)}</button>'));
+  const useStart = library.indexOf("\n  async #useArtifactInput(artifact:DocumentArtifact,event:MouseEvent){");
+  const useEnd = library.indexOf("\n  #relatedReferenceCount(", useStart);
+  assert.ok(useStart >= 0 && useEnd > useStart, "Inspect the actual current Library copy member");
+  const use = library.slice(useStart, useEnd);
+  for (const binding of [
+    "const destination=this.store.projection.get().documentId;",
+    "await reuseManualOutput(this,this.store,this.#outputReuse,event,{",
+    "destinationDocumentId:destination,",
+    "current:()=>this.store.projection.get().libraryArtifacts.some(value=>value.id===artifact.id",
+    "&&value.documentId===artifact.documentId&&value.sequence===artifact.sequence",
+    "&&value.sourceEventId===artifact.sourceEventId&&value.contentRef===artifact.contentRef)",
+    'copy:()=>this.store.addArtifactAsContext(artifact.id,destination,"library",{reveal:false}),',
+  ]) assert.ok(use.includes(binding), "Exact source dispatch binding: " + binding);
   assert.ok(library.includes('this.#toggleLibrary(artifact)') && library.includes('this.#toggleLibrary(output)'));
   assert.equal(unconditional(design, ".library-output-actions")["flex-wrap"], "wrap");
   assert.equal(unconditional(base, ".family-actions")["flex-wrap"], "wrap");
@@ -214,7 +229,7 @@ test("configuration grids target in-flow paid replay forms, not the persona moda
   const actual = texts["src/apps/product/actual-replay.ts"];
   assert.ok(actual.includes('class="modal actual-persona-confirmation"'));
   assert.ok(actual.includes('<form class="modal-card"'));
-  assert.ok(actual.includes('name="personaAcknowledged"') && actual.includes("this.#confirmPersona(event)"));
+  assert.ok(actual.includes('name="personaAcknowledged"') && actual.includes("this.#confirmPersona(event,pendingPersona,personaOpening)"));
 });
 
 test("the safe catalog teaches both native and wrapped actions without stretching its badge example", () => {
@@ -267,4 +282,145 @@ test("slotted native, wrapped and built-in actions all stretch while trailing ba
   assert.equal(unconditional(design, peers)["max-inline-size"], "100%");
   assert.equal(unconditional(design, "forma-ui-cluster > :is(button,a)")["white-space"], "normal");
   assert.equal(unconditional(design, "forma-ui-cluster > :is(button,a)")["overflow-wrap"], "anywhere");
+});
+
+test("shared dialog footer stretches its native action peers without fixed heights or changed common metrics", () => {
+  const footer = unconditional(design, ".ui-dialog-card > footer");
+  assert.equal(footer.display, "flex");
+  assert.equal(footer["align-items"], "stretch");
+  assert.equal(footer["flex-wrap"], "wrap");
+  assert.equal(footer["justify-content"], "flex-end");
+  assert.equal(footer.gap, "var(--forma-space-3,var(--space-3))");
+  for (const selector of [".ui-dialog-card > footer", ".button", ".button.primary", ".button.ghost"]) {
+    const declared = unconditional(design, selector);
+    for (const prop of ["height", "block-size", "max-height", "max-block-size", "align-self"]) assert.equal(declared[prop], undefined, selector + " preserves natural block growth and inherited peer alignment");
+  }
+  const button = unconditional(design, ".button");
+  assert.equal(button["min-height"], "2.75rem");
+  assert.equal(button["padding-block"], "var(--forma-space-2, var(--space-2))");
+  assert.equal(button["line-height"], "var(--forma-body-line-height, 1.6)");
+});
+
+test("shared dialog keeps centered headers and existing long-literal wrapping instead of clipping copy", () => {
+  const header = unconditional(design, ".ui-dialog-card > header");
+  assert.equal(header.display, "flex");
+  assert.equal(header["align-items"], "center", "only the action footer changes alignment");
+  assert.equal(header["justify-content"], "space-between");
+  assert.equal(unconditional(design, ":where(h1, h2, h3, h4, p, dd, code, pre, small, strong)")["overflow-wrap"], "anywhere");
+  const form = unconditional(design, ":where(fieldset, form, label, input, textarea, select, table, pre, code)");
+  assert.equal(form["min-width"], "0");
+  assert.equal(form["max-width"], "100%");
+  assert.equal(unconditional(design, ".button")["overflow-wrap"], "anywhere");
+  assert.equal(unconditional(design, ".button")["max-width"], "100%");
+  assert.equal(unconditional(design, ".ui-dialog-card")["max-inline-size"], "100%");
+  for (const sheet of [base, design, responsive]) for (const rule of rules(sheet).filter(rule => rule.selector.includes("ui-dialog-card"))) {
+    const declared = declarations(rule);
+    assert.notEqual(declared["white-space"], "nowrap");
+    assert.notEqual(declared.overflow, "hidden");
+    assert.notEqual(declared["overflow-wrap"], "normal");
+    assert.notEqual(declared["text-overflow"], "ellipsis");
+    assert.equal(declared["line-clamp"], undefined);
+    assert.equal(declared["-webkit-line-clamp"], undefined);
+  }
+});
+
+test("both existing dialog consumers retain direct native footer controls and literal named content", async () => {
+  const modal = await read("src/components/modal-dialog.ts");
+  const confirmation = modal.slice(modal.indexOf("export function requestDialogConfirmation("), modal.indexOf("export function requestDialogText("));
+  assert.ok(confirmation.includes('form.className = "modal-card ui-dialog-card";'));
+  assert.ok(confirmation.includes('const footer = ownerDocument.createElement("footer");'));
+  assert.ok(confirmation.includes('cancel.type = "button"; cancel.className = "button ghost";'));
+  assert.ok(confirmation.includes('confirm.type = "submit"; confirm.className = "button primary";'));
+  assert.ok(confirmation.includes("footer.append(cancel, confirm); form.append(heading, detail, footer);"));
+  assert.ok(confirmation.includes("heading.textContent = options.title;") && confirmation.includes("detail.textContent = options.message;"));
+  assert.ok(confirmation.includes('dialog.setAttribute("aria-labelledby", heading.id);'));
+  assert.ok(confirmation.includes('dialog.setAttribute("aria-describedby", detail.id);'));
+  const feedback = await read("src/components/design-system/feedback.ts");
+  const primitive = feedback.slice(feedback.indexOf("export class FormaUiDialog "), feedback.indexOf("export class FormaUiCopyButton "));
+  assert.ok(primitive.includes('<section class="ui-dialog-card"><header><h2'));
+  assert.ok(primitive.includes('<button type="button" class="icon-button" aria-label='));
+  assert.ok(primitive.includes('<footer><button type="button" class="button ghost"'));
+  assert.ok(primitive.includes('<button type="button" class="button primary"'));
+  assert.ok(primitive.includes('this.#close("cancel")') && primitive.includes('this.#close("confirm")'));
+});
+
+test("B3 exact target identities keep bidi markup and unrestricted long-token wrapping in existing rows", async () => {
+  const settings = await read("src/components/forma-workspace-settings.ts");
+  assert.ok(settings.includes("<b><bdi>${names.get(snapshot.snapshot_id)!.label}</bdi></b>"));
+  assert.ok(settings.includes("<bdi>${names.get(credential.id)!.label}</bdi>"));
+  assert.ok(settings.includes('<option value=${member.user_id}>${names.get(member.membership_id)!.label}</option>'));
+  for (const binding of ['this.#confirmRecovery(event,"restore",snapshot)', 'this.#confirmRecovery(event,"cleanup",snapshot)',
+    "this.#revokeCredential(event,credential)", "this.#confirmOwnershipTransfer(event)"])
+    assert.ok(settings.includes(binding), "unchanged current executor binding: " + binding);
+  const copy = unconditional(design, ".workspace-settings-list > li > div");
+  assert.equal(copy["min-inline-size"], "0"); assert.equal(copy["overflow-wrap"], "anywhere");
+  for (const property of ["width", "inline-size", "max-height", "max-block-size", "overflow", "text-overflow", "line-clamp", "-webkit-line-clamp"])
+    assert.equal(copy[property], undefined, "identity remains complete, without a new clipping or size ceiling");
+  // This is containment only. E separately owns the existing card row's
+  // preferred copy basis and wrapping actions; it is not yet a geometry pass.
+  assert.equal(unconditional(design, ".button")["min-height"], "2.75rem");
+  assert.equal(unconditional(design, ".ui-dialog-card > footer")["align-items"], "stretch");
+});
+
+test("Sessions original blank form keeps actions before a full-span current status", async () => {
+  const sessions = await read("src/components/forma-sessions.ts");
+  const start = sessions.indexOf("  #blankForm() {"), end = sessions.indexOf("\n  #brief()", start);
+  assert.ok(start >= 0 && end > start, "The actual adopted original-draft form is a required candidate prerequisite");
+  const method = sessions.slice(start, end);
+  const formStart = method.indexOf('<form class="blank-document-form"'), formEnd = method.indexOf("</form>", formStart);
+  assert.ok(formStart >= 0 && formEnd > formStart);
+  const form = method.slice(formStart, formEnd);
+  const label = form.indexOf('<label for="blank-document-name">'), input = form.indexOf('<input id="blank-document-name"');
+  const actions = form.indexOf('<div>${name !== null ? html`<button type="button" class="button ghost blank-document-discard"');
+  const actionsEnd = form.indexOf("</div>", actions), status = form.indexOf('<p role="status">');
+  assert.ok(label >= 0 && label < input && input < actions && actions < actionsEnd && actionsEnd < status,
+    "The same native label/input/actions precede status in semantic order; CSS does not visually reorder them");
+  assert.equal(form.split('<p role="status">').length - 1, 1);
+  assert.ok(method.includes('if (name === null && !original) return notice ?'),
+    "An original without a name input retains the same styled form/action/status owner");
+  assert.ok(form.includes('${name !== null ? html`<label for="blank-document-name">'),
+    "Discard removes the named field and its label, not the original recovery controls");
+  assert.ok(form.includes('@submit=${this.#startBlank}') && form.includes('@click=${this.#discardBlank}'));
+  assert.ok(form.includes('.value=${name}') && form.includes('aria-busy=${String(Boolean(draft?.pending) || draft?.check === "checking")}'));
+  assert.ok(form.includes('${draft?.mode === "unconfirmed" ? originalActions : html`<button type="submit"')
+    && form.includes('!name?.trim() || !draft || draft.pending'),
+    "Unconfirmed recovery replaces unusable Create; ordinary creation retains its existing admission floor");
+  for (const selector of [".blank-document-form > div", '.blank-document-form > [role="status"]']) {
+    const rule = unconditional(base, selector);
+    assert.equal(rule["grid-column"], "1 / -1", "Long status and action copy cannot consume an auto track");
+    assert.equal(rule["min-inline-size"], "0");
+    assert.equal(rule.order, undefined); assert.equal(rule.position, undefined);
+    assert.equal(rule["padding-inline"], undefined, "The original form remains the only inset owner");
+  }
+  const notice = unconditional(base, '.blank-document-form > [role="status"]');
+  assert.equal(notice.margin, "0"); assert.equal(notice["overflow-wrap"], "anywhere");
+});
+
+test("Sessions original blank form reuses wrapping peer controls and the shared field floor", () => {
+  const form = unconditional(base, ".blank-document-form"), actions = unconditional(base, ".blank-document-form > div");
+  assert.equal(form.display, "grid"); assert.equal(form["min-inline-size"], "0");
+  assert.equal(form["grid-template-columns"], "repeat(2,minmax(0,1fr))");
+  assert.equal(form.gap, "var(--forma-cluster-gap)"); assert.equal(form.padding, "14px");
+  const fields = unconditional(base, ".blank-document-form > :is(label,input)");
+  assert.equal(fields["min-inline-size"], "0"); assert.equal(fields["max-inline-size"], "100%");
+  assert.equal(unconditional(base, ".blank-document-form label b")["overflow-wrap"], "anywhere");
+  const input = unconditional(base, ".blank-document-form input");
+  assert.equal(input["min-height"], "var(--forma-hit-target)"); assert.equal(input["min-block-size"], input["min-height"]);
+  assert.equal(input.padding, "var(--forma-space-2, var(--space-2)) var(--forma-control-inset-inline)");
+  assert.equal(actions.display, "flex"); assert.equal(actions["flex-wrap"], "wrap");
+  assert.equal(actions["align-items"], "stretch"); assert.equal(actions.gap, form.gap);
+  const peers = unconditional(base, ".blank-document-form > div > .button");
+  assert.equal(peers.flex, "0 1 auto"); assert.equal(peers["max-inline-size"], "100%");
+  assert.equal(peers["align-self"], "stretch"); assert.equal(peers["white-space"], "normal");
+  assert.equal(peers["overflow-wrap"], "anywhere");
+  const narrow = rules(base).filter(rule => rule.selectors.includes(".blank-document-form")
+    && rule.parent.type === "atrule" && rule.parent.name === "media" && rule.parent.params === "(max-width: 760px)");
+  assert.equal(narrow.length, 1); assert.equal(declarations(narrow[0])["grid-template-columns"], "1fr");
+  assert.equal(declarations(narrow[0])["align-items"], "stretch");
+  for (const rule of rules(base).filter(rule => rule.selector.includes(".blank-document-form"))) {
+    const value = declarations(rule);
+    for (const property of ["height", "block-size", "max-height", "max-block-size", "text-overflow", "line-clamp", "-webkit-line-clamp"])
+      assert.equal(value[property], undefined, "No fixed-height or truncated substitute for real wrapping");
+    assert.notEqual(value.overflow, "hidden"); assert.notEqual(value["white-space"], "nowrap");
+  }
 });

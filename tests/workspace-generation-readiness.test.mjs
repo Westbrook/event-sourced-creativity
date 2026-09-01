@@ -123,7 +123,22 @@ test("a failed preflight never starts paid work and explains the connection prob
 test("next-step recommendations only open exact saved work or free configuration", async () => {
   const workspace = await readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8");
   assert.match(workspace,/followCreativeNextTarget\(action.target/);
-  assert.match(workspace,/configure:\(target\)=>this\.#prepareFormat\(target\)/);
+  // The same free receiver now carries the original current/focus ownership.
+  // This is a source wiring oracle; native arrival and no-command companions
+  // remain separate from the paid-generation readiness harness above.
+  assert.match(workspace,/configure:\(target\)=>this\.#prepareFormat\(target,options\?\.current,options\?\.focus\)/);
+  const followStart = workspace.indexOf("  async #followNextAction("), prepareStart = workspace.indexOf("  async #prepareFormat("),
+    prepareEnd = workspace.indexOf("  async #chooseFormat(");
+  assert.ok(followStart >= 0 && prepareStart > followStart && prepareEnd > prepareStart);
+  const opening = workspace.slice(followStart, prepareEnd), preparation = workspace.slice(prepareStart, prepareEnd);
+  assert.match(opening,/output:\(target\)=>this\.#openNextOutput\(target,options\?\.current\)/);
+  assert.match(opening,/openArtifactById\(target\.artifactId,\{\s*expectedRevision:target\.revision/);
+  assert.match(preparation,/\(!required\|\|required\(stage\)\)&&creativePreparationTargetAvailable\(target,this\.#nextFacts\(target\),stage\)/);
+  assert.match(preparation,/if\(!current\("opening"\)\)return false/);
+  assert.match(preparation,/host\.openConfiguration\(current\)/);
+  assert.match(preparation,/host\.openRender\(target\.medium,target\.documentId,\{current\}\)/);
+  assert.doesNotMatch(opening,/this\.store\.(?:append(?:Batch)?|preview|generate|approve\w*|renderDocumentArtifact)\s*\(/,
+    "Opening exact saved work or settings does not append, generate, render a result, or approve it");
   assert.doesNotMatch(workspace,/runReadyImageGeneration/);
 });
 

@@ -289,7 +289,7 @@ test("creation, sharing, project editing, and image inspection remain complete a
   assert.doesNotMatch(workspace,/Proposed events · inert until accepted|Expected sequence \$\{this\.store\.head\.get\(\)\}/);
   assert.match(rail,/documentViewFromRoute\(route\)==="document"/);
   assert.match(rail,/offline\|\|synchronizing/);
-  assert.match(rail,/this\.store\.openDocument\(documentId, destination, "project-rail"\)/);
+  assert.match(rail,/this\.store\.openDocument\(documentId,\s*destination,\s*"project-rail",\s*navigation\)/);
   assert.doesNotMatch(rail,/Your work is saved|No auto-filing/);
   assert.doesNotMatch(image,/generation event #|:active\.id\}<\/h2>/);
   assert.doesNotMatch(canvas,/generation event #/);

@@ -23,7 +23,7 @@ function actualSourceMember(name) {
   assert.ok(member,"the actual source ownership dependency "+name+" remains available");
   return member.getText(syntax);
 }
-const sourceOwnershipMembers=["#sourceGeneration","#sourceRetired","#sourceOwners","#sourcePausedJobs","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive","#assertSourceOwnership"].map(actualSourceMember).join("\n");
+const sourceOwnershipMembers=["#projectContextCookieGeneration","#projectContextSessionGeneration","#sourceGeneration","#sourceRetired","#sourceOwners","#sourcePausedJobs","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive","#assertSourceOwnership"].map(actualSourceMember).join("\n");
 
 const harnessSource = `
 import { resolvePresentationCountRequest } from ${JSON.stringify(new URL("../src/model/presentation-count-policy.ts", import.meta.url).href)};

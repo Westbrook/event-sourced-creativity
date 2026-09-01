@@ -2,6 +2,7 @@ import { html } from "lit";
 import type { CreativeBlock } from "../model/events";
 import { documentImageFormat, imageAspectRatioLabel, imageFormatForPreset, IMAGE_FORMAT_PRESETS, imageFormatLabel, normalizeImageFormat } from "../model/image-format";
 import { FormaElement } from "./forma-element";
+import type { CommandDeparture } from "./command-departure";
 
 export class ImageFormatEditor extends FormaElement {
   static properties = { block:{attribute:false}, compact:{type:Boolean}, surface:{type:String} };
@@ -9,6 +10,31 @@ export class ImageFormatEditor extends FormaElement {
   compact = false;
   surface = "document";
   #saving = false;
+
+  // Compare the actual fields with the same current canonical values render uses.
+  get localWorkBlocked():boolean {
+    if(this.#saving)return true;
+    const form=this.querySelector<HTMLFormElement>(".image-format-form");if(!form)return false;
+    const target=this.#sourceBlock();
+    const format=target?normalizeImageFormat(target.properties.image_format):documentImageFormat(this.store.projection.get().blocks).format;
+    const width=form.elements.namedItem("width") as HTMLInputElement|null;
+    const height=form.elements.namedItem("height") as HTMLInputElement|null;
+    return !width||!height||width.value!==String(format.dimensions.width)||height.value!==String(format.dimensions.height);
+  }
+
+  captureCommandDeparture():CommandDeparture {
+    const source=this.store.captureSourceOwnership(),form=this.querySelector(".image-format-form");
+    const identity=()=>{
+      const projection=this.store.projection.get(),target=this.#sourceBlock();
+      const format=target?normalizeImageFormat(target.properties.image_format):documentImageFormat(projection.blocks).format;
+      return JSON.stringify([projection.projectId,projection.documentId,this.surface,this.compact,this.block?.id??null,
+        target?[target.projectId,target.documentId,target.id,target.type,target.sourceEvents,target.locked]:null,format]);
+    };
+    const original=identity();
+    return{element:this,current:()=>this.isConnected&&this.store.sourceOwnershipActive(source)
+      &&this.querySelector(".image-format-form")===form&&identity()===original,
+      blocked:()=>this.localWorkBlocked,reason:()=>"next.lifecycle.currentWorkOpen"};
+  }
 
   #sourceBlock() {
     if (this.block) return this.block;
@@ -35,6 +61,17 @@ export class ImageFormatEditor extends FormaElement {
       if (target) {
         const current = normalizeImageFormat(target.properties.image_format);
         if (JSON.stringify(current) !== JSON.stringify(next)) await this.store.append({ type:"BlockPropertyEdited", payload:{ block_id:target.id, document_id:target.documentId, property_path:"image_format", old_value:current, new_value:next, source_surface:this.surface } });
+        else {
+          const ownership = this.captureCommandDeparture();
+          const width = form.elements.namedItem("width") as HTMLInputElement | null;
+          const height = form.elements.namedItem("height") as HTMLInputElement | null;
+          if (!ownership.current() || !form.isConnected || this.querySelector(".image-format-form") !== form
+            || this.#sourceBlock() !== target || target.locked || !width || !height
+            || width.value !== data.get("width") || height.value !== data.get("height")) return;
+          // This explicit current no-op has not awaited or dispatched anything.
+          width.value = String(current.dimensions.width);
+          height.value = String(current.dimensions.height);
+        }
       } else {
         const projection = this.store.projection.get();
         await this.store.append({ type:"BlockCreated", payload:{ block_id:crypto.randomUUID(), document_id:projection.documentId, project_id:projection.projectId, type:"format", handle:`format/${imageAspectRatioLabel(next).replace(":","x")}`, position:`p${String(projection.blocks.length).padStart(4,"0")}`, properties:{ text:`Create for a ${imageAspectRatioLabel(next)} frame at ${next.dimensions.width} × ${next.dimensions.height} pixels.`, subtype:"Resolution", weight:1, intent:"include", authority:"authored", image_format:next, created_from:this.surface } } });

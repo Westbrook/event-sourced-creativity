@@ -25,6 +25,11 @@ export class OutputInputEditor extends FormaElement {
 
   get draft() { return this.#draft ? structuredClone(this.#draft) : null; }
 
+  /** Existing local work only; no permission, receipt or navigation authority. */
+  get localWorkBlocked() {
+    return this.#saving || this.#composing || this.#edited && JSON.stringify(this.#draft) !== JSON.stringify(outputInputDraft(this.block));
+  }
+
   reset(){this.#loaded="";this.#draft=null;this.#edited=false;this.#error="";this.#load();this.requestUpdate();}
 
   #load() {

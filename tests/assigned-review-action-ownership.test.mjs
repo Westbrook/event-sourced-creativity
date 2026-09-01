@@ -1,14 +1,39 @@
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import {fileURLToPath} from "node:url";
 import nativeTest,{after} from "node:test";
 const selection=process.argv.find(value=>value.startsWith("--case="))?.slice(7);
 const selectedPattern=selection?new RegExp(selection):null;let registered=0;
 const test=(name,options,body)=>{if(selectedPattern&&!selectedPattern.test(name))return;registered++;return nativeTest(name,options,body);};
 const ROOT=fileURLToPath(new URL("../",import.meta.url));
-const {assignmentPage,sceneDeferred,flushStoreFrames,frames,responseBody,artifactFocusOptionsFromRoute,
+const {assignmentPage:originalAssignmentPage,sceneDeferred,flushStoreFrames,frames,responseBody,artifactFocusOptionsFromRoute,
  libraryFocusFromRoute,sceneCostFixtureProof,originalFetch,externalCount}=await import("./helpers/assigned-review-action-fixture.mjs");
 const {foldEvents}=await import("file://"+ROOT+"src/model/events.ts");
 const {readWorkspaceEvents}=await import("file://"+ROOT+"worker/runtime.ts");
+const {nativeFormLifetime,nativeDefaultProperties,ports}=await import("./helpers/workspace-settings-fragment-fixture.mjs");
+const {installOutputNavigationFocusNative}=await import("./helpers/output-navigation-focus-native.mjs");
+const {registerCalmFullPageComponents}=await import("./helpers/calm-full-page-fixture.mjs");
+
+async function assignmentPage(t,...args){
+ const q=await originalAssignmentPage(t,...args),{f,h}=q;
+ // Native form/focus adapters inspect the full tree before flush's lazy load.
+ // Register the same real current/destination components as the existing Settings context fixture.
+ await registerCalmFullPageComponents(f,["forma-workspace-settings","forma-projects"]);
+ // Same finite native composition as workspace-settings-context-departure.
+ // Reuse only its form lifetime/default ports, never its service or setup.
+ // This local opt-in leaves the shared assignment fixture's defaults intact.
+ assert.equal(f.forms,undefined);f.forms=new Map();
+ const currentOwner=()=>{
+  const owners=f.components().filter(owner=>owner.isConnected&&owner.tag==="forma-workspace-settings");
+  assert.ok(owners.length<=1,"At most one actual current Settings owner");
+  if(owners.length)assert.ok(ports.ElementPort.hasStoreIdentity(owners[0],h.store));
+  return owners[0]??null;
+ };
+ installOutputNavigationFocusNative(t,f,ports);
+ nativeFormLifetime(f,{marker:"#submitOrganization"},{owner:currentOwner});
+ nativeDefaultProperties({f,currentOwner});
+ return q;
+}
 
 const waitTurn=()=>new Promise(setImmediate);
 async function waitFor(check,label){for(let i=0;i<120;i++){if(check())return;await waitTurn();}assert.ok(check(),label);}
@@ -26,7 +51,7 @@ test("shared cookie producer / "+surface+"/"+order,{timeout:30_000},async t=>{
  const originalLoad=h.store.load;t.mock.method(h.store,"load",function(...args){const pending=originalLoad.apply(this,args);loads.push(pending);return pending;});
  let closing=false;
  const original=h.store.openAssignedReview;
- t.mock.method(h.store,"openAssignedReview",function(task){const call={task};calls.push(call);call.pending=original.call(this,task);void call.pending.then(value=>call.value=value);return call.pending;});
+ t.mock.method(h.store,"openAssignedReview",function(task,...args){const call={task};calls.push(call);call.pending=original.call(this,task,...args);void call.pending.then(value=>call.value=value);return call.pending;});
  h.intercept=async request=>{
   if(!(request.init.method==="POST"&&request.url.endsWith("/context")||request.init.method==="DELETE"&&request.url==="/api/workspaces/context"))return;
   const gate={request,entered:sceneDeferred(),release:sceneDeferred()};gates.push(gate);made[gates.length-1]?.resolve(gate);
@@ -82,7 +107,7 @@ async function actionFixture(t,entry="cross-project",options={}){
  t.after(()=>{globalThis.fetch=previousFetch;});
  await flushStoreFrames(h);await f.settle();
  const calls=[],original=h.store.openAssignedReview;
- t.mock.method(h.store,"openAssignedReview",function(task){const call={task};calls.push(call);call.pending=original.call(this,task);void call.pending.then(value=>call.value=value,error=>call.error=String(error));return call.pending;});
+ t.mock.method(h.store,"openAssignedReview",function(task,...args){const call={task};calls.push(call);call.pending=original.call(this,task,...args);void call.pending.then(value=>call.value=value,error=>call.error=String(error));return call.pending;});
  q.calls=calls;return q;
 }
 function holdContextHeaders(t,q){
@@ -99,6 +124,7 @@ function holdContextHeaders(t,q){
 async function assertExactTask(q,task){
  await flushStoreFrames(q.h);await q.f.settle();await flushStoreFrames(q.h);await q.f.settle();
  const route=q.h.store.route.get(),options=artifactFocusOptionsFromRoute(route);
+ q.exactTaskDiagnostic?.("after-existing-settle");
  assert.equal(libraryFocusFromRoute(route)?.id,task.artifactId);
  assert.deepEqual(options,{expectedRevision:task.revision,intent:"review",expectedContentSha256:task.contentSha256});
  const response=await q.nativeRequest({url:"/api/session",init:{}}),session=await responseBody(response);
@@ -172,11 +198,39 @@ test("queued selection retires conservatively / "+change,{timeout:30_000},async 
    await h.store.refreshEvents();await f.settle();assert.equal(h.store.sourceOwnershipActive(h.store.captureSourceOwnership()),true);
    assert.equal(h.store.sourceOwnershipActive(source),false,"A genuinely renewed source cannot revive the old action");
   }
- }else assert.deepEqual(h.store.session.get().projectContext,context,"Disowned context responses do not publish a different selection");
+ }else{
+  // Explicit migration: a completed real cookie is reconciled without adopting
+  // the retired UI selection. Keeping personal authorization here was unsafe.
+  const response=await q.nativeRequest({url:"/api/session",init:{}});assert.equal(response.status,200);
+  const actual=await responseBody(response);assert.equal(actual.projectContext.projectId,q.task.projectId);
+  assert.deepEqual(h.store.session.get().projectContext,actual.projectContext,"Store privacy scope follows the actual cookie, not the abandoned navigation");
+  assert.notDeepEqual(h.store.session.get().projectContext,context);
+  assert.equal(h.store.sourceOwnershipActive(source),false,"Reconciliation never restores the obsolete Source owner");
+ }
  if(change==="invalid-latest"){
   // A later explicit valid selection is a new intent, not an automatic retry.
   h.intercept=undefined;
-  assert.equal(await h.store.openAssignedReview(q.thirdTask),true);await assertExactTask(q,q.thirdTask);
+  const before=h.requests.length;
+  q.exactTaskDiagnostic=stage=>{
+   const projection=h.store.projection.get(),session=h.store.session.get();
+   t.diagnostic("C_ASSIGNED_EXACT_FRESH_AFTER_RECONCILIATION "+JSON.stringify({stage,
+    expected:{artifactId:q.thirdTask.artifactId,documentId:q.thirdTask.documentId,projectId:q.thirdTask.projectId,
+      revision:q.thirdTask.revision,contentSha256:q.thirdTask.contentSha256},
+    route:h.store.route.get(),focus:libraryFocusFromRoute(h.store.route.get()),options:artifactFocusOptionsFromRoute(h.store.route.get()),
+    projection:{projectId:projection.projectId,documentId:projection.documentId,
+      documents:projection.documents.map(row=>({id:row.id,projectId:row.projectId,removed:row.removed})),
+      artifacts:projection.libraryArtifacts.map(row=>({id:row.id,documentId:row.documentId,contentRef:row.contentRef}))},
+    context:session.projectContext?{projectId:session.projectContext.projectId,projectAccessId:session.projectContext.projectAccessId}:null,
+    viewers:q.viewerCalls.map(call=>({id:call.id,result:call.result??null,error:call.error??null,
+      connected:call.owner.isConnected,documentId:call.owner.documentId,open:call.owner.querySelector(".document-artifact-view")?.open??false,
+      revision:call.options?.expectedRevision,contentSha256:call.options?.expectedContentSha256,intent:call.options?.intent})),
+    requests:h.requests.slice(before).map(row=>({url:row.url,method:row.init.method??"GET"})),
+    toast:h.store.ui.toast,error:h.store.error.get()}));
+  };
+  q.exactTaskDiagnostic("before-fresh-selection");
+  assert.equal(await h.store.openAssignedReview(q.thirdTask),true);
+  q.exactTaskDiagnostic("after-original-return");
+  await assertExactTask(q,q.thirdTask);
  }
 });
 test("rejected context handshake settles before a later explicit valid selection",{timeout:30_000},async t=>{
@@ -267,7 +321,7 @@ test("an actual rejected older handshake releases a waiting valid task without a
 
 for(const navigate of [false,true])test("post-DELETE load continuation / "+navigate,{timeout:30_000},async t=>{
  const q=await actionFixture(t,"same-document",{personalSource:true}),{h,f}=q;
- let returned;const originalLeave=h.store.leaveProjectContext;t.mock.method(h.store,"leaveProjectContext",async function(){const value=await originalLeave.call(this);returned=value;return value;});
+ let returned;const originalLeave=h.store.leaveProjectContext;t.mock.method(h.store,"leaveProjectContext",function(...args){const pending=originalLeave.apply(this,args);void pending.then(value=>{returned=value;},()=>undefined);return pending;});
  const gate={entered:sceneDeferred(),release:sceneDeferred()};let held=false;
  h.intercept=async request=>{
   if(held||!request.url.startsWith("/api/events?")||!h.store.loading.get()||h.store.session.get()?.projectContext)return;
@@ -339,4 +393,310 @@ test("Settings retains its existing localized rejection and releases its busy co
  assert.equal(h.store.route.get(),"/settings/workspaces");assert.equal(h.store.session.get().projectContext,undefined);
 });
 
-after(()=>{assert.ok(registered>0,"At least one named case is selected");if(!selection)assert.equal(registered,33);assert.equal(externalCount(),0);assert.ok(sceneCostFixtureProof.maximumBindings<=100);globalThis.fetch=originalFetch;console.log("ASSIGNED_NATIVE_PROOF",JSON.stringify({fixtures:sceneCostFixtureProof.fixtures,queryShapes:sceneCostFixtureProof.nativeQueries.size,maximumBindings:sceneCostFixtureProof.maximumBindings,external:externalCount()}));});
+
+// Additive cookie/Source countercontrols; all original 33 case bodies remain.
+async function cCookiePublishedScope(q, expectedProject, label) {
+  const { h } = q, actor = h.store.session.get().user.userId;
+  const response = await q.nativeRequest({ url: "/api/session", init: {} });
+  assert.equal(response.status, 200, label + ": the actual latest browser cookie is usable");
+  const live = await response.json();
+  assert.equal(live.user.userId, actor); assert.equal(live.projectContext?.projectId, expectedProject);
+  const beforeAuthority = h.store.captureAuthorizationScope()?.key;
+  let error = null;
+  try { await h.store.refreshEvents({ fromStart: true }); } catch (value) { error = String(value); }
+  await flushStoreFrames(h); await q.f.settle();
+  const current = h.store.session.get(), rows = h.store.events.get();
+  const targetRows = rows.filter(event => event.payload?.project_id === expectedProject);
+  const coherent = current?.user.userId === live.user.userId
+    && current.projectContext?.organizationId === live.projectContext.organizationId
+    && current.projectContext?.projectAccessId === live.projectContext.projectAccessId
+    && current.projectContext?.projectId === live.projectContext.projectId;
+  return { error, targetRows: targetRows.length, coherent, beforeAuthority,
+    publishedAuthority: h.store.captureAuthorizationScope()?.key,
+    publishedProject: current?.projectContext?.projectId ?? null,
+    nativeProject: live.projectContext.projectId,
+    currentSourceActive: h.store.sourceOwnershipActive(h.store.captureSourceOwnership()) };
+}
+
+for (const boundary of ["newer-success", "canceled-last-waiter", "route-withdrawal"]) test(
+  "completed context cookie preserves the latest selection and coherent private Source / " + boundary,
+  { timeout: 30_000 }, async t => {
+    const q = await actionFixture(t, "cross-project", { differentTargets: true }), { h, f } = q;
+    const { gates, made } = holdContextHeaders(t, q), before = h.requests.length;
+    const originalAuthority = h.store.captureAuthorizationScope()?.key, originalSource = h.store.captureSourceOwnership();
+    assert.equal(h.store.session.get().projectContext, undefined);
+    assert.ok(h.store.sourceOwnershipActive(originalSource));
+    await f.act(q.button(q.task.artifactId));
+    const first = await made[0].promise; await first.entered.promise;
+    assert.equal(first.response.status, 200);
+    const originalBody = await first.response.clone().json();
+    assert.equal(originalBody.projectId, q.task.projectId);
+    assert.ok(first.response.headers.get("set-cookie"));
+    if (boundary !== "route-withdrawal") {
+      await f.act(q.button(q.secondTask.artifactId)); await f.settle();
+      assert.equal(q.calls.length, 2); assert.equal(gates.length, 1,
+        "The newer exact selection waits for the first real cookie response");
+    }
+    let departed = null;
+    if (boundary !== "newer-success") {
+      const link = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+        && new URL(node.attributes.href, "https://fixture.invalid").pathname === "/projects");
+      assert.ok(link.port.isConnected && link.owner.isConnected && !link.hiddenBy);
+      await f.act(link, "click", { button: 0 }); await f.settle();
+      departed = h.store.route.get();
+      assert.equal(new URL(departed, "https://fixture.invalid").pathname, "/projects",
+        "The actual current navigation link, not a replaced app method, withdraws the old opening");
+    }
+    first.release.resolve();
+    let expected = q.task;
+    if (boundary === "newer-success") {
+      const second = await made[1].promise; await second.entered.promise;
+      assert.equal(second.response.status, 200);
+      const body = await second.response.clone().json();
+      assert.equal(body.projectId, q.secondTask.projectId);
+      assert.equal(body.projectAccessId, q.secondTask.projectAccessId);
+      second.release.resolve(); expected = q.secondTask;
+    }
+    await Promise.all(q.calls.map(call => call.pending)); await flushStoreFrames(h); await f.settle();
+    const commands = h.requests.slice(before).filter(row => row.init.method === "POST" && row.url.endsWith("/context"));
+    assert.equal(commands.length, boundary === "newer-success" ? 2 : 1,
+      "No canceled waiter, replacement identity or automatic context retry is dispatched");
+    if (boundary === "newer-success") {
+      assert.deepEqual(q.calls.map(call => call.value), [false, true]);
+      await assertExactTask(q, q.secondTask);
+    } else {
+      assert.ok(q.calls.every(call => call.value === false));
+      assert.equal(h.store.route.get(), departed); assert.equal(q.viewerCalls.length, 0);
+    }
+    const result = await cCookiePublishedScope(q, expected.projectId, boundary);
+    t.diagnostic("C_CONTEXT_COOKIE_LATEST " + JSON.stringify({ boundary, originalStatus: first.response.status,
+      commands: commands.map(row => ({ url: row.url, method: row.init.method })),
+      results: q.calls.map(call => call.value), originalAuthority,
+      originalSourceActive: h.store.sourceOwnershipActive(originalSource), ...result,
+      route: h.store.route.get(), viewerCalls: q.viewerCalls.length,
+      evidence: "actual connected Activity controls, original serialized RAM Worker responses/cookies, diagnostic session GET and ordinary event read" }));
+    assert.ok(result.targetRows === 0 || result.coherent,
+      "A completed older cookie cannot place its private project events under the wrong session after a canceled waiter or route withdrawal");
+    if (boundary === "newer-success") {
+      assert.equal(result.error, null); assert.equal(result.coherent, true); assert.ok(result.targetRows > 0);
+      assert.equal(h.store.session.get().projectContext.projectId, q.secondTask.projectId);
+      await assertExactTask(q, q.secondTask);
+    } else {
+      assert.equal(h.store.route.get(), departed); assert.equal(q.viewerCalls.length, 0);
+    }
+  });
+
+
+// Additive original-Worker read boundaries. Existing 36 bodies remain unchanged.
+const cContextDiagnosticHash=value=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function cContextEventWitness(event){
+  return {eventId:event.eventId,streamId:event.streamId,sequence:event.sequence,type:event.type,
+    projectId:event.payload?.project_id??null,documentId:event.payload?.document_id??null,
+    artifactId:event.payload?.artifact_id??null,eventSha256:cContextDiagnosticHash(event)};
+}
+const cContextContentWitness=content=>Object.entries(content).map(([reference,value])=>({reference,sha256:cContextDiagnosticHash(value)}))
+  .sort((left,right)=>left.reference.localeCompare(right.reference));
+async function cContextCaptureOriginalEvents(q){
+  const session=q.h.store.session.get(),events=q.h.store.events.get().map(cContextEventWitness);
+  // Shared project reads preserve eventId but project the physical author stream
+  // into a project-access stream/cursor; the alias is not an events table stream.
+  const physicalBackingStream=q.w.streamId,publishedScopeStream="project:"+q.task.projectAccessId;
+  const backing=await readWorkspaceEvents(q.w.env,physicalBackingStream);
+  assert.equal(physicalBackingStream,"creative:"+q.w.owner);
+  assert.ok(backing.every(event=>event.streamId===physicalBackingStream));
+  const exactTarget=event=>event.payload?.project_id===q.task.projectId
+    &&event.payload?.document_id===q.task.documentId&&event.payload?.artifact_id===q.task.artifactId;
+  assert.equal(backing.filter(event=>event.type==="DocumentRenderCompleted"&&exactTarget(event)).length,1,
+    "The exact assigned artifact has one original completion in its physical author stream before the action");
+  assert.equal(backing.filter(event=>event.type==="ArtifactReviewRequested"&&exactTarget(event)
+    &&event.payload.artifact_revision===q.task.revision&&event.payload.content_sha256===q.task.contentSha256
+    &&event.payload.assigned_reviewer_user_id===session.user.userId).length,1,
+    "The real task matches its original authored assignment revision, hash and reviewer");
+  q.contextReadBaseline={actorId:session.user.userId,projectId:session.projectContext?.projectId??null,
+    route:q.h.store.route.get(),personalStream:"creative:"+session.user.userId,physicalBackingStream,publishedScopeStream,sessionSha256:cContextDiagnosticHash(session),
+    events,physicalTargetEvents:backing.filter(event=>event.payload?.project_id===q.task.projectId).map(cContextEventWitness),
+    content:cContextContentWitness(q.h.store.content.get())};
+}
+function cContextReadObservation(q, originalSource, expectedProject) {
+  const session = q.h.store.session.get();
+  const baseline=q.contextReadBaseline,allCurrent=q.h.store.events.get().map(cContextEventWitness),current=allCurrent.filter(event=>event.projectId===expectedProject);
+  const content=cContextContentWitness(q.h.store.content.get());
+  const provenance=baseline?{original:{actorId:baseline.actorId,projectId:baseline.projectId,route:baseline.route,
+    personalStream:baseline.personalStream,physicalBackingStream:baseline.physicalBackingStream,publishedScopeStream:baseline.publishedScopeStream,
+    targetEvents:baseline.events.filter(event=>event.projectId===expectedProject),physicalTargetEvents:baseline.physicalTargetEvents},
+    observed:current.map(event=>({...event,
+      presentBeforeAction:baseline.events.some(before=>before.eventId===event.eventId&&before.streamId===event.streamId),
+      identicalBeforeAction:baseline.events.some(before=>before.eventId===event.eventId&&before.streamId===event.streamId&&before.eventSha256===event.eventSha256),
+      publishedProjectScope:event.streamId===baseline.publishedScopeStream,
+      matchesPhysicalTargetIdentity:baseline.physicalTargetEvents.some(before=>before.eventId===event.eventId
+        &&before.type===event.type&&before.projectId===event.projectId&&before.documentId===event.documentId&&before.artifactId===event.artifactId)})),
+    newlyObservedTargetRows:current.filter(event=>!baseline.events.some(before=>before.eventId===event.eventId&&before.streamId===event.streamId)).length,
+    newlyObservedPrivateContentRows:content.filter(entry=>!baseline.content.some(before=>before.reference===entry.reference&&before.sha256===entry.sha256)).length,
+    snapshot:{actorId:session.user.userId,sessionSha256:cContextDiagnosticHash(session),events:allCurrent,content},
+    content:content.map(entry=>({...entry,identicalBeforeAction:baseline.content.some(before=>before.reference===entry.reference&&before.sha256===entry.sha256)}))}:undefined;
+  return { route: q.h.store.route.get(), project: session.projectContext?.projectId ?? null,
+    originalSourceActive: q.h.store.sourceOwnershipActive(originalSource),
+    targetRows: q.h.store.events.get().filter(event => event.payload?.project_id === expectedProject).length,
+    currentSourceActive: q.h.store.sourceOwnershipActive(q.h.store.captureSourceOwnership()),provenance };
+}
+
+test("context cookie body still owns positive handoff while an ordinary source read waits", { timeout: 30_000 }, async t => {
+  const q = await actionFixture(t, "cross-project", { differentTargets: true }), { h, f } = q;
+  await cContextCaptureOriginalEvents(q);
+  const source = h.store.captureSourceOwnership(), session = h.store.session.get(), origin = h.store.route.get();
+  const entered = sceneDeferred(), release = sceneDeferred(); let commands = 0, bodyReads = 0;
+  h.intercept = async request => {
+    if (request.init.method !== "POST" || !request.url.endsWith("/context")) return;
+    commands++; const response = await q.nativeRequest(request);
+    assert.equal(response.status, 200); const body = await response.clone().json();
+    assert.equal(body.projectId, q.task.projectId); assert.equal(body.projectAccessId, q.task.projectAccessId);
+    const json = response.json.bind(response);
+    Object.defineProperty(response, "json", { value: async () => {
+      bodyReads++; entered.resolve(); await release.promise; return json();
+    } });
+    return response;
+  };
+  t.after(async () => { release.resolve(); await Promise.allSettled(q.calls.map(call => call.pending)); });
+  await f.act(q.button(q.task.artifactId)); await entered.promise;
+  assert.equal(commands, 1); assert.equal(bodyReads, 1); assert.equal(q.calls[0].value, undefined);
+  assert.equal(h.store.session.get(), session); assert.equal(h.store.route.get(), origin);
+  let readError = null;
+  try { await h.store.refreshEvents({ fromStart: true }); } catch (error) { readError = String(error); }
+  await flushStoreFrames(h); await f.settle();
+  const during = cContextReadObservation(q, source, q.task.projectId), sameSession = h.store.session.get() === session;
+  const stillPending = q.calls[0].value === undefined;
+  release.resolve(); await q.calls[0].pending; await assertExactTask(q, q.task);
+  t.diagnostic("C_CONTEXT_COOKIE_HELD_BODY " + JSON.stringify({ commands, bodyReads, readError, during,
+    sameSession, stillPending, result: q.calls[0].value, final: cContextReadObservation(q, source, q.task.projectId) }));
+  // Explicit oracle migration after C126 proved the total count includes one
+  // unchanged personal ProjectCreated. Zero NEW target/private rows remains mandatory.
+  assert.equal(during.provenance.newlyObservedTargetRows, 0, "A body-held positive context cannot publish destination rows under its original Source");
+  assert.equal(during.provenance.newlyObservedPrivateContentRows, 0);
+  assert.deepEqual(during.provenance.snapshot.events, q.contextReadBaseline.events, "The complete original event snapshot is unchanged while the current positive body is held");
+  assert.deepEqual(during.provenance.snapshot.content, q.contextReadBaseline.content, "Every original private content reference and byte digest is unchanged");
+  assert.equal(during.provenance.snapshot.actorId, q.contextReadBaseline.actorId);
+  assert.equal(during.provenance.snapshot.sessionSha256, q.contextReadBaseline.sessionSha256);
+  assert.equal(sameSession, true, "Background reads cannot adopt before the original positive body/handoff is admitted");
+  assert.equal(during.originalSourceActive, true); assert.equal(during.route, origin); assert.equal(stillPending, true);
+  assert.equal(q.calls[0].value, true, "The unchanged original remains able to finish its exact authorized opening");
+  assert.equal(commands, 1, "No context retry, replacement or additional authored command");
+});
+
+test("pre-cookie session prefetch cannot certify a completed withdrawn context cookie", { timeout: 30_000 }, async t => {
+  const q = await actionFixture(t, "cross-project", { differentTargets: true }), { h, f } = q;
+  const source = h.store.captureSourceOwnership(), actor = h.store.session.get().user.userId;
+  const prefetched = await q.nativeRequest({ url: "/api/session", init: {} });
+  assert.equal(prefetched.status, 200); const prefetchedBody = await prefetched.clone().json();
+  assert.equal(prefetchedBody.user.userId, actor); assert.equal(prefetchedBody.projectContext, undefined);
+  const { gates, made } = holdContextHeaders(t, q);
+  await f.act(q.button(q.task.artifactId)); const original = await made[0].promise; await original.entered.promise;
+  assert.equal(original.response.status, 200);
+  const projects = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+    && new URL(node.attributes.href, "https://fixture.invalid").pathname === "/projects");
+  await f.act(projects, "click", { button: 0 }); const route = h.store.route.get();
+  assert.equal(new URL(route, "https://fixture.invalid").pathname, "/projects");
+  original.release.resolve(); await q.calls[0].pending; assert.equal(q.calls[0].value, false);
+  // This is the original pre-cookie response, not a body fabricated from Store state.
+  await h.store.refreshSession(Promise.resolve(prefetched));
+  let readError = null;
+  try { await h.store.refreshEvents({ fromStart: true }); } catch (error) { readError = String(error); }
+  await flushStoreFrames(h); await f.settle();
+  const observed = cContextReadObservation(q, source, q.task.projectId);
+  const native = await q.nativeRequest({ url: "/api/session", init: {} }); assert.equal(native.status, 200);
+  const actual = await native.json(); assert.equal(actual.projectContext.projectId, q.task.projectId);
+  t.diagnostic("C_CONTEXT_COOKIE_PREFETCH " + JSON.stringify({ prefetchedProject: prefetchedBody.projectContext?.projectId ?? null,
+    nativeProject: actual.projectContext.projectId, readError, observed, result: q.calls[0].value, commands: gates.length }));
+  assert.ok(observed.targetRows === 0 || observed.project === actual.projectContext.projectId,
+    "A stale prefetched session must not stamp a new cookie as the original personal Source");
+  assert.equal(observed.project, actual.projectContext.projectId, "An available fresh current session is reconciled without adopting the old route");
+  assert.equal(observed.route, route); assert.equal(gates.length, 1);
+});
+
+test("failed completed-cookie reconciliation withholds private rows until a fresh explicit read", { timeout: 30_000 }, async t => {
+  const q = await actionFixture(t, "cross-project", { differentTargets: true }), { h, f } = q;
+  await cContextCaptureOriginalEvents(q);
+  const source = h.store.captureSourceOwnership(), { gates, made } = holdContextHeaders(t, q);
+  await f.act(q.button(q.task.artifactId)); const original = await made[0].promise; await original.entered.promise;
+  assert.equal(original.response.status, 200);
+  const projects = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+    && new URL(node.attributes.href, "https://fixture.invalid").pathname === "/projects");
+  await f.act(projects, "click", { button: 0 }); const route = h.store.route.get();
+  const contextIntercept = h.intercept; let unavailable = true, failedReads = 0, successfulReads = 0;
+  h.intercept = async request => {
+    if (request.url !== "/api/session") return contextIntercept?.(request);
+    const response = await q.nativeRequest(request); assert.equal(response.status, 200);
+    const actual = await response.clone().json(); assert.equal(actual.projectContext.projectId, q.task.projectId);
+    if (unavailable) { failedReads++; return Response.json({ error: "finite_context_session_unavailable" }, { status: 503 }); }
+    successfulReads++; return response;
+  };
+  t.after(() => { unavailable = false; });
+  original.release.resolve(); await q.calls[0].pending; assert.equal(q.calls[0].value, false);
+  let readError = null;
+  try { await h.store.refreshEvents({ fromStart: true }); } catch (error) { readError = String(error); }
+  await flushStoreFrames(h); await f.settle();
+  const denied = cContextReadObservation(q, source, q.task.projectId);
+  unavailable = false;
+  await h.store.refreshEvents({ fromStart: true }); await flushStoreFrames(h); await f.settle();
+  const recovered = cContextReadObservation(q, source, q.task.projectId);
+  t.diagnostic("C_CONTEXT_COOKIE_RECONCILIATION_FAILURE " + JSON.stringify({ failedReads, successfulReads, readError,
+    denied, recovered, result: q.calls[0].value, commands: gates.length }));
+  assert.equal(denied.provenance.newlyObservedTargetRows, 0, "A failed session reconciliation cannot authorize destination private publication");
+  assert.equal(denied.provenance.newlyObservedPrivateContentRows, 0);
+  assert.deepEqual(denied.provenance.snapshot.events, q.contextReadBaseline.events, "Failed reconciliation preserves the entire original event snapshot");
+  assert.deepEqual(denied.provenance.snapshot.content, q.contextReadBaseline.content, "Failed reconciliation preserves the entire original private-content snapshot");
+  assert.equal(denied.provenance.snapshot.actorId, q.contextReadBaseline.actorId);
+  assert.equal(denied.provenance.snapshot.sessionSha256, q.contextReadBaseline.sessionSha256);
+  assert.equal(denied.originalSourceActive, true);assert.equal(denied.currentSourceActive, true);assert.equal(denied.route, route);
+  assert.ok(failedReads > 0); assert.ok(readError); assert.ok(successfulReads > 0);
+  assert.equal(recovered.project, q.task.projectId); assert.ok(recovered.targetRows > 0);
+  assert.equal(recovered.route, route); assert.equal(gates.length, 1, "The later explicit read never retries the original context write");
+});
+
+test("malformed same-principal session cannot certify a completed context cookie", { timeout: 30_000 }, async t => {
+  const q = await actionFixture(t, "cross-project", { differentTargets: true }), { h, f } = q;
+  await cContextCaptureOriginalEvents(q);
+  const source = h.store.captureSourceOwnership(), actor = h.store.session.get().user.userId;
+  const { gates, made } = holdContextHeaders(t, q);
+  await f.act(q.button(q.task.artifactId)); const original = await made[0].promise; await original.entered.promise;
+  assert.equal(original.response.status, 200);
+  const projects = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+    && new URL(node.attributes.href, "https://fixture.invalid").pathname === "/projects");
+  await f.act(projects, "click", { button: 0 }); const route = h.store.route.get();
+  const contextIntercept = h.intercept; let malformed = true, malformedReads = 0, freshReads = 0;
+  h.intercept = async request => {
+    if (request.url !== "/api/session") return contextIntercept?.(request);
+    const response = await q.nativeRequest(request); assert.equal(response.status, 200);
+    const actual = await response.clone().json();
+    assert.equal(actual.user.userId, actor); assert.equal(actual.projectContext.projectId, q.task.projectId);
+    assert.ok(actual.policy && typeof actual.policy.version === "string");
+    if (malformed) {
+      malformedReads++;
+      // Only this explicit malformed-positive envelope differs from the actual
+      // Worker body; user, audience, impersonation and context stay exact.
+      delete actual.policy; return Response.json(actual, { status: 200 });
+    }
+    freshReads++; return response;
+  };
+  t.after(() => { malformed = false; });
+  original.release.resolve(); await q.calls[0].pending; assert.equal(q.calls[0].value, false);
+  let readError = null;
+  try { await h.store.refreshEvents({ fromStart: true }); } catch (error) { readError = String(error); }
+  await flushStoreFrames(h); await f.settle();
+  const rejected = cContextReadObservation(q, source, q.task.projectId);
+  malformed = false;
+  await h.store.refreshEvents({ fromStart: true }); await flushStoreFrames(h); await f.settle();
+  const recovered = cContextReadObservation(q, source, q.task.projectId);
+  t.diagnostic("C_CONTEXT_COOKIE_MALFORMED_SESSION " + JSON.stringify({ malformedReads, freshReads, readError,
+    rejected, recovered, result: q.calls[0].value, commands: gates.length }));
+  assert.equal(rejected.provenance.newlyObservedTargetRows, 0, "A same-principal malformed200 cannot certify cookie B under session A");
+  assert.equal(rejected.provenance.newlyObservedPrivateContentRows, 0);
+  assert.deepEqual(rejected.provenance.snapshot.events, q.contextReadBaseline.events, "Malformed reconciliation preserves the entire original event snapshot");
+  assert.deepEqual(rejected.provenance.snapshot.content, q.contextReadBaseline.content, "Malformed reconciliation preserves the entire original private-content snapshot");
+  assert.equal(rejected.provenance.snapshot.actorId, q.contextReadBaseline.actorId);
+  assert.equal(rejected.provenance.snapshot.sessionSha256, q.contextReadBaseline.sessionSha256);
+  assert.equal(rejected.originalSourceActive, true);assert.equal(rejected.currentSourceActive, true);assert.equal(rejected.route, route);
+  assert.ok(malformedReads > 0); assert.ok(readError); assert.ok(freshReads > 0);
+  assert.equal(recovered.project, q.task.projectId); assert.ok(recovered.targetRows > 0);
+  assert.equal(recovered.route, route); assert.equal(gates.length, 1);
+});
+after(()=>{assert.ok(registered>0,"At least one named case is selected");if(!selection)assert.equal(registered,40);assert.equal(externalCount(),0);assert.ok(sceneCostFixtureProof.maximumBindings<=100);globalThis.fetch=originalFetch;console.log("ASSIGNED_NATIVE_PROOF",JSON.stringify({fixtures:sceneCostFixtureProof.fixtures,queryShapes:sceneCostFixtureProof.nativeQueries.size,maximumBindings:sceneCostFixtureProof.maximumBindings,external:externalCount()}));});

@@ -1,8 +1,19 @@
 import { html, noChange, nothing } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon, downloadJson, copyTextToClipboard } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
-import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentInRoute, withProjectTaskDocumentInRoute } from "../model/routes";
+import { artifactFocusOptionsFromRoute, artifactFocusRoute, documentContextBlockFromRoute, documentContextBlockRoute, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, withDocumentInRoute, withProjectTaskDocumentInRoute } from "../model/routes";
+import { commandDiscoveryTargetAvailable, commandMatchScore, commandReviewIdentity, commandReviewMatches, projectCommandDiscovery, type CommandDiscoveryInput, type CommandDiscoveryRow } from "../model/command-discovery";
+import { commandDiscoveryCopy } from "./design-system/locales/command-discovery-messages";
+import { documentArtifactDefinition } from "../model/document-artifacts";
+import { creativePreparationTargetAvailable, type CreativePreparationStage } from "../model/workspace-intelligence";
+import { nextActionFacts } from "../state/next-action-context";
+import type { AssignedReviewTask, CapturedSourceOwnership } from "../state/store";
+import type { FormaLibrary } from "./forma-library";
+import { joinNativeDialogClose, navigationPresentationClosing, navigationPresentationCurrent, type CommandDeparture, type CommandDepartureOwner, type InAppNavigationAction, type LocalNavigation, type NavigationClosingPresentation, type NavigationPresentationContext, type NavigationRefusal } from "./command-departure";
+import type { FormaWorkspace } from "./forma-workspace";
+import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { APPLICATIONS, applicationAccessible, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, creativeCreationHref, navigationItemAccessible, navigationItemActive } from "../platform/applications";
 import { formaActivityAttention, scopedFormaActivity } from "../model/activity";
 import { canvasFocusFromRoute } from "../canvas/routes";
@@ -18,8 +29,26 @@ import "./icons-navigation";
 import "./forma-attention-observer";
 import "./forma-creative-assistant.ts";
 
+type CommandOpening = {
+  epoch:number; source:CapturedSourceOwnership|null; sourceReadable:boolean; authorityKey:string; route:string; locale:string; localeRequest:number;
+  actorId:string; principalId:string; impersonationId:string|null; opener:HTMLElement|null; origins:readonly CommandDeparture[];
+};
+type CommandChoice = { id:string; key:string; label:string; hint:string; terms:readonly string[]; row?:CommandDiscoveryRow; route?:string; run?:()=>unknown };
+type ShellFocus = { focus:OutputNavigationFocusLease; scopeCurrent():boolean; dispose():void };
+type CommandNavigation = {
+  focus:OutputNavigationFocusLease; current():boolean; handoff():boolean; retain():void;
+  adoptSource(source:CapturedSourceOwnership):boolean;
+  bind(focus:OutputNavigationFocusLease,ownedRouteFocus:(element:Element)=>boolean):void;
+};
+
 export class FormaShell extends FormaElement {
-  #commandIndex = 0;
+  #commandActiveKey:string|null=null;
+  #commandChooseFirst=true;
+  #commandSelectionChanged=false;
+  #commandEpoch=0;
+  #contextOpening=0;
+  #commandOpening:CommandOpening|null=null;
+  #commandRouteFocus:{route:string;focus:OutputNavigationFocusLease;current:()=>boolean}|null=null;
   #commandComposing = false;
   #shareHours=24;#freshShareUrl="";#freshShareScope="";#freshShareCopied:boolean|null=null;#termsOwnership=false;#termsProvider=false;
   #dialogObserver?: MutationObserver;
@@ -30,6 +59,9 @@ export class FormaShell extends FormaElement {
   #accessibleRoute = "";
   #routeAnnouncement = "";
   #focusNextRoute = false;
+  #routeFocus:ShellFocus|null=null;
+  #accountFocus:{panel:HTMLElement;open:boolean;owner:ShellFocus}|null=null;
+  #accountReturnFocus=false;
   #localeRequest = 0;
   #layoutObserver?: ResizeObserver;
   #layoutFrame = 0;
@@ -53,30 +85,98 @@ export class FormaShell extends FormaElement {
     });
   };
   #shareScope(){const session=this.store.session.get(),context=session?.projectContext,projection=this.store.projection.get();return[session?.user.userId??"",context?.organizationId??"personal",context?.projectAccessId??"personal",projection.projectId,projection.documentId,session?.permissionEpoch??""].join("\u0000");}
-  #clearShareSecret=()=>{this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;if(this.store.ui.shareOpen)this.store.patchUi({shareOpen:false});};
+  #clearShareSecret=()=>{this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;if(this.store.ui.shareOpen)this.store.patchUi({shareOpen:false});};
   #openShare(closeAccount=false){if(!this.store.canManageProjectShares())return;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;void this.store.loadShares();this.store.patchUi({...closeAccount?{accountOpen:false}:{},shareOpen:true});}
   #closeShare(){this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;this.store.patchUi({shareOpen:false});}
+  // A one-shot presentation lease, separate from navigation or action authority.
+  #captureShellFocus(current:()=>boolean,ownedRouteFocus?:(element:Element)=>boolean):ShellFocus{
+    const store=this.store,document=this.ownerDocument,route=store.route.get(),epoch=this.#commandEpoch;
+    const authorization=store.captureAuthorizationScope(),source=store.captureSourceOwnership();
+    const sourceReadable=store.sourceOwnershipActive(source),locale=this.i18n.locale,localeRequest=this.#localeRequest;
+    let retired=false,unsubscribe=()=>{};
+    const dispose=()=>{if(retired)return;retired=true;unsubscribe();focus.dispose();};
+    const scopeCurrent=()=>{
+      if(retired)return false;
+      if(!this.isConnected||this.store!==store||this.ownerDocument!==document||this.#commandEpoch!==epoch
+        ||store.route.get()!==route||this.i18n.locale!==locale||this.#localeRequest!==localeRequest
+        ||!store.authorizationScopeActive(authorization)||sourceReadable&&!store.sourceOwnershipActive(source)||!current()){
+        dispose();return false;
+      }
+      return true;
+    };
+    const focus=captureOutputNavigationFocus(document,{ownedRouteFocus:element=>scopeCurrent()&&Boolean(ownedRouteFocus?.(element))});
+    unsubscribe=store.subscribe(()=>{scopeCurrent();});
+    return{focus,scopeCurrent,dispose};
+  }
+  #retireAccountFocus(){this.#accountFocus?.owner.dispose();this.#accountFocus=null;}
+  #retireRouteFocus(){this.#routeFocus?.dispose();this.#routeFocus=null;this.#focusNextRoute=false;}
+  #accountBeforeToggle=(event:ToggleEvent)=>{
+    const panel=event.currentTarget as HTMLElement|null;
+    if(!this.isConnected||!panel?.isConnected||panel!==this.querySelector("#account-popover"))return;
+    this.#retireAccountFocus();
+    const open=event.newState==="open",trigger=this.querySelector<HTMLButtonElement>(".avatar");
+    if(open)this.#accountReturnFocus=false;
+    const owner=this.#captureShellFocus(
+      ()=>panel.isConnected&&panel===this.querySelector("#account-popover"),
+      element=>!open&&element===trigger&&Boolean(trigger?.isConnected
+        &&trigger===this.querySelector(".avatar")&&trigger.getAttribute("popovertarget")===panel.getAttribute("id")));
+    const focus=this.#accountFocus={panel,open,owner};
+    // Opening beforetoggle is cancelable; canceled native transitions emit no toggle.
+    queueMicrotask(()=>{if(this.#accountFocus===focus&&panel.matches(":popover-open")!==open)this.#retireAccountFocus();});
+  };
   #accountToggle = (event: ToggleEvent) => {
-    const open = event.newState === "open";
-    if (this.store.ui.accountOpen !== open) this.store.patchUi({ accountOpen: open });
-    if (open) (event.currentTarget as HTMLElement).querySelector<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled])")?.focus();
+    const open = event.newState === "open",panel=event.currentTarget as HTMLElement|null;
+    if(!this.isConnected||!panel?.isConnected||panel!==this.querySelector("#account-popover")
+      ||panel.matches(":popover-open")!==open)return;
+    const focus=this.#accountFocus;
+    const scoped=focus?.panel===panel&&focus.open===open&&focus.owner.scopeCurrent();
+    try{
+      // A newer pointer may retire focus without changing this native state.
+      if(open&&!scoped)return;
+      if(this.store.ui.accountOpen!==open)this.store.patchUi({ accountOpen: open });
+      if(!scoped||!focus||!focus.owner.scopeCurrent())return;
+      const target=open?panel.querySelector<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled])")
+        :this.#accountReturnFocus?this.querySelector<HTMLButtonElement>(".avatar"):null;
+      if(target)focus.owner.focus.run(target,()=>{target.focus();return true;});
+    }finally{
+      if(this.#accountFocus===focus){this.#retireAccountFocus();this.#accountReturnFocus=false;}
+    }
   };
   #keydown = (event: KeyboardEvent) => {
     if (event.isComposing || event.key === "Process" || this.#commandComposing && this.store.ui.commandOpen) return;
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.#commandComposing = false; this.store.patchUi({ commandOpen: !this.store.ui.commandOpen }); }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.#openCommands(); }
     const target = event.composedPath()[0];
     const editingField = target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
     const projectContext=this.store.session.get()?.projectContext;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !editingField && (!projectContext||projectContext.permissions.includes("project.author")) && ["creative","canvas"].includes(applicationIdFromRoute(this.store.route.get()))) { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
     if (event.key === "Escape") {
+      if(this.store.ui.commandOpen){event.preventDefault();void this.#closeCommands();return;}
       if(this.store.ui.impersonationConfirmOpen)this.store.resolveImpersonatedInteraction(false);
-      else { const returnAccountFocus=this.store.ui.accountOpen;this.#commandComposing=false;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;this.store.patchUi({commandOpen:false,accountOpen:false,shareOpen:false,compareOpen:false});if(returnAccountFocus)queueMicrotask(()=>this.querySelector<HTMLButtonElement>(".avatar")?.focus()); }
+      else { this.#accountReturnFocus=Boolean(this.querySelector<HTMLElement>("#account-popover")?.matches(":popover-open"));this.#commandComposing=false;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;this.store.patchUi({commandOpen:false,accountOpen:false,shareOpen:false,compareOpen:false}); }
     }
   };
   #routeChanged = (event: Event) => {
+    if(this.store.ui.commandOpen)void this.#closeCommands(false);
+    if(this.#commandRouteFocus&&this.#commandRouteFocus.route!==this.store.route.get()){this.#commandRouteFocus.focus.dispose();this.#commandRouteFocus=null;}
     this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;
-    const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
-    this.#focusNextRoute=true;
+    const detail = (event as CustomEvent<{ path?: string; preserveFocus?:boolean }>).detail;
+    const path = detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
+    this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();
+    if(detail?.preserveFocus!==true&&path===this.store.route.get()&&!path.includes("#")){
+      const arrival=this.store.captureWorkspaceNavigationFocus(path);
+      // Capture at the committed route event, before render or a newer gesture.
+      // A disposed original gesture cannot seed a replacement presentation lease.
+      if(!arrival||arrival.routeCurrent()&&arrival.current()){
+        const popover=this.ownerDocument.activeElement?.closest<HTMLElement>("[popover]:popover-open");
+        const id=popover?.getAttribute("id"),invokers=id?[...this.querySelectorAll<HTMLElement>("[popovertarget]")]
+          .filter(element=>element.getAttribute("popovertarget")===id):[];
+        const invoker=invokers.length===1?invokers[0]:null;
+        this.#routeFocus=this.#captureShellFocus(()=>!arrival||arrival.routeCurrent(),
+          element=>element===invoker&&Boolean(invoker?.isConnected&&popover?.isConnected
+            &&!popover.matches(":popover-open")));
+        this.#focusNextRoute=true;
+      }
+    }
     void loadRouteComponent(path);
     if (!this.store.loading.get()) void this.store.syncDocumentFromRoute(path);
   };
@@ -126,7 +226,7 @@ export class FormaShell extends FormaElement {
     if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
     else if(!this.store.events.get().length)void this.store.load();
   }
-  override disconnectedCallback(){this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#commandEpoch++;this.#commandOpening=null;this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
 
   #raiseToast() {
     const toast = this.querySelector<HTMLElement>(".toast[popover]");
@@ -138,6 +238,14 @@ export class FormaShell extends FormaElement {
   }
 
   protected override updated() {
+    if(this.#routeFocus&&(!this.#routeFocus.scopeCurrent()||!this.#routeFocus.focus.current()))this.#retireRouteFocus();
+    if(this.#accountFocus&&!this.#accountFocus.owner.scopeCurrent()){this.#retireAccountFocus();this.#accountReturnFocus=false;}
+    if(this.#commandRouteFocus&&!this.#commandRouteFocus.current()){this.#commandRouteFocus.focus.dispose();this.#commandRouteFocus=null;}
+    if(this.#commandOpening&&(!this.store.ui.commandOpen||!this.#commandContextCurrent(this.#commandOpening)||this.#commandOpening.route!==this.store.route.get()
+      ||this.#commandOpening.sourceReadable&&!this.store.sourceOwnershipActive(this.#commandOpening.source))){
+      if(this.store.ui.commandOpen)void this.#closeCommands(false);
+      else{this.#commandOpening=null;this.#commandActiveKey=null;this.#commandComposing=false;}
+    }
     const accountPopover=this.querySelector<HTMLElement>("#account-popover");
     if(!this.store.ui.accountOpen&&accountPopover?.matches(":popover-open"))accountPopover.hidePopover();
     for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);
@@ -154,8 +262,19 @@ export class FormaShell extends FormaElement {
         const workspace=this.i18n.t(`shell.${id}`,application.label);
         document.title=page===workspace?`${workspace} — Forma`:`${page} — ${workspace} — Forma`;
         this.#routeAnnouncement=document.title.replace(/\s— Forma$/,"");
-        if(this.#focusNextRoute&&!path.includes("#")){this.#focusNextRoute=false;void this.updateComplete.then(()=>this.querySelector<HTMLElement>("#main-content")?.focus({preventScroll:true}));}
-      }
+        if(this.#focusNextRoute&&!path.includes("#")){
+          this.#focusNextRoute=false;
+          const focus=this.#routeFocus;
+          if(focus)void this.updateComplete.then(()=>{
+            try{
+              const target=this.querySelector<HTMLElement>("#main-content");
+              if(this.#routeFocus!==focus||!focus.scopeCurrent()||this.#accessibleRoute!==key
+                ||this.store.loading.get()||!this.store.events.get().length||!this.store.routeDataReady()||!target?.isConnected)return;
+              focus.focus.run(target,()=>{target.focus({preventScroll:true});return true;});
+            }finally{focus.dispose();if(this.#routeFocus===focus)this.#routeFocus=null;}
+          });
+        }
+      }else if(this.#focusNextRoute)this.#retireRouteFocus();
       completeRoutePopulation(path);
     }
     this.#revealApplication();
@@ -196,10 +315,40 @@ export class FormaShell extends FormaElement {
     void this.store.hot({ type: "DocumentViewVisited", payload: { document_id: documentId, project_id: projection.projectId, view, focused, route_family: "document", source_surface: "document-view-navigation" } });
   }
 
-  #route(path: string) { this.#commandComposing = false; this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);const reduced=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;target?.scrollIntoView({behavior:reduced?"auto":"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
+  #route(path:string,options?:{current:()=>boolean;focus:OutputNavigationFocusLease;onOriginHandoff?:()=>boolean;onDestinationSource?:(source:CapturedSourceOwnership)=>boolean;documentFocus?:boolean;replace?:boolean},reveal=true):boolean|Promise<boolean> {
+    if(!options){
+      if(path===this.store.route.get())return true;
+      return this.navigateFrom(this,navigation=>this.#route(path,navigation));
+    }
+    if(options&&(!options.current()||!options.focus.current()))return false;
+    this.#commandComposing=false;this.store.patchUi({commandOpen:false,accountOpen:false});
+    const finish=()=>{
+      const route=this.store.route.get();
+      const current=()=>!options||options.current()&&options.focus.current()&&this.store.route.get()===route;
+      if(!current())return false;
+      if(!reveal)return true;
+      const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";
+      if(hash)return new Promise<boolean>(resolve=>window.setTimeout(()=>{
+        if(!current()){resolve(false);return;}
+        const target=document.getElementById(hash),reduced=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        const reveal=()=>{target?.scrollIntoView({behavior:reduced?"auto":"smooth",block:"center"});target?.focus({preventScroll:true});return true;};
+        if(target&&options)resolve(options.focus.run(target,reveal));else{if(!options)reveal();resolve(!options);}
+      },0));
+      window.scrollTo({top:0});
+      return true;
+    };
+    if(options&&applicationIdFromRoute(this.store.route.get())!==applicationIdFromRoute(path)){
+      return this.store.transitionWorkspace(path,options).then(opened=>opened&&
+        (applicationIdFromRoute(this.store.route.get())===applicationIdFromRoute(path)?finish():true));
+    }
+    this.store.setRoute(path,options);return finish();
+  }
+  #leaveProjectContext(){
+    return this.navigateFrom(this,navigation=>this.store.leaveProjectContext(navigation));
+  }
   #page() {
     const path=this.store.route.get(),application=applicationIdFromRoute(path);
-    if(application==="creative"&&this.store.session.get()?.projectContext&&/^\/(?:sessions|scout|memory)(?:\/|[?#]|$)/.test(path))return html`<section class="page-pad"><header class="page-header page-header--hero"><div class="page-header-copy"><h1>${this.i18n.t("workspace.personalOnly.heading","This is part of your personal creative account")}</h1><p>${this.i18n.t("workspace.personalOnly.description","Sessions, personal suggestions, and creative memory stay private and are not shared with a project.")}</p></div><div class="page-header-actions"><button type="button" class="button secondary" @click=${()=>void this.store.leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></div></header></section>`;
+    if(application==="creative"&&this.store.session.get()?.projectContext&&/^\/(?:sessions|scout|memory)(?:\/|[?#]|$)/.test(path))return html`<section class="page-pad"><header class="page-header page-header--hero"><div class="page-header-copy"><h1>${this.i18n.t("workspace.personalOnly.heading","This is part of your personal creative account")}</h1><p>${this.i18n.t("workspace.personalOnly.description","Sessions, personal suggestions, and creative memory stay private and are not shared with a project.")}</p></div><div class="page-header-actions"><button type="button" class="button secondary" @click=${()=>void this.#leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></div></header></section>`;
     if(application==="canvas")return html`<forma-canvas-application></forma-canvas-application>`;
     if(application==="operations")return html`<forma-operations-application></forma-operations-application>`;
     if(application==="product")return html`<forma-product-application></forma-product-application>`;
@@ -247,22 +396,33 @@ export class FormaShell extends FormaElement {
     const close=async()=>{
       if(this.store.planningConsent.get()?.id!==state.id)return;
       const executionId=state.recoveryExecutionId??state.quote?.executionId,authorization=approved?this.store.captureAuthorizationScope():null,route=this.store.route.get();
-      this.querySelector<HTMLDialogElement>(".planning-consent-dialog")?.close();this.store.closePlanningConsent();
-      if(!approved||!executionId||!authorization)return;
-      await this.updateComplete;
-      await Promise.all([...this.querySelectorAll<HTMLElement&{updateComplete?:Promise<unknown>}>("forma-activity")].map(element=>element.updateComplete));
-      if(!this.isConnected||!this.store.authorizationScopeActive(authorization)||this.store.route.get()!==route||this.store.planningConsent.get())return;
-      const owner=this.ownerDocument,active=owner.activeElement as HTMLElement|null;
-      if(owner.querySelector?.("dialog:modal"))return;
-      // Native return already handles a still-connected opener, including free previews.
-      if(active&&active!==owner.body&&active.tagName!=="HTML"&&active.isConnected&&active.getClientRects().length)return;
-      const visible=(element:HTMLElement)=>element.isConnected&&!element.hidden&&!element.matches(":disabled")&&!element.closest("[inert],[hidden]")&&element.getClientRects().length>0;
-      const target=[...this.querySelectorAll<HTMLElement>("[data-planning-recovery-id]")].find(element=>element.getAttribute("data-planning-recovery-id")===executionId&&visible(element));
-      if(target){target.focus({preventScroll:true});return;}
-      const heading=this.querySelector<HTMLElement>("#main-content h1,main h1,[role='main'] h1")??this.querySelector<HTMLElement>("#main-content");
-      if(!heading||!visible(heading))return;
-      if(!heading.hasAttribute("tabindex")){heading.setAttribute("tabindex","-1");heading.addEventListener("blur",()=>heading.removeAttribute("tabindex"),{once:true});}
-      heading.focus({preventScroll:true});
+      // Capture this Close before its own dismissal or any deferred render.
+      // An equal route later cannot revive a retired interaction lifetime.
+      const returnFocus=approved&&executionId&&authorization?this.#captureShellFocus(()=>{
+        const current=this.store.planningConsent.get();return !current||current.id===state.id;
+      }):null;
+      try{
+        this.querySelector<HTMLDialogElement>(".planning-consent-dialog")?.close();this.store.closePlanningConsent();
+        if(!approved||!executionId||!authorization||!returnFocus)return;
+        await this.updateComplete;
+        await Promise.all([...this.querySelectorAll<HTMLElement&{updateComplete?:Promise<unknown>}>("forma-activity")].map(element=>element.updateComplete));
+        if(!this.isConnected||!this.store.authorizationScopeActive(authorization)||this.store.route.get()!==route||this.store.planningConsent.get()
+          ||!returnFocus.scopeCurrent()||!returnFocus.focus.current())return;
+        const owner=this.ownerDocument,active=owner.activeElement as HTMLElement|null;
+        if(owner.querySelector?.("dialog:modal"))return;
+        // Native return already handles a still-connected opener, including free previews.
+        if(active&&active!==owner.body&&active.tagName!=="HTML"&&active.isConnected&&active.getClientRects().length)return;
+        const visible=(element:HTMLElement)=>element.isConnected&&!element.hidden&&!element.matches(":disabled")&&!element.closest("[inert],[hidden]")&&element.getClientRects().length>0;
+        const target=[...this.querySelectorAll<HTMLElement>("[data-planning-recovery-id]")].find(element=>element.getAttribute("data-planning-recovery-id")===executionId&&visible(element));
+        if(target){returnFocus.focus.run(target,()=>{if(!returnFocus.scopeCurrent())return false;target.focus({preventScroll:true});return true;});return;}
+        const heading=this.querySelector<HTMLElement>("#main-content h1,main h1,[role='main'] h1")??this.querySelector<HTMLElement>("#main-content");
+        if(!heading||!visible(heading))return;
+        returnFocus.focus.run(heading,()=>{
+          if(!returnFocus.scopeCurrent())return false;
+          if(!heading.hasAttribute("tabindex")){heading.setAttribute("tabindex","-1");heading.addEventListener("blur",()=>heading.removeAttribute("tabindex"),{once:true});}
+          heading.focus({preventScroll:true});return true;
+        });
+      }finally{returnFocus?.dispose();}
     };
     return html`<dialog class="modal planning-consent-dialog" data-shell-modal open closedby="any" aria-labelledby="planning-consent-title" aria-describedby="planning-consent-description" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)close();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing){event.preventDefault();event.stopPropagation();close();}}} @cancel=${(event:Event)=>{event.preventDefault();close();}} @close=${(event:Event)=>{if(!(event.currentTarget as HTMLDialogElement).open&&this.store.planningConsent.get()?.id===state.id)void close();}}><section class="modal-card context-consent">
       <button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("action.close")} @click=${close}>${icon("close")}</button>
@@ -278,62 +438,663 @@ export class FormaShell extends FormaElement {
         ${canStartNew?html`<button type="button" class="button secondary" ?disabled=${state.working} @click=${()=>void this.store.newPlanningPreview()}>${this.i18n.t("planning.consent.newPreview")}</button>`:nothing}
       </footer></section></dialog>`;
   }
-  async #generateFromCommand(){const readiness=await this.store.ensureGenerationReadiness("generate",{sourceSurface:"command-menu"});if(readiness?.status==="ready"||readiness?.status==="review"&&this.store.generationRiskAcknowledged(readiness.requestKey))return this.store.generate({sourceSurface:"command-menu"});this.store.toast(readiness?.status==="review"?"Review and acknowledge the generation warning in the document controls first.":readiness?.summary??"Generation readiness could not be confirmed.");}
-  async #openContextComposer(){
-    const projection=this.store.projection.get();if(!projection.documentId){this.store.toast("Open a document before adding a creative decision.");return;}
-    if(documentViewFromRoute(this.store.route.get())!=="document"){
-      const route=withDocumentInRoute("/",projection.documentId,projection.documentTitle);this.#route(route);await loadRouteComponent(route);await this.updateComplete;
-      await new Promise<void>((resolve)=>window.requestAnimationFrame(()=>resolve()));
+  #commandIntentCurrent(owner:CommandOpening){
+    const session=this.store.session.get();
+    return this.isConnected&&this.#commandEpoch===owner.epoch&&this.i18n.locale===owner.locale&&this.#localeRequest===owner.localeRequest
+      &&session?.user.userId===owner.actorId&&(session.impersonation?.actor.userId??session.user.userId)===owner.principalId
+      &&(session.impersonation?.impersonationId??null)===owner.impersonationId;
+  }
+  #commandContextCurrent(owner:CommandOpening){
+    return this.#commandIntentCurrent(owner)&&this.store.captureAuthorizationScope()?.key===owner.authorityKey;
+  }
+  #commandOriginElements(){
+    return [...this.querySelectorAll<CommandDepartureOwner>("forma-library,forma-projects,forma-activity,forma-workspace,forma-workspace-settings,forma-creative-assistant,forma-sessions,forma-memory,forma-deliver,forma-chat-studio,forma-canvas-surface,forma-creative-editor,forma-context-board,forma-guided-brief,forma-reality-layers,forma-adaptive-path,forma-image-format-editor,forma-output-card")]
+      .filter(element=>element.isConnected&&FormaElement.hasStoreIdentity(element,this.store));
+  }
+  #commandOriginsCurrent(owner:CommandOpening,context?:NavigationPresentationContext){
+    const current=this.#commandOriginElements();
+    return current.length===owner.origins.length&&owner.origins.every((origin,index)=>
+      origin.element===current[index]&&origin.element.isConnected&&FormaElement.hasStoreIdentity(origin.element,this.store)&&origin.current(context));
+  }
+  #commandReplacesOrigin(choice:CommandChoice,owner:CommandOpening){
+    if(!choice.row){
+      if(choice.id==="undo"||choice.id==="share"||choice.route===owner.route)return false;
+      if(choice.id==="add-context"&&documentViewFromRoute(owner.route)==="document"){
+        const workspaces=[...this.querySelectorAll<FormaWorkspace>("forma-workspace")]
+          .filter(value=>value.isConnected&&FormaElement.hasStoreIdentity(value,this.store));
+        if(workspaces.length===1)return false;
+      }
     }
-    const workspace=this.querySelector<HTMLElement&{openContextComposer:()=>void}>("forma-workspace");
-    if(workspace)workspace.openContextComposer();else this.store.toast("The document is still opening. Try again in a moment.");
+    return true;
+  }
+  async #restoreCommandOpener(owner:CommandOpening,focus:OutputNavigationFocusLease,current:()=>boolean){
+    await this.updateComplete;
+    if(!current()||this.store.ui.commandOpen||!focus.current())return;
+    const target=owner.opener?.isConnected&&owner.opener.getClientRects().length?owner.opener:this.querySelector<HTMLElement>(".command-trigger");
+    if(target)focus.run(target,()=>{target.focus({preventScroll:true});return true;});
+  }
+  #captureNavigationOpening():CommandOpening|null{
+    const session=this.store.session.get(),authorization=this.store.captureAuthorizationScope();if(!session||!authorization)return null;
+    const active=this.ownerDocument.activeElement,source=this.store.captureSourceOwnership();
+    return {epoch:++this.#commandEpoch,source,sourceReadable:this.store.sourceOwnershipActive(source),authorityKey:authorization.key,
+      route:this.store.route.get(),locale:this.i18n.locale,localeRequest:this.#localeRequest,actorId:session.user.userId,
+      principalId:session.impersonation?.actor.userId??session.user.userId,impersonationId:session.impersonation?.impersonationId??null,
+      opener:active instanceof HTMLElement?active:null,origins:this.#commandOriginElements().map(element=>element.captureCommandDeparture())};
+  }
+  #openCommands(){
+    if(this.store.ui.commandOpen){void this.#closeCommands();return;}
+    if(this.ownerDocument.querySelector("dialog[open],.output-requirement-form,.output-plan-review"))return;
+    this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;
+    const owner=this.#captureNavigationOpening();if(!owner)return;
+    this.#commandOpening=owner;
+    this.#commandActiveKey=null;this.#commandChooseFirst=true;this.#commandSelectionChanged=false;this.#commandComposing=false;
+    this.store.patchUi({commandOpen:true});
+  }
+  async #closeCommands(restoreFocus=true,invalidate=true){
+    const owner=this.#commandOpening;if(invalidate)this.#commandEpoch++;
+    const epoch=this.#commandEpoch;
+    this.querySelector<HTMLDialogElement>(".command-dialog")?.close();
+    this.#commandOpening=null;this.#commandActiveKey=null;this.#commandComposing=false;this.#commandSelectionChanged=false;
+    this.store.patchUi({commandOpen:false,search:""});
+    if(!restoreFocus||!owner)return;
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    try{
+      await this.#restoreCommandOpener(owner,focus,()=>this.isConnected&&epoch===this.#commandEpoch
+        &&this.store.route.get()===owner.route&&this.store.captureAuthorizationScope()?.key===owner.authorityKey);
+    }finally{focus.dispose();}
+  }
+  #commandInputFacts(owner:CommandOpening):CommandDiscoveryInput{
+    const projection=this.store.projection.get(),session=this.store.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];
+    const readable=["creative","canvas"].includes(applicationIdFromRoute(this.store.route.get()))&&this.#commandContextCurrent(owner)
+      &&this.store.sourceOwnershipActive(owner.source)&&permissions.includes("project.read");
+    const activity=scopedFormaActivity(session,projection,this.store.projectNotifications.get(),this.store.reviewInbox.get(),this.store.documentJobs.get());
+    return{readable,authorityKey:owner.authorityKey,projection,events:this.store.eventView.get(),
+      reviews:session?.impersonation?[]:activity.reviews,locale:this.i18n.locale,copy:commandDiscoveryCopy(this.i18n.locale),
+      formatLabel:kind=>kind==="image"?this.i18n.t("artifact.image.label","Image"):this.i18n.system(documentArtifactDefinition(kind).label),
+      // C1 never borrows a Canvas's private selection or reinterprets board-only source.
+      preparation:readable&&applicationIdFromRoute(this.store.route.get())==="creative"&&projection.documentId
+        ?nextActionFacts(this.store,projection.documentId,null):null};
+  }
+  #filteredCommandChoices(owner:CommandOpening){
+    const query=this.store.ui.search;
+    return this.#commandChoices(owner).map((choice,index)=>({choice,index,score:commandMatchScore(choice,query,this.i18n.locale)}))
+      .filter(value=>value.score>=0&&(query.trim()||!value.choice.row||value.choice.id==="generate"))
+      .sort((left,right)=>left.score-right.score||left.index-right.index).slice(0,40).map(value=>value.choice);
+  }
+  #moveCommandSelection(owner:CommandOpening,delta:number){
+    if(this.#commandOpening!==owner||!this.#commandContextCurrent(owner))return;
+    const choices=this.#filteredCommandChoices(owner),index=choices.findIndex(choice=>choice.key===this.#commandActiveKey);
+    const next=index<0?(delta>0?0:choices.length-1):Math.min(choices.length-1,Math.max(0,index+delta));
+    this.#commandActiveKey=choices[next]?.key??null;this.#commandChooseFirst=false;this.#commandSelectionChanged=false;this.requestUpdate();
+  }
+  #captureNavigation(owner:CommandOpening,replaces:boolean,context?:NavigationPresentationContext,presentationCurrent:()=>boolean=()=>true,originRoute:()=>string=()=>owner.route){
+    let allowedRouteFocus:(element:Element)=>boolean=()=>false;
+    const focus=captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>allowedRouteFocus(element)});
+    let expectedFocus=focus,retired:"blocked"|"identity"|null=null,handedOff=false,retained=false;
+    let destinationSource:CapturedSourceOwnership|null=null,destinationRoute:{routeCurrent():boolean}|null=null;
+    const originScope=()=>this.#commandContextCurrent(owner)&&this.store.route.get()===originRoute()
+      &&(!owner.sourceReadable||this.store.sourceOwnershipActive(owner.source));
+    const blocked=()=>replaces&&this.#commandOriginsCurrent(owner,context)?owner.origins.find(origin=>origin.blocked(context)):undefined;
+    const navigation:CommandNavigation={focus,
+      current:()=>{
+        const routeHandoff=!handedOff&&Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),expectedFocus));
+        // Keep observing identity even after a dirty refusal. Equality after an
+        // intervening route/owner change must not revive its toast or focus.
+        if(!this.#commandIntentCurrent(owner)||!handedOff&&!routeHandoff
+          &&(!originScope()||replaces&&!this.#commandOriginsCurrent(owner,context)||!presentationCurrent()))retired="identity";
+        if(destinationSource){
+          if(!this.store.sourceOwnershipActive(destinationSource))retired="identity";
+          destinationRoute??=this.store.captureWorkspaceNavigationFocus(this.store.route.get(),expectedFocus);
+          if(destinationRoute?!destinationRoute.routeCurrent():this.store.route.get()!==originRoute())retired="identity";
+        }
+        if(retired)return false;
+        if(routeHandoff)handedOff=true;
+        if(!handedOff&&blocked())retired="blocked";
+        return !retired;
+      },
+      // Store calls this at its first positive publication/adoption boundary.
+      handoff:()=>{if(!navigation.current()||!focus.current())return false;handedOff=true;return true;},
+      adoptSource:source=>{
+        if(!handedOff||destinationSource||!navigation.current()||!focus.current()||this.store.route.get()!==originRoute()
+          ||!this.store.sourceOwnershipActive(source))return false;
+        destinationSource=source;return navigation.current()&&focus.current();
+      },
+      bind:(lease,allowed)=>{expectedFocus=lease;allowedRouteFocus=allowed;},
+      retain:()=>{retained=true;},
+    };
+    const unsubscribe=this.store.subscribe(()=>{navigation.current();});
+    const reportUnavailable=():NavigationRefusal|undefined=>{
+      if(retired==="identity"||!this.#commandContextCurrent(owner))return;
+      const refusal=originScope()?blocked():undefined;
+      this.store.toast(refusal?this.i18n.t(refusal.reason()):commandDiscoveryCopy(this.i18n.locale).unavailable);
+      return refusal?"current-work":"unavailable";
+    };
+    return {navigation,originScope,blocked,reportUnavailable,
+      sourceCurrent:()=>navigation.current()&&(destinationSource!==null||this.#commandContextCurrent(owner)),
+      destinationSourceCurrent:()=>navigation.current()&&this.store.sourceOwnershipActive(destinationSource??owner.source),
+      refusalCurrent:()=>retired!=="identity"&&originScope(),
+      dispose:()=>{unsubscribe();if(!retained)focus.dispose();}};
+  }
+  // Only this retained route owner releases the exact supplied lease.
+  // Assigned-review borrowers keep their caller's post-arrival validation.
+  releaseExactRetainedArtifactFocus(route:string,focus:OutputNavigationFocusLease){
+    const retained=this.#commandRouteFocus;
+    if(!retained||retained.route!==route||retained.focus!==focus
+      ||libraryFocusFromRoute(route)?.kind!=="artifact")return;
+    this.#commandRouteFocus=null;retained.focus.dispose();
+  }
+  #joinRetainedArtifactOpening(route:string,focus:OutputNavigationFocusLease){
+    const retained=this.#commandRouteFocus;
+    if(!retained||retained.route!==route||retained.focus!==focus
+      ||libraryFocusFromRoute(route)?.kind!=="artifact")return;
+    const library=this.querySelector<FormaLibrary>("forma-library");
+    if(!library?.isConnected||library.closest("forma-shell")!==this
+      ||!FormaElement.hasStoreIdentity(library,this.store))return;
+    const opening=library.artifactRouteOpeningCompletion(route,focus);
+    if(!opening)return;
+    // Completion may precede retain registration. Joining the already-settled
+    // original Promise complements Library's later settlement notification.
+    const release=()=>{if(this.#commandRouteFocus===retained)this.releaseExactRetainedArtifactFocus(route,focus);};
+    void opening.then(release,release);
+  }
+  /** Deliberate UI navigation only; internal save, recovery and permission retirement do not call this. */
+  async navigateFrom(origin:FormaElement,run:InAppNavigationAction,preferences:NavigationPresentationContext={}):Promise<boolean>{
+    if(!this.isConnected||!origin.isConnected||!this.contains(origin)||!FormaElement.hasStoreIdentity(origin,this.store)
+      ||this.store.ui.commandOpen)return false;
+    const presentation=preferences.presentation,opener=presentation?.opener;
+    let presentationClosed=false,nativeClosed=false,nativeCloseEvent=false;
+    let nativeClosing:NavigationClosingPresentation|null=null,cancelNativeClose:(()=>void)|null=null;
+    let nativeAfterCloseRoute:string|undefined,nativeDestination:string|undefined;
+    const presentationCurrent=()=>!presentation||presentation.owner===origin&&origin.isConnected
+      &&origin.closest("forma-shell")===this&&FormaElement.hasStoreIdentity(origin,this.store)
+      &&(presentationClosed?(!nativeClosing||navigationPresentationClosing({closingPresentation:nativeClosing},origin))
+        :navigationPresentationCurrent(presentation));
+    if(!presentationCurrent()||opener&&(!opener.isConnected||opener.ownerDocument!==this.ownerDocument
+      ||!this.contains(opener)||opener.closest("forma-shell")!==this))return false;
+    const context:NavigationPresentationContext|undefined=presentation?{
+      get presentation(){return presentationClosed?undefined:presentation;},
+      get closingPresentation(){return nativeClosing??undefined;},
+    }:undefined;
+    const owner=this.#captureNavigationOpening();if(!owner)return false;
+    const localRoute=typeof run==="function"?null:run.localRoute;
+    let local:LocalNavigation|null=null;
+    if(typeof run!=="function"){
+      const original=owner.origins.find(value=>value.element===origin);
+      const capture=(origin as CommandDepartureOwner).captureLocalNavigation;
+      if(!original||typeof localRoute!=="string"||typeof capture!=="function")return false;
+      local=capture.call(origin,localRoute);
+      if(!local||local.element!==origin||typeof local.prepare!=="function"||!original.current()||!local.current())return false;
+      const retained=local;
+      // Only this registered owner's own exact local transition changes its
+      // predicate. All sibling captures and the original owner identity stay.
+      owner.origins=owner.origins.map(value=>value===original?{
+        element:origin,current:context=>original.current(context)&&retained.current(context),
+        blocked:context=>retained.blocked(context),reason:()=>retained.reason(),
+      }:value);
+    }
+    let expectedOriginRoute=owner.route;
+    const originRoute=()=>{
+      const path=this.store.route.get();
+      // Only the actual original close target chain may consume its one fixed root.
+      // Any other observed route retires the existing capture and cannot revive it.
+      if(nativeCloseEvent&&expectedOriginRoute===owner.route&&nativeAfterCloseRoute===path)expectedOriginRoute=path;
+      return expectedOriginRoute;
+    };
+    const captured=this.#captureNavigation(owner,true,context,presentationCurrent,originRoute),navigation=captured.navigation,focus=navigation.focus;
+    const current=()=>captured.sourceCurrent()&&focus.current();
+    const active=this.ownerDocument.activeElement,popover=active?.closest<HTMLElement>("[popover]:popover-open");
+    const popoverId=popover?.getAttribute("id");
+    const invokers=popoverId?[...this.querySelectorAll<HTMLElement>("[popovertarget]")]
+      .filter(element=>element.getAttribute("popovertarget")===popoverId):[];
+    const invoker=invokers.length===1?invokers[0]:null;
+    let destinationFocus:((element:Element)=>boolean)|null=null;
+    const ownedDestinationFocus=(element:Element)=>Boolean(destinationFocus
+      &&this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus)?.routeCurrent()
+      &&captured.destinationSourceCurrent()&&destinationFocus(element));
+    // Only this same-lease Store-issued route may own its exact block anchor.
+    // routeCurrent is deliberately focus-free, avoiding focus.current recursion.
+    const linkedBlockFocus=(element:Element)=>{
+      const route=this.store.route.get(),arrival=this.store.captureWorkspaceNavigationFocus(route,focus);
+      const documentId=documentIdFromRoute(route),blockId=documentContextBlockFromRoute(route);
+      const current=()=>Boolean(arrival?.routeCurrent())&&captured.sourceCurrent()
+        &&(nativeClosed?captured.destinationSourceCurrent():this.store.sourceOwnershipActive(owner.source));
+      return Boolean(documentId&&blockId&&current()
+        &&outputNavigationOwnedRouteFocus(this.ownerDocument,this.store,{documentId,blockId},current)(element));
+    };
+    navigation.bind(focus,element=>Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus))
+      &&element===this.querySelector("#main-content")
+      ||linkedBlockFocus(element)||ownedDestinationFocus(element)
+      ||element===invoker&&Boolean(invoker?.isConnected&&popover?.isConnected&&!popover.matches(":popover-open"))
+        &&captured.refusalCurrent()&&this.#commandOriginsCurrent(owner,context)
+      ||element===opener&&Boolean(presentationClosed&&opener?.isConnected
+        &&!opener.closest("[hidden],[inert]")&&!opener.matches(":disabled")
+        &&(presentation?.element.tagName!=="DIALOG"||!(presentation.element as HTMLDialogElement).open))
+        &&(captured.refusalCurrent()&&this.#commandOriginsCurrent(owner,context)
+          ||nativeClosed&&nativeDestination===this.store.route.get()
+            &&Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus)?.routeCurrent())
+            &&captured.destinationSourceCurrent()));
+    const options={current,focus,onOriginHandoff:()=>navigation.handoff(),onDestinationSource:(source:CapturedSourceOwnership)=>navigation.adoptSource(source)};
+    const reportUnavailable=()=>{const reason=captured.reportUnavailable();if(reason)preferences.onRefusal?.(reason);};
+    const retainArtifactOpening=(opened:boolean,sameRoute=false)=>{
+      const route=this.store.route.get(),linked=libraryFocusFromRoute(route);
+      if(!opened||linked?.kind!=="artifact"||route===owner.route&&!sameRoute)return opened;
+      const source=this.store.captureSourceOwnership(),arrival=this.store.captureWorkspaceNavigationFocus(route,focus);
+      const artifact=this.store.projection.get().libraryArtifacts.find(value=>value.id===linked.id);
+      if(!current()||!source||!artifact||!arrival?.current())return false;
+      const target={id:artifact.id,documentId:artifact.documentId,sequence:artifact.sequence,
+        sourceEventId:artifact.sourceEventId,contentRef:artifact.contentRef};
+      const routeCurrent=()=>captured.sourceCurrent()&&this.store.sourceOwnershipActive(source)
+        &&arrival.routeCurrent()&&this.store.route.get()===route
+        &&this.store.projection.get().libraryArtifacts.some(value=>value.id===target.id
+          &&value.documentId===target.documentId&&value.sequence===target.sequence
+          &&value.sourceEventId===target.sourceEventId&&value.contentRef===target.contentRef);
+      navigation.bind(focus,element=>{
+        if(!routeCurrent())return false;
+        if(element===this.querySelector("#main-content"))return true;
+        const library=this.querySelector<FormaLibrary>("forma-library"),dialog=element.closest<HTMLDialogElement>("dialog");
+        const viewer=library?.querySelector("forma-document-artifacts");
+        return Boolean(library?.isConnected&&FormaElement.hasStoreIdentity(library,this.store)
+          &&viewer?.isConnected&&viewer.documentId===target.documentId&&dialog?.open
+          &&dialog===viewer.querySelector(".document-artifact-view")&&dialog.closest("forma-library")===library);
+      });
+      // Reuse the existing route-owned lease until Library's exact async
+      // opening retires. Do not dispose it at the route-only return.
+      if(this.#commandRouteFocus?.focus!==focus)this.#commandRouteFocus?.focus.dispose();
+      this.#commandRouteFocus={route,focus,current:()=>routeCurrent()&&arrival.current()};
+      navigation.retain();
+      this.#joinRetainedArtifactOpening(route,focus);
+      return true;
+    };
+    const runLocal=async()=>{
+      const retained=local,store=this.store;
+      if(!retained||localRoute===null||retained.prepare()!==true||!current())return false;
+      const opened=await this.store.transitionWorkspace(localRoute,options);
+      if(!retainArtifactOpening(opened,true))return false;
+      if(!retained.afterCommit)return true;
+      const route=store.route.get(),arrival=store.captureWorkspaceNavigationFocus(route,focus);
+      let arrivalRetired=false;
+      const routeCurrent=()=>{
+        if(this.store!==store||!origin.isConnected||origin.closest("forma-shell")!==this||!this.contains(origin)
+          ||!FormaElement.hasStoreIdentity(origin,store)||!captured.destinationSourceCurrent()
+          ||!arrival?.routeCurrent()||store.route.get()!==route)arrivalRetired=true;
+        return !arrivalRetired;
+      };
+      const arrivalCurrent=()=>routeCurrent()&&focus.current();
+      if(!arrivalCurrent())return false;
+      await retained.afterCommit({current:arrivalCurrent,focus});
+      // The final owner focus.run may intentionally consume this same lease.
+      // Only its committed route/source remain to validate after completion.
+      return routeCurrent();
+    };
+    try{
+      if(!current()){
+        if(captured.refusalCurrent()&&captured.blocked())reportUnavailable();
+        return false;
+      }
+      const result=typeof run==="function"?await run({...options,
+        bindDestinationFocus:allowed=>{
+          if(destinationFocus||!current()||presentation&&!presentationClosed)return false;
+          destinationFocus=allowed;return true;
+        },
+        openAssignedReview:task=>presentation&&!presentationClosed?Promise.resolve(false):this.#openAssignedReview(task,owner,navigation),
+        closePresentation:close=>{
+          if(!presentation||presentationClosed||!current())return false;
+          // Remove only this exception before cleanup. New raw work or another
+          // presentation still blocks through the unchanged captured owners.
+          presentationClosed=true;close();return current();
+        },
+        closeNativePresentation:async(close,options)=>{
+          const element=presentation?.element,parent=options.parent;
+          if(!presentation||presentationClosed||!current()||element?.tagName!=="DIALOG"
+            ||!parent.isConnected||!parent.contains(origin)||parent.closest("forma-shell")!==this
+            ||!FormaElement.hasStoreIdentity(parent,this.store))return false;
+          const after=options.afterCloseRoute;
+          if(after!==undefined&&(!parent.matches("forma-library")||origin.closest("forma-library")!==parent
+            ||parent.querySelector("forma-document-artifacts")!==origin
+            ||libraryFocusFromRoute(owner.route)?.kind!=="artifact"||after!==libraryRootRoute(owner.route)))return false;
+          let closeReturned=false;const closeStore=this.store;
+          nativeClosing={presentation,parent,
+            get originalRoute(){return after!==undefined&&expectedOriginRoute===after&&closeStore.route.get()===after?owner.route:undefined;},
+            closedCurrent:()=>parent.closest("forma-shell")===this
+              &&FormaElement.hasStoreIdentity(parent,this.store)&&(closeReturned?options.closedCurrent():presentation.current())};
+          nativeAfterCloseRoute=after;presentationClosed=true;
+          const cancelRetired=()=>{if(!current())cancelNativeClose?.();};
+          const stopClosing=this.store.subscribe(cancelRetired);
+          for(const type of ["pointerdown","keydown","focusin"])this.ownerDocument.addEventListener(type,cancelRetired,true);
+          try{
+            const closed=await joinNativeDialogClose(element as HTMLDialogElement,{
+              current,close:()=>close(current),closing:value=>{nativeCloseEvent=value;},returned:()=>{closeReturned=true;},
+              cancellation:value=>{cancelNativeClose=value;},
+            });
+            if(!closed||(element as HTMLDialogElement).open||!options.closedCurrent()||!current())return false;
+            nativeClosed=true;return true;
+          }finally{
+            stopClosing();for(const type of ["pointerdown","keydown","focusin"])this.ownerDocument.removeEventListener(type,cancelRetired,true);
+            nativeCloseEvent=false;nativeAfterCloseRoute=undefined;if(!nativeClosed)nativeClosing=null;
+          }
+        },
+        route:(path,preferences)=>{
+          if(nativeClosed)nativeDestination=path;
+          const opened=this.#route(path,{...options,...preferences},false);
+          return typeof opened==="boolean"?retainArtifactOpening(opened):opened.then(retainArtifactOpening);
+        }}):await runLocal();
+      if(result===false&&focus.current())reportUnavailable();
+      return result!==false;
+    }catch{if(focus.current())reportUnavailable();return false;}
+    finally{(cancelNativeClose as (()=>void)|null)?.();nativeClosing=null;captured.dispose();}
+  }
+  async #runCommand(key:string|null,owner:CommandOpening){
+    if(!key||this.#commandComposing||this.#commandOpening!==owner||!this.#commandContextCurrent(owner)||this.store.route.get()!==owner.route)return;
+    const choice=this.#filteredCommandChoices(owner).find(value=>value.key===key);if(!choice)return;
+    if(choice.row&&!commandDiscoveryTargetAvailable(choice.row,this.#commandInputFacts(owner)))return;
+    const replaces=this.#commandReplacesOrigin(choice,owner);
+    // Native close is synchronous on this false-restore path. Capture the one
+    // gesture lease before yielding; a later gesture cannot acquire it again.
+    const closing=this.#closeCommands(false,false);
+    const captured=this.#captureNavigation(owner,replaces);
+    const {navigation,originScope,blocked,reportUnavailable}=captured,focus=navigation.focus;
+    try{
+      await closing;
+      if(!navigation.current()||!focus.current()){
+        if(captured.refusalCurrent()&&blocked()){
+          reportUnavailable();
+          await this.#restoreCommandOpener(owner,focus,()=>captured.refusalCurrent()&&this.#commandOriginsCurrent(owner));
+        }
+        return;
+      }
+      if(choice.row){
+        const opened=await this.#openCommandTarget(choice.row,owner,navigation);
+        if(!opened)reportUnavailable();
+      }else{
+        const current=this.#commandChoices(owner).find(value=>value.key===key);if(!current)return;
+        if(current.route===owner.route){
+          await this.#restoreCommandOpener(owner,focus,()=>navigation.current()&&originScope());
+        }else if(current.id==="add-context")await this.#openContextComposer(()=>this.#commandContextCurrent(owner),navigation);
+        else if(current.route!==undefined){
+          navigation.bind(focus,element=>Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus))
+            &&element===this.querySelector("#main-content"));
+          await this.#route(current.route,{current:()=>navigation.current()&&this.#commandContextCurrent(owner),focus,onOriginHandoff:()=>navigation.handoff()});
+        }else await current.run?.();
+      }
+    }catch{reportUnavailable();}
+    finally{captured.dispose();}
+  }
+  async #openAssignedReview(task:AssignedReviewTask,owner:CommandOpening,navigation:CommandNavigation):Promise<boolean>{
+    if(!navigation.current()||!this.#commandContextCurrent(owner)||!this.store.sourceOwnershipActive(owner.source))return false;
+    const identity=commandReviewIdentity(task);
+    // Settings can show another assigned project's envelope. Command discovery
+    // keeps its existing scoped selection before entering this shared receiver.
+    if(this.store.reviewInbox.get().filter(value=>commandReviewMatches(identity,value)).length!==1)return false;
+    // Store owns the context handshake. Bind its exact committed destination once,
+    // then join Library's existing opening instead of treating a route as arrival.
+    const signature=JSON.stringify(identity);
+    let arrival:{route:string;source:CapturedSourceOwnership;authorityKey:string}|null=null;
+    const destinationCurrent=()=>{
+      const route=this.store.route.get(),session=this.store.session.get(),context=session?.projectContext;
+      const linked=libraryFocusFromRoute(route),options=artifactFocusOptionsFromRoute(route);
+      if(!this.#commandIntentCurrent(owner)||JSON.stringify(commandReviewIdentity(task))!==signature
+        ||!this.store.captureWorkspaceNavigationFocus(route,focus)||!session||session.impersonation
+        ||context?.organizationId!==task.organizationId||context.projectAccessId!==task.projectAccessId
+        ||context.projectId!==task.projectId||!context.permissions.includes("project.review.approve")
+        ||linked?.kind!=="artifact"||linked.id!==task.artifactId||!options||options==="invalid"
+        ||options.expectedRevision!==task.revision||options.expectedContentSha256!==task.contentSha256||options.intent!=="review"
+        ||this.store.reviewInbox.get().filter(value=>commandReviewMatches(identity,value)).length!==1)return false;
+      if(!arrival){
+        const source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope();
+        if(!source||!authorization||!this.store.sourceOwnershipActive(source))return false;
+        arrival={route,source,authorityKey:authorization.key};
+      }
+      return route===arrival.route&&this.store.sourceOwnershipActive(arrival.source)
+        &&this.store.captureAuthorizationScope()?.key===arrival.authorityKey;
+    };
+    const nativeFocus=navigation.focus;
+    const ownedRouteFocus=(element:Element)=>{
+      if(!destinationCurrent())return false;
+      if(element===this.querySelector("#main-content"))return true;
+      const dialog=element.closest<HTMLDialogElement>("dialog"),library=dialog?.closest<FormaLibrary>("forma-library");
+      const viewer=dialog?.closest("forma-document-artifacts");
+      return Boolean(dialog?.matches(".document-artifact-view")&&library?.isConnected&&FormaElement.hasStoreIdentity(library,this.store)
+        &&viewer?.documentId===task.documentId);
+    };
+    // One native lease: the wrapper carries the same command/task owner into
+    // the existing route opening; it does not acquire another focus lifetime.
+    const focus:OutputNavigationFocusLease={
+      current:()=>navigation.current()&&this.#commandIntentCurrent(owner)
+        &&(!arrival&&!this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus)||destinationCurrent())
+        &&nativeFocus.current(),
+      run:(element,action)=>focus.current()&&nativeFocus.run(element,()=>focus.current()&&action()),
+      dispose:()=>nativeFocus.dispose(),
+    };
+    navigation.bind(focus,ownedRouteFocus);
+    try{
+      if(!await this.store.openAssignedReview(task,{current:()=>focus.current(),focus,onOriginHandoff:()=>navigation.handoff(),onDestinationSource:source=>navigation.adoptSource(source)})||!destinationCurrent()||!focus.current())return false;
+      for(let attempt=0;attempt<24&&destinationCurrent()&&focus.current();attempt++){
+        await new Promise<void>(resolve=>window.requestAnimationFrame(()=>resolve()));
+        if(!destinationCurrent()||!focus.current())return false;
+        const libraries=[...this.ownerDocument.querySelectorAll<FormaLibrary>("forma-library")]
+          .filter(value=>value.isConnected&&FormaElement.hasStoreIdentity(value,this.store));
+        if(libraries.length>1)return false;
+        if(libraries.length===1)return await libraries[0].awaitArtifactRouteOpening(identity,
+          {current:()=>destinationCurrent()&&focus.current()})&&destinationCurrent()&&focus.current();
+      }
+      return false;
+    }finally{focus.dispose();}
+  }
+  async #openCommandTarget(row:CommandDiscoveryRow,owner:CommandOpening,navigation:CommandNavigation):Promise<boolean>{
+    const target=row.target,sourceCurrent=()=>this.#commandContextCurrent(owner)&&this.store.sourceOwnershipActive(owner.source);
+    if(!sourceCurrent()||!commandDiscoveryTargetAvailable(row,this.#commandInputFacts(owner)))return false;
+    if(target.kind==="review"){
+      const session=this.store.session.get(),projection=this.store.projection.get();
+      const activity=scopedFormaActivity(session,projection,this.store.projectNotifications.get(),this.store.reviewInbox.get(),this.store.documentJobs.get());
+      const task=activity.reviews.find(value=>commandReviewMatches(target.identity,value));
+      return task?this.#openAssignedReview(task,owner,navigation):false;
+    }
+    const projection=this.store.projection.get();
+    const documentId=target.kind==="prepare"?target.target.documentId:target.kind==="project"?projection.documentId:target.documentId;
+    const documentTitle=projection.documents.find(value=>value.id===documentId)?.title??"";
+    const documentRoute=withDocumentInRoute("/",documentId,documentTitle);
+    const destination=target.kind==="project"?"/studio/project":target.kind==="document"||target.kind==="prepare"?documentRoute
+      :target.kind==="decision"?target.scope==="document"?documentContextBlockRoute(documentId,documentTitle,target.blockId):libraryFocusRoute("block",target.blockId,row.label,owner.route)
+      :target.kind==="image"?libraryFocusRoute("output",target.outputId,row.label,documentRoute)
+      :artifactFocusRoute(target.artifactId,row.label,{expectedRevision:target.revision,intent:"inspect"},documentRoute);
+    let handedOff=false,focusTransferred=false;
+    const targetCurrent=()=>sourceCurrent()&&(handedOff&&target.kind==="prepare"
+      ?creativePreparationTargetAvailable(target.target,nextActionFacts(this.store,target.target.documentId,null),"editing")
+      :commandDiscoveryTargetAvailable(row,this.#commandInputFacts(owner)));
+    const ownedDestination=()=>Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus));
+    const blockFocus=target.kind==="decision"&&target.scope==="document"
+      ?outputNavigationOwnedRouteFocus(this.ownerDocument,this.store,{documentId,blockId:target.blockId},targetCurrent):()=>false;
+    const focus=navigation.focus;
+    navigation.bind(focus,element=>{
+      if(!targetCurrent()||!ownedDestination())return false;
+      const workspace=this.querySelector<FormaWorkspace>("forma-workspace");
+      if(element===this.querySelector("#main-content"))return true;
+      if(blockFocus(element))return true;
+      if(target.kind==="image"||target.kind==="artifact"||target.kind==="decision"&&target.scope!=="document"){
+        const linked=libraryFocusFromRoute(this.store.route.get()),kind=target.kind==="image"?"output":target.kind==="artifact"?"artifact":"block";
+        const id=target.kind==="image"?target.outputId:target.kind==="artifact"?target.artifactId:target.blockId;
+        const library=this.querySelector<FormaLibrary>("forma-library"),dialog=element.closest("dialog");
+        return Boolean(linked?.kind===kind&&linked.id===id&&library&&FormaElement.hasStoreIdentity(library,this.store)&&dialog?.open&&library.contains(dialog)
+          &&dialog.matches(kind==="artifact"?".document-artifact-view":".library-focus-dialog"));
+      }
+      if(target.kind!=="prepare"||!workspace||!FormaElement.hasStoreIdentity(workspace,this.store)||this.store.projection.get().documentId!==documentId)return false;
+      if(target.target.medium&&workspace.isConnected&&element.isConnected
+        &&documentIdFromRoute(this.store.route.get())===documentId
+        &&element===workspace.querySelector<HTMLElement>('[data-workbench-pane="result"]')
+        &&element.getAttribute("aria-pressed")==="true")return true;
+      const dialog=element.closest("dialog");
+      return Boolean(dialog?.open&&workspace.contains(dialog)&&dialog.matches(".next-format-dialog,.generation-details-dialog,.document-artifact-create"));
+    });
+    const current=()=>navigation.current()&&targetCurrent()&&focus.current()&&(this.store.route.get()===owner.route||ownedDestination());
+    // The project path can call transitionWorkspace and then openProject.
+    // Consume this one callback at whichever Store boundary is first.
+    let onOriginHandoff:(()=>boolean)|undefined=()=>{
+      if(!navigation.handoff())return false;
+      onOriginHandoff=undefined;return true;
+    };
+    try{
+      if(target.kind==="project"){
+        if(applicationIdFromRoute(this.store.route.get())!==applicationIdFromRoute(destination)
+          &&!await this.store.transitionWorkspace(destination,{current,focus,documentId,onOriginHandoff}))return false;
+        const result=await this.store.openProject(target.projectId,destination,{current,focus,onOriginHandoff});
+        return Boolean(result&&current()&&this.store.projection.get().projectId===target.projectId);
+      }
+      if(applicationIdFromRoute(this.store.route.get())!==applicationIdFromRoute(destination)){
+        if(!await this.store.transitionWorkspace(destination,{current,focus,documentId,onOriginHandoff}))return false;
+      }else if(target.kind==="decision"&&target.scope!=="document")this.store.setRoute(destination,{current,focus,onOriginHandoff});
+      else if(!await this.store.openDocument(documentId,destination,"command-menu",{current,focus,onOriginHandoff}))return false;
+      const arrived=this.store.route.get(),arrivalNavigation=this.store.captureWorkspaceNavigationFocus(arrived,focus);
+      const arrivedCurrent=()=>targetCurrent()&&Boolean(arrivalNavigation?.current())&&this.store.route.get()===arrived;
+      if(!arrivedCurrent())return false;
+      if(target.kind!=="prepare"){
+        // The existing Workspace or Library owns its asynchronous exact
+        // opening. Keep the same lease until that route's owner retires it.
+        if(target.kind==="artifact"||target.kind==="decision"&&target.scope==="document"){
+          this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus={route:arrived,focus,current:arrivedCurrent};focusTransferred=true;navigation.retain();
+          if(target.kind==="artifact")this.#joinRetainedArtifactOpening(arrived,focus);
+        }
+        return true;
+      }
+      await loadRouteComponent(arrived);if(!arrivedCurrent())return false;
+      await this.updateComplete;if(!arrivedCurrent())return false;
+      const workspace=this.querySelector<FormaWorkspace>("forma-workspace");
+      if(!workspace||!FormaElement.hasStoreIdentity(workspace,this.store))return false;
+      await workspace.updateComplete;if(!arrivedCurrent()||workspace!==this.querySelector("forma-workspace"))return false;
+      const required=(stage:CreativePreparationStage)=>sourceCurrent()&&this.store.route.get()===arrived
+        &&workspace.isConnected&&workspace===this.querySelector("forma-workspace")
+        &&creativePreparationTargetAvailable(target.target,nextActionFacts(this.store,documentId,null),stage)
+        &&(handedOff||focus.current());
+      const opened=await workspace.openOutputPreparation(target.target,{current:required,focus});
+      if(opened)handedOff=true;
+      return opened;
+    }finally{if(!focusTransferred)focus.dispose();}
+  }
+  async #openContextComposer(callerCurrent:()=>boolean=()=>true,navigationOwner?:CommandNavigation){
+    const request=++this.#contextOpening,epoch=this.#commandEpoch,projection=this.store.projection.get();
+    if(!projection.documentId){this.store.toast("Open a document before adding a creative decision.");return;}
+    const source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope();
+    if(!source||!authorization||!this.store.sourceOwnershipActive(source))return;
+    const originRoute=this.store.route.get();
+    let arrivedRoute=originRoute,navigation:{current:()=>boolean}|null=null,admitted=false;
+    const scopeCurrent=()=>this.isConnected&&request===this.#contextOpening&&epoch===this.#commandEpoch&&callerCurrent()
+      &&this.store.sourceOwnershipActive(source)&&this.store.authorizationScopeActive(authorization)
+      &&this.store.projection.get().projectId===projection.projectId&&this.store.projection.get().documentId===projection.documentId;
+    const workspaceNow=()=>{
+      const matches=[...this.querySelectorAll<FormaWorkspace>("forma-workspace")]
+        .filter(value=>value.isConnected&&FormaElement.hasStoreIdentity(value,this.store));
+      return matches.length===1?matches[0]:null;
+    };
+    const ownsRoute=()=>this.store.route.get()===arrivedRoute
+      &&(!navigation||Boolean(this.store.captureWorkspaceNavigationFocus(arrivedRoute,focus)));
+    const ownedRouteFocus=(element:Element)=>{
+      if(!scopeCurrent()||!ownsRoute())return false;
+      if(navigation&&element===this.querySelector("#main-content"))return true;
+      const workspace=workspaceNow(),dialog=element.closest("dialog");
+      return Boolean(workspace&&dialog?.matches(".block-composer-dialog")&&workspace.contains(dialog));
+    };
+    const focus=navigationOwner?.focus??captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus});
+    navigationOwner?.bind(focus,ownedRouteFocus);
+    const openingCurrent=()=>scopeCurrent()&&(!navigationOwner||navigationOwner.current())&&ownsRoute()&&(!navigation||navigation.current())&&focus.current();
+    try{
+      if(!openingCurrent())return;
+      if(documentViewFromRoute(originRoute)!=="document"){
+        this.store.setRoute(withDocumentInRoute("/",projection.documentId,projection.documentTitle),{current:openingCurrent,focus,
+          ...(navigationOwner?{onOriginHandoff:()=>navigationOwner.handoff()}:{})});
+        arrivedRoute=this.store.route.get();
+        navigation=this.store.captureWorkspaceNavigationFocus(arrivedRoute,focus);
+        if(!navigation||documentViewFromRoute(arrivedRoute)!=="document"||documentIdFromRoute(arrivedRoute)!==projection.documentId)return;
+        await loadRouteComponent(arrivedRoute);if(!openingCurrent())return;
+        await this.updateComplete;if(!openingCurrent())return;
+        await new Promise<void>(resolve=>window.requestAnimationFrame(()=>resolve()));if(!openingCurrent())return;
+      }
+      const workspace=workspaceNow();
+      if(!workspace){if(openingCurrent())this.store.toast("The document is still opening. Try again in a moment.");return;}
+      await workspace.updateComplete;if(!openingCurrent()||workspaceNow()!==workspace)return;
+      // This context-only entry preserves an already-present Ask draft while
+      // the existing native-opening owner still protects actual promotion.
+      admitted=await workspace.openContextComposer({
+        current:()=>scopeCurrent()&&ownsRoute()&&workspaceNow()===workspace&&(admitted||(!navigationOwner||navigationOwner.current())&&focus.current()),focus,
+      });
+      if(!admitted&&openingCurrent())this.store.toast(this.i18n.t("next.exact.unavailable","This exact action changed or is no longer available. Review the current document."));
+    }finally{focus.dispose();}
   }
   #commandInput(event: Event) {
     if (this.#commandComposing || (event instanceof InputEvent && event.isComposing)) return;
     const value = (event.target as HTMLInputElement).value;
     if (value === this.store.ui.search) return;
-    this.#commandIndex = 0;
+    this.#commandActiveKey=null;this.#commandChooseFirst=true;this.#commandSelectionChanged=false;
     this.store.patchUi({ search: value });
   }
 
-  #commands() {
-    const normalize = (value: string) => value.toLocaleLowerCase(this.i18n.locale).normalize("NFD").replace(/(\p{Script=Latin})\p{Mark}+/gu, "$1").normalize("NFC");
-    const query = normalize(this.store.ui.search);
+  #commandChoices(owner:CommandOpening):CommandChoice[] {
+    const copy=commandDiscoveryCopy(this.i18n.locale),discovery=projectCommandDiscovery(this.#commandInputFacts(owner));
+    const generic=discovery.find(row=>row.target.kind==="prepare"&&row.preparationChoice==="generic");
     const path=this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);
     const session=this.store.session.get();
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
     const creative = this.i18n.t("shell.creative", "Creative");
     const document = this.i18n.t("command.document", "Document");
     const projection = this.store.projection.get();
+    const permissions=session?.projectContext?.permissions??session?.capabilities??[];
+    const canPrepare=permissions.includes("project.author")&&permissions.includes("project.output.request")&&this.store.sourceOwnershipActive(owner.source);
     const creativeNavigationCommands = application.navigation.filter((item) => ["projects", "work", "explore", "activity", "deliver"].includes(item.id)).map((item) => ({
       id: `open-${item.id}`,
       label: this.i18n.t("command.openNavigation", "Open {name}", { name: this.i18n.t(`shell.navigation.${item.id}`, item.label) }),
       hint: creative,
-      run: () => this.#route(item.id === "work" ? creativeCreationHref(projection, (documentId, documentTitle) => withDocumentInRoute(item.href, documentId, documentTitle)) : withProjectTaskDocumentInRoute(item.href, projection.documentId, this.store.route.get())),
+      route: item.id === "work" ? creativeCreationHref(projection, (documentId, documentTitle) => withDocumentInRoute(item.href, documentId, documentTitle)) : withProjectTaskDocumentInRoute(item.href, projection.documentId, this.store.route.get()),
     }));
     const creativeCommands = [
       ...creativeNavigationCommands,
-      { id: "generate", label: this.i18n.t("command.generate", "Generate from current context"), hint: this.i18n.t("shell.navigation.create", "Create"), run: () => this.#generateFromCommand() },
+      { id: "generate", label: generic?.label??copy.chooseDocument, hint: generic?.hint??document, route: "/projects" },
       { id: "add-context", label: simplifiedEditor ? this.i18n.t("command.addGoal", "Add a goal or creative decision") : this.i18n.t("command.addDecision", "Add a creative decision"), hint: document, run: () => this.#openContextComposer() },
-      { id: "open-library", label: this.i18n.t("command.openLibrary", "Open reusable library"), hint: creative, run: () => this.#route(withProjectTaskDocumentInRoute("/library", projection.documentId, this.store.route.get())) },
-      { id: "open-settings", label: this.i18n.t("command.openSettings", "Review personal privacy and usage"), hint: creative, run: () => this.#route("/settings") },
-      { id: "run-scout", label: this.i18n.t("command.runScout", "Run a bounded scout report"), hint: creative, run: () => this.#route("/scout") },
-      { id: "review-memory", label: this.i18n.t("command.reviewMemory", "Review taste and time memory"), hint: creative, run: () => this.#route("/memory") },
-      { id: "open-sessions", label: this.i18n.t("command.openSessions", "Resume a previous creative session"), hint: creative, run: () => this.#route("/sessions") },
+      { id: "open-library", label: this.i18n.t("command.openLibrary", "Open reusable library"), hint: creative, route: withProjectTaskDocumentInRoute("/library", projection.documentId, this.store.route.get()) },
+      { id: "open-settings", label: this.i18n.t("command.openSettings", "Review personal privacy and usage"), hint: creative, route: "/settings" },
+      { id: "run-scout", label: this.i18n.t("command.runScout", "Run a bounded scout report"), hint: creative, route: "/scout" },
+      { id: "review-memory", label: this.i18n.t("command.reviewMemory", "Review taste and time memory"), hint: creative, route: "/memory" },
+      { id: "open-sessions", label: this.i18n.t("command.openSessions", "Resume a previous creative session"), hint: creative, route: "/sessions" },
       { id: "undo", label: this.i18n.t("command.undo", "Undo last authored change"), hint: "⌘Z", run: () => this.store.undo() },
       {id:"share",label:this.i18n.t("command.share","Share or download this document"),hint:document,run:()=>this.#openShare()},
-    ].filter((command)=>!session?.projectContext||((command.id!=="share"||this.store.canManageProjectShares())&&!['run-scout','review-memory','open-sessions'].includes(command.id)&&(command.id!=="generate"||session.projectContext.permissions.includes("project.output.request"))&&(!["add-context","undo"].includes(command.id)||session.projectContext.permissions.includes("project.author"))));
+    ].filter(command=>(command.id!=="generate"||canPrepare)&&(!["add-context","undo"].includes(command.id)||permissions.includes("project.author"))
+      &&(!session?.projectContext||((command.id!=="share"||this.store.canManageProjectShares())&&!['run-scout','review-memory','open-sessions'].includes(command.id))));
     const applicationCommands=[
-      ...application.navigation.filter((item)=>!(session?.projectContext&&applicationId==="canvas"&&item.id==="proposals")&&navigationItemAccessible(item,{role:session?.user.role,principalRole:session?.impersonation?.actor.role,capabilities:session?.capabilities,canvasAccess:session?.canvas.access})).map((item)=>({id:item.id,label:this.i18n.t("command.openNavigation","Open {name}",{name:this.i18n.t("shell.navigation."+item.id,item.label)}),hint:this.i18n.t("shell."+applicationId,application.label),run:()=>this.#route(withProjectTaskDocumentInRoute(item.href, projection.documentId, this.store.route.get()))})),
-      {id:"return-creative",label:this.i18n.t("command.returnCreative","Return to Creator Workspace"),hint:this.i18n.t("shell.application","Application"),run:()=>this.#route("/projects")},
+      ...application.navigation.filter((item)=>!(session?.projectContext&&applicationId==="canvas"&&item.id==="proposals")&&navigationItemAccessible(item,{role:session?.user.role,principalRole:session?.impersonation?.actor.role,capabilities:session?.capabilities,canvasAccess:session?.canvas.access})).map((item)=>({id:item.id,label:this.i18n.t("command.openNavigation","Open {name}",{name:this.i18n.t("shell.navigation."+item.id,item.label)}),hint:this.i18n.t("shell."+applicationId,application.label),route:withProjectTaskDocumentInRoute(item.href, projection.documentId, this.store.route.get())})),
+      {id:"return-creative",label:this.i18n.t("command.returnCreative","Return to Creator Workspace"),hint:this.i18n.t("shell.application","Application"),route:"/projects"},
     ];
-    const commands=(applicationId==="creative"?creativeCommands:applicationCommands).filter((command) => normalize(command.label).includes(query) || normalize(command.hint).includes(query));
-    const run = async (index: number) => { const command = commands[index]; if (!command) return; this.store.patchUi({ commandOpen: false, search: "" }); this.#commandIndex = 0; this.#commandComposing = false; await command.run(); };
-    return html`<dialog class="command-dialog" open closedby="any" aria-labelledby="command-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget){this.#commandComposing=false;this.store.patchUi({commandOpen:false});}}}>
-      <form class="command-card" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!this.#commandComposing)void run(this.#commandIndex);}}>
-        <label id="command-title" class="sr-only" for="command-search">${this.i18n.t("command.search","Search commands")}</label>
-        <div class="command-search"><span>${icon("search")}</span><input id="command-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results" aria-activedescendant=${commands[this.#commandIndex] ? `command-option-${commands[this.#commandIndex]!.id}` : nothing} autofocus .placeholder=${this.i18n.t("command.placeholder","Type a command…")} .value=${this.#commandComposing ? noChange : this.store.ui.search} @input=${this.#commandInput} @compositionstart=${()=>{this.#commandComposing=true;}} @compositionend=${(event:CompositionEvent)=>{this.#commandComposing=false;this.#commandInput(event);}} @keydown=${(event: KeyboardEvent) => { if (event.isComposing || this.#commandComposing) return; if (event.key === "ArrowDown") { event.preventDefault(); this.#commandIndex = Math.min(commands.length - 1, this.#commandIndex + 1); this.requestUpdate(); } else if (event.key === "ArrowUp") { event.preventDefault(); this.#commandIndex = Math.max(0, this.#commandIndex - 1); this.requestUpdate(); } }}><button type="submit" class="sr-only" tabindex="-1" ?disabled=${!commands.length}>${this.i18n.t("command.run","Run command")}</button><kbd>esc</kbd></div>
-        <div id="command-results" class="command-results" role="listbox">${commands.map((command, index) => html`<button type="button" id=${`command-option-${command.id}`} class="command-row" role="option" aria-selected=${index === this.#commandIndex} @mouseenter=${() => { this.#commandIndex = index; this.requestUpdate(); }} @click=${() => run(index)}><span>${command.label}</span><small>${command.hint}</small></button>`)}</div>
+    const staticChoices=(applicationId==="creative"?creativeCommands:applicationCommands).map(command=>({
+      ...command,key:command.id==="generate"&&generic?generic.key:"static:"+command.id,terms:command.id==="generate"?[copy.generateAlias]:[],
+      ...(command.id==="generate"&&generic?{row:generic}:{})}));
+    return[...staticChoices,...discovery.filter(row=>row!==generic).map(row=>({id:"discovery:"+row.key,key:row.key,label:row.label,hint:row.hint,terms:row.terms,row}))];
+  }
+  #commands() {
+    const owner=this.#commandOpening;
+    if(!owner||!this.#commandContextCurrent(owner)||owner.route!==this.store.route.get())return nothing;
+    const commands=this.#filteredCommandChoices(owner),copy=commandDiscoveryCopy(this.i18n.locale);
+    if(this.#commandChooseFirst){this.#commandActiveKey=commands[0]?.key??null;this.#commandChooseFirst=false;}
+    else if(this.#commandActiveKey&&!commands.some(command=>command.key===this.#commandActiveKey)){this.#commandActiveKey=null;this.#commandSelectionChanged=true;}
+    const activeIndex=commands.findIndex(command=>command.key===this.#commandActiveKey);
+    const applicationId=applicationIdFromRoute(this.store.route.get()),simplifiedEditor=documentViewFromRoute(this.store.route.get())==="editor";
+    return html`<dialog class="command-dialog" open closedby="any" aria-labelledby="command-title"
+      @cancel=${(event:Event)=>{event.preventDefault();void this.#closeCommands();}}
+      @close=${()=>{if(this.#commandOpening===owner)void this.#closeCommands();}}
+      @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)void this.#closeCommands();}}>
+      <form class="command-card" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!this.#commandComposing)void this.#runCommand(this.#commandActiveKey,owner);}}>
+        <label id="command-title" class="sr-only" for="command-search">${copy.search}</label>
+        <div class="command-search"><span>${icon("search")}</span><input id="command-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results" aria-describedby="command-scope"
+          aria-activedescendant=${activeIndex>=0?"command-option-"+activeIndex:nothing} autofocus .placeholder=${copy.placeholder}
+          .value=${this.#commandComposing?noChange:this.store.ui.search} @input=${this.#commandInput}
+          @compositionstart=${()=>{this.#commandComposing=true;}} @compositionend=${(event:CompositionEvent)=>{this.#commandComposing=false;this.#commandInput(event);}}
+          @keydown=${(event:KeyboardEvent)=>{if(event.isComposing||event.key==="Process"||this.#commandComposing)return;
+            if(event.key==="ArrowDown"||event.key==="ArrowUp"){event.preventDefault();this.#moveCommandSelection(owner,event.key==="ArrowDown"?1:-1);}}}>
+          <button type="submit" class="sr-only" tabindex="-1" ?disabled=${activeIndex<0}>${this.i18n.t("command.run","Run command")}</button><kbd>esc</kbd></div>
+        <p id="command-scope">${copy.scope}</p>
+        <p class="sr-only" role="status">${this.#commandSelectionChanged?copy.changed:commands.length?"":copy.empty}</p>
+        <div class="command-results">
+        <div id="command-results" role="listbox">${repeat(commands,command=>command.key,(command,index)=>html`<button type="button" tabindex="-1"
+          id=${"command-option-"+index} class="command-row" role="option" aria-selected=${command.key===this.#commandActiveKey}
+          @mouseenter=${()=>{if(this.#commandOpening===owner&&this.#commandContextCurrent(owner)){this.#commandActiveKey=command.key;this.#commandSelectionChanged=false;this.requestUpdate();}}}
+          @click=${()=>void this.#runCommand(command.key,owner)}><span dir="auto">${command.label}</span><small dir="auto">${command.hint}</small></button>`)}</div>
+        ${commands.length?nothing:html`<p>${copy.empty}</p>`}
+        </div>
         <footer><span>${this.i18n.t("command.navigate","↑↓ navigate")}</span><span>${this.i18n.t("command.run","↵ run")}</span><span>${applicationId==="creative"?(simplifiedEditor ? this.i18n.t("command.autoSave","Changes save automatically") : this.i18n.t("command.appendOrNavigate","Commands append or navigate")):applicationId==="canvas"?this.i18n.t("command.canvasHistory","Canvas changes append durable operations"):this.i18n.t("command.readOnlyNavigation","Navigation does not mutate creative state")}</span></footer>
       </form>
     </dialog>`;
@@ -380,23 +1141,23 @@ export class FormaShell extends FormaElement {
         <div class="top-actions">
           ${documentFocusFromRoute(path)&&isCreative&&session?html`<span class="document-focus-actor" dir="auto">${session.user.displayName}${session.projectContext?html`<small>${focusedOrganization&&focusedMembership?html`${focusedOrganization.name} · ${this.i18n.t(`workspace.admin.role.${focusedMembership.role}`,focusedMembership.role)}`:this.i18n.t("projects.workspaceKind","Creative workspace")}</small>`:nothing}</span><button type="button" class="button ghost compact document-focus-activity" aria-label=${attention?this.i18n.t("activity.navigationBadge","Activity, {count} items need attention",{count:String(attention)}):this.i18n.t("shell.navigation.activity","Activity")} @click=${()=>this.#route(withProjectTaskDocumentInRoute("/activity",projection.documentId, this.store.route.get()))}>${icon("spark")}${attention?html`<span>${this.i18n.number(attention)}</span>`:nothing}</button>`:nothing}
           ${this.#localePicker()}
-          <button type="button" class="command-trigger forma-global-search" aria-label=${this.i18n.t("shell.command")} aria-haspopup="dialog" aria-expanded=${String(this.store.ui.commandOpen)} aria-keyshortcuts="Meta+K Control+K" @click=${() => this.store.patchUi({ commandOpen: true })}><span aria-hidden="true">${icon("search")}</span><span class="command-label">${this.i18n.t("shell.command")}</span><kbd>⌘ K</kbd></button>
+          <button type="button" class="command-trigger forma-global-search" aria-label=${this.i18n.t("shell.command")} aria-haspopup="dialog" aria-expanded=${String(this.store.ui.commandOpen)} aria-keyshortcuts="Meta+K Control+K" @click=${()=>this.#openCommands()}><span aria-hidden="true">${icon("search")}</span><span class="command-label">${this.i18n.t("shell.command")}</span><kbd>⌘ K</kbd></button>
           ${isCreative&&this.store.canManageProjectShares()&&isDocumentViewRoute(path)&&projection.documentId?html`<button class="button secondary compact" @click=${()=>this.#openShare()}>${icon("share")} ${this.i18n.t("shell.share","Share")}</button>`:nothing}
           <button type="button" class=${`avatar ${impersonation?"impersonating":""}`} aria-label=${impersonation?this.i18n.t("shell.impersonationAccount","Open fictional account controls for {name}",{name:impersonation.fictionalUser.displayName}):this.i18n.t("shell.account")} popovertarget="account-popover" aria-controls="account-popover" aria-expanded=${this.store.ui.accountOpen}>${session?.user.displayName?this.i18n.firstGrapheme(session.user.displayName).toLocaleUpperCase(this.i18n.locale):icon("user")}</button>
         </div>
-        <div id="account-popover" class="account-popover" popover="auto" @toggle=${this.#accountToggle}>
+        <div id="account-popover" class="account-popover" popover="auto" @beforetoggle=${this.#accountBeforeToggle} @toggle=${this.#accountToggle}>
           ${impersonation ? html`<span class="eyebrow">${this.i18n.t("account.fictional", "Fictional account · impersonating")}</span><b dir="auto">${impersonation.fictionalUser.displayName}</b><p><bdi dir="ltr">${impersonation.fictionalUser.email}</bdi> · ${this.i18n.plural("account.mockEvents", this.store.head.get(), "{count} mock event", "{count} mock events")}</p><div class="account-impersonation-note"><b>${this.i18n.t("account.signedInAs", "Signed in as {name}", { name: "\u2068" + impersonation.actor.displayName + "\u2069" })}</b><p>${this.i18n.t("account.isolation", "Every change requires confirmation and remains isolated in this saved mock.")}</p></div><button class="button primary" @click=${()=>this.store.stopImpersonating()}>${this.i18n.t("account.return", "Return to my account")}</button>` : html`<span class="eyebrow">${this.i18n.t("account.role." + (session?.user.role || "authenticated"), session?.user.role || this.i18n.t("account.role.authenticated", "authenticated"))}</span><b dir="auto">${session?.user.displayName || this.i18n.t("account.signedIn", "Signed-in creative")}</b><p><bdi dir="ltr">${session?.user.email || this.i18n.t("account.identityLoading", "Identity loading")}</bdi>${simplifiedEditor ? nothing : html` · ${this.i18n.plural("account.events", this.store.head.get(), "{count} event", "{count} events")}`}</p>`}
-          ${canAdminister&&!simplifiedEditor?html`<nav class="account-nav" aria-label=${this.i18n.t("account.tools", "Platform tools")}>${availableApplications.filter((candidate)=>!["creative","canvas"].includes(candidate.id)).map((candidate)=>{const destination=authorizedApplicationHome(candidate.id,access);return html`<a href=${destination} @click=${(event:MouseEvent)=>{event.preventDefault();this.#route(destination);}}><span>${this.i18n.t("shell."+candidate.id,candidate.label)}</span><span class="ui-directional-icon" aria-hidden="true">${icon("arrow")}</span></a>`;})}</nav>`:nothing}
+          ${canAdminister&&!simplifiedEditor?html`<nav class="account-nav" aria-label=${this.i18n.t("account.tools", "Platform tools")}>${availableApplications.filter((candidate)=>!["creative","canvas"].includes(candidate.id)).map((candidate)=>{const destination=authorizedApplicationHome(candidate.id,access);return html`<a href=${destination} @click=${(event:MouseEvent)=>{if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.#route(destination);}}><span>${this.i18n.t("shell."+candidate.id,candidate.label)}</span><span class="ui-directional-icon" aria-hidden="true">${icon("arrow")}</span></a>`;})}</nav>`:nothing}
           <div class="account-policy"><span>${this.i18n.t("account.terms", "Terms")}</span><b>${session?.policy.accepted ? this.i18n.t("account.accepted", "accepted") : this.i18n.t("account.required", "required")}</b><span>${this.i18n.t("account.provider", "Provider")}</span><b>${session?.provider.configured ? this.i18n.t("settings.available", "Available") : this.i18n.t("settings.unavailable", "Unavailable")}</b><span>${this.i18n.t("account.retention", "Content retention")}</span><b>${this.i18n.plural("account.days", session?.policy.retentionDays ?? 30, "{count} day", "{count} days")}</b><span>${this.i18n.t("account.attention", "Attention signals")}</span><b>${impersonation ? this.i18n.t("account.mockOff", "off for mock") : this.store.ui.attentionCapture ? this.store.ui.attentionPaused ? this.i18n.t("account.paused", "paused") : this.i18n.t("account.on", "on") : this.i18n.t("account.off", "off")}</b></div>
           ${impersonation ? nothing : html`<form class="account-preferences" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>${this.i18n.t("account.recordViews", "Record explicit view actions")}</span></label><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.attentionCapture} @change=${(e:Event)=>this.store.setAttentionCapture((e.target as HTMLInputElement).checked)}><span>${this.i18n.t("account.useAttention", "Use attention signals to improve Forma")}</span></label></form>${this.store.ui.attentionCapture?html`<button type="button" class="button ghost compact attention-pause" @click=${()=>this.store.setAttentionPaused(!this.store.ui.attentionPaused)}>${this.store.ui.attentionPaused ? icon("play") : icon("pause")} ${this.store.ui.attentionPaused ? this.i18n.t("account.resume", "Resume on this device") : this.i18n.t("account.pause", "Pause on this device")}</button>`:nothing}<small>${this.i18n.t("account.disclosure", "Opt-in capture runs only while this page is visible. It stores coarse surface, active/idle time, visible item IDs, and the action that ended a period—never pointer paths, keys, typed text, microphone, or ambient device data. Device episodes expire after {days} days.", { days: this.i18n.number(14) })}</small>`}
-          ${shared?html`<button type="button" class="button secondary compact" @click=${()=>void this.store.leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button>`:nothing}
+          ${shared?html`<button type="button" class="button secondary compact" @click=${()=>void this.#leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button>`:nothing}
           ${isCreative&&this.store.canManageProjectShares()&&isDocumentViewRoute(path)&&projection.documentId?html`<button type="button" class="button secondary compact account-share-action" @click=${()=>this.#openShare(true)}>${icon("share")} ${this.i18n.t("shell.share","Share")}</button>`:nothing}
           <button type="button" class="button ghost" @click=${() => this.#route("/settings")}>${isCanvas?this.i18n.t("account.privacyCreatorWorkspace","Review privacy in Creator Workspace"):this.i18n.t("account.privacy","Review privacy controls")}</button>
         </div>
       </header>
       ${documentFocusFromRoute(path) ? html`<div class="focus-locale-switcher">${this.#localePicker()}</div>` : nothing}
       ${impersonation?html`<aside class="impersonation-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("account.bannerTitle", "Fictional account · {name}", { name: "\u2068" + impersonation.fictionalUser.displayName + "\u2069" })}</b><span>${this.i18n.t("account.bannerDetail", "You are signed in as {name}. Every change to this mock account asks for confirmation.", { name: "\u2068" + impersonation.actor.displayName + "\u2069" })}</span></div><button class="button secondary compact" @click=${()=>this.store.stopImpersonating()}>${this.i18n.t("account.return", "Return to my account")}</button></aside>`:nothing}
-      ${shared?html`<aside class="impersonation-banner workspace-shared-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</b>${canAuthor?nothing:html`<span>${this.i18n.t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")}</span>`}</div><button type="button" class="button secondary compact" @click=${()=>void this.store.leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}
+      ${shared?html`<aside class="impersonation-banner workspace-shared-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</b>${canAuthor?nothing:html`<span>${this.i18n.t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")}</span>`}</div><button type="button" class="button secondary compact" @click=${()=>void this.#leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${errorMessage} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
       <main id="main-content" tabindex="-1" aria-busy=${sourceReady?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourceLoading}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourceLoading}</main>

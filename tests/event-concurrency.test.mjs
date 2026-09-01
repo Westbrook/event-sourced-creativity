@@ -106,7 +106,11 @@ test("the client refreshes and rebases authored appends after stale heads",async
   assert.match(pipeline,/constpending=this\.#appendPipeline\.then\(\(\)=>this\.#appendBatchNow\(retained,options,observation\)\)/);
   assert.match(append,/if\(!active\(\)\)returnthis\.#finishEventWrite\(observation,\{outcome:"not-attempted",privateUnavailable:true\},\[\],"withheld",options\)/);
   assert.match(opening,/constpersisted=this\.appendWithReceipt\(\{type:"DocumentOpened"/);
-  assert.match(opening,/background:true\}\);constcommitted=persisted\.then\(result=>result\.acknowledgment\.outcome==="observed"&&result\.acknowledgment\.committed\.some\(event=>event\.type==="DocumentOpened"\),\(\)=>false\);this\.#navigationCommit=committed;this\.setRoute\(routedDestination,options\)/, "only the exact observed navigation acknowledgment resolves the commit fence");
+  assert.match(opening,/background:true\}\);constcommitted=persisted\.then\(result=>result\.acknowledgment\.outcome==="observed"&&result\.acknowledgment\.committed\.some\(event=>event\.type==="DocumentOpened"\),\(\)=>false\);this\.#navigationCommit=committed;constopened=navigate\(\)/, "only the exact observed navigation acknowledgment resolves the commit fence");
+  assert.match(opening,/constownsHandoff=Boolean\(options\.onOriginHandoff\);if\(options\.onOriginHandoff&&\(!workspaceNavigationCurrent\(options\)\|\|!options\.onOriginHandoff\(\)\)\)returnfalse;if\(options\.onOriginHandoff\)options=\{\.\.\.options,onOriginHandoff:undefined\}/, "the optional origin handoff is current and consumed before navigation");
+  assert.match(opening,/if\(ownsHandoff&&applicationIdFromRoute\(this\.route\.get\(\)\)!==applicationIdFromRoute\(routedDestination\)\)returnthis\.transitionWorkspace\(routedDestination,options\);this\.setRoute\(routedDestination,options\);returnnull;\};/, "navigation delegates with the same lease and retains the original direct-route fallback");
+  assert.match(opening,/constresult=awaitpersisted;if\(this\.#navigationCommit===committed\)this\.#navigationCommit=null;/, "only the settled original can clear its own commit fence");
+  assert.match(opening,/returnopened\?awaitopened:true;\}$/, "the guarded cross-audience transition is awaited independently of the original acknowledgment");
   assert.match(runtime,/sequence>\? ORDER BY sequence ASC LIMIT \?/);
   assert.match(runtime,/while\(events\.length<requested\)/);
   assert.match(eventsApi,/readEventPageWithHead\(env,streamId,after,limit\)/);

@@ -154,7 +154,7 @@ test("desktop inline rail preserves preference and Escape focus without borrowin
 test("same synthetic full hierarchy at934/847 exposes real Results contributors;790/718 remains a separate narrow posture",async t=>{
  const f=await fixture(t,{width:790,height:882,studioWidth:718}),narrow=f.dom;
  const results=narrow.nodes.find(node=>node.attributes.id==="document-results-panel");assert.equal(results.hiddenBy,"document-results-panel");
- const before=narrow.controls();assert.deepEqual(before,{button:25,select:1});
+ const before=narrow.controls();assert.deepEqual(before,{button:22,select:1});
  f.measure({width:934,shellWidth:934,studioWidth:847});await f.settle();const wider=f.dom;
  assert.equal(f.shell.getAttribute("data-nav-posture"),"rail");
  assert.equal(wider.nodes.find(node=>node.attributes.id==="document-results-panel").hiddenBy,null,"actual Workspace width ownership removes hidden attribute");

@@ -5,6 +5,7 @@ import { captureOutputNavigation, outputNavigationMatches } from "../src/model/o
 import { projectOutcomeDesk, outcomeDeskActions } from "../src/model/outcome-desk.ts";
 import { outcomeDeskHostActions, outcomeDeskHostActionAvailable, outcomeDeskPreparationActions } from "../src/canvas/outcome-desk-host.ts";
 import { nextActionFacts } from "../src/state/next-action-context.ts";
+import { outputContinuationChoices } from "../src/components/output-continuation.ts";
 const test=(name,run)=>nativeTest(name,async t=>{try{return await run(t);}catch(error){if(typeof error?.stack==="string")error.stack=error.stack.replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/gu,"full-class-fixture");throw error;}});
 function currentInput(f){
  const documentId=f.outputSnapshot().documentId,scope=f.store.captureAuthorizationScope(),session=f.store.session.get();
@@ -228,5 +229,35 @@ test("native unavailable media never uses a new-generation fallback instead of o
   const actions=outcomeDeskHostActions(input,row.key,ports(f));
   assert.equal(actions[0].target.section,"owned");assert.equal(actions.some(action=>action.target.section==="native"),false);
  }
+ noCommands(f);
+});
+
+// Extraction parity through the existing complete Store/Workspace/Output owner.
+// Finite HTTP/native ports remain the existing fixture; this adds no executor.
+for (const locale of ["en", "fr", "ar", "ja"]) test("shared Output continuation retains the Desk key and exact accepted-file handoff in " + locale, async t => {
+ const f = await createOutputReachabilityPage(t, { locale });
+ await scenario(f, "accepted-file");
+ const input = currentInput(f), row = targetRow(f), snapshot = f.outputSnapshot(), controller = controllerFor(f);
+ const choices = outputContinuationChoices({
+  read: input.output.resource, authorizationScopeKey: input.facts.authorityKey, reference: row.navigation, jobs: input.output.jobs,
+ });
+ const actions = outcomeDeskHostActions(input, row.key, ports(f)), first = choices[0];
+ assert.equal(first.label.key, "output.delivery.actionDownload");
+ assert.equal(first.reference.kind, "result"); assert.equal(first.reference.resultId, snapshot.results[0].id);
+ assert.equal(first.section, "inspect"); assert.equal(first.refresh, false);
+ assert.equal(actions.length, choices.length);
+ for (const [index, choice] of choices.entries()) {
+  assert.equal(actions[index].key, row.key + ":output:" + choice.section + ":" + choice.label.key + ":" + JSON.stringify(choice.reference));
+  assert.equal(actions[index].label, f.i18n.t(choice.label.key, choice.label.fallback));
+  assert.equal(actions[index].detail, f.i18n.t(choice.detail.key, choice.detail.fallback));
+  assert.deepEqual(actions[index].target, { kind: "canonical-output", reference: choice.reference, section: choice.section, refresh: choice.refresh });
+  assert.equal(outcomeDeskHostActionAvailable(actions[index], input, ports(f)), true);
+ }
+ const before = JSON.stringify(f.adapter.snapshot(snapshot.documentId)), events = JSON.stringify(f.store.events.get());
+ const owners = [...f.outputControllers()], requests = f.outputRequests.filter(value => value.method !== "GET" && !f.isReadOnlyResume(value)).length;
+ assert.equal(await controller.focusOutputReference(first.reference, { section: first.section, current: () => true }), true);
+ assert.deepEqual(f.outputControllers(), owners); assert.equal(JSON.stringify(f.store.events.get()), events);
+ assert.equal(JSON.stringify(f.adapter.snapshot(snapshot.documentId)), before);
+ assert.equal(f.outputRequests.filter(value => value.method !== "GET" && !f.isReadOnlyResume(value)).length, requests);
  noCommands(f);
 });

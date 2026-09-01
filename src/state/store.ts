@@ -57,7 +57,8 @@ import { applicationIdFromRoute, type ApplicationId } from "../platform/applicat
 import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
 import type { PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
 
-type WorkspaceNavigationOptions = { replace?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string };
+// State-only cleanup may preserve focus; this never bypasses action/current guards.
+type WorkspaceNavigationOptions = { replace?:boolean; preserveFocus?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string; onOriginHandoff?:()=>boolean; onDestinationSource?:(source:CapturedSourceOwnership)=>boolean };
 const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options.current||options.current())&&(!options.focus||options.focus.current());
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -75,7 +76,8 @@ export type EventWriteResult = Readonly<{ appended:CreativeEvent[]; acknowledgme
 export type WithheldEventWrite = Readonly<{publication:"withheld";acknowledgment:EventWriteAcknowledgment}>;
 export type AppendOptions = { expected?:number; remember?:boolean; rebaseAttempts?:number; silent?:boolean; background?:boolean; onAcknowledgment?:(receipt:EventWriteAcknowledgment)=>void };
 export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index?:number;type?:string;reason:string}>; head:number; retryable:boolean; error:string; acknowledgment?:EventWriteAcknowledgment; pause?:"source-retired" };
-type EventSourceRead = { source:CapturedSourceOwnership; id:number; profile:AccountSnapshotProfile; identity:AccountSnapshotIdentity; cacheFence:AccountSnapshotFence; complete:boolean; from:number };
+type EventSourceRead = { source:CapturedSourceOwnership; id:number; profile:AccountSnapshotProfile; identity:AccountSnapshotIdentity; cacheFence:AccountSnapshotFence; complete:boolean; from:number; cookieGeneration:number };
+type ProjectContextCookieRequest = { ready:Promise<void>; settled:boolean; admitted:boolean; current:()=>boolean; matches:(session:PilotSession|null)=>boolean; reconciliation:Promise<void>|null };
 type EventSourcePage = { events:CreativeEvent[]; content:Record<string,string>; head:number; read:EventSourceRead };
 type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string };
 const EVENT_WRITE_SCOPE_CAPACITY=32, EVENT_WRITE_STORE_CAPACITY=128;
@@ -272,6 +274,9 @@ export class FormaStore {
   readonly organizationContextPackages = new Signal.State<OrganizationContextPackage[]>([]);
   readonly organizationContextBindings=new Signal.State<OrganizationContextBinding[]>([]);
   readonly organizationContextVersions=new Signal.State<Record<string,OrganizationContextVersion>>({});
+  #organizationCatalogReadSequence=0;
+  #organizationCatalogDeniedThrough=0;
+  #organizationCatalogCompletedRead=0;
   readonly reviewInbox = new Signal.State<AssignedReviewTask[]>([]);
   readonly documentJobs = new Signal.State<DocumentJob[]>([]);
   readonly generationReadiness = new Signal.State<Record<string,GenerationReadiness>>({});
@@ -318,14 +323,19 @@ export class FormaStore {
   #navigationCommit:Promise<boolean>|null=null;
   #workspaceTransition=0;
   #projectContextHandshake:Promise<void>|null=null;
+  #projectContextLatest:ProjectContextCookieRequest|null=null;
+  #projectContextCookieGeneration=0;
+  #projectContextSessionGeneration=0;
   #projectTaskExpiry: { timer: number } | null = null;
-  #workspaceNavigationFocus: { route:string; focus:OutputNavigationFocusLease } | null = null;
+  #workspaceNavigationFocus: { route:string; focus:OutputNavigationFocusLease; revision:number } | null = null;
   #outputInputReveal:{cancel:()=>void}|null=null;
 
   captureWorkspaceNavigationFocus(route:string,expected?:OutputNavigationFocusLease) {
     const owner=this.#workspaceNavigationFocus;
     if(!owner||owner.route!==route||(expected&&owner.focus!==expected))return null;
-    return {focus:owner.focus,current:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&owner.focus.current()};
+    return {focus:owner.focus,
+      routeCurrent:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&this.#workspaceTransition===owner.revision,
+      current:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&owner.focus.current()};
   }
   #loadRevision=0;
   #sessionRevision=0;
@@ -1233,27 +1243,29 @@ export class FormaStore {
     return Boolean(source&&this.#sourceExpiryValid(this.#sourceOwners.get(source))
       &&this.#sourceExpiryValid(this.session.get()?.projectContext?.expiresAt??null));
   }
-  #sourceReadOwned(read:EventSourceRead){return this.sourceOwnershipScopeActive(read.source)&&read.source.generation===this.#sourceGeneration;}
+  #sourceReadOwned(read:EventSourceRead){return read.cookieGeneration===this.#projectContextCookieGeneration&&this.sourceOwnershipScopeActive(read.source)&&read.source.generation===this.#sourceGeneration;}
 
   sourceOwnershipActive(source:CapturedSourceOwnership|null):boolean{
     return Boolean(source&&this.sourceOwnershipScopeActive(source)&&source.generation===this.#sourceGeneration&&!this.#sourceRetired&&this.#sourceDeadlineCurrent(source));
   }
   #assertSourceOwnership(source:CapturedSourceOwnership|null){
-    if(!this.sourceOwnershipActive(source))throw new Error("The current source is unavailable; its private result was withheld.");
+    if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration||!this.sourceOwnershipActive(source))throw new Error("The current source is unavailable; its private result was withheld.");
   }
   #sourceReadCurrent(read:EventSourceRead){
-    return this.#sourceReadOwned(read)&&this.#sourceDeadlineCurrent(read.source)&&this.#sourceExpiryValid(read.identity.accessExpiresAt??null);
+    return this.#projectContextCookieGeneration===this.#projectContextSessionGeneration
+      &&this.#sourceReadOwned(read)&&this.#sourceDeadlineCurrent(read.source)&&this.#sourceExpiryValid(read.identity.accessExpiresAt??null);
   }
   #assertSourceRead(read:EventSourceRead){
     if(!this.#sourceReadCurrent(read))throw new Error("The source read was superseded; its private result was withheld.");
   }
   #beginSourceRead(profile:AccountSnapshotProfile):EventSourceRead{
+    if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)throw new Error("The project context session must be reconciled before reading this source.");
     const source=this.captureSourceOwnership(),session=this.session.get();
     if(!source||!session)throw new Error("Authentication is required to read this source.");
     // A denied whole source is restored from a complete fresh stream, never an old incremental base.
     const actual=this.#sourceRetired?"full":profile,identity=this.#snapshotIdentity(session);
     return{source,id:++this.#sourceReadSequence,profile:actual,identity,
-      cacheFence:captureAccountSnapshotFence(identity,actual),complete:false,from:0};
+      cacheFence:captureAccountSnapshotFence(identity,actual),complete:false,from:0,cookieGeneration:this.#projectContextCookieGeneration};
   }
   #sourceCacheGuard(read:EventSourceRead,complete=false){
     return{fence:read.cacheFence,current:()=>this.#sourceReadCurrent(read)&&accountSnapshotFenceCurrent(read.identity,read.cacheFence)
@@ -1265,7 +1277,7 @@ export class FormaStore {
       ||original&&(job.documentId!==original.documentId||job.kind!==original.kind))
       throw new Error("The original change is unconfirmed. It has not been resubmitted.");
     if(!this.sourceOwnershipScopeActive(source))throw new Error("The active workspace changed; the previous result was safely discarded.");
-    const sourceActive=this.sourceOwnershipActive(source),reference=this.#privateJobReference(job);
+    const sourceActive=this.#projectContextCookieGeneration===this.#projectContextSessionGeneration&&this.sourceOwnershipActive(source),reference=this.#privateJobReference(job);
     const cached=this.#jobDetails.get(jobId),current=this.documentJobs.get().find(entry=>entry.jobId===jobId);
     // Exact reads and complete original acknowledgements require their captured Source after the
     // last await. Preserve a later exact read during the same Source as well
@@ -1421,6 +1433,7 @@ export class FormaStore {
     this.setReplayAsOf(sequence);
   }
   async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false,owned?:EventSourceRead):Promise<EventSourcePage>{
+    if(!owned&&this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)await this.#reconcileProjectContextCookie();
     const read=owned??this.#beginSourceRead(profile);this.#assertSourceRead(read);read.complete=false;
     const restoring=this.#sourceRetired;after=restoring?0:after;profile=read.profile;read.from=Math.max(0,after);
     if(restoring)includeContent=true;
@@ -1762,9 +1775,11 @@ export class FormaStore {
     }
   }
   async #refreshEvents(options:{fromStart?:boolean}={}){
+    if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)await this.#reconcileProjectContextCookie();
+    const read=this.#beginSourceRead("full");
     const baseProfile=this.#historyProfile,wasRetired=this.#sourceRetired,previous=wasRetired?[]:this.events.get(),known=new Set(previous.map(event=>event.eventId));
     const after=options.fromStart===true||wasRetired?0:this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();
-    let replace=after===0,body=await this.#readEventPages(after);
+    let replace=after===0,body=await this.#readEventPages(after,read);
     this.#assertSourceRead(body.read);
     if(body.head<after){body=await this.#readEventPages(0,body.read);this.#assertSourceRead(body.read);replace=true;}
     if(body.read.from===0)replace=true;
@@ -2422,7 +2437,7 @@ async syncDocumentJobs(){
   }
   resolveImpersonatedInteraction(confirmed:boolean){const resolve=this.#impersonationConfirmation;this.#impersonationConfirmation=undefined;this.patchUi({impersonationConfirmOpen:false,impersonationAction:""});resolve?.(confirmed);if(!confirmed)this.toast("Canceled. The fictional account was not changed.");}
   async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account",controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{onNotDispatchedAtConfirmation?:()=>void}={}){
-    const check=()=>{if(controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
+    const check=()=>{if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)throw new Error("The project context session must be reconciled before continuing.");if(controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     const authorization=this.#activeAuthorizationScope(),method=String(init.method??(input instanceof Request?input.method:"GET")).toUpperCase();
     if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){check();const pending=fetch(input,init);try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();if(authorization)this.#assertAuthorizationScope(authorization);return response;}
     const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);check();if(!confirmed){try{controls.onNotDispatchedAtConfirmation?.();}catch{/* A presentation callback cannot dispatch this unapproved attempt. */}return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});}const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");check();const pending=fetch(input,{...init,headers});try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();this.#assertAuthorizationScope(authorization);return response;
@@ -2473,7 +2488,10 @@ async syncDocumentJobs(){
     path = this.#projectTaskRoute(path, options);
     const current=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
     if(current!==destination){
-      if(!["creative","canvas"].includes(current)||!["creative","canvas"].includes(destination)){location.assign(path);return;}
+      if(!["creative","canvas"].includes(current)||!["creative","canvas"].includes(destination)){
+        if(options.onOriginHandoff&&!options.onOriginHandoff())return;
+        location.assign(path);return;
+      }
       void this.transitionWorkspace(path,options);
       return;
     }
@@ -2485,8 +2503,15 @@ async syncDocumentJobs(){
     path = this.#projectTaskRoute(path, options);
     const navigationScope = this.captureAuthorizationScope(), sourceRoute = this.route.get(), sessionRevision = this.#sessionRevision;
     const source=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
-    if(source===destination){this.#commitRoute(path,options);return true;}
-    if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)){location.assign(path);return true;}
+    if(source===destination){
+      if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
+      if(options.onOriginHandoff)options={...options,onOriginHandoff:undefined};
+      this.#commitRoute(path,options);return true;
+    }
+    if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)){
+      if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
+      location.assign(path);return true;
+    }
     const previous=this.session.get(),attempt=++this.#workspaceTransition;
     try{
       const response=await fetch(`/api/session?audience=${encodeURIComponent(destination)}`,{cache:"no-store",credentials:"same-origin"});
@@ -2503,7 +2528,18 @@ async syncDocumentJobs(){
         this.toast(destination==="canvas"?"Canvas is no longer available for this account or project.":"Your workspace authorization has changed. Reload your current project.");
         return false;
       }
+      // Negative authorization above still retires permissions. Only a positive
+      // adoption asks the original view to release its current raw-work owner.
+      if(options.onOriginHandoff){
+        if(!ownsHeaders||!ownsBody||!workspaceNavigationCurrent(options)||!options.onOriginHandoff())return false;
+        options={...options,onOriginHandoff:undefined};
+      }
       this.#applySession({...current,audience:previous?.audience});
+      if(options.onDestinationSource){
+        const adopted=this.captureSourceOwnership();
+        if(attempt!==this.#workspaceTransition||this.route.get()!==sourceRoute||this.#sessionRevision!==sessionRevision+1
+          ||!adopted||!this.sourceOwnershipActive(adopted)||!options.onDestinationSource(adopted))return false;
+      }
       if(!ownsHeaders||!ownsBody||!workspaceNavigationCurrent(options))return false;
       this.#commitRoute(path,options);
       return true;
@@ -2513,6 +2549,7 @@ async syncDocumentJobs(){
   #commitRoute(path:string,options:WorkspaceNavigationOptions={}){
     if(!workspaceNavigationCurrent(options))return;
     path = this.#projectTaskRoute(path, options);
+    if(options.onOriginHandoff&&!options.onOriginHandoff())return;
     this.#workspaceTransition += 1;
     const projection = this.projection.get();
     const requestedFocus = options.documentFocus ?? (documentFocusFromRoute(path) || documentFocusFromRoute(this.route.get()));
@@ -2532,8 +2569,8 @@ async syncDocumentJobs(){
         recordPopulationSource("memory",this.events.get().length);
       }
     }
-    this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus}:null;
-    this.route.set(routedPath);this.#scheduleProjectTaskExpiry();if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
+    this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:this.#workspaceTransition}:null;
+    this.route.set(routedPath);this.#scheduleProjectTaskExpiry();if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath, ...(options.preserveFocus===true?{preserveFocus:true}:{}) } }));
     const required=this.#profileForRoute(routedPath);
     if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
     if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
@@ -2579,7 +2616,7 @@ async syncDocumentJobs(){
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
   async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const session=this.session.get();let appended:CreativeEvent[]=[];if(session?.projectContext){const authorization=this.#authorizationScope(session),response=await fetch("/api/privacy/attention",{method:"POST"}),body=await response.json() as {appended?:CreativeEvent[];error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok){this.toast(body.error??"Your personal attention data could not be forgotten.");return[];}appended=body.appended??[];}else appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const active=this.session.get();if(active)await clearAnalyticsSnapshots(this.#snapshotIdentity(active),true);this.toast("Your personal attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
   async erasePersonalAuthoredContext(){const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number;outputReservationReconciliationPending?:boolean;outputProviderReconciliationPending?:number;outputStorageCleanupPending?:number;outputReconciliationCheckFailed?:boolean};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);this.#assertAuthorizationScope(authorization);this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);await this.#refreshEvents();this.#assertAuthorizationScope(authorization);const outputPending=Boolean(result.outputReservationReconciliationPending||result.outputProviderReconciliationPending||result.outputStorageCleanupPending||result.outputReconciliationCheckFailed);this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0})+(outputPending?" "+this.#systemNotice("Some Output file cleanup or provider accounting is still pending. No new generation was authorized."):""));this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");return false;}}
-  async migrateHistoricalEventPrivacy(){const session=this.session.get();if(!session||session.user.role!=="admin"||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"migrate-historical-events",confirmation:"MIGRATE_HISTORICAL_EVENT_CONTENT"})},"migrate historical event privacy");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;migratedEvents?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Historical event migration failed.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session))]);this.toast(this.#systemNotice("{count} historical event bodies moved into erasable owner-scoped storage. Existing backups and other devices still require separate handling.",{count:result.migratedEvents??0}));return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Historical event migration failed.");return false;}}
+  async migrateHistoricalEventPrivacy(){const session=this.session.get();if(!session||session.user.role!=="admin"||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"migrate-historical-events",confirmation:"MIGRATE_HISTORICAL_EVENT_CONTENT"})},"migrate historical event privacy");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;migratedEvents?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Historical event migration failed.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session))]);this.#assertAuthorizationScope(authorization);this.toast(this.#systemNotice("{count} historical event bodies moved into erasable owner-scoped storage. Existing backups and other devices still require separate handling.",{count:result.migratedEvents??0}));return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Historical event migration failed.");return false;}}
 
   async load(options:{routeHandoff?:Promise<void>}={}) {
     const loadRevision=++this.#loadRevision;let loadAuthorization="",loadRead:EventSourceRead|undefined;
@@ -2590,7 +2627,7 @@ async syncDocumentJobs(){
     this.loading.set(true);this.notify();
     try{
       const bootstrap=consumeSessionBootstrap(),prefetched=consumeSessionPrefetch();
-      const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
+      const sessionPromise=bootstrap&&!this.#projectContextLatest?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
       const snapshotsPromise=sessionPromise.then(verified=>{
         if(loadRevision!==this.#loadRevision||this.#authorizationScope(verified)!==this.#activeAuthorizationScope())throw new Error("A newer workspace load already owns this source.");
         loadRead=this.#beginSourceRead(profile);
@@ -2685,11 +2722,54 @@ async syncDocumentJobs(){
   }
 
   async refreshSession(prefetched:Promise<Response>|null=null) {
-    const revision=++this.#sessionRevision,response=await(prefetched?prefetched.catch(()=>fetch("/api/session")):fetch("/api/session"));
-    if(revision!==this.#sessionRevision){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
+    const revision=++this.#sessionRevision,cookieGeneration=this.#projectContextCookieGeneration,owner=this.#projectContextLatest;
+    const current=()=>revision===this.#sessionRevision&&cookieGeneration===this.#projectContextCookieGeneration&&owner===this.#projectContextLatest;
+    const usePrefetch=cookieGeneration===0?prefetched:null;
+    if(prefetched&&!usePrefetch)void prefetched.catch(()=>undefined);
+    const response=await(usePrefetch?usePrefetch.catch(()=>fetch("/api/session")):fetch("/api/session",{cache:"no-store",credentials:"same-origin"}));
+    if(!current()){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
     const body=await response.json() as PilotSession & {error?:string};
-    if(revision!==this.#sessionRevision){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
-    if(!response.ok)throw new Error(body.error??"Authentication required");return this.#applySession(body,revision);
+    if(!current()){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
+    if(!response.ok)throw new Error(body.error??"Authentication required");
+    // An intermediate cookie cannot cancel a later queued same-principal choice.
+    // A genuine different principal still retires the original request normally.
+    if(owner&&owner.matches(body)&&cookieGeneration!==this.#projectContextSessionGeneration
+      &&(!owner.settled||owner.current()&&!owner.admitted)){
+      const active=this.session.get();if(active)return active;throw new Error("A newer project context is already loading.");
+    }
+    const applied=this.#applySession(body,revision);
+    if(current())this.#projectContextSessionGeneration=cookieGeneration;return applied;
+  }
+
+  async #reconcileProjectContextCookie(){
+    while(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration){
+      const owner=this.#projectContextLatest;if(!owner)throw new Error("The project context session is unavailable.");
+      await owner.ready;
+      if(owner!==this.#projectContextLatest)continue;
+      if(!owner.matches(this.session.get()))throw new Error("The original project context belongs to a different account.");
+      if(this.#projectContextCookieGeneration===this.#projectContextSessionGeneration)return;
+      if(owner.current())throw new Error("The selected project context has not completed its current handoff.");
+      if(!owner.reconciliation){
+        const pending=(async()=>{
+          const cookieGeneration=this.#projectContextCookieGeneration,revision=++this.#sessionRevision;
+          const current=()=>owner===this.#projectContextLatest&&owner.settled&&owner.matches(this.session.get())
+            &&cookieGeneration===this.#projectContextCookieGeneration&&revision===this.#sessionRevision;
+          const response=await fetch("/api/session",{cache:"no-store",credentials:"same-origin"});if(!current())return;
+          const body=await response.json() as PilotSession&{error?:string};if(!current())return;
+          if(!response.ok)throw new Error(body.error??"Authentication required");
+          if(!owner.matches(body))throw new Error("The original project context belongs to a different account.");
+          // This read certifies only the actual current cookie/Source, never the
+          // original context command, its abandoned route, or its focus lease.
+          this.#applySession(body,revision);
+          if(current())this.#projectContextSessionGeneration=cookieGeneration;
+        })();
+        const reconciliation:Promise<void>=pending.finally(()=>{if(owner.reconciliation===reconciliation)owner.reconciliation=null;});
+        owner.reconciliation=reconciliation;
+      }
+      await owner.reconciliation;
+      if(owner===this.#projectContextLatest&&this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)
+        throw new Error("The project context session could not be reconciled.");
+    }
   }
 
   async syncProjectNotifications(){
@@ -2702,34 +2782,49 @@ async syncDocumentJobs(){
     const session=this.session.get(),context=session?.projectContext;
     if(!session||!context){this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});return;}
     const authorization=this.#authorizationScope(session);
+    const read=++this.#organizationCatalogReadSequence,cookieGeneration=this.#projectContextCookieGeneration;
+    const assertCurrent=()=>{
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+      if(cookieGeneration!==this.#projectContextCookieGeneration||read<=this.#organizationCatalogDeniedThrough||read<this.#organizationCatalogCompletedRead)
+        throw new Error("The organization catalog read was superseded.");
+    };
     try{
       const response=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages`,{credentials:"same-origin"});
-      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
-      const body=await response.json() as {packages?:OrganizationContextPackage[]};
-      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
-      if(!response.ok)return;
-      const packages=body.packages??[];
+      assertCurrent();
+      if(response.status===403){
+        // This exact catalog denial withdraws its cache, not the unrelated
+        // Document Source. Pending newer reads are not positive certificates.
+        this.#organizationCatalogDeniedThrough=this.#organizationCatalogReadSequence;
+        this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});
+        this.notify();return;
+      }
+      const body=await response.json() as {packages?:OrganizationContextPackage[];error?:unknown}|null;assertCurrent();
+      // Certify this root endpoint only from an explicit completed collection;
+      // keep the existing row and child interpretation, not a second decoder.
+      if(!response.ok||!body||typeof body!=="object"||Array.isArray(body)||Object.hasOwn(body,"error")||!Array.isArray(body.packages))return;
+      const packages=body.packages;
       const versions:Record<string,OrganizationContextVersion>={};
       const results=await Promise.all(packages.map(async(item)=>{
         const scoped=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(item.id)}/bindings`,{credentials:"same-origin"});
-        this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+        assertCurrent();
         const rows=await scoped.json() as {bindings?:Array<Record<string,unknown>>};
-        this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+        assertCurrent();
         const bindings=scoped.ok?(rows.bindings??[]):[];
         const requested=new Set([item.versionId,...bindings.flatMap((binding)=>[binding.version_id,binding.pending_version_id])].filter((id):id is string=>typeof id==="string"&&Boolean(id)));
         await Promise.all([...requested].map(async(versionId)=>{
           const published=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(item.id)}/versions/${encodeURIComponent(versionId)}`,{credentials:"same-origin"});
-          this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+          assertCurrent();
           const detail=await published.json().catch(()=>null) as {versionId?:string;version?:number;snapshot?:Omit<OrganizationContextVersion,"id"|"version">}|null;
-          this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+          assertCurrent();
           if(published.ok&&detail?.versionId&&detail.snapshot)versions[detail.versionId]={...detail.snapshot,id:detail.versionId,version:Number(detail.version??0)};
         }));
         return bindings;
       }));
-      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+      assertCurrent();
       this.organizationContextPackages.set(packages);
       this.organizationContextBindings.set(results.flat().map((row)=>({id:String(row.binding_id),organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id),documentId:String(row.document_id),packageId:String(row.package_id),versionId:String(row.version_id),pendingVersionId:row.pending_version_id?String(row.pending_version_id):null,updateMode:row.update_mode==="follow-approved"?"follow-approved":"pinned",status:String(row.status)})));
       this.organizationContextVersions.set(versions);
+      this.#organizationCatalogCompletedRead=read;
       this.notify();
     }catch{/* Exact organization context remains unavailable until the authorized catalog refreshes. */}
   }
@@ -2753,12 +2848,16 @@ async syncDocumentJobs(){
       this.#assertAuthorizationScope(authorization);
       const result=await published.json() as {error?:string;version?:number};
       if(!published.ok&&result.error==="independent_context_approver_required"){
+        if(!this.#scopeStillActive(authorization))return true;
         await this.syncOrganizationContextPackages();
+        if(!this.#scopeStillActive(authorization))return true;
         this.toast(this.#systemNotice("Awaiting approval"));
         return true;
       }
       if(!published.ok)throw new Error(result.error??"The organization context version could not be published.");
+      if(!this.#scopeStillActive(authorization))return true;
       await this.syncOrganizationContextPackages();
+      if(!this.#scopeStillActive(authorization))return true;
       this.toast(this.#systemNotice("Organization context version {version} was published. Following documents must explicitly accept the update.",{version:result.version??body.version??1}));
       return true;
     }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be published.");return false;}
@@ -2773,69 +2872,131 @@ async syncDocumentJobs(){
       this.#assertAuthorizationScope(authorization);
       const body=await response.json() as {error?:string;message?:string;version?:number};
       if(!response.ok)throw new Error(body.message??body.error??"Organization context could not be published.");
+      if(!this.#scopeStillActive(authorization))return true;
       if(session.projectContext?.organizationId===organizationId)await this.syncOrganizationContextPackages();
+      if(!this.#scopeStillActive(authorization))return true;
       this.toast(this.#systemNotice("Organization context version {version} was published. Following documents must explicitly accept the update.",{version:body.version??1}));
       return true;
     }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be published.");return false;}
   }
-  async adoptOrganizationContextPackage(packageId:string,versionId:string,mode:"pinned"|"follow-approved"="pinned"){const session=this.session.get(),context=session?.projectContext,projection=this.projection.get();if(!session||!context||!projection.documentId)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({projectAccessId:context.projectAccessId,documentId:projection.documentId,versionId,updateMode:mode,expectedProjectHead:this.head.get()})},"adopt this approved organization context into the current document");this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Organization context could not be added.");await this.#refreshEvents();await this.syncOrganizationContextPackages();this.toast(mode==="pinned"?"The approved context version is pinned to this document.":"Approved context was added. Future changes always require your acceptance.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be added.");return false;}}
+  async adoptOrganizationContextPackage(packageId:string,versionId:string,mode:"pinned"|"follow-approved"="pinned"){
+    const session=this.session.get(),context=session?.projectContext,projection=this.projection.get();if(!session||!context||!projection.documentId)return false;
+    const authorization=this.#authorizationScope(session),source=this.captureSourceOwnership();
+    const current=()=>this.#projectContextCookieGeneration===this.#projectContextSessionGeneration&&this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(source)
+      &&this.projection.get().projectId===projection.projectId&&this.projection.get().documentId===projection.documentId;
+    let acknowledged=false;
+    try{
+      const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({projectAccessId:context.projectAccessId,documentId:projection.documentId,versionId,updateMode:mode,expectedProjectHead:this.head.get()})},"adopt this approved organization context into the current document");
+      this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};
+      if(!response.ok)throw new Error(body.error??"Organization context could not be added.");
+      acknowledged=true;if(!current())return true;
+      await this.#refreshEvents();if(!current())return true;
+      await this.syncOrganizationContextPackages();if(!current())return true;
+      this.toast(mode==="pinned"?"The approved context version is pinned to this document.":"Approved context was added. Future changes always require your acceptance.");return true;
+    }catch(error){if(current())this.toast(error instanceof Error?error.message:"Organization context could not be added.");return acknowledged;}
+  }
   async acceptOrganizationContextPackageUpdate(packageId:string,bindingId:string,versionId:string){
     const session=this.session.get(),context=session?.projectContext;
     if(!session||!context||!packageId||!bindingId||!versionId)return false;
-    const authorization=this.#authorizationScope(session);
+    const authorization=this.#authorizationScope(session),source=this.captureSourceOwnership(),projection=this.projection.get();
+    const binding=this.organizationContextBindings.get().find((item)=>item.id===bindingId&&item.packageId===packageId&&item.organizationId===context.organizationId&&item.projectAccessId===context.projectAccessId);
+    const current=()=>Boolean(binding&&binding.documentId===projection.documentId)&&this.#projectContextCookieGeneration===this.#projectContextSessionGeneration
+      &&this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(source)&&this.projection.get().projectId===projection.projectId&&this.projection.get().documentId===projection.documentId;
+    let acknowledged=false;
     try{
       const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/bindings/${encodeURIComponent(bindingId)}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({action:"accept",versionId,expectedProjectHead:this.head.get()})},"accept this exact published organization context update");
       this.#assertAuthorizationScope(authorization);
       const result=await response.json() as {error?:string;version?:number};
-      this.#assertAuthorizationScope(authorization);
       if(!response.ok)throw new Error(result.error??"This organization context update could not be accepted.");
-      await this.#refreshEvents();await this.syncOrganizationContextPackages();
+      acknowledged=true;if(!current())return true;
+      await this.#refreshEvents();if(!current())return true;
+      await this.syncOrganizationContextPackages();if(!current())return true;
       this.toast(this.#systemNotice("Published organization context version {version} was applied. Review any affected finished outputs again.",{version:result.version??""}));
       return true;
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"This organization context update could not be accepted.");return false;}
+    }catch(error){if(current())this.toast(error instanceof Error?error.message:"This organization context update could not be accepted.");return acknowledged;}
   }
   async setOrganizationContextPackageUpdateMode(packageId:string,bindingId:string,mode:"pinned"|"follow-approved"){
     const session=this.session.get(),context=session?.projectContext;if(!session||!context)return false;
-    const authorization=this.#authorizationScope(session);
+    const authorization=this.#authorizationScope(session),source=this.captureSourceOwnership(),projection=this.projection.get();
+    const binding=this.organizationContextBindings.get().find((item)=>item.id===bindingId&&item.packageId===packageId&&item.organizationId===context.organizationId&&item.projectAccessId===context.projectAccessId);
+    const current=()=>Boolean(binding&&binding.documentId===projection.documentId)&&this.#projectContextCookieGeneration===this.#projectContextSessionGeneration
+      &&this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(source)&&this.projection.get().projectId===projection.projectId&&this.projection.get().documentId===projection.documentId;
+    let acknowledged=false;
     try{
       const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/bindings/${encodeURIComponent(bindingId)}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({action:"policy",updateMode:mode})},"change this document's context update policy");
       this.#assertAuthorizationScope(authorization);
       if(!response.ok)throw new Error("The context update policy could not be changed.");
-      await this.syncOrganizationContextPackages();this.toast(mode==="pinned"?"This document is pinned to its current context version.":"Published context updates will be offered before anything changes.");return true;
-    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The context update policy could not be changed.");return false;}
+      acknowledged=true;if(!current())return true;
+      await this.syncOrganizationContextPackages();if(!current())return true;
+      this.toast(mode==="pinned"?"This document is pinned to its current context version.":"Published context updates will be offered before anything changes.");return true;
+    }catch(error){if(current())this.toast(error instanceof Error?error.message:"The context update policy could not be changed.");return acknowledged;}
   }
   /** One ephemeral owner for a context-cookie mutation, never an authorization grant. */
-  beginProjectContextSelection(options:{requireUnexpiredContext?:boolean}={}){
+  beginProjectContextSelection(options:{requireUnexpiredContext?:boolean;current?:()=>boolean}={}){
     const navigation=++this.#workspaceTransition,sourceRoute=this.route.get(),session=this.session.get();
     const authorization=this.captureAuthorizationScope(),sourceGeneration=this.#sourceGeneration;
     const actorId=session?.user.userId,principalId=session?.impersonation?.actor.userId??actorId;
     const impersonationId=session?.impersonation?.impersonationId??null,audience=session?.audience??"creative";
-    const current=()=>{const now=this.session.get();return Boolean(session&&now&&this.#workspaceTransition===navigation&&this.route.get()===sourceRoute
-      &&now.user.userId===actorId&&(now.impersonation?.actor.userId??now.user.userId)===principalId
-      &&(now.impersonation?.impersonationId??null)===impersonationId&&(now.audience??"creative")===audience);};
+    const matches=(now:PilotSession|null)=>Boolean(session&&now&&now.user.userId===actorId
+      &&(now.impersonation?.actor.userId??now.user.userId)===principalId
+      &&(now.impersonation?.impersonationId??null)===impersonationId&&(now.audience??"creative")===audience);
+    const selectedCurrent=()=>matches(this.session.get())&&this.#workspaceTransition===navigation&&this.route.get()===sourceRoute;
+    const current=()=>selectedCurrent()&&(!options.current||options.current());
     const sourceCurrent=()=>current()&&sourceGeneration===this.#sourceGeneration&&this.authorizationScopeActive(authorization)
       &&(!options.requireUnexpiredContext||this.#sourceExpiryValid(session?.projectContext?.expiresAt??null));
-    let requested=false;
-    return {current,sourceCurrent,request:async(project:{organizationId:string;projectAccessId:string}|null):Promise<Response|null>=>{
-      if(requested)return null;requested=true;
-      // A newer waiter cannot overtake a response which can still install Set-Cookie.
-      while(this.#projectContextHandshake){await this.#projectContextHandshake;if(!sourceCurrent())return null;}
-      if(!sourceCurrent())return null;
-      const pending=fetch(project?"/api/workspaces/"+encodeURIComponent(project.organizationId)+"/projects/"+encodeURIComponent(project.projectAccessId)+"/context":"/api/workspaces/context",
-        {method:project?"POST":"DELETE",credentials:"same-origin"});
-      const settled=pending.then(()=>undefined,()=>undefined);this.#projectContextHandshake=settled;
-      try{const response=await pending;return sourceCurrent()?response:null;}
-      finally{if(this.#projectContextHandshake===settled)this.#projectContextHandshake=null;}
+    let requested=false,finished=false;let requestedOwner:ProjectContextCookieRequest|null=null;
+    let requestedProject:{organizationId:string;projectAccessId:string;projectId?:string}|null=null;
+    const reconcile=async()=>{
+      const latest=this.#projectContextLatest;
+      if(latest?.settled&&!latest.current()&&latest.matches(this.session.get())&&!this.#sourceRetired)
+        try{await this.#reconcileProjectContextCookie();}catch{/* A later explicit session/source read may recover; never retry the context write. */}
+    };
+    return {current,sourceCurrent,refreshSession:async(onDestinationSource?:(source:CapturedSourceOwnership)=>boolean)=>{
+      const owner=requestedOwner;if(!owner||owner!==this.#projectContextLatest||!owner.settled||!sourceCurrent())return null;
+      const revision=this.#sessionRevision+1,cookieGeneration=this.#projectContextCookieGeneration;
+      owner.admitted=true;const adopted=await this.refreshSession();
+      // A superseded refresh may return the active session. Only this exact
+      // applied read certifies the selected destination, never that fallback.
+      if(owner!==this.#projectContextLatest||revision!==this.#sessionRevision||cookieGeneration!==this.#projectContextCookieGeneration
+        ||cookieGeneration!==this.#projectContextSessionGeneration||adopted!==this.session.get()||!selectedCurrent())return null;
+      const context=adopted.projectContext;
+      if(requestedProject?!context||context.organizationId!==requestedProject.organizationId||context.projectAccessId!==requestedProject.projectAccessId
+        ||requestedProject.projectId!==undefined&&context.projectId!==requestedProject.projectId||!context.permissions.includes("project.read"):Boolean(context))return null;
+      const source=this.captureSourceOwnership();
+      if(!source||!this.sourceOwnershipActive(source)||onDestinationSource&&!onDestinationSource(source)||!current())return null;
+      return adopted;
+    },finish:async()=>{finished=true;await reconcile();},request:async(project:{organizationId:string;projectAccessId:string;projectId?:string}|null):Promise<Response|null>=>{
+      if(requested||!sourceCurrent())return null;requested=true;
+      requestedProject=project?{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId}:null;
+      let ready!:()=>void;
+      const owner:ProjectContextCookieRequest={ready:new Promise<void>(resolve=>{ready=resolve;}),settled:false,admitted:false,current:()=>!finished&&sourceCurrent(),matches,reconciliation:null};
+      requestedOwner=owner;this.#projectContextLatest=owner;this.#sessionRevision+=1;
+      let cookieMayHaveChanged=false;
+      try{
+        // A newer waiter cannot overtake a response which can still install Set-Cookie.
+        while(this.#projectContextHandshake){await this.#projectContextHandshake;if(!sourceCurrent())return null;}
+        if(!sourceCurrent())return null;
+        const pending=fetch(project?"/api/workspaces/"+encodeURIComponent(project.organizationId)+"/projects/"+encodeURIComponent(project.projectAccessId)+"/context":"/api/workspaces/context",
+          {method:project?"POST":"DELETE",credentials:"same-origin"});
+        const settled=pending.then(()=>undefined,()=>undefined);this.#projectContextHandshake=settled;
+        try{const response=await pending;cookieMayHaveChanged=response.ok;return sourceCurrent()?response:null;}
+        catch(error){cookieMayHaveChanged=true;throw error;}
+        finally{if(this.#projectContextHandshake===settled)this.#projectContextHandshake=null;}
+      }finally{
+        if(cookieMayHaveChanged){this.#projectContextCookieGeneration+=1;this.#sessionRevision+=1;}
+        owner.settled=true;ready();await reconcile();
+      }
     }};
   }
 
-  async openAssignedReview(task:AssignedReviewTask){
-    const selection=this.beginProjectContextSelection({requireUnexpiredContext:true}),session=this.session.get();
+  async openAssignedReview(task:AssignedReviewTask,options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff"|"onDestinationSource">={}){
+    if(!workspaceNavigationCurrent(options))return false;
+    const selection=this.beginProjectContextSelection({requireUnexpiredContext:true,current:()=>workspaceNavigationCurrent(options)}),session=this.session.get();
     if(!session||session.impersonation||task.status!=="pending"||!Number.isSafeInteger(task.revision)||task.revision<0||!/^[a-f0-9]{64}$/.test(task.contentSha256))return false;
-    const actorId=session.user.userId,ownsNavigation=selection.current;
+    const actorId=session.user.userId,ownsNavigation=()=>selection.current()&&workspaceNavigationCurrent(options);
     const originContext=session.projectContext;
-    const sameProject=Boolean(originContext&&originContext.organizationId===task.organizationId
-      &&originContext.projectAccessId===task.projectAccessId&&originContext.projectId===task.projectId);
+    const originDocumentId=originContext&&originContext.organizationId===task.organizationId&&originContext.projectAccessId===task.projectAccessId&&originContext.projectId===task.projectId
+      ?projectTaskDocumentIdFromRoute(this.route.get())??documentIdFromRoute(this.route.get())??this.projection.get().documentId:"";
     let finishRouteHandoff!:()=>void;
     const routeHandoff=new Promise<void>(resolve=>{finishRouteHandoff=resolve;});
     const current=()=>{const now=this.session.get(),context=now?.projectContext;return Boolean(ownsNavigation()&&now&&!now.impersonation&&now.user.userId===actorId
@@ -2846,7 +3007,10 @@ async syncDocumentJobs(){
       const body=await response.json() as {error?:string};if(!selection.sourceCurrent())return false;
       if(!response.ok)throw new Error(body.error??"The assigned project is no longer available.");
       if(this.session.get()?.user.userId!==actorId)return false;
-      await this.refreshSession();if(!current())return false;
+      // The original view owns raw work until this positive, still-current
+      // context response. Adoption below intentionally retires its old Source.
+      if(options.onOriginHandoff&&(!workspaceNavigationCurrent(options)||!options.onOriginHandoff()))return false;
+      if(!await selection.refreshSession(options.onDestinationSource)||!current())return false;
       // Only this load waits for its exact task decision; newer loads remain independent.
       await this.load({routeHandoff});if(!current())return false;
       await this.syncReviewInbox();if(!current())return false;
@@ -2855,27 +3019,53 @@ async syncDocumentJobs(){
         &&candidate.documentId===task.documentId&&candidate.artifactId===task.artifactId
         &&candidate.revision===task.revision&&candidate.contentSha256===task.contentSha256);
       if(!pending)throw new Error("The assigned review could not be opened.");
+      // A same-project Work return remains useful only while its exact Document
+      // exists in the newly loaded source; the old task route may suppress projection.
+      const returnDocumentId=originDocumentId&&foldEvents(this.events.get(),Number.POSITIVE_INFINITY,"",task.projectId).documents
+        .some(document=>document.id===originDocumentId&&document.projectId===task.projectId&&!document.removed)
+        ?originDocumentId:task.documentId;
       this.setRoute(artifactFocusRoute(task.artifactId,task.artifactTitle,{expectedRevision:task.revision,expectedContentSha256:task.contentSha256,intent:"review"}),
-        {...(sameProject?{}:{documentId:task.documentId}),current});
+        {documentId:returnDocumentId,current,focus:options.focus});
       return true;
     }catch(error){if(ownsNavigation()&&this.session.get()?.user.userId===actorId)this.toast(error instanceof Error?error.message:"The assigned review could not be opened.");return false;}
-    finally{finishRouteHandoff();}
+    finally{finishRouteHandoff();await selection.finish();}
   }
 
-  async leaveProjectContext(){
-    const selection=this.beginProjectContextSelection();
-    if(!this.session.get()?.projectContext&&!this.#projectContextHandshake)return true;
+  async leaveProjectContext(options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff"|"onDestinationSource">&{destination?:"/projects"|"/activity"}={}){
+    if(!workspaceNavigationCurrent(options))return false;
+    const selection=this.beginProjectContextSelection({current:()=>workspaceNavigationCurrent(options)});
+    if(!this.session.get()?.projectContext&&!this.#projectContextHandshake)return options.destination!=="/activity";
     try{
       const response=await selection.request(null);if(!response)return false;
       const body=await response.json() as {error?:string};if(!selection.sourceCurrent())return false;
       if(!response.ok)throw new Error(body.error??"project_context_exit_failed");
-      await this.refreshSession();if(!selection.current())return false;
+      if(options.onOriginHandoff&&(!workspaceNavigationCurrent(options)||!options.onOriginHandoff()))return false;
+      if(!await selection.refreshSession(options.onDestinationSource)||!selection.current())return false;
       this.patchUi({commandOpen:false,accountOpen:false,shareOpen:false,compareOpen:false});
-      this.setRoute("/projects");
+      if(options.destination==="/activity"){
+        const source=this.captureSourceOwnership();if(!source||!this.sourceOwnershipActive(source))return false;
+        let finishRouteHandoff!:()=>void;
+        const routeHandoff=new Promise<void>(resolve=>{finishRouteHandoff=resolve;});
+        try{
+          // The old shared task address is not a personal Document selection.
+          // Load the actual personal source before the one final route commit.
+          const loadRevision=this.#loadRevision+1;
+          await this.load({routeHandoff});
+          if(loadRevision!==this.#loadRevision||this.loading.get()||!selection.current()
+            ||!workspaceNavigationCurrent(options)||!this.sourceOwnershipActive(source)
+            ||this.session.get()?.projectContext||this.error.get())return false;
+          const documentId=foldEvents(this.events.get(),this.asOf.get()).documentId;
+          const destination=withProjectTaskDocumentInRoute("/activity",documentId);
+          this.setRoute(destination,{documentId,current:()=>selection.current()&&workspaceNavigationCurrent(options),focus:options.focus});
+          return this.route.get()===destination&&this.sourceOwnershipActive(source)&&workspaceNavigationCurrent(options);
+        }finally{finishRouteHandoff();}
+      }
+      this.setRoute("/projects",{current:()=>selection.current()&&workspaceNavigationCurrent(options),focus:options.focus});
       const navigation=this.#workspaceTransition,route=this.route.get(),source=this.captureSourceOwnership();
       await this.load();
-      return this.#workspaceTransition===navigation&&this.route.get()===route&&this.sourceOwnershipActive(source);
+      return this.#workspaceTransition===navigation&&this.route.get()===route&&this.sourceOwnershipActive(source)&&workspaceNavigationCurrent(options);
     }catch(error){if(selection.current())this.toast(error instanceof Error?error.message:"The shared project could not be closed.");return false;}
+    finally{await selection.finish();}
   }
 
   async acceptTerms() {
@@ -3430,7 +3620,11 @@ async syncDocumentJobs(){
     const root=this.projection.get().libraryBlocks.find((block)=>block.id===blockId);if(!root)return[];return outputInputEditEvents(root,this.#relatedOutputBlocks(blockId),draft,{sourceSurface});
   }
 
-  async revealOutputInput(blockId:string,destinationDocumentId=this.projection.get().documentId){
+  async revealOutputInput(blockId:string,destinationDocumentId=this.projection.get().documentId,options:Pick<WorkspaceNavigationOptions,"current"|"focus">={}){
+    // An explicitly supplied original lease is transferred to this existing
+    // reveal lifetime, including early refusal. Never cancel newer work first.
+    try{if(!workspaceNavigationCurrent(options)){options.focus?.dispose();return false;}}
+    catch{options.focus?.dispose();return false;}
     this.#outputInputReveal?.cancel();
     const projection=this.projection.get(),sourceRoute=this.route.get(),authorization=this.captureAuthorizationScope();
     const targetDocument=projection.documents.find(item=>item.id===destinationDocumentId&&!item.removed);
@@ -3440,7 +3634,7 @@ async syncDocumentJobs(){
       return JSON.stringify([context??null,session?.capabilities??[],session?.impersonation?.expiresAt??null]);
     };
     const authorityDetails=sessionDetails(),projectId=projection.projectId;
-    if(!blockId||!authorization||!targetDocument||!targetBlock||targetDocument.projectId!==projectId||targetBlock.projectId!==projectId)return false;
+    if(!blockId||!authorization||!targetDocument||!targetBlock||targetDocument.projectId!==projectId||targetBlock.projectId!==projectId){options.focus?.dispose();return false;}
     const destination=documentContextBlockRoute(destinationDocumentId,targetDocument.title,blockId);
     const sourceNavigation=this.#workspaceNavigationFocus;
     let navigation:{route:string;focus:OutputNavigationFocusLease}|null=null,transition=this.#workspaceTransition;
@@ -3487,7 +3681,7 @@ async syncDocumentJobs(){
       if(!stateCurrent()||!focus.current()){owner.cancel();return false;}
       sessionWrites=0;return true;
     };
-    const focus=captureOutputNavigationFocus(document,{
+    const focus=options.focus??captureOutputNavigationFocus(document,{
       ownedRouteFocus:outputNavigationOwnedRouteFocus(document,this,{documentId:destinationDocumentId,blockId},stateCurrent),
     });
     // State notifications cannot read or write signals. Watch the existing
@@ -4076,8 +4270,20 @@ async syncDocumentJobs(){
     const documentTitle = selected.documents.find((document) => document.id === documentId)?.title ?? "";
     const routedDestination = isDocumentViewRoute(destination) && documentId
       ? withDocumentInRoute(destination, documentId, documentTitle) : withProjectTaskDocumentInRoute(destination, documentId);
-    const routeOptions = { ...options, documentId };
-    if (projectId === projection.projectId) { this.setRoute(routedDestination, routeOptions); return true; }
+    const routeOptions = { ...options, documentId }, ownsHandoff = Boolean(options.onOriginHandoff);
+    if(routeOptions.onOriginHandoff){
+      if(!workspaceNavigationCurrent(routeOptions)||!routeOptions.onOriginHandoff())return false;
+      // This local copy carries the same current/focus through optimistic
+      // publication and setRoute, without asking the departed owner twice.
+      routeOptions.onOriginHandoff=undefined;
+    }
+    if (projectId === projection.projectId) {
+      // As in openDocument, a guarded caller keeps its original lease until
+      // the existing cross-workspace session/route transition has finished.
+      if (ownsHandoff && applicationIdFromRoute(this.route.get()) !== applicationIdFromRoute(routedDestination))
+        return await this.transitionWorkspace(routedDestination, routeOptions);
+      this.setRoute(routedDestination, routeOptions); return true;
+    }
     const previousRoute = this.#projectTaskRoute(this.route.get()), clientEventId = crypto.randomUUID(), now = new Date().toISOString();
     const canvasDestination = destination === "/canvas" || destination.startsWith("/canvas/");
     const input: EventInput = { type: "ProjectOpened", payload: { project_id: projectId, previous_project_id: projection.projectId, source_surface: canvasDestination ? "canvas-projects" : "projects", client_event_id: clientEventId } };
@@ -4087,7 +4293,11 @@ async syncDocumentJobs(){
     const persisted = this.appendWithReceipt(input, { rebaseAttempts: 6, silent: true, background: true });
     const committed = persisted.then((result) => result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId), () => false);
     this.#navigationCommit = committed;
-    this.setRoute(routedDestination, routeOptions);
+    // The original event/rollback bookkeeping below settles first. A guarded
+    // cross-workspace success then joins this same transition and focus lease.
+    const opening = ownsHandoff && applicationIdFromRoute(this.route.get()) !== applicationIdFromRoute(routedDestination)
+      ? this.transitionWorkspace(routedDestination, routeOptions) : null;
+    if (!opening) this.setRoute(routedDestination, routeOptions);
     const revision = this.#workspaceTransition, route = this.route.get();
     const current = () => this.sourceOwnershipActive(sourceOwner) && this.authorizationScopeActive(authorization) && this.#workspaceTransition === revision && this.route.get() === route && workspaceNavigationCurrent(options);
     const result = await persisted;
@@ -4100,28 +4310,39 @@ async syncDocumentJobs(){
         this.setRoute(previousRoute,{replace:true});
         if(result.acknowledgment.outcome==="unconfirmed")this.toast(this.#systemNotice("The original change is unconfirmed. It has not been resubmitted."));
       }
-      return observed;
+      return observed && (opening ? await opening : true);
     }
     if (!result.appended.length) {
       if (current()) { this.setRoute(previousRoute, { replace: true }); this.toast("That project could not be opened. Your current workspace was restored."); }
       return false;
     }
-    if (current()) { this.notify(); this.toast(this.#systemNotice("{name} opened in {workspace}.", { name: target.name, workspace: this.#systemNotice(canvasDestination ? "Canvas" : "Creator Workspace") })); }
-    return true;
+    const arrived = opening ? await opening : true;
+    if (arrived && current()) { this.notify(); this.toast(this.#systemNotice("{name} opened in {workspace}.", { name: target.name, workspace: this.#systemNotice(canvasDestination ? "Canvas" : "Creator Workspace") })); }
+    return arrived;
   }
 
-  async openDocument(documentId: string, destination="/", sourceSurface?: string, options:Pick<WorkspaceNavigationOptions,"current"|"focus">={}) {
+  async openDocument(documentId: string, destination="/", sourceSurface?: string, options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff">={}) {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
     if(!workspaceNavigationCurrent(options))return false;
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withProjectTaskDocumentInRoute(withDocumentInRoute(destination, documentId, target?.title ?? ""), documentId);
     if(!documentId||!target){this.toast("That document is no longer available.");return false;}
-    if(documentId===projection.documentId){this.setRoute(routedDestination,options);return true;}
-    if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination,options);return true;}
+    const ownsHandoff=Boolean(options.onOriginHandoff);
+    if(options.onOriginHandoff&&(!workspaceNavigationCurrent(options)||!options.onOriginHandoff()))return false;
+    if(options.onOriginHandoff)options={...options,onOriginHandoff:undefined};
+    const navigate=()=>{
+      // A guarded caller keeps its same lease until this existing cross-audience
+      // route finishes. Omitted-hook calls retain their original setRoute path.
+      if(ownsHandoff&&applicationIdFromRoute(this.route.get())!==applicationIdFromRoute(routedDestination))
+        return this.transitionWorkspace(routedDestination,options);
+      this.setRoute(routedDestination,options);return null;
+    };
+    if(documentId===projection.documentId){const opened=navigate();return opened?await opened:true;}
+    if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});const opened=navigate();return opened?await opened:true;}
     const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
-    const persisted=this.appendWithReceipt({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then(result=>result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="DocumentOpened"),()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination,options);
+    const persisted=this.appendWithReceipt({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then(result=>result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="DocumentOpened"),()=>false);this.#navigationCommit=committed;const opened=navigate();
     const revision=this.#workspaceTransition,authorization=this.captureAuthorizationScope();
     const result=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
-    if(result.publication==="published"&&this.sourceOwnershipActive(sourceOwner)&&result.appended.length&&revision===this.#workspaceTransition&&this.authorizationScopeActive(authorization))this.toast("Document opened.");return true;
+    if(result.publication==="published"&&this.sourceOwnershipActive(sourceOwner)&&result.appended.length&&revision===this.#workspaceTransition&&this.authorizationScopeActive(authorization))this.toast("Document opened.");return opened?await opened:true;
   }
 
   async removeDocument(documentId: string) {
@@ -4227,18 +4448,31 @@ async syncDocumentJobs(){
     finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 
-  async declareIntent(statement: string, deadline: string | null = null) {
-    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
-    const authorization=this.#activeAuthorizationScope();
+  async declareIntent(statement: string, deadline: string | null = null): Promise<boolean> {
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return false;}
+    const authorization=this.#activeAuthorizationScope(),session=this.session.get();
+    const expectedSequence=this.head.get(),documentId=this.projection.get().documentId;
+    const streamId=session?.projectContext?"project:"+session.projectContext.projectAccessId:"creative:"+(session?.user.userId??"");
+    const actor=session?.projectContext?"user:"+session.user.userId:"user";
     this.busy.set("declare-intent"); this.notify();
     try {
-      const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "declare_intent", expectedSequence: this.head.get(), clientId: "web:sessions", statement, deadline }) },"record this intent in the fictional account");
+      const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "declare_intent", expectedSequence, clientId: "web:sessions", statement, deadline }) },"record this intent in the fictional account");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
-      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
+      const body = await response.json() as { appended?: CreativeEvent[]; rejected?: unknown[]; head?: number; error?: string };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error ?? "Intent could not be recorded");
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Intent recorded privately; the immutable event keeps only its expiring reference.");
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");}
+      const event=Array.isArray(body.appended)&&body.appended.length===1?body.appended[0]:null;
+      if(!event||event.type!=="IntentDeclared"||event.actor!==actor||event.streamId!==streamId||event.clientId!=="web:sessions"
+        ||typeof event.eventId!=="string"||!event.eventId||typeof event.correlationId!=="string"||!event.correlationId
+        ||event.sequence!==expectedSequence+1||body.head!==event.sequence||!Array.isArray(body.rejected)||body.rejected.length
+        ||!event.payload||typeof event.payload!=="object"||Array.isArray(event.payload)
+        ||typeof event.payload.statement_ref!=="string"||!event.payload.statement_ref
+        ||typeof event.payload.content_expires_at!=="string"||!Number.isFinite(Date.parse(event.payload.content_expires_at))
+        ||!this.#requestedEventObserved({type:"IntentDeclared",payload:{scope_ref:documentId,deadline}},event))
+        throw new Error(this.#systemNotice("The original change is unconfirmed. It has not been resubmitted."));
+      this.#mergeConfirmed([event], event.sequence); this.toast("Intent recorded privately; the immutable event keeps only its expiring reference.");
+      return true;
+    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");return false;}
     finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
   }
 

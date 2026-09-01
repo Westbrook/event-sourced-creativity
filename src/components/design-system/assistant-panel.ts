@@ -1,4 +1,4 @@
-import { html, nothing, type PropertyValues } from "lit";
+import { html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { ASSISTANT_CONTEXT_LIMITS,type AssistantContext } from "../../model/conversation-context.ts";
 import type { AssistantInteractionMode } from "../../model/assistant-route-policy.ts";
@@ -133,6 +133,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     modes: { attribute: false },
     busyModes: { attribute: false },
     context: { attribute: false },
+    continuation: { attribute: false },
     pending: { type: Number },
     readOnly: { type: Boolean },
     guidanceOnly: { type: Boolean },
@@ -153,6 +154,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   declare modes: readonly AssistantInteractionMode[];
   declare busyModes: readonly AssistantInteractionMode[];
   declare context: AssistantContext | null;
+  /** Local presentation only; never a conversation message or tool request. */
+  declare continuation: TemplateResult | typeof nothing;
   declare pending: number;
   declare readOnly: boolean;
   declare guidanceOnly: boolean;
@@ -192,6 +195,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.modes = ["guidance"];
     this.busyModes = [];
     this.context = null;
+    this.continuation = nothing;
     this.pending = 0;
     this.readOnly = false;
     this.guidanceOnly = false;
@@ -302,6 +306,19 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
 
   #toggle(open: boolean) {
     this.dispatchEvent(new CustomEvent("forma-assistant-toggle", { detail: { open }, bubbles: true, composed: true }));
+  }
+
+  /** Read existing owners; navigation must not acknowledge or discard their work. */
+  get navigationBlocked() {
+    return Boolean(this.#draft || [...this.#drafts].some(([mode, value]) => mode !== this.#activeMode && Boolean(value))
+      || this.#toolSubmitting || this.#guidanceSubmitting || this.guidanceDelivery || this.specialist);
+  }
+
+  /** Closing a settled recovery is not cancellation; raw drafts and active work still own departure. */
+  get commandDepartureBlocked() {
+    return Boolean(this.#draft || [...this.#drafts].some(([mode,value])=>mode!==this.#activeMode&&Boolean(value))
+      || this.#toolSubmitting || this.#guidanceSubmitting || this.guidanceDelivery === "sending"
+      || this.specialist && (this.specialist.working || this.specialist.stopping || this.specialist.id !== this.#dismissedSpecialistId));
   }
 
   clearConversationDrafts() {
@@ -620,7 +637,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const unsafeRights=Number(context?.totals.unsafeRightsDecisions??0);
     return html`<section class="forma-assistant-panel" role="dialog" aria-modal="false" aria-labelledby="forma-assistant-title" @keydown=${(event: KeyboardEvent) => { if (event.key === "Escape" && !event.isComposing && !document.querySelector("dialog:modal")) { event.preventDefault(); event.stopPropagation(); this.#toggle(false); } }}>
       <header class="forma-assistant-header"><div><h2 id="forma-assistant-title" data-assistant-heading tabindex="-1">${this.i18n.t("assistant.heading")}</h2><small>${this.i18n.t("assistant.privacy")}</small></div><button type="button" class="icon-button forma-assistant-close" aria-label=${this.i18n.t("assistant.close")} @click=${() => this.#toggle(false)}>${icon("close")}</button></header>
-      <div class="forma-assistant-transcript" role="log" aria-live="polite" aria-relevant="additions">
+      <div class="forma-assistant-transcript">
+        ${this.continuation !== nothing ? html`<div class="forma-assistant-continuation">
+          ${this.navigationBlocked ? html`<p class="forma-assistant-mode-detail">${this.i18n.t("next.lifecycle.assistantOwnsWork", "Clear unsent drafts or review the current request before continuing; wait if it is still running. Closing the Assistant keeps drafts and does not cancel submitted requests.")}</p>` : nothing}
+          <fieldset ?disabled=${this.navigationBlocked} aria-label=${this.i18n.t("next.exact.heading", "Next for this document")}>${this.continuation}</fieldset>
+        </div>` : nothing}
+        <div class="forma-assistant-conversation" role="log" aria-live="polite" aria-relevant="additions">
         ${context ? html`<small class="forma-assistant-page">${this.i18n.t("assistant.page", "", { page: this.pageLabel || this.i18n.system(context.surface.page) })}</small>${context.documentTitle ? html`<small class="forma-assistant-page">${this.i18n.t("assistant.document", "", { title: context.documentTitle })}</small>` : nothing}${context.scope.documentId?html`<small class="forma-assistant-page" role="status">${this.i18n.t("assistant.coverage.visible","",{count:this.i18n.number(context.decisionAtoms.length),total:this.i18n.number(context.totals.decisions)})}${context.decisionAtoms.length<context.totals.decisions?` ${this.i18n.system("· truncated")}`:""}</small><small class="forma-assistant-page">${this.i18n.t("assistant.coverage.readable","",{count:this.i18n.number(readable)})}${withheld?` · ${this.i18n.t("assistant.coverage.withheld","",{count:this.i18n.number(withheld)})}`:""}</small>${protectedOverflow?html`<small class="forma-assistant-page" role="status">${this.i18n.t("assistant.coverage.protectedOverflow","",{count:this.i18n.number(protectedOverflow)})}</small>`:nothing}${protectedTextOverflow?html`<small class="forma-assistant-page" role="status">${this.i18n.t("assistant.coverage.protectedText","",{count:this.i18n.number(protectedTextOverflow)})}</small>`:nothing}${unsafeRights?html`<small class="forma-assistant-page" role="status">${this.i18n.t("assistant.coverage.rightsBlocked","",{count:this.i18n.number(unsafeRights)})}</small>`:nothing}`:nothing}${context.selectedItems.map((item) => html`<small class="forma-assistant-page">${this.i18n.t("assistant.selection", "", { title: item.title })}</small>`)}` : nothing}
         ${this.messages.length ? this.messages.map((message) => html`<div class=${`forma-assistant-message forma-assistant-message--${message.role}`} dir="auto"><p>${message.key ? this.i18n.t(message.key, "", message.values ?? {}) : message.text}</p>${message.savedTurnId && message.canReviewSpecialist && this.canSpecialist && !this.tasks.some((task) => task.turnId === message.savedTurnId && task.executionId) ? html`<button type="button" class="button secondary compact forma-assistant-review" data-assistant-recovery data-assistant-turn-id=${message.savedTurnId} aria-label=${this.i18n.t("assistant.specialist.reviewLabel", "", this.#specialistLabelValues(message.savedTurnId))} @click=${(event: Event) => this.#openSpecialist(event, message.savedTurnId!)}>${this.i18n.t("assistant.specialist.review")}</button>` : nothing}${message.reviewMode?html`<button type="button" class="button secondary compact forma-assistant-review" ?disabled=${!message.reviewReady} @click=${()=>{const mode=message.reviewMode;if(mode)this.dispatchEvent(new CustomEvent<{mode:"plan-document"|"plan-board"}>("forma-assistant-review",{detail:{mode},bubbles:true,composed:true}));}}>${this.i18n.t("assistant.reviewSuggestions")}</button>`:nothing}</div>`) : html`<p class="forma-assistant-message forma-assistant-message--assistant">${this.i18n.t("assistant.greeting")}</p>`}
         ${this.proposals.map((proposal) => html`<article class="forma-assistant-proposal"><small>${this.i18n.t("assistant.proposedAction")}</small>${proposal.summary || proposal.summaryKey ? html`<p dir="auto">${proposal.summaryKey ? this.i18n.t(proposal.summaryKey) : proposal.summary}</p>` : nothing}<button type="button" class="button secondary compact" ?disabled=${this.readOnly && proposal.kind !== "navigate"} @click=${() => this.dispatchEvent(new CustomEvent("forma-assistant-proposal", { detail: { proposal, action: "accept" }, bubbles: true, composed: true }))}>${this.i18n.t(proposal.key)}</button><button type="button" class="button ghost compact" ?disabled=${this.readOnly && proposal.kind !== "navigate"} @click=${() => this.dispatchEvent(new CustomEvent("forma-assistant-proposal", { detail: { proposal, action: "dismiss" }, bubbles: true, composed: true }))}>${this.i18n.t("assistant.dismissProposal")}</button></article>`)}
@@ -641,6 +663,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         ${this.guidanceOnly && this.#activeMode === "guidance" ? html`<p class="forma-assistant-read-only">${this.i18n.t("assistant.guidanceOnly")}</p>`
           : this.readOnly ? html`<p class="forma-assistant-read-only">${this.i18n.t("assistant.readOnly")}</p>` : nothing}
         ${this.pending ? html`<p class="forma-assistant-pending" role="status">${this.pending === 1 ? this.i18n.t("assistant.sending") : this.i18n.t("assistant.pending", "", { count: this.i18n.number(this.pending) })}</p>` : nothing}
+        </div>
       </div>
       <form class="forma-assistant-composer" data-attention-context=${this.#activeMode==="guidance"?"assistant-guidance":"writing-direction"} @submit=${this.#submit}>
         ${this.modes.length > 1 ? html`<div class="forma-assistant-modes" role="group" aria-label=${this.i18n.t("assistant.mode.label")}>${this.modes.map((mode) => html`<button type="button" class="forma-assistant-mode" aria-pressed=${String(this.#activeMode === mode)} ?disabled=${this.#toolSubmitting} @click=${() => { this.#drafts.set(this.#activeMode, this.#draft); this.#activeMode = mode; this.#draft = this.#drafts.get(mode) ?? ""; this.requestUpdate(); }}>${this.i18n.t(`assistant.mode.${this.#modeName(mode)}`)}</button>`)}</div><p class="forma-assistant-mode-detail">${this.i18n.t(`assistant.mode.${modeName}Detail`)}</p>` : nothing}

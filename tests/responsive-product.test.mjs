@@ -618,7 +618,7 @@ test("Activity and Deliver are refresh-safe, least-privilege Creator destination
   assert.doesNotMatch(publicShare, /extends FormaElement|from "\.\/forma-element"|from "\.\.\/state\/store"/);
 });
 
-test("Activity rejects orphan, removed, cross-tenant, unauthorized, and impersonated records", () => {
+test("Activity rejects orphan, removed, cross-tenant, unauthorized, and impersonated records", async () => {
   const grant = { organizationId: "org-a", projectAccessId: "access-a", projectId: "project-a" };
   const context = { ...grant, permissions: ["project.review.approve", "project.output.request"] };
   const projection = { projectId: "project-a", documents: [
@@ -666,7 +666,37 @@ test("Activity rejects orphan, removed, cross-tenant, unauthorized, and imperson
   assert.deepEqual(scopedFormaActivity(personal, noPersonalProject, notifications, reviews, jobs).reviews.map((item) => item.id), ["review-a"]);
   assert.equal(scopedFormaActivity({ ...personal, projects: undefined }, noPersonalProject, notifications, reviews, jobs).reviews.length, 0);
   assert.equal(scopedFormaActivity({ ...personal, impersonation: { active: true } }, noPersonalProject, notifications, reviews, jobs).reviews.length, 0);
-  assert.match(activity, /leaveProjectContext\(\)[\s\S]*?setRoute\("\/activity"\)/);
+  // The visible View-all control requests one guarded Store-owned commit;
+  // it must not append a second route after a context operation has completed.
+  assert.match(activity, /import \{ navigateInApp, type CommandDeparture \} from "\.\/command-departure";/);
+  assert.match(activity, /@click=\$\{\(\) => void navigateInApp\(this,navigation=>this\.store\.leaveProjectContext\(\{\.\.\.navigation,destination:"\/activity"\}\)\)\}>\$\{this\.i18n\.t\("activity\.viewAllAssignments", "View all my assigned reviews"\)\}/);
+  assert.equal((activity.match(/this\.store\.leaveProjectContext\(/g) ?? []).length, 1);
+  assert.doesNotMatch(activity, /this\.store\.setRoute\("\/activity"\)/);
+  const store = await read("../src/state/store.ts");
+  const from = store.indexOf("  async leaveProjectContext("), to = store.indexOf("  async acceptTerms(", from);
+  assert.ok(from >= 0 && to > from, "The actual Store context-exit implementation is present");
+  const leave = store.slice(from, to).replace(/\s+/gu, "");
+  assert.ok(leave.includes('options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff"|"onDestinationSource">&{destination?:"/projects"|"/activity"}={}'));
+  assert.ok(leave.includes('if(!workspaceNavigationCurrent(options))returnfalse;constselection=this.beginProjectContextSelection({current:()=>workspaceNavigationCurrent(options)});'));
+  assert.ok(leave.includes('if(!this.session.get()?.projectContext&&!this.#projectContextHandshake)returnoptions.destination!=="/activity";'));
+  assert.ok(leave.includes('constresponse=awaitselection.request(null);if(!response)returnfalse;constbody=awaitresponse.json()as{error?:string};if(!selection.sourceCurrent())returnfalse;'
+    +'if(!response.ok)thrownewError(body.error??"project_context_exit_failed");if(options.onOriginHandoff&&(!workspaceNavigationCurrent(options)||!options.onOriginHandoff()))returnfalse;'
+    +'if(!awaitselection.refreshSession(options.onDestinationSource)||!selection.current())returnfalse;'));
+  const branchFrom = leave.indexOf('if(options.destination==="/activity"){'), branchTo = leave.indexOf('this.setRoute("/projects",', branchFrom);
+  assert.ok(branchFrom >= 0 && branchTo > branchFrom, "The optional destination is separate from default Return");
+  const branch = leave.slice(branchFrom, branchTo);
+  assert.ok(branch.includes('constsource=this.captureSourceOwnership();if(!source||!this.sourceOwnershipActive(source))returnfalse;'));
+  assert.ok(branch.includes('constrouteHandoff=newPromise<void>(resolve=>{finishRouteHandoff=resolve;});'));
+  assert.ok(branch.includes('constloadRevision=this.#loadRevision+1;awaitthis.load({routeHandoff});'
+    +'if(loadRevision!==this.#loadRevision||this.loading.get()||!selection.current()||!workspaceNavigationCurrent(options)||!this.sourceOwnershipActive(source)'
+    +'||this.session.get()?.projectContext||this.error.get())returnfalse;'));
+  assert.ok(branch.includes('constdocumentId=foldEvents(this.events.get(),this.asOf.get()).documentId;'
+    +'constdestination=withProjectTaskDocumentInRoute("/activity",documentId);'
+    +'this.setRoute(destination,{documentId,current:()=>selection.current()&&workspaceNavigationCurrent(options),focus:options.focus});'
+    +'returnthis.route.get()===destination&&this.sourceOwnershipActive(source)&&workspaceNavigationCurrent(options);'));
+  assert.equal((branch.match(/this\.setRoute\(/g) ?? []).length, 1, "One final commit uses the committed personal Document, including the empty-history route");
+  assert.doesNotMatch(branch, /this\.(?:projection|eventView)\.get\(/);
+  assert.ok(branch.includes('}finally{finishRouteHandoff();}'));
   assert.match(activity, /acknowledgeProjectNotification\(notification\.id\)/);
   assert.match(deliver, /documentIds\.has\(artifact\.documentId\)/);
   assert.match(deliver, /documentIds\.has\(output\.documentId\)/);

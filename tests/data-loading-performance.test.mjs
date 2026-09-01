@@ -3468,7 +3468,94 @@ test("capability and delivery migrations safely replay after runtime initializat
 
 test("creator provenance defaults to human-readable history and exposes Engineering handoffs only to exact event specialists",async()=>{
   const sources=await Promise.all(["forma-workspace.ts","event-inspector.ts"].map((name)=>readFile(new URL(`../src/components/${name}`,import.meta.url),"utf8")));
-  for(const source of sources){assert.match(source,/capabilities\?\.includes\("engineering\.events\.read"\)===true/);assert.match(source,/\$\{engineering\?html`<details class="provenance-technical"/);assert.match(source,/workspace\.provenance\.description/);assert.match(source,/setRoute\("\/engineering\/events"\)/);assert.doesNotMatch(source,/Open in Operations|setRoute\("\/operations\/events"\)/);}
+  for(const source of sources){
+    assert.match(source,/capabilities\?\.includes\("engineering\.events\.read"\)===true/);
+    assert.match(source,/workspace\.provenance\.description/);
+    assert.match(source,/import\s*\{[^}]*\bnavigateInApp\b[^}]*\}\s*from\s*"\.\/command-departure";/u);
+    const technical=source.match(/\$\{engineering\?html\x60<details class="provenance-technical">[\s\S]*?<\/details>\x60:nothing\}/u);
+    assert.ok(technical,"technical details remain collapsed and exact-capability gated");
+    assert.match(technical[0],/<button @click=\$\{\(\)\s*=>\s*navigateInApp\(this,navigation=>navigation\.route\("\/engineering\/events"\)\)\}>/u);
+    assert.doesNotMatch(source,/setRoute\("\/engineering\/events"\)/);
+    assert.doesNotMatch(source,/Open in Operations|setRoute\("\/operations\/events"\)/);
+  }
+  const [bridge,shell]=await Promise.all(["command-departure.ts","forma-shell.ts"].map(name=>readFile(new URL("../src/components/"+name,import.meta.url),"utf8")));
+  const section=(source,start,end)=>{
+    const from=source.indexOf(start),to=end?source.indexOf(end,from+start.length):source.length;
+    assert.ok(from>=0&&to>from,"the actual navigation declaration is retained: "+start);
+    return source.slice(from,to).replace(/\s+/gu,"");
+  };
+  const forwarding=section(bridge,"export function navigateInApp(");
+  assert.ok(forwarding.includes('consthost=origin.closest<InAppNavigationHost>("forma-shell");'));
+  assert.ok(forwarding.includes("returnhost?host.navigateFrom(origin,run,context):Promise.resolve(false);"));
+  const admission=section(shell,"  async navigateFrom(","  async #runCommand(");
+  assert.ok(admission.includes("if(!this.isConnected||!origin.isConnected||!this.contains(origin)||!FormaElement.hasStoreIdentity(origin,this.store)||this.store.ui.commandOpen)returnfalse;"));
+  assert.ok(admission.includes("constowner=this.#captureNavigationOpening();if(!owner)returnfalse;"));
+  // Ordinary provenance keeps its captured origin. Only the exact admitted
+  // Library native-close chain can consume its one already-known root route.
+  assert.ok(admission.includes("letexpectedOriginRoute=owner.route;constoriginRoute=()=>{constpath=this.store.route.get();"));
+  assert.ok(admission.includes("if(nativeCloseEvent&&expectedOriginRoute===owner.route&&nativeAfterCloseRoute===path)expectedOriginRoute=path;returnexpectedOriginRoute;};"));
+  assert.ok(admission.includes('if(after!==undefined&&(!parent.matches("forma-library")||origin.closest("forma-library")!==parent||parent.querySelector("forma-document-artifacts")!==origin||libraryFocusFromRoute(owner.route)?.kind!=="artifact"||after!==libraryRootRoute(owner.route)))returnfalse;'));
+  assert.ok(admission.includes("nativeAfterCloseRoute=after;presentationClosed=true;"));
+  assert.ok(admission.includes("current,close:()=>close(current),closing:value=>{nativeCloseEvent=value;},returned:()=>{closeReturned=true;},"));
+  assert.ok(admission.includes("nativeCloseEvent=false;nativeAfterCloseRoute=undefined;if(!nativeClosed)nativeClosing=null;"));
+  assert.ok(admission.includes("constcaptured=this.#captureNavigation(owner,true,context,presentationCurrent,originRoute),navigation=captured.navigation,focus=navigation.focus;"));
+  // A deliberate positive context handoff replaces the origin authorization
+  // check only with its one Store-issued successor, not route equality alone.
+  assert.ok(admission.includes("constcurrent=()=>captured.sourceCurrent()&&focus.current();"));
+  assert.ok(admission.includes("constoptions={current,focus,onOriginHandoff:()=>navigation.handoff(),onDestinationSource:(source:CapturedSourceOwnership)=>navigation.adoptSource(source)};"));
+  // Shared admission still reports the original guarded refusal; its local
+  // wrapper forwards only an actually reported reason to the optional caller.
+  assert.ok(admission.includes("constreportUnavailable=()=>{constreason=captured.reportUnavailable();if(reason)preferences.onRefusal?.(reason);};"));
+  assert.ok(admission.includes("if(!current()){if(captured.refusalCurrent()&&captured.blocked())reportUnavailable();returnfalse;}"));
+  // The artifact-opening wrapper retains, rather than replaces, the same
+  // guarded route/options/lease. Engineering is a non-artifact pass-through.
+  assert.ok(admission.includes("constretainArtifactOpening=(opened:boolean,sameRoute=false)=>{"));
+  assert.ok(admission.includes('if(!opened||linked?.kind!=="artifact"||route===owner.route&&!sameRoute)returnopened;'));
+  assert.ok(admission.includes('constopened=this.#route(path,{...options,...preferences},false);returntypeofopened==="boolean"?retainArtifactOpening(opened):opened.then(retainArtifactOpening);'));
+  assert.ok(admission.includes("constsource=this.store.captureSourceOwnership(),arrival=this.store.captureWorkspaceNavigationFocus(route,focus);"));
+  assert.ok(admission.includes("if(!current()||!source||!artifact||!arrival?.current())returnfalse;"));
+  assert.ok(admission.includes("constrouteCurrent=()=>captured.sourceCurrent()&&this.store.sourceOwnershipActive(source)"
+    +"&&arrival.routeCurrent()&&this.store.route.get()===route&&this.store.projection.get().libraryArtifacts.some(value=>value.id===target.id"
+    +"&&value.documentId===target.documentId&&value.sequence===target.sequence&&value.sourceEventId===target.sourceEventId&&value.contentRef===target.contentRef);"));
+  assert.ok(admission.includes("this.#commandRouteFocus={route,focus,current:()=>routeCurrent()&&arrival.current()};navigation.retain();this.#joinRetainedArtifactOpening(route,focus);returntrue;"));
+  const owner=section(shell,"  #captureNavigation(","  /** Deliberate UI navigation only;");
+  assert.ok(owner.includes("originRoute:()=>string=()=>owner.route){"));
+  assert.ok(owner.includes("constoriginScope=()=>this.#commandContextCurrent(owner)&&this.store.route.get()===originRoute()&&(!owner.sourceReadable||this.store.sourceOwnershipActive(owner.source));"));
+  assert.ok(owner.includes("letdestinationSource:CapturedSourceOwnership|null=null,destinationRoute:{routeCurrent():boolean}|null=null;"));
+  assert.ok(owner.includes("if(!this.#commandIntentCurrent(owner)||!handedOff&&!routeHandoff&&(!originScope()||replaces&&!this.#commandOriginsCurrent(owner,context)||!presentationCurrent()))retired=\"identity\";"));
+  assert.ok(owner.includes("if(destinationSource){if(!this.store.sourceOwnershipActive(destinationSource))retired=\"identity\";"
+    +"destinationRoute??=this.store.captureWorkspaceNavigationFocus(this.store.route.get(),expectedFocus);"
+    +"if(destinationRoute?!destinationRoute.routeCurrent():this.store.route.get()!==originRoute())retired=\"identity\";}"));
+  assert.ok(owner.includes("if(retired)returnfalse;if(routeHandoff)handedOff=true;if(!handedOff&&blocked())retired=\"blocked\";return!retired;"));
+  assert.ok(owner.includes("handoff:()=>{if(!navigation.current()||!focus.current())returnfalse;handedOff=true;returntrue;},"));
+  assert.ok(owner.includes("adoptSource:source=>{if(!handedOff||destinationSource||!navigation.current()||!focus.current()||this.store.route.get()!==originRoute()"
+    +"||!this.store.sourceOwnershipActive(source))returnfalse;destinationSource=source;returnnavigation.current()&&focus.current();},"));
+  assert.ok(owner.includes("sourceCurrent:()=>navigation.current()&&(destinationSource!==null||this.#commandContextCurrent(owner)),"));
+  assert.ok(owner.includes("constunsubscribe=this.store.subscribe(()=>{navigation.current();});"));
+  const authority=section(shell,"  #commandContextCurrent(","  #commandOriginElements(");
+  assert.ok(authority.includes("returnthis.#commandIntentCurrent(owner)&&this.store.captureAuthorizationScope()?.key===owner.authorityKey;"));
+  const route=section(shell,"  #route(","  #page()");
+  assert.ok(route.includes("if(options&&(!options.current()||!options.focus.current()))returnfalse;"));
+  assert.ok(route.includes("this.store.transitionWorkspace(path,options)"));
+  assert.ok(route.includes("this.store.setRoute(path,options);returnfinish();"));
+  // The same expected native-focus record owns the adopted route revision.
+  // Its routeCurrent is intentionally focus-independent to avoid recursion
+  // through the existing review wrapper; both outer current/focus guards stay.
+  const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
+  const receipt=section(store,"  captureWorkspaceNavigationFocus(","  #loadRevision=");
+  assert.ok(receipt.includes("constowner=this.#workspaceNavigationFocus;if(!owner||owner.route!==route||(expected&&owner.focus!==expected))returnnull;"));
+  assert.ok(receipt.includes("routeCurrent:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&this.#workspaceTransition===owner.revision,"));
+  assert.ok(receipt.includes("current:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&owner.focus.current()"));
+  const commit=section(store,"  #commitRoute(","  async syncDocumentFromRoute(");
+  assert.ok(commit.includes("if(!workspaceNavigationCurrent(options))return;path=this.#projectTaskRoute(path,options);if(options.onOriginHandoff&&!options.onOriginHandoff())return;this.#workspaceTransition+=1;"));
+  assert.ok(commit.includes("this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:this.#workspaceTransition}:null;this.route.set(routedPath);"));
+  const source=section(store,"  captureSourceOwnership(","  #assertSourceOwnership(");
+  assert.ok(source.includes("constauthorization=this.captureAuthorizationScope();if(!authorization)returnnull;"
+    +"constsource=Object.freeze({authorization:Object.freeze({...authorization}),generation:this.#sourceGeneration});"
+    +"this.#sourceOwners.set(source,this.session.get()?.projectContext?.expiresAt??null);returnsource;"));
+  assert.ok(source.includes("returnBoolean(source&&this.#sourceOwners.has(source)&&this.authorizationScopeActive(source.authorization));"));
+  assert.ok(source.includes("returnBoolean(source&&this.#sourceExpiryValid(this.#sourceOwners.get(source))&&this.#sourceExpiryValid(this.session.get()?.projectContext?.expiresAt??null));"));
+  assert.ok(source.includes("returnBoolean(source&&this.sourceOwnershipScopeActive(source)&&source.generation===this.#sourceGeneration&&!this.#sourceRetired&&this.#sourceDeadlineCurrent(source));"));
 });
 
 // Live metadata shares the real dashboard batch; these controls keep the

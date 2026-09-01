@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { beliefHistory, CREATOR_AXES, preferenceCapsule, standingConstraints, tasteMetrics, type CreatorAxis, type TasteBelief } from "../model/taste";
 import { attentionMetrics } from "../model/attention";
 import { FormaElement, icon } from "./forma-element";
+import type { CommandDeparture } from "./command-departure";
 import "./icons-history";
 import "./area-navigation";
 
@@ -16,11 +17,126 @@ export class FormaMemory extends FormaElement {
   #threshold = 3;
   #onDate = "";
   #asOf = Number.POSITIVE_INFINITY;
+  #preferenceClean: readonly [CreatorAxis, "affirm" | "forbid", number] = ["style", "affirm", 0];
+  #conditionClean: readonly ["generation_count" | "on_date", number, string, number] = ["generation_count", 3, "", 0];
+  #preferenceRevision = 0;
+  #conditionRevision = 0;
+  #workOwner: { current: () => boolean } | null = null;
+  #pendingSaves: { owner: { current: () => boolean }; count: number } | null = null;
+  #workChanged = () => {
+    if (this.#workOwner && !this.#workOwner.current()) { this.#retireLocalWork(); this.requestUpdate(); }
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    for (const name of ["forma-route-changed", "forma-authorization-changed", "forma-event-source-retired"])
+      window.addEventListener(name, this.#workChanged);
+  }
+
+  override disconnectedCallback() {
+    for (const name of ["forma-route-changed", "forma-authorization-changed", "forma-event-source-retired"])
+      window.removeEventListener(name, this.#workChanged);
+    this.#retireLocalWork(); super.disconnectedCallback();
+  }
+
+  #retireLocalWork() {
+    this.#workOwner = null; this.#pendingSaves = null;
+    this.#value = ""; this.#condition = ""; this.#axis = "style"; this.#polarity = "affirm";
+    this.#trigger = "generation_count"; this.#threshold = 3; this.#onDate = "";
+    this.#preferenceClean = ["style", "affirm", 0]; this.#conditionClean = ["generation_count", 3, "", 0];
+    this.#preferenceRevision++; this.#conditionRevision++;
+  }
+
+  #currentWorkOwner() {
+    this.#workChanged();
+    if (!this.#workOwner) {
+      const store = this.store, source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
+      const route = store.route.get().split("#")[0];
+      const owner = { current: (): boolean => this.#workOwner === owner && this.isConnected && this.store === store
+        && store.sourceOwnershipActive(source) && store.authorizationScopeActive(authorization)
+        && store.route.get().split("#")[0] === route };
+      this.#workOwner = owner;
+      if (!owner.current()) { this.#workOwner = null; return null; }
+    }
+    return this.#workOwner;
+  }
+
+  #editLocal(kind: "preference" | "condition", edit: () => void) {
+    if (!this.#currentWorkOwner()) return;
+    edit();
+    if (kind === "preference") this.#preferenceRevision++; else this.#conditionRevision++;
+    this.requestUpdate();
+  }
+
+  #localDraftChanged(kind: "preference" | "condition") {
+    return kind === "preference" ? Boolean(this.#value
+      || this.#axis !== this.#preferenceClean[0] || this.#polarity !== this.#preferenceClean[1])
+      : Boolean(this.#condition || this.#trigger !== this.#conditionClean[0]
+        || this.#threshold !== this.#conditionClean[1] || this.#onDate !== this.#conditionClean[2]);
+  }
+
+  get #savePending() {
+    return Boolean(this.#pendingSaves && this.#pendingSaves.count > 0 && this.#pendingSaves.owner.current());
+  }
+
+  #localWorkBlocked() {
+    return this.#localDraftChanged("preference") || this.#localDraftChanged("condition") || this.#savePending;
+  }
+
+  #discardLocal(event: Event, kind: "preference" | "condition") {
+    const target = event.currentTarget as HTMLElement | null, form = target?.closest("form");
+    if (!target?.isConnected || !form?.isConnected
+      || form !== this.querySelector(kind === "preference" ? ".preference-author form" : ".condition-author")
+      || target !== form.querySelector(".memory-discard") || !this.#currentWorkOwner()
+      || this.#savePending || !this.#localDraftChanged(kind)) return;
+    this.#editLocal(kind, () => {
+      if (kind === "preference") {
+        this.#value = ""; [this.#axis, this.#polarity] = this.#preferenceClean;
+      } else {
+        this.#condition = ""; [this.#trigger, this.#threshold, this.#onDate] = this.#conditionClean;
+      }
+    });
+  }
+
+  #discardControl(kind: "preference" | "condition") {
+    const action = this.i18n.t("workspace.admin.discardPolicy", "Discard unsaved changes");
+    const name = this.i18n.system(kind === "preference" ? "Specific preference" : "Conditions & resurfacing");
+    return html`<button type="button" class="button ghost memory-discard"
+      aria-label=${this.i18n.t("artifact.delivery.namedAction", "{action} — {name}", { action, name })}
+      ?disabled=${this.#savePending || !this.#localDraftChanged(kind)}
+      @click=${(event: Event) => this.#discardLocal(event, kind)}>${action}</button>`;
+  }
+
+  captureCommandDeparture(): CommandDeparture {
+    const owner = this.#currentWorkOwner(), preference = this.#preferenceRevision, condition = this.#conditionRevision;
+    return { element: this, current: () => Boolean(owner?.current())
+      && this.#preferenceRevision === preference && this.#conditionRevision === condition,
+      blocked: () => this.#localWorkBlocked(), reason: () => "next.lifecycle.currentWorkOpen" };
+  }
+
+  async #trackSave<T>(owner: { current: () => boolean }, save: () => Promise<T>): Promise<T> {
+    let pending = this.#pendingSaves;
+    if (!pending || pending.owner !== owner) { pending = { owner, count: 0 }; this.#pendingSaves = pending; }
+    pending.count++; this.requestUpdate();
+    try { return await save(); }
+    finally {
+      pending.count--;
+      if (this.#pendingSaves === pending && pending.count === 0) this.#pendingSaves = null;
+      if (owner.current()) this.requestUpdate();
+    }
+  }
 
   async #authorPreference(event: SubmitEvent) {
-    event.preventDefault(); const value = this.#value.trim(); if (!value) return;
-    await this.store.append({ type: "PreferenceAuthored", payload: { preference_id: crypto.randomUUID(), axis: this.#axis, value, polarity: this.#polarity, scope: "account", source_claim_ref: null } });
-    this.#value = ""; this.requestUpdate();
+    event.preventDefault();
+    const owner = this.#currentWorkOwner(), raw = this.#value, value = raw.trim();
+    if (!owner || !value) return;
+    const revision = this.#preferenceRevision, selection = [this.#axis, this.#polarity] as const, preferenceId = crypto.randomUUID();
+    const appended = await this.#trackSave(owner, () => this.store.append({ type: "PreferenceAuthored", payload: {
+      preference_id: preferenceId, axis: selection[0], value, polarity: selection[1], scope: "account", source_claim_ref: null } }));
+    if (!owner.current() || !appended.some(event => event.type === "PreferenceAuthored" && event.payload.preference_id === preferenceId)) return;
+    if (revision >= this.#preferenceClean[2]) this.#preferenceClean = [selection[0], selection[1], revision];
+    if (this.#preferenceRevision === revision && this.#value === raw) { this.#value = ""; this.#preferenceRevision++; }
+    this.requestUpdate();
   }
 
   async #promote(belief: TasteBelief) {
@@ -28,12 +144,19 @@ export class FormaMemory extends FormaElement {
   }
 
   async #setCondition(event: SubmitEvent) {
-    event.preventDefault(); const condition = this.#condition.trim(); if (!condition) return;
-    const saved = await this.store.setCondition(condition, this.#trigger, this.#threshold, this.#onDate || null);
-    if (saved) { this.#condition = ""; this.requestUpdate(); }
+    event.preventDefault();
+    const owner = this.#currentWorkOwner(), raw = this.#condition, condition = raw.trim();
+    if (!owner || !condition) return;
+    const revision = this.#conditionRevision, selection = [this.#trigger, this.#threshold, this.#onDate] as const;
+    const saved = await this.#trackSave(owner, () => this.store.setCondition(condition, selection[0], selection[1], selection[2] || null));
+    if (!saved || !owner.current()) return;
+    if (revision >= this.#conditionClean[3]) this.#conditionClean = [selection[0], selection[1], selection[2], revision];
+    if (this.#conditionRevision === revision && this.#condition === raw) { this.#condition = ""; this.#conditionRevision++; }
+    this.requestUpdate();
   }
 
   override render() {
+    this.#workChanged();
     const events = this.store.events.get(); const head = this.store.head.get(); const busy = this.store.busy.get(); const content = this.store.content.get();
     const phase6 = events.findLast((event) => event.type === "PhaseGateReviewed" && Number(event.payload.phase) === 6); const advanced = phase6?.payload.decision === "advance";
     const capsule = preferenceCapsule(events, 16); const authored = standingConstraints(events); const inferred = capsule.filter((belief) => belief.authority === "inferred"); const metrics = tasteMetrics(events); const attention=attentionMetrics(events); const history = beliefHistory(events);
@@ -46,8 +169,8 @@ export class FormaMemory extends FormaElement {
         <section><div class="section-heading"><div><span class="eyebrow">You control what persists</span><h2>Preferences guiding your work</h2></div><span>${authored.length} saved · ${inferred.length} suggested</span></div><div class="memory-policy"><span>${icon("info")}</span><p><b>Only preferences you save become instructions.</b> Suggestions can bring relevant choices forward, but they never hide options or change your work without permission.</p></div>
           <div class="belief-list">${capsule.length ? capsule.map((belief) => html`<article class="belief-card ${belief.authority}"><header><span>${belief.axis}</span><em>${belief.authority==="authored"?this.i18n.system("Saved by you"):this.i18n.system("Suggested")}</em></header><h3>${belief.polarity === "forbid" ? this.i18n.system("Avoid") : this.i18n.system("Favor")} ${belief.value}</h3><div class="belief-evidence"><span>${Math.round(belief.confidence * 100)}% confidence</span><span>${belief.evidenceCount} supporting action${belief.evidenceCount === 1 ? "" : "s"}</span><span>${Math.round(belief.freshness * 100)}% current</span></div><details class="creative-diagnostics"><summary>Inspect supporting reference</summary><code>${belief.claimRef}</code></details>${belief.authority === "authored" ? html`<button class="button ghost compact" @click=${() => this.store.append({ type: "PreferenceRevoked", payload: { preference_id: belief.preferenceId, reason: "revoked-by-user" } })}>Remove saved preference</button>` : html`<div class="belief-actions"><button class="button secondary compact" @click=${() => this.#promote(belief)}>Save this preference</button><button class="button ghost compact" @click=${() => this.store.append({ type: "FactRetracted", payload: { fact_ref: belief.claimRef, reason: "forgotten-by-user" } })}>Dismiss suggestion</button></div>`}</article>`) : html`<div class="empty-workspace"><span>${icon("spark")}</span><h3>No preferences yet</h3><p>Save, compare, or respond to creative work, then update suggestions when you are ready.</p></div>`}</div>
         </section>
-        <section class="preference-author"><div><span class="eyebrow">An instruction from you</span><h2>Say what should carry forward</h2><p>A saved preference becomes part of future creative work until you change or remove it.</p></div><form @submit=${this.#authorPreference}><label>Applies to<select .value=${this.#axis} @change=${(event: Event) => { this.#axis = (event.target as HTMLSelectElement).value as CreatorAxis; }}>${CREATOR_AXES.map((axis) => html`<option value=${axis}>${axis}</option>`)}</select></label><label>Effect<select .value=${this.#polarity} @change=${(event: Event) => { this.#polarity = (event.target as HTMLSelectElement).value as "affirm" | "forbid"; }}><option value="affirm">Favor</option><option value="forbid">Avoid</option></select></label><label class="preference-value">Specific preference<input maxlength="120" placeholder="e.g. low, lateral light" .value=${this.#value} @input=${(event: InputEvent) => { this.#value = (event.target as HTMLInputElement).value; this.requestUpdate(); }}></label><button class="button primary" ?disabled=${!this.#value.trim()}>Save preference</button></form></section>
-        <section><div class="section-heading"><div><span class="eyebrow">Authored future memory</span><h2>Conditions & resurfacing</h2></div><button class="button secondary compact" ?disabled=${busy === "check-conditions"} @click=${() => this.store.checkConditions()}>${busy === "check-conditions" ? this.i18n.system("Checking…") : this.i18n.system("Check due policies")}</button></div><div class="condition-list">${conditions.length ? conditions.map((condition) => { const pointer = String(condition.condition_ref ?? ""); const current = generationCount(condition); const trigger = String(condition.trigger_kind ?? (pointer === "three-new-generations" ? "generation_count" : "manual")); return html`<article class=${condition.fired ? "fired" : ""}><span>${icon(condition.fired ? "check" : "clock")}</span><div><b>${content[pointer] ?? (pointer === "three-new-generations" ? this.i18n.system("Revisit the palette") : this.i18n.system("Private condition"))}</b><small>${condition.fired ? this.i18n.system("Resurfaced") : trigger === "generation_count" ? this.i18n.system("{current}/{count} new generations", { current: this.i18n.number(current), count: this.i18n.number(Number(condition.threshold ?? 3)) }) : trigger === "on_date" ? this.i18n.system("Due {formatted}", { formatted: new Date(String(condition.fire_on)).toLocaleDateString(this.i18n.locale) }) : this.i18n.system("Legacy manual condition")}</small></div></article>`; }) : html`<p>No future conditions are active.</p>`}</div><form class="condition-author" @submit=${this.#setCondition}><label class="condition-copy">What should resurface?<input maxlength="300" placeholder="Revisit the night palette" .value=${this.#condition} @input=${(event: InputEvent) => { this.#condition = (event.target as HTMLInputElement).value; this.requestUpdate(); }}></label><label>When<select .value=${this.#trigger} @change=${(event: Event) => { this.#trigger = (event.target as HTMLSelectElement).value as "generation_count" | "on_date"; this.requestUpdate(); }}><option value="generation_count">After generations</option><option value="on_date">On a date</option></select></label>${this.#trigger === "generation_count" ? html`<label>Count<input type="number" min="1" max="100" .value=${String(this.#threshold)} @input=${(event: InputEvent) => { this.#threshold = Number((event.target as HTMLInputElement).value); }}></label>` : html`<label>Date<input type="date" .value=${this.#onDate} @input=${(event: InputEvent) => { this.#onDate = (event.target as HTMLInputElement).value; this.requestUpdate(); }}></label>`}<button class="button primary" ?disabled=${!this.#condition.trim() || (this.#trigger === "on_date" && !this.#onDate)}>Set time policy</button></form></section>
+        <section class="preference-author"><div><span class="eyebrow">An instruction from you</span><h2>Say what should carry forward</h2><p>A saved preference becomes part of future creative work until you change or remove it.</p></div><form @submit=${this.#authorPreference}><label>Applies to<select .value=${this.#axis} @change=${(event: Event) => { this.#editLocal("preference", () => { this.#axis = (event.target as HTMLSelectElement).value as CreatorAxis; }); }}>${CREATOR_AXES.map((axis) => html`<option value=${axis}>${axis}</option>`)}</select></label><label>Effect<select .value=${this.#polarity} @change=${(event: Event) => { this.#editLocal("preference", () => { this.#polarity = (event.target as HTMLSelectElement).value as "affirm" | "forbid"; }); }}><option value="affirm">Favor</option><option value="forbid">Avoid</option></select></label><label class="preference-value">Specific preference<input maxlength="120" placeholder="e.g. low, lateral light" .value=${this.#value} @input=${(event: InputEvent) => { this.#editLocal("preference", () => { this.#value = (event.target as HTMLInputElement).value; }); }}></label><div class="platform-form-actions"><button class="button primary" ?disabled=${!this.#value.trim()}>Save preference</button>${this.#discardControl("preference")}</div></form></section>
+        <section><div class="section-heading"><div><span class="eyebrow">Authored future memory</span><h2>Conditions & resurfacing</h2></div><button class="button secondary compact" ?disabled=${busy === "check-conditions"} @click=${() => this.store.checkConditions()}>${busy === "check-conditions" ? this.i18n.system("Checking…") : this.i18n.system("Check due policies")}</button></div><div class="condition-list">${conditions.length ? conditions.map((condition) => { const pointer = String(condition.condition_ref ?? ""); const current = generationCount(condition); const trigger = String(condition.trigger_kind ?? (pointer === "three-new-generations" ? "generation_count" : "manual")); return html`<article class=${condition.fired ? "fired" : ""}><span>${icon(condition.fired ? "check" : "clock")}</span><div><b>${content[pointer] ?? (pointer === "three-new-generations" ? this.i18n.system("Revisit the palette") : this.i18n.system("Private condition"))}</b><small>${condition.fired ? this.i18n.system("Resurfaced") : trigger === "generation_count" ? this.i18n.system("{current}/{count} new generations", { current: this.i18n.number(current), count: this.i18n.number(Number(condition.threshold ?? 3)) }) : trigger === "on_date" ? this.i18n.system("Due {formatted}", { formatted: new Date(String(condition.fire_on)).toLocaleDateString(this.i18n.locale) }) : this.i18n.system("Legacy manual condition")}</small></div></article>`; }) : html`<p>No future conditions are active.</p>`}</div><form class="condition-author" @submit=${this.#setCondition}><label class="condition-copy">What should resurface?<input maxlength="300" placeholder="Revisit the night palette" .value=${this.#condition} @input=${(event: InputEvent) => { this.#editLocal("condition", () => { this.#condition = (event.target as HTMLInputElement).value; }); }}></label><label>When<select .value=${this.#trigger} @change=${(event: Event) => { this.#editLocal("condition", () => { this.#trigger = (event.target as HTMLSelectElement).value as "generation_count" | "on_date"; }); }}><option value="generation_count">After generations</option><option value="on_date">On a date</option></select></label>${this.#trigger === "generation_count" ? html`<label>Count<input type="number" min="1" max="100" .value=${String(this.#threshold)} @input=${(event: InputEvent) => { this.#editLocal("condition", () => { this.#threshold = Number((event.target as HTMLInputElement).value); }); }}></label>` : html`<label>Date<input type="date" .value=${this.#onDate} @input=${(event: InputEvent) => { this.#editLocal("condition", () => { this.#onDate = (event.target as HTMLInputElement).value; }); }}></label>`}<div class="platform-form-actions"><button class="button primary" ?disabled=${!this.#condition.trim() || (this.#trigger === "on_date" && !this.#onDate)}>Set time policy</button>${this.#discardControl("condition")}</div></form></section>
       </main><aside>
         <section class="workflow-memory"><span class="eyebrow">Working-mode memory</span><h2>${metrics.workflow.preferredView?.label??this.i18n.system("Baseline pending")}</h2><p>${metrics.workflow.preferredView?this.i18n.system("Strongest observed mode for making progress"):this.i18n.system("Use a document view to establish a workflow baseline")}. This helps Re-entry route and Scout diagnose UX friction; it never changes what the system thinks you like.</p>${metrics.workflow.rows.filter((row)=>row.visits||row.edits||row.generationRequests||row.outcomes||row.activeMinutes).length?html`<div class="workflow-memory-list">${metrics.workflow.rows.filter((row)=>row.visits||row.edits||row.generationRequests||row.outcomes||row.activeMinutes).slice(0,5).map((row)=>html`<div><span><b>${row.label}</b><small>${row.visits} visits · ${row.edits} edits</small></span><em>${row.outcomes} retained</em></div>`)}</div><small class="workflow-memory-policy">UI routing only · excluded from generation input · attention remains supplemental</small>`:nothing}</section>
         <section class="taste-metrics"><span class="eyebrow">Evaluation ledger</span><h2>${Math.round(metrics.promotionRate * 100)}%</h2><p>inferred claims promoted into authored standing preferences</p><div><span><b>${metrics.versions}</b>model versions</span><span><b>${metrics.inferred}</b>current inferences</span><span><b>${metrics.promoted}</b>promotions</span><span><b>${metrics.activeAuthored}</b>active authored</span></div></section>

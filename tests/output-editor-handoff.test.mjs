@@ -6,6 +6,8 @@ import { html } from "lit";
 import { snapshot as outputSnapshot, deferred } from "./output-ui-source-harness.mjs";
 import { createSceneStoreHost, untilScene } from "./helpers/scene-cost-store-host.mjs";
 import { documentContextBlockRoute } from "../src/model/routes.ts";
+import { calmFullPageNativePorts as navigationPorts, fullPageTree } from "./helpers/calm-full-page-fixture.mjs";
+import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
 
 // Reuse complete production components and LocaleController with existing native
 // ports. Omit only fixture test registration; no production method is replaced.
@@ -18,10 +20,11 @@ fixtureModule=fixtureModule.replace(/(from\s+|import\s*\()(["'])([^"']+)\2/gu,(_
 fixtureModule=fixtureModule.replaceAll('import.meta.resolve("vite")',JSON.stringify(import.meta.resolve("vite"))).replaceAll("import.meta.url",JSON.stringify(fixtureUrl.href));
 fixtureModule=fixtureModule.replace("await import(specifier)", "await import(specifier===\"lit/directives/live.js\"?"+JSON.stringify(import.meta.resolve("lit/directives/live.js"))+":specifier)");
 fixtureModule+="\nexport {fixture,loadActual,ElementPort,documentPort,windowPort};\n";
-const {fixture,loadActual,ElementPort,documentPort,windowPort}=await import("data:text/javascript;base64,"+Buffer.from(fixtureModule).toString("base64"));
-Object.defineProperty(ElementPort.prototype,"ownerDocument",{get:()=>documentPort,configurable:true});
-documentPort.addEventListener=(...args)=>windowPort.addEventListener(...args);
-documentPort.removeEventListener=(...args)=>windowPort.removeEventListener(...args);
+const {fixture}=await import("data:text/javascript;base64,"+Buffer.from(fixtureModule).toString("base64"));
+// Keep the old explicitly finite Store/facts factory; use the already shared
+// native renderer/IDL for the newly required real Shell admission parent.
+const {loadActual,ElementPort,documentPort,windowPort}=navigationPorts;
+const {FormaShell}=await loadActual("src/components/forma-shell.ts");
 const {ContextIntelligence}=await loadActual("src/components/context-intelligence.ts");
 const {FormaOutputRequirements}=await loadActual("src/components/forma-output-requirements.ts");
 const {FormaOutputRequirementCard}=await loadActual("src/components/forma-output-requirement-card.ts");
@@ -31,8 +34,7 @@ const plain=value=>String(value).replace(/<[^>]+>/gu,"").replaceAll("&lt;","<").
 function buttons(f,owner){
   return [...(owner.markup??"").matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gu)].map(([,raw,text])=>{
     const value=f.renderer.attrs(raw),textContent=plain(text),node=f.renderer.ownNodes(owner,"button").find(candidate=>candidate.handlers.click===value.handlers.click&&candidate.attributes["aria-label"]===value.attributes["aria-label"]);
-    if(node){node.textContent=textContent;node.disabled=Object.hasOwn(node.attributes,"disabled");node.getClientRects=()=>f.visibleCard?[{}]:[];
-      node.scrollIntoView=()=>f.trace.push("scroll:"+owner.snapshot?.requirementId);node.focus=()=>f.trace.push("native-focus:"+owner.snapshot?.requirementId+":"+textContent);}
+    if(node){node.textContent=textContent;node.disabled=Object.hasOwn(node.attributes,"disabled");node.getClientRects=()=>f.visibleCard?[{}]:[];}
     return{...value,textContent,node};
   });
 }
@@ -45,23 +47,50 @@ function retainedReview(projectId,documentId,blockId){
 }
 async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="apply",blockType="output"}={}){
   noProviders(t);
-  const f=fixture(t,{locale,facts:[{id:"requirement-A",type:blockType,text:"One owned image."}]});
-  f.host.disconnectedCallback();f.trace.length=0;f.frames=[];f.opened=[];f.patches=[];f.visibleCard=true;f.otherDialog=false;f.navigationGate=null;
+  const baseCleanups=[],nativeCleanups=[];
+  const f=fixture({after:cleanup=>baseCleanups.push(cleanup)},{locale,facts:[{id:"requirement-A",type:blockType,text:"One owned image."}]});
+  f.host.isConnected=false;f.host.disconnectedCallback();f.trace.length=0;f.frames=[];f.opened=[];f.patches=[];f.visibleCard=true;f.otherDialog=false;f.navigationGate=null;
+  Object.assign(f,{resizeTargets:new Map(),timers:new Map(),storage:new Map(),timerSequence:0});
+  t.after(async()=>{
+    navigationPorts.bindFixture(f);
+    for(const {instance}of f.renderer.instances.values())if(instance.isConnected){instance.isConnected=false;instance.disconnectedCallback();}
+    f.host.isConnected=false;
+    if(f.shell){f.shell.isConnected=false;f.shell.disconnectedCallback();}
+    f.publishNavigationState?.();
+    // Deliver only already queued native frames after retirement so their own
+    // original guards can finish; no result, focus target or action is supplied.
+    for(let count=0;f.frames.length&&count<32;count++){f.frames.shift()();await Promise.resolve();}
+    assert.equal(f.frames.length,0,"retired continuation cleanup remains bounded");
+    if(f.shell){documentPort.body.children=documentPort.body.children.filter(node=>node!==f.shell);f.shell.parentElement=null;}
+    f.host.parentElement=null;
+    for(const cleanup of [...nativeCleanups].reverse())await cleanup();
+    for(const cleanup of baseCleanups)await cleanup();
+  });
+  navigationPorts.bindFixture(f);
   f.state.route=documentContextBlockRoute("A","Author-owned document","");f.state.author=true;f.store.route={get:()=>f.state.route};
   const session=f.store.session.get;f.store.session.get=()=>({...session(),capabilities:[...(f.state.canRead?["project.read"]:[]),...(f.state.author?["project.author"]:[])]});
-  f.store.patchUi=patch=>{f.patches.push(patch);Object.assign(f.store.ui,patch);};
-  // This existing mocked Store port now carries the same transient focus owner.
-  // The actual Store/full-page tests below exercise the production implementation.
+  const subscribers=new Set(),publish=()=>{for(const subscriber of [...subscribers])subscriber();};
+  f.publishNavigationState=publish;
+  assert.equal(f.store.subscribe,undefined,"the old finite Store has no prior subscription port to replace");
+  f.store.subscribe=listener=>{subscribers.add(listener);return()=>subscribers.delete(listener);};
+  f.store.patchUi=patch=>{f.patches.push(patch);Object.assign(f.store.ui,patch);publish();};
+  // This is still the existing mocked Store navigation boundary, not a real
+  // Store/Worker approval or navigation receipt. Forward the actual Shell hook
+  // immediately before this port publishes its original route; never supply
+  // an always-current admission. The separate actual Store case stays below.
   f.navigationFocus=null;
   f.store.openDocument=async(documentId,destination,surface,options={})=>{
     if(options.current&&!options.current()||options.focus&&!options.focus.current())return false;
+    if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
     f.opened.push({documentId,destination,surface});f.state.route=destination;f.state.documentId=documentId;
-    f.navigationFocus=options.focus?{route:destination,focus:options.focus}:null;
+    f.navigationFocus=options.focus?{route:destination,focus:options.focus}:null;publish();
     return f.navigationGate?f.navigationGate.promise:true;
   };
   f.store.captureWorkspaceNavigationFocus=(route,expected)=>{
     const owner=f.navigationFocus;
-    return owner&&owner.route===route&&(!expected||owner.focus===expected)?{focus:owner.focus,current:()=>f.navigationFocus===owner&&f.state.route===route&&owner.focus.current()}:null;
+    return owner&&owner.route===route&&(!expected||owner.focus===expected)?{focus:owner.focus,
+      routeCurrent:()=>f.navigationFocus===owner&&f.state.route===route,
+      current:()=>f.navigationFocus===owner&&f.state.route===route&&owner.focus.current()}:null;
   };
   f.store.outputRequirementCommand=async()=>assert.fail("No save, confirm, approve, grant, or generate");
   f.store.refreshEvents=async()=>assert.fail("A refused application cannot refresh authored state");
@@ -73,11 +102,30 @@ async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="appl
   f.store.guardedFetch=async(url,init)=>{assert.equal(url,"/api/context/apply","No analysis/provider route");const body=JSON.parse(init.body);f.state.requests.push({url,body});return f.reply(body);};
   f.block=f.store.projection.get().libraryBlocks.find(block=>block.id==="requirement-A");
   class HandoffPage extends ElementPort{render(){return html`<forma-context-intelligence .block=${this.fixture.block} surface="library"></forma-context-intelligence><forma-output-requirements .documentId=${this.fixture.output.documentId} .blockId=${"requirement-A"}></forma-output-requirements>`;}}
-  f.renderer.registry={"forma-context-intelligence":ContextIntelligence,"forma-output-requirements":FormaOutputRequirements,"forma-output-requirement-card":FormaOutputRequirementCard};
-  f.host=new HandoffPage();f.host.isConnected=true;
-  windowPort.requestAnimationFrame=callback=>{f.frames.push(callback);return f.frames.length;};
-  documentPort.querySelectorAll=selector=>f.renderer.query(null,selector);
-  documentPort.querySelector=selector=>selector==="dialog[open]"&&f.otherDialog?{open:true}:f.renderer.query(null,selector)[0]??null;
+  f.renderer=new navigationPorts.RendererPort(f,{"forma-context-intelligence":ContextIntelligence,"forma-output-requirements":FormaOutputRequirements,"forma-output-requirement-card":FormaOutputRequirementCard});
+  f.shell=new FormaShell();f.shell.tag="forma-shell";f.shell.attributes={};f.shell.isConnected=true;
+  f.host=new HandoffPage();f.host.tag="handoff-page";f.host.attributes={};f.host.isConnected=true;f.host.parentElement=f.shell;
+  documentPort.body.append(f.shell);
+  // Existing selectorNavigationParent precedent: the complete actual Shell
+  // is an admission parent, while this declared two-component unit subtree
+  // alone is rendered. No production render/current/navigateFrom is replaced.
+  f.tree=()=>fullPageTree(f);
+  const raf=new Map();let rafId=0;
+  t.mock.method(windowPort,"requestAnimationFrame",callback=>{
+    const id=++rafId,deliver=()=>{raf.delete(id);return callback();};raf.set(id,deliver);f.frames.push(deliver);return id;
+  });
+  t.mock.method(windowPort,"cancelAnimationFrame",id=>{const callback=raf.get(id),index=f.frames.indexOf(callback);if(index>=0)f.frames.splice(index,1);raf.delete(id);});
+  t.mock.method(documentPort,"querySelectorAll",selector=>f.renderer.query(null,selector));
+  t.mock.method(documentPort,"querySelector",selector=>selector==="dialog[open]"&&f.otherDialog?{open:true}:f.renderer.query(null,selector)[0]??null);
+  // Original trace observations are native bases installed BEFORE the shared
+  // focus wrapper. Queries never replace or stack over that live wrapper.
+  const collect=f.renderer.collect.bind(f.renderer);
+  f.renderer.collect=(markup,owner)=>{const start=f.renderer.nodes.length;collect(markup,owner);
+    for(const node of f.renderer.nodes.slice(start).filter(node=>node.tag==="button")){
+      node.scrollIntoView=()=>f.trace.push("scroll:"+owner.snapshot?.requirementId);
+      node.focus=()=>f.trace.push("native-focus:"+owner.snapshot?.requirementId+":"+node.textContent);
+    }
+  };
   const query=f.renderer.query.bind(f.renderer);
   f.renderer.query=(owner,selector)=>{
     if(selector===".output-requirement-header button"&&owner?.tag==="forma-output-requirement-card"){
@@ -86,8 +134,10 @@ async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="appl
       return buttons(f,owner).filter(button=>handlers.includes(button.handlers.click)).map(button=>button.node).filter(Boolean);
     }return query(owner,selector);
   };
-  const draw=f.draw;f.draw=()=>{
-    const result=draw();f.context=f.renderer.component("forma-context-intelligence","requirement-A");
+  f.native=installOutputNavigationFocusNative({after:cleanup=>nativeCleanups.push(cleanup)},f,navigationPorts);
+  f.draw=()=>{
+    navigationPorts.bindFixture(f);publish();
+    const result=f.renderer.draw(f.host);f.context=f.renderer.component("forma-context-intelligence","requirement-A");
     f.card=[...f.renderer.instances.values()].map(record=>record.instance).find(instance=>instance.tag==="forma-output-requirement-card");
     if(f.card){f.card.getClientRects=()=>f.visibleCard?[{}]:[];if(!f.card.handoffFixtureReady){f.card.handoffFixtureReady=true;f.card.willUpdate(new Map([["snapshot",undefined]]));}buttons(f,f.card);}return result;
   };
@@ -103,6 +153,13 @@ async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="appl
   f.reject=async()=>{await f.begin();if(refusalAt==="apply"){await f.click(f.i18n.t("context.changes.confirm"));await f.flush();}};
   f.drain=async()=>{for(let count=0;f.frames.length&&count<32;count++){f.frames.shift()();await f.flush();}assert.equal(f.frames.length,0,"Bounded focus polling");};
   f.noWork=()=>{assert.equal(f.state.requests.some(request=>request.url!=="/api/context/apply"),false);assert.equal(f.trace.some(item=>/event:forma-output-(?:edit|review-plan|save|show-plan)/u.test(item)),false);};
+  f.shell.connectedCallback();await f.drain();
+  assert.ok(f.shell instanceof FormaShell);assert.strictEqual(f.context.closest("forma-shell"),f.shell);
+  assert.ok(ElementPort.hasStoreIdentity(f.shell,f.store)&&ElementPort.hasStoreIdentity(f.context,f.store));
+  assert.equal(f.shell.contains(f.context),true);assert.deepEqual(f.shell.querySelectorAll("forma-context-intelligence"),[f.context]);
+  assert.equal(f.shell.querySelectorAll("forma-output-requirements").length,1);
+  assert.equal(f.shell.querySelectorAll("forma-library").length,0,"explicit reduced unit composition, not a full Library/sibling-departure proof");
+  assert.equal(f.frames.length,0);assert.equal(f.opened.length,0);assert.equal(f.patches.length,0);
   return f;
 }
 
@@ -179,7 +236,7 @@ test("Output handoff actual Store.openDocument retains the document identity wit
   const f=await handoffFixture(t),h=await createSceneStoreHost({count:1});t.after(()=>h.close());
   const source=h.store.events.get(),projectId=h.worker.projectId,documentId=h.worker.documentId;
   h.store.events.set([...source,{eventId:"in-memory-existing-output",streamId:h.worker.streamId,sequence:h.store.head.get()+1,actor:"user:"+h.worker.owner,correlationId:"fixture",occurredAt:"2026-08-27T00:00:00Z",type:"BlockCreated",payload:{project_id:projectId,document_id:documentId,block_id:"requirement-A",type:"output",handle:"output/existing",position:"z",properties:{text:"One owned image.",weight:1}}}]);
-  f.store=h.store;f.host.store=h.store;f.context.store=h.store;f.block=h.store.projection.get().libraryBlocks.find(block=>block.id==="requirement-A");f.context.block=f.block;
+  f.store=h.store;f.host.store=h.store;f.context.store=h.store;f.shell.store=h.store;f.block=h.store.projection.get().libraryBlocks.find(block=>block.id==="requirement-A");f.context.block=f.block;
   f.preview=retainedReview(projectId,documentId,"requirement-A");f.output.projectId=projectId;f.output.documentId=documentId;
   h.store.outputRequirements.resource=()=>({state:"ready",snapshot:f.output,error:null});h.store.outputRequirements.ensure=async()=>h.store.outputRequirements.resource();
   const previous=Object.getOwnPropertyDescriptor(globalThis,"history");Object.defineProperty(globalThis,"history",{configurable:true,value:{pushState(_state,_title,route){const url=new URL(route,"http://localhost");Object.assign(h.location,{pathname:url.pathname,search:url.search,hash:url.hash});},replaceState(_state,_title,route){this.pushState(_state,_title,route);}}});t.after(()=>previous?Object.defineProperty(globalThis,"history",previous):delete globalThis.history);

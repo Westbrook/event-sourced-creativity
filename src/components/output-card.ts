@@ -7,6 +7,8 @@ import { outputGenerationInputInspection } from "../model/generation-inputs";
 import { describeOutput, imageOutputNamingCandidate } from "../model/output-naming";
 import { requestDialogText } from "./modal-dialog";
 import type { OutputVisual } from "./output-visual";
+import type { CommandDeparture } from "./command-departure";
+import { reuseManualOutput, type ManualOutputReuse } from "./manual-output-reuse";
 import "./icons-authoring";
 import "./output-visual";
 import "./generation-input-dialog";
@@ -15,7 +17,35 @@ export class OutputCard extends FormaElement {
   static properties = { output: { attribute: false }, primary: { type: Boolean } };
   output!: CreativeOutput; primary = false;
   #critiqueOpen=false;#inputsOpen=false;#axis="style";#polarity:"positive"|"negative"="negative";#value="";#note="";
-  async #saveCritique(event:SubmitEvent){event.preventDefault();if(!this.#value.trim())return;const saved=await this.store.critiqueObject(this.output.id,this.#axis,this.#polarity,this.#value.trim(),this.#note.trim());if(saved){this.#critiqueOpen=false;this.#value="";this.#note="";this.requestUpdate();}}
+  #outputReuse:ManualOutputReuse={cancel:null};
+  #critiqueOpening=0;
+  override disconnectedCallback(){this.#critiqueOpening++;this.#outputReuse.cancel?.();super.disconnectedCallback();}
+  captureCommandDeparture():CommandDeparture{
+    const store=this.store,id=this.output?.id,documentId=this.output?.documentId;
+    return {element:this,current:()=>this.isConnected&&this.store===store&&this.output?.id===id&&this.output?.documentId===documentId,
+      // Axis/polarity alone are retained selectors, not an authored claim.
+      blocked:()=>Boolean(this.#value||this.#note||store.busy.get()==="critique-object"),
+      reason:()=>"next.lifecycle.currentWorkOpen"};
+  }
+  #setCritiqueOpen(open:boolean){
+    if(this.#critiqueOpen===open)return;
+    this.#critiqueOpening++;this.#critiqueOpen=open;this.requestUpdate();
+  }
+  async #saveCritique(event:SubmitEvent){
+    event.preventDefault();if(!this.#value.trim())return;
+    const store=this.store,source=store.captureSourceOwnership(),outputId=this.output.id;
+    const outputDocumentId=this.output.documentId,outputEventId=this.output.sourceEventId;
+    const opening=this.#critiqueOpening,{projectId,documentId}=store.projection.get();
+    const original={axis:this.#axis,polarity:this.#polarity,value:this.#value,note:this.#note};
+    const saved=await store.critiqueObject(outputId,original.axis,original.polarity,original.value.trim(),original.note.trim());
+    // An exact original ACK does not own a later draft or a reopened form.
+    if(!saved||!this.isConnected||this.store!==store||!store.sourceOwnershipActive(source)
+      ||this.output?.id!==outputId||this.output.documentId!==outputDocumentId||this.output.sourceEventId!==outputEventId
+      ||store.projection.get().projectId!==projectId||store.projection.get().documentId!==documentId
+      ||!this.#critiqueOpen||this.#critiqueOpening!==opening
+      ||this.#axis!==original.axis||this.#polarity!==original.polarity||this.#value!==original.value||this.#note!==original.note)return;
+    this.#value="";this.#note="";this.#setCritiqueOpen(false);
+  }
   async #renameOutput(output:CreativeOutput,title:string){
     const next=await requestDialogText({title:this.i18n.system("Rename {documentTitle}",{documentTitle:title}),label:this.i18n.system("Name"),value:title,confirmLabel:this.i18n.system("Save name"),cancelLabel:this.i18n.t("action.cancel","Cancel")});
     const name=next?.normalize("NFC").trim();if(!name||name===title)return;
@@ -23,7 +53,16 @@ export class OutputCard extends FormaElement {
   }
   async #generateFull(out:CreativeOutput){this.store.patchUi({selectedOutputId:out.id});const readiness=await this.store.ensureGenerationReadiness("generate",{sourcePreviewId:out.id,sourceSurface:"output-card"});if(readiness?.status==="ready"||readiness?.status==="review"&&this.store.generationRiskAcknowledged(readiness.requestKey))return this.store.generate({sourceSurface:"output-card",sourcePreviewId:out.id});this.store.toast(readiness?.status==="review"?"Review and acknowledge the generation warning in the document controls first.":readiness?.summary??"Generation readiness could not be confirmed.");}
   async #exportOutput(){const out=this.output,authorization=this.store.captureAuthorizationScope();if(!authorization)return;const documentTitle=this.store.projection.get().documents.find((document)=>document.id===out.documentId)?.title??"";const filename=(imageOutputNamingCandidate(out,this.store.content.get(),documentTitle).title??out.id).normalize("NFKC").replace(/[\p{Cc}/\\:*?"<>|]/gu," ").replace(/\s+/gu," ").replace(/^\.+/u,"").trim().slice(0,120)||out.id;if(out.mediaUrl){const response=await fetch(out.mediaUrl);if(!this.store.authorizationScopeActive(authorization))return;if(!response.ok){this.store.toast("The generated image could not be downloaded.");return;}const blob=await response.blob();if(!this.store.authorizationScopeActive(authorization))return;const mime=out.mediaType??blob.type??"image/png",receipt={type:"ObjectExported",payload:{object_id:out.id,destination_class:"download",format:mime}};if(!await this.store.authorizeProjectExport(receipt,authorization))return;if(!this.store.authorizationScopeActive(authorization))return;const url=URL.createObjectURL(blob),anchor=document.createElement("a"),extension=mime==="image/jpeg"?"jpg":mime==="image/webp"?"webp":"png";anchor.href=url;anchor.download=`${filename}.${extension}`;anchor.click();URL.revokeObjectURL(url);return;}const receipt={type:"ObjectExported",payload:{object_id:out.id,destination_class:"download",format:"application/json"}};if(!await this.store.authorizeProjectExport(receipt,authorization))return;if(!this.store.authorizationScopeActive(authorization))return;downloadJson(`${filename}.json`,{output:out,context:this.store.projection.get().latestCompile,clearance:"owned"});}
-  async #useAsInput(){await this.store.addImageOutputAsContext(this.output.id,this.store.projection.get().documentId,"output-card");this.requestUpdate();}
+  async #useAsInput(event:MouseEvent){
+    const output=this.output,destination=this.store.projection.get().documentId;
+    await reuseManualOutput(this,this.store,this.#outputReuse,event,{
+      destinationDocumentId:destination,
+      current:()=>this.output?.id===output.id&&this.output.documentId===output.documentId
+        &&this.output.sourceEventId===output.sourceEventId&&this.output.mediaUrl===output.mediaUrl&&!this.output.discarded,
+      copy:()=>this.store.addImageOutputAsContext(output.id,destination,"output-card",{reveal:false}),
+    });
+    this.requestUpdate();
+  }
   override render() {
     const out = this.output; if (!out) return html``;
     const context=this.store.session.get()?.projectContext;
@@ -46,11 +85,11 @@ export class OutputCard extends FormaElement {
         ${canGenerate&&isDraftOutput(out)?html`<button class="promote" ?disabled=${Boolean(this.store.busy.get())||this.store.documentJobActive("generate")} @click=${()=>this.#generateFull(out)}>${icon("spark")} ${this.store.documentJobActive("generate")?this.i18n.system("Generating safely…"):this.i18n.system("Generate full")}</button>`:nothing}
         ${canAuthor?html`<button type="button" class="output-rename" aria-label=${this.i18n.system("Rename {documentTitle}",{documentTitle:title})} @click=${()=>void this.#renameOutput(out,title)}>${icon("edit")} ${this.i18n.system("Rename")}</button><button aria-pressed=${out.pinned} @click=${() => this.store.append({ type: out.pinned ? "ObjectUnpinned" : "ObjectPinned", payload: { object_id: out.id, scope: "project" } })}>${icon("pin")} ${out.pinned ? this.i18n.system("Pinned") : this.i18n.system("Pin")}</button>
         <button aria-pressed=${out.saved} @click=${() => this.store.append({ type: "ObjectSaved", payload: { object_id: out.id } })}>${icon("check")} ${out.saved ? this.i18n.system("Saved") : this.i18n.system("Save")}</button>`:nothing}
-        ${!context?html`<button aria-expanded=${this.#critiqueOpen} @click=${()=>{this.#critiqueOpen=!this.#critiqueOpen;this.requestUpdate();}}>${icon("edit")} Taste evidence</button>`:nothing}
+        ${!context?html`<button aria-expanded=${this.#critiqueOpen} @click=${()=>this.#setCritiqueOpen(!this.#critiqueOpen)}>${icon("edit")} Taste evidence</button>`:nothing}
         ${!context?html`<button @click=${()=>{this.#inputsOpen=true;this.requestUpdate();}}>${icon("info")} Inspect inputs</button>`:nothing}
-        ${canAuthor?html`<button @click=${()=>this.#useAsInput()}>${icon("plus")} ${this.store.route.get().startsWith("/canvas/")?this.store.projection.get().blocks.some((block)=>block.properties.source_output_id===out.id)?this.i18n.t("projects.editCreator","Edit in Creator Workspace"):this.i18n.t("projects.useEditCreator","Use & edit in Creator Workspace"):this.store.projection.get().blocks.some((block)=>block.properties.source_output_id===out.id)?this.i18n.system("Edit input"):this.i18n.system("Use & edit input")}</button>`:nothing}
+        ${canAuthor?html`<button @click=${(event:MouseEvent)=>this.#useAsInput(event)}>${icon("plus")} ${this.store.route.get().startsWith("/canvas/")?this.store.projection.get().blocks.some((block)=>block.properties.source_output_id===out.id)?this.i18n.t("projects.editCreator","Edit in Creator Workspace"):this.i18n.t("projects.useEditCreator","Use & edit in Creator Workspace"):this.store.projection.get().blocks.some((block)=>block.properties.source_output_id===out.id)?this.i18n.system("Edit input"):this.i18n.system("Use & edit input")}</button>`:nothing}
         ${!context||out.mediaUrl?html`<button type="button" @click=${()=>this.#exportOutput()}>${icon("download")} ${context?this.i18n.t("projects.downloadMedia","Download media"):this.i18n.system("Export")}</button>`:nothing}
-      </div></div>${!context&&this.#critiqueOpen?html`<form class="output-critique" @submit=${this.#saveCritique}><header><div><span class="eyebrow">Authored taste evidence</span><h3>Teach the ranking, transparently</h3><p>Choose exactly what you are reacting to. This evidence can reorder future options; it never filters them.</p></div><button type="button" class="icon-button" aria-label="Close taste evidence" @click=${()=>{this.#critiqueOpen=false;this.requestUpdate();}}>${icon("close")}</button></header><fieldset><legend>Creative axis</legend><div class="taste-axis-grid">${CREATOR_AXES.map(axis=>html`<button type="button" aria-pressed=${this.#axis===axis} @click=${()=>{this.#axis=axis;this.requestUpdate();}}><span>${icon(creatorAxisIconName(axis))}</span>${axis}</button>`)}</div></fieldset><fieldset><legend>Signal</legend><div class="taste-signal"><button type="button" class="positive" aria-pressed=${this.#polarity==="positive"} @click=${()=>{this.#polarity="positive";this.requestUpdate();}}>${icon("check")} Worked well</button><button type="button" class="negative" aria-pressed=${this.#polarity==="negative"} @click=${()=>{this.#polarity="negative";this.requestUpdate();}}>${icon("close")} Change next time</button></div></fieldset><label class="taste-value"><span>${this.#polarity==="positive"?this.i18n.system("What should Forma favor?"):this.i18n.system("What should Forma avoid or change?")}</span><input maxlength="120" required placeholder=${this.#axis==="palette"?this.i18n.system("e.g. electric cyan accents"):this.#axis==="composition"?this.i18n.system("e.g. centered symmetry"):this.i18n.system("Name the specific quality")} .value=${this.#value} @input=${(event:InputEvent)=>{this.#value=(event.target as HTMLInputElement).value;this.requestUpdate();}}><small>Saved as a specific ${this.#axis} claim, not a general thumbs-up or thumbs-down.</small></label><details><summary>Add a private note <span>optional · retained 30 days</span></summary><textarea maxlength="500" rows="3" placeholder="Explain why this quality worked or did not." .value=${this.#note} @input=${(event:InputEvent)=>{this.#note=(event.target as HTMLTextAreaElement).value;}}></textarea></details><footer><button type="button" class="button ghost compact" @click=${()=>{this.#critiqueOpen=false;this.requestUpdate();}}>Cancel</button><button class="button primary compact" ?disabled=${!this.#value.trim()||this.store.busy.get()==="critique-object"}>${this.store.busy.get()==="critique-object"?this.i18n.system("Recording…"):this.i18n.system("Record taste evidence")}</button></footer></form>`:nothing}
+      </div></div>${!context&&this.#critiqueOpen?html`<form class="output-critique" @submit=${this.#saveCritique}><header><div><span class="eyebrow">Authored taste evidence</span><h3>Teach the ranking, transparently</h3><p>Choose exactly what you are reacting to. This evidence can reorder future options; it never filters them.</p></div><button type="button" class="icon-button" aria-label="Close taste evidence" @click=${()=>this.#setCritiqueOpen(false)}>${icon("close")}</button></header><fieldset><legend>Creative axis</legend><div class="taste-axis-grid">${CREATOR_AXES.map(axis=>html`<button type="button" aria-pressed=${this.#axis===axis} @click=${()=>{this.#axis=axis;this.requestUpdate();}}><span>${icon(creatorAxisIconName(axis))}</span>${axis}</button>`)}</div></fieldset><fieldset><legend>Signal</legend><div class="taste-signal"><button type="button" class="positive" aria-pressed=${this.#polarity==="positive"} @click=${()=>{this.#polarity="positive";this.requestUpdate();}}>${icon("check")} Worked well</button><button type="button" class="negative" aria-pressed=${this.#polarity==="negative"} @click=${()=>{this.#polarity="negative";this.requestUpdate();}}>${icon("close")} Change next time</button></div></fieldset><label class="taste-value"><span>${this.#polarity==="positive"?this.i18n.system("What should Forma favor?"):this.i18n.system("What should Forma avoid or change?")}</span><input maxlength="120" required placeholder=${this.#axis==="palette"?this.i18n.system("e.g. electric cyan accents"):this.#axis==="composition"?this.i18n.system("e.g. centered symmetry"):this.i18n.system("Name the specific quality")} .value=${this.#value} @input=${(event:InputEvent)=>{this.#value=(event.target as HTMLInputElement).value;this.requestUpdate();}}><small>Saved as a specific ${this.#axis} claim, not a general thumbs-up or thumbs-down.</small></label><details><summary>Add a private note <span>optional · retained 30 days</span></summary><textarea maxlength="500" rows="3" placeholder="Explain why this quality worked or did not." .value=${this.#note} @input=${(event:InputEvent)=>{this.#note=(event.target as HTMLTextAreaElement).value;}}></textarea></details><footer><button type="button" class="button ghost compact" @click=${()=>this.#setCritiqueOpen(false)}>Cancel</button><button class="button primary compact" ?disabled=${!this.#value.trim()||this.store.busy.get()==="critique-object"}>${this.store.busy.get()==="critique-object"?this.i18n.system("Recording…"):this.i18n.system("Record taste evidence")}</button></footer></form>`:nothing}
     </article>${out.mediaUrl?html`<forma-output-visual class="output-card-image-viewer" .output=${out} .viewerOnly=${true}></forma-output-visual>`:nothing}${!context?html`<forma-generation-input-dialog .open=${this.#inputsOpen} .inspection=${inspection} @generation-input-close=${()=>{this.#inputsOpen=false;this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
   }
 }

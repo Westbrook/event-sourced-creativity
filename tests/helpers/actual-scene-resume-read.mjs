@@ -48,10 +48,19 @@ export function observeActualSceneResumeReads(host) {
     return original;
   };
   host.transport = transport;
+  // A test-owned verified held write is still pending, not a certified read.
+  // Omitted options retain the original full count/wait. Never exclude a clone
+  // or more than one original Promise for the exact supplied request object.
+  const forSettlement = heldOriginal => {
+    const entries = [...pendingOriginals.entries()];
+    if (!heldOriginal || typeof heldOriginal.current !== "function" || heldOriginal.current() !== true) return entries;
+    const held = entries.filter(([, request]) => request === heldOriginal.request);
+    return held.length === 1 ? entries.filter(([promise]) => promise !== held[0][0]) : entries;
+  };
   return { isReadOnlyResume: classify, observations: () => [...observations],
-    pendingOriginalCount: () => pendingOriginals.size,
-    async settleOriginalRequests() {
-      const captured = [...pendingOriginals.entries()]; let terminal = false;
+    pendingOriginalCount: ({ heldOriginal } = {}) => forSettlement(heldOriginal).length,
+    async settleOriginalRequests({ heldOriginal } = {}) {
+      const captured = forSettlement(heldOriginal); let terminal = false;
       const settlement = Promise.allSettled(captured.map(([promise]) => promise)).then(results => { terminal = true; return results; });
       await untilScene(() => terminal, "Already-started original transports must settle within the existing finite Scene boundary");
       const results = await settlement;

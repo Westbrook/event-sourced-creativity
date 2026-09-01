@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { createRequire, registerHooks } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -17,6 +17,18 @@ export const deferred = () => {
   return { promise, resolve: resolvePromise };
 };
 export const template = (strings, ...values) => ({ strings: [...strings], values });
+
+// Only the native event surface used by the actual focus lease in the two
+// existing planning units. Full mounted focus tests remain separate evidence.
+export function outputFixtureFocusDocument() {
+  const listeners = new Map();
+  return { activeElement: null,
+    addEventListener(type, listener) { const entries = listeners.get(type) ?? new Set(); entries.add(listener); listeners.set(type, entries); },
+    removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
+    focus(target) { this.activeElement = target;
+      for (const listener of [...(listeners.get("focusin") ?? [])]) listener({ type: "focusin", target, currentTarget: this }); },
+  };
+}
 
 function transpile(source, name) {
   return ts.transpileModule(source, { fileName: name, compilerOptions: {
@@ -49,6 +61,16 @@ export async function loadController(Base, bindings = {}) {
   const deliveryMessages = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/locales/output-delivery-messages.ts")).href);
   const recovery = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-controller-recovery.ts")).href);
   const planning = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-plan-proposal-state.ts")).href);
+  // The actual focus module has a bundler-style local routes import. Resolve
+  // only source-relative extensionless dependencies during this import, using
+  // the same native module hook as the existing document-copy unit fixture.
+  const sourceURL = pathToFileURL(resolve(sourceRoot, "src") + "/").href;
+  const focusImports = registerHooks({ resolve(specifier, context, nextResolve) {
+    return nextResolve(context.parentURL?.startsWith(sourceURL) && specifier.startsWith(".")
+      && !/\.[a-z0-9]+$/iu.test(specifier) ? specifier + ".ts" : specifier, context);
+  } });
+  const navigationFocus = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-navigation-focus.ts")).href)
+    .finally(() => focusImports.deregister());
   const operationReceipts = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-operation-support-receipt.ts")).href);
   const clipboard = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/clipboard.ts")).href);
   const readiness = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-source-readiness.ts")).href);
@@ -93,6 +115,7 @@ export async function loadController(Base, bindings = {}) {
     ...deliveryMessages,
     ...recovery,
     ...planning,
+    ...navigationFocus,
     ...operationReceipts,
     ...clipboard,
     ...readiness,

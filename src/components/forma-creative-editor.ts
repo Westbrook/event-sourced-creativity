@@ -1,5 +1,6 @@
 import { copyOutputRequirementBlock } from "../model/output-requirement-copy.ts";
 import { html, nothing } from "lit";
+import type { CommandDeparture } from "./command-departure";
 import { generationHistoryItemIsDraft, generationHistoryItems, isDraftOutput, outputQualityLabel, type CreativeBlock, type EventInput } from "../model/events";
 import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, isNegativeIntent, suggestedSubtype, type BlockIntent, type BlockKind } from "../model/block-types";
 import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
@@ -101,6 +102,47 @@ export class FormaCreativeEditor extends AlternativeStudio {
   #pendingReference: File | null = null;
   #rightsConfirmed = false;
   #uploading = false;
+  #pendingSaves: { current: () => boolean; count: number } | null = null;
+
+  #commandSelectedItem() {
+    const projection = this.store.projection.get();
+    return projection.blocks.find(item => item.id === this.#selectedId) ?? projection.blocks[0];
+  }
+
+  #commandSelectionIdentity() {
+    const item = this.#commandSelectedItem();
+    return JSON.stringify([this.#selectedId, item?.projectId, item?.documentId, item?.canvasId,
+      item?.scope, item?.id, item?.sourceEvents]);
+  }
+
+  #commandNativeWorkBlocked() {
+    const item = this.#commandSelectedItem();
+    if (!item || item.type.toLowerCase() === "output") return false;
+    const form = this.querySelector(".creative-editor-inspector")?.querySelector("form");
+    if (!form) return true;
+    const selectedValue = (name: string) => {
+      const select = form.querySelector<HTMLSelectElement>(`select[name="${name}"]`);
+      return select?.selectedOptions.length === 1 ? select.selectedOptions[0].value : null;
+    };
+    if (selectedValue("item-type") !== item.type || selectedValue("item-intent") !== blockIntentFor(item.type, item.properties)) return true;
+    const strength = [...form.querySelectorAll<HTMLInputElement>('input[name="strength"]')].filter(input => input.checked);
+    if (strength.length !== 1 || strength[0].value !== strengthFor(Number(item.properties.weight ?? .65))) return true;
+    // The structured child owns its draft/composition state. Compare only the
+    // existing plain/rich native copy here, against the current selected source.
+    const audioRecording = item.type === "audio" && Boolean(item.properties.media_url);
+    if (!audioRecording && outputInputDraft(item)) return false;
+    const copy = form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]') ?? form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');
+    return !copy || copy.value !== (audioRecording ? String(item.properties.description ?? "") : textFor(item));
+  }
+
+  captureCommandDeparture(): CommandDeparture {
+    const identity = this.#commandSelectionIdentity(), children = this.captureAlternativeCommandChildren();
+    return { element: this, current: () => this.isConnected && this.#commandSelectionIdentity() === identity && children.current(),
+      blocked: () => Boolean(this.#pendingSaves && this.#pendingSaves.count > 0 && this.#pendingSaves.current())
+        || this.#creating || Boolean(this.#pendingReference) || this.#uploading
+        || this.#commandNativeWorkBlocked() || children.blocked(),
+      reason: () => "next.lifecycle.currentWorkOpen" };
+  }
 
   protected override updated() {
     const create = this.querySelector<HTMLDialogElement>(".creative-add-dialog");
@@ -251,7 +293,23 @@ export class FormaCreativeEditor extends AlternativeStudio {
       this.store.toast("Everything already matches.");
       return;
     }
-    await this.store.appendBatch(changes);
+    let pending = this.#pendingSaves;
+    if (!pending || !pending.current()) {
+      const store = this.store, source = store.captureSourceOwnership();
+      const { projectId, documentId } = store.projection.get();
+      pending = { count: 0, current: () => {
+        const projection = store.projection.get();
+        return this.isConnected && this.store === store && store.sourceOwnershipActive(source)
+          && projection.projectId === projectId && projection.documentId === documentId;
+      } };
+      this.#pendingSaves = pending;
+    }
+    pending.count += 1;
+    try { await this.store.appendBatch(changes); }
+    finally {
+      pending.count -= 1;
+      if (pending.count === 0 && this.#pendingSaves === pending) this.#pendingSaves = null;
+    }
   }
 
   async #toggle(item: CreativeBlock) {

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fixture, documentPort } from "./helpers/canvas-focus-repair-host.mjs";
+import { withOutcomeDeskPosture } from "../src/model/outcome-desk.ts";
+import { canvasFocusFromRoute, withCanvasFocus } from "../src/canvas/routes.ts";
 
 const turn = () => new Promise(setImmediate);
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -19,8 +21,21 @@ async function setup(locale) {
     resource: () => ({ state: "idle", snapshot: null }),
     ensure: async (documentId, options) => { const gate = deferred(); reads.push({ documentId, options }); gates.push(gate); await gate.promise; },
   };
+  const beforeDesk = { route: f.store.route.get(), events: JSON.stringify(f.state.events), selected: [...f.state.selected] };
+  assert.equal(f.host.closest("forma-shell"), null, "the refresh unit retains its original standalone host");
   const toggle = f.renderer.ownNodes(f.host, "button").find(node => node.id === "canvas-outcome-toggle");
   assert.ok(toggle); toggle.handlers.click.call(f.host, clickEvent(toggle)); await f.flush();
+  assert.equal(f.store.route.get(), beforeDesk.route, "the actual standalone Desk toggle cannot admit navigation without a Shell");
+  assert.equal(JSON.stringify(f.state.events), beforeDesk.events); assert.deepEqual(f.state.selected, beforeDesk.selected);
+  assert.equal(f.state.requests.length, 0); assert.equal(f.state.batches.length, 0); assert.equal(reads.length, 0);
+  // Declared deep-link setup through the ORIGINAL finite Store. This is not
+  // successful toggle admission or an opening-focus/navigation receipt.
+  const deskRoute = withOutcomeDeskPosture(beforeDesk.route, "outcomes");
+  assert.notEqual(deskRoute, beforeDesk.route);
+  f.store.setRoute(deskRoute); await f.flush();
+  assert.equal(f.store.route.get(), deskRoute);
+  assert.equal(JSON.stringify(f.state.events), beforeDesk.events); assert.deepEqual(f.state.selected, beforeDesk.selected);
+  assert.equal(f.state.requests.length, 0); assert.equal(f.state.batches.length, 0); assert.equal(reads.length, 0); assert.equal(gates.length, 0);
   assert.ok(selectedHeading(f)?.isConnected);
   const original = { events: JSON.stringify(f.state.events), route: f.store.route.get(), selected: [...f.state.selected], listeners: listenerCounts(f) };
   return { f, reads, gates, original };
@@ -82,7 +97,20 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const change of ["route", "a
     const h = await setup(locale), { f } = h;
     try {
       start(f);
-      if (change === "route") { const control = ordinaryControl(f); control.handlers.click.call(f.host, clickEvent(control)); await f.flush(); }
+      if (change === "route") {
+        const route = f.store.route.get(), control = ordinaryControl(f); assert.ok(control?.isConnected);
+        assert.equal(f.host.closest("forma-shell"), null);
+        control.handlers.click.call(f.host, clickEvent(control)); await f.flush();
+        assert.equal(f.store.route.get(), route, "the actual standalone Focus control refuses navigation");
+        assert.equal(JSON.stringify(f.state.events), h.original.events);
+        assert.equal(f.state.requests.length, 0); assert.equal(f.state.batches.length, 0);
+        // External ownership interruption before the ORIGINAL read gate resolves,
+        // not a successful button action or a fabricated admission/receipt.
+        const externalRoute = withCanvasFocus(route, !canvasFocusFromRoute(route));
+        assert.notEqual(externalRoute, route);
+        f.store.setRoute(externalRoute); f.draw();
+        assert.equal(f.store.route.get(), externalRoute);
+      }
       if (change === "authority" || change === "authority-ABA") {
         f.state.authorization = "new-authorization"; f.draw();
         if (change === "authority-ABA") { f.state.authorization = "actor-a"; f.draw(); }

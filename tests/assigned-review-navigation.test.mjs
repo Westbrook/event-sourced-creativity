@@ -15,6 +15,7 @@ const { storePrivateContent } = await import("file://" + ROOT + "worker/pilot-po
 const { financial } = await import("file://" + ROOT + "tests/helpers/event-source-retirement-fixture.mjs");
 const { artifactFocusOptionsFromRoute, libraryFocusFromRoute, projectTaskDocumentIdFromRoute, documentIdFromRoute, withDocumentInRoute } = await import("file://" + ROOT + "src/model/routes.ts");
 const { creativeCreationHref } = await import("file://" + ROOT + "src/platform/applications.ts");
+const { commandDiscoveryCopy } = await import("file://" + ROOT + "src/components/design-system/locales/command-discovery-messages.ts");
 
 const observations = [];
 const pause = () => new Promise(setImmediate);
@@ -238,9 +239,9 @@ for (const scenario of selectedCases) test("actual assigned review / " + scenari
   };
   let pending;
   const original = h.store.openAssignedReview;
-  t.mock.method(h.store, "openAssignedReview", function (task) {
+  t.mock.method(h.store, "openAssignedReview", function (task, ...args) {
     assert.equal(task.id, q.task.id);
-    pending = original.call(this, task); return pending; // Pass-through observation only.
+    pending = original.call(this, task, ...args); return pending; // Pass-through observation only.
   });
   const button = q.button(); assert.ok(button.owner.isConnected);
   const activation = f.act(button); // Actual ordinary connected native click.
@@ -276,7 +277,7 @@ for (const scenario of selectedCases) test("actual assigned review / " + scenari
   // passing viewer assertion or used to blame the within-project path.
 });
 
-async function beginAssignedHandoff(t, entry, { supersededReply = false } = {}) {
+async function beginAssignedHandoff(t, entry, { supersededReply = false, callerCurrent, fromCommand = false } = {}) {
   const q = await assignmentPage(t, entry), { h, f } = q;
   await flushStoreFrames(h); await f.settle();
   const entered = sceneDeferred(), release = sceneDeferred();
@@ -295,10 +296,15 @@ async function beginAssignedHandoff(t, entry, { supersededReply = false } = {}) 
     entered.resolve(); await release.promise; return response;
   };
   const original = h.store.openAssignedReview;
-  t.mock.method(h.store, "openAssignedReview", function (task) {
-    assert.equal(task.id, q.task.id); pending = original.call(this, task); return pending;
+  t.mock.method(h.store, "openAssignedReview", function (task, options) {
+    assert.equal(task.id, q.task.id); pending = original.call(this, task, callerCurrent?{...options,current:callerCurrent}:options); return pending;
   });
-  const activation = f.act(q.button());
+  let activation;
+  if(fromCommand){
+    await f.act(f.find("button",node=>node.owner.tag==="forma-shell"&&String(node.attributes.class).includes("command-trigger")));
+    const input=f.find("input",node=>node.attributes.id==="command-search");input.port.value=q.task.artifactTitle;await f.act(input,"input");
+    activation=f.act(f.find("button",node=>node.attributes.role==="option"&&node.text.includes(q.task.artifactTitle)));
+  }else activation=f.act(q.button());
   await entered.promise; assert.ok(pending);
   const syncCalls = [], sync = h.store.syncDocumentFromRoute;
   t.mock.method(h.store, "syncDocumentFromRoute", function (...args) {
@@ -392,4 +398,114 @@ test("actual assigned handoff / an exact-task failure releases normal route sync
   assert.equal(q.viewerCalls.length, 0);
 });
 
+for(const changed of [false,true])test("assigned review optional caller owner preserves healthy handoff and fences a newer command / changed="+changed,{timeout:25_000},async t=>{
+  let current=true;
+  const q=await beginAssignedHandoff(t,"cross-project",{callerCurrent:()=>current}),route=q.h.store.route.get();
+  // This flag is caller withdrawal after B context/load committed, not a new
+  // user route and not cancellation of that already-completed context request.
+  assert.equal(projectTaskDocumentIdFromRoute(route),q.entryDocument);
+  const source=q.h.store.captureSourceOwnership(),session=q.h.store.session.get(),money=financial(q.w);
+  for(const key of ["organizationId","projectAccessId","projectId"])assert.equal(session.projectContext[key],q.task[key]);
+  assert.equal(q.h.store.sourceOwnershipActive(source),true);
+  if(changed)current=false;
+  q.release.resolve();await q.activation;
+  assert.equal(await q.pending,!changed);
+  await flushStoreFrames(q.h);await q.f.settle();
+  if(changed){
+    assert.ok(q.syncCalls.length,"finally releases the admitted B load's ordinary route synchronization");
+    assert.equal(q.h.store.route.get(),"/projects","Unavailable personal-A address is not restored under shared B");
+    assert.equal(q.h.store.sourceOwnershipActive(source),true);
+    assert.equal(q.h.store.session.get().user.userId,session.user.userId);
+    for(const key of ["organizationId","projectAccessId","projectId"])assert.equal(q.h.store.session.get().projectContext[key],q.task[key]);
+    assert.equal(q.h.store.projection.get().projectId,q.task.projectId);
+    assert.equal(q.h.store.events.get().some(event=>event.payload.project_id===q.entryProject),false,"No previous personal-A source is restored");
+    assert.equal(libraryFocusFromRoute(q.h.store.route.get()),null);assert.equal(q.viewerCalls.length,0);
+    assert.equal(q.f.tree().root.text.includes("EXACT_ASSIGNED_B_BODY"),false,"Withdrawn caller promotes no output viewer");
+  }
+  else assert.equal(libraryFocusFromRoute(q.h.store.route.get())?.id,q.artifactId);
+  assert.deepEqual(financial(q.w),money,"Caller withdrawal/release has no fiscal effects");
+  assert.equal(q.h.requests.some(row=>row.init.method==="POST"&&row.url.startsWith("/api/document-jobs")),false);
+});
+for(const changed of [false,true])test("assigned review actual command opener remains current unless a newer command opens / changed="+changed,{timeout:25_000},async t=>{
+  const q=await beginAssignedHandoff(t,"cross-project",{fromCommand:true}),route=q.h.store.route.get();
+  if(changed)await q.f.act(q.f.find("button",node=>node.owner.tag==="forma-shell"&&String(node.attributes.class).includes("command-trigger")));
+  q.release.resolve();await q.activation;assert.equal(await q.pending,!changed);
+  await flushStoreFrames(q.h);await q.f.settle();
+  if(changed)t.diagnostic(JSON.stringify({diagnostic:"c19-new-command-after-admitted-context",oldRoute:route,currentRoute:q.h.store.route.get(),
+    projectId:q.h.store.projection.get().projectId,documentId:q.h.store.projection.get().documentId,
+    sourceCurrent:q.h.store.sourceOwnershipActive(q.h.store.captureSourceOwnership()),contextProjectId:q.h.store.session.get()?.projectContext?.projectId,
+    commandOpen:q.h.store.ui.commandOpen,visibleCommandInputs:q.f.tree().visible("input").filter(node=>node.attributes.id==="command-search").length,
+    visibleCommandDialogs:q.f.tree().visible("dialog").filter(node=>String(node.attributes.class??"").split(/\s/u).includes("command-dialog")&&node.port?.open).length,
+    viewerCalls:q.viewerCalls.length,artifactFocus:libraryFocusFromRoute(q.h.store.route.get())}));
+  if(changed){
+    // B's context and source already committed before this newer menu opened.
+    // Releasing the task may retire the obsolete A address, not restore A's
+    // private scope or keep an exact-route command alive across that change.
+    assert.equal(projectTaskDocumentIdFromRoute(route),q.entryDocument);
+    assert.ok(q.syncCalls.length,"finally releases ordinary synchronization of the admitted B load");
+    assert.equal(q.h.store.route.get(),"/projects");
+    const source=q.h.store.captureSourceOwnership(),session=q.h.store.session.get(),money=financial(q.w);
+    const commandInputs=()=>q.f.tree().visible("input").filter(node=>node.attributes.id==="command-search");
+    const commandDialogs=()=>q.f.tree().visible("dialog").filter(node=>String(node.attributes.class??"").split(/\s/u).includes("command-dialog")&&node.port?.open);
+    const assertCurrentB=()=>{
+      assert.equal(q.h.store.route.get(),"/projects");
+      assert.equal(q.h.store.sourceOwnershipActive(source),true);
+      assert.equal(q.h.store.session.get().user.userId,session.user.userId);
+      for(const key of ["organizationId","projectAccessId","projectId"])assert.equal(q.h.store.session.get().projectContext[key],q.task[key]);
+      assert.equal(q.h.store.projection.get().projectId,q.task.projectId);
+      assert.equal(q.h.store.projection.get().documentId,q.targetDocument);
+      assert.equal(q.h.store.events.get().some(event=>event.payload.project_id===q.entryProject),false,"No personal-A source is restored");
+      for(const privateText of ["Personal Project A","Personal A Document","Personal A current source.","EXACT_ASSIGNED_B_BODY"])
+        assert.equal(q.f.tree().root.text.includes(privateText),false,"Menu navigation discloses no retired A or unopened B body");
+      assert.equal(libraryFocusFromRoute(q.h.store.route.get()),null);
+      assert.equal(q.viewerCalls.length,0,"Neither withdrawn handoff nor menu discovery opens the output viewer");
+    };
+    assertCurrentB();
+    assert.equal(q.h.store.ui.commandOpen,false,"The menu captured at A's obsolete address is retired");
+    assert.equal(commandInputs().length,0);assert.equal(commandDialogs().length,0);
+    const currentTasks=q.h.store.reviewInbox.get().filter(task=>task.id===q.task.id);
+    assert.equal(currentTasks.length,1);
+    for(const key of ["id","organizationId","projectAccessId","projectId","documentId","artifactId","revision","contentSha256"])
+      assert.equal(currentTasks[0][key],q.task[key],"The unactivated current B choice retains exact "+key);
+    const requestCount=q.h.requests.length;
+    // A distinct, deliberate opening now captures B and /projects. Search is
+    // exercised through the real control; no choice is activated or injected.
+    await q.f.act(q.f.find("button",node=>node.owner.tag==="forma-shell"&&String(node.attributes.class).includes("command-trigger")));
+    assert.equal(q.h.store.ui.commandOpen,true);assert.equal(commandInputs().length,1);assert.equal(commandDialogs().length,1);
+    let input=q.f.find("input",node=>node.attributes.id==="command-search");
+    input.port.value="Personal A";await q.f.act(input,"input");
+    assert.equal(q.f.tree().visible("button").some(node=>node.attributes.role==="option"
+      &&["Personal Project A","Personal A Document",q.entryDocument].some(value=>node.text.includes(value))),false,"The new menu does not borrow A's choices");
+    input=q.f.find("input",node=>node.attributes.id==="command-search");
+    input.port.value=q.task.artifactTitle;await q.f.act(input,"input");
+    const hint=[commandDiscoveryCopy(q.f.locale).review,q.task.organizationName,q.task.projectName,q.task.documentTitle].filter(Boolean).join(" · ");
+    const row=q.f.find("button",node=>node.attributes.role==="option"&&node.text.includes(q.task.artifactTitle)
+      &&node.children.some(child=>typeof child!=="string"&&child.tag==="small"&&child.text===hint));
+    assert.ok(row.owner.isConnected);assert.ok(row.port.isConnected);
+    assert.equal(Object.hasOwn(row.attributes,"disabled"),false);
+    await flushStoreFrames(q.h);await q.f.settle();
+    assertCurrentB();
+    assert.equal(q.h.store.ui.commandOpen,true,"The deliberate current B menu survives settled work");
+    assert.equal(commandInputs().length,1);assert.equal(commandDialogs().length,1);
+    q.f.find("button",node=>node.attributes.role==="option"&&node.text.includes(q.task.artifactTitle)
+      &&node.children.some(child=>typeof child!=="string"&&child.tag==="small"&&child.text===hint));
+    assert.equal(q.h.requests.slice(requestCount).some(request=>!["GET","HEAD"].includes(request.init.method??"GET")),false,"Opening and searching the new menu sends no mutation");
+    assert.deepEqual(financial(q.w),money,"Fresh current-scope command discovery changes none of the nine fiscal tables");
+  }
+  else assert.equal(libraryFocusFromRoute(q.h.store.route.get())?.id,q.artifactId);
+});
+test("assigned review caller cancellation behind an existing context-cookie request cannot send a second mutation",{timeout:25_000},async t=>{
+  const q=await assignmentPage(t,"cross-project"),entered=sceneDeferred(),release=sceneDeferred();
+  t.after(()=>release.resolve());await flushStoreFrames(q.h);await q.f.settle();
+  const route=q.h.store.route.get(),path="/api/workspaces/"+q.task.organizationId+"/projects/"+q.task.projectAccessId+"/context";
+  let count=0;q.h.intercept=async request=>{
+    if(request.url!==path||request.init.method!=="POST")return;
+    count++;const response=await q.nativeRequest(request);entered.resolve();await release.promise;return response;
+  };
+  const first=q.h.store.beginProjectContextSelection().request(q.task);await entered.promise;
+  let current=true;const pending=q.h.store.openAssignedReview(q.task,{current:()=>current});current=false;
+  release.resolve();await first;assert.equal(await pending,false);
+  assert.equal(count,1,"the existing serialized handshake may settle; no later stale POST is sent");
+  assert.equal(q.h.store.route.get(),route);assert.equal(q.viewerCalls.length,0);
+});
 after(()=>{assert.equal(external,0);globalThis.fetch=originalFetch;console.log("ASSIGNED_R2_COMPLETE",JSON.stringify({cases:observations.length,nativeFixtures:sceneCostFixtureProof.fixtures,nativeSqlShapes:sceneCostFixtureProof.nativeQueries.size,maximumBindings:sceneCostFixtureProof.maximumBindings,external}));});

@@ -1,4 +1,4 @@
-import { store } from "../state/store";
+import { store, type FormaStore } from "../state/store";
 import { FormaPresentationalElement } from "./presentational-element";
 
 export { FormaPresentationalElement } from "./presentational-element";
@@ -7,6 +7,8 @@ export { icon } from "./icons";
 /** Application-connected organisms rerender when their shared projection changes. */
 export abstract class FormaElement extends FormaPresentationalElement {
   protected store = store;
+  /** Object identity only; callers still own connected, Source and authorization checks. */
+  static hasStoreIdentity(element: FormaElement, expected: FormaStore): boolean { return element.store === expected; }
   #unsubscribe?: () => void;
   override connectedCallback() { super.connectedCallback(); this.#unsubscribe = this.store.subscribe(() => this.requestUpdate()); }
   override disconnectedCallback() { this.#unsubscribe?.(); super.disconnectedCallback(); }

@@ -10,6 +10,10 @@ import { artifactDeliveryFor } from "../src/state/artifact-delivery-context.ts";
 import { nextActionFacts } from "../src/state/next-action-context.ts";
 import { creativeActionSourceRevision } from "../src/model/workspace-intelligence.ts";
 import { artifactFocusRoute, artifactFocusOptionsFromRoute, libraryFocusFromRoute, libraryRootRoute, libraryBlockEditorFromRoute } from "../src/model/routes.ts";
+import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
+const focusImports = registerOutputSourceImports();
+const { captureOutputNavigationFocus } = await import("../src/components/output-navigation-focus.ts");
+focusImports.deregister();
 
 // Executes actual parsed component methods and the actual viewer @close expression.
 // Application, cryptographic scheduling, native dialog event timing, and focus are
@@ -31,14 +35,27 @@ const membersCode = (parsed, names) => names.flatMap(name => {
   const value = member(parsed, name);
   return value ? [value.getText(parsed.tree)] : [];
 }).join("\n");
-const fieldsCode = (parsed, code, declared = []) => {
-  const names = [...new Set([...code.matchAll(/#([A-Za-z][A-Za-z0-9_]*)/g)].map(match => "#" + match[1]))];
-  return names.filter(name => !declared.includes(name)).map(name => {
+const fieldsCode = (parsed, code, declared = [], expression = "") => {
+  // A selector such as "#main-content" is not a private field. Reuse the
+  // existing parser so literal copy cannot invent a component dependency.
+  const source = "class Fixture {" + code + (expression ? "\n__templateExpression = (" + expression + ");" : "") + "}";
+  const tree = ts.createSourceFile("fixture-fields.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  assert.equal(tree.parseDiagnostics.length, 0, "actual extracted members must parse before selecting fields");
+  const names = new Set();
+  const visit = node => { if (ts.isPrivateIdentifier(node)) names.add(node.getText(tree)); ts.forEachChild(node, visit); };
+  visit(tree);
+  return [...names].filter(name => !declared.includes(name)).map(name => {
     const value = member(parsed, name);
     assert.ok(value && ts.isPropertyDeclaration(value), "actual field " + name);
     return value.getText(parsed.tree);
   }).join("\n");
 };
+// Forward the actual public Store-identity predicate; do not import an app root
+// or substitute the new Library opening's source/authorization decisions.
+const identityCode = "class LibraryFocusIdentityPort {" + membersCode(classTree("src/components/forma-element.ts"), ["hasStoreIdentity"]) + "}";
+const FormaElement = new Function(ts.transpileModule(identityCode, { compilerOptions: {
+  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+} }).outputText + ";return LibraryFocusIdentityPort;")();
 const closeExpression = (() => {
   const viewer = member(documentTree, "#viewer");
   let expression;
@@ -92,6 +109,8 @@ function fixture({ kind = "short_story" } = {}) {
     projection: { get: projection }, events: { get: () => state.events }, eventView: { get: () => state.events }, content: { get: () => state.content }, asOf: cell(Infinity),
     canvasProjection: cell({ selectedCanvasId: "", canvases: [] }), projectNotifications: cell([]), reviewInbox: cell([]), documentJobs: cell([]), loading: cell(false),
     route: { get: () => state.route }, setRoute: value => { state.route = value; }, patchUi: value => Object.assign(store.ui, value),
+    // These legacy cases set routes directly; no Store-owned focus handoff exists.
+    captureWorkspaceNavigationFocus: () => null,
     toast: value => trace.push(["toast", value]),
     ensurePrivateContent: async id => { state.requests.push(["content", id]); },
     reviseDocumentArtifact: async (id, input) => { state.requests.push(["save", id, structuredClone(input)]); if (state.saveGate) await state.saveGate.promise; commit(id, input.markdown); return true; },
@@ -100,10 +119,15 @@ function fixture({ kind = "short_story" } = {}) {
   installSourceOwnershipPort(store);
   class HTMLElement {
     constructor(name) { this.name = name; this.isConnected = true; }
-    focus() { document.activeElement = this; trace.push(["focus", this.name]); }
+    focus() { document.activeElement = this; document.dispatchEvent({ type: "focusin", target: this }); trace.push(["focus", this.name]); }
   }
   const opener = new HTMLElement("initial-opener");
-  const document = { activeElement: opener };
+  const documentListeners = new Map();
+  const document = { activeElement: opener, body: new HTMLElement("body"), documentElement: new HTMLElement("html"),
+    addEventListener(type, handler, capture) { assert.equal(capture, true); documentListeners.set(type, [...(documentListeners.get(type) ?? []), handler]); },
+    removeEventListener(type, handler, capture) { assert.equal(capture, true); documentListeners.set(type, (documentListeners.get(type) ?? []).filter(value => value !== handler)); },
+    dispatchEvent(event) { for (const handler of [...(documentListeners.get(event.type) ?? [])]) handler(event); },
+  };
   const focusTargets = new Map();
   const dialog = {
     open: false, listeners: new Map(), isConnected: true,
@@ -120,7 +144,10 @@ function fixture({ kind = "short_story" } = {}) {
       });
     },
     querySelector(selector) {
-      if (!focusTargets.has(selector)) focusTargets.set(selector, { disabled: false, open: false, focus() { trace.push(["focus", selector]); }, click() { trace.push(["click", selector]); }, querySelector() { return this; } });
+      if (!focusTargets.has(selector)) focusTargets.set(selector, { disabled: false, open: false, isConnected: true,
+        closest(name) { return name === "dialog" ? dialog : null; },
+        focus() { document.activeElement = this; document.dispatchEvent({ type: "focusin", target: this }); trace.push(["focus", selector]); },
+        click() { trace.push(["click", selector]); }, querySelector() { return this; } });
       return focusTargets.get(selector);
     },
     classList: { contains: value => value === "document-artifact-view" },
@@ -130,7 +157,7 @@ function fixture({ kind = "short_story" } = {}) {
   const names = ["#privateSourceCurrent", "openArtifactById", "#openArtifact", "#artifactBinding", "#currentDeliveryBinding", "#refreshDeliveryBinding", "#showArtifactIntent", "#clearPrivateGenerationInputs", "#clearSceneCost", "#closeViewerPopovers", "#clearCreationDraft", "#startArtifactEdit", "#cancelArtifactEdit", "#saveArtifactEdit", "#restoreRevision", "#closeArtifactViewer", "#setViewerFocus", "#cancelViewer", "updated"];
   const code = membersCode(documentTree, names);
   const declared = [...names, "#targetDocumentId", "#revealWorkbenchPane", "#viewDialog", "#createDialog", "#content", "#loadHistory", "#bindCompletedWorkflowStage"];
-  const fields = fieldsCode(documentTree, code + "\n" + closeExpression, declared);
+  const fields = fieldsCode(documentTree, code, declared, closeExpression);
   const probeSource = [
     "(class {", fields,
     'store=store;documentId="A";source="library";isConnected=true;i18n={t:(_id,fallback)=>fallback??_id};',
@@ -167,18 +194,25 @@ function fixture({ kind = "short_story" } = {}) {
   const f = { state, store, host, dialog, document, opener, trace, artifact, commit, HTMLElement, append };
   f.flushClose = () => { while (state.closeQueue.length) state.closeQueue.shift()(); };
   f.library = () => {
-    const names = ["updated", "#focusAvailable"];
+    // One mounted child identity; forward the same actual viewer operation.
+    const viewerPort = { get isConnected() { return host.isConnected; }, get documentId() { return host.documentId; },
+      querySelector: selector => selector === ".document-artifact-view" ? dialog : null,
+      openArtifactById: (id, options) => {
+      const pending = host.openArtifactById(id, options); state.libraryOpen = pending; return pending;
+    } };
+    dialog.closest = selector => selector === "forma-document-artifacts" ? viewerPort : selector === "dialog" ? dialog : null;
+    const names = ["updated", "#focusAvailable", "#restoreLibraryFocus"];
     const code = membersCode(libraryTree, names);
     const fields = fieldsCode(libraryTree, code, names);
     const librarySource = [
-      "(class {", fields, "store=store;isConnected=true;",
+      "(class {", fields, "store=store;isConnected=true;ownerDocument=document;closest(){return null;}",
       "get updateComplete(){return Promise.resolve();}requestUpdate(){}",
-      'querySelector(selector){return selector==="forma-document-artifacts"?{openArtifactById:(id,options)=>{const pending=viewer.openArtifactById(id,options);state.libraryOpen=pending;return pending;}}:null;}',
+      'querySelector(selector){return selector==="forma-document-artifacts"?viewerPort:null;}',
       "querySelectorAll(){return[];}", code, "})",
     ].join("\n");
-    const Library = new Function("store", "viewer", "state", "trace", "libraryBlockEditorFromRoute", "libraryFocusFromRoute", "libraryRootRoute", "artifactFocusOptionsFromRoute", "ensureModalDialog", "CSS",
+    const Library = new Function("store", "viewer", "viewerPort", "state", "trace", "libraryBlockEditorFromRoute", "libraryFocusFromRoute", "libraryRootRoute", "artifactFocusOptionsFromRoute", "ensureModalDialog", "CSS", "document", "FormaElement", "captureOutputNavigationFocus",
       "return " + ts.transpileModule(librarySource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText)(
-        store, host, state, trace, libraryBlockEditorFromRoute, libraryFocusFromRoute, libraryRootRoute, artifactFocusOptionsFromRoute, ensureModalDialog, { escape: String },
+        store, host, viewerPort, state, trace, libraryBlockEditorFromRoute, libraryFocusFromRoute, libraryRootRoute, artifactFocusOptionsFromRoute, ensureModalDialog, { escape: String }, document, FormaElement, captureOutputNavigationFocus,
       );
     return new Library();
   };

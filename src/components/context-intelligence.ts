@@ -5,7 +5,7 @@ import type { CreativeBlock } from "../model/events";
 import type { CapturedAuthorizationScope } from "../state/store";
 import { documentContextBlockFromRoute, documentContextBlockRoute, documentIdFromRoute } from "../model/routes";
 import type { FormaOutputRequirementCard } from "./forma-output-requirement-card";
-import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus } from "./output-navigation-focus";
+import { navigateInApp } from "./command-departure";
 import { FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
@@ -58,6 +58,7 @@ export class ContextIntelligence extends FormaElement{
   #suspended=false;
   #reviewIdentity="";
   #outputEditorHandoff:OutputEditorHandoff|null=null;
+  #reviewOpener?:HTMLElement;
 
   /** Close the owned top layer without discarding an unfinished review or receipt. */
   suspendControls(){this.#suspended=this.#open||this.#suspended;this.#open=false;this.renderRoot.querySelector<HTMLDialogElement>(".context-intelligence-dialog")?.close();this.requestUpdate();}
@@ -100,7 +101,7 @@ export class ContextIntelligence extends FormaElement{
 
   // Explicit cancellation keeps its existing server-review semantics.
   #close(){if(this.#saving)return;this.#resetReview();}
-  #resetReview(){this.#outputEditorHandoff=null;this.#suspended=false;this.#saving=false;this.#changes=null;this.#savePending=false;this.#changeError="";this.#recovering=false;this.#recoveryFailed=false;this.#saveApplied=false;this.#changesStale=false;this.#proposalSources.clear();this.#request+=1;this.#open=false;this.#mode=null;this.#working=false;this.#error=false;this.#plan=null;this.#report=null;this.#quote=null;this.#publicQuery="";this.#quoteAddition="";this.#executionUncertain=false;this.#billingPending=false;this.#consentNotice="";this.#selected.clear();this.#addition="";this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.requestUpdate();}
+  #resetReview(){this.#outputEditorHandoff=null;this.#reviewOpener=undefined;this.#suspended=false;this.#saving=false;this.#changes=null;this.#savePending=false;this.#changeError="";this.#recovering=false;this.#recoveryFailed=false;this.#saveApplied=false;this.#changesStale=false;this.#proposalSources.clear();this.#request+=1;this.#open=false;this.#mode=null;this.#working=false;this.#error=false;this.#plan=null;this.#report=null;this.#quote=null;this.#publicQuery="";this.#quoteAddition="";this.#executionUncertain=false;this.#billingPending=false;this.#consentNotice="";this.#selected.clear();this.#addition="";this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.requestUpdate();}
 
   #outputHandoffTarget(authorization:CapturedAuthorizationScope,request:number):OutputEditorHandoff{
     const projection=this.store.projection.get();
@@ -120,37 +121,39 @@ export class ContextIntelligence extends FormaElement{
       &&this.block.documentId===target.documentId&&this.block.projectId===target.projectId&&this.block.canvasId===target.canvasId&&this.#outputTargetCurrent(target);
   }
   #outputHandoffCurrent(target:OutputEditorHandoff){return this.#open&&this.#outputHandoffOwned(target);}
-  async #openOutputEditor(target:OutputEditorHandoff){
-    if(this.#outputEditorHandoff!==target||this.#working||this.#saving||!this.#outputHandoffCurrent(target))return;
+  async #openOutputEditor(target:OutputEditorHandoff,event:MouseEvent){
+    const element=this.querySelector<HTMLDialogElement>(".context-intelligence-dialog"),trigger=event.currentTarget as HTMLElement|null;
+    const changes=this.#changes,source=this.store.captureSourceOwnership(),opener=this.#reviewOpener?.isConnected?this.#reviewOpener:undefined;
+    const presentationCurrent=()=>this.#outputEditorHandoff===target&&this.#outputHandoffCurrent(target)
+      &&this.querySelector(".context-intelligence-dialog")===element&&Boolean(changes)&&this.#changes===changes
+      &&this.#changesStale&&this.#changeError==="output_requirement_endpoint_required"
+      &&!this.#addition&&!this.#quoteAddition&&!this.#working&&!this.#saving&&!this.#savePending&&this.store.sourceOwnershipActive(source);
+    if(!element||!trigger||!presentationCurrent())return;
     const targetDocument=this.store.projection.get().documents.find(candidate=>candidate.id===target.documentId)!;
     const destination=documentContextBlockRoute(target.documentId,targetDocument.title,target.blockId);
     const sourceEvents=this.block.sourceEvents.join("\u0000");
-    this.#close();
-    const request=this.#request;
-    let arrivedRoute="";
-    const targetCurrent=()=>!this.#open&&request===this.#request&&this.#outputTargetCurrent(target)
-      &&this.store.projection.get().libraryBlocks.find(block=>block.id===target.blockId)?.sourceEvents.join("\u0000")===sourceEvents
-      &&!document.querySelector("dialog[open]");
-    const originalCurrent=()=>this.isConnected&&targetCurrent()&&this.store.route.get()===target.route
-      &&this.store.projection.get().documentId===target.currentDocumentId;
-    const destinationCurrent=()=>targetCurrent()&&(!arrivedRoute||this.store.route.get()===arrivedRoute)
-      &&documentIdFromRoute(this.store.route.get())===target.documentId
-      &&documentContextBlockFromRoute(this.store.route.get())===target.blockId
-      &&this.store.projection.get().documentId===target.documentId;
-    // Native close may restore its own opener synchronously; no await or new
-    // user gesture occurs between that owned close and this focus baseline.
-    const focus=captureOutputNavigationFocus(this.ownerDocument,{
-      ownedRouteFocus:outputNavigationOwnedRouteFocus(this.ownerDocument,this.store,target,destinationCurrent),
-    });
-    try{
-      if(!await this.store.openDocument(target.documentId,destination,this.surface,{current:originalCurrent,focus}))return;
+    await navigateInApp(this,async navigation=>{
+      if(!presentationCurrent()||!navigation.closePresentation(()=>this.#close()))return false;
+      const request=this.#request,focus=navigation.focus;
+      let arrivedRoute="";
+      const targetCurrent=()=>navigation.current()&&this.store.sourceOwnershipActive(source)&&!this.#open&&request===this.#request&&this.#outputTargetCurrent(target)
+        &&this.store.projection.get().libraryBlocks.find(block=>block.id===target.blockId)?.sourceEvents.join("\u0000")===sourceEvents
+        &&!document.querySelector("dialog[open]");
+      const originalCurrent=()=>this.isConnected&&targetCurrent()&&this.store.route.get()===target.route
+        &&this.store.projection.get().documentId===target.currentDocumentId;
+      const destinationCurrent=()=>targetCurrent()&&(!arrivedRoute||this.store.route.get()===arrivedRoute)
+        &&documentIdFromRoute(this.store.route.get())===target.documentId
+        &&documentContextBlockFromRoute(this.store.route.get())===target.blockId
+        &&this.store.projection.get().documentId===target.documentId;
+      if(!await this.store.openDocument(target.documentId,destination,this.surface,
+        {current:originalCurrent,focus,onOriginHandoff:navigation.onOriginHandoff}))return false;
       for(let attempts=0;attempts<24;attempts++){
         await new Promise<void>(resolve=>window.requestAnimationFrame(()=>resolve()));
-        if(!focus.current()||!targetCurrent())return;
-        if(!destinationCurrent()){if(!arrivedRoute&&originalCurrent())continue;return;}
-        const route=this.store.route.get(),navigation=this.store.captureWorkspaceNavigationFocus(route,focus);
-        const current=()=>destinationCurrent()&&Boolean(navigation?.current());
-        if(!current())return;
+        if(!focus.current()||!targetCurrent())return false;
+        if(!destinationCurrent()){if(!arrivedRoute&&originalCurrent())continue;return false;}
+        const route=this.store.route.get(),arrival=this.store.captureWorkspaceNavigationFocus(route,focus);
+        const current=()=>destinationCurrent()&&Boolean(arrival?.current());
+        if(!current())return false;
         if(!arrivedRoute){arrivedRoute=route;this.store.patchUi({focusBlockId:target.blockId});}
         const card=[...document.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")].find(candidate=>{
           const snapshot=candidate.snapshot;
@@ -160,19 +163,15 @@ export class ContextIntelligence extends FormaElement{
         });
         const edit=card&&[...card.querySelectorAll<HTMLButtonElement>(".output-requirement-header button")].find(button=>!button.disabled
           &&button.textContent?.trim()===this.i18n.t("output.requirement.edit")&&button.getClientRects().length>0);
-        if(edit){
-          focus.run(edit,()=>{
-            if(!current()||!edit.isConnected)return false;
-            edit.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"center"});
-            if(!current()||!edit.isConnected)return false;
-            edit.focus({preventScroll:true});
-            return current();
-          });
-          return;
-        }
+        if(edit)return focus.run(edit,()=>{
+          if(!current()||!edit.isConnected)return false;
+          edit.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"center"});
+          if(!current()||!edit.isConnected)return false;
+          edit.focus({preventScroll:true});return current();
+        });
       }
-    }catch{/* No fallback editor or mutation is started after a failed navigation. */}
-    finally{focus.dispose();}
+      return false;
+    },{presentation:{owner:this,element,trigger,current:presentationCurrent,...(opener?{opener}:{})}});
   }
 
   async #requestAnalysis(kind:Workflow,action:"quote"|ContextConsentAction,addedText=""){
@@ -205,6 +204,8 @@ export class ContextIntelligence extends FormaElement{
     const identity=this.#currentReviewIdentity();
     if(this.#reviewIdentity&&this.#reviewIdentity!==identity){this.#resetReview();return;}
     this.#reviewIdentity=identity;
+    const opener=this.ownerDocument.activeElement;
+    this.#reviewOpener=opener instanceof HTMLElement&&this.contains(opener)&&!opener.closest("dialog")?opener:undefined;
     if(this.#suspended&&this.#mode===kind&&(this.#canAnalyze()||this.#changes||this.#plan||this.#report||this.#working)){
       // Retain the exact owned refusal, but never reactivate a previous dialog's
       // captured button when this suspended review becomes visible again.
@@ -271,7 +272,7 @@ export class ContextIntelligence extends FormaElement{
     finally{this.#working=false;this.requestUpdate();}
   }
 
-  #invalidateChanges(){if(this.#saving||this.#savePending||this.#saveApplied)return;this.#changes=null;this.#changeError="";this.#changesStale=false;}
+  #invalidateChanges(){if(this.#saving||this.#savePending||this.#saveApplied)return;this.#outputEditorHandoff=null;this.#changes=null;this.#changeError="";this.#changesStale=false;}
   async #addBlock(event:SubmitEvent){
     event.preventDefault();const source=this.#addition.trim();if(!this.#canAnalyze()||!source||!this.#plan||this.#working||this.#savePending||this.#saveApplied)return;
     this.#invalidateChanges();this.#quoteAddition=source;this.#quoteAdditionType=this.#additionType;this.#quote=null;await this.#preview();
@@ -402,10 +403,10 @@ export class ContextIntelligence extends FormaElement{
     if(!this.#open||!this.#mode)return nothing;
     const decomposition=this.#mode==="decompose",title=this.i18n.t(!this.#canAuthor()?"context.controls.savedReview":decomposition?"context.intelligence.review":"context.intelligence.research");
     const outputEditor=this.#outputEditorHandoff&&this.#outputHandoffCurrent(this.#outputEditorHandoff)?this.#outputEditorHandoff:null;
-    return html`<dialog class="context-intelligence-dialog" ?data-read-only=${!this.#canAuthor()} closedby="any" aria-labelledby=${`context-intelligence-title-${this.block.id}`} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.suspendControls();}} @cancel=${(event:Event)=>{event.preventDefault();this.suspendControls();}}><article><header class="context-intelligence-dialog-header"><div><h2 id=${`context-intelligence-title-${this.block.id}`}>${title}</h2><p>${this.i18n.t(!this.#canAuthor()?"context.controls.reviewReadOnly":decomposition?"context.intelligence.decomposeDescription":"context.intelligence.researchDescription")}</p></div><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close")} @click=${()=>this.suspendControls()}>${icon("close")}</button></header><div class="context-intelligence-body"><section class="context-intelligence-source"><span>${this.i18n.t("context.intelligence.source")}</span><p dir="auto">${this.#changes?.review?.sourceText??researchBlockText(this.block)}</p></section>${this.#consentView()}${!this.#canAnalyze()&&!this.#working&&!this.#recovering&&!this.#recoveryFailed&&!this.#changes&&!this.#plan&&!this.#report?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.controls.noReview")}</p>`:nothing}${this.#working?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.intelligence.working")}</p>`:nothing}${this.#error?html`<p class="context-intelligence-error" role="alert">${this.i18n.t(this.#executionUncertain?"context.consent.uncertain":this.#consentNotice==="refresh"?"context.consent.refresh":this.#consentNotice==="not-submitted"?"context.consent.notSubmitted":"context.intelligence.failed")}</p>`:nothing}${this.#billingPending?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.consent.billingPending")}</p>`:nothing}${decomposition&&this.#plan?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.proposals")}</h3><p>${this.i18n.t("context.intelligence.noChanges")}</p></div><span>${this.i18n.number(this.#plan.proposals.length)}</span></header>${this.#plan.proposals.length?this.#plan.proposals.map((proposal)=>this.#proposal(proposal)):html`<p>${this.i18n.t("context.intelligence.empty")}</p>`}</section>${this.#plan.addenda.length?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.addendum")}</h3><p>${this.i18n.t("context.intelligence.addendumDescription")}</p></div><span>${this.i18n.number(this.#plan.addenda.length)}</span></header>${this.#plan.addenda.map((proposal)=>this.#proposal(proposal))}</section>`:nothing}${this.#canAnalyze()?html`<form class="context-intelligence-add" @submit=${(event:SubmitEvent)=>void this.#addBlock(event)}><label><span>${this.i18n.t("context.intelligence.add")}</span><input required maxlength="1800" ?disabled=${this.#working||this.#savePending||this.#saveApplied} .value=${this.#addition} placeholder=${this.i18n.t("context.intelligence.addPlaceholder")} @input=${(event:InputEvent)=>{this.#addition=(event.currentTarget as HTMLInputElement).value;}}></label><select aria-label=${this.i18n.t("context.changes.addType")} ?disabled=${this.#working||this.#savePending||this.#saveApplied} .value=${this.#additionType} @change=${(event:Event)=>{this.#additionType=(event.currentTarget as HTMLSelectElement).value as BlockKind;}}>${BLOCK_TYPES.filter((item)=>item.type!=="reference").map((item)=>html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}</select><button type="submit" class="button secondary compact" aria-label=${this.i18n.t("context.changes.addPreview")} ?disabled=${this.#working||this.#savePending||this.#saveApplied}>${icon("plus")}</button></form>`:nothing}`:nothing}${!decomposition&&this.#report?html`${this.#section("inferred",this.#report.inferred)}${this.#section("related",this.#report.related)}${this.#section("learned",this.#report.learned)}${this.#report.learned.some((suggestion)=>suggestion.type==="reference")?html`<p class="context-intelligence-reference-notice">${this.i18n.t("context.intelligence.referenceNotice")}</p>`:nothing}`:nothing}${this.#changesView()}${this.#changeError?html`<p role="alert" class="context-intelligence-error">${this.i18n.t(this.#savePending?"context.changes.uncertain":this.#recoveryFailed?"context.changes.recoveryFailed":/participant/.test(this.#changeError)?"context.changes.participantError":this.#changesStale?"context.changes.stale":"context.changes.failed")}</p>`:nothing}</div><footer>
+    return html`<dialog class="context-intelligence-dialog" ?data-read-only=${!this.#canAuthor()} closedby="any" aria-labelledby=${`context-intelligence-title-${this.block.id}`} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.suspendControls();}} @cancel=${(event:Event)=>{event.preventDefault();this.suspendControls();}}><article><header class="context-intelligence-dialog-header"><div><h2 id=${`context-intelligence-title-${this.block.id}`}>${title}</h2><p>${this.i18n.t(!this.#canAuthor()?"context.controls.reviewReadOnly":decomposition?"context.intelligence.decomposeDescription":"context.intelligence.researchDescription")}</p></div><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close")} @click=${()=>this.suspendControls()}>${icon("close")}</button></header><div class="context-intelligence-body"><section class="context-intelligence-source"><span>${this.i18n.t("context.intelligence.source")}</span><p dir="auto">${this.#changes?.review?.sourceText??researchBlockText(this.block)}</p></section>${this.#consentView()}${!this.#canAnalyze()&&!this.#working&&!this.#recovering&&!this.#recoveryFailed&&!this.#changes&&!this.#plan&&!this.#report?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.controls.noReview")}</p>`:nothing}${this.#working?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.intelligence.working")}</p>`:nothing}${this.#error?html`<p class="context-intelligence-error" role="alert">${this.i18n.t(this.#executionUncertain?"context.consent.uncertain":this.#consentNotice==="refresh"?"context.consent.refresh":this.#consentNotice==="not-submitted"?"context.consent.notSubmitted":"context.intelligence.failed")}</p>`:nothing}${this.#billingPending?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.consent.billingPending")}</p>`:nothing}${decomposition&&this.#plan?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.proposals")}</h3><p>${this.i18n.t("context.intelligence.noChanges")}</p></div><span>${this.i18n.number(this.#plan.proposals.length)}</span></header>${this.#plan.proposals.length?this.#plan.proposals.map((proposal)=>this.#proposal(proposal)):html`<p>${this.i18n.t("context.intelligence.empty")}</p>`}</section>${this.#plan.addenda.length?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.addendum")}</h3><p>${this.i18n.t("context.intelligence.addendumDescription")}</p></div><span>${this.i18n.number(this.#plan.addenda.length)}</span></header>${this.#plan.addenda.map((proposal)=>this.#proposal(proposal))}</section>`:nothing}${this.#canAnalyze()?html`<form class="context-intelligence-add" @submit=${(event:SubmitEvent)=>void this.#addBlock(event)}><label><span>${this.i18n.t("context.intelligence.add")}</span><input required maxlength="1800" ?disabled=${this.#working||this.#savePending||this.#saveApplied} .value=${this.#addition} placeholder=${this.i18n.t("context.intelligence.addPlaceholder")} @input=${(event:InputEvent)=>{this.#addition=(event.currentTarget as HTMLInputElement).value;this.requestUpdate();}}></label><select aria-label=${this.i18n.t("context.changes.addType")} ?disabled=${this.#working||this.#savePending||this.#saveApplied} .value=${this.#additionType} @change=${(event:Event)=>{this.#additionType=(event.currentTarget as HTMLSelectElement).value as BlockKind;}}>${BLOCK_TYPES.filter((item)=>item.type!=="reference").map((item)=>html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}</select><button type="submit" class="button secondary compact" aria-label=${this.i18n.t("context.changes.addPreview")} ?disabled=${this.#working||this.#savePending||this.#saveApplied}>${icon("plus")}</button></form>`:nothing}`:nothing}${!decomposition&&this.#report?html`${this.#section("inferred",this.#report.inferred)}${this.#section("related",this.#report.related)}${this.#section("learned",this.#report.learned)}${this.#report.learned.some((suggestion)=>suggestion.type==="reference")?html`<p class="context-intelligence-reference-notice">${this.i18n.t("context.intelligence.referenceNotice")}</p>`:nothing}`:nothing}${this.#changesView()}${this.#changeError?html`<p role="alert" class="context-intelligence-error">${this.i18n.t(this.#savePending?"context.changes.uncertain":this.#recoveryFailed?"context.changes.recoveryFailed":/participant/.test(this.#changeError)?"context.changes.participantError":this.#changesStale?"context.changes.stale":"context.changes.failed")}</p>`:nothing}</div><footer>
       <button type="button" class="button ghost" ?disabled=${this.#saving} @click=${()=>!this.#canAuthor()||this.#savePending||this.#saveApplied?this.suspendControls():this.#close()}>${this.i18n.t(!this.#canAuthor()||this.#savePending||this.#saveApplied?"action.close":"action.cancel")}</button>
       ${!outputEditor&&this.#canAnalyze()&&this.#quote?html`<button type="button" class="button primary" ?disabled=${this.#working||contextConsentAction(this.#quote.status,this.#quote.providerAvailable).disabled} @click=${()=>void this.#execute()}>${this.i18n.t(contextConsentAction(this.#quote.status,this.#quote.providerAvailable).label)}</button>`:nothing}
-      ${outputEditor?html`<button type="button" class="button primary" ?disabled=${this.#working||this.#saving} @click=${()=>void this.#openOutputEditor(outputEditor)}>${this.i18n.t("output.requirement.edit")}</button>`:nothing}
+      ${outputEditor?html`<button type="button" class="button primary" ?disabled=${this.#working||this.#saving||Boolean(this.#addition)||Boolean(this.#quoteAddition)} @click=${(event:MouseEvent)=>void this.#openOutputEditor(outputEditor,event)}>${this.i18n.t("output.requirement.edit")}</button>`:nothing}
       ${!outputEditor&&this.#recoveryFailed?html`<button type="button" class="button primary" ?disabled=${this.#working} @click=${()=>void this.#resumeReview()}>${this.i18n.t("context.changes.resume")}</button>`:nothing}
       ${this.#changes&&!this.#savePending?html`<button type="button" data-context-review-action="dismiss" class=${this.#saveApplied?"button primary":"button ghost"} ?disabled=${this.#working} @click=${()=>void this.#requestChanges("dismiss")}>${this.i18n.t(this.#saveApplied?"context.changes.done":"context.changes.dismiss")}</button>`:nothing}
       ${!outputEditor&&!this.#quote&&!this.#saveApplied&&(this.#plan||this.#report)&&(this.#savePending||this.#canAuthor())?html`<button type="button" data-context-review-action=${this.#savePending?"retrieve":this.#changes&&!this.#changesStale?"apply":"preview"} class="button primary" ?disabled=${this.#working||Boolean(this.#quoteAddition)||!this.#savePending&&(!this.#selected.size||this.block.locked)} @click=${()=>void this.#requestChanges(this.#savePending?"retrieve":this.#changes&&!this.#changesStale?"apply":"preview")}>${this.i18n.t(this.#savePending?"context.changes.retrieve":this.#changes&&!this.#changesStale?"context.changes.confirm":"context.changes.preview")}</button>`:nothing}

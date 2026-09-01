@@ -91,7 +91,9 @@ Comparable supporting controls reuse `--forma-font-size-supporting`,
 `--forma-body-line-height`, `--forma-space-2`, and
 `--forma-control-min-size`. Their native button/input/select borders and block
 padding share one box model; a 44px minimum alone does not make two controls
-the same height. Labels may wrap and controls may grow. Textareas, native
+the same height. Comparable same-line action peers share the applicable minimum
+and stretch through wrappers as labels wrap and controls grow. Keep widths
+content-led; a minimum must never become a height ceiling. Textareas, native
 checkbox glyphs, and larger editorial calls to action retain their own roles.
 Account preferences give the whole native checkbox label the minimum target.
 The same peer-only sizing is consumed by real page-header actions, Library
@@ -118,7 +120,9 @@ inner native control without changing native events or link destinations.
 Do not use action-row stretching to fill the entire height of a labelled field
 and its help text. Forms retain responsive label/control/help grids with
 bottom-aligned actions. The shared slotted page header and list item reserve a
-useful main-content basis before wrapping actions. List items keep the leading
+useful main-content flex basis before wrapping actions; allowing shrinkage alone
+does not reserve room for full headings and supporting copy. Wrap text and then
+actions instead of clipping either. List items keep the leading
 visual and copy in one group so wrapping cannot strand the icon or avatar on
 its own row. Notices move their actions below
 the copy when their own container is narrow. Body copy inherits the locale's
@@ -128,6 +132,9 @@ Each route owns one logical outer gutter. Full-bleed header backgrounds may
 extend beyond it, but equivalent header/body content uses that same gutter;
 nested controls add only their genuine object inset. Deliver applies its body
 inset once around the existing keyed Output hosts, results and final caveat.
+Media stages and intentional timeline, filmstrip, or table scrollports retain
+their documented local sizing and overflow; those exceptions must not clip
+neighboring task copy or introduce a second peer gutter.
 
 The real Cluster catalog example includes a centered badge row and an opt-in
 row with both native and wrapped actions. Stylesheet-contract tests verify the

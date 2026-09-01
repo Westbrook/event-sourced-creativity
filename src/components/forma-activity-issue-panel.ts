@@ -57,6 +57,11 @@ export class FormaActivityIssuePanel extends FormaElement {
   #reviewUnavailable = false;
   #correctionOwner: ActivityCorrectionOwner | null = null;
 
+  /** Content-free origin admission; the original note, review and correction owners stay here. */
+  get navigationBlocked():boolean{
+    return Boolean(this.isConnected&&(this.#busy||this.#noteDraft||this.#reviewNote||this.correctionEditorOwner));
+  }
+
   /** Identity only: the draft itself remains owned by this connected editor. */
   get correctionEditorOwner(): Readonly<{
     notificationId: string; artifactId: string; documentId: string; phase: "loading" | "editing";

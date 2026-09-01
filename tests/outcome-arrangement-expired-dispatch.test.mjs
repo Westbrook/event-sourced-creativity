@@ -87,16 +87,19 @@ test("one actual per-read owner prevents no-render ABA before descriptor publica
   const held=x.hold("retrieve"),before=x.arrangementPosts().length,route=x.h.store.route.get();
   await x.f.act(control(x,outcomeDeskCopy("en").retrieve));await held.entered.promise;
   assert.equal(subscriptions.active(),1);
+  const [originalRead]=subscriptions.listeners();
+  assert.equal(typeof originalRead,"function","The sole held read exposes its actual subscription identity");
   if(change==="route-aba"){x.h.store.setRoute(route+"&other=1");x.h.store.setRoute(route);}
   else if(change==="scope-aba"){
     const session=x.h.store.session.get();x.h.setSession({permissionEpoch:"negative-input-only"});x.h.store.notify();x.h.store.session.set(session);x.h.store.notify();
   }else if(change==="source-aba")await retireAndRestoreBeforeRender(x);
   else if(change==="close-reopen"){await x.f.act(control(x,x.copy.close));await openArrangement(x,{select:false,name:null});}
-  if(change!=="healthy")assert.equal(subscriptions.active(),0,"the actual notification/opening retires the one-shot subscriber immediately");
+  t.diagnostic("ARRANGEMENT_READ_SUBSCRIPTION "+JSON.stringify({change,originalReadActive:subscriptions.has(originalRead),...subscriptions.counts()}));
+  if(change!=="healthy")assert.equal(subscriptions.has(originalRead),false,"the actual notification/opening retires this original one-shot subscriber immediately");
   held.release();await x.drain();
   assert.equal(x.arrangementPosts().length,before+1);assert.equal(x.operation(),preview.operationId);assert.equal(x.ledger().length,0);
   assert.deepEqual(retained(x,preview),row);assert.equal(pendingForm(x),undefined);
-  if(change==="healthy"){assert.ok(dispositionControl(x));assert.equal(subscriptions.active(),1);}
+  if(change==="healthy"){assert.ok(dispositionControl(x));assert.equal(subscriptions.active(),1);assert.equal(subscriptions.has(originalRead),true,"The qualified descriptor retains this same original read owner");}
   else{assert.equal(dispositionControl(x),undefined,"a returned-to-same scope cannot resurrect the captured read");assert.equal(subscriptions.active(),0);}
 });
 

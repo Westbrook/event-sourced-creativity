@@ -15,6 +15,7 @@ import enMessages from "../src/components/design-system/locales/system-en.ts";
 import frMessages from "../src/components/design-system/locales/fr.ts";
 import arMessages from "../src/components/design-system/locales/ar.ts";
 import jaMessages from "../src/components/design-system/locales/ja.ts";
+import { outputFixtureFocusDocument } from "./output-ui-source-harness.mjs";
 
 // This runs actual component renderers and handlers with in-memory application,
 // template, focus, and modal ports. It is not a browser/AT or viewport certificate.
@@ -40,6 +41,7 @@ const localeCatalogs = { en: enMessages, fr: frMessages, ar: arMessages, ja: jaM
 class ElementPort {
   constructor() { this.store = activeFixture?.store; this.i18n = activeFixture?.i18n; this.fixture = activeFixture; this.isConnected = false; this.parentElement = null; this.tag = ""; }
   get renderRoot() { return this; }
+  get ownerDocument() { return documentPort; }
   get updateComplete() { return this.fixture.tick(this); }
   requestUpdate() { this.fixture.requested = true; }
   connectedCallback() {}
@@ -55,9 +57,11 @@ class ElementPort {
     this.fixture.trace.push("event:" + event.type);
     return true;
   }
-  focus() { this.fixture.trace.push("focus:" + this.tag); }
+  focus() { documentPort.focus(this); this.fixture.trace.push("focus:" + this.tag); }
 }
-const documentPort = { activeElement: null, documentElement: { lang: "en", dataset: {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
+// Reuse the existing finite document event port: only actual focus calls update
+// activeElement and notify the real lease; redraw never remaps focus to a new node.
+const documentPort = Object.assign(outputFixtureFocusDocument(), { documentElement: { lang: "en", dataset: {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null });
 const windowPort = { requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
 const modalPort = { ensureModalDialog(dialog) { if (!dialog) return false; if (!dialog.open) { dialog.open = true; activeFixture.trace.push("open:" + dialog.attributes.class); } return true; }, requestDialogText: async () => null };
 
@@ -174,7 +178,7 @@ class RendererPort {
       node.setCustomValidity = value => { node.validationMessage = value; };
       node.reportValidity = () => !node.validationMessage;
       node.querySelector = selector => this.query(owner, selector)[0] ?? null;
-      node.focus = () => this.fixture.trace.push("focus:" + (node.attributes.class ?? node.tag));
+      node.focus = () => { documentPort.focus(node); this.fixture.trace.push("focus:" + (node.attributes.class ?? node.tag)); };
       node.closest = () => null;
       node.close = () => { if (node.open) { this.fixture.trace.push("close:" + node.attributes.class); node.open = false; node.handlers.close?.call(owner, { target: node, currentTarget: node }); node.listeners?.close?.(); } };
       this.nodes.push(node);
@@ -261,6 +265,13 @@ function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), de
     captureSourceOwnership:()=>{if(!state.canRead)return null;const source=Object.freeze({authorization:Object.freeze({key:state.authorization,shared:false}),generation:0});sourceOwners.add(source);return source;},
     sourceOwnershipScopeActive:sourceScopeActive,
     sourceOwnershipActive:sourceScopeActive,
+    // Existing authored records are fully present; Output itself has not been read.
+    routeDataReady: () => {
+      const current = f.store.projection.get();
+      return state.canRead && current.documents.some(document => document.id === current.documentId
+        && document.projectId === current.projectId && !document.removed);
+    },
+    outputRequirements: { resource: () => ({ state: "loading", snapshot: null, error: null }) },
     projection: { get: projection }, events: { get: () => state.events }, eventView: { get: () => state.events },
     asOf: cell(Infinity), content: cell({}), head: { get: () => state.events.length },
     canvasProjection: cell({ selectedCanvasId: "", canvases: [] }), projectNotifications: cell([]), reviewInbox: cell([]),

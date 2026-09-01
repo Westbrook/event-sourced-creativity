@@ -14,7 +14,7 @@ const [harness, requirements, plan, inspection, readiness, runtime] = await Prom
   source("src/model/output-asset-inspection.ts"), source("src/components/output-source-readiness.ts"),
   source("src/components/design-system/locales/output-delivery-runtime-messages.ts"),
 ]);
-const { binding, controllerFixture, eventHandlers, loadController, region, templates } = harness;
+const { binding, controllerFixture, eventHandlers, loadController, outputFixtureFocusDocument, region, templates } = harness;
 const translated = (template, key) => template.values.some((value) => typeof value === "string" && value.includes(`output.delivery.${key}`));
 const text = (value) => templates(value).flatMap((entry) => entry.values.filter((part) => typeof part === "string")).join("\n");
 const hasRegion = (value, marker) => templates(value).some((entry) => entry.strings.some((part) => part.includes(marker)));
@@ -26,7 +26,7 @@ async function renderScenario(scenario, change = () => {}) {
   fixture.store.documentJobs = { get: () => adapter.jobs(snapshot.documentId) };
   fixture.store.projection = { get: () => ({ projectId: snapshot.projectId, libraryBlocks: adapter.sourceBlocks(snapshot.documentId) }) };
   class Base {
-    constructor() { this.store = fixture.store; this.isConnected = true; this.updateComplete = Promise.resolve(); this.i18n = fixture.controller.i18n; }
+    constructor() { this.store = fixture.store; this.isConnected = true; this.ownerDocument = outputFixtureFocusDocument(); this.updateComplete = Promise.resolve(); this.i18n = fixture.controller.i18n; }
     requestUpdate() {}
     querySelector() { return null; }
     connectedCallback() {}

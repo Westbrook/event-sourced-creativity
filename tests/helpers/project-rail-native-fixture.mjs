@@ -99,7 +99,12 @@ export async function createProjectRailNativeFixture(t,options={}){
   f.measure({});f.draw();
   f.rail=f.components().find(component=>component.tag==="forma-project-rail");assert.ok(f.rail);
   const originalQuery=f.rail.querySelector.bind(f.rail);
-  f.rail.closest=selector=>selector===".app-shell"?f.shell:null;
+  const originalClosest=f.rail.closest.bind(f.rail);
+  f.rail.closest=selector=>selector===".app-shell"?f.shell:originalClosest(selector);
+  assert.strictEqual(f.rail.closest("forma-shell"),f.host,"the actual Rail retains its connected complete Shell ancestor");
+  assert.ok(f.rail.isConnected&&f.host.isConnected&&f.host.contains(f.rail));
+  assert.equal(ports.ElementPort.hasStoreIdentity(f.rail,f.store),true);
+  assert.strictEqual(f.rail.ownerDocument,f.host.ownerDocument);
   f.rail.querySelector=selector=>selector===".rail-content[popover]"?f.dom.nodes.find(node=>node.owner===f.rail&&node.port&&matches(node.port,selector))?.port??null:originalQuery(selector);
   f.rail.disconnectedCallback();f.rail.connectedCallback();
   f.dispatch=async(node,eventName="click",fields={},{settle=true}={})=>{

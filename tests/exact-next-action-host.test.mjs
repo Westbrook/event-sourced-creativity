@@ -12,7 +12,7 @@ import {documentArtifactRevision} from "../src/model/document-artifacts.ts";
 const source=readFileSync(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8");
 const start=source.indexOf("  async #followNextAction("),end=source.indexOf("  #formatChoiceDialog()",start);
 assert.ok(start>=0&&end>start,"Production method boundaries changed");
-const methods=source.slice(start,end);
+const methods=actualClassMembers(source,"FormaWorkspace",["#nextFacts"])+"\n"+source.slice(start,end);
 const makeFacts=(documentId="A",outputs=[])=>({projectId:"p",documentId,canvasId:null,authorityKey:"actor:scope",canRead:true,canAuthor:true,canConfigure:true,artifacts:[],outputs,jobs:[],blocks:[{id:`direction-${documentId}`,projectId:"p",documentId,type:"direction",scope:"document",canvasId:null,removed:false,sourceEvents:["event-1"],properties:{text:"An authored direction",weight:1,intent:"include"}}]});
 const savedImage={id:"saved-image",documentId:"A",canvasId:null,title:"Existing image",sequence:7,quality:"high",purpose:"final",discarded:false,promptFanId:null,provider:"test-provider",mediaUrl:"/api/media/saved-image"};
 
@@ -25,7 +25,7 @@ function warm(facts=makeFacts(),onViewerUpdate=()=>{}){
   const fakeStore={projection:{get:()=>state.facts},toast:()=>trace.push("toast:unavailable"),setRoute:route=>routes.push(route),patchUi:()=>{throw new Error("Unexpected UI operation");}};
   const imageViewer={output:null,isConnected:true,get updateComplete(){return Promise.resolve().then(()=>{trace.push("viewer-updated");onViewerUpdate(state);});},openImageViewer(){trace.push("viewer-open:"+this.output?.id);}};
   const Probe=eval(stripTypeScriptTypes(`(class {
-    #formatChoiceOpen=false;#formatReturnFocus=null;#formatTarget=null;#nextOutputTarget=null;#workbenchPane="write";
+    #formatChoiceOpen=false;#formatReturnFocus=null;#formatTarget=null;#formatRequired=null;#nextOutputTarget=null;#workbenchPane="write";
     store=fakeStore;i18n={t:(_key,fallback)=>fallback};
     requestUpdate(){trace.push("update-request");}
     get updateComplete(){return Promise.resolve().then(()=>trace.push("updated"));}

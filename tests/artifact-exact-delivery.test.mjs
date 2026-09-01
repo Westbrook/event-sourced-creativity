@@ -11,6 +11,7 @@ import { sourceRightsDispatchGuard } from "../worker/context-package-rights.ts";
 import { documentArtifactRevision } from "../src/model/document-artifacts.ts";
 import { creativeActionSourceRevision } from "../src/model/workspace-intelligence.ts";
 import { ARTIFACT_DELIVERY_MESSAGES } from "../src/components/design-system/locales/artifact-delivery-messages.ts";
+import { createSceneStoreHost, readWorkspaceEvents, financial } from "./helpers/event-source-retirement-fixture.mjs";
 
 const digest = async text => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text))),byte=>byte.toString(16).padStart(2,"0")).join("");
 const bytes = JSON.stringify({ content_markdown:"Exact approved output", items:[] });
@@ -273,35 +274,104 @@ test("a successful exact opening keeps authorized Save/Restore editable but lose
 });
 
 
-const assignedMethod=between(storeSource,"  async openAssignedReview(","  async leaveProjectContext(");
-const assignedStoreSyntax=ts.createSourceFile("store.ts",storeSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
-const assignedStoreClass=assignedStoreSyntax.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="FormaStore");
-const assignedNavigationField=assignedStoreClass.members.find(node=>ts.isPropertyDeclaration(node)&&node.name?.getText(assignedStoreSyntax)==="#workspaceTransition").getText(assignedStoreSyntax);
-const assignedContextMembers=actualClassMembers(storeSource,"FormaStore",[
-  "#projectContextHandshake","#sourceGeneration","#sourceExpiryValid","#snapshotIdentity","#authorizationScope",
-  "#activeAuthorizationScope","#scopeStillActive","captureAuthorizationScope","authorizationScopeActive","beginProjectContextSelection",
-]);
-function assignmentFixture(change=()=>{}){
+// Focused exact-task handoff with the existing complete production Store.
+// Assignment/session HTTP, load, route commit and notice remain simulated.
+// This is NOT a Worker-issued cookie, generation-race, Source-load or browser
+// certificate; those use the separate actual assigned-review action fixture.
+async function assignmentFixture(t,change=()=>{}){
+  let external=0,h=null,closePromise=null,verify=async()=>{};
+  const restores=[],originalFetch=globalThis.fetch;
+  const blockedFetch=async()=>{external++;assert.fail("No external/provider transport in the focused assignment fixture");};
+  globalThis.fetch=blockedFetch;
+  const close=()=>{
+    if(!closePromise)closePromise=(async()=>{
+      try{await verify();}
+      finally{
+        try{for(const restore of restores.reverse())restore();if(h)await h.close();}
+        finally{if(globalThis.fetch===blockedFetch)globalThis.fetch=originalFetch;}
+      }
+    })();
+    return closePromise;
+  };
+  t.after(()=>closePromise?closePromise.catch(()=>undefined):close()); // Join once; do not repeat an already reported close failure.
+  h=await createSceneStoreHost({count:1,exposeSceneTestAccessors:false});const host=h.store;
+  const canonical=await readWorkspaceEvents(h.worker.env,h.worker.streamId),money=financial(h.worker);
+  const original={open:host.openAssignedReview,selection:host.beginProjectContextSelection,
+    refresh:host.refreshSession,inbox:host.syncReviewInbox,source:host.captureSourceOwnership,guardedFetch:host.guardedFetch};
   const task={id:"assignment",status:"pending",organizationId:"organization",projectAccessId:"access",projectId:"project",
     documentId:"document",artifactId:"artifact",artifactTitle:"Exact result",revision:0,contentSha256:hash};
-  const state={session:{user:{userId:"reviewer"},impersonation:null,policy:{version:"fixture",accepted:true}},tasks:[task],calls:[],routes:[]};
-  const host={session:{get:()=>state.session},route:{get:()=>"/activity?document=document"},reviewInbox:{get:()=>state.tasks},
-    guardedFetch:async()=>{state.calls.push("context");return{ok:true,json:async()=>({})};},
-    refreshSession:async()=>{state.session={...state.session,projectContext:{organizationId:"organization",projectAccessId:"access",projectId:"project",permissions:["project.review.approve"]}};},
-    load:async()=>change(state),syncReviewInbox:async()=>{state.calls.push("assignments");},
-    setRoute:route=>state.routes.push(route),toast:()=>state.calls.push("notice")};
-  // Only native route/load/HTTP I/O is simulated; ownership, identity and handshake members are production bytes.
-  // Reuse the exact former simulated context response/call recorder as the native fetch port, not server proof.
-  const AssignmentHost=fixtureClass("(class {"+assignedNavigationField+"\n"+assignedContextMembers+"\n"+assignedMethod+"})",
-    {fetch:host.guardedFetch,artifactFocusRoute});
-  return{host:Object.assign(new AssignmentHost(),host),state,task};
+  const state={tasks:[task],calls:[],routes:[],http:[],loadEntered:false};
+  const initial={...host.session.get(),user:{...host.session.get().user,userId:"reviewer"},
+    projectContext:undefined,impersonation:null,policy:{version:"fixture",accepted:true}};
+  host.session.set(initial);host.route.set("/activity?document=document");host.reviewInbox.set(state.tasks);
+  Object.defineProperty(state,"session",{enumerable:true,get:()=>host.session.get(),set:value=>{host.session.set(value);}});
+  const requestStart=h.requests.length,pending=new Set();let selected=false;
+  h.transport=request=>{
+    const operation=(async()=>{
+      const method=request.init.method??"GET",row={url:request.url,method,phase:state.loadEntered?"post-load":"pre-load"};
+      state.http.push(row); // Complete, non-deduplicated simulated HTTP trace.
+      if(request.url==="/api/workspaces/organization/projects/access/context"&&method==="POST"){
+        assert.equal(request.init.credentials,"same-origin");assert.equal(selected,false);
+        selected=true;state.calls.push("context");return Response.json({});
+      }
+      assert.equal(method,"GET","No additional command is admitted by this finite port");
+      if(request.url==="/api/session"){
+        assert.equal(selected,true);
+        return Response.json({...initial,projectContext:{organizationId:"organization",projectAccessId:"access",projectId:"project",
+          ownerUserId:"author",expiresAt:"9999-12-31T23:59:59.999Z",permissions:["project.read","project.review.approve"]}});
+      }
+      if(request.url==="/api/project-notifications")return Response.json({notifications:[]});
+      if(request.url==="/api/workspaces/organization/context-packages")return Response.json({packages:[]});
+      if(request.url==="/api/workspaces/reviews"){
+        // Preserve the former test's explicit post-load assignment-read trace.
+        // Automatic applySession reads remain visible above, not deduplicated
+        // into that trace or mistaken for the later exact-task decision.
+        if(state.loadEntered)state.calls.push("assignments");
+        return Response.json({tasks:state.tasks});
+      }
+      assert.fail("Unexpected simulated assignment endpoint: "+method+" "+request.url);
+    })();
+    pending.add(operation);void operation.then(()=>pending.delete(operation),()=>pending.delete(operation));return operation;
+  };
+  // These are the old mini-host's explicit I/O seams, not ownership guards.
+  // In particular refreshSession, applySession, selection, reconciliation,
+  // syncReviewInbox and every private cookie/Source field are actual Store code.
+  const port=(name,value)=>{
+    const previous=Object.getOwnPropertyDescriptor(host,name);
+    Object.defineProperty(host,name,{configurable:true,writable:true,value});
+    restores.push(()=>{if(previous)Object.defineProperty(host,name,previous);else delete host[name];});
+  };
+  port("load",async()=>{state.loadEntered=true;await change(state);});
+  port("setRoute",route=>state.routes.push(route));
+  port("toast",()=>state.calls.push("notice"));
+  verify=async()=>{
+      await Promise.allSettled([...pending]);await new Promise(setImmediate);await h.worker.drainBackground();
+      assert.equal(host.openAssignedReview,original.open);assert.equal(host.beginProjectContextSelection,original.selection);
+      assert.equal(host.refreshSession,original.refresh);assert.equal(host.syncReviewInbox,original.inbox);
+      assert.equal(host.captureSourceOwnership,original.source);assert.equal(host.guardedFetch,original.guardedFetch);
+      assert.equal(external,0);assert.deepEqual(await readWorkspaceEvents(h.worker.env,h.worker.streamId),canonical);
+      assert.deepEqual(financial(h.worker),money);
+      assert.equal(globalThis.fetch,blockedFetch,"This fixture still owns its single external transport guard");
+      assert.deepEqual(h.requests.slice(requestStart).map(request=>({url:request.url,method:request.init.method??"GET"})),
+        state.http.map(({url,method})=>({url,method})),
+        "Every actual Store request reaches the strict finite port; no reusable host short-circuit substitutes a job response");
+      assert.equal(state.http.filter(row=>row.url==="/api/session").length,selected?1:0,
+        "The actual session method uses one simulated current response; no private generation is stamped by the fixture");
+      if(state.loadEntered)assert.equal(state.http.filter(row=>row.url==="/api/workspaces/reviews"&&row.phase==="pre-load").length,1,
+        "The real applySession automatic inbox request is recorded separately from the post-load handoff");
+      t.diagnostic("ARTIFACT_EXACT_ASSIGNMENT_FINITE_IO "+JSON.stringify({http:state.http,explicitHandoffTrace:state.calls,
+        completeActualStore:true,assignmentResponsesSimulated:true,loadAndRouteSimulated:true,workerIssuedCookie:false,
+        cookieGenerationCertification:false,canonicalAndFinancialRowsUnchanged:true}));
+  };
+  return{host,state,task,close};
 }
-test("assigned-review handoff retains its exact task revision and hash after current project authorization",async()=>{
-  const f=assignmentFixture();assert.equal(await f.host.openAssignedReview(f.task),true);
+test("assigned-review handoff retains its exact task revision and hash after current project authorization",{concurrency:false},async t=>{
+  const f=await assignmentFixture(t);try{assert.equal(await f.host.openAssignedReview(f.task),true);
   assert.deepEqual(artifactFocusOptionsFromRoute(f.state.routes[0]),{expectedRevision:0,expectedContentSha256:hash,intent:"review"});
   assert.deepEqual(f.state.calls,["context","assignments"]);
+  }finally{await f.close();}
 });
-test("a changed or revoked assignment never opens a different output revision",async()=>{
+test("a changed or revoked assignment never opens a different output revision",{concurrency:false},async t=>{
   for(const mutate of [
     state=>{state.tasks=[{...state.tasks[0],revision:1}];},
     state=>{state.tasks=[{...state.tasks[0],contentSha256:otherHash}];},
@@ -309,8 +379,8 @@ test("a changed or revoked assignment never opens a different output revision",a
     state=>{state.session.projectContext.permissions=[];},
     state=>{state.session.projectContext.projectAccessId="other";},
     state=>{state.session.user.userId="other";},
-  ]){const f=assignmentFixture(mutate);assert.equal(await f.host.openAssignedReview(f.task),false);assert.deepEqual(f.state.routes,[]);}
-  const invalid=assignmentFixture();assert.equal(await invalid.host.openAssignedReview({...invalid.task,contentSha256:"missing"}),false);assert.deepEqual(invalid.state.calls,[]);
+  ]){const f=await assignmentFixture(t,mutate);try{assert.equal(await f.host.openAssignedReview(f.task),false);assert.deepEqual(f.state.routes,[]);}finally{await f.close();}}
+  const invalid=await assignmentFixture(t);try{assert.equal(await invalid.host.openAssignedReview({...invalid.task,contentSha256:"missing"}),false);assert.deepEqual(invalid.state.calls,[]);}finally{await invalid.close();}
 });
 
 const canvasSource=readFileSync(new URL("../src/canvas/canvas-application.ts",import.meta.url),"utf8");

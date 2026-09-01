@@ -62,7 +62,9 @@ test("the project compass prioritizes scoped documents over duplicated navigatio
   assert.match(rail, /projectRailDocuments\(projection\)/);
   assert.match(rail, /projectRailDocumentCount\(projection\)/);
   assert.match(rail, /projectRailDocumentDestination\(route,\s*this\.getAttribute\("destination"\)\)/);
-  assert.match(rail, /this\.store\.openDocument\(documentId,\s*destination,\s*"project-rail"\)/);
+  assert.match(rail, /this\.store\.openDocument\(documentId,\s*destination,\s*"project-rail",\s*navigation\)/);
+  assert.match(rail, /import \{ navigateInApp \} from "\.\/command-departure";/);
+  assert.match(rail, /void navigateInApp\(this,\s*async navigation\s*=>\s*\{\s*this\.#closeNative\(\);\s*const opened\s*=\s*await this\.store\.openDocument\(documentId,\s*destination,\s*"project-rail",\s*navigation\);\s*if\(opened&&navigation\.current\(\)\)window\.scrollTo\(\{top:0\}\);/);
   assert.match(rail, /this\.i18n\.firstGrapheme\(projection\.projectName\)/);
   assert.match(rail, /projectIdentityRoute=projection\.projectId\?overviewRoute:projectsRoute/);
   assert.match(rail, /class="rail-project-switch" href=\$\{projectIdentityRoute\}/);

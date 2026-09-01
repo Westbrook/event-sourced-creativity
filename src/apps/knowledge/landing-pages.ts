@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import { FORMA_SUPPORTED_LOCALES } from "../../components/design-system/language-options";
 import { formaLocaleFamily, type FormaLocaleController } from "../../components/design-system/localization";
+import type { FormaPlatformShell } from "../../components/forma-platform-shell";
 import "../../components/design-system/layout";
 import { marketingPath, type MarketingProfile } from "../../marketing/profiles";
 import "./landing-pages.css";
@@ -37,6 +38,18 @@ const landingPages = [
   poster: string;
 }>;
 
+function openLandingLocale(event: MouseEvent, path: string) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const anchor = event.currentTarget as HTMLAnchorElement;
+  const target = anchor.getAttribute("target");
+  if (anchor.getAttribute("href") !== path || anchor.hasAttribute("download") || target && target.toLowerCase() !== "_self") return;
+  const origin = anchor.closest<HTMLElement>("forma-knowledge-application");
+  const host = origin?.closest<FormaPlatformShell>("forma-platform-shell");
+  if (!origin || !host) return;
+  event.preventDefault();
+  host.navigateFrom(origin, path);
+}
+
 /** Present the approved public audience introductions without loading private creative work. */
 export function renderKnowledgeLandingPages(i18n: FormaLocaleController) {
   const locale = formaLocaleFamily(i18n.locale);
@@ -68,6 +81,7 @@ export function renderKnowledgeLandingPages(i18n: FormaLocaleController) {
             <nav class="knowledge-landing-pages__locales" aria-labelledby=${headingId}>
               ${FORMA_SUPPORTED_LOCALES.map((option) => html`<a
                 href=${marketingPath(page.profile, option.locale)}
+                @click=${(event: MouseEvent) => openLandingLocale(event, marketingPath(page.profile, option.locale))}
                 lang=${option.locale}
                 dir=${option.direction}
                 aria-current=${option.locale === locale ? "true" : nothing}

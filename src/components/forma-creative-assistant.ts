@@ -1,9 +1,14 @@
 import { html, nothing } from "lit";
+import { navigateInApp, navigationPresentationClosing, type CommandDeparture } from "./command-departure";
 import type { CapturedSourceOwnership } from "../state/store.ts";
 import { assistantInteractionForSurface, assistantSurfaceForRoute, type AssistantInteractionMode, type AssistantToolRequest } from "../model/assistant-route-policy.ts";
 import type { AssistantContext } from "../model/conversation-context.ts";
 import { contextConsentAction } from "../model/context-consent-state.ts";
 import { withDocumentInRoute } from "../model/routes.ts";
+import { creativeNextActions, type CreativeNextAction } from "../model/workspace-intelligence.ts";
+import { nextActionFacts } from "../state/next-action-context.ts";
+import { renderLifecycleNextActionCards } from "./next-action-cards.ts";
+import { openCreativeNextActionDestination } from "./creative-next-action-navigation.ts";
 import { FormaElement } from "./forma-element.ts";
 import { captureOutputNavigationFocus } from "./output-navigation-focus.ts";
 import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask, AssistantSpecialistControl, AssistantSpecialistReview, AssistantSpecialistResponse, AssistantTurnOriginalRequest, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
@@ -24,6 +29,7 @@ type AssistantServerTurn = {
  */
 export class FormaCreativeAssistant extends FormaElement {
   #open = false;
+  #nextNavigation = 0;
   #context: AssistantContext | null = null;
   #messages: AssistantDisplayedMessage[] = [];
   #localToolMessages: AssistantDisplayedMessage[] = [];
@@ -95,7 +101,7 @@ export class FormaCreativeAssistant extends FormaElement {
       ? this.#sourceProject.projectId : this.store.projection.get().projectId;
   }
 
-  #scope() {
+  #scope(route=this.store.route.get()) {
     const session = this.store.session.get();
     return JSON.stringify([
       this.store.captureAuthorizationScope()?.key ?? "",
@@ -105,7 +111,7 @@ export class FormaCreativeAssistant extends FormaElement {
       session?.projectContext?.permissions ?? session?.capabilities ?? [],
       session?.policy.accepted ?? false, session?.policy.version ?? "",
       session?.assistant?.enabled ?? false, session?.assistant?.capabilities ?? [],
-      this.store.route.get(), this.#selection().sort(),
+      route, this.#selection().sort(),
     ]);
   }
 
@@ -777,6 +783,63 @@ export class FormaCreativeAssistant extends FormaElement {
     if (control.action === "quote") return this.#requestSpecialist("quote", control.model);
   }
 
+  #nextContext() {
+    const surface = assistantSurfaceForRoute(this.store.route.get()), projection = this.store.projection.get();
+    // Canvas has no implicit global Document. Resolve its existing exact anchor
+    // independently; never remove canvasId from a previously captured target.
+    const documentId = surface.application === "canvas"
+      ? surface.canvasId ? this.store.canvasPlanningDocumentId() : ""
+      : projection.documentId;
+    const document = projection.documents.find(value => value.id === documentId
+      && value.projectId === projection.projectId && !value.removed);
+    if (!document || !this.store.routeDataReady()) return null;
+    const facts = nextActionFacts(this.store, document.id, null, { lifecycle: true });
+    return facts.canRead ? { facts, document, projectName: projection.projectName } : null;
+  }
+
+  #nextOrigin(route=this.store.route.get()) {
+    const surface = assistantSurfaceForRoute(route);
+    const canvas = surface.canvasId ? this.store.canvasProjection.get() : null;
+    return JSON.stringify([this.#scope(route), canvas?.selectedCanvasId ?? null,
+      canvas ? this.store.canvasPlanningSelection.get() : null,
+      canvas ? this.store.canvasPlanningDocumentId() : null]);
+  }
+
+  captureCommandDeparture():CommandDeparture {
+    const owned=()=>[...this.querySelectorAll<FormaAssistantPanel>("forma-assistant-panel")].filter(panel=>panel.isConnected);
+    const panels=owned(),route=this.store.route.get(),scope=this.#nextOrigin();
+    return {element:this,current:context=>{
+      const current=owned(),closing=context?.closingPresentation,shell=this.closest("forma-shell");
+      // Only Shell's already-adopted native Library root substitutes this one
+      // route slot. Scope clearing, actual selection/panels and raw work stay real.
+      const heldRoute=closing?.originalRoute===route&&shell?.isConnected
+        &&closing.presentation.owner.closest("forma-shell")===shell
+        &&FormaElement.hasStoreIdentity(closing.presentation.owner,this.store)
+        &&navigationPresentationClosing(context,closing.presentation.owner)?route:undefined;
+      return this.isConnected&&scope===this.#nextOrigin(heldRoute)
+        &&current.length===panels.length&&panels.every((panel,index)=>panel===current[index]);},
+      blocked:()=>panels.some(panel=>panel.commandDepartureBlocked),reason:()=>"next.lifecycle.assistantOwnsWork"};
+  }
+
+  async #followNextAction(action: CreativeNextAction) {
+    const panel = this.querySelector<FormaAssistantPanel>("forma-assistant-panel"), next = this.#nextContext();
+    if (!this.#open || !panel?.isConnected || !panel.open || panel.navigationBlocked
+      || !next || action.target.documentId !== next.document.id) return false;
+    const request = ++this.#nextNavigation, origin = this.#nextOrigin();
+    const originCurrent = () => this.isConnected && this.#open && panel.isConnected && panel.open
+      && this.querySelector<FormaAssistantPanel>("forma-assistant-panel") === panel
+      && request === this.#nextNavigation && origin === this.#nextOrigin() && !panel.navigationBlocked;
+    let opened = false, navigationRefusal = "";
+    try {
+      opened = await openCreativeNextActionDestination(this.store, this.ownerDocument, action, {
+        origin:this, originCurrent, navigationCurrent: () => request === this.#nextNavigation,
+        onRefusal: reason => { navigationRefusal = reason; },
+      });
+    } catch { /* An unavailable destination is not a completed handoff. */ }
+    if (!opened && navigationRefusal !== "current-work" && originCurrent()) this.store.toast(this.i18n.t("next.exact.unavailable", "This exact action changed or is no longer available. Review the current document."));
+    return opened;
+  }
+
   #interaction() {
     const session = this.store.session.get();
     const surface = assistantSurfaceForRoute(this.store.route.get());
@@ -915,15 +978,27 @@ export class FormaCreativeAssistant extends FormaElement {
     const { proposal, action } = detail;
     if (!this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
     if (proposal.kind === "navigate") {
-      this.#removeProposal(proposal.id);
-      this.requestUpdate();
-      if (action !== "accept" || !proposal.route) return;
-      const destination = assistantSurfaceForRoute(proposal.route);
+      if (!this.#proposals.includes(proposal)) return;
+      if (action !== "accept") { this.#removeProposal(proposal.id); this.requestUpdate(); return; }
+      const path = proposal.route;
+      if (!path) return;
+      const destination = assistantSurfaceForRoute(path);
       const session = this.store.session.get();
       if (!destination.available || destination.host !== "creator") return;
       if (destination.application === "canvas" && !session?.canvas.access) return;
       if (destination.requiredCapabilities.length && !destination.requiredCapabilities.some((capability) => session?.capabilities?.includes(capability))) return;
-      this.store.setRoute(proposal.route);
+      const scope = this.#scope(), source = this.store.captureSourceOwnership();
+      await navigateInApp(this, async navigation => {
+        if (!navigation.current() || scope !== this.#scope() || !this.store.sourceOwnershipActive(source)
+          || !this.#proposals.includes(proposal)) return false;
+        const opened = await navigation.route(path);
+        // A refusal leaves this exact suggestion available. A genuine route
+        // departure retires its conversation through the existing scope owner.
+        if (opened && scope === this.#scope() && this.#proposals.includes(proposal)) {
+          this.#removeProposal(proposal.id); this.requestUpdate();
+        }
+        return opened;
+      });
       return;
     }
     if (!this.#canAuthor()) return;
@@ -961,26 +1036,22 @@ export class FormaCreativeAssistant extends FormaElement {
         && assistantApprovedRequestCanStop(state, this.#canSpecialist())) await this.#requestSpecialist("stop");
       return; // Signed tasks never use legacy cancellation or actor-self billing reconciliation.
     }
-    if (detail.action === "reconcile" && !window.confirm(this.i18n.t("assistant.task.reconcileConfirm"))) return;
+    if (detail.action !== "cancel") return; // Actor-self reconciliation has no independent billing authority.
     const scope = this.#scope();
     const url = this.#url();
-    url.pathname = `/api/assistant/tasks/${encodeURIComponent(detail.task.id)}/${detail.action}`;
+    url.pathname = `/api/assistant/tasks/${encodeURIComponent(detail.task.id)}/cancel`;
     try {
-      const response = await fetch(url, { method: "POST", headers: {
-        accept: "application/json",
-        ...(detail.action === "reconcile" ? { "content-type": "application/json" } : {}),
-      }, ...(detail.action === "reconcile" ? { body: JSON.stringify({ confirmedNoProviderCharge: true }) } : {}) });
+      const response = await fetch(url, { method: "POST", headers: { accept: "application/json" } });
       if (scope !== this.#scope()) return;
       if (!response.ok) {
         this.store.toast(this.i18n.t(response.status === 409 ? "assistant.task.cancelUnavailable" : "assistant.unavailable"));
         await this.#load();
         return;
       }
-      const status = detail.action === "cancel" ? "canceled" : "reconciled";
+      const status = "canceled";
       this.#tasks = this.#tasks.map((task) => task.id === detail.task.id ? { ...task, status, error: null } : task);
       this.#activeTasks.delete(detail.task.id);
       this.#messages = [...this.#messages, { id: `${detail.task.id}:${status}`, role: "assistant", key: `assistant.task.${status}` }];
-      if (detail.action === "reconcile") await this.store.refreshSession();
     } catch {
       if (scope === this.#scope()) this.store.toast(this.i18n.t("assistant.unavailable"));
     } finally {
@@ -1003,6 +1074,7 @@ export class FormaCreativeAssistant extends FormaElement {
     const projection = this.store.projection.get();
     const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
     const planning = Boolean(documentId && this.store.documentJobActive("structure_adaptive", documentId,surface.canvasId??null));
+    const next = this.#open ? this.#nextContext() : null;
     const chatting = Boolean(documentId && this.store.documentJobActive("chat", documentId));
     const busyModes: AssistantInteractionMode[] = [...(this.store.planningConsent.get() ? ["plan-document" as const, "plan-board" as const] : []), ...(chatting ? ["creative-chat" as const] : [])];
     const messages = this.#messages.map((message) => message.reviewMode
@@ -1013,12 +1085,17 @@ export class FormaCreativeAssistant extends FormaElement {
     return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${messages} .proposals=${this.#proposals}
       .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${interaction.modes}
       .busyModes=${busyModes}
+      .continuation=${next ? renderLifecycleNextActionCards(creativeNextActions(next.facts), this.i18n, action => this.#followNextAction(action), {
+        projectName: next.projectName, documentTitle: next.document.title,
+        scopeUnknown: next.facts.lifecycle?.output.state !== "ready" || next.facts.lifecycle?.output.scopeKnown !== true,
+        creatorHandoff: surface.application === "canvas",
+      }) : nothing}
       .retainGuidanceDraft=${true} .guidanceDelivery=${this.#guidance?.status ?? ""}
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
       .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${!this.#canAuthor()}
       .guidanceOnly=${this.#canAuthor() && (session.assistant.phase !== "actions" || !surface.documentId)}
-      @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#open = event.detail.open; if (!this.#open) { this.#specialist = null; this.#reviewRevision += 1; } this.requestUpdate(); if (this.#open) void this.#load(); }}
+      @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#nextNavigation += 1; this.#open = event.detail.open; if (!this.#open) { this.#specialist = null; this.#reviewRevision += 1; } this.requestUpdate(); if (this.#open) void this.#load(); }}
       @forma-assistant-message=${(event: CustomEvent<{ message: string; mode?: Exclude<AssistantInteractionMode, "guidance"> }>) => { if (event.detail.mode) void this.#tool({ message: event.detail.message, mode: event.detail.mode }); else void this.#send(event.detail); }}
       @forma-assistant-guidance-recovery=${(event: CustomEvent<{ action: "check" | "retry" }>) => { if (event.detail.action === "check") void this.#load(); else void this.#deliverGuidance(); }}
       @forma-assistant-specialist-review=${(event: CustomEvent<{ turnId: string; task?: AssistantDisplayedTask }>) => { void this.#reviewSpecialist(event.detail); }}

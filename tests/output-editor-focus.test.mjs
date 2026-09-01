@@ -3,6 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import { registerHooks } from "node:module";
 import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
+import { retainDeferredFocusInvokers } from "./helpers/deferred-focus-invokers.mjs";
 
 // Reuse the existing complete ContextIntelligence/Output-card fixture. Only
 // old test registration is omitted; all production methods remain untouched.
@@ -39,7 +40,12 @@ for(const event of["focus","pointerdown","keydown"])test("actual existing Edit p
 
 for(const locale of["en","fr","ar","ja"])for(const boundary of["openDocument","frame"])for(const moved of[false,true])
 test("actual "+locale+" Review plan "+boundary+" "+(moved?"newer focus":"control"),async t=>{
- const f=await handoffFixture(t,{locale});await f.reject();
+ const f=await handoffFixture(t,{locale});
+ // This unchanged current card/header has a real unique click EventPart.
+ // Retain its native port across committed same-template draws, never by
+ // label/semantic ID or activeElement reassignment. Actual removal still retires it.
+ retainDeferredFocusInvokers(f,new Set([f.card]));
+ await f.reject();
  const native=installOutputNavigationFocusNative(t,f,ports),original=JSON.stringify(f.state.events),retained=JSON.stringify(f.preview),requests=f.state.requests.length;
  let release;
  if(boundary==="openDocument")f.navigationGate={promise:new Promise(resolve=>{release=resolve;})};

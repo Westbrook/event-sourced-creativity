@@ -135,7 +135,7 @@ for (const locale of ["en", "ja"]) test("B2 retry history remains truthful after
   assert.deepEqual(originalRows.financial, initialFinancial);
 
   const restoration = await retireRestoreAndResume(x, originalRows);
-  const status = x.f.find("p", node => node.owner === restoration.owner && node.attributes.role === "status");
+  const status = x.f.find("p", node => node.owner === restoration.owner && node.attributes.role === "status"&&node.parent?.tag==="form"&&node.parent.parent?.tag==="dialog"&&String(node.parent.parent.attributes.class??"").split(/\s+/u).includes("project-create-dialog"));
   assert.ok(status.port.isConnected);
   assert.ok(status.text.trim(), "Capture actual current status, not a manufactured replacement string");
   const check = x.f.find("button", node => node.owner === restoration.owner && node.attributes.type === "button"

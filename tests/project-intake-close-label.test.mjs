@@ -58,7 +58,7 @@ async function typeRawDraft(x,locale){
   return value;
 }
 function assertStatus(x,key){
-  const node=x.f.find("p",candidate=>candidate.owner===x.owner&&candidate.attributes.role==="status");
+  const node=x.f.find("p",candidate=>candidate.owner===x.owner&&candidate.attributes.role==="status"&&candidate.parent?.tag==="form"&&candidate.parent.parent?.tag==="dialog"&&String(candidate.parent.parent.attributes.class??"").split(/\s+/u).includes("project-create-dialog"));
   assert.equal(node.text,text(x,key));
 }
 async function dismissAndReopen(x,raw,locked){

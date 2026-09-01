@@ -1,5 +1,11 @@
 import { html, nothing } from "lit";
+import { repeat } from "lit/directives/repeat.js";
+import { navigateInApp, type CommandDeparture } from "./command-departure";
+import type { ContextBlock } from "./context-block";
+import type { OutputInputEditor } from "./output-input-editor";
+import type { FormaOutputRequirements } from "./forma-output-requirements";
 import { FormaElement, icon } from "./forma-element";
+import { captureOutputNavigationFocus } from "./output-navigation-focus";
 import { blockIconName } from "./icon-semantics";
 import type { CreativeBlock, EventInput } from "../model/events";
 import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockGroup, type BlockKind } from "../model/block-types";
@@ -24,6 +30,34 @@ type AlternativeShellOptions = {
 };
 
 export abstract class AlternativeStudio extends FormaElement {
+  /** Child-local work only; Shell retains Source, authority, route and gesture ownership. */
+  protected captureAlternativeCommandChildren(): CommandDeparture {
+    const { projectId, documentId } = this.store.projection.get();
+    const owned = <T extends FormaElement>(selector: string) => [...this.querySelectorAll<T>(selector)]
+      .filter(element => element.isConnected && FormaElement.hasStoreIdentity(element, this.store));
+    const contexts = owned<ContextBlock>("forma-context-block").map(element => element.captureCommandDeparture());
+    const independentInputs = () => owned<OutputInputEditor>("forma-output-input-editor")
+      .filter(element => !element.closest("forma-context-block"));
+    const inputIdentity = (element: OutputInputEditor) => JSON.stringify([element.block?.projectId, element.block?.documentId,
+      element.block?.id, element.block?.type, element.source, element.standalone,
+      element.block?.properties.source_artifact_id ?? null, element.block?.properties.source_artifact_kind ?? null,
+      element.block?.properties.source_artifact_item_id ?? null, element.block?.properties.source_output_id ?? null]);
+    const inputs = independentInputs().map(element => ({ element, identity: inputIdentity(element) }));
+    const outputs = owned<FormaOutputRequirements>("forma-output-requirements").map(element => ({ element,
+      documentId: element.documentId, blockId: element.blockId, surface: element.surface }));
+    return { element: this, current: () => {
+      const projection = this.store.projection.get();
+      if (!this.isConnected || projection.projectId !== projectId || projection.documentId !== documentId) return false;
+      const currentContexts = owned<ContextBlock>("forma-context-block"), currentInputs = independentInputs();
+      const currentOutputs = owned<FormaOutputRequirements>("forma-output-requirements");
+      return currentContexts.length === contexts.length && contexts.every(capture => currentContexts.includes(capture.element as ContextBlock) && capture.current())
+        && currentInputs.length === inputs.length && inputs.every(({ element, identity }) => currentInputs.includes(element) && inputIdentity(element) === identity)
+        && currentOutputs.length === outputs.length && outputs.every(({ element, documentId, blockId, surface }) => currentOutputs.includes(element)
+          && element.documentId === documentId && element.blockId === blockId && element.surface === surface);
+    }, blocked: () => contexts.some(capture => capture.blocked()) || inputs.some(({ element }) => element.localWorkBlocked)
+      || outputs.some(({ element }) => element.commandDepartureBlocked), reason: () => "next.lifecycle.currentWorkOpen" };
+  }
+
   protected shell(active: AlternativeMode, title: string, description: string, body: unknown, options: AlternativeShellOptions = {}) {
     const projection = this.store.projection.get();
     const destination = withDocumentFocusInRoute(withDocumentInRoute(`/studio/${active}`, projection.documentId, projection.documentTitle), documentFocusFromRoute(this.store.route.get()));
@@ -74,41 +108,98 @@ export class FormaContextBoard extends AlternativeStudio {
   #subtype = suggestedSubtype("direction");
   #text = "";
   #userSelectedType = false;
+  #cleanType: BlockKind = "direction";
+  #cleanSubtype = suggestedSubtype("direction");
+  #addRevision = 0;
+  #pendingAdds: { current: () => boolean; count: number } | null = null;
+
+  override disconnectedCallback() {
+    this.#addRevision++; this.#pendingAdds = null; super.disconnectedCallback();
+  }
+
+  captureCommandDeparture(): CommandDeparture {
+    const children = this.captureAlternativeCommandChildren();
+    return { element: this, current: () => children.current(),
+      blocked: () => Boolean(this.#pendingAdds && this.#pendingAdds.count > 0 && this.#pendingAdds.current())
+        || this.#text !== "" || this.#type !== this.#cleanType || this.#subtype !== this.#cleanSubtype || children.blocked(),
+      reason: () => "next.lifecycle.currentWorkOpen" };
+  }
 
   #group(block: CreativeBlock): BlockGroup {
     return blockTypeDefinition(block.type)?.group ?? "constraint";
   }
 
   #prepare(type: BlockKind) {
+    const store = this.store, { projectId, documentId } = store.projection.get(), route = store.route.get();
+    const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
+    const focus = captureOutputNavigationFocus(this.ownerDocument), revision = ++this.#addRevision, raw = this.#text;
     this.#type = type;
     this.#subtype = suggestedSubtype(type);
     this.#userSelectedType = true;
+    const subtype = this.#subtype;
+    let retired = false;
+    const current = () => !retired && this.isConnected && this.store === store && store.route.get() === route
+      && store.projection.get().projectId === projectId && store.projection.get().documentId === documentId
+      && store.sourceOwnershipActive(source) && Boolean(authorization && store.authorizationScopeActive(authorization))
+      && this.#addRevision === revision && this.#text === raw && this.#type === type && this.#subtype === subtype;
+    const unsubscribe = store.subscribe(() => { if (!current()) retired = true; });
     this.requestUpdate();
-    void this.updateComplete.then(() => this.querySelector<HTMLInputElement>("#board-decision")?.focus());
+    void this.updateComplete.then(() => {
+      if (!current()) return;
+      const field = this.querySelector<HTMLInputElement>("#board-decision");
+      if (field) focus.run(field, () => { field.focus(); return true; });
+    }, () => undefined).finally(() => { unsubscribe(); focus.dispose(); });
   }
 
   async #add(event: SubmitEvent) {
     event.preventDefault();
-    const text = this.#text.trim();
+    const raw = this.#text, text = raw.trim(), type = this.#type, subtype = this.#subtype, revision = this.#addRevision;
     if (!text) return;
-    const projection = this.store.projection.get();
+    const store = this.store, projection = store.projection.get(), route = store.route.get();
+    const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
+    const scopeCurrent = () => this.isConnected && this.store === store && store.route.get() === route
+      && store.projection.get().projectId === projection.projectId && store.projection.get().documentId === projection.documentId
+      && store.sourceOwnershipActive(source) && Boolean(authorization && store.authorizationScopeActive(authorization));
+    if (!scopeCurrent()) return;
+    let pending = this.#pendingAdds;
+    if (!pending || !pending.current()) {
+      let retired = false;
+      pending = { count: 0, current: () => {
+        if (retired || this.#pendingAdds !== pending || !scopeCurrent()) { retired = true; return false; }
+        return true;
+      } };
+      this.#pendingAdds = pending;
+    }
+    // The same content-free current/count pattern as Guided/Editor. Observe
+    // scope changes synchronously so route/authority ABA cannot revive A.
+    const operation = pending, unsubscribe = store.subscribe(() => { operation.current(); });
+    operation.count++; this.requestUpdate();
     const id = crypto.randomUUID();
-    const appended = await this.store.append({
-      type: "BlockCreated",
-      payload: {
-        block_id: id,
-        document_id: projection.documentId,
-        type: this.#type,
-        handle: `${this.#type}/${slug(text, id)}`,
-        position: `z${String(this.store.head.get() + 1).padStart(5, "0")}`,
-        properties: { text, subtype: this.#subtype, weight: .65, authority: "authored", created_from: "context-board" },
-      },
-    });
-    if (appended.length) {
+    try {
+      const appended = await store.append({
+        type: "BlockCreated",
+        payload: {
+          block_id: id,
+          document_id: projection.documentId,
+          type,
+          handle: `${type}/${slug(text, id)}`,
+          position: `z${String(store.head.get() + 1).padStart(5, "0")}`,
+          properties: { text, subtype, weight: .65, authority: "authored", created_from: "context-board" },
+        },
+      });
+      if (!operation.current() || !appended.some(row => row.type === "BlockCreated" && row.payload.block_id === id
+        && row.payload.document_id === projection.documentId)
+        || this.#addRevision !== revision || this.#text !== raw || this.#type !== type || this.#subtype !== subtype) return;
       this.#text = "";
       this.#userSelectedType = false;
-      this.store.patchUi({ focusBlockId: id });
-      this.requestUpdate();
+      this.#addRevision++;
+      store.patchUi({ focusBlockId: id });
+    } finally {
+      unsubscribe(); const current = operation.current(); operation.count--;
+      if (this.#pendingAdds === operation) {
+        if (operation.count === 0) this.#pendingAdds = null;
+        if (current) this.requestUpdate();
+      }
     }
   }
 
@@ -121,6 +212,10 @@ export class FormaContextBoard extends AlternativeStudio {
     if (nextLane && !this.#userSelectedType && !this.#text && this.#type !== nextLane.starter) {
       this.#type = nextLane.starter;
       this.#subtype = suggestedSubtype(nextLane.starter);
+    }
+    if (!this.#userSelectedType && !this.#text) {
+      this.#cleanType = this.#type;
+      this.#cleanSubtype = this.#subtype;
     }
     const definition = blockTypeDefinition(this.#type)!;
     const ready = resolvedCore === coreLanes.length;
@@ -141,7 +236,7 @@ export class FormaContextBoard extends AlternativeStudio {
           <span>Next useful move</span>
           <b>${nextLane ? this.i18n.system("Clarify {value}", { value: this.i18n.system(nextLane.label).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Test the plan as a whole")}</b>
           <p>${(nextLane?this.i18n.system(nextLane.success):undefined) ?? this.i18n.system("All five areas are represented. Look for contradictions, weak influence, or a missing reference.")}</p>
-          ${nextLane ? html`<button class="button secondary compact" @click=${() => this.#prepare(nextLane.starter)}>Prepare this decision ${icon("arrow")}</button>` : html`<button class="button secondary compact" @click=${() => this.store.setRoute("/studio/layers")}>Shape influence ${icon("arrow")}</button>`}
+          ${nextLane ? html`<button class="button secondary compact" @click=${() => this.#prepare(nextLane.starter)}>Prepare this decision ${icon("arrow")}</button>` : html`<button class="button secondary compact" @click=${() => void navigateInApp(this, navigation => navigation.route("/studio/layers"))}>Shape influence ${icon("arrow")}</button>`}
         </aside>
       </section>`;
     const capture = html`
@@ -152,17 +247,17 @@ export class FormaContextBoard extends AlternativeStudio {
         </div>
         <form class="board-quick-add" @submit=${this.#add}>
           <label>Block type
-            <select .value=${this.#type} @change=${(event: Event) => { this.#type = (event.target as HTMLSelectElement).value as BlockKind; this.#subtype = suggestedSubtype(this.#type); this.#userSelectedType = true; this.requestUpdate(); }}>
+            <select .value=${this.#type} @change=${(event: Event) => { this.#addRevision++; this.#type = (event.target as HTMLSelectElement).value as BlockKind; this.#subtype = suggestedSubtype(this.#type); this.#userSelectedType = true; this.requestUpdate(); }}>
               ${BLOCK_TYPES.map((item) => html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}
             </select>
           </label>
           <label>Starting point
-            <select .value=${this.#subtype} @change=${(event: Event) => { this.#subtype = (event.target as HTMLSelectElement).value; }}>
+            <select .value=${this.#subtype} @change=${(event: Event) => { this.#addRevision++; this.#subtype = (event.target as HTMLSelectElement).value; this.#userSelectedType = true; }}>
               ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${this.i18n.system(subtype)}</option>`)}
             </select>
           </label>
           <label>Your decision
-            <input id="board-decision" required placeholder=${this.i18n.system(definition.prompt)} .value=${this.#text} @input=${(event: InputEvent) => { this.#text = (event.target as HTMLInputElement).value; this.requestUpdate(); }}>
+            <input id="board-decision" required placeholder=${this.i18n.system(definition.prompt)} .value=${this.#text} @input=${(event: InputEvent) => { this.#addRevision++; this.#text = (event.target as HTMLInputElement).value; this.requestUpdate(); }}>
           </label>
           <button class="button primary" ?disabled=${!this.#text.trim()}>${icon("plus")} Add context</button>
         </form>
@@ -223,19 +318,55 @@ export class FormaGuidedBrief extends AlternativeStudio {
   #subtypes: Record<string, string> = {};
   #seededDocument = "";
   #step = 0;
+  // Content-free edit identity; raw answers remain only in the existing fields.
+  #fieldEdits = new Map<BlockKind, { dirty: boolean }>();
+  #pendingSaves: { current: () => boolean; count: number } | null = null;
+
+  override disconnectedCallback() {
+    this.#fieldEdits = new Map();
+    this.#seededDocument = "";
+    super.disconnectedCallback();
+  }
+
+  #markFieldEdit(type: BlockKind) {
+    const seed = this.#fieldSeed(type);
+    this.#fieldEdits.set(type, { dirty: (this.#drafts[type] ?? "") !== seed.text
+      || (this.#subtypes[type] ?? suggestedSubtype(type)) !== seed.subtype });
+  }
+
+  #fieldSeed(type: BlockKind) {
+    const block = this.store.projection.get().blocks.find(item => item.type === type);
+    return {
+      text: block ? String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? "") : "",
+      subtype: String(block?.properties.subtype ?? suggestedSubtype(type)),
+    };
+  }
+
+  captureCommandDeparture(): CommandDeparture {
+    const children = this.captureAlternativeCommandChildren(), seededDocument = this.#seededDocument;
+    return { element: this, current: () => children.current() && this.#seededDocument === seededDocument,
+      blocked: () => Boolean(this.#pendingSaves && this.#pendingSaves.count > 0 && this.#pendingSaves.current())
+        || ALL_BRIEF_FIELDS.some(({ type }) => {
+        const seed = this.#fieldSeed(type);
+        return (this.#drafts[type] ?? "") !== seed.text || (this.#subtypes[type] ?? suggestedSubtype(type)) !== seed.subtype;
+      }) || children.blocked(), reason: () => "next.lifecycle.currentWorkOpen" };
+  }
 
   #seed() {
     const projection = this.store.projection.get();
-    if (this.#seededDocument === projection.documentId) return;
-    this.#drafts = {};
-    this.#subtypes = {};
-    for (const field of ALL_BRIEF_FIELDS) {
-      const block = projection.blocks.find((item) => item.type === field.type);
-      this.#drafts[field.type] = block ? String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? "") : "";
-      this.#subtypes[field.type] = String(block?.properties.subtype ?? suggestedSubtype(field.type));
+    if (this.#seededDocument !== projection.documentId) {
+      this.#drafts = {};
+      this.#subtypes = {};
+      this.#fieldEdits = new Map();
+      this.#step = 0;
+      this.#seededDocument = projection.documentId;
     }
-    this.#step = 0;
-    this.#seededDocument = projection.documentId;
+    for (const field of ALL_BRIEF_FIELDS) {
+      if (this.#fieldEdits.get(field.type)?.dirty) continue;
+      const seed = this.#fieldSeed(field.type);
+      this.#drafts[field.type] = seed.text;
+      this.#subtypes[field.type] = seed.subtype;
+    }
   }
 
   #eventsFor(fields: readonly BriefField[]) {
@@ -268,16 +399,63 @@ export class FormaGuidedBrief extends AlternativeStudio {
 
   async #saveSection(event: SubmitEvent) {
     event.preventDefault();
-    const section = BRIEF_SECTIONS[this.#step];
+    const step = this.#step, section = BRIEF_SECTIONS[step], projection = this.store.projection.get();
+    const source = this.store.captureSourceOwnership(), authorization = this.store.captureAuthorizationScope(), edits = this.#fieldEdits;
+    const current = () => {
+      const now = this.store.projection.get();
+      return this.isConnected && this.#fieldEdits === edits && this.#seededDocument === projection.documentId
+        && now.projectId === projection.projectId && now.documentId === projection.documentId
+        && this.store.sourceOwnershipActive(source) && authorization && this.store.authorizationScopeActive(authorization);
+    };
+    if (!current()) return;
+    const submitted = section.fields.map(({ type }) => {
+      const raw = this.#drafts[type] ?? "", subtype = this.#subtypes[type] ?? suggestedSubtype(type);
+      const block = projection.blocks.find(value => value.type === type);
+      const adopted = Boolean(block?.properties.source_artifact_id || block?.properties.source_output_id);
+      return { type, raw, subtype, value: adopted ? raw : raw.trim(), edit: edits.get(type) };
+    });
     const events = this.#eventsFor(section.fields);
     if (events.length) {
-      const appended = await this.store.appendBatch(events);
-      if (!appended.length) return;
-      this.store.toast(this.i18n.system("{section} saved to the document.",{section:this.i18n.system(section.label)}));
+      // Same content-free scoped count as CreativeEditor; the field lifetime
+      // also prevents disconnect/Document ABA from reviving this continuation.
+      let pending = this.#pendingSaves;
+      if (!pending || !pending.current()) this.#pendingSaves = pending = { count: 0, current: () => Boolean(current()) };
+      pending.count += 1;
+      this.requestUpdate();
+      try {
+        const result = await this.store.appendBatchWithReceipt(events), acknowledgment = result.acknowledgment;
+        if (!current() || result.publication !== "published" || acknowledgment.outcome !== "observed"
+          || acknowledgment.privateUnavailable || acknowledgment.rejectedIndices.length
+          || acknowledgment.action !== (events.length > 1 ? "batch" : "append") || acknowledgment.committed.length !== events.length) return;
+        const newerFields = submitted.some(field => edits.get(field.type) !== field.edit && edits.get(field.type)?.dirty);
+        this.store.toast(newerFields
+          ? this.i18n.t("guided.save.newerEditsKept", "The earlier submission was saved. Your newer edits are still here.")
+          : this.i18n.system("{section} saved to the document.",{section:this.i18n.system(section.label)}));
+      } finally {
+        pending.count -= 1;
+        if (this.#pendingSaves === pending) {
+          if (pending.count === 0) this.#pendingSaves = null;
+          if (pending.current()) this.requestUpdate();
+        }
+      }
     } else {
       this.store.toast(this.i18n.system("{section} already matches the document.",{section:this.i18n.system(section.label)}));
     }
-    if (this.#step < BRIEF_SECTIONS.length - 1) this.#goToStep(this.#step + 1);
+    // Deliberate already-matches Save uses the same exact-value check. An empty
+    // builder result alone (for example a locked/skipped field) cannot consume it.
+    const unchanged = (field: (typeof submitted)[number]) => edits.get(field.type) === field.edit
+      && (this.#drafts[field.type] ?? "") === field.raw
+      && (this.#subtypes[field.type] ?? suggestedSubtype(field.type)) === field.subtype;
+    const sectionUnchanged = submitted.every(unchanged);
+    for (const field of submitted) {
+      const seed = this.#fieldSeed(field.type);
+      if (!current() || !unchanged(field) || seed.text !== field.value || seed.subtype !== field.subtype) continue;
+      this.#drafts[field.type] = seed.text;
+      this.#subtypes[field.type] = seed.subtype;
+      edits.set(field.type, { dirty: false });
+    }
+    if (!current()) return;
+    if (sectionUnchanged && this.#step === step && step < BRIEF_SECTIONS.length - 1) this.#goToStep(step + 1);
     else this.requestUpdate();
   }
 
@@ -336,12 +514,12 @@ export class FormaGuidedBrief extends AlternativeStudio {
               </header>
               <p>${this.i18n.system(field.help)}</p>
               <label class="guided-subtype">Starting point
-                <select form=${guidedFormId} .value=${this.#subtypes[field.type]} @change=${(event: Event) => { this.#subtypes[field.type] = (event.target as HTMLSelectElement).value; this.requestUpdate(); }}>
-                  ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${this.i18n.system(subtype)}</option>`)}
+                <select form=${guidedFormId} .value=${this.#subtypes[field.type]} @change=${(event: Event) => { this.#subtypes[field.type] = (event.target as HTMLSelectElement).value; this.#markFieldEdit(field.type); this.requestUpdate(); }}>
+                  ${repeat([...new Set([this.#subtypes[field.type] ?? suggestedSubtype(field.type), ...definition.subtypes])], (subtype) => subtype, (subtype) => html`<option value=${subtype} ?selected=${subtype === (this.#subtypes[field.type] ?? suggestedSubtype(field.type))}>${this.i18n.system(subtype)}</option>`)}
                 </select>
               </label>
               <label class="sr-only" for=${`brief-${field.type}`}>${this.i18n.system(field.question)}</label>
-              <textarea id=${`brief-${field.type}`} form=${guidedFormId} rows="4" placeholder=${this.i18n.system(definition.prompt)} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
+              <textarea id=${`brief-${field.type}`} form=${guidedFormId} rows="4" placeholder=${this.i18n.system(definition.prompt)} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.#markFieldEdit(field.type); this.requestUpdate(); }}></textarea>
               <small class="guided-source">${existing ? this.i18n.system("Saving will update this answer everywhere it appears.") : this.i18n.system("Saving will add this decision to the document.")}</small>
               ${existing ? html`<forma-spatial-scope-editor .block=${existing} surface="guided"></forma-spatial-scope-editor><forma-context-intelligence .block=${existing} surface="guided" compact></forma-context-intelligence>` : html`<small class="guided-scope-pending">Save this answer, then choose whether it affects everything or one area.</small>`}
             </section>`;
@@ -374,7 +552,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
               ${items.length ? html`<ul>${items.map((block) => {
                 const fieldSection = BRIEF_SECTIONS.findIndex((candidate) => candidate.fields.some((field) => field.type === block.type));
                 return html`<li>
-                  <button @click=${() => fieldSection >= 0 ? this.#goToStep(fieldSection) : this.store.setRoute("/")}>
+                  <button @click=${() => fieldSection >= 0 ? this.#goToStep(fieldSection) : void navigateInApp(this, navigation => navigation.route("/"))}>
                     <span><b>${this.i18n.system(blockTypeDefinition(block.type)?.label??block.type)}</b><small>${(typeof block.properties.subtype === "string" && blockTypeDefinition(block.type)?.subtypes.includes(block.properties.subtype) ? this.i18n.system(block.properties.subtype) : String(block.properties.subtype ?? block.handle))}</small></span>
                     <em>${String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? block.handle)}</em>
                     <i>${fieldSection >= 0 ? this.i18n.system("Review answer") : this.i18n.system("Open baseline")} ${icon("arrow")}</i>

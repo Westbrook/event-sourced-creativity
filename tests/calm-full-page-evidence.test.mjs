@@ -1,8 +1,10 @@
 
 import assert from "node:assert/strict";
 import nativeTest from "node:test";
-import { createCalmFullPage, fullPageTree, STUDY_SHAPED_TYPES } from "./helpers/calm-full-page-fixture.mjs";
-import { certifyActualOutputFixtureResumeReads } from "./helpers/output-reachability-fixture.mjs";
+import { createCalmFullPage, fullPageTree, registerCalmFullPageComponents, STUDY_SHAPED_TYPES, calmFullPageNativePorts as ports } from "./helpers/calm-full-page-fixture.mjs";
+import { createSceneStoreHost } from "./helpers/scene-cost-store-host.mjs";
+import { observeActualSceneResumeReads } from "./helpers/actual-scene-resume-read.mjs";
+import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
 
 // Data-URL fixture frames are labels, not megabytes of copied fixture source.
 const test=(name,run)=>nativeTest(name,async context=>{try{return await run(context);}catch(error){if(typeof error?.stack==="string")error.stack=error.stack.replace(new RegExp("data:text/javascript;base64,[A-Za-z0-9+/=]+","gu"),"full-class-fixture");throw error;}});
@@ -14,11 +16,34 @@ const job=(f,index,status="running",kind="render_document")=>({
  jobId:"synthetic-job-"+index,documentId:f.store.projection.get().documentId,kind,status,sourceSurface:"document",requestedSequence:1,documentRevision:"synthetic-only",requestKey:"synthetic-key-"+index,sourcePreviewId:null,productionMode:"manual",promptTechnique:"prose",promptFanId:null,parentJobId:null,fanKind:null,members:[],result:kind==="render_document"?{artifactKind:index%2?"slides":"short_story"}:null,error:status==="failed"?"Synthetic stopped test job":null,errorDetail:null,moderationPromptRef:null,dismissedAt:null,attemptCount:1,requestedAt:"2026-08-27T00:00:00Z",startedAt:"2026-08-27T00:00:01Z",completedAt:status==="failed"?"2026-08-27T00:00:02Z":null,notifiedAt:null,leaseExpiresAt:null,updatedAt:"2026-08-27T00:00:02Z",stage:status,progressMessage:"Synthetic task status"
 });
 async function full(t,options){
- const previous=globalThis.fetch;let external=0;
+ const previous=globalThis.fetch,previousHistory=globalThis.history;let external=0;
  globalThis.fetch=async()=>{external++;throw new Error("External/provider calls are forbidden in full-page evidence");};
- let fixture;try{fixture=await createCalmFullPage(t,options);fixture.isReadOnlyResume=await certifyActualOutputFixtureResumeReads(fixture);}catch(error){globalThis.fetch=previous;throw error;}
- t.after(()=>{globalThis.fetch=previous;assert.equal(external,0,"no external or provider calls");});
+ let fixture;
+ try{
+  const storeHost=await createSceneStoreHost({exposeSceneTestAccessors:false});
+  const resume=observeActualSceneResumeReads(storeHost);
+  // Observe and settle the already-started original transport before the
+  // existing page close hook. Never replay a read to certify a different one.
+  t.after(async()=>{await resume.settleOriginalRequests();resume.restore();});
+  // The adopted shared navigation now uses real History and focus ownership.
+  // Reuse the same native ports as the current lifecycle fixture, not a
+  // replacement ready resource, navigation method or application controller.
+  globalThis.history={pushState(_state,_title,value){const next=new URL(value,"http://localhost");Object.assign(storeHost.location,{pathname:next.pathname,search:next.search,hash:next.hash});},
+   replaceState(...args){this.pushState(...args);}};
+  fixture=await createCalmFullPage(t,{...options,storeHost});
+  await registerCalmFullPageComponents(fixture,["forma-workspace"]);
+  installOutputNavigationFocusNative(t,fixture,ports);
+  await resume.settleOriginalRequests();await fixture.settle();
+  assert.equal(resume.pendingOriginalCount(),0,"initial original transports have settled before test baselines");
+  fixture.isReadOnlyResume=resume.isReadOnlyResume;
+ }catch(error){globalThis.fetch=previous;globalThis.history=previousHistory;throw error;}
+ t.after(()=>{globalThis.fetch=previous;globalThis.history=previousHistory;assert.equal(external,0,"no external or provider calls");});
  return fixture;
+}
+async function settlePreparationChooser(f){
+ // forma-action intentionally does not return the asynchronous handoff. Observe
+ // the actual current dialog with bounded existing native/render settlement.
+ for(let attempt=0;attempt<24&&!f.tree().visible("dialog").some(byClass("next-format-dialog"));attempt++)await f.settle();
 }
 function resting(f){
  const tree=f.tree(),counts=tree.controls();
@@ -109,7 +134,7 @@ for(const locale of ["en","fr","ar","ja"])for(const reader of [false,true])for(c
      const modes=()=>rendered(f.tree(),"button",node=>node.owner===panel&&byClass("forma-assistant-mode")(node)).map(node=>node.text);
      const mode=label=>f.find("button",node=>node.owner===panel&&byClass("forma-assistant-mode")(node)&&node.text===label);
      const view=()=>({label:field().attributes["aria-label"],placeholder:field().attributes.placeholder,submit:submit().attributes["aria-label"],
-      detail:rendered(f.tree(),"p",node=>node.owner===panel&&byClass("forma-assistant-mode-detail")(node)).map(node=>node.text)});
+      detail:rendered(f.tree(),"p",node=>node.owner===panel&&byClass("forma-assistant-mode-detail")(node)&&nodeWithin(node,byClass("forma-assistant-composer"))).map(node=>node.text)});
      const labels=modes(),quick=f.i18n.t("assistant.mode.quickEdit"),ordinary=labels.filter(label=>label!==quick),saved=[];
      assert.ok(labels.includes(quick));assert.ok(ordinary.length>0);
      for(const label of ordinary){
@@ -118,6 +143,10 @@ for(const locale of ["en","fr","ar","ja"])for(const reader of [false,true])for(c
      }
      await f.act(mode(quick));assert.equal(field().properties.value,"","scope is shown before the first quick-edit instruction");
      assert.deepEqual(view(),{label:quick,placeholder:expected.placeholder,submit:f.i18n.t("assistant.mode.quickEditSubmit"),detail:[expected.detail]});
+     assert.equal(panel.navigationBlocked,true,"the other modes still own their unsent drafts");
+     assert.deepEqual(rendered(f.tree(),"p",node=>node.owner===panel&&byClass("forma-assistant-mode-detail")(node)&&nodeWithin(node,byClass("forma-assistant-continuation"))).map(node=>node.text),[f.i18n.t("next.lifecycle.assistantOwnsWork")],"the separate continuation warning remains truthful and visible");
+     const continuation=rendered(f.tree(),"fieldset",node=>node.owner===panel&&nodeWithin(node,byClass("forma-assistant-continuation")));
+     assert.equal(continuation.length,1);assert.equal(Object.hasOwn(continuation[0].attributes,"disabled"),true,"the warning is not removed to recover the old mode-copy oracle");
      const quickDraft="  One local decision — قرار 日本語\nkeep this line  ",input=field();input.port.value=quickDraft;await f.act(input,"input");
      for(const prior of saved){await f.act(mode(prior.label));assert.equal(field().properties.value,prior.draft);assert.deepEqual(view(),prior.view,"other mode copy and accessible labels are unchanged");}
      await f.act(mode(quick));assert.equal(field().properties.value,quickDraft);assert.deepEqual(modes(),labels);
@@ -186,7 +215,7 @@ for(const medium of ["image","short_story","scene","slides","storyboard","video"
  test("two rendered preparation choices reach the exact "+medium+" executor without submission",async t=>{
   const f=await full(t),original=f.store.projection.get(),actor=f.store.session.get().user.userId,blocks=original.blocks.map(block=>[block.id,block.properties.text]);
   const choices=[];
-  const launch=f.find("button",byChoice("configure-output"));choices.push(launch.attributes["data-choice-value"]);await f.act(launch);
+  const launch=f.find("button",byChoice("configure-output"));choices.push(launch.attributes["data-choice-value"]);await f.act(launch);await settlePreparationChooser(f);
   const chooser=f.tree().visible("dialog").find(byClass("next-format-dialog"));assert.ok(chooser);
   assert.deepEqual(f.tree().visible("button").filter(node=>nodeWithin(node,byClass("next-format-dialog"))&&node.owner.tag==="forma-ui-choice-card").map(node=>node.attributes["data-choice-value"]),["image","short_story","scene","slides","storyboard","video","audio"],"all actual format entries retained");
   const format=f.find("button",byChoice(medium));choices.push(format.attributes["data-choice-value"]);await f.act(format);
@@ -262,7 +291,7 @@ test("all14 study-shaped decisions reach their actual controls in two rendered c
 
 for(const withdrawal of ["source","reader"]){
  test("old rendered preparation choice cannot retarget after "+withdrawal+" withdrawal",async t=>{
-  const f=await full(t);await f.act(f.find("button",byChoice("configure-output")));const oldChoice=f.find("button",byChoice("short_story"));
+  const f=await full(t);await f.act(f.find("button",byChoice("configure-output")));await settlePreparationChooser(f);const oldChoice=f.find("button",byChoice("short_story"));
   if(withdrawal==="source")f.patchProperties(0,{text:"Synthetic changed exact source after the chooser opened"});
   else{const session=f.store.session.get();f.store.session.set({...session,projectContext:{organizationId:"synthetic-org",projectAccessId:"synthetic-access",projectId:f.store.projection.get().projectId,ownerUserId:session.user.userId,role:"viewer",permissions:["project.read"],expiresAt:new Date(Date.now()+3600_000).toISOString()}});}
   await f.settle();await f.act(oldChoice);

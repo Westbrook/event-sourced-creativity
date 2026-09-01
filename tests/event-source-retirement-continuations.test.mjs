@@ -34,20 +34,21 @@ for(const spec of CASES)for(const withdrawn of[false,true])test(spec.name+" "+(w
   form.append("rightsConfirmed","true");form.append("nonSensitiveConfirmed","true");
   const upload=await h.worker.request("/api/media",{method:"POST",body:form});assert.equal(upload.status,200,await upload.clone().text());const media=await upload.json();
   await appendAuditEvent(h.worker.env,h.worker.streamId,"worker:renderer","GenerationCompleted",{project_id:h.worker.projectId,document_id:h.worker.documentId,object_ids:["source-continuation-image"],
-   generation_id:"synthetic-historical-image",simulation:true,provider:"simulation",model_id:"fixture",media_url:media.url,media_type:"image/png",image_width:1,image_height:1,source_surface:"document"});
+   generation_id:"synthetic-historical-image",simulation:true,provider:"simulation",model_id:"fixture",media_url:media.url,media_type:"image/png",image_width:1,image_height:1,source_surface:"document",prompt_fan_id:"source-continuation-fan",prompt_technique:"prose"});
   await h.store.refreshEvents();original=h.store.projection.get().libraryOutputs.find(output=>output.id==="source-continuation-image");assert.ok(original?.mediaUrl);
  }
  if(spec.reference){const descriptor=Object.getOwnPropertyDescriptor(URL,"createObjectURL");Object.defineProperty(URL,"createObjectURL",{configurable:true,writable:true,value:undefined});t.after(()=>Object.defineProperty(URL,"createObjectURL",descriptor));}
- const {component,bind}=await sourceContinuationHost(t,h,spec.kind),routeRequests=[];const nativeRoute=h.store.setRoute.bind(h.store);
+ const {component,bind,awaitOriginalEntry}=await sourceContinuationHost(t,h,spec.kind,{navigationAction:spec.action}),routeRequests=[];const nativeRoute=h.store.setRoute.bind(h.store);
  t.mock.method(h.store,"setRoute",(...args)=>{routeRequests.push(args[0]);return nativeRoute(...args);});
- component.fixturePrepare({blockId:original.id,text:"Original A saved through actual Worker",creating:true,selected:"original-selection",...(spec.reference?{file:new File([wav()],"original-reference.wav",{type:"audio/wav"})}:{})});
+ await component.fixturePrepare({blockId:original.id,text:"Original A saved through actual Worker",creating:true,selected:"original-selection",...(spec.reference?{file:new File([wav()],"original-reference.wav",{type:"audio/wav"})}:{})});
  const gate=sceneDeferred(),entered=sceneDeferred();t.after(()=>gate.resolve());const real=h.store[spec.method].bind(h.store);let result,invocations=0;const responses=[];
  h.intercept=async request=>{if(!eventPost(request))return;const response=await h.worker.request(request.url,request.init);responses.push({request:request.body,response:await response.clone().json(),status:response.status});return response;};
  t.mock.method(h.store,spec.method,async(...args)=>{invocations++;const value=await real(...args);result=value;
   entered.resolve();await gate.promise;return value;});
  const argument=spec.action==="context"?original.id:spec.action==="previous"?"saved-scene-story":original,pending=component.fixtureInvoke(spec.action,argument);
- await entered.promise;assert.equal(invocations,1);assert.ok(Array.isArray(result)?result.length:!!result&&!("publication"in result),"Actual successful original result: "+JSON.stringify({result,notice:h.store.ui.toast,appendFailure:h.store.appendFailure.get(),responses}).slice(0,6000));
- if(withdrawn){await h.deny();h.restore();await h.store.refreshEvents();bind();component.fixturePrepare({text:"New B after independently verified recovery",selected:"new-selection",...(spec.reference?{file:new File([wav()],"new-reference.wav",{type:"audio/wav"})}:{})});}
+ if(spec.kind==="alternatives"){assert.equal(typeof awaitOriginalEntry,"function");await awaitOriginalEntry(entered.promise,pending);}else await entered.promise;
+ assert.equal(invocations,1);assert.ok(Array.isArray(result)?result.length:!!result&&!("publication"in result),"Actual successful original result: "+JSON.stringify({result,notice:h.store.ui.toast,appendFailure:h.store.appendFailure.get(),responses}).slice(0,6000));
+ if(withdrawn){await h.deny();h.restore();await h.store.refreshEvents();bind();await component.fixturePrepare({text:"New B after independently verified recovery",selected:"new-selection",...(spec.reference?{file:new File([wav()],"new-reference.wav",{type:"audio/wav"})}:{})});}
  const before=component.fixtureState(),beforeRoute=h.store.route.get(),beforeToast=h.store.ui.toast,posts=h.requests.filter(eventPost).length,routeCount=routeRequests.length;
  gate.resolve();await pending;bind();const after=component.fixtureState();
  assert.equal(h.requests.filter(eventPost).length,posts,"No old completion triggers another append or extraction");

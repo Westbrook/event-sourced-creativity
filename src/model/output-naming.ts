@@ -1,5 +1,6 @@
 import { documentArtifactDefinition, isDocumentArtifactKind, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput } from "./events.ts";
+import type { CreativeNextAction } from "./workspace-intelligence.ts";
 
 export type OutputNamingKind = DocumentArtifactKind | "image";
 
@@ -241,6 +242,46 @@ export function qualifyDisplayCollisions(rows: readonly DisplayLabel[], format: 
     }
   }
   return result;
+}
+
+export type CreativeNextActionDisplayLocale = {
+  t: (id: string, fallback?: string, values?: Record<string, string | number>) => string;
+  number?: (value: number) => string;
+  date?: (value: Date | number, options?: Intl.DateTimeFormatOptions) => string;
+};
+
+/** Shared visible names, never selection, authorization or recovery policy.
+ * An existing host may retain its executor-specific localized action copy.
+ * Opaque target identities order collision qualifiers but are never displayed. */
+export function creativeNextActionDisplayLabels(
+  actions: readonly CreativeNextAction[], locale: CreativeNextActionDisplayLocale, baseLabels?: readonly string[],
+): string[] {
+  const isolate = (value: string) => "\u2068" + value + "\u2069";
+  const rows = actions.map((action, index) => {
+    const label = baseLabels?.[index] ?? locale.t(action.labelKey ?? `next.exact.${action.id}.label`, action.label);
+    const title = action.title && action.target.kind !== "job" ? action.target.kind === "configure"
+      ? locale.t(`artifact.${action.title}.label`, action.title.replaceAll("_", " ")) : action.title : "";
+    return { key: JSON.stringify(action.target), action, label: title ? `${label}: ${title}` : label };
+  });
+  const jobs = rows.filter(row => row.action.target.kind === "job" && row.action.jobDisplay);
+  const collisions = qualifyDisplayCollisions(jobs, number => String(number));
+  const described = jobs.map(row => {
+    if (!collisions.get(row.key)!.qualifier) return row;
+    const { artifactKind, kind, requestedAt } = row.action.jobDisplay!;
+    const format = artifactKind ? locale.t(`artifact.${artifactKind}.label`, documentArtifactDefinition(artifactKind).label)
+      : locale.t(`activity.kind.${kind}`, locale.t("activity.documentOperation", "Document operation"));
+    const requested = new Date(requestedAt);
+    const time = Number.isFinite(requested.getTime()) && locale.date
+      ? locale.date(requested, { dateStyle: "medium", timeStyle: "short" }) : "";
+    return { ...row, label: row.label + ": " + [format, time].filter(Boolean).map(isolate).join(" · ") };
+  });
+  const qualifier = (number: number, key: string, fallback: string) => isolate(locale.number
+    ? locale.t(key, fallback, { number: locale.number(number) }) : String(number));
+  const jobLabels = qualifyDisplayCollisions(described, number =>
+    qualifier(number, "next.exact.jobRequestQualifier", "Request {number}"));
+  const labels = qualifyDisplayCollisions(rows.map(row => ({ ...row, label: jobLabels.get(row.key)?.label ?? row.label })),
+    number => qualifier(number, "next.exact.choiceQualifier", "Choice {number}"));
+  return rows.map(row => labels.get(row.key)!.label);
 }
 
 function scopedOutputPresentations(candidates: readonly OutputNamingCandidate[], presentations: OutputPresentation[], options: OutputNamingOptions): OutputPresentation[] {

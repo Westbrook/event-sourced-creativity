@@ -228,17 +228,24 @@ export class FormaOutputRequirements extends FormaElement {
     this.#observePlanning(snapshot);
     if (!this.#reviewPlan) this.#planOpener = { element: opener, viewKey: this.#planViewKey() };
     this.#reviewPlan = true; this.requestUpdate();
-    const view = this.#captureView();
-    void this.updateComplete.then(() => { if (this.#viewCurrent(view) && this.#reviewPlan) this.querySelector<HTMLElement>(".output-plan-review")?.focus(); });
+    const view = this.#captureView(), route = this.store.route.get(), focus = captureOutputNavigationFocus(this.ownerDocument);
+    void this.updateComplete.then(() => {
+      if (!this.#viewCurrent(view) || !this.#reviewPlan || this.store.route.get() !== route) return;
+      const target = this.querySelector<HTMLElement>(".output-plan-review");
+      if (target) focus.run(target, () => { target.focus(); return true; });
+    }, () => undefined).finally(() => focus.dispose());
   }
   #closePlan() {
-    const opener = this.#planOpener, view = this.#captureView();
+    const opener = this.#planOpener, view = this.#captureView(), route = this.store.route.get();
+    const focus = captureOutputNavigationFocus(this.ownerDocument);
     this.#reviewPlan = false; this.#planOpener = null; this.requestUpdate();
     void this.updateComplete.then(() => {
-      if (!this.#viewCurrent(view) || !opener || !outputPlanFocusMayRestore(opener.viewKey, this.#planViewKey(), true)) return;
-      if (opener.element?.isConnected && !(opener.element as HTMLButtonElement).disabled) opener.element.focus();
-      else this.querySelector<HTMLElement>("[data-output-plan-focus-return]")?.focus();
-    });
+      if (!this.#viewCurrent(view) || this.#reviewPlan || this.store.route.get() !== route
+        || !opener || !outputPlanFocusMayRestore(opener.viewKey, this.#planViewKey(), true)) return;
+      const target = opener.element?.isConnected && !(opener.element as HTMLButtonElement).disabled ? opener.element
+        : this.querySelector<HTMLElement>("[data-output-plan-focus-return]");
+      if (target) focus.run(target, () => { target.focus(); return true; });
+    }, () => undefined).finally(() => focus.dispose());
   }
 
   protected override updated() {
@@ -288,12 +295,26 @@ export class FormaOutputRequirements extends FormaElement {
     return write && write.status !== "acknowledged" ? write : null;
   }
   #writeNotAttempted() { this.#announce(this.#message("output_client_write_not_attempted")); }
+  /** Local work only. A false value is not current Source, read, route, or authoring permission. */
+  get navigationBlocked(): boolean {
+    return Boolean(!this.isConnected || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
+      || this.#uncertainCommand || this.#unresolvedWrite() || this.#preflight || this.#preflightIntent || this.#removeId
+      || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")]
+        .some(card => card.isConnected && card.hasOpenDraft));
+  }
+  /** Departure protects local edits/in-flight work, not settled original metadata alone. */
+  get commandDepartureBlocked():boolean {
+    return Boolean(!this.isConnected || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
+      || this.#unresolvedWrite()?.status === "pending" || this.#preflight || this.#preflightIntent || this.#removeId
+      || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")]
+        .some(card => card.isConnected && card.hasOpenDraft));
+  }
   #transportReceipt() {
     const write = this.store.outputRequirements.retainedWrite(this.documentId);
     if (!write || write.status === "acknowledged" && !write.sourceRetired) return nothing;
     const receipt = JSON.stringify({ documentId: this.documentId, ...write }, null, 2);
     return html`<details class="output-transport-receipt" open><summary aria-label=${this.#controlName(this.#t("operationReceiptIds", "Operation receipt identifiers"))}>${this.#t("operationReceiptIds", "Operation receipt identifiers")}</summary>
-      ${write.status !== "acknowledged" ? html`<p role="status">${this.#message(write.sourceRetired ? "original_command_content_unavailable" : "output_client_write_unconfirmed")}</p>` : nothing}
+      ${write.status !== "acknowledged" ? html`<p role="status">${this.#message(write.sourceRetired ? "original_command_content_unavailable" : "output_client_write_unconfirmed")} ${this.i18n.t("next.output.recoveryLifetime", "Copy the technical receipt before leaving this view. Returning may not restore its local retry controls. Leaving does not cancel the request, confirm success, or release reserved budget.")}</p>` : nothing}
       <button type="button" class="button secondary compact" aria-label=${this.#controlName(this.#t("copyOperationReceipt", "Copy technical receipt"))} @click=${() => this.#copyTransportReceipt(write.clientMutationId, write.digest)}>${this.#t("copyOperationReceipt", "Copy technical receipt")}</button>
       <label>${this.#t("operationReceiptText", "Technical receipt for manual copying")}<textarea aria-label=${this.#controlName(this.#t("operationReceiptText", "Technical receipt for manual copying"))} readonly rows="8" spellcheck="false" lang="en" dir="ltr" .value=${receipt}></textarea></label>
     </details>`;
@@ -1094,6 +1115,69 @@ export class FormaOutputRequirements extends FormaElement {
 
 
   #navigationRequest = 0;
+  /** Reveal one current authored Output's existing status only; never create a snapshot or action grant. */
+  async revealAuthoredRequirement(target: { projectId: string; documentId: string; blockId: string }, options: {
+    current: () => boolean; focus?: OutputNavigationFocusLease;
+  }): Promise<boolean> {
+    const { projectId, documentId, blockId } = target, request = ++this.#navigationRequest;
+    const view = this.#captureView(), route = this.store.route.get();
+    const identityCurrent = () => {
+      const projection = this.store.projection.get(), session = this.store.session.get(), context = session?.projectContext;
+      const permissions = context?.permissions ?? session?.capabilities ?? [];
+      const resource = this.store.outputRequirements.resource(documentId);
+      return Boolean(blockId && options.current() && request === this.#navigationRequest && this.#viewCurrent(view)
+        && this.store.route.get() === route && this.surface === "document" && this.documentId === documentId && this.blockId === blockId
+        && session && permissions.includes("project.read") && (!context || context.projectId === projectId)
+        && projection.projectId === projectId && projection.documentId === documentId
+        && projection.documents.some(value => value.id === documentId && value.projectId === projectId && !value.removed)
+        && projection.blocks.filter(value => value.id === blockId && value.documentId === documentId && value.projectId === projectId
+          && value.type === "output" && !value.removed).length === 1
+        && !this.#busy && !this.#reviewPlan && !this.#planning?.dirty && !this.#file && !this.#uncertainCommand
+        && !this.#unresolvedWrite() && !this.#preflight && !this.#preflightIntent
+        && !document.querySelector("dialog[open]") && !document.querySelector(".output-requirement-form")
+        && !document.querySelector(".output-plan-review") && !document.querySelector(".output-recipe-draft")
+        && !document.querySelector(".output-recipe-entry[open]")
+        // A withheld Output may expose its existing content-free status, never a retained private card.
+        && (!(resource.accessLost || resource.privateUnavailable) || resource.snapshot === null));
+    };
+    if (!identityCurrent()) return false;
+    const focus = options.focus ?? captureOutputNavigationFocus(this.ownerDocument, {
+      ownedRouteFocus: outputNavigationOwnedRouteFocus(this.ownerDocument, this.store, { documentId, blockId }, identityCurrent),
+    });
+    const current = () => focus.current() && identityCurrent();
+    try {
+      if (!current()) return false;
+      await this.updateComplete;
+      if (!current()) return false;
+      const panel = this.closest<HTMLElement>("#document-context-panel");
+      if (panel?.hidden) {
+        const workspace = this.closest("forma-workspace") as (HTMLElement & { revealOutputNavigation?: (documentId: string, current: () => boolean) => boolean; updateComplete?: Promise<unknown> }) | null;
+        if (!workspace?.revealOutputNavigation?.(documentId, current)) return false;
+        await workspace.updateComplete;
+        if (!current() || this.closest<HTMLElement>("#document-context-panel")?.hidden) return false;
+      }
+      const resource = this.store.outputRequirements.resource(documentId), statusOnly = resource.snapshot === null;
+      const elements = statusOnly
+        ? [...this.querySelectorAll<HTMLElement>(".output-requirements")]
+        : [...this.querySelectorAll<HTMLElement>("[data-output-requirement]")].filter(element => element.getAttribute("data-output-requirement") === blockId);
+      const element = elements.length === 1 ? elements[0] : null;
+      const presentedCurrent = () => {
+        const shown = this.store.outputRequirements.resource(documentId);
+        return current() && (statusOnly ? shown.snapshot === null
+          : !shown.accessLost && !shown.privateUnavailable && shown.snapshot === resource.snapshot);
+      };
+      if (!element?.isConnected || !element.getClientRects().length || !presentedCurrent()) return false;
+      return focus.run(element, () => {
+        if (!presentedCurrent() || !element.isConnected) return false;
+        if (statusOnly) element.tabIndex = -1;
+        element.focus({ preventScroll: true });
+        if (!presentedCurrent() || !element.isConnected) return false;
+        element.scrollIntoView({ block: "nearest" });
+        return presentedCurrent();
+      });
+    } finally { if (!options.focus) focus.dispose(); }
+  }
+
   /** Exact navigation only. Never changes a run selection, draft, offer, or authored decision. */
   async focusOutputReference(reference: OutputNavigationReference, options: {
     section?: OutputNavigationSection; current: () => boolean; focus?: OutputNavigationFocusLease;

@@ -5,6 +5,11 @@ import { createSceneStoreHost } from "./scene-cost-store-host.mjs";
 
 // Full component hierarchy, synthetic state and native-control ports; no CSS,
 // viewport, provider, study-data or accessibility certification is implied.
+const cAlternativeCalmCheckpoint=(phase,detail={})=>{
+  if(process.env.FORMA_ALTERNATIVE_SETUP_TRACE==="1")
+    process.stderr.write("C_ALTERNATIVE_CALM "+JSON.stringify({phase,at:Date.now(),...detail})+"\n");
+};
+cAlternativeCalmCheckpoint("helper-prefix-start");
 const fixtureUrl=new URL("../inactive-generation-dialog-host.test.mjs",import.meta.url);
 const fixtureText=fs.readFileSync(fixtureUrl,"utf8");
 const fixtureTree=ts.createSourceFile(fixtureUrl.pathname,fixtureText,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
@@ -19,7 +24,7 @@ replacePort("import { documentArtifactRevision } from \"../src/model/document-ar
 replacePort(/(from\s+|import\s*\()(["'])([^"']+)\2/gu,(_match,prefix,_quote,specifier)=>prefix+JSON.stringify(specifier.startsWith(".")?new URL(specifier,fixtureUrl).href:specifier.startsWith("node:")?specifier:import.meta.resolve(specifier)));
 fixtureModule=fixtureModule.replaceAll("import.meta.url",JSON.stringify(fixtureUrl.href));
 replacePort("await import(specifier)","await import(new URL(specifier.slice(4),"+JSON.stringify(new URL("./",import.meta.resolve("lit")).href)+").href)");
-replacePort('{ origin: "https://fixture.invalid" }','{ origin: "https://fixture.invalid",get pathname(){return activeFixture?.nativeHistoryLocation?.pathname??activeFixture?.store.route.get().split(/[?#]/)[0]??"/";},get search(){return activeFixture?.nativeHistoryLocation?.search??(activeFixture?.nativeUrlParts?new URL(activeFixture.store.route.get(),"https://fixture.invalid").search:"");},get hash(){return activeFixture?.nativeHistoryLocation?.hash??(activeFixture?.nativeUrlParts?new URL(activeFixture.store.route.get(),"https://fixture.invalid").hash:"");} }');
+replacePort('{ origin: "https://fixture.invalid" }','{ origin: "https://fixture.invalid",assign(value){if(typeof activeFixture?.nativeLocationAssign!=="function")throw new Error("Native navigation observation was not enabled for this fixture");return activeFixture.nativeLocationAssign(String(value));},get pathname(){return activeFixture?.nativeHistoryLocation?.pathname??activeFixture?.store.route.get().split(/[?#]/)[0]??"/";},get search(){return activeFixture?.nativeHistoryLocation?.search??(activeFixture?.nativeUrlParts?new URL(activeFixture.store.route.get(),"https://fixture.invalid").search:"");},get hash(){return activeFixture?.nativeHistoryLocation?.hash??(activeFixture?.nativeUrlParts?new URL(activeFixture.store.route.get(),"https://fixture.invalid").hash:"");} }');
 replacePort('/(?:forma-element|presentational-element)$/','/(?:forma-element|presentational-element)(?:\\.ts)?$/');
 replacePort('else if (specifier === "./consequential-preview") dependencies.set(specifier, { consequentialPreview: () => nothing });','');
 replacePort('getComputedStyle", "matchMedia", "InputEvent", code)(','getComputedStyle", "matchMedia", "InputEvent", "MutationObserver", "IntersectionObserver", "requestAnimationFrame", "cancelAnimationFrame", "localStorage", "navigator", "innerWidth", "innerHeight", code)(');
@@ -27,7 +32,8 @@ replacePort('class { observe() {} disconnect() {} }, () => ({ direction: activeF
   'FixtureResizeObserver, element => windowPort.getComputedStyle(element), query => windowPort.matchMedia(query), class InputEvent {}, FixtureObserver, FixtureObserver, callback => windowPort.requestAnimationFrame(callback), id => windowPort.cancelAnimationFrame(id), fixtureStorage, {onLine:true,language:"en"}, windowPort.innerWidth, windowPort.innerHeight,');
 replacePort("return \"<\" + tag + \" data-rendered-port=\\\"true\\\"\" + raw + \">\" + child + content + \"</\" + tag + \">\";","return \"<\" + tag + \" data-rendered-port=\\\"true\\\" data-fixture-component=\" + this.reference(id,owner) + raw + \">\" + child + content + \"</\" + tag + \">\";");
 fixtureModule=fixtureModule.replaceAll("instance.updated?.();","instance.updated?.(new Map());");
-replacePort('const child = this.value(instance.render(), instance, id, caches);','const child = typeof instance.render==="function"?this.value(instance.render(), instance, id, caches):serializeNative(instance.children??[],this,instance);');
+replacePort('rendered = instance.render();','rendered = typeof instance.render==="function"?instance.render():undefined;');
+replacePort('const child = this.value(rendered, instance, id, caches);','const child = typeof instance.render==="function"?this.value(rendered, instance, id, caches):serializeNative(instance.children??[],this,instance);');
 // Observe only the actual factory return inside an explicitly opted-in host construction.
 replacePort("else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });","else if (/\\/adaptive-proposal-review(?:\\.ts)?$/u.test(specifier)) {\n      const actual = await loadActual(\"src/components/adaptive-proposal-review.ts\");\n      dependencies.set(specifier, { ...actual, createAdaptiveProposalReview(...args) {\n        const controller = Reflect.apply(actual.createAdaptiveProposalReview, this, args);\n        if (adaptiveProposalConstruction) {\n          assert.equal(args[0], adaptiveProposalConstruction.fixture.store, \"observe the actual owning Store argument\");\n          assert.ok(controller instanceof actual.AdaptiveProposalReviewController, \"observe the actual factory result\");\n          adaptiveProposalConstruction.controllers.push(controller);\n        }\n        return controller;\n      } });\n    }\n    else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });");
 replacePort('const instance = new this.registry[tag]();','const instance = constructObservedComponent(this.fixture, tag, this.registry[tag]);');
@@ -103,13 +109,30 @@ windowPort.visualViewport={width:790,height:882,offsetLeft:0,offsetTop:0,addEven
 moduleCache.set("src/route-loader.ts",{loadRouteComponent:async route=>activeFixture?.trace.push("route-module:"+route)});
 `;
 replacePort("const { FormaUiPopover } = await loadActual",fullPageNativePorts+"\nconst { FormaUiPopover } = await loadActual");
-fixtureModule+="\nexport {RendererPort,ElementPort,loadActual,documentPort,windowPort,FormaLocaleController,FORMA_DEFAULT_MESSAGES,localeCatalogs,moduleCache,FixtureObserver,readAdaptiveProposalEvidence};\nexport function bindFixture(value){activeFixture=value;}\n";
+fixtureModule+="\nexport {RendererPort,ElementPort,modalPort,loadActual,documentPort,windowPort,FormaLocaleController,FORMA_DEFAULT_MESSAGES,localeCatalogs,moduleCache,FixtureObserver,readAdaptiveProposalEvidence};\nexport function bindFixture(value){activeFixture=value;}\n";
+cAlternativeCalmCheckpoint("helper-native-module-start");
 const ports=await import("data:text/javascript;base64,"+Buffer.from(fixtureModule).toString("base64"));
+cAlternativeCalmCheckpoint("helper-native-module-end");
 // Expose native DOM ports for focused host extensions; component implementations stay actual.
 export { ports as calmFullPageNativePorts };
 export const readAdaptiveProposalEvidence = ports.readAdaptiveProposalEvidence;
 const componentManifest=JSON.parse(fs.readFileSync(new URL("../../custom-elements.json",import.meta.url),"utf8"));
 const componentModules=new Map(componentManifest.modules.flatMap(module=>(module.declarations??[]).filter(declaration=>declaration.tagName).map(declaration=>[declaration.tagName,{file:module.path,name:declaration.name}])));
+// Opt-in registration before native focus performs a synchronous full-tree read.
+// Reuse the lifecycle fixture's actual CEM/literal-child traversal. Already
+// registered parents still require their conditional descendants; never install
+// a placeholder or weaken fullPageTree's missing-component assertion.
+export async function registerCalmFullPageComponents(f,tags){
+  const registered=new Set();
+  async function register(tag){
+    if(registered.has(tag))return;registered.add(tag);
+    cAlternativeCalmCheckpoint("cem-tag-start",{tag});
+    const entry=componentModules.get(tag);assert.ok(entry,"existing actual component "+tag);
+    if(!f.renderer.registry[tag]){cAlternativeCalmCheckpoint("cem-load-start",{tag,file:entry.file});const module=await ports.loadActual(entry.file);cAlternativeCalmCheckpoint("cem-load-end",{tag,file:entry.file});assert.equal(typeof module[entry.name],"function",tag);f.renderer.registry[tag]=module[entry.name];}
+    for(const child of new Set([...fs.readFileSync(new URL("../../"+entry.file,import.meta.url),"utf8").matchAll(/<(forma-[\w-]+)(?=[\s>])/gu)].map(match=>match[1])))await register(child);
+  }
+  for(const tag of tags)await register(tag);
+}
 export const STUDY_SHAPED_TYPES=Object.freeze(["direction","audience","message","format","exclusion","subject","environment","emotion","style","composition","accessibility","direction","direction","audio"]);
 export async function createCalmFullPage(t,{locale="en",reader=false,assistant=false,storeHost:providedStoreHost=null,observeAdaptiveProposals=false}={}){
   const storeHost=providedStoreHost??await createSceneStoreHost();t.after(()=>storeHost.close());
@@ -126,8 +149,11 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
   const messages={...ports.FORMA_DEFAULT_MESSAGES,...ports.localeCatalogs[locale]};
   f.i18n=new ports.FormaLocaleController({addController(){},requestUpdate(){},dispatchEvent(event){event.callback({locale,formatLocale:locale,direction:locale==="ar"?"rtl":"ltr",timeZone:"UTC",messages,revision:1},()=>{});return true;}});
   f.i18n.hostConnected();
+  cAlternativeCalmCheckpoint("shell-load-start",{locale});
   const {FormaShell}=await ports.loadActual("src/components/forma-shell.ts"),registry={};
+  cAlternativeCalmCheckpoint("shell-load-end",{locale});
   f.renderer=new ports.RendererPort(f,registry);
+  const commandCloseTasks=new Set();let commandCloseDisposed=false;
   const originalCollect=f.renderer.collect.bind(f.renderer);
   f.renderer.collect=(markup,owner)=>{
     const index=f.renderer.nodes.length;originalCollect(markup,owner);
@@ -136,6 +162,22 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
       node.getClientRects=()=>node.isConnected?[node.getBoundingClientRect()]:[];
       node.contains=ports.ElementPort.prototype.contains;
       node.removeAttribute=name=>delete node.attributes[name];
+      // Native close removes open synchronously, then queues a user-interaction
+      // task. Do not re-enter the actual Shell handler inside dialog.close().
+      // Limit this port correction to the command dialog shared by these hosts.
+      if(node.tag==="dialog"&&owner.tag==="forma-shell"&&node.classList.contains("command-dialog"))node.close=()=>{
+        if(commandCloseDisposed||!node.open)return;
+        f.trace.push("close:"+node.attributes.class);node.open=false;node.removeAttribute("open");
+        const task=setImmediate(()=>{
+          commandCloseTasks.delete(task);if(commandCloseDisposed)return;
+          ports.bindFixture(f);
+          const event={type:"close",target:node,currentTarget:node,bubbles:false,cancelable:false};
+          // Deliver to the exact original node even if redraw removed it. The
+          // real listener decides whether its original opening is still owned.
+          node.handlers.close?.call(owner,event);node.listeners?.close?.(event);
+        });
+        commandCloseTasks.add(task);
+      };
     }
   };
   f.tick=async()=>{await Promise.resolve();f.draw();f.requested=true;return true;};
@@ -144,21 +186,33 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
   f.host.connectedCallback();
   f.flush=async()=>{
     for(let step=0;step<12;step++){
+      cAlternativeCalmCheckpoint("flush-draw-start",{step});
       f.draw();
+      cAlternativeCalmCheckpoint("flush-draw-end",{step,nodes:f.renderer.nodes.length,instances:f.renderer.instances.size});
       const unknown=[...new Set([...f.renderer.markup.matchAll(/<(forma-[\w-]+)(?=[\s>])/gu)].map(match=>match[1]).filter(tag=>!registry[tag]))];
       if(unknown.length){
-        for(const tag of unknown){const entry=componentModules.get(tag);assert.ok(entry,"every emitted component has a real definition: "+tag);const module=await ports.loadActual(entry.file);assert.equal(typeof module[entry.name],"function",tag);registry[tag]=module[entry.name];}
+        for(const tag of unknown){const entry=componentModules.get(tag);assert.ok(entry,"every emitted component has a real definition: "+tag);cAlternativeCalmCheckpoint("flush-load-start",{tag,file:entry.file});const module=await ports.loadActual(entry.file);cAlternativeCalmCheckpoint("flush-load-end",{tag,file:entry.file});assert.equal(typeof module[entry.name],"function",tag);registry[tag]=module[entry.name];}
         continue;
       }
-      const resized=[...f.resizeTargets];for(const [observer,node]of resized)observer.callback([{target:node,contentRect:node.getBoundingClientRect()}]);
-      const frames=[...f.frames.values()];f.frames.clear();for(const callback of frames)callback(0);
+      const resized=[...f.resizeTargets];cAlternativeCalmCheckpoint("flush-resize-start",{step,count:resized.length});for(const [observer,node]of resized)observer.callback([{target:node,contentRect:node.getBoundingClientRect()}]);
+      cAlternativeCalmCheckpoint("flush-resize-end",{step});
+      const frames=[...f.frames.values()];f.frames.clear();cAlternativeCalmCheckpoint("flush-frames-start",{step,count:frames.length});
+      for(const [frame,callback]of frames.entries()){
+        const source=String(callback),label=source.includes("this.#positionLauncher()")&&source.includes("this.#positionFrame")
+          ?"AssistantPanel.positionLauncher":source.includes("this.#layoutPosture")&&source.includes("this.getBoundingClientRect()")
+          ?"FormaShell.syncLayout":"unclassified";
+        cAlternativeCalmCheckpoint("flush-frame-start",{step,frame,label});
+        callback(0);
+        cAlternativeCalmCheckpoint("flush-frame-end",{step,frame,label});
+      }
+      cAlternativeCalmCheckpoint("flush-frames-end",{step});
       await Promise.resolve();
       if(!f.requested)break;
       if(step===11)throw new Error("Full page did not settle under finite native ports");
     }
     return f.renderer.markup;
   };
-  t.after(()=>{ports.bindFixture(f);for(const {instance}of f.renderer.instances.values())if(instance.isConnected){instance.isConnected=false;instance.disconnectedCallback();}f.host.disconnectedCallback();f.i18n.hostDisconnected();});
+  t.after(()=>{commandCloseDisposed=true;for(const task of commandCloseTasks)clearImmediate(task);commandCloseTasks.clear();ports.bindFixture(f);for(const {instance}of f.renderer.instances.values())if(instance.isConnected){instance.isConnected=false;instance.disconnectedCallback();}f.host.disconnectedCallback();f.i18n.hostDisconnected();});
   await f.flush();
   f.components=()=>[f.host,...[...f.renderer.instances.values()].map(record=>record.instance).filter(instance=>instance.isConnected)];
   f.modules=ports.moduleCache;
@@ -168,12 +222,17 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
   f.tree=()=>fullPageTree(f);
   f.settle=async()=>{
     for(let step=0;step<4;step++){
+      cAlternativeCalmCheckpoint("settle-round-start",{step});
       await new Promise(setImmediate);await f.flush();
+      cAlternativeCalmCheckpoint("settle-first-flush-end",{step});
       // Join the real mounted Output client's current read, not a substitute
       // empty snapshot or a fixed number of render ticks.
       const documents=[...new Set(f.components().filter(component=>component.tag==="forma-output-requirements").map(component=>component.documentId).filter(Boolean))];
+      cAlternativeCalmCheckpoint("settle-output-reads-start",{step,documents:documents.length});
       await Promise.all(documents.map(id=>{const resource=store.outputRequirements.resource(id);return ["loading","refreshing"].includes(resource.state)?store.outputRequirements.ensure(id):resource;}));
+      cAlternativeCalmCheckpoint("settle-output-reads-end",{step});
       await f.flush();
+      cAlternativeCalmCheckpoint("settle-round-end",{step});
     }
   };
   f.find=(tag,predicate)=>{const found=f.tree().visible(tag).filter(predicate);assert.equal(found.length,1,"one visible "+tag+" matches predicate");return found[0];};
@@ -202,7 +261,10 @@ export function fullPageTree(f,markup=f.renderer.markup){
     const parent=stack.at(-1);
     if(!token.startsWith("<")){parent.children.push(decode(token));continue;}
     const [,tag,raw]=token.match(/^<([\w-]+)([^>]*)>/u),parsed=f.renderer.attrs(raw);
-    const owner=parent.component??parent.owner;
+    // These actual light-DOM layout elements render nothing and preserve their
+    // author's children. Their native handlers still belong to the author.
+    const preservesAuthoredChildren=["forma-ui-stack","forma-ui-cluster","forma-ui-surface"].includes(parent.tag);
+    const owner=preservesAuthoredChildren?parent.owner:parent.component??parent.owner;
     const componentId=parsed.attributes["data-fixture-component"],component=componentId?f.renderer.instances.get(componentId)?.instance:null;
     if(tag.startsWith("forma-"))assert.ok(component,"full hierarchy includes actual "+tag);
     const port=f.renderer.nodes.find(candidate=>candidate.owner===owner&&candidate.full===token)??null;

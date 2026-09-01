@@ -520,7 +520,9 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
     env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
       .bind(context.projectAccessId,context.organizationId,context.ownerUserId),
   ];
-  if(includeContent)statements.push(env.DB.prepare(`SELECT content.content_id,content.content FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
+  // Metadata pages retain only references eligible for this exact reader. Body
+  // hydration is separate; content=0 must neither select bytes nor erase live IDs.
+  statements.push(env.DB.prepare(`SELECT content.content_id${includeContent?",content.content":""} FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
     CROSS JOIN private_content content ON content.content_id=scope.resource_id
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.resource_kind='content'
       AND ((scope.visibility='collaborative_output' AND content.owner_id=scope.owner_user_id AND content.kind='document-artifact')
@@ -531,8 +533,8 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
       AND content.redacted_at IS NULL AND content.expires_at>?`)
     .bind(context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,new Date().toISOString()));
   const [rows,headRow,resourceRows,contentRow]=await env.DB.batch<Record<string,unknown>>(statements);
-  const content=Object.fromEntries((contentRow?.results??[]).map((row)=>[String(row.content_id),String(row.content)]));
-  const allowedContent=new Set(Object.keys(content));
+  const content=includeContent?Object.fromEntries((contentRow?.results??[]).map((row)=>[String(row.content_id),String(row.content)])):{};
+  const allowedContent=new Set((contentRow?.results??[]).map((row)=>String(row.content_id)));
   const activeResources=resourceIndex(resourceRows?.results??[]);
   const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent));
   const head=Number(headRow?.results[0]?.head??0),nextAfter=Number(events.at(-1)?.sequence??after);

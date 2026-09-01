@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = process.env.FORMA_OUTPUT_REGRESSION_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path) => import(pathToFileURL(resolve(root, path)).href);
-const [{ binding, controllerFixture, deferred, eventHandlers, loadController, region, templates }, domain, requirements] = await Promise.all([
+const [{ binding, controllerFixture, deferred, eventHandlers, loadController, outputFixtureFocusDocument, region, templates }, domain, requirements] = await Promise.all([
   source("tests/output-ui-source-harness.mjs"), source("src/model/output-plan.ts"), source("src/model/output-requirements.ts"),
 ]);
 const attributes = (value, name) => value.values.flatMap((candidate, index) => value.strings[index].trimEnd().endsWith(`${name}=`) ? [candidate] : []);
@@ -38,15 +38,16 @@ async function openReview() {
   snapshot.summary = domain.summarizeOutputPlan(plan, [], { state: "ready", source_revision: snapshot.sourceRevision, requirement_revision: snapshot.requirementRevision });
   snapshot.requirementSummaries = { [row.blockId]: snapshot.summary };
   const focuses = { opener: 0, review: 0, fallback: 0 };
-  const opener = { isConnected: true, disabled: false, focus() { focuses.opener++; } };
+  const focusDocument = outputFixtureFocusDocument();
+  const opener = { isConnected: true, disabled: false, focus() { focuses.opener++; focusDocument.focus(this); } };
   class Base {
-    constructor() { this.store = fixture.store; this.isConnected = true; this.updateComplete = Promise.resolve(); this.i18n = fixture.controller.i18n; }
+    constructor() { this.store = fixture.store; this.ownerDocument = focusDocument; this.isConnected = true; this.updateComplete = Promise.resolve(); this.i18n = fixture.controller.i18n; }
     requestUpdate() {}
     connectedCallback() { this.isConnected = true; }
     disconnectedCallback() { this.isConnected = false; }
     querySelector(selector) {
-      if (selector === ".output-plan-review") return { focus() { focuses.review++; } };
-      if (selector === "[data-output-plan-focus-return]") return { focus() { focuses.fallback++; } };
+      if (selector === ".output-plan-review") return { isConnected: true, focus() { focuses.review++; focusDocument.focus(this); } };
+      if (selector === "[data-output-plan-focus-return]") return { isConnected: true, focus() { focuses.fallback++; focusDocument.focus(this); } };
       return null;
     }
   }

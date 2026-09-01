@@ -144,7 +144,8 @@ test("the governed artifact dialog exposes reversible focused viewing for every 
   assert.match(artifacts, /this\.i18n\.system\(this\.#viewerFocused\?"Exit focus":"Focus view"\)/);
   assert.match(artifacts, /\?disabled=\$\{editing\}/, "focused viewing must never strand unsaved direct edits");
   assert.match(artifacts, /#viewerReturnFocus\?:HTMLElement/);
-  assert.match(artifacts, /if\(opener\?\.isConnected\)opener\.focus\(\{preventScroll:true\}\)/);
+  // Ordinary Close keeps its native opener; registered own-close requires the original current lease.
+  assert.match(artifacts, /if\(\(!closeGuard\|\|closeGuard\.current\(\)\)&&opener\?\.isConnected\)opener\.focus\(\{preventScroll:true\}\)/, "manual own-close cannot reclaim an opener after its original focus owner retires");
   assertViewerPrivateFocusCleanup(artifacts);
 
   for (const kind of ["audio", "video", "storyboard", "slides", "short_story", "scene"]) {
@@ -171,7 +172,7 @@ test("active artifact viewers retain a visible result-pane ancestor across respo
   assert.match(workspace,/#setArtifactViewerOpen\(open:boolean\)\s*\{[\s\S]*?if\(this\.#artifactViewerOpen===open\)return;/);
   assert.match(workspace,/@document-artifact-viewer-open=\$\{\(\)=>this\.#setArtifactViewerOpen\(true\)\}/);
   assert.match(workspace,/@document-artifact-close=\$\{\(\)=>this\.#setArtifactViewerOpen\(false\)\}/);
-  assert.match(artifacts,/if\(opener\?\.isConnected\)opener\.focus\(\{preventScroll:true\}\);this\.dispatchEvent\(new CustomEvent\("document-artifact-close"/);
+  assert.match(artifacts,/if\(!owned\)return;if\(\(!closeGuard\|\|closeGuard\.current\(\)\)&&opener\?\.isConnected\)opener\.focus\(\{preventScroll:true\}\);this\.dispatchEvent\(new CustomEvent\("document-artifact-close",\{bubbles:true,composed:true,\.\.\.\(closeGuard\?\{detail:\{preserveFocus:true\}\}:\{\}\)\}\)\)/, "owned close still releases the result-pane ancestor even when the original focus guard declines restoration");
   const expression=workspace.match(/id="document-results-panel"[^>]*\?hidden=\$\{([^}]*)\}/)?.[1];
   assert.ok(expression,"the result-pane visibility expression remains explicit");
   const runnable=expression.replaceAll("this.#narrowWorkbench","narrow").replaceAll("this.#workbenchPane","pane").replaceAll("this.#artifactViewerOpen","viewerOpen");

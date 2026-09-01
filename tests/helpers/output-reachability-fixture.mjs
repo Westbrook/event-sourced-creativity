@@ -78,7 +78,7 @@ function syntheticSession(state) {
   };
 }
 
-export async function createOutputReachabilityPage(t,{state="confirmed",surface="document",locale="en",unavailable=false,retainedOriginalRequests=null}={}) {
+export async function createOutputReachabilityPage(t,{state="confirmed",surface="document",locale="en",unavailable=false,retainedOriginalRequests=null,authoredSource=false}={}) {
   assert.ok(Object.hasOwn(OUTPUT_REACHABILITY_STATES,state));
   assert.ok(["document","deliver"].includes(surface));
   const previousFetch=globalThis.fetch,external=[];
@@ -90,6 +90,18 @@ export async function createOutputReachabilityPage(t,{state="confirmed",surface=
   const append=(type,payload)=>events.push({eventId:"output-reachability-seed-"+events.length,streamId,sequence:events.length+1,occurredAt:"2026-08-27T00:00:00Z",recordedAt:"2026-08-27T00:00:00Z",actor:"user",correlationId:"synthetic-output-reachability",type,payload});
   append("ProjectCreated",{project_id:FIXTURE_PROJECT,name:"Synthetic Output project"});
   for(const [index,id] of FIXTURE_DOCUMENT_IDS.entries())append("DocumentCreated",{project_id:FIXTURE_PROJECT,document_id:id,title:"Synthetic Document "+String.fromCharCode(65+index)});
+  // Opt in to a complete authored Source scenario, distinct from an unavailable
+  // Output-domain read. The real Store must receive these events on every
+  // subsequent /api/events read, not only through a local projection append.
+  if(authoredSource)for(const id of FIXTURE_DOCUMENT_IDS){
+    const snapshot=adapter.snapshot(id);
+    assert.equal(snapshot.projectId,FIXTURE_PROJECT);assert.equal(snapshot.documentId,id);
+    assert.equal(snapshot.requirements.length,1,"this finite Source explicitly owns one exact requirement per Document");
+    const [row]=snapshot.requirements;assert.equal(row.spec.id,row.blockId);
+    append("BlockCreated",{project_id:FIXTURE_PROJECT,document_id:id,block_id:row.blockId,type:"output",
+      handle:"output/synthetic-"+id,position:"zz",
+      properties:{text:row.content,subtype:row.subtype,output_spec:structuredClone(row.spec),authority:"authored"}});
+  }
   const requests=[],unexpected=[],readOnlyResumes=new Map();
   let storeHost;
   const isReadOnlyResume=request=>{
@@ -121,6 +133,10 @@ export async function createOutputReachabilityPage(t,{state="confirmed",surface=
       if(url.pathname==="/api/document-jobs")return Response.json({jobs:FIXTURE_DOCUMENT_IDS.flatMap(id=>adapter.jobs(id)),nextCursor:null});
       if(url.pathname==="/api/document-jobs/presentation-candidates")return Response.json({documentId:url.searchParams.get("document"),jobs:[]});
       if(url.pathname==="/api/reviews")return Response.json({reviews:[],nextCursor:null});
+      // Explicit synthetic no-assignment input using the existing inbox DTO;
+      // never an approval, capability grant or routed Worker custody claim.
+      if(authoredSource&&method==="GET"&&url.pathname==="/api/workspaces/reviews"&&!url.search)
+        return Response.json({tasks:[],count:0,delivery:"in-app-only"});
       if(url.pathname==="/api/project-notifications")return Response.json({notifications:[],nextCursor:null});
       if(/context-packages|context-bindings/u.test(url.pathname))return Response.json({packages:[],bindings:[]});
       unexpected.push(url.pathname);throw Error("Unimplemented read-only full-page transport: "+url.pathname);
@@ -145,7 +161,10 @@ export async function createOutputReachabilityPage(t,{state="confirmed",surface=
   };
   f.isReadOnlyResume=isReadOnlyResume;
   f.adapter=adapter;f.outputRecords=records;f.outputRequests=requests;f.outputState=state;f.outputSurface=surface;
-  for(const id of FIXTURE_DOCUMENT_IDS){
+  // Calm's study-only projection is not the backing Source. Admit the opted-in
+  // complete event collection through the unchanged actual Store read path.
+  if(authoredSource)await f.store.refreshEvents({fromStart:true});
+  else for(const id of FIXTURE_DOCUMENT_IDS){
     const snapshot=adapter.snapshot(id),row=snapshot.requirements[0];
     f.appendEvent("BlockCreated",{document_id:id,block_id:row.blockId,type:"output",handle:"output/synthetic-"+id,position:"zz",properties:{text:row.content,subtype:row.subtype,output_spec:row.spec,authority:"authored"}});
   }

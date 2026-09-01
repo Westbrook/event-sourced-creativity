@@ -8,6 +8,10 @@ import { ARTIFACT_DELIVERY_MESSAGES } from "../src/components/design-system/loca
 // Reuse the existing actual HTTP fixtures and full Deliver/Output classes.
 // Only their test registrations are omitted; no production method is replaced.
 // SQLite and native-template/focus ports are not browser, human-review or provider certification.
+// The reduced Deliver owner has no Shell: its artifact link is a binding proof.
+// Ordinary exact viewer arrival is covered separately by the full-host Deliver
+// case in activity-delivery-exact-destinations.test.mjs. Output export/accounting
+// assertions in this file still execute their original actual domain commands.
 async function fixtureDeclarations(file, names) {
   const url = new URL(file, import.meta.url), source = readFileSync(url, "utf8");
   const tree = ts.createSourceFile(url.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -180,7 +184,12 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const kind of ["accepted", "
         exact.handlers.click.call(f.host, { defaultPrevented: false, button: 0, ctrlKey: true, preventDefault() { prevented++; } });
         assert.equal(prevented, 0); assert.deepEqual(f.routes, []);
         exact.handlers.click.call(f.host, { defaultPrevented: false, button: 0, preventDefault() { prevented++; } });
-        assert.equal(prevented, 1); assert.deepEqual(f.routes, [exact.attributes.href]);
+        assert.equal(prevented, 1);
+        assert.equal(exact.handlers.click.toString().replace(/\s+/gu, ""), "(event)=>this.#follow(event,href)", "the original exact href is bound to the actual follow handler");
+        const deliverSource = readFileSync(new URL("../src/components/forma-deliver.ts", import.meta.url), "utf8");
+        assert.ok(deliverSource.includes('#follow(event:MouseEvent,path:string){if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.#open(path);}'));
+        assert.ok(deliverSource.includes('return navigateInApp(this,navigation=>navigation.route(path));'));
+        assert.deepEqual(f.routes, [], "this standalone naming/summary owner cannot claim an admitted Shell route; the whole-host companion retains that oracle");
         assert.ok(links.some(node => node.attributes.href === libraryFocusRoute("output", state.assetId, "Retained visual history")));
       }
     } else if (kind === "unaccepted") {

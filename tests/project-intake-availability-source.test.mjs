@@ -69,7 +69,7 @@ for(const removed of [false,true])test("intake Projects-profile receipt head pre
     const buttons=x.f.tree().visible("button").filter(node=>node.owner===x.owner);
     assert.equal(buttons.some(node=>node.text===x.f.i18n.t("projects.retryOriginal","Retry same creation")),false);
     assert.equal(buttons.some(node=>node.text===x.f.i18n.t("projects.checkOriginalAvailability","Check original availability")),true);
-    const status=x.f.find("p",node=>node.owner===x.owner&&node.attributes.role==="status");
+    const status=x.f.find("p",node=>node.owner===x.owner&&node.attributes.role==="status"&&node.parent?.tag==="form"&&node.parent.parent?.tag==="dialog"&&String(node.parent.parent.attributes.class??"").split(/\s+/u).includes("project-create-dialog"));
     assert.equal(status.text,x.f.i18n.t("projects.originalConfirmedUnavailable"));
   }else{
     assert.equal(documentIdFromRoute(x.h.store.route.get()),original.documentId);
