@@ -152,7 +152,7 @@ test("document-only containment preserves neutral writing intent and exact resul
   assert.match(projects, /!canvas&&resultDocumentId\?withDocumentInRoute\("\/#output-title",resultDocumentId/);
   // The same exact destinations now pass through current-origin admission.
   // Keep the result-source builder tied to its actual native click, not only a route literal.
-  assert.match(projects, /import \{ navigateInApp, type CommandDeparture \} from "\.\/command-departure";/);
+  assert.match(projects, /import \{ navigateInApp, performOperationInApp, type CommandDeparture, type CommandOperation, type OwnOperationAdmission \} from "\.\/command-departure";/);
   assert.match(projects, /#openProject\(projectId:string,destination:string\)\{\s*return navigateInApp\(this,navigation=>this\.store\.openProject\(projectId,destination,navigation\)\);\s*\}/);
   assert.match(projects, /@click=\$\{\(\)=>this\.#openProject\(project\.id,destination\)\}/);
   assert.match(projects, /@click=\$\{\(\)=>\{const resultDocumentId=displayArtifact\?\.documentId\?\?latest\?\.documentId;const resultDestination=!canvas&&resultDocumentId\?withDocumentInRoute\("\/#output-title",resultDocumentId,p\.documents\.find\(\(document\)=>document\.id===resultDocumentId\)\?\.title\?\?""\):destination;void this\.#openProject\(project\.id,resultDestination\);\}\}/);

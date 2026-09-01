@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { createProjectIntakeFixture } from "./helpers/project-intake-fixture.mjs";
+import { createProjectIntakeFixture, reviewProjectIntake } from "./helpers/project-intake-fixture.mjs";
+import { projectIntakeMessage } from "../src/components/design-system/locales/project-intake-messages.ts";
 import { assignmentPage, originalFetch, externalCount } from "./helpers/assigned-review-action-fixture.mjs";
 import { calmFullPageNativePorts as ports, registerCalmFullPageComponents } from "./helpers/calm-full-page-fixture.mjs";
 import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
@@ -31,7 +32,9 @@ async function cCommandDraftDrain(x) {
 async function cCommandDraftNative(t, x) {
   await registerCalmFullPageComponents(x.f, ["forma-workspace"]);
   x.f.nativeHistoryLocation = x.h.location;
-  x.f.native = installOutputNavigationFocusNative(t, x.f, ports);
+  // Intake already owns the native collector; a second installation would
+  // retire the same persistent Shell trigger that the first has just reused.
+  x.f.native = x.native ?? installOutputNavigationFocusNative(t, x.f, ports);
   x.resume = observeActualSceneResumeReads(x.h); t.after(() => x.resume.restore());
   await cCommandDraftDrain(x);
   const start = x.h.requests.length; await cCommandDraftDrain(x);
@@ -114,17 +117,81 @@ function cCommandDraftDiagnostic(t, x, before, gesture, raw, kind, mode) {
     exactSourceHistoryAndReceiptsUnchanged: true, allFinancialRowsUnchanged: true, newDispatches: 0,
     evidence: "actual Shell/native current controls and real isolated Worker; no physical browser or provider proof" }));
 }
+// D presentation compatibility only: each raw value is read from its actual
+// currently visible native field, not from hidden fields or private state.
+async function cCommandProjectNative(t, x) {
+  await cCommandDraftNative(t, x);
+  // Reuse the existing recipe-only host's narrow native DETAILS.open port.
+  // Reflect only the boolean supplied by this actual Projects owner; never
+  // force disclosure, replace render(), or waive strict visible-tree checks.
+  const originalCollect = x.f.renderer.collect;
+  const collect = (markup, owner) => {
+    const start = x.f.renderer.nodes.length, result = Reflect.apply(originalCollect, x.f.renderer, [markup, owner]);
+    if (owner === x.owner) for (const node of x.f.renderer.nodes.slice(start)) {
+      if (node.tag !== "details" || !Object.hasOwn(node.properties, "open")) continue;
+      assert.equal(typeof node.properties.open, "boolean");
+      node.open = node.properties.open;
+    }
+    return result;
+  };
+  x.f.renderer.collect = collect;
+  t.after(() => { if (x.f.renderer.collect === collect) x.f.renderer.collect = originalCollect; });
+  return x;
+}
+function cCommandProjectForm(x) {
+  return x.f.find("form", node => node.owner === x.owner && cCommandDraftClass(node, "project-intake")
+    && cCommandDraftClass(node, "modal-card") && cCommandDraftClass(node, "wide"));
+}
+function cCommandProjectButton(x, key) {
+  const tree = x.f.tree(), forms = tree.visible("form").filter(node => node.owner === x.owner
+    && cCommandDraftClass(node, "project-intake") && cCommandDraftClass(node, "modal-card") && cCommandDraftClass(node, "wide"));
+  assert.equal(forms.length, 1);
+  const buttons = tree.visible("button").filter(node => node.owner === x.owner && cCommandDraftInside(node, forms[0])
+    && node.parent?.tag === "footer" && node.text === projectIntakeMessage(x.f.i18n.locale, key));
+  assert.equal(buttons.length, 1); assert.ok(buttons[0].port.isConnected && x.f.renderer.nodes.includes(buttons[0].port));
+  return buttons[0];
+}
+async function cCommandProjectOutcome(x) {
+  const rows = x.f.tree().visible("textarea").filter(node => node.owner === x.owner && Object.hasOwn(node.attributes, "data-intake-outcome"));
+  assert.ok(rows.length <= 1);
+  if (!rows.length) {
+    const back = cCommandProjectButton(x, "back"); assert.equal(back.port.matches(":disabled"), false);
+    x.f.native.emit("pointerdown", back.port); x.f.native.focus(back.port);
+    await x.f.act(back, "click", { button: 0 });
+  }
+  const outcome = x.f.find("textarea", node => node.owner === x.owner && Object.hasOwn(node.attributes, "data-intake-outcome"));
+  assert.ok(outcome.port.isConnected && x.f.renderer.nodes.includes(outcome.port));
+  assert.equal(outcome.port.matches(":disabled"), false); return outcome;
+}
+async function cCommandProjectRaw(x) {
+  const outcome = await cCommandProjectOutcome(x), objective = outcome.port.value;
+  if (!objective.trim()) assert.equal(cCommandProjectButton(x, "continue").port.matches(":disabled"), true,
+    "Whitespace cannot activate Continue; the deliberate Start blank control is required");
+  await reviewProjectIntake(x.f, x.owner, { blank: true });
+  const values = [];
+  for (const label of [x.f.i18n.t("projects.projectName", "Project name"), x.f.i18n.system("Document name")]) {
+    const node = x.field(label); assert.ok(node.port.isConnected && x.f.renderer.nodes.includes(node.port));
+    assert.equal(node.hiddenBy, null); assert.equal(node.port.matches(":disabled"), false); values.push(node.port.value);
+  }
+  assert.ok(cCommandProjectForm(x).port.isConnected);
+  return { name: values[0], documentTitle: values[1], objective };
+}
 async function cCommandProjectType(x, raw) {
+  if (!x.f.tree().visible("form").some(node => node.owner === x.owner && cCommandDraftClass(node, "project-intake")))
+    await cCommandProjectReopen(x);
+  const objective = await cCommandProjectOutcome(x); objective.port.value = raw.objective; await x.f.act(objective, "input");
+  assert.equal((await cCommandProjectOutcome(x)).port.value, raw.objective);
+  if (!raw.objective.trim()) assert.equal(cCommandProjectButton(x, "continue").port.matches(":disabled"), true);
+  await reviewProjectIntake(x.f, x.owner, { blank: true });
   for (const [label, value] of [[x.f.i18n.t("projects.projectName", "Project name"), raw.name], [x.f.i18n.system("Document name"), raw.documentTitle]]) {
     const node = x.field(label); assert.ok(node.port.isConnected); assert.equal(node.port.matches(":disabled"), false);
     node.port.value = value; await x.f.act(node, "input");
   }
-  const objective = x.objective(); assert.ok(objective.port.isConnected); assert.equal(objective.port.matches(":disabled"), false);
-  objective.port.value = raw.objective; await x.f.act(objective, "input");
-  assert.deepEqual(x.visible().draft, raw);
+  assert.deepEqual(await cCommandProjectRaw(x), raw);
 }
 async function cCommandProjectClose(x) {
-  const tree = x.f.tree(), forms = tree.visible("form").filter(node => node.owner === x.owner && node.attributes.class === "modal-card wide");
+  const tree = x.f.tree(), forms = tree.visible("form").filter(node => node.owner === x.owner
+    && cCommandDraftClass(node, "modal-card") && cCommandDraftClass(node, "wide") && cCommandDraftClass(node, "project-intake"));
   assert.equal(forms.length, 1);
   const buttons = tree.visible("button").filter(node => node.owner === x.owner && cCommandDraftInside(node, forms[0])
     && node.parent?.tag === "footer" && node.attributes.type === "button" && node.text === x.f.i18n.t("action.cancel", "Cancel"));
@@ -137,12 +204,12 @@ async function cCommandProjectReopen(x) {
     && node.owner.label === x.f.i18n.t("projects.new", "New project"));
   assert.ok(button.port.isConnected); assert.equal(button.port.matches(":disabled"), false);
   x.f.native.emit("pointerdown", button.port); x.f.native.focus(button.port);
-  await x.f.act(button, "click", { button: 0 }); assert.equal(x.visible().modal, true);
+  await x.f.act(button, "click", { button: 0 }); assert.ok(cCommandProjectForm(x).port.isConnected);
 }
 
 for (const [locale, mode] of [["en", "clean"], ["ja", "raw"], ["ja", "resolve"]])
 test("C Projects closed raw intake command origin / " + locale + " / " + mode, cCommandDraftOptions, async t => {
-  const x = await createProjectIntakeFixture(t, { locale }); await cCommandDraftNative(t, x);
+  const x = await createProjectIntakeFixture(t, { locale, prepare: false }); await cCommandProjectNative(t, x);
   const empty = { name: "", documentTitle: "", objective: "" };
   const raw = mode === "clean" ? empty : { name: "  Retained command project B  ", documentTitle: " \t ", objective: " \n\t  " };
   await cCommandProjectType(x, raw); await cCommandProjectClose(x);
@@ -152,7 +219,7 @@ test("C Projects closed raw intake command origin / " + locale + " / " + mode, c
   if (mode === "clean") { cCommandDraftDeparture(x, before); return; }
   cCommandDraftRefusal(x, before, gesture);
   assert.equal(x.visible().modal, false, "Refusal does not silently reopen the closed intake");
-  await cCommandProjectReopen(x); assert.deepEqual(x.visible().draft, raw, "Reopening the actual current form reveals the exact retained whitespace");
+  await cCommandProjectReopen(x); assert.deepEqual(await cCommandProjectRaw(x), raw, "Reopening the actual current form reveals the exact retained whitespace");
   if (mode === "raw") { await cCommandProjectClose(x); await cCommandDraftNoWrites(x, before); return; }
   await cCommandProjectType(x, empty); await cCommandProjectClose(x);
   const fresh = await cCommandDraftOpenWork(x); await cCommandDraftNoWrites(x, before);
@@ -225,7 +292,7 @@ function cPageShortcutObserve(t, x, before, kind, raw) {
 
 for (const [locale, mode] of [["en", "clean"], ["ja", "raw-resolve"]])
 test("C ordinary Projects contents shortcut / " + locale + " / " + mode, cCommandDraftOptions, async t => {
-  const x = await createProjectIntakeFixture(t, { locale }); await cCommandDraftNative(t, x);
+  const x = await createProjectIntakeFixture(t, { locale, prepare: false }); await cCommandProjectNative(t, x);
   await registerCalmFullPageComponents(x.f, ["forma-project-contents"]); await cCommandDraftDrain(x);
   const empty = { name: "", documentTitle: "", objective: "" };
   const raw = mode === "clean" ? empty : { name: "  Shortcut project B  ", documentTitle: " \t未送信  ", objective: " \n\t  " };
@@ -262,7 +329,7 @@ test("C ordinary Projects contents shortcut / " + locale + " / " + mode, cComman
   cPageShortcutObserve(t, x, before, "projects-contents-" + mode, raw);
   if (mode !== "clean") {
     cPageShortcutRefused(x, before, gesture); assert.equal(x.visible().modal, false);
-    await cCommandProjectReopen(x); assert.deepEqual(x.visible().draft, raw);
+    await cCommandProjectReopen(x); assert.deepEqual(await cCommandProjectRaw(x), raw);
     await cCommandProjectType(x, empty); await cCommandProjectClose(x);
     await cPageShortcutClick(x, target); await cCommandDraftNoWrites(x, before);
   }
@@ -309,7 +376,7 @@ const cProjectsCanvasPrivate = x => ({
   payloads: x.worker.sqlite.prepare("SELECT * FROM event_private_payloads ORDER BY private_event_id").all(),
 });
 async function cProjectsCanvasPage(t) {
-  const x = await createProjectIntakeFixture(t, { locale: "en" }); await cCommandDraftNative(t, x);
+  const x = await createProjectIntakeFixture(t, { locale: "en", prepare: false }); await cCommandProjectNative(t, x);
   await registerCalmFullPageComponents(x.f, ["forma-canvas-application", "forma-canvas-surface"]);
   assert.strictEqual(x.f.renderer.registry["forma-canvas-application"], x.f.modules.get("src/apps/canvas/entry.ts").FormaCanvasApplication);
   assert.strictEqual(x.f.renderer.registry["forma-canvas-surface"], x.f.modules.get("src/canvas/canvas-application.ts").CanvasApplication);
@@ -464,7 +531,7 @@ test("C Projects current-project Canvas footer joins original session / en / " +
     await cCommandDraftNoWrites(x, before); await cProjectsCanvasNoWrites(x, before);
     cPageShortcutRefused(x, before, gesture);
     assert.equal(x.visible().modal, false, "The refusal does not reopen an intake without the user");
-    await cCommandProjectReopen(x); assert.deepEqual(x.visible().draft, raw, "Exact raw strings, including empty-looking values, are retained");
+    await cCommandProjectReopen(x); assert.deepEqual(await cCommandProjectRaw(x), raw, "Exact raw strings, including empty-looking values, are retained");
     await cCommandProjectType(x, empty); await cCommandProjectClose(x);
     assert.equal(x.owner.captureCommandDeparture().blocked(), false);
     await cCommandDraftNoWrites(x, before); await cProjectsCanvasNoWrites(x, before);

@@ -1,5 +1,11 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1i2qq03.94": "Présentation explicite uniquement ; le composant hôte fournit le contrôle de rattachement au contexte actuel, jamais une ligne enregistrée fictive.",
+  "system.auto.tqfa8e.80": "Uniquement l’identifiant d’origine encore non résolu du composant hôte de la recette ; aucun corps de requête, justificatif ni autorisation de réessai.",
+  "system.auto.1w05nuc.88": "Renvoie explicitement la demande d’enregistrement d’origine de cette session ; ne matérialise jamais les modifications plus récentes et ne les réapplique jamais sur une nouvelle base.",
+  "system.auto.1g1qzzo.110": "Transfère uniquement les données saisies par l’utilisateur vers ce formulaire existant ; toutes les autorisations requises pour les livrables doivent de nouveau être réunies avant de préparer la proposition.",
+  "system.auto.1akiecf.88": "Une seule proposition locale rattachée au contexte actuel. Seule l’action explicite « Enregistrer » de la carte existante peut l’enregistrer durablement.",
+  "system.auto.jf2bs7.90": "Uniquement l’opération exacte issue du formulaire, déjà prise en charge par un seul gestionnaire enregistré ; aucun contrôle temporaire de la route ou du focus n’est acquis.",
   "system.auto.1eh5z6w.74": "Seule cette visionneuse actuelle précise, en lecture seule, peut être exclue du périmètre de son parent.",
   "system.auto.7jaeh8.82": "Admet uniquement un départ ordinaire de l’interface encore valide ; ne bloque jamais les retraits liés à la confidentialité ou au chargement.",
   "system.auto.1qiom3q.70": "Prise en charge sans contenu, partagée entre les gestionnaires de navigation existants de cette vue.",

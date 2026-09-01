@@ -4,6 +4,8 @@ import { lifecyclePage, lifecycleButton, activateLifecycle } from "./helpers/cre
 import { createSceneStoreHost } from "./helpers/scene-cost-store-host.mjs";
 import { observeActualSceneResumeReads } from "./helpers/actual-scene-resume-read.mjs";
 import { withProjectTaskDocumentInRoute } from "../src/model/routes.ts";
+import { readWorkspaceEvents as dRecipeReadWorkspaceEvents } from "../worker/runtime.ts";
+import { financial as dRecipeFinancial } from "./helpers/event-source-retirement-fixture.mjs";
 const originalFetch=globalThis.fetch;let external=0;
 globalThis.fetch=async()=>{external++;throw Error("No external/provider transport in lifecycle opening controls");};
 after(()=>{assert.equal(external,0);globalThis.fetch=originalFetch;});
@@ -212,4 +214,120 @@ for (const path of twoChoicePaths) test("F ordinary " + path.route + " retired "
   if (path.withdrawal === "reader") assert.deepEqual(f.store.session.get().projectContext.permissions, ["project.read"]);
   certifiedTwoChoiceReads(f, resume);
   t.diagnostic("F_TWO_CHOICE_RETIRED " + JSON.stringify({ route: path.route, medium: path.medium, withdrawal: path.withdrawal, firstVisibleChoice: choices[0], currentRoute, oldSettingsOpened: false, generated: false }));
+});
+
+
+// D-only additive coverage, installed after the complete eight-piece baseline
+// and Store-identity compatibility. Reuse the C connected-host/native machinery.
+test("D closed recipe-only Projects draft blocks the current lifecycle action until deliberately cleared", { concurrency: false, timeout: 45_000 }, async t => {
+  const { f, resume } = await twoChoicePage(t, "/projects"), h = f.storeHost, worker = h.worker;
+  const owner = onlyTwoChoice(f.components().filter(host => host.tag === "forma-projects"), "one actual current Projects owner");
+  const chosen = action(f, "configure"), target = JSON.stringify(chosen.target);
+  assert.equal(chosen.target.projectId, f.projectId); assert.equal(chosen.target.documentId, f.documentId);
+  assert.equal(chosen.target.medium, null); assert.equal(chosen.target.canvasId, null);
+  const before = { route: f.store.route.get(), events: JSON.stringify(f.store.events.get()), head: f.store.head.get(),
+    history: await dRecipeReadWorkspaceEvents(worker.env, worker.streamId), money: dRecipeFinancial(worker),
+    source: f.store.captureSourceOwnership(), authorization: f.store.captureAuthorizationScope(), selected: f.store.ui.selectedOutputId };
+  const receipts = () => worker.sqlite.prepare("SELECT * FROM event_client_receipts WHERE stream_id=? ORDER BY client_event_id").all(worker.streamId);
+  const receiptBefore = receipts();
+  const unchanged = async () => {
+    assert.equal(JSON.stringify(f.store.events.get()), before.events); assert.equal(f.store.head.get(), before.head);
+    assert.deepEqual(await dRecipeReadWorkspaceEvents(worker.env, worker.streamId), before.history);
+    assert.deepEqual(receipts(), receiptBefore); assert.deepEqual(dRecipeFinancial(worker), before.money);
+    assert.ok(f.store.sourceOwnershipActive(before.source) && f.store.authorizationScopeActive(before.authorization));
+    assert.equal(f.store.ui.selectedOutputId, before.selected); f.sourceUnchanged();
+  };
+  // Finite property port only: flat collect already reflects native value and
+  // checked, but not DETAILS.open. Apply only this actual bound boolean, scoped
+  // to this owner and this disclosure, at the existing commit boundary. It is
+  // never forced open and no hidden control or application method is substituted.
+  const originalCollect = f.renderer.collect;
+  const collect = (markup, currentOwner) => {
+    const start = f.renderer.nodes.length, result = Reflect.apply(originalCollect, f.renderer, [markup, currentOwner]);
+    if (currentOwner === owner) for (const node of f.renderer.nodes.slice(start))
+      if (node.tag === "details" && Object.hasOwn(node.attributes, "data-intake-recipe")) {
+        assert.equal(typeof node.properties.open, "boolean", "The current app supplies an explicit native open property");
+        node.open = node.properties.open;
+      }
+    return result;
+  };
+  f.renderer.collect = collect;
+  t.after(() => { if (f.renderer.collect === collect) f.renderer.collect = originalCollect; });
+  const intake = () => onlyTwoChoice(f.tree().visible("form").filter(node => node.owner === owner && classed(node, "project-intake")), "one current native intake form");
+  const recipe = () => onlyTwoChoice(f.tree().visible("select").filter(node => node.owner === owner
+    && Object.hasOwn(node.attributes, "data-intake-recipe-choice")), "one current visible recipe selector");
+  const files = () => f.tree().visible("input").filter(node => node.owner === owner && Object.hasOwn(node.attributes, "data-intake-recipe-file"));
+  const emptyBrief = () => {
+    const form = intake(), tree = f.tree();
+    const outcome = onlyTwoChoice(tree.visible("textarea").filter(node => node.owner === owner
+      && Object.hasOwn(node.attributes, "data-intake-outcome")), "actual empty intent field, not a review or submitted brief");
+    assert.equal(outcome.port.value, "");
+    const textual = tree.nodes.filter(node => ["input", "textarea"].includes(node.tag) && node.attributes.type !== "checkbox"
+      && withinTwoChoice(node, form));
+    assert.ok(textual.length >= 2, "Actual intent and optional source controls remain present");
+    for (const node of textual) assert.equal(node.port.value, "", "Every rendered raw brief field remains empty");
+    const submit = onlyTwoChoice(tree.visible("button").filter(node => node.owner === owner && node.attributes.type === "submit"
+      && withinTwoChoice(node, form)), "one original intent Continue control");
+    assert.equal(Object.hasOwn(submit.attributes, "disabled"), true, "No nonempty objective or creation intent has been manufactured");
+  };
+  const open = async () => {
+    const button = onlyTwoChoice(f.tree().visible("button").filter(node => node.owner.tag === "forma-ui-button"
+      && node.owner.parentElement === owner && node.owner.label === f.i18n.t("projects.new", "New project")), "existing ordinary New project control");
+    f.native.emit("pointerdown", button.port); f.native.focus(button.port); await f.act(button);
+    emptyBrief();
+  };
+  const close = async () => {
+    const button = onlyTwoChoice(f.tree().visible("button").filter(node => node.owner === owner && classed(node, "modal-close")), "current native intake Close");
+    f.native.emit("pointerdown", button.port); f.native.focus(button.port); await f.act(button);
+    await settleTwoChoice(f, resume);
+    assert.equal(dialogs(f).filter(node => classed(node, "project-create-dialog")).length, 0);
+    assert.ok(owner.isConnected); assert.equal(f.store.route.get(), before.route);
+  };
+  await open();
+  const tree = f.tree(), details = onlyTwoChoice(tree.visible("details").filter(node => node.owner === owner
+    && Object.hasOwn(node.attributes, "data-intake-recipe")), "the real optional recipe disclosure");
+  const summary = onlyTwoChoice(tree.visible("summary").filter(node => node.parent === details), "its current visible native summary");
+  assert.equal(details.port.open, false); assert.equal(summary.handlers.click, undefined);
+  // Existing native-summary default, followed by the application's real toggle.
+  f.native.emit("pointerdown", summary.port); f.native.focus(summary.port);
+  details.port.open = !details.port.open; await f.act(details, "toggle");
+  const select = recipe(); assert.equal(select.port.value, "");
+  select.port.value = "campaign"; await f.act(select, "change");
+  assert.equal(recipe().port.value, "campaign"); assert.ok(files().length >= 2);
+  assert.ok(files().every(node => node.port.checked === false), "No file type is selected automatically");
+  const selectedFiles = ["campaign-image", "campaign-audio"];
+  for (const key of selectedFiles) {
+    const checkbox = onlyTwoChoice(files().filter(node => node.attributes["data-intake-recipe-file"] === key), "exact visible file choice");
+    assert.equal(checkbox.port.matches(":disabled"), false); checkbox.port.checked = true; await f.act(checkbox, "change");
+  }
+  assert.deepEqual(files().filter(node => node.port.checked).map(node => node.attributes["data-intake-recipe-file"]), selectedFiles);
+  emptyBrief(); await close(); await unchanged();
+  const requestBoundary = h.requests.length, originalAction = lifecycleButton(f, chosen.id);
+  f.native.emit("pointerdown", originalAction.port); f.native.focus(originalAction.port); activateLifecycle(f, originalAction);
+  await settleTwoChoice(f, resume);
+  assert.equal(f.store.route.get(), before.route, "A closed raw recipe alone blocks current lifecycle navigation");
+  assert.ok(owner.isConnected); assert.equal(dialogs(f).length, 0, "No old intake or destination opens automatically");
+  assert.equal(h.requests.length, requestBoundary, "The refused lifecycle gesture makes no request, including no Check, upload or Save");
+  assert.equal(f.store.ui.toast, f.i18n.t("next.lifecycle.currentWorkOpen", "Finish or close the current edit or review before opening another next step."));
+  assert.equal(JSON.stringify(action(f, "configure").target), target); await unchanged();
+  await open();
+  assert.equal(recipe().port.value, "campaign", "Deliberate reopening retains the exact recipe choice");
+  assert.deepEqual(files().filter(node => node.port.checked).map(node => node.attributes["data-intake-recipe-file"]), selectedFiles,
+    "Both genuinely chosen file types survive Close and refused navigation");
+  const clear = recipe(); clear.port.value = ""; await f.act(clear, "change");
+  assert.equal(recipe().port.value, ""); assert.equal(files().length, 0, "Choosing No recipe deliberately clears its file choices");
+  emptyBrief(); await close(); await unchanged();
+  assert.equal(h.requests.length, requestBoundary, "Reopen and local clearing make no transport request");
+  const choices = [], opened = await openTwoChoiceChooser(f, resume, { route: "/projects", tag: "forma-projects", medium: "image" }, choices);
+  assert.equal(opened.chosen.id, chosen.id); assert.equal(opened.target, target);
+  assert.equal(choices.length, 1, "The same current lifecycle action is restored after deliberate clearing");
+  assert.equal(f.store.projection.get().documentId, f.documentId); assert.equal(opened.chooser.owner.store, f.store);
+  assert.equal(opened.chooser.owner.tag, "forma-workspace"); await unchanged(); certifiedTwoChoiceReads(f, resume);
+  assert.equal(h.requests.some(request => request.body?.action === "project_intake"), false);
+  assert.equal(h.requests.some(request => request.url.startsWith("/api/output-requirements") && (request.init.method ?? "GET") !== "GET"), false);
+  t.diagnostic("D_PROJECTS_RECIPE_ONLY_LIFECYCLE " + JSON.stringify({ locale: f.locale, recipe: "campaign", selectedFiles,
+    everyBriefFieldUntouched: true, closedDraftBlocksWithoutRequest: true, reopenedChoicesRetained: true,
+    deliberateNoRecipeRestoresSameAction: true, exactDocumentId: f.documentId, canonicalEventsAndReceiptsUnchanged: true,
+    financialRowsUnchanged: true, createdProjects: 0, savedRequirements: 0, generatedOrApproved: 0,
+    evidence: "actual connected Projects/Workspace/Store with existing synthetic lifecycle projection and RAM Worker read/fiscal controls; finite native property/toggle ports, not physical UI proof" }));
 });

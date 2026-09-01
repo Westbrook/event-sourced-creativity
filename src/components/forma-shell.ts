@@ -597,6 +597,50 @@ export class FormaShell extends FormaElement {
     const release=()=>{if(this.#commandRouteFocus===retained)this.releaseExactRetainedArtifactFocus(route,focus);};
     void opening.then(release,release);
   }
+  /** One registered owner's exact consumed-form operation; no route or focus lease is acquired. */
+  async performOperationFrom(origin:FormaElement,operation:string,event:Event):Promise<void>{
+    if(!this.isConnected||!origin.isConnected||!this.contains(origin)||origin.closest("forma-shell")!==this
+      ||!FormaElement.hasStoreIdentity(origin,this.store)||this.store.ui.commandOpen)return;
+    const registered=this.#commandOriginElements().find(element=>element===origin),capture=registered?.captureCommandOperation;
+    if(!registered||typeof capture!=="function")return;
+    const consumed=capture.call(registered,operation,event);
+    if(!consumed||consumed.element!==origin||typeof consumed.start!=="function")return;
+    const owner=this.#captureNavigationOpening(),store=this.store;
+    const original=owner?.origins.find(value=>value.element===origin);
+    if(!owner||!original)return;
+    // Substitute only the operation consumed by this actual owner. Later
+    // captures still see its pending work; every sibling capture stays exact.
+    owner.origins=owner.origins.map(value=>value===original?{
+      element:origin,current:()=>original.current()&&consumed.current(),
+      blocked:()=>consumed.blocked(),reason:()=>consumed.reason(),
+    }:value);
+    let disposed=false,retired:"identity"|"blocked"|null=null,unsubscribe=()=>{};
+    const identityCurrent=()=>this.store===store&&this.#commandContextCurrent(owner)
+      &&store.route.get()===owner.route&&store.sourceOwnershipActive(owner.source)
+      &&this.#commandOriginsCurrent(owner);
+    const blocked=()=>owner.origins.find(value=>value.blocked());
+    const current=()=>{
+      if(disposed)return false;
+      if(!identityCurrent())retired="identity";
+      if(retired)return false;
+      if(blocked())retired="blocked";
+      return !retired;
+    };
+    const dispose=()=>{if(disposed)return;disposed=true;unsubscribe();};
+    const reportRefusal=()=>{
+      if(retired==="identity"||!identityCurrent())return;
+      const refusal=blocked();
+      if(refusal)store.toast(this.i18n.t(refusal.reason()));
+    };
+    if(!current()){reportRefusal();dispose();return;}
+    unsubscribe=store.subscribe(()=>{current();});
+    try{
+      // Start is synchronous up to the owner's first await. Its original
+      // Store call alone consumes current(); never recheck it after publication.
+      await consumed.start({current,dispose});
+    }finally{dispose();}
+  }
+
   /** Deliberate UI navigation only; internal save, recovery and permission retirement do not call this. */
   async navigateFrom(origin:FormaElement,run:InAppNavigationAction,preferences:NavigationPresentationContext={}):Promise<boolean>{
     if(!this.isConnected||!origin.isConnected||!this.contains(origin)||!FormaElement.hasStoreIdentity(origin,this.store)

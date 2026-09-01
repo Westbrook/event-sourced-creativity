@@ -51,6 +51,10 @@ export function installOutputNavigationFocusNative(t, f, ports) {
   // header template. Its existing renderer binding carries template identity
   // and keyed/repeat ancestry; a matching class alone never owns a native node.
   const commandTriggers=new Map(),seenCommandTriggers=new Set();
+  // Library's original import preview has one native dialog in its actual
+  // keyed template. Its own close EventPart includes that exact key ancestry;
+  // neither a class match nor the original import's data confers identity.
+  const importDialogs=new Map(),seenImportDialogs=new Set();
   const value=f.renderer.value.bind(f.renderer);
   f.renderer.value=(part,owner,path,caches)=>{
     const markup=value(part,owner,path,caches);
@@ -66,7 +70,7 @@ export function installOutputNavigationFocusNative(t, f, ports) {
   };
   const draw=f.renderer.draw.bind(f.renderer);
   f.renderer.draw=(...args)=>{
-    const previous=new Set(f.renderer.nodes);articleTemplates.clear();seenArticles.clear();seenCommandTriggers.clear();structure=null;drawing=true;
+    const previous=new Set(f.renderer.nodes);articleTemplates.clear();seenArticles.clear();seenCommandTriggers.clear();seenImportDialogs.clear();structure=null;drawing=true;
     try{return draw(...args);}finally{
       drawing=false;structure=null;const present=new Set(f.renderer.nodes);
       for(const [owner,record]of articles)if(!seenArticles.has(owner)||!present.has(record.node)){
@@ -74,6 +78,9 @@ export function installOutputNavigationFocusNative(t, f, ports) {
       }
       for(const [owner,record]of commandTriggers)if(!seenCommandTriggers.has(owner)||!present.has(record.node)){
         record.node.isConnected=false;commandTriggers.delete(owner);
+      }
+      for(const [owner,record]of importDialogs)if(!owner.isConnected||!seenImportDialogs.has(owner)||!present.has(record.node)){
+        record.node.isConnected=false;importDialogs.delete(owner);
       }
       if(typeof f.tree==="function")for(const node of previous)if(!present.has(node))node.isConnected=false;
     }
@@ -162,8 +169,9 @@ export function installOutputNavigationFocusNative(t, f, ports) {
     };
     const originalMatches=node.matches?.bind(node);
     node.matches=selector=>{
-      // Only the literal attribute grammar already supported by this helper;
+      // Literal attributes and simple ASCII IDs reuse the exact live matcher;
       // pseudos, popover state and other selectors retain their existing port.
+      if(/^#[A-Za-z_][A-Za-z0-9_-]*$/u.test(selector))return simpleMatches(node,selector);
       if(/^(?:[\w-]+)?(?:\[[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\]\s]+))?\])+$/u.test(selector))return simpleMatches(node,selector);
       if(selector!==":disabled")return originalMatches?.(selector)??simpleMatches(node,selector);
       if(node.disabled||Object.hasOwn(node.attributes??{},"disabled"))return true;
@@ -240,6 +248,33 @@ export function installOutputNavigationFocusNative(t, f, ports) {
             commandTriggers.set(owner,{part:binding.part,store:owner.store,node:fresh});
           }
           seenCommandTriggers.add(owner);
+        }
+      }
+    }
+    if(drawing&&owner?.tag==="forma-library"){
+      const anchors=f.renderer.nodes.slice(start).filter(node=>node.tag==="dialog"
+        &&String(node.attributes.class??"").split(/\s+/u).includes("library-import-dialog"));
+      if(anchors.length===1){
+        const fresh=anchors[0],token=fresh.full.match(/\s@close=(?:["'])?__bound_(\d+)__(?:["'])?(?=[\s>])/u);
+        const binding=token?f.renderer.bindings[Number(token[1])]:null;
+        if(binding?.owner===owner&&typeof binding.part==="string"
+          &&/\/key:[^/]+\/template:\d+\/part:\d+$/u.test(binding.part)
+          &&typeof binding.value==="function"&&binding.value===fresh.handlers.close
+          &&!/\s[.?]?open(?=[\s=>])/u.test(fresh.full)){
+          const previous=importDialogs.get(owner);
+          const same=previous?.node.isConnected&&previous.part===binding.part&&previous.store===owner.store;
+          if(same){
+            const node=previous.node;
+            // Keep native open state, listeners and original node-bound methods.
+            // Only this same emitted element's current attributes/parts change.
+            for(const key of["full","attributes","properties","propertyParts","handlers"])node[key]=fresh[key];
+            f.renderer.nodes[f.renderer.nodes.indexOf(fresh)]=node;
+            if(fresh!==node)fresh.isConnected=false;
+          }else{
+            if(previous)previous.node.isConnected=false;
+            importDialogs.set(owner,{part:binding.part,store:owner.store,node:fresh});
+          }
+          seenImportDialogs.add(owner);
         }
       }
     }

@@ -4,8 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {AUTHORED,createProjectIntakeFixture,assertComplete,sceneDeferred,untilScene} from "./helpers/project-intake-fixture.mjs";
-import {calmFullPageNativePorts as ports} from "./helpers/calm-full-page-fixture.mjs";
-import {installOutputNavigationFocusNative} from "./helpers/output-navigation-focus-native.mjs";
+
 import {documentIdFromRoute} from "../src/model/routes.ts";
 const options={concurrency:false,timeout:45000};
 const disabled=node=>Object.hasOwn(node.attributes,"disabled");
@@ -63,7 +62,7 @@ async function checkExactAfterDismissal(x,first,originalCanonical){
 
 const scenarios=["restored-pending-close","restored-pending-escape","ordinary-pending-close","ordinary-completion","settled-lost-close"];
 for(const locale of ["en","ja"])for(const scenario of scenarios)test("B2 held original nonmutating dismissal "+locale+" "+scenario,options,async t=>{
-  const x=await createProjectIntakeFixture(t,{locale}),native=installOutputNavigationFocusNative(t,x.f,ports);
+  const x=await createProjectIntakeFixture(t,{locale}),native=x.native;
   await x.f.settle();const release=sceneDeferred();let first=null,finished=false;
   x.setBehavior(async(stage,row)=>{
     if(stage==="after-worker"&&!first){assertComplete(row);first=row;await release.promise;

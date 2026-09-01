@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {documentIdFromRoute} from "../src/model/routes.ts";
 import {AUTHORED,createProjectIntakeFixture,assertComplete,intendedIds} from "./helpers/project-intake-fixture.mjs";
+import {projectIntakeMessage} from "../src/components/design-system/locales/project-intake-messages.ts";
 
 const options={concurrency:false,timeout:45000};
 const locales=["en","fr","ar","ja"];
@@ -17,12 +18,13 @@ const footerButtons=x=>x.f.tree().visible("button").filter(node=>{
   let footer=false;
   for(let parent=node.parent;parent;parent=parent.parent){
     if(parent.tag==="footer")footer=true;
-    if(parent.tag==="form"&&parent.attributes.class==="modal-card wide")return footer;
+    if(parent.tag==="form"&&String(parent.attributes.class).split(/\s+/u).includes("project-intake"))return footer;
   }
   return false;
 });
 function footerDismiss(x){
-  const buttons=footerButtons(x).filter(node=>node.attributes.type==="button"&&node.attributes.class==="button ghost");
+  const buttons=footerButtons(x).filter(node=>node.attributes.type==="button"&&node.attributes.class==="button ghost"
+    &&[text(x,"action.close","Close"),text(x,"action.cancel","Cancel")].includes(node.text));
   assert.equal(buttons.length,1,"One actual current footer dismissal, excluding the top-right Close icon and project cards");
   assert.equal(Object.hasOwn(buttons[0].attributes,"disabled"),false);
   return buttons[0];
@@ -40,7 +42,7 @@ const draft=x=>({
 function assertDraft(x,expected,locked){
   assert.deepEqual(draft(x),expected,"The actual current fields preserve raw spaces, newline and authored Unicode");
   for(const node of [x.field(text(x,"projects.projectName","Project name")),x.field(x.f.i18n.system("Document name")),x.objective()])
-    assert.equal(Object.hasOwn(node.attributes,"disabled"),locked,"Only retained attempted intake locks its original field");
+    assert.equal(node.port.matches(":disabled"),locked,"Only retained attempted intake locks its original field, including the native disabled advanced fieldset");
 }
 async function typeRawDraft(x,locale){
   const value={
@@ -140,7 +142,8 @@ for(const locale of locales){
     assert.equal(labels.beforeLabel,text(x,"action.cancel","Cancel"));
     assert.equal(labels.afterLabel,text(x,"action.cancel","Cancel"));
     assert.equal(labels.footerLabels.includes(text(x,"action.close","Close")),false,"Top-right Close must not mask the footer contract");
-    assert.equal(footerButtons(x).length,2,"Only Cancel and Create exist before any attempt");
+    assert.deepEqual(footerButtons(x).map(node=>node.text),[text(x,"action.cancel","Cancel"),projectIntakeMessage(locale,"discardDraft"),projectIntakeMessage(locale,"back"),text(x,"projects.createAction","Create project")],
+      "Before any attempt the exact footer preserves Cancel, Back and Create plus explicit local Discard; no original-recovery control is fabricated");
     assert.equal(x.dispatches.length,0);
     assert.equal((await x.canonical()).projects.length,0);
     t.diagnostic(JSON.stringify({locale,phase:"before-attempt",...labels,requests:0,rawDraftRetained:true}));

@@ -11940,6 +11940,47 @@
             },
             {
               "kind": "field",
+              "name": "newDraft",
+              "type": {
+                "text": "OutputRequirementCardDraft | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "method",
+              "name": "openNewDraft",
+              "parameters": [
+                {
+                  "name": "opener",
+                  "type": {
+                    "text": "HTMLElement | null"
+                  }
+                },
+                {
+                  "name": "current",
+                  "type": {
+                    "text": "() => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Explicit presentation only; the host supplies current ownership, never a fabricated saved row."
+            },
+            {
+              "kind": "field",
+              "name": "originalSaveId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Recipe host's unresolved original ID only; no body, receipt or retry permission."
+            },
+            {
+              "kind": "field",
               "name": "presentation",
               "type": {
                 "text": "\"full\" | \"compact\""
@@ -11961,6 +12002,30 @@
                 "text": "\"loading\" | \"ready\" | \"refreshing\" | \"unavailable\""
               },
               "default": "\"loading\""
+            },
+            {
+              "kind": "method",
+              "name": "retryOriginalSave",
+              "parameters": [
+                {
+                  "name": "clientMutationId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "current",
+                  "type": {
+                    "text": "() => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Explicitly resend this session's original Save; never materialize or rebase newer edits."
             },
             {
               "kind": "field",
@@ -12152,6 +12217,36 @@
             },
             {
               "kind": "method",
+              "name": "receiveIntakeRecipe",
+              "parameters": [
+                {
+                  "name": "input",
+                  "type": {
+                    "text": "OutcomeRecipeInput"
+                  }
+                },
+                {
+                  "name": "source",
+                  "type": {
+                    "text": "OutcomeRecipeInputSource"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; opener: HTMLElement | null; focus: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<\"unavailable\" | \"opened\" | \"retained\" | \"existing-draft\" | \"stale\" | \"forbidden\">"
+                }
+              },
+              "description": "Transfer only authored input into this existing entry; full Output authority is required again before staging."
+            },
+            {
+              "kind": "method",
               "name": "revealAuthoredRequirement",
               "parameters": [
                 {
@@ -12173,6 +12268,30 @@
                 }
               },
               "description": "Reveal one current authored Output's existing status only; never create a snapshot or action grant."
+            },
+            {
+              "kind": "method",
+              "name": "stageRecipeDraft",
+              "parameters": [
+                {
+                  "name": "proposal",
+                  "type": {
+                    "text": "OutcomeRecipeDraft"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; opener: HTMLElement | null; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<\"unavailable\" | \"opened\" | \"existing-draft\" | \"stale\" | \"forbidden\">"
+                }
+              },
+              "description": "One current-owned local proposal. Only the existing card's explicit Save can persist it."
             },
             {
               "kind": "field",
@@ -12438,6 +12557,29 @@
               "return": {
                 "type": {
                   "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureCommandOperation",
+              "parameters": [
+                {
+                  "name": "operation",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "CommandOperation | null"
                 }
               }
             }
@@ -12757,6 +12899,36 @@
                 }
               },
               "description": "Deliberate UI navigation only; internal save, recovery and permission retirement do not call this."
+            },
+            {
+              "kind": "method",
+              "name": "performOperationFrom",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "operation",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              },
+              "description": "One registered owner's exact consumed-form operation; no route or focus lease is acquired."
             },
             {
               "kind": "method",
@@ -13196,7 +13368,7 @@
                 {
                   "name": "target",
                   "type": {
-                    "text": "import(\"/private/tmp/forma-durable-production/src/model/workspace-intelligence\").CreativeActionScope & { kind: \"configure\"; medium: CreativeMedium | null; sourceRevision: string; }"
+                    "text": "import(\"/Users/westbrook/.codex/visualizations/2026/08/26/01a03eaa-d5b7-7630-943d-7105f7a3067b/forma-recovery-20260831/checkout/src/model/workspace-intelligence\").CreativeActionScope & { kind: \"configure\"; medium: CreativeMedium | null; sourceRevision: string; }"
                   }
                 },
                 {

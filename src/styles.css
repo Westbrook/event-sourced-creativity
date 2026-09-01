@@ -1423,6 +1423,10 @@ html[data-document-focus] .reality-editor { height: calc(100dvh - 70px); max-hei
 .project-card-summary p b { color: var(--ink); }
 .project-card footer { display: flex; gap: 7px; margin-top: 19px; }
 .project-create-dialog label,.project-document-dialog label { display: grid; gap: 6px; margin-top: 16px; color: var(--muted); font: var(--type-caption) var(--mono); text-transform: uppercase; }.project-create-dialog input,.project-document-dialog input { background: var(--panel); font: var(--type-body) var(--sans); text-transform: none; }.project-create-dialog footer,.project-document-dialog footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 20px; }
+/* Original-document recovery can add long, title-qualified peer actions.
+ * Keep ordinary creation separate from the existing Duplicate footer. */
+.project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > footer { min-inline-size: 0; flex-wrap: wrap; align-items: stretch; gap: var(--forma-cluster-gap); }
+.project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > footer > .button { flex: 0 1 auto; max-inline-size: 100%; align-self: stretch; white-space: normal; overflow-wrap: anywhere; }
 
 .alternative-intro { display: grid; grid-template-columns: minmax(260px,.8fr) minmax(360px,1.2fr); align-items: end; gap: 28px; padding: 22px; background: var(--forest); border-radius: 10px; color: #eff5eb; }
 .alternative-intro h2 { margin: 4px 0 7px; color: var(--acid); font: 600 var(--type-title) var(--serif); }.alternative-intro p { margin: 0; color: #c4d0c8; }.alternative-intro .eyebrow { color: #aabbb0; }

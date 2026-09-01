@@ -236,7 +236,7 @@ export async function createCalmFullPage(t,{locale="en",reader=false,assistant=f
     }
   };
   f.find=(tag,predicate)=>{const found=f.tree().visible(tag).filter(predicate);assert.equal(found.length,1,"one visible "+tag+" matches predicate");return found[0];};
-  f.act=async(node,eventName="click",event={})=>{assert.ok(!node.hiddenBy,"cannot use a hidden control");assert.ok(node.port,"exact native control port exists");assert.ok(!Object.hasOwn(node.attributes,"disabled"),"executor is not disabled");const handler=node.handlers[eventName];assert.equal(typeof handler,"function","actual "+eventName+" handler");await handler.call(node.owner,{target:node.port,currentTarget:node.port,preventDefault(){},stopPropagation(){},...event});await f.settle();};
+  f.act=async(node,eventName="click",event={})=>{assert.ok(!node.hiddenBy,"cannot use a hidden control");assert.ok(node.port,"exact native control port exists");assert.ok(!Object.hasOwn(node.attributes,"disabled"),"executor is not disabled");const handler=node.handlers[eventName];assert.equal(typeof handler,"function","actual "+eventName+" handler");await handler.call(node.owner,{target:node.port,currentTarget:node.port,preventDefault(){},stopPropagation(){},type:eventName,...event});await f.settle();};
   await f.settle();
   assert.equal(STUDY_SHAPED_TYPES.filter((type,index)=>store.projection.get().blocks.some(block=>block.id==="synthetic-"+index&&block.type===type)).length,14);
   return f;

@@ -200,7 +200,7 @@ forma-generation-actions,
   flex: 0 0 auto;
 }
 
-.context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance),
+.context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance, forma-output-requirements),
 .output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
   margin-inline: var(--forma-pane-inset);
 }

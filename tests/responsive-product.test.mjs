@@ -848,3 +848,83 @@ test("the final slide-toolbar cascade keeps its genuine inline disclosure even i
     assert.equal(winning(selectors,"inset",viewport,container)?.value,"auto");
   }
 });
+
+// Source/CSS contracts only: reuse this file's existing PostCSS/cascade helpers.
+// Root's actual 431px Document observation is the physical baseline; these
+// checks neither compute layout nor exercise recipe/save/provider behavior.
+function d337OutputPaneGutter() {
+  const found = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    const selector = rule.selectors?.find(value => value.startsWith(".context-column > :is(")
+      && value.includes(".context-provenance"));
+    if (selector) found.push({ rule, selector });
+  });
+  assert.equal(found.length, 1, "reuse the single existing parent-owned context gutter rule");
+  return found[0];
+}
+
+test("D337 recipe entry, draft and retained card share the direct Document pane gutter", async () => {
+  const output = await read("../src/components/forma-output-requirements.ts");
+  const component = postcss.parse(await read("../src/components/forma-output-requirements.css"));
+  const paneStart = workspace.indexOf('<section id="document-context-panel" class="context-column"');
+  const hostStart = workspace.indexOf("<forma-output-requirements ", paneStart);
+  const paneEnd = workspace.indexOf("</section>", paneStart);
+  assert.ok(paneStart >= 0 && hostStart > paneStart && paneEnd > hostStart,
+    "the existing output host is authored inside the actual Document context pane");
+  assert.equal((workspace.match(/<forma-output-requirements\b/gu) ?? []).length, 1);
+  assert.ok(output.includes('<details class="output-recipe-entry"'));
+  assert.ok(output.includes('<section class="output-recipe-draft"'));
+  assert.ok(output.includes("const empty = !rows.length && !snapshot.confirmedPlan;"));
+  assert.match(output, /class=\$\{empty \? nothing : "output-requirements"\}/u);
+  assert.ok(output.includes("this.#recipeEntry(snapshot)") && output.includes("this.#recipeCard(snapshot)"));
+  assert.match(output, /\.newDraft=\$\{row \? null : draft\}\s+\.snapshot=\$\{row \? this\.#cardSnapshot\(snapshot, row\) : null\}/u,
+    "the same existing Card remains mounted through draft and observed saved-row states");
+  assert.ok(output.includes('if (!snapshot) return html') && output.includes("this.#recipeEntry(null)"),
+    "unavailable/loading delivery remains within the same host rather than an entry-only wrapper");
+
+  const host = component.nodes.filter(node => node.type === "rule" && node.selector === "forma-output-requirements");
+  assert.equal(host.length, 1);
+  const hostProperties = Object.fromEntries(host[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]));
+  assert.equal(hostProperties.display, "block"); assert.equal(hostProperties["min-inline-size"], "0");
+  for (const property of ["width", "inline-size", "margin-inline", "padding-inline", "margin-left", "margin-right"])
+    assert.equal(hostProperties[property], undefined, "the shared component does not own a second pane offset: " + property);
+  const summary = component.nodes.find(node => node.type === "rule" && node.selector === "forma-output-requirements summary");
+  assert.ok(summary);
+  const summaryProperties = Object.fromEntries(summary.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]));
+  assert.equal(summaryProperties["min-block-size"], "var(--forma-control-min-size,2.75rem)");
+  assert.equal(summaryProperties["padding-inline"], ".5rem", "native disclosure hit-area padding is distinct from the pane gutter");
+
+  const { selector } = d337OutputPaneGutter();
+  const members = selector.match(/^\.context-column > :is\(([^()]*)\)$/u)?.[1].split(",").map(value => value.trim());
+  assert.ok(members);
+  for (const sibling of [".blank-context", ".add-block", ".document-insight", ".context-provenance"])
+    assert.ok(members.includes(sibling), "preserve the existing gutter sibling " + sibling);
+  assert.ok(members.includes("forma-output-requirements"),
+    "the whole direct host, not only its current recipe entry, must share the existing pane inset");
+});
+
+test("D337 delivery inset uses the same logical parent rule at all existing postures", () => {
+  const { rule, selector } = d337OutputPaneGutter();
+  const outputSibling = ".output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form)";
+  assert.ok(rule.selectors.includes(outputSibling), "the other original pane consumers remain in their unchanged shared rule");
+  assert.equal(rule.selectors.length, 2); assert.equal(rule.parent.type, "root",
+    "pane spacing is not restricted to a phone, pointer, direction or recipe-state condition");
+  assert.deepEqual(rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]),
+    [["margin-inline", "var(--forma-pane-inset)"]],
+    "use the existing logical margin, not physical offsets, a second padding system or width arithmetic");
+  const postures = [...viewports,
+    { name: "observed 431px Document, fine pointer", width: 431, height: 883, pointer: "fine" },
+    { name: "431px Document, coarse pointer", width: 431, height: 883, pointer: "coarse" }];
+  for (const viewport of postures) {
+    assert.equal(winning(":root", "--forma-pane-inset", viewport)?.value, "clamp(1rem, 1.6vi, 1.25rem)", viewport.name);
+    assert.equal(winning(".context-column > .section-heading", "padding-inline", viewport)?.value,
+      "var(--forma-pane-inset)", viewport.name + ": the neighboring heading owns the same logical edge token");
+    assert.equal(winning(selector, "margin-inline", viewport)?.value, "var(--forma-pane-inset)",
+      viewport.name + ": preserve existing parent spacing before checking the missing host member");
+  }
+  const expected = ".context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance, forma-output-requirements)";
+  const missing = postures.filter(viewport => winning(expected, "margin-inline", viewport)?.value !== "var(--forma-pane-inset)")
+    .map(viewport => viewport.name);
+  assert.deepEqual(missing, [],
+    "the direct Document host inherits the same gutter without matching nested Output blocks, Library, Project or Deliver hosts");
+});

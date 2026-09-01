@@ -4,8 +4,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AUTHORED, createProjectIntakeFixture, captureUnsentIntake, assertComplete, intendedIds } from "./helpers/project-intake-fixture.mjs";
-import { calmFullPageNativePorts as ports } from "./helpers/calm-full-page-fixture.mjs";
-import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
 import { documentIdFromRoute } from "../src/model/routes.ts";
 const options={concurrency:false,timeout:45000};
 const currentSource=x=>x.h.store.sourceOwnershipActive(x.h.store.captureSourceOwnership());
@@ -47,7 +45,7 @@ async function retireThenRestore(x){
 const checkButton=(x,owner)=>x.f.find("button",node=>node.owner===owner&&node.attributes.type==="button"
   &&node.text===x.f.i18n.t("projects.checkOriginal","Check original"));
 for(const locale of ["en","ja"])test("B2 explicit same-original Retry after lost pre-Worker request and current unknown Check: "+locale,options,async t=>{
-  const x=await createProjectIntakeFixture(t,{locale});installOutputNavigationFocusNative(t,x.f,ports);await x.f.settle();
+  const x=await createProjectIntakeFixture(t,{locale});await x.f.settle();
   const source=x.h.store.captureSourceOwnership(),receiptOwner={authorizationKey:source.authorization.key,
     actorUserId:x.h.store.session.get().user.userId,projectId:x.h.store.projection.get().projectId,sourceGeneration:source.generation};
   const events=await captureUnsentIntake(x),original=intendedIds(events),canonical=await x.canonical();
@@ -73,7 +71,7 @@ for(const locale of ["en","ja"])test("B2 explicit same-original Retry after lost
     canonicalEvents:(await x.canonical()).delta.length,receipts:(await x.canonical()).eventClientReceipts}));
   assert.equal(retries.length,1,"Unknown is not unused, but it must not permanently block an explicit atomic retry of these SAME original IDs");
   assert.equal(Object.hasOwn(retries[0].attributes,"disabled"),false);
-  const form=x.f.find("form",node=>node.owner===owner&&node.attributes.class==="modal-card wide");
+  const form=x.f.find("form",node=>node.owner===owner&&String(node.attributes.class).split(/\s+/u).includes("project-intake"));
   await x.f.act(form,"submit",{submitter:retries[0].port});
   assert.equal(intakePosts(x).length,beforeRetry+1);const completed=x.dispatches.at(-1);assertComplete(completed);
   assert.equal(completed.body.intakeAction,"commit");assert.deepEqual(completed.body.events,events);
@@ -84,7 +82,7 @@ for(const locale of ["en","ja"])test("B2 explicit same-original Retry after lost
   assert.equal(x.notifications.some(row=>row.toast.includes(AUTHORED.name)),true);
 });
 for(const locale of ["en","ja"])test("B2 existing committed original still recovers by fresh Check without resubmission: "+locale,options,async t=>{
-  const x=await createProjectIntakeFixture(t,{locale});installOutputNavigationFocusNative(t,x.f,ports);await x.f.settle();let first=null;
+  const x=await createProjectIntakeFixture(t,{locale});await x.f.settle();let first=null;
   x.setBehavior(async(stage,row)=>{if(stage==="after-worker"&&row.status===200&&!first){first=row;throw Error("Synthetic lost committed response");}});
   await x.submit();assert.ok(first);assertComplete(first);x.setBehavior(async()=>{});
   const canonical=await x.canonical(),owner=await retireThenRestore(x),before=intakePosts(x).length;

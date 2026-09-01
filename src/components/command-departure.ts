@@ -131,9 +131,20 @@ export type LocalNavigation = CommandDeparture & {
   prepare():boolean;
   afterCommit?(arrival:{current():boolean;readonly focus:OutputNavigationFocusLease}):void|Promise<void>;
 };
+/** Original UI custody only, never write permission, a receipt, or route/focus authority. */
+export type OwnOperationAdmission = {
+  current():boolean;
+  /** End this prepublication check after the original Store call settles. */
+  dispose():void;
+};
+export type CommandOperation = CommandDeparture & {
+  /** Only this owner starts its exact consumed-form operation, once, after admission. */
+  start(admission:OwnOperationAdmission):void|Promise<void>;
+};
 export type CommandDepartureOwner = FormaElement & {
   captureCommandDeparture():CommandDeparture;
   captureLocalNavigation?(path:string):LocalNavigation|null;
+  captureCommandOperation?(operation:string,event:Event):CommandOperation|null;
 };
 export type InAppNavigationAction = ((navigation:InAppNavigation)=>unknown)|{readonly localRoute:string};
 
@@ -156,10 +167,17 @@ export type InAppNavigation = {
 };
 type InAppNavigationHost = FormaElement & {
   navigateFrom(origin:FormaElement,run:InAppNavigationAction,context?:NavigationPresentationContext):Promise<boolean>;
+  performOperationFrom(origin:FormaElement,operation:string,event:Event):Promise<void>;
 };
 
 /** Only actual connected Shell compositions own this ordinary-navigation admission. */
 export function navigateInApp(origin:FormaElement,run:InAppNavigationAction,context:NavigationPresentationContext={}):Promise<boolean>{
   const host=origin.closest<InAppNavigationHost>("forma-shell");
   return host?host.navigateFrom(origin,run,context):Promise.resolve(false);
+}
+
+/** Start an actual owner's consumed-form operation without granting navigation or exempting siblings. */
+export function performOperationInApp(origin:FormaElement,operation:string,event:Event):Promise<void>{
+  const host=origin.closest<InAppNavigationHost>("forma-shell");
+  return host?host.performOperationFrom(origin,operation,event):Promise.resolve();
 }

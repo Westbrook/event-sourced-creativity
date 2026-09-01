@@ -1,5 +1,11 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1i2qq03.94": "Explicit presentation only; the host supplies current ownership, never a fabricated saved row.",
+  "system.auto.tqfa8e.80": "Recipe host's unresolved original ID only; no body, receipt or retry permission.",
+  "system.auto.1w05nuc.88": "Explicitly resend this session's original Save; never materialize or rebase newer edits.",
+  "system.auto.1g1qzzo.110": "Transfer only authored input into this existing entry; full Output authority is required again before staging.",
+  "system.auto.1akiecf.88": "One current-owned local proposal. Only the existing card's explicit Save can persist it.",
+  "system.auto.jf2bs7.90": "One registered owner's exact consumed-form operation; no route or focus lease is acquired.",
   "system.auto.1eh5z6w.74": "Only this exact current readonly viewer may be subtracted from its parent.",
   "system.auto.7jaeh8.82": "Admit only a current ordinary UI departure; never gate privacy or load retirement.",
   "system.auto.1qiom3q.70": "Content-free custody shared by this view's existing navigation owners.",

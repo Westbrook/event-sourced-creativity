@@ -554,8 +554,11 @@ test("late Canvas " + outcome + " cannot replace feedback after newer " + change
   assert.equal(h.requests.filter(row => row.init.method === "POST").length, 0);
 });
 
-async function navigationPage(t, locale, { nativePreparation = false, ...fixtureOptions } = {}) {
+async function navigationPage(t, locale, { nativePreparation = false, observeOriginalFullRead = false, ...fixtureOptions } = {}) {
   const h = await navigationFixture(t, fixtureOptions), events = h.store.events.get(), head = h.store.head.get(), content = h.store.content.get();
+  // This explicit held-GET prerequisite must sit inside the original transport
+  // observer, so its real pending response participates in the unchanged join.
+  if (observeOriginalFullRead) h.navigationFullRead = cBlankReadPort(t, { h }, { originalTransport: true });
   h.navigationResumeReads = observeActualSceneResumeReads(h); t.after(() => h.navigationResumeReads.restore());
   const f = await createCalmFullPage(t, { locale, storeHost: h });
   // Reuse the full actual Shell/route/nested renderer, then restore this test's
@@ -3597,12 +3600,16 @@ async function cBlankNoEffects(x, history) {
 }
 // Observe one already-armed full GET only; no response/URL blanket exemption.
 // A clone is read before the SAME original response is returned (finite latency).
-function cBlankReadPort(t, x) {
-  const { h } = x, prior = h.intercept, records = [];
+function cBlankReadPort(t, x, { originalTransport = false } = {}) {
+  const { h } = x, port = originalTransport ? "transport" : "intercept", prior = h[port], records = [];
+  if (originalTransport) assert.equal(h.navigationResumeReads, undefined,
+    "Install the full-GET hold before, never outside or in place of, the existing original-transport observer");
   let armed = null;
   const intercept = async request => {
-    if (!armed || !request.url.startsWith("/api/events?") || (request.init.method ?? "GET") !== "GET")
+    if (!armed || !request.url.startsWith("/api/events?") || (request.init.method ?? "GET") !== "GET") {
+      if (originalTransport && !prior) return h.worker.request(request.url, request.init);
       return prior?.(request);
+    }
     const record = armed; armed = null; record.request = request;
     const url = new URL(request.url, "https://fixture.invalid");
     assert.equal(url.searchParams.get("after"), "0");
@@ -3629,8 +3636,8 @@ function cBlankReadPort(t, x) {
     if (record.gate) await record.gate.promise;
     record.delivered = true; return response;
   };
-  h.intercept = intercept;
-  t.after(() => { for (const record of records) record.gate?.resolve(); if (h.intercept === intercept) h.intercept = prior; });
+  h[port] = intercept;
+  t.after(() => { for (const record of records) record.gate?.resolve(); if (h[port] === intercept) h[port] = prior; });
   return {
     arm({ hold = false, failure = false } = {}) {
       assert.equal(armed, null);
@@ -4620,7 +4627,7 @@ import { foldEvents as cLibraryImportFoldEvents } from "../src/model/events.ts";
 
 function cLibraryImportReceiptAccounting(t, h, admit) {
   const prior = h.transport, records = [], proofs = new WeakMap();
-  let armed = null;
+  let armed = null, unknownContinuation = null;
   const original = request => prior ? prior(request) : h.worker.request(request.url, request.init);
   const exact = request => {
     const proof = proofs.get(request);
@@ -4646,7 +4653,19 @@ function cLibraryImportReceiptAccounting(t, h, admit) {
       "This continuation baseline starts with the same unambiguous canonical/current project");
     assert.deepEqual(Object.keys(input).sort(), ["action", "clientId", "event", "events", "expectedSequence"]);
     assert.equal(input.action, "batch"); assert.equal(input.clientId, "web:lit");
-    assert.equal(input.expectedSequence, history.at(-1).sequence);
+    if (record.unknownContinuation) {
+      const continuation = record.unknownContinuation, index = continuation.attempts.indexOf(record);
+      assert.ok(index === 0 || index === 1);
+      assert.equal(input.expectedSequence, record.dispatchHead);
+      assert.ok(Number.isSafeInteger(input.expectedSequence) && input.expectedSequence >= 0 && input.expectedSequence <= history.at(-1).sequence);
+      if (index === 0) continuation.eventBytes = JSON.stringify(input.events);
+      else {
+        assert.equal(JSON.stringify(input.events), continuation.eventBytes, "Only the existing Store retry of this same replacement identity is admitted");
+        const previous = continuation.attempts[index - 1];
+        assert.equal(previous.response.status, 409); assert.equal(previous.responseBody.error, "stale_sequence");
+        assert.equal(input.expectedSequence, previous.responseBody.head);
+      }
+    } else assert.equal(input.expectedSequence, history.at(-1).sequence);
     assert.equal(input.events.length, source.blocks.length + 1); assert.deepEqual(input.event, input.events[0]);
     const documentId = input.event.payload.document_id, ids = input.events.slice(1).map(event => event.payload.block_id);
     for (const id of [documentId, ...ids]) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
@@ -4661,6 +4680,21 @@ function cLibraryImportReceiptAccounting(t, h, admit) {
         type: block.type, handle: block.handle + "-import", position: "z" + index, properties: block.properties } })),
     ], "Only the exact safe direction archive selected for this gesture may be submitted");
     const response = await original(request), receipt = await response.clone().json();
+    if (record.unknownContinuation && !response.ok) {
+      assert.ok(response.status >= 400 && response.status <= 599);
+      assert.ok(receipt && typeof receipt === "object" && !Array.isArray(receipt) && typeof receipt.error === "string");
+      if (response.status === 409 && receipt.error === "stale_sequence")
+        assert.deepEqual(receipt, { error: "stale_sequence", expected: input.expectedSequence, head: history.at(-1).sequence });
+      await h.worker.drainBackground();
+      assert.deepEqual(await h.history(), history, "This actual non2xx replacement response has no canonical write in the complete observed history");
+      assert.deepEqual(h.counts(), financial, "A non2xx replacement response did not change financial rows");
+      assert.equal(response.bodyUsed, false); assert.equal(request.init, init);
+      assert.equal(request.init.body, bytes); assert.equal(JSON.stringify(request.body), bytes);
+      assert.ok(h.store.sourceOwnershipActive(record.source) && h.store.authorizationScopeActive(record.authorization));
+      proofs.set(request, { init, bytes }); assert.equal(exact({ ...request }), false);
+      record.response = response; record.responseBody = receipt; record.refused = response.status < 500; record.delivered = true;
+      return response;
+    }
     assert.equal(response.status, 200, "A held delivery must first be a genuine successful Worker import");
     assert.equal(response.bodyUsed, false); assert.deepEqual(Object.keys(receipt).sort(), ["appended", "head", "rejected"]);
     assert.deepEqual(receipt.rejected, []); assert.equal(receipt.appended.length, input.events.length);
@@ -4679,19 +4713,42 @@ function cLibraryImportReceiptAccounting(t, h, admit) {
     proofs.set(request, { init, bytes }); assert.equal(exact({ ...request }), false);
     record.documentId = documentId; record.receipt = receipt; record.response = response;
     if (record.gate) await record.gate.promise;
+    if (record.unknownOriginalAccounting) {
+      record.deliveryLost = true;
+      record.loss = new TypeError("D_LIBRARY_IMPORT_ORIGINAL_RESPONSE_DELIVERY_LOST");
+      throw record.loss; // Only delivery is lost: the exact real200/canonical receipt above is already verified.
+    }
     record.delivered = true; return response;
   };
   const transport = request => {
     if (request.url !== "/api/events" || request.init.method !== "POST" || request.body?.event?.type !== "DocumentForked") return original(request);
-    assert.ok(armed && !armed.request, "Only one explicitly armed import-copy gesture is admitted");
-    const record = armed; armed = null; record.pending = execute(request, record);
+    let record = armed;
+    if (unknownContinuation) {
+      assert.equal(armed, null);
+      assert.ok(unknownContinuation.attempts.length < 2, "At most one explicit continuation and the existing single stale-sequence retry");
+      if (unknownContinuation.attempts.length) {
+        const previous = unknownContinuation.attempts.at(-1);
+        assert.equal(previous.delivered, true); assert.equal(previous.response?.status, 409);
+        assert.equal(previous.responseBody?.error, "stale_sequence");
+      }
+      const first = unknownContinuation.original;
+      record = { archive: first.archive, route: first.route, actor: first.actor, projectId: first.projectId,
+        source: first.source, authorization: first.authorization, gate: null, request: null, receipt: null,
+        delivered: false, error: null, unknownContinuation, dispatchHead: h.store.head.get() };
+      unknownContinuation.attempts.push(record); records.push(record);
+    } else {
+      assert.ok(armed && !armed.request, "Only one explicitly armed import-copy gesture is admitted");
+      armed = null;
+    }
+    record.pending = execute(request, record);
     record.pending.catch(error => { record.error = error; }); return record.pending;
   };
   h.transport = transport;
   t.after(() => { for (const record of records) record.gate?.resolve(); if (h.transport === transport) h.transport = prior; });
   return {
-    arm(archive, hold = false, { pendingActivationAccounting = false } = {}) {
-      assert.equal(typeof pendingActivationAccounting, "boolean");
+    arm(archive, hold = false, { pendingActivationAccounting = false, unknownOriginalAccounting = false } = {}) {
+      assert.equal(typeof pendingActivationAccounting, "boolean"); assert.equal(typeof unknownOriginalAccounting, "boolean");
+      if (unknownOriginalAccounting) { assert.equal(hold, false); assert.equal(pendingActivationAccounting, false); }
       if (pendingActivationAccounting) assert.equal(hold, true, "Pending-activation accounting requires the original held delivery");
       assert.equal(armed, null); assert.equal(records.length, 0, "This family never retries or imports B automatically");
       const source = h.store.captureSourceOwnership(), authorization = h.store.captureAuthorizationScope();
@@ -4701,7 +4758,7 @@ function cLibraryImportReceiptAccounting(t, h, admit) {
       assert.ok(projected.blocks.every(block => block.type === "direction"), "No media, Output, approval or rights-copy scope is admitted");
       armed = { archive: structuredClone(archive), route: h.store.route.get(), actor: h.store.session.get().user.userId,
         projectId: h.store.projection.get().projectId, source, authorization, gate: hold ? sceneDeferred() : null,
-        request: null, receipt: null, delivered: false, error: null, pendingActivationAccounting };
+        request: null, receipt: null, delivered: false, error: null, pendingActivationAccounting, unknownOriginalAccounting };
       records.push(armed); return armed;
     },
     armPendingActivation(original) {
@@ -4717,6 +4774,16 @@ function cLibraryImportReceiptAccounting(t, h, admit) {
         delivered: false, error: null, predecessor: original };
       records.push(armed); return armed;
     },
+    armUnknownContinuation(first) {
+      assert.equal(first.unknownOriginalAccounting, true, "Unknown-original accounting is a separate explicit false-default opt-in");
+      assert.equal(unknownContinuation, null); assert.equal(armed, null); assert.equal(records.length, 1); assert.equal(records[0], first);
+      assert.equal(first.deliveryLost, true); assert.equal(first.error, first.loss); assert.equal(first.delivered, false);
+      assert.equal(first.response.status, 200); assert.ok(first.receipt && exact(first.request));
+      assert.ok(h.store.sourceOwnershipActive(first.source) && h.store.authorizationScopeActive(first.authorization));
+      assert.equal(h.store.route.get(), first.route); assert.equal(h.store.session.get().user.userId, first.actor);
+      assert.equal(h.store.projection.get().projectId, first.projectId);
+      unknownContinuation = { original: first, attempts: [], eventBytes: null }; return unknownContinuation;
+    },
     async reached(record) {
       await untilScene(() => Boolean(record.receipt || record.error), "The original Library import reaches its real Worker receipt");
       if (record.error) throw record.error;
@@ -4726,8 +4793,9 @@ function cLibraryImportReceiptAccounting(t, h, admit) {
   };
 }
 
-async function cLibraryImportPage(t, locale) {
-  const f = await navigationPage(t, locale, { nativePreparation: true, libraryImportReceiptAccounting: true }), h = f.navigationHost;
+async function cLibraryImportPage(t, locale, { observeOriginalFullRead = false } = {}) {
+  const f = await navigationPage(t, locale, { nativePreparation: true, libraryImportReceiptAccounting: true,
+    observeOriginalFullRead }), h = f.navigationHost;
   await registerCalmFullPageComponents(f, ["forma-library"]);
   // Declared safe archive fixtures are first canonical RAM events, then passed
   // through the existing exporter; no supplied imported projection or response.
@@ -4872,7 +4940,7 @@ test("C Library archive import / en / committed A cannot clear a newly chosen B 
     const old = cLibraryImportPreview(x, { pending: true }); assert.ok(old);
     await x.f.act(old.close, "click", { button: 0 }); assert.equal(cLibraryImportPreview(x), null);
     await finishCommandPreparation(x.f, cLibraryImportChoose(x, b));
-    assert.deepEqual(cLibraryImportPreview(x).values, ["2", "0", "0"], "Close then a genuine new file selection presents B while A's successful reply remains held");
+    assert.deepEqual(dLibraryImportPreview(x).values, ["2", "0", "0"], "Close then a genuine new file selection presents B while A's successful reply remains held");
     assert.equal(a.reads, 1); assert.equal(b.reads, 1); assert.equal(x.receipts.records().length, 1);
     record.gate.resolve(); await finishCommandPreparation(x.f, pending);
     await cLibraryImportUnchanged(x); cLibraryImportCopiedA(x, record);
@@ -5296,6 +5364,82 @@ test("C Library next version keeps exact native package ownership through actual
 });
 
 
+// D, not C pending admission: lose delivery only after the original genuine
+// Worker commit, then exercise the existing settled current user continuation.
+// A replacement refusal and a second committed copy are distinct observations.
+test("D Library archive import / en / unconfirmed original never becomes a newly identified import", fIntelligenceOptions, async t => {
+  const x = await cLibraryImportPage(t, "en"), file = cLibraryImportFile(x.archives.A);
+  await finishCommandPreparation(x.f, cLibraryImportChoose(x, file));
+  assert.deepEqual(cLibraryImportPreview(x).values, ["1", "0", "0"]);
+  await cLibraryImportUnchanged(x);
+  const acknowledgmentOwner = { authorizationKey: x.before.authorization.key, actorUserId: x.before.actor,
+    projectId: x.h.a, sourceGeneration: x.before.source.generation };
+  const previous = new Set(x.h.store.eventWriteAcknowledgments(acknowledgmentOwner).map(value => value.observationId));
+  const first = x.receipts.arm(x.archives.A.archive, false, { unknownOriginalAccounting: true });
+  await finishCommandPreparation(x.f, x.f.act(cLibraryImportPreview(x).submit, "click", { button: 0 }));
+  assert.equal(first.response.status, 200); assert.equal(first.deliveryLost, true); assert.equal(first.delivered, false);
+  assert.equal(first.error, first.loss); assert.ok(x.receipts.isOriginal(first.request));
+  assert.equal(first.response.bodyUsed, false, "The original real200 is deliberately not delivered to Store");
+  assert.equal(first.receipt.appended.length, 2); assert.equal(x.receipts.records().length, 1);
+  await cLibraryImportUnchanged(x);
+  const current = x.h.store.eventWriteAcknowledgments(acknowledgmentOwner).filter(value => !previous.has(value.observationId));
+  assert.equal(current.length, 1); const unconfirmed = current[0];
+  assert.equal(unconfirmed.action, "batch"); assert.deepEqual(unconfirmed.owner, acknowledgmentOwner);
+  assert.equal(unconfirmed.outcome, "unconfirmed"); assert.equal(unconfirmed.privateUnavailable, false);
+  assert.deepEqual(unconfirmed.requestedClientEventIds, []); assert.deepEqual(unconfirmed.committed, []);
+  assert.deepEqual(unconfirmed.rejectedIndices, []); assert.equal(unconfirmed.observedHead, null);
+  const stillUnconfirmed = () => {
+    const rows = x.h.store.eventWriteAcknowledgments(acknowledgmentOwner).filter(value => value.observationId === unconfirmed.observationId);
+    assert.equal(rows.length, 1); assert.deepEqual(rows[0], unconfirmed,
+      "The actual original local observation remains unconfirmed; a later GET or another batch response is not its ACK");
+  };
+  const originalRequest = first.request, originalInit = originalRequest.init, originalBytes = originalInit.body;
+  const originalDocumentId = first.documentId, originalEventIds = first.receipt.appended.map(event => event.eventId);
+  assert.deepEqual(dLibraryImportPreview(x).values, ["1", "0", "0"], "Unknown A remains visibly retained after its original Promise settles");
+  stillUnconfirmed();
+  const continuation = x.receipts.armUnknownContinuation(first), beforeContinuation = x.h.requests.length;
+  // Post-baseline UI forward: the new deliberate continuation is Check, not another Import.
+  // Its GET can establish original Document availability, never the original batch ACK.
+  const pending = cBlankAct(x, x.f.find("button", node => node.owner === x.library
+    && fObjectClassed(node, "library-import-check-original")));
+  try { await finishCommandPreparation(x.f, pending); }
+  finally { await pending; await x.h.navigationResumeReads.settleOriginalRequests(); }
+  for (const attempt of continuation.attempts) if (attempt.error) throw attempt.error;
+  await cLibraryImportUnchanged(x); stillUnconfirmed();
+  assert.equal(first.request, originalRequest); assert.equal(first.request.init, originalInit);
+  assert.equal(first.request.init.body, originalBytes); assert.equal(JSON.stringify(first.request.body), originalBytes);
+  assert.equal(first.documentId, originalDocumentId); assert.deepEqual(first.receipt.appended.map(event => event.eventId), originalEventIds);
+  assert.equal(file.reads, 1);
+  const attempts = continuation.attempts;
+  assert.ok(attempts.length <= 2 && attempts.every(value => value.delivered && value.response && x.receipts.isOriginal(value.request)));
+  if (attempts.length === 2) {
+    assert.equal(attempts[0].response.status, 409); assert.equal(attempts[0].responseBody.error, "stale_sequence");
+    assert.deepEqual(attempts[1].request.body.events, attempts[0].request.body.events,
+      "The real Store may retry the same replacement array after a stale-sequence read, never a fixture-generated third identity");
+  }
+  const replacements = attempts.filter(value => value.request.body.event.payload.document_id !== originalDocumentId
+    || JSON.stringify(value.request.body.events) !== JSON.stringify(originalRequest.body.events));
+  const forks = x.receipts.appended().filter(event => event.type === "DocumentForked");
+  const canonical = await x.h.history(), canonicalForks = canonical.slice(x.before.history.length).filter(event => event.type === "DocumentForked");
+  assert.deepEqual(canonicalForks, forks); assert.ok(forks.some(event => event.payload.document_id === originalDocumentId));
+  assert.equal(new Set(forks.map(event => event.payload.document_id)).size, forks.length);
+  const refused = attempts.filter(value => value.refused), uncertainFailures = attempts.filter(value => value.response.status >= 500),
+    committedReplacement = forks.filter(event => event.payload.document_id !== originalDocumentId);
+  t.diagnostic("D_LIBRARY_IMPORT_UNKNOWN " + JSON.stringify({ originalWorkerStatus: first.response.status,
+    originalDeliveryLost: first.deliveryLost, originalDocumentId, originalEventIds, originalObservationId: unconfirmed.observationId,
+    originalOutcomeBeforeAndAfter: "unconfirmed", actualContinuationStatuses: attempts.map(value => value.response.status),
+    rejectedReplacementAttempts: refused.map(value => ({ status: value.response.status, error: value.responseBody.error })),
+    uncertainNon2xxReplacementAttempts: uncertainFailures.map(value => ({ status: value.response.status, error: value.responseBody.error })),
+    replacementIdentityRequests: replacements.length, committedReplacementDocuments: committedReplacement.map(event => event.payload.document_id),
+    canonicalDocumentCopies: forks.length, sourceEventReadsAfterContinuation: x.h.requests.slice(beforeContinuation)
+      .filter(request => (request.init.method ?? "GET") === "GET" && request.url.startsWith("/api/events")).length,
+    exactCanonicalSuffix: true, originalBytesUnchanged: true, sourceFiscalResumeUnchanged: true }));
+  assert.equal(replacements.length, 0, "An unconfirmed original must not dispatch a newly identified replacement import, even if that replacement is refused");
+  assert.equal(committedReplacement.length, 0, "An unknown original must not create a second copied document");
+  assert.equal(forks.length, 1, "Only the original genuinely committed copy belongs to this continuation");
+});
+
+
 // C continuation admission, distinct from original publisher ACK completion.
 // Reuse the full authorized Library/native-form/Worker setup. Only next-version
 // cases create one real version-1 package during setup; the tested card gesture
@@ -5590,6 +5734,954 @@ for (const nextVersion of [false, true]) for (const changed of [false, true]) te
       await h.navigationResumeReads.settleOriginalRequests(); await f.settle();
       await h.navigationResumeReads.settleOriginalRequests(); await h.worker.drainBackground();
     }
+  });
+
+
+// D original-import lifetime controls. Reuse the original real-Worker observer,
+// the full current Library/Store renderer, and cBlankReadPort's exact full GET.
+// These are finite native-event/File.text/session-signal controls, not OS picker,
+// physical Escape/backdrop, browser geometry, or live-authentication evidence.
+function dLibraryImportPreview(x, { blocked = true, busy = false } = {}) {
+  const { f, library } = x, tree = f.tree();
+  const dialogs = tree.visible("dialog").filter(node => node.owner === library && fObjectClassed(node, "library-import-dialog"));
+  assert.ok(dialogs.length <= 1); if (!dialogs.length) return null;
+  const dialog = dialogs[0]; assert.equal(dialog.port.open, true);
+  const metrics = tree.visible("div").filter(node => c19NamingWithin(node, dialog) && fObjectClassed(node, "metric-grid"));
+  assert.equal(metrics.length, 1);
+  const values = tree.visible("b").filter(node => c19NamingWithin(node, metrics[0])).map(node => node.text);
+  assert.equal(values.length, 3);
+  const buttons = tree.visible("button").filter(node => node.owner === library && c19NamingWithin(node, dialog));
+  const close = buttons.filter(node => node.attributes["aria-label"] === f.i18n.t("projects.closePreview", "Close preview"));
+  const submit = buttons.filter(node => node.text === f.i18n.system("Import document copy"));
+  assert.equal(close.length, 1); assert.equal(submit.length, 1);
+  assert.ok(submit[0].port.isConnected && f.renderer.nodes.includes(submit[0].port));
+  assert.equal(submit[0].port.matches(":disabled"), blocked);
+  assert.equal(submit[0].attributes["aria-busy"], String(busy), "A different B preview is blocked by A, not falsely described as its own in-flight submission");
+  return { dialog, close: close[0], submit: submit[0], values };
+}
+function dLibraryImportRecovery(x) {
+  const { f, library } = x, tree = f.tree();
+  const rows = tree.visible("aside").filter(node => node.owner === library && fObjectClassed(node, "library-import-recovery"));
+  assert.ok(rows.length <= 1, "One original recovery is rendered either inline or in the current preview, never duplicated");
+  if (!rows.length) return null;
+  const region = rows[0]; assert.ok(region.port.isConnected && library.isConnected);
+  assert.equal(region.attributes["aria-labelledby"], "library-import-original-title");
+  const labels = tree.visible("p").filter(node => c19NamingWithin(node, region) && node.attributes.id === "library-import-original-title");
+  const statuses = tree.visible("p").filter(node => c19NamingWithin(node, region) && node.attributes.role === "status");
+  assert.equal(labels.length, 1); assert.equal(statuses.length, 1);
+  const title = "\u2068" + x.original.request.body.event.payload.title + "\u2069";
+  assert.equal(labels[0].text, f.i18n.t("library.archive.original", "", { title }));
+  const buttons = tree.visible("button").filter(node => node.owner === library && c19NamingWithin(node, region));
+  const named = name => { const found = buttons.filter(node => fObjectClassed(node, name)); assert.ok(found.length <= 1); return found[0] ?? null; };
+  const check = named("library-import-check-original"), open = named("library-import-open-original"), discard = named("library-import-discard-newer");
+  assert.equal(buttons.length, Number(Boolean(check)) + Number(Boolean(open)) + Number(Boolean(discard)));
+  if (check) assert.equal(check.text, f.i18n.t("library.archive.checkOriginal", "", { title }));
+  if (open) assert.equal(open.text, f.i18n.t("library.archive.openOriginal", "", { title }));
+  if (discard) assert.equal(discard.text, f.i18n.t("library.archive.discardNewer"));
+  return { region, status: statuses[0], check, open, discard };
+}
+function dLibraryImportStatus(x, key) {
+  const recovery = dLibraryImportRecovery(x); assert.ok(recovery);
+  assert.equal(recovery.status.text, x.f.i18n.t(key)); return recovery;
+}
+function dLibraryImportChoose(x, file) {
+  const input = cLibraryImportInput(x);
+  x.f.native.emit("pointerdown", input.port); x.f.native.focus(input.port);
+  return cLibraryImportChoose(x, file);
+}
+async function dLibraryImportDismiss(x, kind = "close") {
+  const preview = dLibraryImportPreview(x); assert.ok(preview);
+  if (kind === "close") await cBlankAct(x, preview.close);
+  else if (kind === "cancel") {
+    // Deliver the native cancel contract to the actual dialog listener. The
+    // finite renderer does not synthesize a browser's Escape default action.
+    await x.f.act(preview.dialog, "cancel", { key: "Escape", cancelable: true });
+  } else {
+    assert.equal(kind, "backdrop");
+    await x.f.act(preview.dialog, "click", { button: 0, target: preview.dialog.port });
+  }
+  await x.f.settle(); assert.equal(dLibraryImportPreview(x), null);
+}
+const dLibraryImportReceiptRows = h => h.worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all();
+async function dLibraryImportUnknown(t, locale, { observeOriginalFullRead = false } = {}) {
+  const x = await cLibraryImportPage(t, locale, { observeOriginalFullRead }), file = cLibraryImportFile(x.archives.A);
+  x.clientReceipts = dLibraryImportReceiptRows(x.h);
+  await finishCommandPreparation(x.f, dLibraryImportChoose(x, file));
+  assert.deepEqual(cLibraryImportPreview(x).values, ["1", "0", "0"]);
+  const owner = { authorizationKey: x.before.authorization.key, actorUserId: x.before.actor,
+    projectId: x.h.a, sourceGeneration: x.before.source.generation };
+  const prior = new Set(x.h.store.eventWriteAcknowledgments(owner).map(value => value.observationId));
+  const original = x.receipts.arm(x.archives.A.archive, false, { unknownOriginalAccounting: true });
+  await finishCommandPreparation(x.f, x.f.act(cLibraryImportPreview(x).submit, "click", { button: 0 }));
+  assert.equal(original.response.status, 200); assert.equal(original.deliveryLost, true);
+  assert.equal(original.error, original.loss); assert.equal(original.delivered, false);
+  assert.equal(original.response.bodyUsed, false); assert.ok(x.receipts.isOriginal(original.request));
+  assert.equal(original.receipt.appended.length, 2); assert.equal(file.reads, 1);
+  const observations = x.h.store.eventWriteAcknowledgments(owner).filter(value => !prior.has(value.observationId));
+  assert.equal(observations.length, 1); const acknowledgment = observations[0];
+  assert.deepEqual(acknowledgment.owner, owner); assert.equal(acknowledgment.action, "batch");
+  assert.equal(acknowledgment.outcome, "unconfirmed"); assert.equal(acknowledgment.privateUnavailable, false);
+  assert.deepEqual(acknowledgment.requestedClientEventIds, []); assert.deepEqual(acknowledgment.committed, []);
+  assert.deepEqual(acknowledgment.rejectedIndices, []); assert.equal(acknowledgment.observedHead, null);
+  const unconfirmed = () => {
+    const found = x.h.store.eventWriteAcknowledgments(owner).filter(value => value.observationId === acknowledgment.observationId);
+    assert.equal(found.length, 1); assert.deepEqual(found[0], acknowledgment, "A Document availability GET/Open never acknowledges the entire original batch");
+    return found[0];
+  };
+  Object.assign(x, { original, file, unconfirmed });
+  assert.deepEqual(dLibraryImportPreview(x).values, ["1", "0", "0"]);
+  const recovery = dLibraryImportStatus(x, "library.archive.unconfirmed");
+  assert.ok(recovery.check); assert.equal(recovery.open, null); assert.equal(recovery.discard, null);
+  await dLibraryImportNoEffects(x); return x;
+}
+async function dLibraryImportNoEffects(x, { history = [...x.before.history, ...x.receipts.appended()], retired = false } = {}) {
+  const { f, h, before, receipts, original } = x;
+  await h.navigationResumeReads.settleOriginalRequests(); await f.settle(); await h.worker.drainBackground();
+  assert.deepEqual(await h.history(), history, "Only the separately accounted original import and explicitly authored setup events exist");
+  assert.deepEqual(h.counts(), before.counts); assert.deepEqual(dLibraryImportReceiptRows(h), x.clientReceipts);
+  assert.equal(receipts.records().length, 1); assert.ok(receipts.isOriginal(original.request));
+  assert.equal(JSON.stringify(original.request.body), original.request.init.body);
+  const writes = h.requests.slice(before.requests).filter(row => (row.init.method ?? "GET") !== "GET" && !h.navigationResumeReads.isReadOnlyResume(row));
+  assert.deepEqual(writes, [original.request], "Check, Open, dismissal and B never dispatch an import, source edit, generation or other command");
+  assert.equal(h.navigationResumeReads.pendingOriginalCount(), 0);
+  if (!retired) {
+    assert.ok(h.store.sourceOwnershipActive(before.source) && h.store.authorizationScopeActive(before.authorization));
+    assert.equal(h.store.session.get().user.userId, before.actor); x.unconfirmed?.();
+  }
+}
+function dLibraryImportDisabledClick(x, button) {
+  assert.ok(button?.port.isConnected && x.f.renderer.nodes.includes(button.port));
+  assert.equal(button.port.matches(":disabled"), true); assert.ok(Object.hasOwn(button.attributes, "disabled"));
+  assert.equal(typeof button.port.click, "function"); button.port.click(); // Actual finite native disabled default, not a direct handler call.
+}
+
+for (const [locale, kind] of [["en", "close"], ["fr", "cancel"], ["ar", "backdrop"]])
+test("D Library original remains reachable after preview " + kind + " / " + locale, fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, locale), read = cBlankReadPort(t, x);
+  const requests = x.h.requests.length, route = x.h.store.route.get();
+  await dLibraryImportDismiss(x, kind);
+  const recovery = dLibraryImportStatus(x, "library.archive.unconfirmed");
+  assert.ok(recovery.check); assert.equal(recovery.open, null);
+  assert.equal(x.f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+  assert.deepEqual(x.h.requests.slice(requests).filter(row => row.url.startsWith("/api/events")), [], "Dismissal does not Check or resend automatically");
+  const record = read.arm(); await cBlankAct(x, dLibraryImportRecovery(x).check);
+  assert.equal(record.status, 200); assert.equal(record.delivered, true);
+  assert.ok(dLibraryImportStatus(x, "library.archive.originalAvailable").open);
+  assert.equal(dLibraryImportPreview(x), null, "Checking a collapsed original never reopens its preview");
+  assert.equal(x.h.store.route.get(), route); assert.equal(x.file.reads, 1);
+  await dLibraryImportNoEffects(x);
+  t.diagnostic("D_LIBRARY_IMPORT_LIFETIME " + JSON.stringify({ kind, locale, original: x.original.documentId,
+    realOriginal200Lost: true, explicitRead200: true, originalStillUnconfirmed: true, automaticReopen: false, commands: 1 }));
+});
+
+test("D Library Check preserves B and Open original requires explicit B discard / ja", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "ja"), { f, h } = x, b = cLibraryImportFile(x.archives.B);
+  await dLibraryImportDismiss(x); await finishCommandPreparation(f, dLibraryImportChoose(x, b));
+  assert.deepEqual(dLibraryImportPreview(x).values, ["2", "0", "0"]);
+  dLibraryImportDisabledClick(x, dLibraryImportPreview(x).submit); await f.settle();
+  const read = cBlankReadPort(t, x), record = read.arm();
+  await cBlankAct(x, dLibraryImportRecovery(x).check);
+  assert.equal(record.status, 200); assert.equal(record.delivered, true);
+  assert.deepEqual(dLibraryImportPreview(x).values, ["2", "0", "0"], "Availability of A does not replace or consume unsent B");
+  let recovery = dLibraryImportStatus(x, "library.archive.originalAvailable");
+  assert.ok(recovery.discard); dLibraryImportDisabledClick(x, recovery.open);
+  assert.equal(h.store.route.get(), x.before.origin); await dLibraryImportNoEffects(x);
+  await cBlankAct(x, dLibraryImportRecovery(x).discard);
+  assert.equal(dLibraryImportPreview(x), null); recovery = dLibraryImportStatus(x, "library.archive.originalAvailable");
+  assert.equal(recovery.discard, null); assert.equal(recovery.open.port.matches(":disabled"), false);
+  await cBlankAct(x, recovery.open);
+  assert.equal(documentIdFromRoute(h.store.route.get()), x.original.documentId);
+  assert.equal(h.store.projection.get().documentId, x.original.documentId);
+  assert.equal(b.reads, 1); await dLibraryImportNoEffects(x);
+});
+
+test("D Library unresolved B File.text blocks Open and explicit discard invalidates its late preview / en", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "en"), { f } = x, read = cBlankReadPort(t, x);
+  await dLibraryImportDismiss(x);
+  const record = read.arm({ hold: true }), checking = cBlankAct(x, dLibraryImportRecovery(x).check);
+  const b = cLibraryImportFile(x.archives.B, true); let choosing;
+  try {
+    await record.entered.promise; await f.tick(x.library);
+    choosing = dLibraryImportChoose(x, b); await b.entered.promise; await f.tick(x.library);
+    assert.equal(dLibraryImportPreview(x), null); assert.ok(dLibraryImportRecovery(x).discard);
+    record.gate.resolve(); await checking;
+    const recovery = dLibraryImportStatus(x, "library.archive.originalAvailable");
+    dLibraryImportDisabledClick(x, recovery.open);
+    await cBlankAct(x, dLibraryImportRecovery(x).discard);
+    assert.equal(dLibraryImportRecovery(x).open.port.matches(":disabled"), false);
+    b.gate.resolve(); await finishCommandPreparation(f, choosing);
+    assert.equal(dLibraryImportPreview(x), null, "Late discarded B cannot reopen or replace the still-collapsed original");
+    assert.equal(dLibraryImportRecovery(x).discard, null); assert.equal(b.reads, 1);
+    await dLibraryImportNoEffects(x);
+  } finally { record.gate.resolve(); b.gate.resolve(); await Promise.allSettled([checking, choosing].filter(Boolean)); }
+});
+
+test("D Library pending A blocks B then known A leaves unresolved B available as a new deliberate import / fr", fIntelligenceOptions, async t => {
+  const x = await cLibraryImportPage(t, "fr"), { f } = x, a = cLibraryImportFile(x.archives.A), b = cLibraryImportFile(x.archives.B, true);
+  x.clientReceipts = dLibraryImportReceiptRows(x.h);
+  await finishCommandPreparation(f, dLibraryImportChoose(x, a));
+  const original = x.receipts.arm(x.archives.A.archive, true); x.original = original;
+  const pending = f.act(cLibraryImportPreview(x).submit, "click", { button: 0 }); let choosing;
+  try {
+    await finishCommandPreparation(f, x.receipts.reached(original));
+    const preview = dLibraryImportPreview(x, { busy: true }); dLibraryImportDisabledClick(x, preview.submit);
+    assert.equal(dLibraryImportStatus(x, "library.archive.originalPending").check, null);
+    await cBlankAct(x, preview.close); assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(dLibraryImportRecovery(x).check, null, "A pending original is not described as a settled availability check");
+    choosing = dLibraryImportChoose(x, b); await b.entered.promise; await f.tick(x.library);
+    assert.equal(dLibraryImportPreview(x), null); assert.ok(dLibraryImportRecovery(x).discard);
+    original.gate.resolve(); await finishCommandPreparation(f, pending);
+    assert.equal(dLibraryImportRecovery(x), null, "Only A's exact positive result resolves A; B need not have parsed yet");
+    b.gate.resolve(); await finishCommandPreparation(f, choosing);
+    assert.deepEqual(cLibraryImportPreview(x).values, ["2", "0", "0"]);
+    assert.equal(original.delivered, true); cLibraryImportCopiedA(x, original);
+    assert.equal(a.reads, 1); assert.equal(b.reads, 1); await dLibraryImportNoEffects(x);
+  } finally { original.gate.resolve(); b.gate.resolve(); await Promise.allSettled([pending, choosing].filter(Boolean)); }
+});
+
+test("D Library original unavailable after genuine removal does not select a same-title replacement / fr", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "fr"), { h } = x, id = x.original.documentId;
+  await h.external("DocumentCreated", { project_id: h.a, document_id: "d-library-original-same-title-peer", title: x.original.request.body.event.payload.title });
+  await h.external("DocumentRemoved", { project_id: h.a, document_id: id });
+  const history = await h.history(), read = cBlankReadPort(t, x), record = read.arm();
+  await cBlankAct(x, dLibraryImportRecovery(x).check);
+  assert.equal(record.status, 200); assert.ok(record.body.events.some(event => event.type === "DocumentRemoved" && event.payload.document_id === id));
+  const recovery = dLibraryImportStatus(x, "library.archive.originalAbsent");
+  assert.equal(recovery.open, null); assert.ok(recovery.check);
+  assert.deepEqual(dLibraryImportPreview(x).values, ["1", "0", "0"]);
+  dLibraryImportDisabledClick(x, dLibraryImportPreview(x).submit);
+  assert.equal(h.store.route.get(), x.before.origin); await dLibraryImportNoEffects(x, { history });
+});
+
+test("D Library finite failed Check permits another read but never confirms or resubmits the import / ar", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "ar"), read = cBlankReadPort(t, x);
+  const failed = read.arm({ failure: true }); await cBlankAct(x, dLibraryImportRecovery(x).check);
+  assert.equal(failed.status, 503); assert.equal(dLibraryImportStatus(x, "library.archive.checkUnavailable").open, null);
+  const found = read.arm(); await cBlankAct(x, dLibraryImportRecovery(x).check);
+  assert.equal(found.status, 200); assert.ok(dLibraryImportStatus(x, "library.archive.originalAvailable").open);
+  const later = read.arm({ failure: true, hold: true }), pending = cBlankAct(x, dLibraryImportRecovery(x).check);
+  try {
+    await later.entered.promise; await x.f.tick(x.library);
+    const checking = dLibraryImportStatus(x, "library.archive.checkingOriginal");
+    assert.equal(checking.open, null); assert.equal(checking.check.port.matches(":disabled"), true);
+    assert.equal(checking.check.attributes["aria-busy"], "true");
+    later.gate.resolve(); await pending;
+    assert.equal(dLibraryImportStatus(x, "library.archive.checkUnavailable").open, null);
+    assert.deepEqual(dLibraryImportPreview(x).values, ["1", "0", "0"]);
+    await dLibraryImportNoEffects(x);
+  } finally { later.gate.resolve(); await pending; }
+});
+
+test("D Library failed newer file parsing preserves the collapsed original recovery / ja", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "ja"); await dLibraryImportDismiss(x);
+  const bad = cLibraryImportFile({ blocks: 0, bytes: "{" });
+  await finishCommandPreparation(x.f, dLibraryImportChoose(x, bad));
+  assert.equal(bad.reads, 1); assert.equal(dLibraryImportPreview(x), null);
+  const recovery = dLibraryImportStatus(x, "library.archive.unconfirmed");
+  assert.ok(recovery.check); assert.equal(recovery.discard, null); assert.equal(recovery.open, null);
+  await dLibraryImportNoEffects(x);
+});
+
+for (const [locale, kind] of [["en", "source"], ["ja", "principal-signal-aba"], ["fr", "resource-aba"], ["ar", "disconnect-aba"]])
+test("D Library retired original Check and pending file cannot revive after " + kind + " / " + locale, fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, locale), { f, h, library } = x;
+  await dLibraryImportDismiss(x);
+  const read = cBlankReadPort(t, x), record = read.arm({ hold: true }), checking = cBlankAct(x, dLibraryImportRecovery(x).check);
+  const b = cLibraryImportFile(x.archives.B, true); let choosing, restorePolicy = () => {};
+  try {
+    await record.entered.promise; assert.equal(record.status, 200); assert.equal(record.delivered, false);
+    choosing = dLibraryImportChoose(x, b); await b.entered.promise; await f.tick(library);
+    assert.ok(dLibraryImportRecovery(x).discard);
+    if (kind === "source") {
+      const env = h.worker.env, key = "FORMA_PILOT_COHORT_ID", had = Object.hasOwn(env, key), previous = env[key];
+      env[key] = "synthetic-missing-d-library-original-cohort";
+      restorePolicy = () => { if (had) env[key] = previous; else delete env[key]; };
+      await assert.rejects(h.store.refreshEvents({ fromStart: true }), /Event stream returned 403/u);
+      await f.settle();
+      assert.equal(h.store.sourceOwnershipActive(x.before.source), false);
+      assert.deepEqual(h.store.events.get(), []); assert.deepEqual(h.store.content.get(), {});
+    } else if (kind === "principal-signal-aba") {
+      // The fixture's existing public session signal models a principal ABA;
+      // this does not claim a second user's authenticated Worker session.
+      const session = h.store.session.get();
+      h.store.session.set({ ...session, user: { ...session.user, userId: "d-library-other-principal" } }); h.store.notify();
+      assert.equal(h.store.authorizationScopeActive(x.before.authorization), false);
+      h.store.session.set(session); h.store.notify();
+      assert.equal(h.store.authorizationScopeActive(x.before.authorization), true);
+    } else if (kind === "resource-aba") {
+      const route = h.store.route.get();
+      h.store.setRoute(withProjectTaskDocumentInRoute("/library", h.otherA));
+      assert.notEqual(h.store.route.get(), route); h.store.setRoute(route);
+      assert.equal(h.store.route.get(), route);
+    } else {
+      // Public native lifecycle only, not a private import handler or a fake
+      // renderer: disconnect/reconnect the same actual instance before draw.
+      library.isConnected = false; library.disconnectedCallback();
+      library.isConnected = true; library.connectedCallback();
+    }
+    await f.settle(); assert.equal(dLibraryImportRecovery(x), null); assert.equal(dLibraryImportPreview(x), null);
+    const route = h.store.route.get(), focus = f.native.nativeFocus.length, scroll = f.native.nativeScroll.length;
+    record.gate.resolve(); b.gate.resolve(); await Promise.all([checking, choosing]); await f.settle();
+    assert.equal(dLibraryImportRecovery(x), null); assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(h.store.route.get(), route); assert.equal(f.native.nativeFocus.length, focus); assert.equal(f.native.nativeScroll.length, scroll);
+    if (kind === "source") {
+      assert.deepEqual(h.store.events.get(), []); assert.deepEqual(h.store.content.get(), {});
+      assert.equal(f.tree().root.text.includes(x.original.request.body.event.payload.title), false);
+    }
+    assert.equal(b.reads, 1); await dLibraryImportNoEffects(x, { retired: true });
+    t.diagnostic("D_LIBRARY_IMPORT_RETIREMENT " + JSON.stringify({ locale, kind, originalWorker200Lost: true,
+      heldOriginalAvailabilityStatus: record.status, lateBReads: b.reads, recoveryRevived: false,
+      nativeFocusOrScroll: false, replacementCommands: 0, principalPortIsSynthetic: kind === "principal-signal-aba" }));
+  } finally {
+    record.gate.resolve(); b.gate.resolve(); await Promise.allSettled([checking, choosing].filter(Boolean)); restorePolicy();
+  }
+});
+
+test("D Library collapsed unconfirmed original still blocks an actual current recommendation / en", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "en"), { f, h, library } = x;
+  await dLibraryImportDismiss(x);
+  const documentId = h.store.projection.get().documentId;
+  const facts = cLibraryDraftNextActionFacts(h.store, documentId, null, { lifecycle: true });
+  assert.equal(facts.canRead && facts.canAuthor && facts.canConfigure, true);
+  const actions = cLibraryDraftNextActions(facts).filter(action => action.target.kind === "configure");
+  assert.equal(actions.length, 1); const action = actions[0], target = JSON.stringify(action.target);
+  const button = cLibraryDraftLifecycleButton(f, action.id);
+  assert.equal(button.owner.closest("forma-library"), library); assert.equal(button.port.matches(":disabled"), false);
+  assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+  const route = h.store.route.get(), requests = h.requests.length;
+  f.native.emit("pointerdown", button.port); f.native.focus(button.port);
+  cLibraryDraftActivateLifecycle(f, button); await f.settle();
+  assert.equal(h.store.route.get(), route); assert.ok(library.isConnected);
+  assert.equal(JSON.stringify(action.target), target); assert.ok(dLibraryImportRecovery(x).check);
+  assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+  assert.deepEqual(h.requests.slice(requests).filter(row => row.url.startsWith("/api/events")), []);
+  await dLibraryImportNoEffects(x);
+});
+
+// D deliberate Library departure, additive after the immutable lifetime14.
+// Reuse the actual Shell/task/Library/Store/RAM Worker and the existing exact
+// original import/read ports. Native events and File.text are finite ports;
+// these controls do not claim browser history cancellation or physical focus.
+const dLibraryImportLifetimeCopy = Object.freeze({
+  en: "Leaving this Library view removes these local recovery controls. It does not cancel the import or confirm its result.",
+  fr: "Quitter cette vue de la bibliothèque supprime ces contrôles de récupération locaux. Cela n’annule pas l’importation et ne confirme pas son résultat.",
+  ar: "تؤدي مغادرة عرض المكتبة هذا إلى إزالة أدوات الاستعادة المحلية هذه. لا يؤدي ذلك إلى إلغاء الاستيراد أو تأكيد نتيجته.",
+  ja: "このライブラリ画面を離れると、ローカルの復旧操作は利用できなくなります。インポートの取り消しや結果の確認にはなりません。",
+});
+function dLibraryImportLifetimeSnapshot(x) {
+  const { f, library } = x, tree = f.tree();
+  const regions = tree.visible("aside").filter(node => node.owner === library && fObjectClassed(node, "library-import-recovery"));
+  assert.equal(regions.length, 1); const region = regions[0];
+  assert.ok(region.port.isConnected && library.isConnected);
+  return tree.visible("p").filter(node => node.owner === library
+    && c19NamingWithin(node, region) && fObjectClassed(node, "library-import-recovery-lifetime"))
+    .map(node => ({ text: node.text, role: node.attributes.role ?? null,
+      connected: node.port.isConnected && x.f.renderer.nodes.includes(node.port) }));
+}
+function dLibraryImportLifetimeAssert(x, snapshot) {
+  const text = dLibraryImportLifetimeCopy[x.f.locale]; assert.equal(typeof text, "string");
+  assert.equal(x.f.i18n.t("library.archive.recoveryLifetime"), text);
+  assert.deepEqual(snapshot, [{ text, role: null, connected: true }],
+    "One localized inline lifetime hint; the original exact receipt status remains separate and unchanged");
+}
+function dLibraryImportActivity(x) {
+  const link = x.f.task("/activity"), destination = withProjectTaskDocumentInRoute("/activity",
+    x.h.store.projection.get().documentId, x.h.store.route.get());
+  assert.equal(link.owner.tag, "forma-ui-audience-navigation");
+  assert.equal(link.attributes.href, destination);
+  return { link, destination };
+}
+function dLibraryImportDeparted(x, destination) {
+  const { f, h, library } = x;
+  assert.equal(h.store.route.get(), destination);
+  assert.equal(h.location.pathname + h.location.search + h.location.hash, destination);
+  assert.equal(library.isConnected, false); assert.equal(f.components().includes(library), false);
+  assert.equal(f.components().filter(owner => owner.tag === "forma-activity"
+    && owner.store === h.store && owner.isConnected).length, 1);
+  assert.equal(dLibraryImportRecovery(x), null); assert.equal(dLibraryImportPreview(x), null);
+  assert.equal(f.tree().visible("aside").filter(node => fObjectClassed(node, "library-import-recovery")).length, 0);
+}
+// Presentation-only drain while ONE verified original response is held. It
+// neither excludes that response from the strict transport join nor calls it
+// quiescent. All original requests are joined after the gate's final release.
+async function dLibraryImportHeldPresentation(x, record, provenance) {
+  const { f, h } = x;
+  const exact = () => {
+    assert.equal(record.response.status, 200); assert.equal(record.delivered, false);
+    assert.ok(h.requests.includes(record.request)); assert.equal(record.response.bodyUsed, false);
+    provenance();
+  };
+  exact();
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await f.settle();
+    for (const [id, timer] of [...h.timers]) if (timer.delay === 16) { h.timers.delete(id); timer.callback(0); }
+    await new Promise(setImmediate);
+  }
+  await f.settle(); await h.worker.drainBackground(); exact();
+  assert.equal(h.navigationResumeReads.pendingOriginalCount(), 1,
+    "The exact held original is still pending, not cancelled, consumed, or silently omitted from settlement");
+  assert.equal([...h.timers.values()].filter(timer => timer.delay === 16).length, 0);
+  assert.equal(f.frames.size, 0); assert.equal(f.requested, false);
+}
+
+test("D Library deliberate task departure retires dismissed unknown recovery without resending / en", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "en"), { f, h, library } = x;
+  const native = await cOrdinaryNavNative(t, f);
+  await dLibraryImportDismiss(x); await cOrdinaryNavSettle(f);
+  const recovery = dLibraryImportStatus(x, "library.archive.unconfirmed");
+  assert.ok(recovery.check); assert.equal(recovery.open, null); assert.equal(recovery.discard, null);
+  const hint = dLibraryImportLifetimeSnapshot(x), before = await cOrdinaryNavBefore(f);
+  const target = dLibraryImportActivity(x);
+  await cOrdinaryNavClick(f, target.link, native);
+  dLibraryImportDeparted(x, target.destination); await cOrdinaryNavNoWrite(f, before);
+  x.unconfirmed(); await dLibraryImportNoEffects(x);
+  // A fresh deliberate return does not invent durable recovery or restore the
+  // retired owner. The exact original write observation remains unconfirmed.
+  const back = f.task("/library"), returnRoute = back.attributes.href;
+  await cOrdinaryNavClick(f, back, native);
+  assert.equal(h.store.route.get(), returnRoute);
+  const fresh = f.components().filter(owner => owner.tag === "forma-library" && owner.store === h.store && owner.isConnected);
+  assert.equal(fresh.length, 1); assert.equal(fresh[0] === library, false);
+  assert.equal(f.tree().visible("aside").filter(node => fObjectClassed(node, "library-import-recovery")).length, 0);
+  assert.equal(f.tree().visible("dialog").filter(node => fObjectClassed(node, "library-import-dialog")).length, 0);
+  x.unconfirmed(); await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x);
+  dLibraryImportLifetimeAssert(x, hint);
+});
+
+test("D Library pending original still refuses task departure after actual preview Close / fr", fIntelligenceOptions, async t => {
+  const x = await cLibraryImportPage(t, "fr"), { f, h, library } = x;
+  const native = await cOrdinaryNavNative(t, f), file = cLibraryImportFile(x.archives.A);
+  x.clientReceipts = dLibraryImportReceiptRows(h);
+  await finishCommandPreparation(f, dLibraryImportChoose(x, file)); await cOrdinaryNavSettle(f);
+  const acknowledgmentOwner = { authorizationKey: x.before.authorization.key, actorUserId: x.before.actor,
+    projectId: h.a, sourceGeneration: x.before.source.generation };
+  const previous = new Set(h.store.eventWriteAcknowledgments(acknowledgmentOwner).map(value => value.observationId));
+  const original = x.receipts.arm(x.archives.A.archive, true); x.original = original;
+  const pending = f.act(cLibraryImportPreview(x).submit, "click", { button: 0 });
+  const provenance = () => {
+    assert.equal(x.receipts.records().length, 1); assert.equal(x.receipts.records()[0] === original, true);
+    assert.equal(x.receipts.isOriginal(original.request), true); assert.equal(original.receipt.appended.length, 2);
+  };
+  const settleHeld = () => dLibraryImportHeldPresentation(x, original, provenance);
+  try {
+    await finishCommandPreparation(f, x.receipts.reached(original)); await settleHeld();
+    const preview = dLibraryImportPreview(x, { busy: true });
+    assert.equal(dLibraryImportStatus(x, "library.archive.originalPending").check, null);
+    await cBlankAct(x, preview.close); await settleHeld(); assert.equal(dLibraryImportPreview(x), null);
+    const recovery = dLibraryImportStatus(x, "library.archive.originalPending");
+    assert.equal(recovery.check, null); assert.equal(recovery.open, null); assert.equal(recovery.discard, null);
+    const hint = dLibraryImportLifetimeSnapshot(x), before = await cOrdinaryNavBefore(f);
+    const target = dLibraryImportActivity(x), gesture = await cOrdinaryNavClick(f, target.link, native, settleHeld);
+    cOrdinaryNavRefused(f, before, native, gesture, library); await cOrdinaryNavNoWrite(f, before);
+    assert.equal(original.delivered, false); dLibraryImportStatus(x, "library.archive.originalPending");
+    original.gate.resolve(); await finishCommandPreparation(f, pending); await cOrdinaryNavSettle(f);
+    assert.equal(original.delivered, true); cLibraryImportCopiedA(x, original);
+    const observations = h.store.eventWriteAcknowledgments(acknowledgmentOwner).filter(value => !previous.has(value.observationId));
+    assert.deepEqual(observations, [], "The existing Store retires a positively observed published receipt; it does not retain it as unknown");
+    const originalIds = new Set(original.receipt.appended.map(event => event.eventId));
+    assert.deepEqual(h.store.events.get().filter(event => originalIds.has(event.eventId)), original.receipt.appended);
+    assert.equal(h.store.head.get(), original.receipt.head);
+    assert.equal(dLibraryImportRecovery(x), null); assert.equal(dLibraryImportPreview(x), null);
+    const fresh = dLibraryImportActivity(x); await cOrdinaryNavClick(f, fresh.link, native);
+    dLibraryImportDeparted(x, fresh.destination); await cOrdinaryNavNoWrite(f, before);
+    assert.equal(file.reads, 1); await dLibraryImportNoEffects(x);
+    dLibraryImportLifetimeAssert(x, hint);
+  } finally {
+    original.gate.resolve(); await Promise.allSettled([pending]);
+    await h.navigationResumeReads.settleOriginalRequests(); await f.settle();
+    await h.navigationResumeReads.settleOriginalRequests(); await h.worker.drainBackground();
+  }
+});
+
+test("D Library newer unresolved file refuses task departure until explicit local discard / ar", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "ar"), { f, h, library } = x;
+  const native = await cOrdinaryNavNative(t, f); await dLibraryImportDismiss(x);
+  const b = cLibraryImportFile(x.archives.B, true), choosing = dLibraryImportChoose(x, b);
+  try {
+    await b.entered.promise; await f.tick(library); await cOrdinaryNavSettle(f);
+    assert.equal(b.reads, 1); assert.equal(dLibraryImportPreview(x), null);
+    const recovery = dLibraryImportStatus(x, "library.archive.unconfirmed");
+    assert.ok(recovery.check && recovery.discard); assert.equal(recovery.open, null);
+    const hint = dLibraryImportLifetimeSnapshot(x), before = await cOrdinaryNavBefore(f);
+    const target = dLibraryImportActivity(x), gesture = await cOrdinaryNavClick(f, target.link, native);
+    cOrdinaryNavRefused(f, before, native, gesture, library); await cOrdinaryNavNoWrite(f, before);
+    assert.equal(dLibraryImportPreview(x), null); assert.ok(dLibraryImportRecovery(x).discard); x.unconfirmed();
+    await cBlankAct(x, dLibraryImportRecovery(x).discard); await cOrdinaryNavSettle(f);
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x).discard, null);
+    const fresh = dLibraryImportActivity(x); await cOrdinaryNavClick(f, fresh.link, native);
+    dLibraryImportDeparted(x, fresh.destination); await cOrdinaryNavNoWrite(f, before); x.unconfirmed();
+    const focus = f.native.nativeFocus.length, scroll = f.native.nativeScroll.length, windowScroll = native.scrolls.length;
+    b.gate.resolve(); await finishCommandPreparation(f, choosing); await cOrdinaryNavSettle(f);
+    dLibraryImportDeparted(x, fresh.destination);
+    assert.equal(f.native.nativeFocus.length, focus); assert.equal(f.native.nativeScroll.length, scroll);
+    assert.equal(native.scrolls.length, windowScroll); assert.equal(b.reads, 1);
+    await dLibraryImportNoEffects(x); dLibraryImportLifetimeAssert(x, hint);
+  } finally {
+    b.gate.resolve(); await Promise.allSettled([choosing]);
+    await h.navigationResumeReads.settleOriginalRequests(); await f.settle();
+    await h.navigationResumeReads.settleOriginalRequests(); await h.worker.drainBackground();
+  }
+});
+
+test("D Library read-only Check retires quietly after deliberate task departure / ja", fIntelligenceOptions, async t => {
+  const x = await dLibraryImportUnknown(t, "ja", { observeOriginalFullRead: true }), { f, h } = x;
+  const native = await cOrdinaryNavNative(t, f); await dLibraryImportDismiss(x); await cOrdinaryNavSettle(f);
+  const read = h.navigationFullRead, record = read.arm({ hold: true });
+  const checking = cBlankAct(x, dLibraryImportRecovery(x).check);
+  const provenance = () => {
+    assert.equal(read.records.length, 1); assert.equal(read.records[0] === record, true);
+    assert.equal(record.request.init.method ?? "GET", "GET"); assert.equal(record.request.init.body, undefined);
+    assert.equal(record.body.hasMore, false); x.unconfirmed();
+  };
+  const settleHeld = () => dLibraryImportHeldPresentation(x, record, provenance);
+  try {
+    await record.entered.promise; await settleHeld();
+    const recovery = dLibraryImportStatus(x, "library.archive.checkingOriginal");
+    assert.equal(recovery.check.port.matches(":disabled"), true); assert.equal(recovery.check.attributes["aria-busy"], "true");
+    assert.equal(recovery.open, null); assert.equal(recovery.discard, null); assert.equal(dLibraryImportPreview(x), null);
+    const hint = dLibraryImportLifetimeSnapshot(x), before = await cOrdinaryNavBefore(f);
+    const target = dLibraryImportActivity(x); await cOrdinaryNavClick(f, target.link, native, settleHeld);
+    dLibraryImportDeparted(x, target.destination); await cOrdinaryNavNoWrite(f, before);
+    assert.equal(record.delivered, false); assert.equal(h.navigationResumeReads.pendingOriginalCount(), 1);
+    const focus = f.native.nativeFocus.length, scroll = f.native.nativeScroll.length, windowScroll = native.scrolls.length;
+    record.gate.resolve(); await finishCommandPreparation(f, checking); await cOrdinaryNavSettle(f);
+    assert.equal(record.delivered, true);
+    // Delivery returns the original response; a superseded Store read may
+    // legitimately stop before consuming its body. It still cannot revive UI.
+    dLibraryImportDeparted(x, target.destination);
+    assert.equal(f.native.nativeFocus.length, focus); assert.equal(f.native.nativeScroll.length, scroll);
+    assert.equal(native.scrolls.length, windowScroll); x.unconfirmed();
+    await dLibraryImportNoEffects(x); dLibraryImportLifetimeAssert(x, hint);
+  } finally {
+    record.gate.resolve(); await Promise.allSettled([checking]);
+    await h.navigationResumeReads.settleOriginalRequests(); await f.settle();
+    await h.navigationResumeReads.settleOriginalRequests(); await h.worker.drainBackground();
+  }
+});
+
+// One-event import uses the real Store's public append/nondispatch boundary.
+// Reuse PC's finite ordinary-write capacity technique; no job controls, private
+// observation mutation, fake receipt, or zero-context import transport grant.
+test("D Library zero-context import public capacity nondispatch stays a deliberate available preview / en",
+  fIntelligenceOptions, async t => {
+    const x = await cLibraryImportPage(t, "en"), { f, h, library } = x;
+    const sourceId = "d-library-zero-context-source", sourceTitle = "D Library zero-context archive";
+    await h.external("DocumentCreated", { project_id: h.a, document_id: sourceId, title: sourceTitle });
+    await h.store.refreshEvents({ fromStart: true }); await cOrdinaryNavSettle(f); h.exact();
+    const history = await h.history(), events = history.filter(event => event.type === "ProjectCreated" && event.payload.project_id === h.a
+      || event.type === "DocumentCreated" && event.payload.document_id === sourceId);
+    assert.equal(events.length, 2);
+    assert.equal(history.some(event => event.type === "BlockCreated" && event.payload.document_id === sourceId), false);
+    const archive = cLibraryImportExportArchive(events), projected = cLibraryImportFoldEvents(archive.events);
+    assert.deepEqual(archive.events, events); assert.deepEqual(archive.mediaManifest, []);
+    assert.equal(projected.documentId, sourceId); assert.equal(projected.documentTitle, sourceTitle);
+    assert.equal(projected.blocks.length, 0); assert.equal(projected.outputs.length, 0);
+    const before = await cOrdinaryNavBefore(f), content = structuredClone(h.store.content.get());
+    const source = before.source, authorization = before.authorization;
+    const owner = { authorizationKey: authorization.key, actorUserId: h.store.session.get().user.userId,
+      projectId: h.a, sourceGeneration: source.generation };
+    assert.deepEqual(h.store.eventWriteAcknowledgments(owner), []);
+    assert.equal(x.receipts.records().length, 0);
+    const prior = h.transport, proofs = new WeakMap(), capacityRequests = [], receipts = [];
+    let preparing = null;
+    const exact = request => {
+      const proof = proofs.get(request);
+      return Boolean(proof && request.url === "/api/events" && request.init.method === "POST"
+        && request.init === proof.init && request.init.body === proof.bytes && JSON.stringify(request.body) === proof.bytes);
+    };
+    const transport = request => {
+      if (preparing && request.url === "/api/events" && request.init.method === "POST") {
+        assert.equal(preparing.request, null); assert.ok(h.requests.includes(request));
+        assert.deepEqual(request.body, { action: "append", clientId: "web:lit", expectedSequence: preparing.head,
+          event: preparing.event, events: [preparing.event] });
+        assert.equal(request.init.body, JSON.stringify(request.body));
+        assert.ok(h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authorization));
+        preparing.request = request; proofs.set(request, { init: request.init, bytes: request.init.body });
+        assert.equal(exact({ ...request }), false); capacityRequests.push(request);
+        // Named synthetic uncertainty before Worker dispatch, not a server ACK.
+        throw new TypeError("Finite named Library capacity prerequisite transport outcome unknown");
+      }
+      return prior ? prior(request) : h.worker.request(request.url, request.init);
+    };
+    h.transport = transport;
+    try {
+      for (let index = 0; index < 32; index++) {
+        const id = "d-library-capacity-" + index;
+        const event = { type: "BlockCreated", payload: { project_id: h.a, document_id: h.ad,
+          block_id: id, client_event_id: "client-" + id, type: "direction",
+          properties: { text: "Named finite Library capacity prerequisite " + index } } };
+        const preparation = { event, head: h.store.head.get(), request: null }; preparing = preparation;
+        let result;
+        try { result = await h.store.appendWithReceipt(event); } finally { preparing = null; }
+        assert.ok(preparation.request && exact(preparation.request));
+        assert.equal(result.publication, "none"); assert.deepEqual(result.appended, []);
+        assert.equal(result.acknowledgment.outcome, "unconfirmed"); assert.equal(result.acknowledgment.action, "append");
+        assert.equal(result.acknowledgment.privateUnavailable, false); assert.deepEqual(result.acknowledgment.owner, owner);
+        assert.deepEqual(result.acknowledgment.requestedClientEventIds, ["client-" + id]);
+        assert.deepEqual(result.acknowledgment.committed, []); assert.deepEqual(result.acknowledgment.rejectedIndices, []);
+        assert.equal(result.acknowledgment.observedHead, null); receipts.push(result.acknowledgment);
+      }
+      await cOrdinaryNavSettle(f);
+      assert.equal(capacityRequests.length, 32); assert.deepEqual(h.store.eventWriteAcknowledgments(owner), receipts);
+      assert.deepEqual(await h.history(), before.history); assert.deepEqual(h.counts(), before.counts);
+      assert.deepEqual(dLibraryImportReceiptRows(h), before.receipts); assert.deepEqual(h.store.content.get(), content);
+      assert.equal(JSON.stringify(h.store.events.get()), before.events); assert.equal(h.store.head.get(), before.head);
+
+      // Independently observe the exact public one-event shape, then exercise
+      // the actual native Import separately; do not wrap its Store result.
+      const beforeProbe = h.requests.length, probe = await h.store.appendBatchWithReceipt([
+        { type: "DocumentForked", payload: { document_id: "d0000000-0000-4000-8000-000000000098",
+          title: "Imported · " + projected.documentTitle, source_stream_id: archive.streamId,
+          source_sequence: archive.events.at(-1).sequence, carried_block_ids: [] } },
+      ]);
+      assert.equal(h.requests.length, beforeProbe); assert.equal(probe.publication, "none"); assert.deepEqual(probe.appended, []);
+      assert.equal(probe.acknowledgment.action, "append"); assert.equal(probe.acknowledgment.outcome, "not-attempted");
+      assert.equal(probe.acknowledgment.privateUnavailable, false); assert.deepEqual(probe.acknowledgment.owner, owner);
+      assert.deepEqual(probe.acknowledgment.requestedClientEventIds, []); assert.deepEqual(probe.acknowledgment.committed, []);
+      assert.deepEqual(probe.acknowledgment.rejectedIndices, []); assert.equal(probe.acknowledgment.observedHead, null);
+      assert.deepEqual(h.store.eventWriteAcknowledgments(owner), receipts);
+      const file = cLibraryImportFile({ archive, bytes: JSON.stringify(archive), blocks: 0 });
+      await finishCommandPreparation(f, dLibraryImportChoose(x, file));
+      const preview = dLibraryImportPreview(x, { blocked: false }); assert.deepEqual(preview.values, ["0", "0", "0"]);
+      const beforeImport = await cOrdinaryNavBefore(f);
+      await cBlankAct(x, preview.submit); await cOrdinaryNavSettle(f);
+      assert.equal(h.requests.length, beforeImport.requests, "Actual one-event Import is rejected by real Store capacity before any transport");
+      assert.deepEqual(dLibraryImportPreview(x, { blocked: false }).values, ["0", "0", "0"]);
+      assert.equal(f.tree().visible("aside").filter(node => node.owner === library && fObjectClassed(node, "library-import-recovery")).length, 0,
+        "Explicit nondispatch does not create an unknown import or leave Check/Open recovery");
+      assert.equal(h.store.ui.toast, f.i18n.t("library.archive.notSent", "", { title: "\u2068Imported · " + sourceTitle + "\u2069" }));
+      assert.ok(library.isConnected); assert.equal(h.store.route.get(), before.route); assert.equal(file.reads, 1);
+      assert.equal(x.receipts.records().length, 0); assert.deepEqual(h.store.eventWriteAcknowledgments(owner), receipts);
+      await cOrdinaryNavNoWrite(f, beforeImport);
+      assert.deepEqual(await h.history(), before.history); assert.deepEqual(h.counts(), before.counts);
+      assert.deepEqual(dLibraryImportReceiptRows(h), before.receipts); assert.deepEqual(h.store.content.get(), content);
+      assert.deepEqual(h.requests.slice(before.requests).filter(request => (request.init.method ?? "GET") !== "GET"
+        && !h.navigationResumeReads.isReadOnlyResume(request)), capacityRequests);
+      assert.ok(capacityRequests.every(exact)); assert.equal(h.navigationResumeReads.pendingOriginalCount(), 0);
+      assert.equal(globalThis.fetch.mock.callCount(), 0);
+      t.diagnostic("D_LIBRARY_ZERO_CONTEXT_NONDISPATCH " + JSON.stringify({ contextBlocks: 0, publicAction: probe.acknowledgment.action,
+        publicOutcome: probe.acknowledgment.outcome, finiteOrdinaryUnknowns: capacityRequests.length,
+        importTransports: 0, phantomRecovery: false, originalPreviewStillAvailable: true, noProvider: true }));
+    } finally { if (h.transport === transport) h.transport = prior; }
+  });
+
+
+// One combined D sibling-owner journey, after the original1/lifetime14/departure4
+// gates. Reuse the original lost real200, exact full Check and current native
+// Assistant helpers; no new fixture, Store, response, private accessor or grant.
+test("D Library recovered original Open retains collapsed Assistant raw until explicit clear / en",
+  fIntelligenceOptions, async t => {
+    const x = await dLibraryImportUnknown(t, "en"), { f, h, library, original } = x;
+    const acknowledgment = structuredClone(x.unconfirmed()), originalRequest = original.request,
+      originalInit = originalRequest.init, originalBytes = originalInit.body, originalResponse = original.response,
+      originalReceipt = structuredClone(original.receipt), originalEventIds = original.receipt.appended.map(event => event.eventId);
+
+    // Same mounted-Assistant RAM no-provider configuration as the existing
+    // recovered Sessions case. The real Worker session supplies availability.
+    h.worker.env.OPENAI_API_KEY = "";
+    await registerCalmFullPageComponents(f, ["forma-creative-assistant"]);
+    Object.assign(x, { reads: cTargetHandoffAssistantReads(t, f),
+      checkpoint: (phase, queues = null) => t.diagnostic("D_LIBRARY_RECOVERED_OPEN_PHASE "
+        + JSON.stringify({ phase, ...(queues ? { queues } : {}) })) });
+    const native = await cOrdinaryNavNative(t, f); await cPC190Settle(x);
+    const session = h.store.session.get();
+    assert.equal(session.projectContext, undefined); assert.equal(session.assistant.enabled, true);
+    assert.equal(session.provider.configured, false); assert.equal(session.policy.accepted, true);
+    assert.ok(library.isConnected && library.store === h.store);
+    assert.equal(h.store.route.get(), x.before.origin); assert.deepEqual(x.unconfirmed(), acknowledgment);
+
+    await dLibraryImportDismiss(x); await cPC190Settle(x);
+    const read = cBlankReadPort(t, x), checked = read.arm();
+    await cBlankAct(x, dLibraryImportRecovery(x).check); await cPC190Settle(x);
+    assert.equal(checked.status, 200); assert.equal(checked.delivered, true);
+    assert.equal(read.records.length, 1); assert.equal(read.records[0], checked);
+    assert.equal(checked.request.init.method ?? "GET", "GET"); assert.equal(checked.request.init.body, undefined);
+    assert.ok(dLibraryImportStatus(x, "library.archive.originalAvailable").open);
+    assert.equal(dLibraryImportPreview(x), null, "Check keeps the dismissed original inline, not in a reopened preview");
+    assert.equal(h.store.route.get(), x.before.origin); assert.deepEqual(x.unconfirmed(), acknowledgment);
+    const targets = h.store.projection.get().documents.filter(document => document.id === original.documentId
+      && document.projectId === h.a && !document.removed);
+    assert.equal(targets.length, 1); const target = targets[0], destination = withDocumentInRoute("/", target.id, target.title);
+    const committedIds = new Set(originalEventIds);
+    assert.deepEqual(h.store.events.get().filter(event => committedIds.has(event.eventId)), originalReceipt.appended);
+    assert.equal(library.captureCommandDeparture().blocked(), false,
+      "The resolved inline original has no local unsent preview; only the independently authored Assistant will block");
+
+    Object.assign(x, cPC190Assistant(x)); x.scope = x.panel.conversationScope;
+    assert.equal(JSON.parse(x.scope)[9], x.before.origin); assert.equal(JSON.parse(x.scope)[2], h.a);
+    assert.equal(x.panel.open, false); assert.equal(x.panel.commandDepartureBlocked, false);
+    await cPC190OpenAssistant(x, "");
+    assert.ok(x.reads.reads.length > 0);
+    for (const row of x.reads.reads) {
+      assert.equal(row.status, 200); const url = new URL(row.url, "https://fixture.invalid");
+      assert.equal(url.searchParams.get("route"), x.before.origin); assert.equal(url.searchParams.get("projectId"), h.a);
+      assert.equal(row.body.context.scope.projectId, h.a);
+    }
+    const raw = "  Keep this unsent Assistant question while opening the original — 未送信\n  ";
+    await cPC190Type(x, "", raw); await cPC190Collapse(x, raw); await cPC190Settle(x);
+    await dLibraryImportNoEffects(x);
+    const before = await cOrdinaryNavBefore(f);
+    const privateBefore = h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+      contentBefore = structuredClone(h.store.content.get()), moneyBefore = cOtherProjectCanvasFinancial(h.worker);
+    const recovery = dLibraryImportStatus(x, "library.archive.originalAvailable");
+    assert.ok(recovery.open); assert.equal(recovery.discard, null); assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+    assert.equal(library.captureCommandDeparture().blocked(), false);
+    const gesture = await cOrdinaryNavClick(f, recovery.open, native, () => cPC190Settle(x));
+    t.diagnostic("D_LIBRARY_RECOVERED_OPEN_ASSISTANT " + JSON.stringify({
+      originalWorkerStatus: original.response.status, originalDeliveryLost: original.deliveryLost,
+      originalEventIds, originalObservationOutcome: x.unconfirmed().outcome, checkedStatus: checked.status,
+      origin: before.route, actual: h.store.route.get(), originalLibraryConnected: library.isConnected,
+      sameAssistantScope: x.panel.isConnected && x.panel.conversationScope === x.scope,
+      assistantStillCollapsed: !x.panel.open, assistantStillBlocks: x.panel.commandDepartureBlocked,
+      additionalRequests: h.requests.length - before.requests,
+      evidence: "actual original Worker/import/Check and full Shell/Library/Assistant; no replacement or physical-browser claim" }));
+    cOrdinaryNavRefused(f, before, native, gesture, library);
+    assert.ok(x.assistant.isConnected && x.panel.isConnected); assert.equal(x.panel.parentElement, x.assistant);
+    assert.equal(x.panel.conversationScope, x.scope); assert.equal(x.panel.open, false);
+    assert.equal(x.panel.commandDepartureBlocked, true); assert.equal(x.assistant.captureCommandDeparture().blocked(), true);
+    assert.equal(h.store.ui.toast, f.i18n.t("next.lifecycle.assistantOwnsWork"));
+    assert.equal(dLibraryImportPreview(x), null); assert.ok(dLibraryImportStatus(x, "library.archive.originalAvailable").open);
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(h.store.content.get(), contentBefore); assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+    assert.deepEqual(x.unconfirmed(), acknowledgment); x.reads.empty();
+
+    // Reopening must expose the same raw text through the actual new composer,
+    // not through a retired textarea. Only a current explicit clear resolves it.
+    const requestsBeforeReopen = h.requests.length, readsBeforeReopen = x.reads.reads.length;
+    await cPC190OpenAssistant(x, raw); cPC190Field(x, raw);
+    assert.equal(x.reads.reads.length, readsBeforeReopen + 1);
+    const reopened = x.reads.reads.at(-1), reopeningRequests = h.requests.slice(requestsBeforeReopen);
+    assert.equal(reopened.status, 200); assert.equal(reopeningRequests.length, 1);
+    assert.equal(reopeningRequests[0].url, reopened.url);
+    assert.equal(reopeningRequests[0].init.method ?? "GET", "GET"); assert.equal(reopeningRequests[0].init.body, undefined);
+    const reopeningUrl = new URL(reopened.url, "https://fixture.invalid");
+    assert.equal(reopeningUrl.pathname, "/api/assistant"); assert.equal(reopeningUrl.searchParams.get("route"), before.route);
+    assert.equal(reopeningUrl.searchParams.get("projectId"), h.a); assert.equal(reopened.body.context.scope.projectId, h.a);
+    assert.equal(x.panel.commandDepartureBlocked, true); assert.equal(h.store.route.get(), before.route);
+    await cPC190Type(x, raw, ""); await cPC190Collapse(x, ""); await cPC190Settle(x);
+    assert.equal(h.requests.length, requestsBeforeReopen + 1, "Explicit clear and collapse add no read, save or submit");
+    assert.equal(x.panel.commandDepartureBlocked, false); assert.equal(x.assistant.captureCommandDeparture().blocked(), false);
+    assert.equal(library.captureCommandDeparture().blocked(), false);
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(h.store.content.get(), contentBefore); assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+
+    const fresh = dLibraryImportStatus(x, "library.archive.originalAvailable");
+    assert.ok(fresh.open); assert.equal(dLibraryImportPreview(x), null);
+    await cOrdinaryNavClick(f, fresh.open, native, () => cPC190Settle(x));
+    assert.equal(h.store.route.get(), destination);
+    assert.equal(h.location.pathname + h.location.search + h.location.hash, destination); h.exact(h.a, original.documentId);
+    assert.equal(library.isConnected, false); assert.equal(f.components().includes(library), false);
+    assert.equal(dLibraryImportRecovery(x), null); assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(f.components().filter(owner => owner.tag === "forma-workspace" && owner.store === h.store && owner.isConnected).length, 1);
+    assert.deepEqual(x.unconfirmed(), acknowledgment, "Exact Document availability and Open never acknowledge the original import batch");
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x); x.reads.empty();
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+    assert.equal(original.request, originalRequest); assert.equal(original.request.init, originalInit);
+    assert.equal(original.request.init.body, originalBytes); assert.equal(JSON.stringify(original.request.body), originalBytes);
+    assert.equal(original.response, originalResponse); assert.equal(original.response.bodyUsed, false);
+    assert.deepEqual(original.receipt, originalReceipt); assert.deepEqual(original.receipt.appended.map(event => event.eventId), originalEventIds);
+    assert.equal(original.deliveryLost, true); assert.equal(original.delivered, false); assert.equal(x.file.reads, 1);
+    assert.equal(read.records.length, 1); assert.equal(x.receipts.records().length, 1);
+  });
+
+
+// The two bounded preview companions do not alter the immutable inline case.
+// Assistant input is always authored while no dialog is open.
+test("D Library original readonly preview refuses pre-existing collapsed Assistant raw / en",
+  fIntelligenceOptions, async t => {
+    const x = await cLibraryImportPage(t, "en"), { f, h, library } = x;
+    h.worker.env.OPENAI_API_KEY = "";
+    await registerCalmFullPageComponents(f, ["forma-creative-assistant"]);
+    Object.assign(x, { reads: cTargetHandoffAssistantReads(t, f),
+      checkpoint: (phase, queues = null) => t.diagnostic("D_LIBRARY_PREVIEW_ASSISTANT_PHASE "
+        + JSON.stringify({ phase, ...(queues ? { queues } : {}) })) });
+    const native = await cOrdinaryNavNative(t, f); await cPC190Settle(x);
+    const session = h.store.session.get();
+    assert.equal(session.projectContext, undefined); assert.equal(session.assistant.enabled, true);
+    assert.equal(session.provider.configured, false); assert.equal(session.policy.accepted, true);
+    assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+    Object.assign(x, cPC190Assistant(x)); x.scope = x.panel.conversationScope;
+    assert.equal(JSON.parse(x.scope)[9], x.before.origin); assert.equal(JSON.parse(x.scope)[2], h.a);
+    assert.equal(x.panel.open, false); assert.equal(x.panel.commandDepartureBlocked, false);
+    await cPC190OpenAssistant(x, "");
+    assert.ok(x.reads.reads.length > 0);
+    for (const row of x.reads.reads) {
+      assert.equal(row.status, 200); const url = new URL(row.url, "https://fixture.invalid");
+      assert.equal(url.pathname, "/api/assistant"); assert.equal(url.searchParams.get("route"), x.before.origin);
+      assert.equal(url.searchParams.get("projectId"), h.a); assert.equal(row.body.context.scope.projectId, h.a);
+    }
+    const raw = "  Keep this unsent Assistant question while opening the original — 未送信\n  ";
+    await cPC190Type(x, "", raw); await cPC190Collapse(x, raw); await cPC190Settle(x);
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+
+    // Reuse the exact dLibraryImportUnknown A-loss recipe after, not before,
+    // those native gestures. The unchanged helper has no setup-injection hook.
+    const file = cLibraryImportFile(x.archives.A); x.clientReceipts = dLibraryImportReceiptRows(h);
+    await finishCommandPreparation(f, dLibraryImportChoose(x, file));
+    assert.deepEqual(cLibraryImportPreview(x).values, ["1", "0", "0"]);
+    const owner = { authorizationKey: x.before.authorization.key, actorUserId: x.before.actor,
+      projectId: h.a, sourceGeneration: x.before.source.generation };
+    const prior = new Set(h.store.eventWriteAcknowledgments(owner).map(value => value.observationId));
+    const original = x.receipts.arm(x.archives.A.archive, false, { unknownOriginalAccounting: true });
+    await finishCommandPreparation(f, f.act(cLibraryImportPreview(x).submit, "click", { button: 0 }));
+    assert.equal(original.response.status, 200); assert.equal(original.deliveryLost, true);
+    assert.equal(original.error, original.loss); assert.equal(original.delivered, false);
+    assert.equal(original.response.bodyUsed, false); assert.ok(x.receipts.isOriginal(original.request));
+    assert.equal(original.receipt.appended.length, 2); assert.equal(file.reads, 1);
+    const observations = h.store.eventWriteAcknowledgments(owner).filter(value => !prior.has(value.observationId));
+    assert.equal(observations.length, 1); const acknowledgment = structuredClone(observations[0]);
+    assert.deepEqual(acknowledgment.owner, owner); assert.equal(acknowledgment.action, "batch");
+    assert.equal(acknowledgment.outcome, "unconfirmed"); assert.equal(acknowledgment.privateUnavailable, false);
+    assert.deepEqual(acknowledgment.requestedClientEventIds, []); assert.deepEqual(acknowledgment.committed, []);
+    assert.deepEqual(acknowledgment.rejectedIndices, []); assert.equal(acknowledgment.observedHead, null);
+    Object.assign(x, { original, file, unconfirmed: () => {
+      const found = h.store.eventWriteAcknowledgments(owner).filter(value => value.observationId === acknowledgment.observationId);
+      assert.equal(found.length, 1); assert.deepEqual(found[0], acknowledgment,
+        "A Document availability GET/Open never acknowledges the entire original batch"); return found[0];
+    } });
+    const originalRequest = original.request, originalInit = originalRequest.init, originalBytes = originalInit.body,
+      originalResponse = original.response, originalReceipt = structuredClone(original.receipt),
+      originalEventIds = originalReceipt.appended.map(event => event.eventId);
+    assert.deepEqual(dLibraryImportPreview(x).values, ["1", "0", "0"]);
+    const unknown = dLibraryImportStatus(x, "library.archive.unconfirmed");
+    assert.ok(unknown.check); assert.equal(unknown.open, null); assert.equal(unknown.discard, null);
+    await dLibraryImportNoEffects(x);
+
+    const read = cBlankReadPort(t, x), checked = read.arm();
+    await cBlankAct(x, dLibraryImportRecovery(x).check); await cPC190Settle(x);
+    assert.equal(checked.status, 200); assert.equal(checked.delivered, true);
+    assert.equal(checked.request.init.method ?? "GET", "GET"); assert.equal(checked.request.init.body, undefined);
+    assert.equal(read.records.length, 1); assert.deepEqual(x.unconfirmed(), acknowledgment);
+    const preview = dLibraryImportPreview(x), recovery = dLibraryImportStatus(x, "library.archive.originalAvailable");
+    assert.deepEqual(preview.values, ["1", "0", "0"]); assert.ok(recovery.open);
+    // Each helper reads its own structural snapshot; compare their original native ports.
+    assert.ok(preview.dialog.port.contains(recovery.region.port));
+    assert.equal(recovery.open.port.closest("dialog"), preview.dialog.port); assert.equal(recovery.discard, null);
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 1);
+    assert.equal(library.captureCommandDeparture().blocked(), true, "The original preview is not a blanket navigation exemption");
+    assert.ok(x.panel.isConnected && x.assistant.isConnected); assert.equal(x.panel.conversationScope, x.scope);
+    assert.equal(x.panel.open, false); assert.equal(x.panel.commandDepartureBlocked, true);
+    const targets = h.store.projection.get().documents.filter(document => document.id === original.documentId
+      && document.projectId === h.a && !document.removed);
+    assert.equal(targets.length, 1);
+    const destination = withDocumentInRoute("/", targets[0].id, targets[0].title), before = await cOrdinaryNavBefore(f);
+    const privateBefore = h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+      contentBefore = structuredClone(h.store.content.get()), moneyBefore = cOtherProjectCanvasFinancial(h.worker);
+    const gesture = await cOrdinaryNavClick(f, recovery.open, native, () => cPC190Settle(x));
+    t.diagnostic("D_LIBRARY_PREVIEW_ASSISTANT " + JSON.stringify({
+      originalWorkerStatus: original.response.status, originalDeliveryLost: original.deliveryLost,
+      originalEventIds, checkedStatus: checked.status, originalObservationOutcome: x.unconfirmed().outcome,
+      origin: before.route, actual: h.store.route.get(), originalPreviewOpen: preview.dialog.port.open,
+      originalLibraryConnected: library.isConnected, assistantStillCollapsed: !x.panel.open,
+      assistantStillBlocks: x.panel.commandDepartureBlocked, additionalRequests: h.requests.length - before.requests,
+      evidence: "actual pre-modal input and original Worker/import/Check; no behind-modal gesture or browser claim" }));
+    cOrdinaryNavRefused(f, before, native, gesture, library);
+    const retained = dLibraryImportPreview(x);
+    assert.equal(retained.dialog.port, preview.dialog.port); assert.equal(retained.dialog.port.open, true);
+    assert.deepEqual(retained.values, ["1", "0", "0"]);
+    const retainedRecovery = dLibraryImportStatus(x, "library.archive.originalAvailable"); assert.ok(retainedRecovery.open);
+    assert.ok(retained.dialog.port.contains(retainedRecovery.region.port));
+    assert.equal(retainedRecovery.open.port.closest("dialog"), retained.dialog.port);
+    assert.ok(x.assistant.isConnected && x.panel.isConnected); assert.equal(x.panel.parentElement, x.assistant);
+    assert.equal(x.panel.conversationScope, x.scope); assert.equal(x.panel.open, false);
+    assert.equal(x.panel.commandDepartureBlocked, true); assert.equal(x.assistant.captureCommandDeparture().blocked(), true);
+    assert.equal(h.store.ui.toast, f.i18n.t("next.lifecycle.assistantOwnsWork"));
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x); x.reads.empty();
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(h.store.content.get(), contentBefore); assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+
+    // Only a real local dismissal makes the Assistant reachable again.
+    const requestsBeforeClose = h.requests.length;
+    await dLibraryImportDismiss(x); await cPC190Settle(x);
+    assert.equal(h.requests.length, requestsBeforeClose); assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 0);
+    assert.ok(dLibraryImportStatus(x, "library.archive.originalAvailable").open);
+    const readsBeforeReopen = x.reads.reads.length, requestsBeforeReopen = h.requests.length;
+    await cPC190OpenAssistant(x, raw); cPC190Field(x, raw);
+    assert.equal(x.reads.reads.length, readsBeforeReopen + 1);
+    const reopened = x.reads.reads.at(-1), reopeningRequests = h.requests.slice(requestsBeforeReopen);
+    assert.equal(reopened.status, 200); assert.equal(reopeningRequests.length, 1);
+    assert.equal(reopeningRequests[0].url, reopened.url);
+    assert.equal(reopeningRequests[0].init.method ?? "GET", "GET"); assert.equal(reopeningRequests[0].init.body, undefined);
+    const reopeningUrl = new URL(reopened.url, "https://fixture.invalid");
+    assert.equal(reopeningUrl.pathname, "/api/assistant"); assert.equal(reopeningUrl.searchParams.get("route"), before.route);
+    assert.equal(reopeningUrl.searchParams.get("projectId"), h.a); assert.equal(reopened.body.context.scope.projectId, h.a);
+    assert.equal(x.panel.commandDepartureBlocked, true); assert.equal(h.store.route.get(), before.route);
+    await cPC190Type(x, raw, ""); await cPC190Collapse(x, ""); await cPC190Settle(x);
+    assert.equal(h.requests.length, requestsBeforeReopen + 1);
+    assert.equal(x.panel.commandDepartureBlocked, false); assert.equal(x.assistant.captureCommandDeparture().blocked(), false);
+    assert.equal(library.captureCommandDeparture().blocked(), false);
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(h.store.content.get(), contentBefore); assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+    const fresh = dLibraryImportStatus(x, "library.archive.originalAvailable");
+    assert.ok(fresh.open); assert.equal(dLibraryImportPreview(x), null);
+    await cOrdinaryNavClick(f, fresh.open, native, () => cPC190Settle(x));
+    assert.equal(h.store.route.get(), destination);
+    assert.equal(h.location.pathname + h.location.search + h.location.hash, destination); h.exact(h.a, original.documentId);
+    assert.equal(library.isConnected, false); assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    assert.equal(f.components().filter(component => component.tag === "forma-workspace" && component.store === h.store && component.isConnected).length, 1);
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x); x.reads.empty();
+    assert.deepEqual(x.unconfirmed(), acknowledgment);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+    assert.equal(original.request, originalRequest); assert.equal(original.request.init, originalInit);
+    assert.equal(original.request.init.body, originalBytes); assert.equal(JSON.stringify(original.request.body), originalBytes);
+    assert.equal(original.response, originalResponse); assert.equal(original.response.bodyUsed, false);
+    assert.deepEqual(original.receipt, originalReceipt); assert.deepEqual(original.receipt.appended.map(event => event.eventId), originalEventIds);
+    assert.equal(original.deliveryLost, true); assert.equal(original.delivered, false);
+    assert.equal(file.reads, 1); assert.equal(read.records.length, 1); assert.equal(x.receipts.records().length, 1);
+  });
+
+test("D Library clean original readonly preview opens its exact recovered Document / en",
+  fIntelligenceOptions, async t => {
+    const x = await dLibraryImportUnknown(t, "en"), { f, h, library, original } = x;
+    const native = await cOrdinaryNavNative(t, f);
+    const acknowledgment = structuredClone(x.unconfirmed()), originalRequest = original.request, originalInit = original.request.init,
+      originalBytes = originalInit.body, originalResponse = original.response, originalReceipt = structuredClone(original.receipt);
+    const read = cBlankReadPort(t, x), checked = read.arm();
+    await cBlankAct(x, dLibraryImportRecovery(x).check); await cOrdinaryNavSettle(f);
+    assert.equal(checked.status, 200); assert.equal(checked.delivered, true);
+    assert.equal(checked.request.init.method ?? "GET", "GET"); assert.equal(checked.request.init.body, undefined);
+    const preview = dLibraryImportPreview(x), recovery = dLibraryImportStatus(x, "library.archive.originalAvailable");
+    assert.deepEqual(preview.values, ["1", "0", "0"]); assert.ok(recovery.open);
+    assert.ok(preview.dialog.port.contains(recovery.region.port));
+    assert.equal(recovery.open.port.closest("dialog"), preview.dialog.port); assert.equal(recovery.discard, null);
+    assert.equal(f.tree().visible("dialog").filter(node => node.port?.open).length, 1);
+    assert.equal(library.captureCommandDeparture().blocked(), true,
+      "Only this native original-preview Open may subtract its exact read-only presentation");
+    const targets = h.store.projection.get().documents.filter(document => document.id === original.documentId
+      && document.projectId === h.a && !document.removed);
+    assert.equal(targets.length, 1); const destination = withDocumentInRoute("/", targets[0].id, targets[0].title);
+    const before = await cOrdinaryNavBefore(f), moneyBefore = cOtherProjectCanvasFinancial(h.worker),
+      privateBefore = h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all();
+    await cOrdinaryNavClick(f, recovery.open, native, () => cOrdinaryNavSettle(f));
+    t.diagnostic("D_LIBRARY_PREVIEW_CLEAN_OPEN " + JSON.stringify({
+      originalWorkerStatus: original.response.status, originalDeliveryLost: original.deliveryLost, checkedStatus: checked.status,
+      originalDocumentId: original.documentId, actual: h.store.route.get(), destination,
+      originalLibraryConnected: library.isConnected, originalObservationOutcome: x.unconfirmed().outcome,
+      evidence: "actual current readonly original preview Open; no dismissal, replacement or batch acknowledgment" }));
+    assert.equal(h.store.route.get(), destination);
+    assert.equal(h.location.pathname + h.location.search + h.location.hash, destination); h.exact(h.a, original.documentId);
+    assert.equal(library.isConnected, false); assert.equal(f.components().includes(library), false);
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    assert.equal(f.components().filter(component => component.tag === "forma-workspace" && component.store === h.store && component.isConnected).length, 1);
+    await cOrdinaryNavNoWrite(f, before); await dLibraryImportNoEffects(x);
+    assert.deepEqual(x.unconfirmed(), acknowledgment);
+    assert.deepEqual(h.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(), privateBefore);
+    assert.deepEqual(cOtherProjectCanvasFinancial(h.worker), moneyBefore);
+    assert.equal(original.request, originalRequest); assert.equal(original.request.init, originalInit);
+    assert.equal(original.request.init.body, originalBytes); assert.equal(JSON.stringify(original.request.body), originalBytes);
+    assert.equal(original.response, originalResponse); assert.equal(original.response.bodyUsed, false);
+    assert.deepEqual(original.receipt, originalReceipt);
+    assert.deepEqual(original.receipt.appended.map(event => event.eventId), originalReceipt.appended.map(event => event.eventId));
+    assert.equal(original.deliveryLost, true); assert.equal(original.delivered, false);
+    assert.equal(x.file.reads, 1); assert.equal(read.records.length, 1); assert.equal(x.receipts.records().length, 1);
   });
 
 

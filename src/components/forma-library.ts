@@ -1,6 +1,6 @@
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
 import { html, nothing } from "lit";
-import { hasBlockingNavigationDialog, navigateInApp, type CommandDeparture, type LocalNavigation, type NavigationPresentationContext } from "./command-departure";
+import { hasBlockingNavigationDialog, navigateInApp, navigationPresentationMatches, type CommandDeparture, type LocalNavigation, type NavigationPresentationContext } from "./command-departure";
 import { creativeNextActions, type CreativeNextAction } from "../model/workspace-intelligence";
 import { nextActionFacts } from "../state/next-action-context";
 import { renderLifecycleNextActionCards } from "./next-action-cards";
@@ -28,7 +28,7 @@ import { promptTechniqueDefinition } from "../model/prompt-structures";
 import { describeOutput, imageOutputNamingCandidate, qualifyDisplayCollisions } from "../model/output-naming";
 import { isContextCompositionRelation } from "../model/combined-context";
 import { isImageReference, referenceMedium } from "../model/reference-media";
-import { artifactFocusOptionsFromRoute, isProjectTaskRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute as buildLibraryFocusRoute, libraryRootRoute, type LibraryFocusKind } from "../model/routes";
+import { artifactFocusOptionsFromRoute, isProjectTaskRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute as buildLibraryFocusRoute, libraryRootRoute, withDocumentInRoute, type LibraryFocusKind } from "../model/routes";
 import "./output-card";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
@@ -44,6 +44,10 @@ import "./design-system/layout";
 
 type LibraryView = "all"|"blocks"|"outputs"|"families";
 type OutputScope = "recent"|"kept";
+type LibraryImportOriginal = {
+  readonly selectionId:number;readonly documentId:string;readonly projectId:string;readonly title:string;
+  state:"pending"|"unconfirmed";check?:"checking"|"found"|"absent"|"unavailable";
+};
 const records=(value:unknown):Array<Record<string,unknown>>=>Array.isArray(value)?value.filter((item):item is Record<string,unknown>=>Boolean(item)&&typeof item==="object"&&!Array.isArray(item)):[];
 
 export class FormaLibrary extends FormaElement {
@@ -59,7 +63,8 @@ export class FormaLibrary extends FormaElement {
   #cancelPublisherCompletion:(()=>void)|null=null;
   #outputReuse:ManualOutputReuse={cancel:null};
   #importRequest=0;
-  #importOwner:{id:number;pending:boolean;current:()=>boolean;close:()=>void;show:(dialog:HTMLDialogElement)=>void}|null=null;
+  #importOwner:{id:number;pending:boolean;original?:LibraryImportOriginal;current:()=>boolean;close:()=>void;
+    dismiss:()=>void;show:(dialog:HTMLDialogElement)=>void}|null=null;
 
   override disconnectedCallback(){this.#outputReuse.cancel?.();this.#cancelPublisherCompletion?.();this.#importOwner?.close();this.#cancelLibraryReturnFocus?.();this.#artifactOpening?.disposeFocus();this.#artifactOpening=null;this.#openedArtifactId="";super.disconnectedCallback();}
 
@@ -199,21 +204,31 @@ export class FormaLibrary extends FormaElement {
       .some(input=>input.getAttribute("type")==="checkbox"
         ?input.checked!==input.defaultChecked:input.value!==input.defaultValue);
   }
-  #unretainedNavigationBlocked(context?:NavigationPresentationContext){
-    return Boolean(this.#imported||this.#cancelPublisherCompletion
+  #unretainedNavigationBlocked(context?:NavigationPresentationContext,departure=false){
+    const importOwner=this.#importOwner;
+    // Only the exact recovered original's readonly preview is this gesture's presentation.
+    const originalPreview=departure&&Boolean(this.#imported&&importOwner?.current()&&!importOwner.pending
+      &&importOwner.original?.state==="unconfirmed"&&importOwner.original.check==="found"
+      &&importOwner.id===importOwner.original.selectionId&&this.#importRequest===importOwner.id
+      &&context?.presentation?.trigger===this.querySelector(".library-import-open-original")
+      &&navigationPresentationMatches(context,this,this.querySelector(".library-import-dialog")));
+    return Boolean(!originalPreview&&(this.#imported||importOwner&&(importOwner.pending||importOwner.original?.state==="pending"
+      ||this.#importRequest===importOwner.id||!departure&&importOwner.original))||this.#cancelPublisherCompletion
       ||hasBlockingNavigationDialog(this.ownerDocument,context)||this.#publisherDraftChanged());
   }
-  #navigationBlocked(context?:NavigationPresentationContext){
+  #navigationBlocked(context?:NavigationPresentationContext,departure=false){
     const target=libraryBlockEditorFromRoute(this.store.route.get());
     const inspection=target?[...this.querySelectorAll("forma-library-block-editor")].find(editor=>
       editor.isConnected&&editor.blockId===target.blockId&&editor.closest("forma-library")===this
       &&FormaElement.hasStoreIdentity(editor,this.store)):undefined;
     return Boolean(target&&!inspection?.allowsNavigationPresentation(context)
-      ||[...this.#editorTargets.values()].some(editor=>editor?.navigationBlocked)||this.#unretainedNavigationBlocked(context));
+      ||[...this.#editorTargets.values()].some(editor=>editor?.navigationBlocked)||this.#unretainedNavigationBlocked(context,departure));
   }
   /** Content-free admission; the caller still owns Source, route and native focus. */
   captureCommandDeparture():CommandDeparture {
-    return {element:this,current:()=>this.isConnected,blocked:context=>this.#navigationBlocked(context),
+    // A dismissed settled original is recoverable metadata, not a new unsent draft.
+    // Preparation still checks it; deliberate departure never cancels its write.
+    return {element:this,current:()=>this.isConnected,blocked:context=>this.#navigationBlocked(context,true),
       reason:()=>this.#cancelPublisherCompletion?"next.library.publisherPending"
         :this.#publisherDraftChanged()?"next.library.publisherDraft":"next.lifecycle.currentWorkOpen"};
   }
@@ -244,7 +259,7 @@ export class FormaLibrary extends FormaElement {
         &&mounted.length===editors.length&&editors.every((editor,index)=>mounted[index]===editor);
     };
     if(!current())return null;
-    return {element:this,current,blocked:context=>this.#unretainedNavigationBlocked(context),
+    return {element:this,current,blocked:context=>this.#unretainedNavigationBlocked(context,true),
       reason:()=>this.captureCommandDeparture().reason(),prepare:()=>{
         if(!current())return false;
         // The existing keyed cache survives only these same-Library routes.
@@ -414,6 +429,8 @@ export class FormaLibrary extends FormaElement {
     const input=event.target as HTMLInputElement,file=input.files?.[0];
     if(!file||!input.isConnected||!this.isConnected||!this.#canAuthor()||this.store.session.get()?.projectContext
       ||![...this.querySelectorAll<HTMLInputElement>('input[type="file"]')].includes(input))return;
+    // Transfer only this same current original; the new file never replaces its command.
+    const original=this.#importOwner?.current()?this.#importOwner.original:undefined;
     this.#importOwner?.close();
     const id=++this.#importRequest,route=this.store.route.get(),resource=route.split("#",1)[0],projectId=this.store.projection.get().projectId;
     const source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope();
@@ -429,52 +446,165 @@ export class FormaLibrary extends FormaElement {
     const close=()=>{
       unsubscribe();focus.dispose();
       if(this.#importOwner?.id!==id)return;
+      ++this.#importRequest;
       this.#importOwner=null;this.#imported=undefined;this.requestUpdate();
+    };
+    const dismiss=()=>{
+      if(this.#importOwner?.id!==id)return;
+      if(!this.#importOwner.original){close();return;}
+      ++this.#importRequest;focus.dispose();this.#imported=undefined;this.requestUpdate();
     };
     const unsubscribe=this.store.subscribe(()=>{
       if(!current())close();
       else if(!shown&&this.store.route.get()!==route)focus.dispose();
     });
-    this.#importOwner={id,pending:false,current,close,show:dialog=>{
+    this.#importOwner={id,pending:false,original,current,close,dismiss,show:dialog=>{
       if(!current()){close();return;}
+      if(this.#importRequest!==id)return;
       if(shown){ensureModalDialog(dialog);return;}
       const other=this.ownerDocument.querySelector("dialog[open]");
-      if(this.store.route.get()!==route||other&&other!==dialog||!focus.current()){close();return;}
+      if(this.store.route.get()!==route||other&&other!==dialog||!focus.current()){dismiss();return;}
       shown=focus.run(dialog,()=>ensureModalDialog(dialog));
       focus.dispose();
-      if(!shown)close();
+      if(!shown)dismiss();
     }};
     this.requestUpdate();
     try{
       if(!current()){close();return;}
       const text=await file.text();
-      if(!current()||!focus.current()){close();return;}
+      if(!current()){close();return;}
+      if(this.#importRequest!==id)return;
+      if(!focus.current()){dismiss();return;}
       this.#imported=importArchive(JSON.parse(text));this.requestUpdate();
     }catch(error){
-      const notify=current()&&focus.current();close();
+      const notify=current()&&this.#importRequest===id&&focus.current();
+      if(current())dismiss();else close();
       if(notify)this.store.toast(error instanceof Error?error.message:"Import failed");
     }
   }
   async #forkImport(owner=this.#importOwner){
     const imported=this.#imported;
-    if(!owner?.current()||owner.pending||!this.#canAuthor()||!imported)return;
+    if(!owner?.current()||owner.pending||owner.original||!this.#canAuthor()||!imported)return;
     const projection=foldEvents(imported.events);
     const restricted=projection.blocks.filter((block)=>["reference","audio"].includes(block.type)
       ||Object.entries(block.properties).some(([key,value])=>Boolean(value)&&(key.startsWith("organization_context_")
         ||["media_url","reference_id","source_ref","source_evidence_hash","source_artifact_id","source_output_id","source_block_id"].includes(key))));
     if(restricted.length){this.store.toast(this.i18n.t("library.archive.unsafe"));return;}
+    const source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope();
+    let original:LibraryImportOriginal|undefined;
+    const originalCurrent=()=>{
+      const activeOwner=this.#importOwner;
+      return Boolean(original&&activeOwner&&activeOwner.original===original&&activeOwner.current()
+        &&this.store.sourceOwnershipActive(source)&&this.store.authorizationScopeActive(authorization));
+    };
     owner.pending=true;this.requestUpdate();
     try{
-      const documentId=crypto.randomUUID();
+      const documentId=crypto.randomUUID(),title=`Imported · ${projection.documentTitle}`;
       const copiedIds=new Map(projection.blocks.map((block)=>[block.id,crypto.randomUUID()]));
-      const events=[{type:"DocumentForked",payload:{document_id:documentId,title:`Imported · ${projection.documentTitle}`,source_stream_id:imported.streamId,source_sequence:imported.events.at(-1)?.sequence??0,carried_block_ids:projection.blocks.map((block)=>block.id)}},...projection.blocks.map((block,index)=>({type:"BlockCreated",payload:{block_id:copiedIds.get(block.id)!,document_id:documentId,type:block.type,handle:`${block.handle}-import`,position:`z${index}`,properties:block.properties}}))];
-      const appended=await this.store.appendBatch(copyOutputRequirementCreationEvents(events,copiedIds));
-      if(appended.length!==events.length||!owner.current()||this.#imported!==imported)return;
-      owner.close();this.store.toast(this.i18n.t("library.archive.imported"));
+      const events=[{type:"DocumentForked",payload:{document_id:documentId,title,source_stream_id:imported.streamId,source_sequence:imported.events.at(-1)?.sequence??0,carried_block_ids:projection.blocks.map((block)=>block.id)}},...projection.blocks.map((block,index)=>({type:"BlockCreated",payload:{block_id:copiedIds.get(block.id)!,document_id:documentId,type:block.type,handle:`${block.handle}-import`,position:`z${index}`,properties:block.properties}}))];
+      const command=copyOutputRequirementCreationEvents(events,copiedIds);
+      original={selectionId:owner.id,documentId,projectId:this.store.projection.get().projectId,
+        title,state:"pending"};
+      owner.original=original;
+      const result=await this.store.appendBatchWithReceipt(command);
+      if(!originalCurrent())return;
+      const activeOwner=this.#importOwner!;
+      const complete=result.publication==="published"&&result.acknowledgment.outcome==="observed"
+        &&!result.acknowledgment.privateUnavailable&&!result.acknowledgment.rejectedIndices.length
+        &&result.acknowledgment.committed.length===command.length&&result.appended.length===command.length
+        &&result.appended.some(event=>event.type==="DocumentForked"&&event.payload.document_id===documentId);
+      const notSent=result.acknowledgment.action===(command.length>1?"batch":"append")
+        &&result.acknowledgment.requestedClientEventIds.length===0
+        &&result.acknowledgment.outcome==="not-attempted"&&!result.acknowledgment.privateUnavailable
+        &&result.publication==="none"&&result.appended.length===0&&result.acknowledgment.committed.length===0
+        &&result.acknowledgment.rejectedIndices.length===0&&result.acknowledgment.observedHead===null;
+      if(!complete&&!notSent){original.state="unconfirmed";return;}
+      activeOwner.original=undefined;
+      if(complete&&activeOwner===owner&&this.#importRequest===owner.id&&this.#imported===imported){
+        owner.close();this.store.toast(this.i18n.t("library.archive.imported"));
+      }else{
+        // Bookkeeping for A may finish while B is current; never consume B.
+        this.store.toast(this.i18n.t(complete?"library.archive.originalImported":"library.archive.notSent","",
+          {title:`\u2068${original.title}\u2069`}));
+        if(this.#importRequest!==activeOwner.id)activeOwner.close();else this.requestUpdate();
+      }
+    }catch(error){
+      if(!original)throw error;
+      if(originalCurrent())original.state="unconfirmed";
     }finally{
       owner.pending=false;
-      if(this.#importOwner===owner)this.requestUpdate();
+      if(this.#importOwner===owner||originalCurrent())this.requestUpdate();
     }
+  }
+  #originalImportedDocument(owner=this.#importOwner){
+    const original=owner?.original;
+    if(!owner?.current()||!original||original.state!=="unconfirmed")return null;
+    // This is committed Document availability, never an acknowledgment of the whole import.
+    return foldEvents(this.store.events.get(),Number.POSITIVE_INFINITY,original.documentId,original.projectId)
+      .documents.find(document=>document.id===original.documentId&&document.projectId===original.projectId&&!document.removed)??null;
+  }
+  #newerImportSelected(owner=this.#importOwner){
+    return Boolean(owner?.original&&owner.id!==owner.original.selectionId&&this.#importRequest===owner.id);
+  }
+  async #checkOriginalImport(event:Event,owner=this.#importOwner){
+    const original=owner?.original;
+    if(event.currentTarget!==this.querySelector(".library-import-check-original")||!owner?.current()
+      ||!original||original.state!=="unconfirmed"||original.check==="checking")return;
+    const current=()=>{const activeOwner=this.#importOwner;return Boolean(activeOwner&&activeOwner.original===original&&activeOwner.current());};
+    original.check="checking";this.requestUpdate();
+    try{
+      await this.store.refreshEvents({fromStart:true});
+      if(current())original.check=this.#originalImportedDocument()?"found":"absent";
+    }catch{if(current())original.check="unavailable";}
+    finally{if(current()){if(original.check==="checking")original.check=undefined;this.requestUpdate();}}
+  }
+  async #openOriginalImport(event:Event,owner=this.#importOwner){
+    const original=owner?.original,document=this.#originalImportedDocument(owner),trigger=event.currentTarget;
+    if(!(trigger instanceof HTMLElement)||trigger!==this.querySelector(".library-import-open-original")||!owner?.current()
+      ||!original||original.check!=="found"||!document||this.#newerImportSelected(owner))return;
+    const selection=this.#importRequest,continuation=this.#captureLibraryContinuation();
+    const current=()=>continuation.current()&&this.#importRequest===selection&&this.#importOwner===owner&&owner.current()&&owner.original===original
+      &&original.check==="found"&&!this.#newerImportSelected(owner)&&this.#originalImportedDocument(owner)?.id===document.id;
+    const dialog=trigger.closest<HTMLDialogElement>("dialog.library-import-dialog");
+    const context:NavigationPresentationContext|undefined=dialog&&dialog===this.querySelector(".library-import-dialog")
+      &&dialog.closest("forma-library")===this?{presentation:{owner:this,element:dialog,trigger,
+        current:()=>current()&&dialog===this.querySelector(".library-import-dialog")}}:undefined;
+    try{
+      if(current())await navigateInApp(this,navigation=>{
+        let handedOff=false;
+        return this.store.transitionWorkspace(withDocumentInRoute("/",document.id,document.title),{
+          ...navigation,documentId:document.id,documentFocus:false,
+          current:()=>navigation.current()&&(handedOff||current()),
+          onOriginHandoff:()=>{
+            if(!current()||!navigation.onOriginHandoff())return false;
+            handedOff=true;return true;
+          },
+        });
+      },context);
+    }finally{continuation.dispose();}
+  }
+  #importRecovery(owner=this.#importOwner){
+    const original=owner?.current()?owner.original:undefined;
+    if(!owner||!original)return nothing;
+    const newer=this.#newerImportSelected(owner),available=original.check==="found"&&Boolean(this.#originalImportedDocument(owner));
+    const status=original.state==="pending"?"library.archive.originalPending"
+      :original.check==="checking"?"library.archive.checkingOriginal"
+      :original.check==="found"?available?"library.archive.originalAvailable":"library.archive.originalAbsent"
+      :original.check==="absent"?"library.archive.originalAbsent"
+      :original.check==="unavailable"?"library.archive.checkUnavailable":"library.archive.unconfirmed";
+    const title=`\u2068${original.title}\u2069`;
+    return html`<aside class="library-import-recovery" aria-labelledby="library-import-original-title"><p id="library-import-original-title"><strong>${this.i18n.t("library.archive.original","",{title})}</strong></p>
+      <p role="status">${this.i18n.t(status)}</p>
+      <p class="library-import-recovery-lifetime">${this.i18n.t("library.archive.recoveryLifetime")}</p>
+      ${newer?html`<p>${this.i18n.t("library.archive.newerPreview")}</p>`:nothing}
+      <div class="family-actions">
+        ${original.state==="unconfirmed"?html`
+          <button type="button" class="button secondary library-import-check-original" ?disabled=${original.check==="checking"}
+            aria-busy=${String(original.check==="checking")} @click=${(event:Event)=>this.#checkOriginalImport(event,owner)}>${this.i18n.t("library.archive.checkOriginal","",{title})}</button>
+          ${available?html`<button type="button" class="button primary library-import-open-original" ?disabled=${newer}
+            @click=${(event:Event)=>this.#openOriginalImport(event,owner)}>${this.i18n.t("library.archive.openOriginal","",{title})}</button>`:nothing}`:nothing}
+        ${newer?html`<button type="button" class="button ghost library-import-discard-newer" @click=${()=>owner.dismiss()}>${this.i18n.t("library.archive.discardNewer")}</button>`:nothing}
+      </div></aside>`;
   }
   #blockName(block:CreativeBlock){const named=String(block.properties.label??"").trim();if(named)return named;const authored=String(block.properties.text??"").normalize("NFC").trim();if(authored&&/(?:^|\/)(?:document|decision)-[a-f\d]{8}(?:-copy)?$/i.test(block.handle))return authored;const slug=String(block.handle.split("/").at(-1)??block.handle).replace(/-canvas-[a-f\d]{6,}$/i,"").replace(/-(?:copy|import)(?:-\d+)?$/i,"").replace(/[-_]+/g," ").trim();return slug?`${slug.charAt(0).toLocaleUpperCase()}${slug.slice(1)}`:"Untitled decision";}
   #blockSearchText(block:CreativeBlock){
@@ -577,6 +707,7 @@ export class FormaLibrary extends FormaElement {
     };
     const resultsSection=this.#view==="all"||this.#view==="outputs"?html`<section><div class="section-heading"><div><span class="eyebrow">All creative results</span><h2>${this.#outputScope==="kept"?this.i18n.t("projects.keptOutputs","Kept outputs"):this.i18n.t("projects.recentOutputs","Recent outputs")}</h2><p class="section-note">${this.i18n.system("Images, stories, presentations & motion")} · ${this.i18n.t("artifact.audio.label","Audio")}</p></div><forma-ui-segmented-control class="compact-segmented" .label=${this.i18n.t("projects.outputHistory","Output history")} .value=${this.#outputScope} .options=${[{value:"recent",label:`${this.i18n.t("projects.recent","Recent")} ${recentOutputItems.length+allArtifacts.length}`},{value:"kept",label:`${this.i18n.t("projects.kept","Kept")} ${keptCount}`}]} @forma-change=${(event:CustomEvent<{value:string}>)=>{const value=event.detail.value;if(value==="recent"||value==="kept")this.#setOutputScope(value);}}></forma-ui-segmented-control></div><div class="library-output-grid">${creativeResults.map(renderCreativeResult)}</div>${!creativeResults.length?html`<div class="family-empty" data-forma-empty-state><span>${icon("image")}</span><h3>No ${this.#outputScope} outputs match</h3><p>${this.#outputScope==="kept"?this.i18n.system("Keep an image, story, scene, presentation, storyboard, or video to find it here."):this.i18n.system("Create an image, story, scene, presentation, storyboard, or video to build your project collection.")}</p></div>`:nothing}</section>`:nothing;
     return html`<section class="library-page"><forma-project-rail surface="library"></forma-project-rail><div class="library-main"><header class="page-header page-header--library"><div class="page-header-copy"><span class="eyebrow" dir="auto">${projection.projectName} / ${this.i18n.t("shell.navigation.library","Library")}</span><h1 tabindex="-1">${this.i18n.t("projects.libraryHeading","Project library")}</h1><p>${this.i18n.t("projects.libraryDescription","Find every reusable idea, finished image, story, scene, presentation, storyboard, and video in this project.")}</p></div>${canAuthor?html`<div class="page-header-actions"><button type="button" class="button primary" data-context-controls-id="__new__" @click=${()=>this.#openEditor()}>${icon("plus")} ${this.i18n.t("projects.newReusableBlock","New reusable block")}</button>${!context?html`<form @submit=${(event:SubmitEvent)=>event.preventDefault()}><label class="button secondary file-button">${icon("download")} ${this.i18n.t("projects.importDocument","Import as document")}<input type="file" accept="application/json" @change=${this.#import}></label></form><button class="button secondary" @click=${async()=>{const authorization=this.store.captureAuthorizationScope();if(!authorization)return;const receipt={type:"ObjectExported",payload:{object_id:projection.documentId||projection.projectId,project_id:projection.projectId,destination_class:"download",format:"application/json",source_surface:"project-library-archive"}};if(!await this.store.authorizeProjectExport(receipt,authorization)||!this.store.authorizationScopeActive(authorization))return;downloadJson(`forma-${projection.projectName.normalize("NFC").toLocaleLowerCase(this.i18n.locale).replace(/[^\p{L}\p{N}]+/gu,"-").replace(/^-|-$/g,"")||"project"}.json`,exportProjectArchive(events,projection.projectId));}}>${icon("share")} ${this.i18n.t("projects.exportProject","Export this project")}</button>`:nothing}</div>`:nothing}</header><div class="library-body">
+      ${!imported?this.#importRecovery(importOwner):nothing}
       <form class="library-toolbar" @submit=${(event:SubmitEvent)=>{event.preventDefault();this.requestUpdate();}}><forma-ui-search class="searchbox" .label=${this.i18n.t("projects.searchLibrary","Search project library")} .placeholder=${this.i18n.t("projects.searchAllWork","Search all project work")} .value=${this.#query} @forma-input=${(event:CustomEvent<{value:string}>)=>{this.#query=event.detail.value;this.requestUpdate();}}></forma-ui-search><forma-ui-segmented-control class="segmented" .label=${this.i18n.t("projects.libraryContent","Library content")} .value=${this.#view} .options=${[["all",this.i18n.t("projects.filter.all","All")],["blocks",this.i18n.t("projects.filter.blocks","Blocks")],["outputs",this.i18n.t("projects.filter.outputs","Outputs")],["families",this.i18n.t("projects.filter.families","Families")]].map(([value,label])=>({value,label}))} @forma-change=${(event:CustomEvent<{value:string}>)=>this.#setView(event.detail.value as LibraryView)}></forma-ui-segmented-control></form>
       ${selectedCollection?html`<div class="collection-filter"><span>${icon("folder")}</span><div><b>Showing ${selectedCollection.handle}</b><small>${documents.length} filed document${documents.length===1?"":"s"}; related blocks and outputs inherit this filter.</small></div><button @click=${()=>this.store.patchUi({focusCollectionId:""})}>Clear filter</button></div>`:nothing}
       ${next?renderLifecycleNextActionCards(nextActions,this.i18n,action=>void this.#followLifecycleAction(action),{projectName:next.projectName,documentTitle:next.document.title,scopeUnknown:next.facts.lifecycle?.output.scopeKnown!==true,creatorHandoff:libraryBaseRoute(currentRoute)==="/canvas/library"}):nothing}
@@ -634,7 +765,7 @@ export class FormaLibrary extends FormaElement {
       ${focusedBlock?html`<dialog class="modal library-focus-dialog" closedby="any" aria-labelledby="block-focus-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeFocus();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeFocus();}} @close=${()=>{if(libraryFocusFromRoute(this.store.route.get()))this.#closeFocus();}}><div class="modal-card wide focus-preview-card"><button class="icon-button modal-close" aria-label=${this.i18n.t("projects.closePreview","Close preview")} @click=${this.#closeFocus}>${icon("close")}</button><span class="eyebrow">${focusedBlock.type} · ${focusedBlock.scope==="library"?this.i18n.system("reusable project decision"):this.i18n.system("from a project document")}</span><h2 id="block-focus-title" dir="auto">${this.#blockName(focusedBlock)}</h2><div class="block-focus-layout"><div><forma-context-block .block=${focusedBlock} .readOnly=${true} surface="library"></forma-context-block>${canAuthor&&!focusedBlock.properties.organization_context_package_binding_id?html`<div class="focus-preview-actions"><button class="button primary" @click=${(event:MouseEvent)=>this.#useCopy(focusedBlock,event)}>${this.#relatedReferenceCount(focusedBlock.id)?this.i18n.system("Use complete context set ({count})", { count: this.i18n.number(this.#relatedReferenceCount(focusedBlock.id)+1) }):this.i18n.system("Use a copy in the open document")}</button><button class="button secondary" @click=${(event:MouseEvent)=>this.#openEditor(focusedBlock.id,event)}>${this.i18n.t("context.controls.named","Controls for {name}",this.#namedValue(this.#blockName(focusedBlock)))}</button></div>`:focusedBlock.properties.organization_context_package_binding_id?html`<p>${this.i18n.system("Organization context")}</p>`:nothing}</div><div><span class="eyebrow">Created using this decision</span>${this.#blockOutputs(focusedBlock,projection.libraryOutputs).length?html`<div class="linked-output-grid">${this.#blockOutputs(focusedBlock,projection.libraryOutputs).map((output)=>{const href=libraryFocusRoute("output",output.id);return html`<a href=${href} @click=${(event:MouseEvent)=>this.#navigate(event,"output",output.id)}>${this.#art(output)}<b>${this.#outputName(output)}</b></a>`;})}</div>`:html`<div class="linked-empty">No images have used this decision yet.</div>`}</div></div></div></dialog>`:nothing}
       ${focusedOutput?html`<dialog class="modal library-focus-dialog" closedby="any" aria-labelledby="output-focus-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeFocus();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeFocus();}} @close=${()=>{if(libraryFocusFromRoute(this.store.route.get()))this.#closeFocus();}}><div class="modal-card wide focus-preview-card"><button class="icon-button modal-close" aria-label=${this.i18n.t("projects.closePreview","Close preview")} @click=${this.#closeFocus}>${icon("close")}</button><span class="eyebrow">Generated image</span><h2 id="output-focus-title" dir="auto">${this.#outputName(focusedOutput)}</h2><div class="output-focus-layout"><forma-output-card .output=${focusedOutput} .primary=${true}></forma-output-card><aside><span class="eyebrow">What shaped this result</span><h3>${this.#outputBlocks(focusedOutput,projection.libraryBlocks).length} creative decision${this.#outputBlocks(focusedOutput,projection.libraryBlocks).length===1?"":"s"}</h3>${this.#outputBlocks(focusedOutput,projection.libraryBlocks).map((block)=>{const name=this.#blockName(block);const href=libraryFocusRoute("block",block.id,name);return html`<a href=${href} @click=${(event:MouseEvent)=>this.#navigate(event,"block",block.id,name)}><span>${block.type}</span><b>${name}</b></a>`;})}${canAuthor?html`<button class="button secondary" @click=${()=>this.#toggleLibrary(focusedOutput)}>${focusedOutput.library?this.i18n.t("projects.removeKept","Remove from kept"):this.i18n.t("projects.keepReuse","Keep for reuse")}</button>`:nothing}</aside></div></div></dialog>`:nothing}
       ${focusedFamily?html`<dialog class="modal family-lightbox" closedby="any" aria-labelledby="family-lightbox-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeFocus();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeFocus();}} @close=${()=>{if(libraryFocusFromRoute(this.store.route.get()))this.#closeFocus();}}><div class="modal-card wide family-lightbox-card"><button class="icon-button modal-close" aria-label=${this.i18n.t("projects.closePreview","Close preview")} @click=${this.#closeFocus}>${icon("close")}</button><span class="eyebrow">Suggested visual family</span><h2 id="family-lightbox-title">${String(focusedFamily.label??"Related creative work")}</h2><p>Open any image to review the creative decisions that shaped it.</p><div class="family-lightbox-grid">${records(focusedFamily.members).map((member,index)=>{const output=projection.libraryOutputs.find((item)=>item.id===String(member.object_id));if(!output)return html`<span class="unavailable-family-member">${this.#art(undefined,index)}<b>Image unavailable</b><small>This result is no longer in the project</small></span>`;const href=libraryFocusRoute("output",output.id);return html`<a href=${href} @click=${(event:MouseEvent)=>this.#navigate(event,"output",output.id)}>${this.#art(output,index)}<b>${this.#outputName(output)}</b><small>${Math.round(Number(member.confidence??0)*100)}% visual match</small></a>`;})}</div></div></dialog>`:nothing}
-      ${imported&&importOwner?keyed(importOwner.id,localizeTemplateResult(html`<dialog class="modal library-import-dialog" closedby="any" aria-labelledby="import-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)importOwner.close();}} @cancel=${(event:Event)=>{event.preventDefault();importOwner.close();}} @close=${()=>{importOwner.close();}}><div class="modal-card"><button class="icon-button modal-close" aria-label=${this.i18n.t("projects.closePreview","Close preview")} @click=${()=>{importOwner.close();}}>${icon("close")}</button><span class="eyebrow">Project archive inspected</span><h2 id="import-title">Import one document as a copy?</h2><p>${imported.events.length} archived events passed validation. Only the current document and its context blocks will be copied into this project. Other documents, generated outputs, uploaded media, collections, relationships, and history will not be restored.</p><div class="metric-grid"><div><b>${foldEvents(imported.events).blocks.length}</b><span>context blocks copied</span></div><div><b>${foldEvents(imported.events).outputs.length}</b><span>outputs not copied</span></div><div><b>${imported.mediaManifest.length}</b><span>media files not copied</span></div></div><button class="button primary" ?disabled=${importOwner.pending} aria-busy=${String(importOwner.pending)} @click=${()=>this.#forkImport(importOwner)}>Import document copy</button></div></dialog>`,this.i18n)):nothing}
+      ${imported&&importOwner?keyed(importOwner.id,localizeTemplateResult(html`<dialog class="modal library-import-dialog" closedby="any" aria-labelledby="import-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)importOwner.dismiss();}} @cancel=${(event:Event)=>{event.preventDefault();importOwner.dismiss();}} @close=${()=>{importOwner.dismiss();}}><div class="modal-card"><button class="icon-button modal-close" aria-label=${this.i18n.t("projects.closePreview","Close preview")} @click=${()=>{importOwner.dismiss();}}>${icon("close")}</button><span class="eyebrow">Project archive inspected</span><h2 id="import-title">Import one document as a copy?</h2><p>${imported.events.length} archived events passed validation. Only the current document and its context blocks will be copied into this project. Other documents, generated outputs, uploaded media, collections, relationships, and history will not be restored.</p><div class="metric-grid"><div><b>${foldEvents(imported.events).blocks.length}</b><span>context blocks copied</span></div><div><b>${foldEvents(imported.events).outputs.length}</b><span>outputs not copied</span></div><div><b>${imported.mediaManifest.length}</b><span>media files not copied</span></div></div>${this.#importRecovery(importOwner)}<button class="button primary" ?disabled=${importOwner.pending||Boolean(importOwner.original)} aria-busy=${String(importOwner.pending)} @click=${()=>this.#forkImport(importOwner)}>Import document copy</button></div></dialog>`,this.i18n)):nothing}
     </section>`;
   }
   override render(){return keyed(this.#editorScope,html`${cache(localizeTemplateResult(this.#renderLibrary(),this.i18n))}`);}

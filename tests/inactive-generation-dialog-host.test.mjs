@@ -1052,3 +1052,80 @@ test("finite submit form retention follows the current owner template and object
   assert.strictEqual(current.form.owner, replacementOwner);
   assert.strictEqual(documentPort.activeElement, active); assert.deepEqual(f.trace, [], "Retention does not invoke or remap focus");
 });
+
+test("finite Library import dialog identity belongs only to its current keyed close EventPart", { concurrency: false }, async t => {
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  // Reuse the existing EventPart unit's renderer/native ports. These literal
+  // owner/Store/template inputs qualify only the finite adapter, never actual
+  // Library, Source, import, modal focus, permission, or receipt behavior.
+  const f = { trace: [], listeners: new Map(), store: {} }, owner = { tag: "forma-library", store: f.store };
+  const previousFixture = activeFixture; t.after(() => { activeFixture = previousFixture; });
+  f.renderer = new RendererPort(f, {});
+  const native = installOutputNavigationFocusNative(t, f, { documentPort, ElementPort });
+  const dialog = (label, close) => lit.html`<dialog class="modal library-import-dialog" aria-label=${label} @close=${close}></dialog>`;
+  const view = (key, label, close, extra = nothing) => lit.html`${keyed(key, dialog(label, close))}${extra}`;
+  const alternate = (key, label, close) => lit.html`<section>${view(key, label, close)}</section>`;
+  const draw = (template, host = owner) => {
+    f.renderer.draw(host, () => template); return f.renderer.ownNodes(host, "dialog");
+  };
+  const one = (template, host = owner) => {
+    const nodes = draw(template, host); assert.equal(nodes.length, 1);
+    assert.strictEqual(nodes[0].owner, host); assert.equal(nodes[0].isConnected, true); return nodes[0];
+  };
+  const replacement = (prior, template, host = owner) => {
+    const next = one(template, host); assert.notStrictEqual(next, prior); assert.equal(prior.isConnected, false); return next;
+  };
+  const calls = [], noop = () => {}; let notifications = 0;
+  const original = one(view(1, "Original", event => calls.push(["old", event.target, event.currentTarget])));
+  assert.equal(original.open, false); assert.equal(Object.hasOwn(original.attributes, "open"), false);
+  const close = original.close, setAttribute = original.setAttribute, focus = original.focus;
+  const listener = () => { notifications++; }; original.addEventListener("close", listener);
+  original.open = true; native.focus(original); // Explicit native-port inputs, not a browser showModal claim.
+  const onClose = function(event) { assert.strictEqual(this, owner); calls.push(["current", event.target, event.currentTarget]); };
+  const same = one(view(1, "Same appearance", onClose));
+  assert.strictEqual(same, original); assert.equal(same.open, true);
+  assert.equal(same.attributes["aria-label"], "Same appearance"); assert.strictEqual(same.handlers.close, onClose);
+  assert.strictEqual(same.close, close); assert.strictEqual(same.setAttribute, setAttribute); assert.strictEqual(same.focus, focus);
+  assert.strictEqual(same.listeners.close, listener); assert.strictEqual(native.document.activeElement, original);
+  same.setAttribute("data-native-probe", "original"); assert.equal(original.attributes["data-native-probe"], "original");
+  same.close(); assert.equal(original.open, false); assert.equal(notifications, 1);
+  assert.deepEqual(calls, [["current", original, original]], "The retained original close method invokes the current binding with its own node");
+  assert.strictEqual(one(view(1, "Same appearance", onClose)), original); assert.equal(original.open, false);
+
+  const differentTemplate = replacement(original, alternate(1, "Same appearance", noop));
+  const returned = replacement(differentTemplate, view(1, "Same appearance", noop));
+  assert.notStrictEqual(returned, original, "Returning template identity cannot revive the earlier removed node");
+  assert.deepEqual(draw(nothing), []); assert.equal(returned.isConnected, false);
+  const afterAbsence = replacement(returned, view(1, "Same appearance", noop));
+  const keyTwo = replacement(afterAbsence, view(2, "Same appearance", noop));
+  const keyOneAgain = replacement(keyTwo, view(1, "Same appearance", noop));
+  assert.notStrictEqual(keyOneAgain, afterAbsence, "A-B-A keys cannot revive the first keyed node");
+  const otherOwner = { tag: "forma-library", store: f.store };
+  const ownerChanged = replacement(keyOneAgain, view(1, "Same appearance", noop), otherOwner);
+  otherOwner.store = {};
+  const storeChanged = replacement(ownerChanged, view(1, "Same appearance", noop), otherOwner);
+
+  // The first dialog stays at the exact same EventPart; only a same-owner
+  // second dialog is added, so this reaches the ambiguity guard itself.
+  const ambiguous = draw(view(1, "Same appearance", noop, keyed(2, dialog("Same appearance", noop))), otherOwner);
+  assert.equal(ambiguous.length, 2); assert.equal(storeChanged.isConnected, false);
+  assert.ok(ambiguous.every(node => node.isConnected && node !== storeChanged));
+  const afterAmbiguity = one(view(1, "Same appearance", noop), otherOwner);
+  assert.notStrictEqual(afterAmbiguity, storeChanged);
+  for (const prior of ambiguous) { assert.notStrictEqual(afterAmbiguity, prior); assert.equal(prior.isConnected, false); }
+
+  // Same-template repeated draws must remain ordinary replacement outside
+  // the keyed, unbound-open contract, including false-valued authored parts.
+  const excluded = [
+    () => dialog("Same appearance", noop),
+    () => keyed(1, lit.html`<dialog class="modal library-import-dialog" open @close=${noop}></dialog>`),
+    () => keyed(1, lit.html`<dialog class="modal library-import-dialog" ?open=${false} @close=${noop}></dialog>`),
+    () => keyed(1, lit.html`<dialog class="modal library-import-dialog" .open=${false} @close=${noop}></dialog>`),
+  ];
+  for (const template of excluded) {
+    const prior = one(template(), otherOwner); prior.open = true;
+    replacement(prior, template(), otherOwner);
+  }
+  assert.strictEqual(native.document.activeElement, original, "Retirement never transfers focus to a same-looking replacement");
+  assert.equal(original.isConnected, false); assert.equal(native.nativeFocus.length, 1); assert.equal(native.nativeScroll.length, 0);
+});

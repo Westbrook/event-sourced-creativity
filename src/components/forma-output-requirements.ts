@@ -1,17 +1,20 @@
 import { outputNavigationMatches, type OutputNavigationReference, type OutputNavigationSection } from "../model/output-navigation";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
-import { html, nothing, type PropertyValues } from "lit";
+import { html, noChange, nothing, type PropertyValues } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { FormaElement } from "./forma-element";
 import { copyInterfaceText } from "./design-system/clipboard";
 import { outputOperationSupportReceipt } from "./output-operation-support-receipt";
 import { compileOutputPlan, type OutputPlanSummary, type OutputPlanTarget } from "../model/output-plan";
-import type { OutputCountPolicy, OutputQuantity, OutputRequirementSpec } from "../model/output-requirements";
+import { inspectOutputRequirement, type OutputCountPolicy, type OutputQuantity, type OutputRequirementSpec } from "../model/output-requirements";
+import { buildOutcomeRecipeDraft, outcomeRecipe, outcomeRecipeFileChoices, OUTCOME_RECIPE_IDS, type OutcomeRecipeDraft, type OutcomeRecipeId, type OutcomeRecipeInput, type OutcomeRecipeInputSource } from "../model/outcome-recipes";
+import { OUTCOME_RECIPE_MESSAGES } from "./design-system/locales/outcome-recipe-messages";
+import { outcomeRecipeDraftLabels, outcomeRecipeDraftMessage, type OutcomeRecipeDraftMessage } from "./design-system/locales/outcome-recipe-draft-messages";
 import { readOutputNativeExecutionPolicy } from "../model/output-execution-policy";
 import { OUTPUT_PREFLIGHT_TARGET_MAX_COUNT } from "../model/output-delivery-contract";
 import { OUTPUT_SCOPE_AMENDMENT_REASON_MAX_LENGTH, outputScopeAmendmentReasonIssue } from "../model/output-scope-amendment";
 import type { OutputCommandResponse, OutputConfirmationOptions, OutputPreflight, OutputNativeTargetPreflight, OutputRequirementCommand, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../model/output-delivery-contract";
-import type { FormaOutputRequirementCard, OutputCardEditorState, OutputCardPlanSuggestions, OutputRequirementCardSnapshot } from "./forma-output-requirement-card";
+import type { FormaOutputRequirementCard, OutputCardEditorState, OutputCardPlanSuggestions, OutputRequirementCardDraft, OutputRequirementCardSnapshot, OutputRequirementCancelIntent } from "./forma-output-requirement-card";
 import type { CapturedAuthorizationScope, CapturedSourceOwnership } from "../state/store";
 import type { OutputCommittedReceipt, OutputMutationResult } from "../state/output-requirements-client";
 import type { DocumentJob } from "../model/document-jobs";
@@ -61,6 +64,13 @@ export class FormaOutputRequirements extends FormaElement {
   #notice = "";
   #noticeKind: "status" | "alert" = "status";
   #editors = new Map<string, OutputCardEditorState & { sourceRetired?: true; receipt?: OutputCommittedReceipt }>();
+  #recipeDraft: { proposal: OutcomeRecipeDraft; view: OutputPrivateView; opener: HTMLElement | null } | null = null;
+  #recipeId: OutcomeRecipeId | "" = "";
+  #recipeText = "";
+  #recipeChoices = new Set<string>();
+  #recipeComposing = false;
+  #recipeEntryOpen = false;
+  #recipeIncoming: object | null = null;
   #planning: OutputPlanProposalState | null = null;
   #planOpener: { element: HTMLElement | null; viewKey: string } | null = null;
   #reviewPlan = false;
@@ -106,6 +116,7 @@ export class FormaOutputRequirements extends FormaElement {
       || !this.store.sourceOwnershipScopeActive(detail.source) || !source || source.generation !== detail.generation
       || this.store.sourceOwnershipActive(source)) return;
     // Retire private material, not this controller or its sole original operation owners.
+    this.#clearRecipePresentation();
     this.#viewEpoch += 1; this.#sourceRefreshEpoch += 1;
     this.#loading = false; this.#sourceRefreshing = false; this.#busy = "";
     this.#nativeViewEpoch += 1; this.#nativeRequestEpoch += 1; this.#nativeInspection = null;
@@ -120,7 +131,7 @@ export class FormaOutputRequirements extends FormaElement {
       ...(editor.clientMutationId ? { clientMutationId: editor.clientMutationId } : {}), sourceRetired: true,
       ...(editor.receipt ? { receipt: editor.receipt } : {}) }]));
     for (const card of this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")) {
-      const previous = card.snapshot; card.snapshot = null; card.resourceState = "unavailable";
+      const previous = card.snapshot; card.snapshot = null; card.newDraft = null; card.resourceState = "unavailable";
       card.editorState = { status: "unavailable", ...(card.editorState.clientMutationId ? { clientMutationId: card.editorState.clientMutationId } : {}) };
       card.requestUpdate("snapshot", previous);
     }
@@ -134,6 +145,7 @@ export class FormaOutputRequirements extends FormaElement {
   constructor() { super(); this.documentId = ""; this.documentName = ""; this.blockId = ""; this.surface = "document"; this.inspectionOnly = false; }
   override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.requestUpdate(); }
   override disconnectedCallback() {
+    this.#clearRecipePresentation();
     this.#viewEpoch += 1;
     this.#sourceRefreshEpoch += 1; this.#sourceRefreshing = false; this.#sourceRefreshScope = "";
     this.#nativeViewEpoch += 1; this.#nativeInspection = null; this.#lastNativeView = "";
@@ -161,6 +173,7 @@ export class FormaOutputRequirements extends FormaElement {
     }
     const key = `${this.store.captureAuthorizationScope()?.key ?? ""}\u0000${this.documentId}`;
     if (key !== this.#lastScope) {
+      this.#clearRecipePresentation();
       this.#viewEpoch += 1; this.#loading = false;
       this.#lastScope = key; this.#busy = ""; this.#notice = ""; this.#editors.clear();
       this.#lastSourceContract = "";
@@ -178,6 +191,11 @@ export class FormaOutputRequirements extends FormaElement {
     }
     const snapshot = this.#snapshot();
     // A successful command refreshes its cache through ready → refreshing → ready.
+    if (this.#recipeDraft && !this.#viewCurrent(this.#recipeDraft.view)) this.#clearRecipePresentation();
+    const recipeResource = this.store.outputRequirements.resource(this.documentId);
+    if ((recipeResource.accessLost || recipeResource.privateUnavailable) && (this.#recipeDraft || this.#recipeId || this.#recipeText)) {
+      this.#clearRecipePresentation(); this.#notice = "";
+    }
     // That transport phase gates current clicks, but cannot retire an unchanged pending offer.
     const nativeIntentContract = snapshot ? JSON.stringify([snapshot.documentId, snapshot.confirmedPlan?.revisionId,
       snapshot.sourceRevision, snapshot.requirementRevision, snapshot.permissions.canRequest,
@@ -290,6 +308,269 @@ export class FormaOutputRequirements extends FormaElement {
     return policy ? this.#message("output_native_execution_window", { maximumExecutionSeconds: policy.maximumMilliseconds / 1000 }) : this.#message("output_native_execution_window_unknown");
   }
   #snapshot() { return this.store.outputRequirements.resource(this.documentId).snapshot; }
+  #recipeMessage(key: OutcomeRecipeDraftMessage) { return outcomeRecipeDraftMessage(this.i18n.locale, key); }
+  #recipeCatalog() {
+    const family = this.i18n.locale.toLowerCase().split(/[-_]/)[0];
+    return OUTCOME_RECIPE_MESSAGES[family === "fr" ? "fr" : family === "ar" ? "ar" : family === "ja" ? "ja" : "en"];
+  }
+  #clearRecipePresentation() { this.#recipeDraft = null; this.#recipeId = ""; this.#recipeText = ""; this.#recipeChoices.clear(); this.#recipeComposing = false; this.#recipeEntryOpen = false; this.#recipeIncoming = null; }
+  #recipeEntryEdited() { this.#recipeIncoming = null; }
+  #recipeInputClearable() {
+    const resource = this.store.outputRequirements.resource(this.documentId);
+    return this.#recipeInputContextCurrent() && !this.#recipeExistingWork() && !this.#loading && !this.#sourceRefreshing && !this.#recipeIncoming && !this.#recipeComposing
+      && resource.state !== "loading" && resource.state !== "refreshing";
+  }
+  async #clearRecipeInput(view: OutputPrivateView, route: string) {
+    if (!this.#viewCurrent(view) || this.store.route.get() !== route || !this.#recipeInputClearable()
+      || !this.#recipeId && !this.#recipeText && !this.#recipeChoices.size) return;
+    const entryOpen = this.#recipeEntryOpen, focus = captureOutputNavigationFocus(this.ownerDocument);
+    try {
+      this.#clearRecipePresentation(); this.#recipeEntryOpen = entryOpen;
+      this.#announce(this.#recipeMessage("inputCleared"));
+      await this.updateComplete;
+      if (!this.#viewCurrent(view) || this.store.route.get() !== route || !this.#recipeInputClearable()
+        || this.#recipeId || this.#recipeText || this.#recipeChoices.size
+        || this.#noticeKind !== "status" || this.#notice !== this.#recipeMessage("inputCleared")) return;
+      const target = this.querySelector<HTMLElement>("[data-output-recipe-focus-return]")
+        ?? this.querySelector<HTMLElement>("[data-output-plan-focus-return]");
+      if (target?.closest("forma-output-requirements") === this) focus.run(target, () => { target.focus({ preventScroll: true }); return true; });
+    } finally { focus.dispose(); }
+  }
+  #recipeExistingWork() {
+    return Boolean(this.#recipeDraft || this.#busy || this.#unresolvedWrite()
+      || this.#reviewPlan || this.#planning?.dirty || this.#file || this.#uncertainCommand || this.#preflight || this.#preflightIntent
+      || this.ownerDocument.querySelector("dialog[open], .output-plan-review")
+      || [...this.ownerDocument.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")].some(card => card.hasOpenDraft));
+  }
+  #recipeOpeningBlocked() { return this.#recipeExistingWork() || this.#loading || this.#sourceRefreshing; }
+  #recipeInputEditable() {
+    const session = this.store.session.get(), snapshot = this.#snapshot();
+    return this.#recipeInputContextCurrent() && !this.#recipeExistingWork()
+      && (session?.projectContext?.permissions ?? session?.capabilities ?? []).includes("project.author")
+      && (!snapshot || snapshot.permissions.canAuthor);
+  }
+  #recipeInputContextCurrent() {
+    const projection = this.store.projection.get(), session = this.store.session.get(), context = session?.projectContext;
+    const resource = this.store.outputRequirements.resource(this.documentId);
+    return this.isConnected && !this.blockId && this.surface === "document" && !this.inspectionOnly
+      && Boolean(session && this.store.captureAuthorizationScope()) && this.#viewCurrent(this.#captureView())
+      && projection.documentId === this.documentId
+      && projection.documents.some(document => document.id === this.documentId && document.projectId === projection.projectId && !document.removed)
+      && (context?.permissions ?? session?.capabilities ?? []).includes("project.read")
+      && (!context || context.projectId === projection.projectId && Date.parse(context.expiresAt) > Date.now())
+      && !resource.accessLost && !resource.privateUnavailable;
+  }
+  /** Transfer only authored input into this existing entry; full Output authority is required again before staging. */
+  async receiveIntakeRecipe(input: OutcomeRecipeInput, source: OutcomeRecipeInputSource, options: {
+    current: () => boolean; opener: HTMLElement | null; focus: OutputNavigationFocusLease;
+  }): Promise<"opened" | "retained" | "existing-draft" | "stale" | "forbidden" | "unavailable"> {
+    if (typeof options?.current !== "function" || !options.current() || typeof options.focus?.current !== "function"
+      || typeof options.focus.dispose !== "function") return "stale";
+    const view = this.#captureView(), route = this.store.route.get(), locale = this.i18n.locale;
+    const scopeCurrent = () => {
+      const projection = this.store.projection.get(), session = this.store.session.get();
+      return options.current() && this.#viewCurrent(view) && this.#recipeInputContextCurrent() && this.store.route.get() === route
+        && projection.projectId === source.projectId && this.documentId === source.documentId
+        && session?.user.userId === source.actorUserId && this.store.captureAuthorizationScope()?.key === source.authorizationScopeKey;
+    };
+    const author = () => {
+      const session = this.store.session.get(), snapshot = this.#snapshot();
+      return (session?.projectContext?.permissions ?? session?.capabilities ?? []).includes("project.author")
+        && (!snapshot || snapshot.permissions.canAuthor === true);
+    };
+    if (!scopeCurrent() || !Number.isSafeInteger(source.head) || source.head < 1 || this.store.head.get() !== source.head) return "stale";
+    if (!author()) return "forbidden";
+    if (this.#recipeExistingWork() || this.#recipeId || this.#recipeText || this.#recipeChoices.size) {
+      this.#announce(this.#recipeMessage("existing")); return "existing-draft";
+    }
+    const choices = outcomeRecipeFileChoices(input.recipeId);
+    if (!outcomeRecipe(input.recipeId) || typeof input.originalText !== "string" || !input.originalText.trim() || input.originalText.length > 12000
+      || !Array.isArray(input.selectedChoices) || !input.selectedChoices.length || new Set(input.selectedChoices).size !== input.selectedChoices.length
+      || input.selectedChoices.some(key => !choices.some(choice => choice.key === key))) return "unavailable";
+    const incoming = {};
+    this.#recipeIncoming = incoming; this.#recipeId = input.recipeId; this.#recipeText = input.originalText;
+    this.#recipeChoices = new Set(input.selectedChoices); this.#recipeEntryOpen = options.focus.current();
+    this.#notice = this.#recipeMessage("intakeRetained"); this.#noticeKind = "status"; this.requestUpdate();
+    const ownsInput = () => scopeCurrent() && this.#recipeIncoming === incoming;
+    const focus = options.focus;
+    try {
+      // Join the existing exact resource read. A failed read preserves these
+      // local fields, but cannot stage a proposal or acknowledge any write.
+      await this.store.outputRequirements.ensure(this.documentId);
+      await this.updateComplete;
+      if (!ownsInput()) return "stale";
+      if (!focus.current()) return "retained";
+      const snapshot = this.#snapshot();
+      if (this.store.head.get() !== source.head || this.i18n.locale !== locale || !author() || !this.#recipeScopeReady(snapshot) || !snapshot) {
+        this.#announce(this.#recipeMessage("intakeRetained")); return "retained";
+      }
+      const proposal = buildOutcomeRecipeDraft({
+        scope: { projectId: snapshot.projectId, documentId: snapshot.documentId, authorizationScopeKey: source.authorizationScopeKey },
+        expectedRevision: snapshot.revision, sourceRevision: snapshot.sourceRevision, requirementRevision: snapshot.requirementRevision,
+        requirementId: crypto.randomUUID(), recipeId: input.recipeId, originalText: this.#recipeText, selectedChoices: [...this.#recipeChoices],
+        labels: outcomeRecipeDraftLabels(this.i18n.locale, this.#recipeCatalog().recipesById[input.recipeId].title),
+      });
+      // Transfer the same uninterrupted gesture to stageRecipeDraft's existing
+      // focus lease synchronously; never capture a new gesture after a read.
+      focus.dispose();
+      const result = await this.stageRecipeDraft(proposal, { opener: options.opener,
+        current: () => ownsInput() && this.store.head.get() === source.head && this.i18n.locale === locale });
+      if (result === "opened") return result;
+      if (ownsInput()) { this.#announce(this.#recipeMessage(result === "existing-draft" ? "existing" : "intakeRetained")); return "retained"; }
+      return "stale";
+    } catch {
+      if (ownsInput()) { this.#announce(this.#recipeMessage("intakeRetained")); return "retained"; }
+      return "stale";
+    } finally { focus.dispose(); if (this.#recipeIncoming === incoming) this.#recipeIncoming = null; }
+  }
+  #recipeScopeReady(snapshot: OutputRequirementsSnapshot | null): boolean {
+    const resource = this.store.outputRequirements.resource(this.documentId), projection = this.store.projection.get();
+    return this.isConnected && !this.blockId && this.surface === "document" && !this.inspectionOnly
+      && resource.state === "ready" && !resource.privateUnavailable && !resource.accessLost && snapshot !== null
+      && snapshot.documentId === this.documentId && snapshot.documentId === projection.documentId && snapshot.projectId === projection.projectId
+      && snapshot.scope.actorUserId === this.store.session.get()?.user.userId
+      && snapshot.scope.projectAccessId === (this.store.session.get()?.projectContext?.projectAccessId ?? null)
+      && snapshot.permissions.canAuthor && this.#viewCurrent(this.#captureView());
+  }
+  /** One current-owned local proposal. Only the existing card's explicit Save can persist it. */
+  async stageRecipeDraft(proposal: OutcomeRecipeDraft, options: { current: () => boolean; opener: HTMLElement | null }): Promise<"opened" | "existing-draft" | "stale" | "forbidden" | "unavailable"> {
+    if (typeof options?.current !== "function" || !options.current()) return "stale";
+    const snapshot = this.#snapshot();
+    if (!snapshot) return "unavailable";
+    if (!this.#recipeScopeReady(snapshot)) return snapshot.permissions.canAuthor ? "stale" : "forbidden";
+    if (this.#recipeOpeningBlocked()) { this.#announce(this.#recipeMessage("existing")); return "existing-draft"; }
+    if (!outcomeRecipe(proposal.recipeId) || proposal.recipeVersion !== 1 || proposal.spec.id !== proposal.requirementId
+      || inspectOutputRequirement(proposal.spec).status !== "valid"
+      || proposal.spec.value_origins.recipe_template?.kind !== "suggested"
+      || proposal.spec.value_origins.recipe_template.text !== `forma-recipe:${proposal.recipeId}@1`
+      || snapshot.requirements.some(row => row.blockId === proposal.requirementId)
+      || this.store.projection.get().libraryBlocks.some(block => block.id === proposal.requirementId)) return "unavailable";
+    const view = this.#captureView(), route = this.store.route.get();
+    const current = () => {
+      const value = this.#snapshot();
+      return options.current() && this.#viewCurrent(view) && this.store.route.get() === route && this.#recipeScopeReady(value)
+        && value?.projectId === proposal.scope.projectId && value.documentId === proposal.scope.documentId
+        && this.store.captureAuthorizationScope()?.key === proposal.scope.authorizationScopeKey
+        && value.revision === proposal.expectedRevision && value.sourceRevision === proposal.sourceRevision
+        && value.requirementRevision === proposal.requirementRevision;
+    };
+    if (!current()) return "stale";
+    const focus = captureOutputNavigationFocus(this.ownerDocument);
+    try {
+    const panel = this.closest<HTMLElement>("#document-context-panel");
+    if (panel?.hidden) {
+      const workspace = this.closest("forma-workspace") as (HTMLElement & { revealOutputNavigation?: (documentId: string, current: () => boolean) => boolean; updateComplete?: Promise<unknown> }) | null;
+      if (!workspace?.revealOutputNavigation?.(this.documentId, () => current() && focus.current())) return "existing-draft";
+      await workspace.updateComplete;
+      if (!current() || !focus.current()) return "stale";
+    }
+    const owned = { proposal: structuredClone(proposal), view, opener: options.opener };
+    this.#recipeDraft = owned; this.requestUpdate();
+    await this.updateComplete;
+    if (!current() || !focus.current() || this.#recipeDraft !== owned) {
+      if (this.#recipeDraft === owned) { this.#recipeDraft = null; this.requestUpdate(); }
+      return "stale";
+    }
+    const card = this.querySelector<FormaOutputRequirementCard>("[data-output-recipe-draft] forma-output-requirement-card");
+    if (!card) { this.#recipeDraft = null; this.requestUpdate(); return "unavailable"; }
+    await card.updateComplete;
+    const opened = await card.openNewDraft(options.opener, () => this.#recipeDraft === owned && current() && focus.current());
+    if (!opened && this.#recipeDraft === owned) { this.#recipeDraft = null; this.requestUpdate(); }
+    return opened ? "opened" : "stale";
+    } finally { focus.dispose(); }
+  }
+  async #previewRecipe(event: SubmitEvent) {
+    event.preventDefault();
+    this.#recipeEntryEdited();
+    const snapshot = this.#snapshot(), recipeId = this.#recipeId;
+    if (!recipeId || this.#recipeComposing || !this.#recipeScopeReady(snapshot) || !snapshot || this.#recipeOpeningBlocked()
+      || !this.#recipeText.trim() || !this.#recipeChoices.size) return;
+    const view = this.#captureView(), route = this.store.route.get();
+    const originalText = this.#recipeText, selectedChoices = [...this.#recipeChoices];
+    const proposal = buildOutcomeRecipeDraft({
+      scope: { projectId: snapshot.projectId, documentId: snapshot.documentId, authorizationScopeKey: this.store.captureAuthorizationScope()?.key ?? "" },
+      expectedRevision: snapshot.revision, sourceRevision: snapshot.sourceRevision, requirementRevision: snapshot.requirementRevision,
+      requirementId: crypto.randomUUID(), recipeId, originalText, selectedChoices,
+      labels: outcomeRecipeDraftLabels(this.i18n.locale, this.#recipeCatalog().recipesById[recipeId].title),
+    });
+    const result = await this.stageRecipeDraft(proposal, { opener: event.submitter instanceof HTMLElement ? event.submitter : null,
+      current: () => this.#viewCurrent(view) && this.store.route.get() === route && this.#recipeId === recipeId
+        && this.#recipeText === originalText && JSON.stringify([...this.#recipeChoices]) === JSON.stringify(selectedChoices) });
+    if (this.#viewCurrent(view) && result !== "opened") this.#announce(this.#recipeMessage(result === "existing-draft" ? "existing" : "stale"), true);
+  }
+  #recipeEntry(snapshot: OutputRequirementsSnapshot | null) {
+    const retained = Boolean((this.#recipeId || this.#recipeText || this.#recipeChoices.size) && this.#recipeInputContextCurrent());
+    if (this.blockId || this.surface !== "document" || this.inspectionOnly || !snapshot?.permissions.canAuthor && !retained) return nothing;
+    const blocked = !this.#recipeInputEditable();
+    const previewBlocked = blocked || !snapshot || !this.#recipeScopeReady(snapshot) || this.#recipeOpeningBlocked();
+    const view = this.#captureView(), route = this.store.route.get(), clearBlocked = !this.#recipeInputClearable();
+    const catalog = this.#recipeCatalog();
+    return html`<details class="output-recipe-entry" .open=${this.#recipeEntryOpen} @toggle=${(event: Event) => { this.#recipeEntryOpen = (event.currentTarget as HTMLDetailsElement).open; }}><summary data-output-recipe-focus-return aria-label=${this.#controlName(this.#recipeMessage("heading"))}>${this.#recipeMessage("heading")}</summary><p>${this.#recipeMessage("hint")}</p>
+      <form @submit=${this.#previewRecipe} @compositionstart=${() => { this.#recipeEntryEdited(); this.#recipeComposing = true; }} @compositionend=${() => { this.#recipeComposing = false; this.requestUpdate(); }}>
+        <label>${catalog.recipes}<select ?disabled=${blocked} .value=${this.#recipeId} @change=${(event: Event) => {
+          if (!this.#recipeInputEditable()) return;
+          this.#recipeEntryEdited();
+          const value = (event.target as HTMLSelectElement).value;
+          this.#recipeId = outcomeRecipe(value)?.id ?? "";
+          this.#recipeChoices = new Set<string>(); this.requestUpdate();
+        }}><option value="">${catalog.noRecipe}</option>${OUTCOME_RECIPE_IDS.map(id => html`<option value=${id}>${catalog.recipesById[id].title}</option>`)}</select></label>
+        ${this.#recipeId ? html`<fieldset ?disabled=${blocked}><legend>${this.#recipeMessage("choices")}</legend>${outcomeRecipeFileChoices(this.#recipeId).map(choice => html`<label><input type="checkbox" .checked=${this.#recipeChoices.has(choice.key)} @change=${(event: Event) => {
+          if (!this.#recipeInputEditable()) return;
+          this.#recipeEntryEdited();
+          if ((event.target as HTMLInputElement).checked) this.#recipeChoices.add(choice.key); else this.#recipeChoices.delete(choice.key); this.requestUpdate();
+        }}>${outcomeRecipeDraftLabels(this.i18n.locale, "").choices[choice.key]}</label>`)}</fieldset>` : nothing}
+        <label>${this.#recipeMessage("outcome")}<textarea rows="3" maxlength="12000" ?disabled=${blocked} .value=${this.#recipeComposing ? noChange : this.#recipeText} @input=${(event: InputEvent) => { if (this.#recipeInputEditable()) { this.#recipeEntryEdited(); this.#recipeText = (event.target as HTMLTextAreaElement).value; if (!this.#recipeComposing) this.requestUpdate(); } }}></textarea></label>
+        <p>${this.#recipeMessage("limitation")}</p><button type="submit" class="button secondary" ?disabled=${previewBlocked || this.#recipeComposing || !this.#recipeId || !this.#recipeChoices.size || !this.#recipeText.trim()}>${this.#recipeMessage("preview")}</button>
+        <p>${this.#recipeMessage("clearInputHint")}</p><button type="button" class="button ghost" ?disabled=${clearBlocked} @click=${() => this.#clearRecipeInput(view, route)}>${this.#recipeMessage("clearInput")}</button>
+      </form></details>`;
+  }
+  #retryRecipeSave(owned: { proposal: OutcomeRecipeDraft; view: OutputPrivateView }, clientMutationId: string, route: string) {
+    const card = this.querySelector<FormaOutputRequirementCard>("[data-output-recipe-draft] forma-output-requirement-card");
+    const current = () => {
+      const original = this.#unresolvedWrite();
+      return this.#recipeDraft === owned && this.#viewCurrent(owned.view) && this.store.route.get() === route
+        && !this.#busy && !this.#loading && !this.#sourceRefreshing && this.#recipeScopeReady(this.#snapshot())
+        && original?.action === "save" && original.status === "unknown" && !original.sourceRetired
+        && original.clientMutationId === clientMutationId && this.#editors.get(owned.proposal.requirementId)?.clientMutationId === clientMutationId
+        && !!card?.isConnected && card === this.querySelector("[data-output-recipe-draft] forma-output-requirement-card");
+    };
+    if (!current() || !card) return;
+    if (!card.retryOriginalSave(clientMutationId, current) && current()) this.#announce(this.#recipeMessage("retryUnavailable"), true);
+  }
+  #recipeCard(snapshot: OutputRequirementsSnapshot) {
+    const owned = this.#recipeDraft;
+    if (!owned || !this.#viewCurrent(owned.view)) return nothing;
+    const proposal = owned.proposal, row = snapshot.requirements.find(value => value.blockId === proposal.requirementId);
+    const original = this.#unresolvedWrite(), editor = this.#editors.get(proposal.requirementId) ?? { status: "idle" as const };
+    const blocked = original && (original.sourceRetired || original.clientMutationId !== editor.clientMutationId);
+    const originalSaveId = original?.action === "save" && original.clientMutationId === editor.clientMutationId ? original.clientMutationId : "";
+    const route = this.store.route.get();
+    const draft: OutputRequirementCardDraft = {
+      scope: proposal.scope, requirementId: proposal.requirementId, revision: snapshot.revision,
+      documentContext: this.#documentDisplayContext(snapshot.documentId, snapshot.projectId),
+      label: proposal.spec.label, originalText: proposal.spec.original_text, spec: proposal.spec,
+      canEdit: !this.inspectionOnly && snapshot.permissions.canAuthor,
+      sourceOptions: this.store.projection.get().libraryBlocks.filter(block => block.documentId === snapshot.documentId && !block.removed && block.type.toLowerCase() !== "output").map(block => ({ id: block.id, label: String(block.properties.label ?? block.handle) })),
+      planSuggestions: proposal.planSuggestions,
+    };
+    return html`<section class="output-recipe-draft" data-output-recipe-draft=${proposal.requirementId}>
+      <forma-output-requirement-card .newDraft=${row ? null : draft} .snapshot=${row ? this.#cardSnapshot(snapshot, row) : null}
+        .resourceState=${blocked ? "unavailable" : this.store.outputRequirements.resource(this.documentId).state} .editorState=${editor} .originalSaveId=${originalSaveId}
+        @forma-output-save=${this.#save} @forma-output-review-plan=${this.#reviewIntent}
+        @forma-output-cancel=${(event: CustomEvent<OutputRequirementCancelIntent>) => {
+          if (!this.#viewCurrent(owned.view) || this.#recipeDraft !== owned || event.detail.requirementId !== proposal.requirementId || this.#unresolvedWrite()) return;
+          this.#recipeDraft = null; this.requestUpdate();
+        }}></forma-output-requirement-card>
+      ${originalSaveId && original?.status === "unknown" && !original.sourceRetired ? html`<p>${this.#recipeMessage("retryOriginalHelp")}</p>
+        <button type="button" class="button secondary" ?disabled=${Boolean(this.#busy) || this.#loading || this.#sourceRefreshing || !this.#recipeScopeReady(snapshot)}
+          @click=${() => this.#retryRecipeSave(owned, originalSaveId, route)}>${this.#recipeMessage("retryOriginal")}</button>` : nothing}
+      ${row && editor.status === "saved" ? html`<button type="button" class="button ghost" @click=${() => {
+        const card = this.querySelector<FormaOutputRequirementCard>("[data-output-recipe-draft] forma-output-requirement-card");
+        if (this.#recipeDraft !== owned || !this.#viewCurrent(owned.view) || this.#unresolvedWrite() || card?.hasOpenDraft) return;
+        this.#recipeDraft = null; this.requestUpdate();
+      }}>${this.#recipeMessage("done")}</button>` : nothing}
+    </section>`;
+  }
   #unresolvedWrite() {
     const write = this.store.outputRequirements.retainedWrite(this.documentId);
     return write && write.status !== "acknowledged" ? write : null;
@@ -299,6 +580,7 @@ export class FormaOutputRequirements extends FormaElement {
   get navigationBlocked(): boolean {
     return Boolean(!this.isConnected || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
       || this.#uncertainCommand || this.#unresolvedWrite() || this.#preflight || this.#preflightIntent || this.#removeId
+      || this.#recipeDraft || this.#recipeId || this.#recipeText || this.#recipeChoices.size || this.#recipeIncoming || this.#recipeComposing
       || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")]
         .some(card => card.isConnected && card.hasOpenDraft));
   }
@@ -306,6 +588,7 @@ export class FormaOutputRequirements extends FormaElement {
   get commandDepartureBlocked():boolean {
     return Boolean(!this.isConnected || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
       || this.#unresolvedWrite()?.status === "pending" || this.#preflight || this.#preflightIntent || this.#removeId
+      || this.#recipeDraft || this.#recipeId || this.#recipeText || this.#recipeChoices.size || this.#recipeIncoming || this.#recipeComposing
       || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")]
         .some(card => card.isConnected && card.hasOpenDraft));
   }
@@ -1137,6 +1420,10 @@ export class FormaOutputRequirements extends FormaElement {
         && !document.querySelector("dialog[open]") && !document.querySelector(".output-requirement-form")
         && !document.querySelector(".output-plan-review") && !document.querySelector(".output-recipe-draft")
         && !document.querySelector(".output-recipe-entry[open]")
+        && ![...this.ownerDocument.querySelectorAll<FormaOutputRequirements>("forma-output-requirements")].some(controller =>
+          controller.isConnected && controller.store === this.store && controller.documentId === documentId
+          && (controller.#recipeDraft || controller.#recipeId || controller.#recipeText || controller.#recipeChoices.size
+            || controller.#recipeIncoming || controller.#recipeComposing))
         // A withheld Output may expose its existing content-free status, never a retained private card.
         && (!(resource.accessLost || resource.privateUnavailable) || resource.snapshot === null));
     };
@@ -1672,15 +1959,19 @@ export class FormaOutputRequirements extends FormaElement {
     const resource = this.store.outputRequirements.resource(this.documentId);
     const snapshot = resource.snapshot;
     const ready = resource.state === "ready";
-    if (!snapshot) return html`${this.#transportReceipt()}<section class="output-requirements" aria-busy=${resource.state === "loading" || this.#sourceRefreshing ? "true" : "false"}><h2>${this.#t("title", "Outputs")}</h2><p role="status">${resource.state === "loading" ? this.#t("loading", "Loading the complete delivery scope…") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p>${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}${this.#refreshControl("button secondary")}</section>`;
+    if (!snapshot) return html`${this.#transportReceipt()}<section class="output-requirements" aria-busy=${resource.state === "loading" || this.#sourceRefreshing ? "true" : "false"}><h2 tabindex="-1" data-output-plan-focus-return>${this.#t("title", "Outputs")}</h2><p role="status">${resource.state === "loading" ? this.#t("loading", "Loading the complete delivery scope…") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p>${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>` : nothing}${this.#recipeEntry(null)}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}${this.#refreshControl("button secondary")}</section>`;
     const rows = this.blockId ? snapshot.requirements.filter((row) => row.blockId === this.blockId) : snapshot.requirements;
     const packageGate = outputPackageReadiness(snapshot), historyUnverified = snapshot.capabilities.limitationCodes?.includes("output_scope_history_reason_unverified") === true;
     if (this.blockId) return html`${this.#transportReceipt()}${rows.map((row) => this.#card(snapshot, row, ready))}${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>${this.#refreshControl("button secondary")}` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}`;
-    if (!rows.length && !snapshot.confirmedPlan) return this.#transportReceipt();
-    return html`<section class="output-requirements" aria-busy=${resource.state === "refreshing" || this.#sourceRefreshing || Boolean(this.#busy) ? "true" : "false"} data-document-id=${this.documentId}>
-      <header class="output-requirements-heading"><div>${this.documentName ? html`<span class="eyebrow" dir="auto">${this.documentName}</span>` : nothing}<h2 aria-label=${this.#controlName(this.#t("title", "Outputs"))} tabindex="-1" data-output-plan-focus-return>${this.#t("title", "Outputs")}</h2><p>${ready ? outputSourceReadiness(snapshot).allowed ? this.#summary(snapshot.summary, !snapshot.confirmedPlan, historyUnverified) : this.#t("sourceReadinessUnknown", "Source checks are unavailable; delivery readiness is unknown.") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p></div>${this.#refreshControl("button ghost compact")}</header>
+    // Keep the recipe Card at one Lit ChildPart when its first row is observed.
+    // A read may reveal that row without acknowledging the original Save.
+    const empty = !rows.length && !snapshot.confirmedPlan;
+    return html`<section class=${empty ? nothing : "output-requirements"} aria-busy=${empty ? nothing : (resource.state === "refreshing" || this.#sourceRefreshing || Boolean(this.#busy) ? "true" : "false")} data-document-id=${empty ? nothing : this.documentId}>
+      ${empty ? nothing : html`<header class="output-requirements-heading"><div>${this.documentName ? html`<span class="eyebrow" dir="auto">${this.documentName}</span>` : nothing}<h2 aria-label=${this.#controlName(this.#t("title", "Outputs"))} tabindex="-1" data-output-plan-focus-return>${this.#t("title", "Outputs")}</h2><p>${ready ? outputSourceReadiness(snapshot).allowed ? this.#summary(snapshot.summary, !snapshot.confirmedPlan, historyUnverified) : this.#t("sourceReadinessUnknown", "Source checks are unavailable; delivery readiness is unknown.") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p></div>${this.#refreshControl("button ghost compact")}</header>`}
       ${this.#transportReceipt()}
-      <p>${this.#t("wholeScope", "Progress covers the entire confirmed plan, including unselected, unresolved, and currently unavailable work.")}</p>
+      ${empty ? nothing : html`<p>${this.#t("wholeScope", "Progress covers the entire confirmed plan, including unselected, unresolved, and currently unavailable work.")}</p>`}
+      ${this.#recipeEntry(snapshot)}${this.#recipeCard(snapshot)}
+      ${empty ? html`${resource.state !== "ready" || this.#unresolvedWrite()?.status === "unknown" ? this.#refreshControl("button secondary") : nothing}${this.#notice ? html`<p role=${this.#noticeKind} tabindex="-1" data-output-plan-focus-return>${this.#notice}</p>` : nothing}` : html`
       ${this.#sourceNotice(snapshot)}
       ${this.#sourceCapacityNotice(snapshot)}
       ${this.#scopeHistory(snapshot)}
@@ -1696,6 +1987,7 @@ export class FormaOutputRequirements extends FormaElement {
         ${snapshot.permissions.canAuthor && (snapshot.capabilities.ownedFileAdoption || this.#file) ? html`<section class="output-adoption" tabindex="-1" aria-label=${this.#controlName(this.#t("adoptTitle", "Use a file you own"))}><h3>${this.#t("adoptTitle", "Use a file you own")}</h3><p>${this.#t("adoptDetail", "Upload a finished file. Forma inspects the bytes; matching, content review, current rights, and acceptance are separate steps.")}</p><p>${snapshot.capabilities.supportedFileExtensions.join(", ")}</p><form class="output-file-upload" @submit=${this.#upload}><label>${this.#t("file", "File")}<input aria-label=${this.#controlName(this.#t("file", "File"))} type="file" ?required=${!this.#file} accept=${snapshot.capabilities.supportedFileExtensions.map((extension) => extension.startsWith(".") ? extension : `.${extension}`).join(",")} @change=${this.#setFile}></label><label><input aria-label=${this.#controlName(this.#t("ownedRights", "I own or have permission to use this file and its contents."))} type="checkbox" required .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}>${this.#t("ownedRights", "I own or have permission to use this file and its contents.")}</label><button aria-label=${this.#controlName(this.#t("uploadInspect", "Upload and inspect · no generation"))} type="submit" class="button secondary" ?disabled=${!ready || !snapshot.capabilities.ownedFileAdoption || !outputSourceReadiness(snapshot).allowed || Boolean(this.#busy) || outputUploadNeedsRestage(this.#uploadFailure) || !this.#file || !this.#rightsConfirmed}>${this.#t("uploadInspect", "Upload and inspect · no generation")}</button></form>${this.#file ? html`<p><b>${this.#t("file", "File")}:</b> <span dir="auto">${this.#file.name}</span></p>` : nothing}${this.#uploadFailure ? html`<p role="status">${this.#uploadFailure.kind === "revision" ? this.#t("uploadRevisionConflict", "The saved Document revision changed before this upload. Your selected file is retained; refresh and review the current source before restaging it.") : this.#uploadFailure.kind === "authority" ? this.#t("uploadAuthorityChanged", "The upload’s source or authorization checks changed. Your selected file is retained; recheck current access and source evidence before restaging it.") : this.#t("uploadFileRetained", "Your selected file is retained. Resolve the reported issue before uploading again. Changing the revision alone does not resolve capacity, rights, evidence, or inspection failures.")}</p>${outputUploadNeedsRestage(this.#uploadFailure) ? html`<button aria-label=${this.#controlName(this.#t("recheckUpload", "Refresh checks before restaging this file"))} type="button" class="button secondary" ?disabled=${Boolean(this.#busy) || !snapshot.permissions.canAuthor} @click=${this.#restageUpload}>${this.#t("recheckUpload", "Refresh checks before restaging this file")}</button>` : nothing}` : nothing}<ul>${(snapshot.capabilities.limitationCodes ?? ["output_client_load_failed"]).map((limitation) => html`<li>${this.#message(limitation)}</li>`)}</ul></section>` : nothing}
         ${this.#execution(snapshot, ready)}
         ${snapshot.confirmedPlan ? html`<form class="output-export" aria-label=${this.#controlName(this.#t("downloadPackage", "Download checked deliverables"))} @submit=${this.#export}><h3>${this.#t("downloadPackage", "Download checked deliverables")}</h3>${historyUnverified ? html`<p class="output-package-history-warning" role="status">${this.#message("output_scope_history_reason_unverified")}</p>` : nothing}${!historyUnverified && !snapshot.summary?.delivery_ready ? html`<label><input aria-label=${this.#controlName(this.#t("partialExplicit", "Download a partial package with its missing-work manifest. This does not complete the assignment."))} type="checkbox" .checked=${this.#allowPartial} @change=${(event: Event) => { if (this.#snapshot()?.capabilities.limitationCodes?.includes("output_scope_history_reason_unverified")) return; this.#allowPartial = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}>${this.#t("partialExplicit", "Download a partial package with its missing-work manifest. This does not complete the assignment.")}</label>` : nothing}<button aria-label=${this.#controlName(this.#t("downloadFiles", "Download files and manifest"))} type="submit" class="button primary" ?disabled=${!ready || !packageGate.allowed || !snapshot.permissions.canDownload || Boolean(this.#busy) || !snapshot.summary?.delivery_ready && !this.#allowPartial}>${this.#t("downloadFiles", "Download files and manifest")}</button></form>${this.#packageParts.length > 1 ? html`<ol class="output-package-parts">${this.#packageParts.map((path, index) => html`<li><button aria-label=${this.#controlName(this.#t("downloadPart", "Download part {part} of {total}", { part: index + 1, total: this.#packageParts.length }))} type="button" class="button secondary" ?disabled=${!ready || !packageGate.allowed || !snapshot.permissions.canDownload || !this.#packageRelease || !outputReleaseStillAllowed(this.#packageRelease, snapshot)} @click=${() => this.#download(path, "package")}>${this.#t("downloadPart", "Download part {part} of {total}", { part: index + 1, total: this.#packageParts.length })}</button></li>`)}</ol>` : nothing}` : nothing}
+      `}
       `}
     </section>`;
   }

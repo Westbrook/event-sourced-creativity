@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {documentIdFromRoute} from "../src/model/routes.ts";
-import {AUTHORED,createProjectIntakeFixture,assertComplete,intendedIds} from "./helpers/project-intake-fixture.mjs";
+import {AUTHORED,createProjectIntakeFixture,assertComplete,intendedIds,reviewProjectIntake} from "./helpers/project-intake-fixture.mjs";
+import {installDBoundNativeDetails} from "./helpers/d-native-disclosure.mjs";
 const options={concurrency:false,timeout:45000};
 async function loseOriginal(x){
   let lost=null;x.setBehavior(async(stage,row)=>{if(stage==="after-worker"&&!lost){lost=row;row.dropped=true;throw Error("Synthetic lost ACK after actual intake commit");}});
@@ -29,20 +30,21 @@ async function laterOriginal(x,first){
   const result=await x.raw(events);assert.equal(result.response.status,200);assert.equal(result.body.status,"complete");
   return{projectId,documentId,eventIds:result.body.appended.map(event=>event.eventId)};
 }
-async function canvasOwner(x){
+async function canvasOwner(t,x){
   await x.f.act(x.f.find("button",node=>node.owner===x.owner&&node.attributes["aria-label"]===x.f.i18n.t("action.close","Close")));
   const reply=await x.worker.request("/api/session?audience=canvas");assert.equal(reply.status,200);
   const current=await reply.json();assert.equal(current.canvas.access,true,"Existing actual admin Canvas access, no fabricated grant");
   assert.equal(await x.h.store.transitionWorkspace("/canvas/projects"),true);await x.f.settle();
   const owner=x.f.components().find(component=>component.tag==="forma-projects");
   assert.ok(owner);assert.equal(x.h.store.route.get(),"/canvas/projects");
+  installDBoundNativeDetails(t,x.f,owner);
   await x.f.act(x.f.find("button",node=>node.owner.tag==="forma-ui-button"&&node.owner.parentElement===owner&&node.owner.label===x.f.i18n.t("projects.new","New project")));
+  await reviewProjectIntake(x.f,owner);
   for(const [label,value] of [[x.f.i18n.t("projects.projectName","Project name"),AUTHORED.name],[x.f.i18n.system("Document name"),AUTHORED.documentTitle]]){
     const field=x.f.find("input",node=>node.owner.tag==="forma-ui-field"&&node.owner.parentElement===owner&&node.owner.label===label);
     field.port.value=value;await x.f.act(field,"input");
   }
-  const objective=x.f.find("textarea",node=>node.owner===owner&&node.attributes.maxlength==="1200");objective.port.value=AUTHORED.objective;await x.f.act(objective,"input");
-  const form=()=>x.f.find("form",node=>node.owner===owner&&node.attributes.class==="modal-card wide");
+  const form=()=>x.f.find("form",node=>node.owner===owner&&String(node.attributes.class).split(" ").includes("project-intake"));
   return{owner,form,submit:()=>x.f.act(form(),"submit")};
 }
 
@@ -77,7 +79,7 @@ test("intake confirmed but removed original stays confirmed without retry or lat
 });
 
 test("intake actual Canvas-origin creation opens its authored Document, not an inferred board",options,async t=>{
-  const x=await createProjectIntakeFixture(t),canvas=await canvasOwner(x),before=eventsCount(x);
+  const x=await createProjectIntakeFixture(t),canvas=await canvasOwner(t,x),before=eventsCount(x);
   await canvas.submit();await x.f.settle();
   const original=assertComplete(x.dispatches.at(-1));
   assert.equal(documentIdFromRoute(x.h.store.route.get()),original.documentId);
@@ -87,7 +89,7 @@ test("intake actual Canvas-origin creation opens its authored Document, not an i
 });
 
 test("intake Canvas completion retains its receipt across a genuine denied transition and explicit availability Check",options,async t=>{
-  const x=await createProjectIntakeFixture(t),canvas=await canvasOwner(x),originalIntercept=x.h.intercept;let denied=0;
+  const x=await createProjectIntakeFixture(t),canvas=await canvasOwner(t,x),originalIntercept=x.h.intercept;let denied=0;
   x.h.intercept=async request=>{
     if(request.url==="/api/session?audience=creative"&&denied===0){
       denied++;x.worker.env.FORMA_PILOT_COHORT_ID="unavailable-transition-cohort";

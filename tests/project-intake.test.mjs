@@ -181,22 +181,91 @@ test("project creation refuses unlicensed passages and keeps every intake contro
   assert.equal(plan(draft({ source: "Unlicensed evidence", sourceRights: false })), null);
   assert.equal(plan(draft({ name: "   " })), null);
 
-  assert.match(source, /this\.store\.commitProjectIntake\(attempt\.brief\.events,\{current\}\)/);
-  assert.match(source, /this\.store\.checkProjectIntake\(attempt\.brief\.events,\{current\}\)/);
+  {
+    const owner = parsed.statements.find(node => typescript.isClassDeclaration(node) && node.name?.text === "FormaProjects");
+    const intake = owner?.members.find(node => typescript.isMethodDeclaration(node) && node.name.getText(parsed) === "#runIntake");
+    const statements = intake?.body?.statements.find(typescript.isTryStatement)?.tryBlock.statements;
+    assert.ok(statements, "the original intake method owns the guarded Store call");
+    const [controlStatement, resultStatement, ownGuard, receiptStatement] = statements;
+    for (const [statement, name] of [[controlStatement, "controls"], [resultStatement, "result"], [receiptStatement, "complete"]]) {
+      assert.ok(statement && typescript.isVariableStatement(statement)
+        && Boolean(statement.declarationList.flags & typescript.NodeFlags.Const)
+        && statement.declarationList.declarations.length === 1, "one local constant owns " + name);
+      assert.equal(statement.declarationList.declarations[0].name.getText(parsed), name);
+    }
+    const controls = controlStatement.declarationList.declarations[0].initializer;
+    assert.ok(controls && typescript.isObjectLiteralExpression(controls) && controls.properties.length === 1);
+    const current = controls.properties[0];
+    assert.ok(typescript.isPropertyAssignment(current) && current.name.getText(parsed) === "current"
+      && typescript.isArrowFunction(current.initializer) && current.initializer.parameters.length === 0);
+    const conjunction = current.initializer.body;
+    assert.ok(typescript.isBinaryExpression(conjunction)
+      && conjunction.operatorToken.kind === typescript.SyntaxKind.AmpersandAmpersandToken,
+    "Store custody requires both the original attempt and this admission");
+    for (const [call, expression] of [[conjunction.left, "current"], [conjunction.right, "admission.current"]]) {
+      assert.ok(typescript.isCallExpression(call) && call.arguments.length === 0);
+      assert.equal(call.expression.getText(parsed), expression);
+    }
+    const awaited = resultStatement.declarationList.declarations[0].initializer;
+    assert.ok(awaited && typescript.isAwaitExpression(awaited));
+    const finalizer = awaited.expression;
+    assert.ok(typescript.isCallExpression(finalizer) && typescript.isPropertyAccessExpression(finalizer.expression)
+      && finalizer.expression.name.text === "finally" && finalizer.arguments.length === 1);
+    const disposal = finalizer.arguments[0];
+    assert.ok(typescript.isArrowFunction(disposal) && disposal.parameters.length === 0
+      && typescript.isCallExpression(disposal.body) && disposal.body.arguments.length === 0);
+    assert.equal(disposal.body.expression.getText(parsed), "admission.dispose",
+      "the original Store Promise disposes admission before receipt handling");
+    const selected = finalizer.expression.expression;
+    assert.ok(typescript.isParenthesizedExpression(selected) && typescript.isConditionalExpression(selected.expression));
+    const request = selected.expression;
+    assert.equal(request.condition.getText(parsed), 'mode==="check"');
+    for (const [call, expression] of [[request.whenTrue, "this.store.checkProjectIntake"], [request.whenFalse, "this.store.commitProjectIntake"]]) {
+      assert.ok(typescript.isCallExpression(call));
+      assert.equal(call.expression.getText(parsed), expression);
+      assert.deepEqual([...call.arguments].map(argument => argument.getText(parsed)), ["attempt.brief.events", "controls"],
+        "both modes retain the original event batch and the same conjoined controls");
+    }
+    assert.ok(typescript.isIfStatement(ownGuard) && typescript.isReturnStatement(ownGuard.thenStatement)
+      && ownGuard.thenStatement.expression === undefined && ownGuard.elseStatement === undefined);
+    assert.equal(ownGuard.expression.getText(parsed), "!current()",
+      "only the retained own-current guard follows Store settlement, before the existing complete receipt");
+  }
   assert.match(source, /\.label=\$\{this\.i18n\.system\("Document name"\)\}/);
   assert.match(source, /this\.i18n\.system\("What should remain with them\?"\)/);
-  assert.match(source, /textarea \?disabled=\$\{Boolean\(this\.#intake\)\} rows="4" maxlength="12000"/);
+  assert.match(source, /textarea rows="4" maxlength="12000"/);
+  assert.match(source, /<fieldset \?disabled=\$\{Boolean\(this\.#intake\)\|\|this\.#submitting\}>/, "the advanced authored fields remain disabled for an original intake");
   assert.match(source, /this\.i18n\.system\("Exact value"\)/);
-  assert.match(source, /max-length="500" \.value=\$\{this\.#protectedPhrase\}/);
-  assert.match(source, /\?disabled=\$\{this\.#submitting\|\|!this\.#name\.trim\(\)\|\|Boolean\(this\.#source\.trim\(\)&&!this\.#sourceRights\)\}/);
+  assert.match(source, /max-length="500" \.value=\$\{this\.#intakeComposing\?noChange:this\.#protectedPhrase\}/);
+  assert.match(source, /Boolean\(this\.#briefValues\(\)\.source\.trim\(\)&&!this\.#briefValues\(\)\.sourceRights\)/,
+    "the current explicit brief or blank values retain the original source-rights admission");
   assert.match(source,/if\(this\.#submitting\|\|!this\.#creating\|\|this\.#intake\?\.confirmed\)return;/,"concurrent submissions and confirmed originals cannot create duplicate projects");
   const projects=parsed.statements.find(statement=>typescript.isClassDeclaration(statement)&&statement.name?.text==="FormaProjects");
   const method=name=>{const member=projects?.members.find(member=>member.name?.getText(parsed)===name);assert.ok(member);return member.getText(parsed);};
+  assert.match(method("render"), /\$\{this\.#intake\?\.confirmed\?nothing:html`<button type="submit" class="button primary" \?disabled=\$\{this\.#submitting\|\|this\.#intakeComposing\|\|this\.#reviewOutcomeMissing\(\)\|\|!this\.#intake&&\(!this\.#name\.trim\(\)\|\|Boolean\(this\.#briefValues\(\)\.source\.trim\(\)&&!this\.#briefValues\(\)\.sourceRights\)\)\}>/,
+    "the rendered Create/Retry button retains the complete submission, composition, missing-outcome, new-name and source-rights disabled guard");
+  assert.equal(method("#reviewOutcomeMissing"), '#reviewOutcomeMissing(){return !this.#intake&&this.#intakePosture==="review"&&this.#intakeChoice==="brief"&&!this.#intakeComposing&&!this.#objective.trim();}',
+    "only a new non-composing brief review requires an outcome; an original retry and the explicit blank path keep their own admission");
   const opening=method("#openCreate");
   assert.match(opening,/const opening=\{\};this\.#intakeOpening=opening;this\.#creating=true;/,"reopening preserves the draft under a fresh presentation owner");
-  assert.match(opening,/captureOutputNavigationFocus\(this\.ownerDocument\)/,"the opening owns focus before render yields");
-  assert.match(opening,/this\.#intakeOpening!==opening\|\|this\.#draftScopeKey\(\)!==scope/,"a later opening or changed custody cannot inherit focus");
-  assert.match(opening,/!this\.store\.sourceOwnershipActive\(source\)/,"current Source remains required after render");
+  assert.match(opening,/this\.requestUpdate\(\);this\.#focusIntake\(false\);\n {2}\}$/,"the opening synchronously reuses the owned lease and retains normal native focus reveal");
+  const openingFocus=method("#focusIntake");
+  assert.equal(openingFocus, [
+    '#focusIntake(preventScroll=true){',
+    '    const opening=this.#intakeOpening,scope=this.#draftScopeKey(),source=this.store.captureSourceOwnership(),posture=this.#intakePosture;',
+    '    const current=()=>this.isConnected&&this.#creating&&opening!==null&&this.#intakeOpening===opening&&this.#intakePosture===posture',
+    '      &&Boolean(scope)&&this.#draftScope===scope&&this.#draftScopeKey()===scope&&this.store.sourceOwnershipActive(source);',
+    '    const focus=captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>{',
+    '      const dialog=this.querySelector<HTMLDialogElement>(".project-create-dialog");',
+    '      return current()&&Boolean(dialog?.contains(element))&&(element.matches(".modal-close")||element.matches("[data-intake-outcome]"));',
+    '    }});',
+    '    void this.updateComplete.then(()=>{',
+    '      if(!current()||!focus.current())return;',
+    '      const target=this.querySelector<HTMLElement>(this.#intake?".modal-close":posture==="intent"?"[data-intake-outcome]":"[data-intake-name] input");',
+    '      if(target&&!target.matches(":disabled"))focus.run(target,()=>{target.focus({preventScroll});return true;});',
+    '    }).finally(()=>focus.dispose());',
+    '  }',
+  ].join("\n"),"the reused method retains exact opening/posture/principal-scope/Source and newer-focus custody, modal-owned native allowance, enabled target and final disposal");
   const intake=method("#runIntake"),completeGuard="if(!complete){this.#intakeIssue=true;return;}",cleanup="this.#submitting=false;this.#intake=null;this.#draftScope=\"\";this.#clearDraft();";
   assert.ok(intake.includes(completeGuard)&&intake.includes(cleanup)&&intake.indexOf(completeGuard)<intake.indexOf(cleanup),"successful creation clears its retained draft only after the complete original receipt; separate custody retirement may discard private drafts");
 });

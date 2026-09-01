@@ -1,4 +1,11 @@
 forma-output-requirements { display:block; min-inline-size:0; }
+forma-output-requirements .output-recipe-entry { margin-block:var(--forma-space-4,1rem); }
+forma-output-requirements .output-recipe-entry form { display:grid; gap:var(--forma-space-3,.75rem); min-inline-size:0; }
+forma-output-requirements .output-recipe-entry label { display:grid; gap:.375rem; min-inline-size:0; overflow-wrap:anywhere; }
+forma-output-requirements .output-recipe-entry fieldset { display:grid; gap:.5rem; min-inline-size:0; }
+forma-output-requirements .output-recipe-entry fieldset label { display:flex; align-items:start; gap:.5rem; min-block-size:var(--forma-control-min-size,2.75rem); }
+forma-output-requirements .output-recipe-entry :is(select,textarea) { inline-size:100%; max-inline-size:100%; min-block-size:var(--forma-control-min-size,2.75rem); box-sizing:border-box; font:inherit; }
+forma-output-requirements .output-recipe-draft { margin-block:var(--forma-space-4,1rem); min-inline-size:0; }
 .output-governed-source-disclosure { min-inline-size:0; overflow-wrap:anywhere; }
 .output-requirements { margin-block:1.5rem; padding:clamp(.8rem,2vw,1.4rem); border:1px solid var(--forma-color-border, GrayText); border-radius:var(--forma-radius-large, 1rem); background:var(--forma-color-surface, Canvas); color:var(--forma-color-text, CanvasText); }
 .output-requirements-heading, .output-target > header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; flex-wrap:wrap; }

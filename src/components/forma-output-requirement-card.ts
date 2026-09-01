@@ -21,6 +21,7 @@ import {
   type OutputInterpretationChange, type OutputInterpretationDecision,
 } from "./output-requirement-editor.ts";
 import "./forma-output-requirement-card.css";
+import { outcomeRecipeDraftMessage } from "./design-system/locales/outcome-recipe-draft-messages";
 
 export type OutputCardScope = { projectId: string; documentId: string; authorizationScopeKey: string };
 export type OutputCardRevision = string | number | null;
@@ -77,11 +78,14 @@ type CoverageOwner = Pick<OutputDeliverable, "id" | "source_scope" | "coverage">
 type TextFieldOptions = { multiline?: boolean; rows?: number; help?: string; numeric?: boolean; direction?: "auto" | "ltr"; errorKey?: string; ownerId?: string; sectionLabel?: string };
 const MEDIA: OutputMediaKind[] = ["unknown", "image", "slides", "audio", "video", "document"];
 const scopeKey = (scope: OutputCardScope, requirementId: string) => JSON.stringify([scope.authorizationScopeKey, scope.projectId, scope.documentId, requirementId]);
+/** Explicit unsaved presentation. It has no canonical summary, result or plan authority. */
+export type OutputRequirementCardDraft = Omit<OutputRequirementCardSnapshot, "summary" | "results" | "canReviewPlan">;
 
 /**
  * @tag forma-output-requirement-card
  * @summary Author requested deliverables with native forms and inspect authoritative output status.
  * @property {OutputRequirementCardSnapshot | null} snapshot - Authorized property-only requirement and whole-scope status.
+ * @property {OutputRequirementCardDraft | null} newDraft - Current-owned unsaved requirement, distinct from a saved snapshot.
  * @property {OutputCardResourceState} resourceState - Loading, ready, refreshing, or unavailable; never inferred from empty rows.
  * @property {"full" | "compact"} presentation - Full editor or compact saved-status summary.
  * @property {OutputCardEditorState} editorState - Command response, matched by mutation identity before a draft is closed.
@@ -99,9 +103,12 @@ const scopeKey = (scope: OutputCardScope, requirementId: string) => JSON.stringi
 export class FormaOutputRequirementCard extends FormaPresentationalElement {
   static properties = {
     snapshot: { attribute: false }, resourceState: { attribute: false }, presentation: { attribute: false },
-    editorState: { attribute: false }, readOnlyReason: { attribute: false },
+    editorState: { attribute: false }, readOnlyReason: { attribute: false }, newDraft: { attribute: false }, originalSaveId: { attribute: false },
   };
   snapshot: OutputRequirementCardSnapshot | null = null;
+  newDraft: OutputRequirementCardDraft | null = null;
+  /** Recipe host's unresolved original ID only; no body, receipt or retry permission. */
+  originalSaveId = "";
   resourceState: OutputCardResourceState = "loading";
   presentation: "full" | "compact" = "full";
   editorState: OutputCardEditorState = { status: "idle" };
@@ -125,7 +132,6 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   #mediumChange: { deliverableId: string; kind: OutputMediaKind } | null = null;
   #conflictReviewedAt = "";
   #interpretationReviewedAt = -1;
-  get hasOpenDraft() { return this.#editing || this.#waiting || Boolean(this.#session?.dirty); }
 
   #t(key: OutputRequirementMessageKey, values: Record<string, string | number> = {}) {
     const family = formaLocaleFamily(this.i18n.locale) as keyof typeof FORMA_OUTPUT_REQUIREMENT_MESSAGES;
@@ -136,8 +142,46 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     return (scoped && scoped !== FORMA_OUTPUT_REQUIREMENT_MESSAGES.en[id] ? scoped : fallback).replace(/\{(\w+)\}/gu, (_, name: string) => String(values[name] ?? ""));
   }
   #isolate(value: string) { return "\u2068" + value + "\u2069"; }
+  #input() { return this.snapshot ?? this.newDraft; }
+  #draftMessage(key: Parameters<typeof outcomeRecipeDraftMessage>[1]) { return outcomeRecipeDraftMessage(this.i18n.locale, key); }
+  get hasOpenDraft() { return this.#editing || this.#waiting || Boolean(this.#session?.dirty); }
+  /** Explicit presentation only; the host supplies current ownership, never a fabricated saved row. */
+  async openNewDraft(opener: HTMLElement | null, current: () => boolean): Promise<boolean> {
+    if (!current() || !this.newDraft || this.snapshot || !this.#canEdit() || this.resourceState !== "ready" || this.hasOpenDraft) return false;
+    const input = this.newDraft, key = scopeKey(input.scope, input.requirementId);
+    this.#opener = opener; this.#session = this.#newSession(input); this.#session.dirty = true;
+    this.#editing = true; this.#status = ""; this.#errors.clear(); this.#interpretationReviewedAt = -1;
+    this.requestUpdate(); await this.updateComplete;
+    if (!current() || this.#activeKey !== key || !this.#editing) return false;
+    this.querySelector<HTMLElement>(`#${this.#fieldId("originalText")}`)?.focus({ preventScroll: true });
+    return true;
+  }
+  /** Explicitly resend this session's original Save; never materialize or rebase newer edits. */
+  retryOriginalSave(clientMutationId: string, current: () => boolean): boolean {
+    const session = this.#session, pending = session?.pendingMutation, input = this.#input();
+    if (typeof current !== "function" || !current() || !this.isConnected || !session || !pending || !input || !this.#editing
+      || !clientMutationId || this.originalSaveId !== clientMutationId || pending.id !== clientMutationId
+      || this.editorState.clientMutationId !== clientMutationId || this.#fieldsDisabled() || this.#composing.size
+      || this.editorState.status === "forbidden" || this.editorState.status === "saved" || this.editorState.status === "idle"
+      || this.resourceState !== "ready" || this.#activeKey !== scopeKey(session.scope, session.requirementId)
+      || this.#activeKey !== scopeKey(input.scope, input.requirementId)) return false;
+    let original: unknown;
+    try { original = JSON.parse(pending.fingerprint); } catch { return false; }
+    if (!Array.isArray(original) || original.length !== 3 || original[0] === null || original[0] !== session.baseRevision
+      || JSON.stringify(original) !== pending.fingerprint || inspectOutputRequirement(original[1]).status !== "valid"
+      || (original[1] as OutputRequirementSpec).id !== session.requirementId) return false;
+    const plan = original[2] as OutputCardPlanSuggestions | null;
+    if (!plan || typeof plan !== "object" || Array.isArray(plan) || Object.keys(plan).sort().join(",") !== "countPolicies,suggestedCounts"
+      || !plan.countPolicies || typeof plan.countPolicies !== "object" || Array.isArray(plan.countPolicies)
+      || !plan.suggestedCounts || typeof plan.suggestedCounts !== "object" || Array.isArray(plan.suggestedCounts) || !current()) return false;
+    // Preserve pending.editVersion: an original ACK cannot close newer raw edits.
+    this.#waiting = true; this.#status = ""; this.requestUpdate();
+    this.#emit<OutputRequirementSaveIntent>("forma-output-save", { ...this.#intent(session)!, clientMutationId,
+      draft: original[1] as OutputRequirementSpec, planSuggestions: plan });
+    return true;
+  }
   #documentContext() {
-    const scope = this.snapshot?.scope, context = this.snapshot?.documentContext;
+    const scope = this.#input()?.scope, context = this.#input()?.documentContext;
     if (!scope) return "";
     return context?.projectId === scope.projectId && context.documentId === scope.documentId
       && typeof context.title === "string" && Number.isSafeInteger(context.ordinal) && context.ordinal > 0
@@ -145,15 +189,15 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       : this.#t("contextDocumentIdentity", { identity: this.#isolate(scope.documentId) });
   }
   #requirementContext() {
-    const name = this.#isolate(this.#session?.label || this.snapshot?.label || this.#t("heading"));
-    const ordinal = this.snapshot?.requirementOrdinal;
+    const name = this.#isolate(this.#session?.label || this.#input()?.label || this.#t("heading"));
+    const ordinal = this.#input()?.requirementOrdinal;
     const requirement = typeof ordinal === "number" && Number.isSafeInteger(ordinal) && ordinal > 0
       ? this.#t("contextRequirement", { number: this.i18n.number(ordinal), name })
-      : this.#t("contextRequirementIdentity", { name, identity: this.#isolate(this.snapshot?.requirementId || this.#id) });
+      : this.#t("contextRequirementIdentity", { name, identity: this.#isolate(this.#input()?.requirementId || this.#id) });
     return [this.#documentContext(), requirement].filter(Boolean).join(" · ");
   }
   #context(ownerId = "") {
-    const spec = this.#session?.spec ?? outputRequirementEditableDraft(this.snapshot?.spec);
+    const spec = this.#session?.spec ?? outputRequirementEditableDraft(this.#input()?.spec);
     const requirement = this.#requirementContext();
     const rows = (spec?.deliverables ?? []).flatMap((deliverable, index) => {
       const parent = this.#t("contextDeliverable", { number: this.i18n.number(index + 1), name: this.#isolate(deliverable.label || this.#t("untitledGroup")) });
@@ -183,7 +227,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   #emit<T>(name: string, detail: T) { this.dispatchEvent(new CustomEvent<T>(name, { detail, bubbles: true, composed: true, cancelable: true })); }
   #intent(session = this.#session): OutputCardIntentScope | null {
     if (session) return { scope: { ...session.scope }, requirementId: session.requirementId, expectedRevision: session.baseRevision };
-    const value = this.snapshot;
+    const value = this.#input();
     return value ? { scope: { ...value.scope }, requirementId: value.requirementId, expectedRevision: value.revision } : null;
   }
   #latest() {
@@ -196,15 +240,16 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     const latest = this.#latest();
     return !!latest && (latest.revision !== this.#session.baseRevision || (this.editorState.status === "conflict" && this.#resolvedConflictMarker !== this.#conflictMarker()));
   }
-  #unsupported() { return this.snapshot?.spec != null && inspectOutputRequirement(this.snapshot.spec).status === "unsupported"; }
+  #newDraftChanged() { return !this.snapshot && this.newDraft && this.#session && this.newDraft.revision !== this.#session.baseRevision; }
+  #unsupported() { const input = this.#input(); return input?.spec != null && inspectOutputRequirement(input.spec).status === "unsupported"; }
   #nestedForm() { return this.closest("form") !== null; }
-  #canEdit() { return !!this.snapshot?.canEdit && !this.readOnlyReason && !this.#unsupported() && !this.#nestedForm(); }
+  #canEdit() { return !!this.#input()?.canEdit && !this.readOnlyReason && !this.#unsupported() && !this.#nestedForm(); }
   #fieldsDisabled() { return !this.#canEdit() || this.#waiting || this.editorState.status === "saving"; }
-  #canSave() { return this.#canEdit() && this.resourceState === "ready" && !this.#waiting && this.editorState.status !== "saving" && this.editorState.status !== "forbidden" && !this.#hasConflict(); }
+  #canSave() { return !this.originalSaveId && this.#canEdit() && this.resourceState === "ready" && !this.#waiting && this.editorState.status !== "saving" && this.editorState.status !== "forbidden" && !this.#hasConflict() && !this.#newDraftChanged() && (!this.newDraft || this.snapshot || !this.#session || !outputRequirementInterpretationNeedsReview(this.#comparisonDraft())); }
 
   protected override willUpdate(changed: PropertyValues) {
-    if (changed.has("snapshot")) {
-      const next = this.snapshot;
+    if (changed.has("snapshot") || changed.has("newDraft")) {
+      const next = this.#input();
       const nextAuthorization = next?.scope.authorizationScopeKey ?? "";
       const nextKey = next ? scopeKey(next.scope, next.requirementId) : "";
       if (this.#authorizationKey && nextAuthorization !== this.#authorizationKey) {
@@ -238,7 +283,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     copy.deliverables = copy.deliverables.map((value) => ({ ...value, ...(value.content_quantity ? {} : value.media_kind === "slides" ? { content_quantity: { kind: "unknown" as const, unit: "slide" as const } } : value.media_kind === "audio" || value.media_kind === "video" ? { content_quantity: { kind: "unknown" as const, unit: "second" as const } } : {}) }));
     return copy;
   }
-  #newSession(snapshot: OutputRequirementCardSnapshot): DraftSession {
+  #newSession(snapshot: OutputRequirementCardDraft): DraftSession {
     const editable = outputRequirementEditableDraft(snapshot.spec);
     const spec = editable ? this.#editableSpec(editable) : this.#blankSpec(snapshot.requirementId, snapshot.label, snapshot.originalText);
     return {
@@ -250,10 +295,12 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     };
   }
   #open(event: Event) {
-    if (!this.#canEdit() || !this.snapshot) return;
+    const input = this.#input();
+    if (!this.#canEdit() || !input) return;
     this.#opener = event.currentTarget as HTMLElement;
-    this.#session = this.#cache.get(this.#activeKey) ?? this.#newSession(this.snapshot);
-    this.#editing = true; this.#status = inspectOutputRequirement(this.snapshot.spec).status === "invalid" && outputRequirementEditableDraft(this.snapshot.spec) ? "invalidLabelsPreserved" : ""; this.#waiting = false; this.#errors.clear();
+    this.#session = this.#cache.get(this.#activeKey) ?? this.#newSession(input);
+    if (!this.snapshot) this.#session.dirty = true;
+    this.#editing = true; this.#status = inspectOutputRequirement(input.spec).status === "invalid" && outputRequirementEditableDraft(input.spec) ? "invalidLabelsPreserved" : ""; this.#waiting = false; this.#errors.clear();
     this.#interpretationReviewedAt = -1; this.#conflictReviewedAt = "";
     this.#emit<OutputRequirementEditIntent>("forma-output-edit", { ...this.#intent()!, action: "open" });
     this.requestUpdate(); this.#focus("originalText");
@@ -295,7 +342,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     session.spec = structuredClone(proposal.spec); session.acceptedWording = session.originalText;
     session.planSuggestions = structuredClone(proposal.planning); session.planningBasisSpec = structuredClone(proposal.spec);
     session.quantities.clear(); session.text.clear(); session.policies.clear(); session.editedPolicyIds.clear();
-    session.dirty = true; session.structuredDirty = true; session.pendingMutation = null; session.editVersion += 1;
+    session.dirty = true; session.structuredDirty = true; if (!this.originalSaveId) session.pendingMutation = null; session.editVersion += 1;
     this.#status = proposal.recognized ? "proposalDraft" : "proposalNotRecognized";
     this.#errors.clear(); this.#parseProposal = null; this.requestUpdate(); this.#focus("groups");
   }
@@ -314,7 +361,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     this.#touch(); this.#status = "retainedInterpretationConfirmed"; this.requestUpdate();
   }
   #cancel() {
-    if (!this.#session || this.#waiting) return;
+    if (!this.#session || this.#waiting || this.originalSaveId) return;
     if (this.#session.dirty) { this.#cancelIntent = "cancel"; this.requestUpdate(); this.#focus("keepEditing"); return; }
     this.#close(false);
   }
@@ -327,6 +374,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     void this.updateComplete.then(() => { if (this.#opener?.isConnected) this.#opener.focus({ preventScroll: true }); else this.#focusSummary(); });
   }
   #discard() {
+    if (this.originalSaveId) return;
     if (this.#cancelIntent === "reload") {
       const latest = this.#latest();
       if (latest) { this.#session = this.#newSession(latest); this.#resolvedConflictMarker = this.#conflictMarker(); this.#cancelIntent = null; this.#status = ""; this.#errors.clear(); this.#interpretationReviewedAt = -1; this.#conflictReviewedAt = ""; this.requestUpdate(); this.#focus("originalText"); }
@@ -334,7 +382,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   }
   #reapply() {
     const latest = this.#latest();
-    if (!latest || !this.#session || this.resourceState !== "ready" || !this.#canEdit() || inspectOutputRequirement(latest.spec).status !== "valid" || this.#conflictReviewedAt !== `${this.#conflictMarker()}:${this.#session.editVersion}`) return;
+    if (this.originalSaveId || !latest || !this.#session || this.resourceState !== "ready" || !this.#canEdit() || inspectOutputRequirement(latest.spec).status !== "valid" || this.#conflictReviewedAt !== `${this.#conflictMarker()}:${this.#session.editVersion}`) return;
     this.#session.baseRevision = latest.revision; this.#session.pendingMutation = null;
     this.#conflictReviewedAt = "";
     this.#resolvedConflictMarker = this.#conflictMarker(); this.#status = "reapplied";
@@ -645,7 +693,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   }
   #coverage(owner: CoverageOwner, update: (next: Partial<CoverageOwner>) => void) {
     const selected = owner.source_scope.kind === "blocks" ? owner.source_scope.block_ids : [];
-    const sources = this.snapshot?.sourceOptions ?? [];
+    const sources = this.#input()?.sourceOptions ?? [];
     const coverage = owner.coverage;
     return html`<div class="output-requirement-coverage">
       ${this.#select(`${owner.id}:coverage`, this.#t("coverage"), coverage.kind, (["document_context", "document_outline", "topics", "unresolved"] as const).map((kind) => ({ value: kind, label: this.#t(`coverage.${kind}`) })), (kind) => update({ coverage: kind === "document_outline" || kind === "document_context" ? { kind } : kind === "topics" ? { kind, topics: [] } : { kind: "unresolved", description: "" } }), owner.id, "")}
@@ -756,7 +804,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       if (field === "source") {
         if (record.kind === "document") return this.#t("source.document");
         if (record.kind === "unknown") return this.#t("source.unknown");
-        if (Array.isArray(record.block_ids)) return record.block_ids.map((id) => this.snapshot?.sourceOptions.find((source) => source.id === id)?.label ?? this.#t("comparisonUnavailableSource")).join(" · ");
+        if (Array.isArray(record.block_ids)) return record.block_ids.map((id) => this.#input()?.sourceOptions.find((source) => source.id === id)?.label ?? this.#t("comparisonUnavailableSource")).join(" · ");
       }
       if (field === "coverage") {
         if (record.kind === "document_context" || record.kind === "document_outline") return this.#t(`coverage.${record.kind}`);
@@ -806,6 +854,18 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     </div>`;
   }
   #conflictView() {
+    if (this.#newDraftChanged() && this.newDraft && this.#session) {
+      const marker = JSON.stringify([this.newDraft.revision, this.#session.editVersion]);
+      return html`<div class="output-requirement-warning"><p>${this.#draftMessage("changed")}</p>
+        ${this.#checkbox("new-draft-source-reviewed", this.#draftMessage("reviewed"), this.#conflictReviewedAt === marker, checked => { this.#conflictReviewedAt = checked ? marker : ""; this.requestUpdate(); })}
+        <button type="button" ?disabled=${Boolean(this.originalSaveId) || this.#fieldsDisabled() || this.resourceState !== "ready" || this.#conflictReviewedAt !== marker} @click=${() => {
+          if (this.originalSaveId || !this.#newDraftChanged() || !this.newDraft || !this.#session || this.#fieldsDisabled() || this.resourceState !== "ready"
+            || this.#conflictReviewedAt !== JSON.stringify([this.newDraft.revision, this.#session.editVersion])) return;
+          this.#session.baseRevision = this.newDraft.revision; this.#session.pendingMutation = null; this.#conflictReviewedAt = "";
+          this.#touch(false); this.requestUpdate();
+        }}>${this.#draftMessage("rebase")}</button>
+      </div>`;
+    }
     const latest = this.#latest();
     if (!this.#hasConflict() || !latest || !this.#session) return nothing;
     const inspected = inspectOutputRequirement(latest.spec);
@@ -818,7 +878,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       ${changes ? this.#decisionChanges(changes) : html`<p>${this.#t("conflictComparisonUnavailable")}</p>`}
       <p>${this.#t("conflictReplacementHelp")}</p>
       ${this.#checkbox("conflict-reviewed", this.#t("conflictReplacementAcknowledgment"), checked, (value) => { this.#conflictReviewedAt = value ? `${this.#conflictMarker()}:${this.#session!.editVersion}` : ""; this.requestUpdate(); })}
-      <div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("reapply"), "")} type="button" ?disabled=${this.#fieldsDisabled() || this.resourceState !== "ready" || !checked || !changes} @click=${this.#reapply}>${this.#t("reapply")}</button><button aria-label=${this.#controlName(this.#t("reloadLatest"), "")} type="button" ?disabled=${this.#waiting} @click=${() => { this.#cancelIntent = "reload"; this.requestUpdate(); this.#focus("keepEditing"); }}>${this.#t("reloadLatest")}</button></div>
+      <div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("reapply"), "")} type="button" ?disabled=${Boolean(this.originalSaveId) || this.#fieldsDisabled() || this.resourceState !== "ready" || !checked || !changes} @click=${this.#reapply}>${this.#t("reapply")}</button><button aria-label=${this.#controlName(this.#t("reloadLatest"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${() => { if (this.originalSaveId) return; this.#cancelIntent = "reload"; this.requestUpdate(); this.#focus("keepEditing"); }}>${this.#t("reloadLatest")}</button></div>
     </details></div>`;
   }
   #editor() {
@@ -838,17 +898,18 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       <ol class="output-requirement-groups" aria-labelledby=${this.#fieldId("groups")}>${repeat(session.spec.deliverables, (value) => value.id, (value) => this.#deliverable(value))}</ol>
       <button aria-label=${this.#controlName(this.#t("addDeliverable"), "")} type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#addDeliverable}>${this.#t("addDeliverable")}</button>
       ${this.editorState.status === "invalid" && this.editorState.issues?.length ? html`<ul class="output-requirement-error">${this.editorState.issues.map((issue) => html`<li>${issue.message}</li>`)}</ul>` : nothing}
-      <footer class="output-requirement-form-footer"><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save"), "")} id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button aria-label=${this.#controlName(this.#t("cancel"), "")} type="button" ?disabled=${this.#waiting} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
-      ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepEditing"), "")} id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText"); }}>${this.#t("keepEditing")}</button><button aria-label=${this.#controlName(this.#t("discard"), "")} type="button" @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
+      <footer class="output-requirement-form-footer"><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save"), "")} id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button aria-label=${this.#controlName(this.#t("cancel"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
+      ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepEditing"), "")} id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText"); }}>${this.#t("keepEditing")}</button><button aria-label=${this.#controlName(this.#t("discard"), "")} type="button" ?disabled=${Boolean(this.originalSaveId)} @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
     </form>`;
   }
   override render() {
     const snapshot = this.snapshot;
+    const input = this.#input();
     const resourceNotice = this.resourceState === "ready" ? "" : this.resourceState === "loading" ? "loading" : this.resourceState === "refreshing" ? "refreshing" : "unavailable";
-    const editNotice = this.#editing && this.editorState.status === "unavailable" ? "unavailableDraft" : this.#editing && (this.editorState.status === "forbidden" || !snapshot?.canEdit) ? "forbiddenDraft" : "";
-    const reason = this.#unsupported() ? this.#t("unsupported") : this.#nestedForm() ? this.#t("nestedForm") : this.readOnlyReason || (snapshot && !snapshot.canEdit ? this.#t("readOnly") : "");
+    const editNotice = this.#editing && this.editorState.status === "unavailable" ? "unavailableDraft" : this.#editing && (this.editorState.status === "forbidden" || !input?.canEdit) ? "forbiddenDraft" : "";
+    const reason = this.#unsupported() ? this.#t("unsupported") : this.#nestedForm() ? this.#t("nestedForm") : this.readOnlyReason || (input && !input.canEdit ? this.#t("readOnly") : "");
     return html`<section class="output-requirement-card" data-presentation=${this.presentation} data-state=${this.resourceState} dir=${this.i18n.direction} aria-labelledby=${`${this.#id}-heading`} @keydown=${this.#keydown}>
-      <header class="output-requirement-header"><div><span>${this.#t("heading")}</span><h2 id=${`${this.#id}-heading`} aria-label=${this.#controlName(this.#isolate(snapshot?.label || this.#t("heading")))} tabindex="-1" dir="auto">${snapshot?.label || this.#t("heading")}</h2></div><div class="output-requirement-actions">
+      <header class="output-requirement-header"><div><span>${!snapshot && this.newDraft ? this.#draftMessage("unsaved") : this.#t("heading")}</span><h2 id=${`${this.#id}-heading`} aria-label=${this.#controlName(this.#isolate(input?.label || this.#t("heading")))} tabindex="-1" dir="auto">${input?.label || this.#t("heading")}</h2></div><div class="output-requirement-actions">
         ${!this.#editing && this.#canEdit() ? html`<button aria-label=${this.#controlName(this.#t("edit"), "")} type="button" @click=${this.#open}>${this.#t("edit")}</button>` : nothing}
         ${snapshot?.canReviewPlan ? html`<button aria-label=${this.#controlName(this.#t("reviewPlan"), "")} type="button" ?disabled=${this.resourceState !== "ready" || this.#unsupported() || !!this.#session?.dirty} @click=${this.#reviewPlan}>${this.#t("reviewPlan")}</button>` : nothing}
       </div></header>

@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { documentIdFromRoute } from "../src/model/routes.ts";
-import { AUTHORED,createProjectIntakeFixture,captureUnsentIntake,assertComplete,intendedIds,sceneDeferred,untilScene,readWorkspaceEvents } from "./helpers/project-intake-fixture.mjs";
+import { AUTHORED,createProjectIntakeFixture,captureUnsentIntake,assertComplete,intendedIds,sceneDeferred,untilScene,readWorkspaceEvents,reviewProjectIntake } from "./helpers/project-intake-fixture.mjs";
+import {projectIntakeMessage} from "../src/components/design-system/locales/project-intake-messages.ts";
 const {projectIntake}=await import("../src/model/project-intake.ts");
 
 const options={concurrency:false,timeout:45000};
@@ -210,7 +211,7 @@ for(const recovery of ["check","commit"])test("intake final receipt authority lo
   const field=x.f.find("input",node=>node.owner.tag==="forma-ui-field"&&node.owner.parentElement===currentOwner
     &&node.owner.label===x.f.i18n.t("projects.projectName","Project name"));
   assert.equal(field.port.value,AUTHORED.name);assert.equal(Object.hasOwn(field.attributes,"disabled"),true);
-  const forms=x.f.tree().visible("form").filter(node=>node.owner===currentOwner&&node.attributes.class==="modal-card wide");
+  const forms=x.f.tree().visible("form").filter(node=>node.owner===currentOwner&&String(node.attributes.class).split(/\s+/u).includes("project-intake"));
   assert.equal(forms.length,1);
   // Explicit successor to the previous manual-Retry-must-send-zero policy:
   // restoration/opening still sent ZERO. A user-directed exact-original Retry
@@ -246,6 +247,7 @@ for(const interruption of ["route","new-draft"])test("intake late committed ACK 
       const newer=x.f.components().find(component=>component.tag==="forma-projects");
       assert.equal(Boolean(newer&&newer!==x.owner),true,"A genuinely fresh Projects owner");
       await x.f.act(x.f.find("button",node=>node.owner.tag==="forma-ui-button"&&node.owner.parentElement===newer&&node.owner.label===x.f.i18n.t("projects.new","New project")));
+      await reviewProjectIntake(x.f,newer,{objective:"Newer unsent outcome"});
       newerName=()=>x.f.find("input",node=>node.owner.tag==="forma-ui-field"&&node.owner.parentElement===newer&&node.owner.label===x.f.i18n.t("projects.projectName","Project name"));
       await input(x,newerName(),"Newer unsent intake");
     }
@@ -318,7 +320,10 @@ test("intake existing effective-persona authorization stays supported and rechec
 
 for(const shape of ["blank","full"])test("intake current builder "+shape+" shape stays complete and exact",options,async t=>{
   const x=await createProjectIntakeFixture(t);
-  if(shape==="blank")await input(x,x.objective(),"");
+  if(shape==="blank"){
+    await x.f.act(x.f.find("button",node=>node.owner===x.owner&&node.text===projectIntakeMessage(x.f.locale,"back")));
+    await x.f.act(x.f.find("button",node=>node.owner===x.owner&&node.text===projectIntakeMessage(x.f.locale,"blank")));
+  }
   else{
     const field=(tag,attribute,value)=>x.f.find(tag,node=>node.owner===x.owner&&node.attributes[attribute]===value);
     await input(x,field("input","placeholder",x.f.i18n.system("Audience, stakeholders, or decision makers")),"Current authors and reviewers");

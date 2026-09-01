@@ -70,11 +70,44 @@ test("synthetic14 full Shell, real Creative route and all emitted descendants se
  assert.equal(f.components().find(component=>component.tag==="forma-document-artifacts").launcherOnly,false,"not the old launcher-only fixture");
  assert.equal(tree.visible("input").filter(node=>node.attributes.type==="radio"&&node.owner.tag==="forma-context-block").length,14);
  const counts=resting(f);assert.deepEqual(counts,{button:22,select:1});
- assert.equal(tree.nodes.filter(node=>node.tag==="button").length,35,"raw DOM includes hidden contributors, once per element; the duplicate composer generation owner is removed");
- assert.equal(tree.nodes.filter(node=>node.tag==="select").length,2);
+ const d320Owners=f.components(),d320Controls=tree.nodes.filter(node=>node.tag==="button"||node.tag==="select");
+ const d320Entries=tree.nodes.filter(node=>node.tag==="details"&&byClass("output-recipe-entry")(node));
+ const d320GenerationOwners=d320Owners.filter(owner=>owner.tag==="forma-generation-actions");
+ t.diagnostic(JSON.stringify({diagnostic:"D320-current-full-page-control-provenance",
+  raw:{button:d320Controls.filter(node=>node.tag==="button").length,select:d320Controls.filter(node=>node.tag==="select").length},
+  recipeEntries:d320Entries.map((node,index)=>({index,owner:node.owner.tag,ownerIndex:d320Owners.indexOf(node.owner),
+   ownerConnected:node.owner.isConnected,portIndex:f.renderer.nodes.indexOf(node.port),portConnected:node.port?.isConnected??false,
+   nativeOpen:node.port?.open??null,boundOpen:node.properties.open??null,hiddenBy:node.hiddenBy})),
+  generationOwnerCount:d320GenerationOwners.length,generationOwners:d320GenerationOwners.map(owner=>({ownerIndex:d320Owners.indexOf(owner),connected:owner.isConnected,source:owner.source})),
+  controls:d320Controls.map(node=>({tag:node.tag,type:node.attributes.type??null,text:node.text,owner:node.owner.tag,ownerIndex:d320Owners.indexOf(node.owner),
+   portIndex:f.renderer.nodes.indexOf(node.port),portConnected:node.port?.isConnected??false,hiddenBy:node.hiddenBy,
+   recipeEntryIndexes:d320Entries.flatMap((entry,index)=>nodeWithin(node,candidate=>candidate===entry)?[index]:[])}))}));
+ // D322 observed only this one closed, actual recipe entry adding 2B/1S.
+ const recipeOwners=d320Owners.filter(owner=>owner.tag==="forma-output-requirements");
+ assert.equal(recipeOwners.length,1);assert.equal(d320Entries.length,1);
+ const recipeEntry=d320Entries[0],recipeOwner=recipeOwners[0];
+ assert.ok(recipeOwner instanceof f.renderer.registry["forma-output-requirements"]);
+ assert.equal(recipeEntry.owner,recipeOwner);assert.equal(recipeOwner.store,f.store);
+ assert.equal(recipeOwner.documentId,f.store.projection.get().documentId);
+ assert.ok(recipeOwner.isConnected&&recipeEntry.port?.isConnected&&f.renderer.nodes.includes(recipeEntry.port));
+ assert.equal(recipeEntry.port.owner,recipeOwner);assert.equal(recipeEntry.hiddenBy,null);
+ assert.equal(recipeEntry.port.open,false);assert.equal(recipeEntry.properties.open,false);
+ const inRecipe=node=>nodeWithin(node,ancestor=>ancestor===recipeEntry),recipeControls=d320Controls.filter(inRecipe);
+ assert.deepEqual(recipeControls.map(node=>[node.tag,node.attributes.type??null]),[["select",null],["button","submit"],["button","button"]]);
+ assert.deepEqual(recipeControls.filter(node=>node.tag==="button").map(node=>node.text),["Review editable requirements · no generation","Clear recipe input"]);
+ assert.deepEqual(recipeControls[0].children.filter(node=>node?.tag==="option").map(node=>node.text),["No recipe","Executive deck","Campaign","Film and continuity"]);
+ assert.ok(recipeControls.every(node=>node.owner===recipeOwner&&node.port?.owner===recipeOwner&&node.hiddenBy==="details[closed]"),"only this exact closed recipe owns the added controls");
+ assert.ok(d320Controls.every(node=>node.port?.isConnected&&f.renderer.nodes.includes(node.port)),"every counted native control is current");
+ assert.equal(new Set(d320Controls.map(node=>node.port)).size,d320Controls.length,"raw DOM counts each actual native control once");
+ assert.equal(d320GenerationOwners.length,1);assert.ok(d320GenerationOwners[0].isConnected);
+ assert.equal(d320GenerationOwners[0].source,"document","the duplicate composer generation owner remains removed");
+ assert.equal(tree.nodes.filter(node=>node.tag==="button"&&!inRecipe(node)).length,35,"all non-recipe button contributors retain the original count");
+ assert.equal(tree.nodes.filter(node=>node.tag==="select"&&!inRecipe(node)).length,2,"all non-recipe select contributors retain the original count");
+ assert.equal(tree.nodes.filter(node=>node.tag==="button").length,37,"original 35 plus exactly two closed recipe buttons");
+ assert.equal(tree.nodes.filter(node=>node.tag==="select").length,3,"original two plus exactly one closed recipe select");
  assert.equal(tree.visible("button").filter(node=>Object.hasOwn(node.attributes,"disabled")).length,4,"disabled controls are not subtracted");
  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0);
- t.diagnostic("Synthetic full hierarchy:22B/1S structurally visible;35B/2S emitted. One retained generation owner in Results. Functional 718px studio/16px root ports, not browser geometry or the production study.");
+ t.diagnostic("Synthetic full hierarchy:22B/1S structurally visible;37B/3S emitted, including exactly2B/1S in the closed recipe entry; non-recipe contributors remain35B/2S. One retained generation owner in Results. Functional 718px studio/16px root ports, not browser geometry or the production study.");
 });
 
 test("visibility negatives reject omitted nested components and expose actual hidden Results/closed details contributors",async t=>{

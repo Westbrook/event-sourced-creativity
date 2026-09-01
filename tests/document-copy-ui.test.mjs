@@ -35,8 +35,9 @@ function between(source, start, end) {
 const storeMethods = between(storeSource, "  #documentCopyFacts(", "  #canRequestProjectOutputs(");
 const hostMethods = between(hostSource, "  #copyTarget()", "  #requestDelete(");
 const hostUpdated = between(hostSource, "  protected override updated()", "  #copyTarget()");
+const ordinaryOwnerMethods = between(hostSource, "  #retireOrdinaryDocument(){", "  protected override updated(){");
 const hostRender = between(hostSource, "  override render()", "\n}\nif (!customElements");
-const hostFields = hostSource.split("\n").filter(line => /^ {2}#(?:query|duplicateProjectId)=/u.test(line)).join("\n").replaceAll("#", "_");
+const hostFields = hostSource.split("\n").filter(line => /^ {2}#(?:(?:query|duplicateProjectId)=|ordinaryDocument:)/u.test(line)).join("\n").replaceAll("#", "_");
 const event = (sequence, type, payload) => ({ eventId: "event-" + sequence, streamId: "creative:account-a", sequence,
   occurredAt: "2026-08-26T12:00:00.000Z", recordedAt: "2026-08-26T12:00:00.000Z", actor: "user:account-a",
   clientId: "test", correlationId: "source", causationId: null, compensatesEventId: null, schemaVersion: 1, type, payload });
@@ -172,7 +173,8 @@ function fixture(overrides = {}) {
     "session={get:()=>state.session}; projection={get:()=>state.projection}; ui={focusCollectionId:''}; reviewInbox={get:()=>state.reviewInbox??[]}; projectNotifications={get:()=>state.projectNotifications??[]}; documentJobs={get:()=>state.documentJobs??[]};\n" +
     "captureAuthorizationScope(){return state.session?{key:scope(),shared:Boolean(state.session.projectContext)}:null;}\n" +
     "authorizationScopeActive(captured){return Boolean(captured&&captured.key===scope());}\n" +
-    "notify(){notices.push('update');} _systemNotice(value){return value;}\n" +
+    "_fixtureListeners=new Set(); subscribe(listener){this._fixtureListeners.add(listener);return()=>this._fixtureListeners.delete(listener);}\n" +
+    "notify(){notices.push('update');for(const listener of [...this._fixtureListeners])listener();} _systemNotice(value){return value;}\n" +
     "async guardedFetch(url,init,_action,ports={}){const current=()=>{if(ports.current&&!ports.current())throw new Error('source changed');};current();const pending=gateway(url,init);ports.onDispatch?.();const response=await pending;current();return response;}\n" +
     "async refreshEvents(){notices.push('refresh');if(controls.refreshFail)throw new Error('refresh failed');if(!controls.refreshOmit)state.projection=readProjection();}\n" +
     "async openDocument(id){navigation.push(id);state.selectedDocumentId=id;state.projection=readProjection();return true;}\n" +
@@ -199,12 +201,12 @@ function fixture(overrides = {}) {
       ensureModalDialog: native?.ports.modalPort.ensureModalDialog ?? ensureModalDialog,
       navigateInApp: native?.navigateInApp, captureOutputNavigationFocus, i18n, html, nothing, icon: () => "",
       normalizeDocumentDuplicationTitle, documentDuplicationFolder, documentCopyDestination, documentCopyIssueMessage,
-      renderAuthoringPreview, withDocumentInRoute, libraryBlockEditorRoute, canvasRoute: () => "", formaActivityAttention, scopedFormaActivity, dialog, heading, input };
+      renderAuthoringPreview, withDocumentInRoute, libraryBlockEditorRoute, canvasRoute: () => "", formaActivityAttention, scopedFormaActivity, dialog, heading, input, foldEvents };
     const Host = Function(...Object.keys(ports), "return " + stripTypeScriptTypes("(class extends HostBase {\n" +
       hostFields + "\nstore=store; i18n=i18n; isConnected=true;\n" +
       (native ? "" : "ownerDocument=document; requestUpdate(){} get updateComplete(){return Promise.resolve();}\n" +
       "querySelectorAll(){return this._newDocument?[dialog]:[];} querySelector(selector){return selector.includes(' input')?input:selector.includes('dialog')&&!selector.includes('h2')?dialog:heading;}\n") +
-      hostUpdated + "\n" + hostMethods + "\n" + hostRender + "\n})"))(...Object.values(ports));
+      ordinaryOwnerMethods + "\n" + hostUpdated + "\n" + hostMethods + "\n" + hostRender + "\n})"))(...Object.values(ports));
     return new Host();
   }
   const host = createHost();
@@ -233,9 +235,10 @@ async function copyNavigationFixture(t) {
   const f = fixture({ nativeNavigation: { ports, frame, navigateInApp } });
   const original = { notify: f.store.notify, events: f.store.events,
     subscribe: f.store.subscribe, captureWorkspaceNavigationFocus: f.store.captureWorkspaceNavigationFocus };
-  assert.equal(original.events, undefined); assert.equal(original.subscribe, undefined);
+  assert.equal(original.events, undefined); assert.equal(typeof original.subscribe, "function");
+  assert.equal(typeof original.notify, "function"); assert.ok(f.store._fixtureListeners instanceof Set);
   assert.equal(original.captureWorkspaceNavigationFocus, undefined);
-  const listeners = new Set(), cleanups = [];
+  const cleanups = [];
   let shell = null;
   t.after(async () => {
     ports.bindFixture(frame);
@@ -243,12 +246,15 @@ async function copyNavigationFixture(t) {
       f.host.isConnected = false; f.host.parentElement = null;
       for (const node of frame.renderer?.nodes ?? []) node.isConnected = false;
       if (shell) { shell.isConnected = false; shell.disconnectedCallback(); }
-      frame.frames.clear(); frame.timers.clear(); listeners.clear();
+      frame.frames.clear(); frame.timers.clear();
     } finally {
       for (const cleanup of cleanups.reverse()) await cleanup();
-      f.store.notify = original.notify;
-      delete f.store.events; delete f.store.subscribe; delete f.store.captureWorkspaceNavigationFocus;
-      ports.bindFixture(null);
+      try {
+        assert.equal(f.store.notify, original.notify); assert.equal(f.store.subscribe, original.subscribe);
+      } finally {
+        delete f.store.events; delete f.store.captureWorkspaceNavigationFocus;
+        ports.bindFixture(null);
+      }
     }
   });
   // The old synthetic Open does not publish a workspace-navigation receipt.
@@ -259,9 +265,7 @@ async function copyNavigationFixture(t) {
   const navigation = new Navigation(); navigation.route = f.store.route;
   f.store.captureWorkspaceNavigationFocus = navigation.captureWorkspaceNavigationFocus.bind(navigation);
   f.store.events = { get: () => f.canonical };
-  f.store.subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
-  f.store.notify = function (...args) { const result = original.notify.apply(this, args);
-    for (const listener of [...listeners]) listener(); return result; };
+  // Reuse D's original fixture subscription; no second listener set or notify wrapper.
   frame.renderer = new ports.RendererPort(frame, {});
   frame.host = f.host; f.host.tag = "forma-project-contents"; f.host.attributes = {};
   frame.draw = () => { ports.bindFixture(frame); frame.requested = false;

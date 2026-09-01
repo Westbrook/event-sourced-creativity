@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {documentIdFromRoute} from "../src/model/routes.ts";
 import {calmFullPageNativePorts as ports} from "./helpers/calm-full-page-fixture.mjs";
-import {AUTHORED,createProjectIntakeFixture,assertComplete,intendedIds} from "./helpers/project-intake-fixture.mjs";
+import {installDBoundNativeDetails} from "./helpers/d-native-disclosure.mjs";
+import {AUTHORED,createProjectIntakeFixture,assertComplete,intendedIds,reviewProjectIntake} from "./helpers/project-intake-fixture.mjs";
 const options={concurrency:false,timeout:45000};
 const locales=["en","ja"];
 const modes=["none","skip","path-departure","query-departure"];
@@ -30,7 +31,7 @@ function footer(x,current){
     let found=false;
     for(let parent=node.parent;parent;parent=parent.parent){
       if(parent.tag==="footer")found=true;
-      if(parent.tag==="form"&&parent.attributes.class==="modal-card wide")return found;
+      if(parent.tag==="form"&&String(parent.attributes.class).split(/\s+/u).includes("project-intake"))return found;
     }return false;
   });
 }
@@ -55,7 +56,8 @@ async function loseAck(x){
   x.setBehavior(async()=>{});return first;
 }
 async function closeCurrent(x,attempted){
-  const candidates=footer(x,x.owner).filter(node=>node.attributes.class==="button ghost");
+  const candidates=footer(x,x.owner).filter(node=>node.attributes.class==="button ghost"
+    &&node.text===x.f.i18n.t(attempted?"action.close":"action.cancel",attempted?"Close":"Cancel"));
   assert.equal(candidates.length,1);
   assert.equal(candidates[0].text,x.f.i18n.t(attempted?"action.close":"action.cancel",attempted?"Close":"Cancel"));
   await x.f.act(candidates[0]);
@@ -161,7 +163,13 @@ for(const locale of locales)for(const attempted of [false,true])for(const mode o
       assert.equal(labels.includes(resumeLabel(x)),false,"Actual pathname/query departure must still retire the old intake");
       const open=headers(x,current).filter(node=>node.owner.label===x.f.i18n.t("projects.new","New project"));
       assert.equal(open.length,1);await x.f.act(open[0]);
-      assert.deepEqual(draft(x,current),{name:"",documentTitle:"",objective:""},"No older private draft is inherited after actual departure");
+      const emptyOutcome=objective(x,current).port.value;
+      assert.equal(emptyOutcome,"","The genuinely fresh outcome contains no older private draft");
+      installDBoundNativeDetails(t,x.f,current);
+      await reviewProjectIntake(x.f,current,{blank:true});
+      assert.deepEqual({name:field(x,current,x.f.i18n.t("projects.projectName","Project name")).port.value,
+        documentTitle:field(x,current,x.f.i18n.system("Document name")).port.value,objective:emptyOutcome},
+        {name:"",documentTitle:"",objective:""},"No older private draft is inherited after actual departure");
       assert.equal(footer(x,current).some(node=>node.text===x.f.i18n.t("projects.checkOriginal","Check original")),false);
       assert.equal(postCount(x),posts);assert.deepEqual(await x.canonical(),canonical);
     }
