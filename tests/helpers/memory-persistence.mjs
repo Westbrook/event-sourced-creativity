@@ -14,6 +14,23 @@ import { planMemoryReview } from "../../worker/memory-shadow.ts";
 
 const migration = readFileSync(new URL("../../db/memory-shadow/0001_shadow_memory.sql",import.meta.url),"utf8");
 export const memoryMigrationHash = createHash("sha256").update(migration).digest("hex");
+const jobMigration = readFileSync(new URL("../../db/memory-shadow/0002_review_jobs.sql",import.meta.url),"utf8");
+export const memoryJobMigrationHash = createHash("sha256").update(jobMigration).digest("hex");
+
+/** Separate marker: installing the original store never implicitly installs jobs. */
+export function installMemoryJobTestSchema(sqlite) {
+  if(sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_shadow_job_schema'").get()){
+    const rows=sqlite.prepare("SELECT * FROM memory_shadow_job_schema").all();
+    assert.equal(rows.length,1);assert.equal(rows[0].version,1);assert.equal(rows[0].isolation,"synthetic-only");
+    assert.equal(rows[0].migration_hash,memoryJobMigrationHash,"Memory job migration fingerprint mismatch");return false;
+  }
+  sqlite.exec("BEGIN IMMEDIATE");
+  try{
+    for(const statement of jobMigration.split("--> statement-breakpoint").map((text)=>text.trim()).filter(Boolean))sqlite.prepare(statement).run();
+    sqlite.prepare("INSERT INTO memory_shadow_job_schema VALUES(1,?,'synthetic-only')").run(memoryJobMigrationHash);
+    sqlite.exec("COMMIT");return true;
+  }catch(error){sqlite.exec("ROLLBACK");throw error;}
+}
 
 /** The app never imports this installer. Only explicit isolated test databases reach it. */
 export function installMemoryTestSchema(sqlite) {

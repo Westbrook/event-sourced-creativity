@@ -10,11 +10,14 @@ import { createMemoryConversationSegment, type MemoryConversationSegment } from 
 import { publishMemoryReview, type MemoryCursor, type MemoryReviewPlan } from "./memory-shadow.ts";
 import { MemorySourceAdapter, type MemoryIdentity, type MemorySourceCapture, type MemorySourceEvidence } from "./memory-source-adapter.ts";
 import {
-  MemoryBoundaryError, memoryAssert, memoryCursorJson, memoryGuardQuery, memoryGuardsCurrent,
-  type MemoryDatabase, type MemorySqlGuard,
+  MemoryBoundaryError, memoryAssert, memoryCursorJson, memoryGuardQuery, memoryGuardsCurrent, memoryCanonical as canonical,
+  type MemoryDatabase, type MemorySqlGuard, type MemoryPublicationCoordination,
 } from "./memory-sql.ts";
 
 type Metadata = Omit<MemoryRecord, "body">;
+// A 128-source capture may produce episodes plus up to 42 independent workflow
+// groups and 32 summary segments. Keep bounded headroom for ALL those artifacts.
+export const MEMORY_REVIEW_RECORD_LIMIT = 256;
 type SegmentMetadata = Omit<MemoryConversationSegment, "record">;
 type Partition = { generation: number; privacy_generation: number };
 type StoreState = {
@@ -34,9 +37,6 @@ export type MemoryStoredView = MemorySourceEvidence & {
 const parseStored = <T>(text: string): T => {
   try { return JSON.parse(text) as T; } catch { throw new MemoryBoundaryError("invalid-stored-memory-metadata"); }
 };
-const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
-  item && typeof item === "object" && !Array.isArray(item)
-    ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right))) : item);
 const metadataOf = ({ body: _body, ...metadata }: MemoryRecord): Metadata => metadata;
 const placeholder = (metadata: Metadata): MemoryRecord => ({ ...metadata, body: "metadata eligibility check" });
 const partitionBindings = (identity: MemoryIdentity) => [identity.actorUserId, identity.custodianId];
@@ -55,11 +55,18 @@ export class MemoryShadowStore {
     memoryAssert(database === adapter.database, "memory-databases-must-match");
     this.db = database; this.adapter = adapter;
   }
+  get sourceAdapter(): MemorySourceAdapter { return this.adapter; }
 
   private state(capture: MemoryStoreCapture): StoreState {
     const state = this.issued.get(capture); memoryAssert(state, "unissued-memory-store-capture"); return state!;
   }
   evidence(capture: MemoryStoreCapture): MemorySourceEvidence { return structuredClone(this.state(capture).evidence); }
+  /** Body-free derivation metadata for the already-authorized in-process worker. */
+  derivationState(capture: MemoryStoreCapture): { records: Metadata[]; suppressions: MemorySuppression[] } {
+    const state = this.state(capture); return structuredClone({ records:state.metadata,suppressions:state.suppressions });
+  }
+  /** Same-database predicates for durable admission; these are not client receipts. */
+  transactionGuards(capture: MemoryStoreCapture): MemorySqlGuard[] { return structuredClone(this.guards(this.state(capture))); }
 
   private generationGuard(state: StoreState): MemorySqlGuard {
     return { condition: "COALESCE((SELECT generation FROM memory_shadow_partitions WHERE actor_user_id=? AND custodian_id=?),0)=?",
@@ -75,10 +82,10 @@ export class MemoryShadowStore {
     return { ...state.evidence.access, now };
   }
 
-  async capture(identity: MemoryIdentity, recipeVersion = "document-memory-v1", purpose: MemoryPurpose = "learn"): Promise<MemoryStoreCapture | null> {
+  async capture(identity: MemoryIdentity, recipeVersion = "document-memory-v1", purpose: MemoryPurpose = "learn", savedThrough?: MemoryCursor): Promise<MemoryStoreCapture | null> {
     if (this.adapter.mode === "off") return null;
     memoryAssert(recipeVersion.length > 0 && recipeVersion.length <= 128, "invalid-memory-recipe");
-    const request = structuredClone(identity), bind = partitionBindings(request), db = this.db;
+    const request = structuredClone(identity), cutoff = savedThrough && structuredClone(savedThrough), bind = partitionBindings(request), db = this.db;
     const schema = await db.prepare("SELECT version,isolation FROM memory_shadow_schema").all<{ version: number; isolation: string }>();
     memoryAssert(schema.results.length === 1 && schema.results[0].version === 1 && schema.results[0].isolation === "synthetic-only", "unsupported-memory-schema");
     const rows = await db.batch<Record<string, unknown>>([
@@ -92,7 +99,7 @@ export class MemoryShadowStore {
     ]);
     memoryAssert(rows.length === 7 && rows.every((row) => row.success && row.results.length <= 1024), "memory-store-read-limit");
     const processed = Object.fromEntries(rows[1].results.map((row) => [String(row.stream_id), Number(row.sequence)]));
-    const sourceCapture = await this.adapter.capture(request, processed, purpose); memoryAssert(sourceCapture, "memory-disabled");
+    const sourceCapture = await this.adapter.capture(request, processed, purpose, cutoff); memoryAssert(sourceCapture, "memory-disabled");
     const evidence = this.adapter.evidence(sourceCapture!);
     const storedSources = rows[2].results.map((row) => parseStored<MemorySource>(String(row.source_json)));
     const suppressions = rows[5].results.map((row) => parseStored<MemorySuppression>(String(row.suppression_json)));
@@ -163,11 +170,14 @@ export class MemoryShadowStore {
   }
 
   async publish(input: { capture: MemoryStoreCapture; plan: MemoryReviewPlan; records: readonly MemoryRecord[];
-    segments?: readonly MemoryConversationSegment[] }): Promise<{ status: "committed" | "already-committed"; processed: MemoryCursor }> {
+    segments?: readonly MemoryConversationSegment[]; coordination?: MemoryPublicationCoordination }): Promise<{ status: "committed" | "already-committed"; processed: MemoryCursor }> {
     const state = this.state(input.capture), captured = structuredClone({ plan: input.plan, records: input.records, segments: input.segments ?? [] });
     const { plan, records, segments } = captured, evidence = state.evidence, db = this.db, bind = partitionBindings(state.identity);
+    const coordination = input.coordination && { ...input.coordination,guards:structuredClone(input.coordination.guards) };
+    memoryAssert(!coordination || coordination.database === db && coordination.guards.length > 0
+      && Number.isFinite(memoryTime(coordination.expiresAt)), "invalid-memory-publication-coordination");
     memoryAssert(state.purpose === "learn", "memory-learning-capture-required");
-    memoryAssert(records.length <= 128 && segments.length <= 32 && new Set(records.map((record) => record.id)).size === records.length
+    memoryAssert(records.length <= MEMORY_REVIEW_RECORD_LIMIT && segments.length <= 32 && new Set(records.map((record) => record.id)).size === records.length
       && new Set(segments.map((segment) => segment.record.id)).size === segments.length, "memory-publication-limit");
     memoryAssert(records.filter((record) => record.kind === "conversation-summary").length === segments.length
       && records.filter((record) => record.kind === "conversation-summary").every((record) => segments.some((segment) => segment.record.id === record.id)),
@@ -245,14 +255,14 @@ export class MemoryShadowStore {
     const activeSources = [...evidence.sources.values()].filter((source) => source.state === "active");
     const scopes = new Set([state.identity.targetScopeId,...records.map((record) => record.scopeId),...activeSources.map((source) => source.scopeId),
       ...evidence.observations.flatMap((observation) => observation.targets.map((target) => target.scopeId))]);
-    const deadline = Math.min(memoryTime(finalAccess.enrollmentExpiresAt),...records.map((record) => memoryTime(record.expiresAt)),
+    const deadline = Math.min(coordination ? memoryTime(coordination.expiresAt) : Infinity,memoryTime(finalAccess.enrollmentExpiresAt),...records.map((record) => memoryTime(record.expiresAt)),
       ...activeSources.flatMap((source) => [memoryTime(source.expiresAt),memoryTime(source.happenedAt) + finalAccess.retentionDays * 86_400_000]),
       ...evidence.observations.map((observation) => memoryTime(observation.expiresAt)),
       ...[...scopes].map((scope) => memoryTime(memoryScopeGrant(finalAccess,evidence.graph,scope,"learn")?.expiresAt)),
       ...evidence.observations.filter((observation) => observation.action === "attention").map(() => memoryTime(evidence.attention?.expiresAt)));
     memoryAssert(Number.isFinite(deadline) && deadline > memoryTime(finalAccess.now), "expired-memory-publication");
     const timeGuard = this.adapter.transactionTimeGuard(finalAccess.now,new Date(deadline).toISOString());
-    try { await this.commit(state,statements,false,timeGuard); }
+    try { await this.commit(state,statements,false,timeGuard,coordination); }
     catch (error) {
       // A concurrent identical worker or a lost acknowledgement may have committed.
       const receipt = await db.prepare("SELECT plan_json,output_hash FROM memory_shadow_reviews WHERE actor_user_id=? AND custodian_id=? AND review_id=?")
@@ -429,8 +439,8 @@ export class MemoryShadowStore {
         .bind(...bind,canonical([record.id,record.version,operation,generation]),record.id,record.version,operation,generation,now)];
   }
 
-  private async commit(state: StoreState, writes: D1PreparedStatement[], privacy = false, timeGuard?: MemorySqlGuard): Promise<void> {
-    const db = this.db, guards = [...this.guards(state),...(timeGuard ? [timeGuard] : [])], guardIds: string[] = [], statements: D1PreparedStatement[] = [];
+  private async commit(state: StoreState, writes: D1PreparedStatement[], privacy = false, timeGuard?: MemorySqlGuard, coordination?: MemoryPublicationCoordination): Promise<void> {
+    const db = this.db, guards = [...this.guards(state),...(timeGuard ? [timeGuard] : []),...(coordination?.guards ?? [])], guardIds: string[] = [], statements: D1PreparedStatement[] = [];
     const assert = (guard: MemorySqlGuard) => {
       // Validate the server-owned condition before interpolating it into a CHECK assertion.
       memoryGuardQuery(db,guard);
@@ -442,6 +452,10 @@ export class MemoryShadowStore {
     statements.push(db.prepare("INSERT INTO memory_shadow_partitions(actor_user_id,custodian_id,generation,privacy_generation) VALUES(?,?,0,0) ON CONFLICT(actor_user_id,custodian_id) DO NOTHING").bind(...bind));
     statements.push(...writes);
     for (const guard of guards) assert(guard);
+    if (coordination) {
+      statements.push(coordination.completion);
+      assert({ condition:"changes()=1",bindings:[] });
+    }
     // The last publication write is time-qualified too; expiry must not advance progress.
     statements.push(db.prepare(`UPDATE memory_shadow_partitions SET generation=generation+1,privacy_generation=privacy_generation+? WHERE actor_user_id=? AND custodian_id=? AND generation=?${timeGuard ? ` AND (${timeGuard.condition})` : ""}`)
       .bind(privacy ? 1 : 0,...bind,state.partition.generation,...(timeGuard?.bindings ?? [])));

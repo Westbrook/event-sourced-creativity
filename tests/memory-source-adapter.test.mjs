@@ -77,6 +77,34 @@ test("events appended after the captured head are left for the next interval",as
   assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events").get().head,2);
 });
 
+test("saved cutoffs reject missing, extra, future, fractional and rewound canonical cursors",async(t)=>{
+  const state=fixture(t);seedMemoryDocument(state);
+  for(const cutoff of [{},{[state.stream]:9,other:0},{[state.stream]:10},{[state.stream]:-1},{[state.stream]:1.5}])
+    await assert.rejects(()=>state.adapter.capture(state.identity,{},"learn",cutoff),/invalid-saved-memory-cutoff|memory-interval-limit-or-rewind/);
+  await assert.rejects(()=>state.adapter.capture(state.identity,{[state.stream]:8},"learn",{[state.stream]:7}),/memory-interval-limit-or-rewind/);
+});
+
+test("saved cutoffs exclude appended chats and remain bounded even when the live head exceeds the scan limit",async(t)=>{
+  const state=fixture(t);seedMemoryDocument(state);state.addChat("after-cutoff");
+  for(let index=0;index<505;index++)state.addEvent({type:"ProviderRequestCompleted",actor:"worker:fixture"});
+  const capture=await state.adapter.capture(state.identity,{},"learn",{[state.stream]:9}),evidence=state.adapter.evidence(capture);
+  assert.equal(evidence.scannedRows,9);assert.equal(evidence.sources.size,8);assert.equal(evidence.conversations[0].turns.length,4);
+  assert.equal([...evidence.sources.values()].every((source)=>source.sequence<=9),true);
+  await assert.rejects(()=>read(state),/memory-interval-limit-or-rewind/);
+});
+
+test("both adapter and store snapshot a caller's saved cutoff before their first await",async(t)=>{
+  const state=fixture(t);seedMemoryDocument(state);
+  for(const kind of ["adapter","store"]){
+    const cutoff={[state.stream]:9};let changed=false;
+    state.controls.beforeStatement=()=>{if(!changed){changed=true;cutoff[state.stream]=999;}};
+    const capture=kind==="adapter"?await state.adapter.capture(state.identity,{},"learn",cutoff)
+      :await state.store.capture(state.identity,"document-memory-v1","learn",cutoff);
+    const evidence=kind==="adapter"?state.adapter.evidence(capture):state.store.evidence(capture);
+    assert.equal(changed,true);assert.deepEqual(evidence.inventory.through,{[state.stream]:9});state.controls.beforeStatement=null;
+  }
+});
+
 test("a client envelope cannot override actor/custody, source identity or speaker",async(t)=>{
   const state=fixture(t);
   state.addEvent({payload:{actor_user_id:"bob",scopeId:"other-document",independentEvidence:true}});

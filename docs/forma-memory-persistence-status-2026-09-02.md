@@ -1,5 +1,7 @@
 # Forma memory: isolated persistence slice
 
+**Historical slice:** This report and its verification/evaluation receipts describe commit `c56f870`. See the [third-slice status](forma-memory-review-jobs-status-2026-09-02.md) for the subsequently implemented durable review jobs. The original receipts are retained unchanged, not relabeled as evidence for newer source files.
+
 **Status:** Implemented and verified locally on `codex/forma-memory-foundation`, following foundation commit `6570a78`. **Still off: no live collection, assistant integration, UI change, shared migration or deployment.** This is the next backend slice of the [scope-aware memory plan](forma-scope-aware-memory-plan-2026-09-02.md), not the completed memory product.
 
 ## What now works

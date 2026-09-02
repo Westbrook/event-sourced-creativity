@@ -55,6 +55,10 @@ const extractiveBody = (turns: readonly Pick<MemoryConversationTurn, "text" | "r
   return `${turn.role === "user" ? "User stated" : "Assistant proposed (not an accepted decision)"}: ${excerpt}`;
 }).join("\n");
 
+/** Exact rendered budget for chunking; source/role eligibility is still checked separately. */
+export const memoryConversationExcerptBytes = (turns: readonly Pick<MemoryConversationTurn, "text" | "role">[]): number =>
+  new TextEncoder().encode(extractiveBody(turns)).byteLength;
+
 /** Deterministic extractive baseline, not a semantic model summary or accepted-decision extractor. */
 export async function createMemoryConversationSegment(input: {
   id: string; version: number; inventory: MemoryConversationInventory;

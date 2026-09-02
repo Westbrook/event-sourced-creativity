@@ -2,6 +2,12 @@
 export type MemorySqlGuard = { condition: string; bindings: readonly (string | number | null)[] };
 export type MemoryDatabase = Pick<D1Database, "prepare" | "batch">;
 
+/** Trusted server-owned job fence; never accepted from an HTTP request. */
+export type MemoryPublicationCoordination = {
+  database: MemoryDatabase; guards: readonly MemorySqlGuard[];
+  expiresAt: string; completion: D1PreparedStatement;
+};
+
 export class MemoryBoundaryError extends Error {
   constructor(code: string) { super(code); this.name = "MemoryBoundaryError"; }
 }
@@ -25,3 +31,6 @@ export async function memoryGuardsCurrent(db: MemoryDatabase, guards: readonly M
 }
 
 export const memoryCursorJson = (cursor: Readonly<Record<string, number>>) => JSON.stringify(Object.entries(cursor).sort(([left], [right]) => left.localeCompare(right)));
+export const memoryCanonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
+  item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right))) : item);

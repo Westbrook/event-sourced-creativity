@@ -118,9 +118,9 @@ export class MemorySourceAdapter {
     return authority;
   }
 
-  async capture(identity: MemoryIdentity, from: MemoryCursor = {}, purpose: MemoryPurpose = "learn"): Promise<MemorySourceCapture | null> {
+  async capture(identity: MemoryIdentity, from: MemoryCursor = {}, purpose: MemoryPurpose = "learn", savedThrough?: MemoryCursor): Promise<MemorySourceCapture | null> {
     if (this.mode === "off") return null;
-    const request = structuredClone(identity), processed = structuredClone(from), now = this.now();
+    const request = structuredClone(identity), processed = structuredClone(from), cutoff = savedThrough && structuredClone(savedThrough), now = this.now();
     const authority = structuredClone(await this.authority.authorize(request, now));
     const access = authority.access, graph = createMemoryScopeGraph(authority.scopes);
     memoryAssert(access.environment === "synthetic" && access.now === now && access.actorUserId === request.actorUserId
@@ -132,14 +132,17 @@ export class MemorySourceAdapter {
       && authority.streams.every((stream) => stream.ownerUserId && stream.streamId === `creative:${stream.ownerUserId}`)
       && Object.entries(processed).every(([stream, sequence]) => authority.streams.some((candidate) => candidate.streamId === stream)
         && Number.isSafeInteger(sequence) && sequence >= 0), "invalid-canonical-memory-stream");
+    memoryAssert(!cutoff || Object.keys(cutoff).length === authority.streams.length
+      && authority.streams.every((stream) => Number.isSafeInteger(cutoff[stream.streamId]) && cutoff[stream.streamId] >= 0), "invalid-saved-memory-cutoff");
     const db = this.database, guards: MemorySqlGuard[] = [authority.guard];
     const heads = await db.batch<{ head: number }>(authority.streams.map((stream) => db.prepare(
       "SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(stream.streamId)));
     memoryAssert(heads.length === authority.streams.length, "incomplete-memory-heads");
     const through: Record<string, number> = {}, headers: MemoryEventHeader[] = [];
     for (const [index, stream] of authority.streams.entries()) {
-      const head = heads[index]?.results[0]?.head;
-      memoryAssert(Number.isSafeInteger(head) && head >= (processed[stream.streamId] ?? 0) && head <= 512, "memory-interval-limit-or-rewind");
+      const currentHead = heads[index]?.results[0]?.head, head = cutoff?.[stream.streamId] ?? currentHead;
+      memoryAssert(Number.isSafeInteger(currentHead) && Number.isSafeInteger(head) && head <= currentHead
+        && head >= (processed[stream.streamId] ?? 0) && head <= 512, "memory-interval-limit-or-rewind");
       through[stream.streamId] = head;
       let after = 0;
       while (after < head) {
