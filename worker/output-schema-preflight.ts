@@ -33,6 +33,8 @@ export const OUTPUT_SCHEMA_PREFLIGHT_QUERIES = [
     WHERE type IN ('view','trigger') ORDER BY type COLLATE BINARY,name COLLATE BINARY LIMIT 1001` },
   { id: "foreignKeyHealth", sql: "SELECT CAST(count(*) AS TEXT) AS foreign_key_violation_count FROM pragma_foreign_key_check" },
   ...tables.map(table => ({ id: table, sql: `SELECT '${table}' AS table_name,CAST(count(*) AS TEXT) AS row_count FROM main."${table}"` })),
+  { id: "reservedReferences", sql: `SELECT CAST(count(*) AS TEXT) AS row_count FROM main.sqlite_schema WHERE ${reserved.map(name => `instr(lower(coalesce(sql,'')),'${name}')>0`).join(" OR ")}` },
+  { id: "legacyAssertion", sql: "SELECT CAST(count(*) AS TEXT) AS row_count FROM output_atomic_assertions WHERE token='output-model3d-schema-foreign-keys'" },
 ] as const;
 
 export function canReadOutputSchemaPreflight(access: PrincipalAccess): boolean {
@@ -55,7 +57,7 @@ export async function readOutputSchemaPreflight(db: D1Database) {
     } else {
       const count = rows[0]![query.id === "foreignKeyHealth" ? "foreign_key_violation_count" : "row_count"];
       if (typeof count !== "string" || !/^(?:0|[1-9]\d*)$/u.test(count)) throw new Error("schema_preflight_incomplete");
-      if (query.id !== "foreignKeyHealth" && rows[0]!.table_name !== query.id) throw new Error("schema_preflight_incomplete");
+      if (tables.some(table => table === query.id) && rows[0]!.table_name !== query.id) throw new Error("schema_preflight_incomplete");
     }
   }
   const snapshot = { contract: "forma.output-schema-preflight.v1", capturedAt: new Date().toISOString(), complete: true,

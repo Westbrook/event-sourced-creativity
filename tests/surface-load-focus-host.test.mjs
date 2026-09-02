@@ -775,6 +775,7 @@ const connectedSpecialistProfiles={
     ]},
   engineering:{audience:"engineering",path:"/engineering",tag:"forma-engineering-application",
     entry:"src/apps/engineering/entry.ts",name:"FormaEngineeringApplication",
+    ownerModules:["src/apps/engineering/diagnostics.ts"],
     capabilities:["engineering.diagnostics.read","engineering.events.read","engineering.sync.read"],
     endpoints:["health","events","sync","jobs"].map(view=>"/api/portfolio/engineering/"+view),
     routes:["health","events","sync","jobs"].map(view=>({path:view==="health"?"/engineering":"/engineering/"+view,
@@ -830,6 +831,68 @@ async function openConnectedSpecialist(t,locale,profile){
   await f.replyConnectedSession(0);await f.acceptModule(0);
   assertConnectedSpecialist(f,profile,profile.path);return f;
 }
+
+const schemaPreflightEndpoint = "/api/portfolio/engineering/schema-preflight";
+const schemaPreflightProfile = () => ({ ...connectedSpecialistProfiles.engineering,
+  capabilities: [...connectedSpecialistProfiles.engineering.capabilities, "platform.identity.manage"],
+  endpoints: [...connectedSpecialistProfiles.engineering.endpoints, schemaPreflightEndpoint] });
+const schemaInspectButton = f => f.tree().visible("button").find(node =>
+  node.text === f.i18n.t("engineering.schema.inspect", "Inspect schema metadata"))?.port;
+const schemaFixtureResponse = marker => response({ contract: "forma.output-schema-preflight.v1",
+  complete: true, groups: { catalog: [{ name: marker }] } });
+
+test("schema report stays absent without both administrative capabilities", async t => {
+  const f = await openConnectedSpecialist(t, "en", connectedSpecialistProfiles.engineering);
+  assert.equal(schemaInspectButton(f), undefined);
+  assert.equal(f.reads.some(row => row.url === schemaPreflightEndpoint), false);
+});
+for (const locale of ["en", "ja"]) test("schema report " + locale + ": explicit read, denial clearing and retry", async t => {
+  const f = await openConnectedSpecialist(t, locale, schemaPreflightProfile());
+  assert.equal(f.reads.length, 1, "opening health does not read schema metadata");
+  await f.act(schemaInspectButton(f));
+  assert.equal(f.reads[1].url, schemaPreflightEndpoint);
+  assert.equal(f.reads[1].init.cache, "no-store");
+  assert.equal(schemaInspectButton(f).matches(":disabled"), true);
+  await f.reply(1, schemaFixtureResponse("current-schema-marker"));
+  assert.ok(f.tree().root.text.includes("current-schema-marker"));
+  await f.act(schemaInspectButton(f));
+  assert.equal(f.tree().root.text.includes("current-schema-marker"), false, "old snapshot clears before a new read");
+  await f.reply(2, response({ error: "access_denied" }, 403));
+  assert.equal(f.tree().visible("pre").length, 0);
+  assert.ok(f.tree().root.text.includes(f.i18n.t("engineering.schema.unavailable")));
+  await f.act(schemaInspectButton(f));
+  await f.reply(3, schemaFixtureResponse("fresh-schema-marker"));
+  assert.ok(f.tree().root.text.includes("fresh-schema-marker"));
+  assert.equal(f.serviceCalls.every(call => call.method === "GET"), true);
+});
+test("schema report retires a late response when the principal session is reset", async t => {
+  const f = await openConnectedSpecialist(t, "en", schemaPreflightProfile());
+  await f.act(schemaInspectButton(f));
+  f.platformSession.reset(); await f.flush();
+  await f.reply(1, schemaFixtureResponse("retired-schema-marker"));
+  assert.equal(schemaInspectButton(f), undefined);
+  assert.equal(f.tree().root.text.includes("retired-schema-marker"), false);
+});
+test("schema report retires a late response after leaving the health view", async t => {
+  const f = await openConnectedSpecialist(t, "en", schemaPreflightProfile());
+  await f.act(schemaInspectButton(f));
+  await f.navigate("/engineering/events"); await f.acceptModule(1);
+  await f.reply(1, schemaFixtureResponse("retired-route-marker"));
+  assert.equal(schemaInspectButton(f), undefined);
+  assert.equal(f.tree().root.text.includes("retired-route-marker"), false);
+});
+for (const pending of [false, true]) test("schema report retires " + (pending ? "pending" : "displayed") + " metadata after current health authorization denial", async t => {
+  const f = await openConnectedSpecialist(t, "en", schemaPreflightProfile());
+  await f.reply(0, response(connectedSpecialistReport("authorized-health")));
+  await f.act(schemaInspectButton(f));
+  if (!pending) await f.reply(1, schemaFixtureResponse("denied-schema-marker"));
+  const leaf = connectedSpecialistComponent(f, "forma-engineering-diagnostics");
+  await f.act(connectedSpecialistRefresh(f, leaf));
+  await f.reply(2, response({ error: "access_denied" }, 403));
+  if (pending) await f.reply(1, schemaFixtureResponse("denied-schema-marker"));
+  assert.equal(schemaInspectButton(f), undefined);
+  assert.equal(f.tree().root.text.includes("denied-schema-marker"), false);
+});
 
 for(const locale of["en","ja"]){
   test("F connected Operations "+locale+": exact leaf, current denial and deliberate same-owner read recovery",async t=>{

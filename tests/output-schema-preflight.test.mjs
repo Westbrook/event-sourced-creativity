@@ -32,6 +32,8 @@ test("schema preflight actual Worker returns exact metadata and aggregate counts
   assert.ok(snapshot.groups.catalog.some(row => row.name === "output_assets" && row.sql.includes("CREATE TABLE")));
   assert.ok(snapshot.groups.inboundKeys.some(row => row.child_table === "output_results"));
   assert.equal(snapshot.groups.foreignKeyHealth[0].foreign_key_violation_count, "0");
+  assert.equal(snapshot.groups.reservedReferences[0].row_count, "0");
+  assert.equal(snapshot.groups.legacyAssertion[0].row_count, "0");
   assert.doesNotMatch(JSON.stringify(snapshot), /The keeper checks|Saved complete story|in-memory-scene-test/);
   await f.drainBackground();
   assert.equal(f.sqlite.prepare("SELECT total_changes() AS n").get().n, before);
@@ -50,7 +52,8 @@ test("schema preflight withholds all partial or oversized metadata", async () =>
   const replies = () => OUTPUT_SCHEMA_PREFLIGHT_QUERIES.map(query => ({ success: true, results:
     query.id === "settings" ? [{ sqlite_version: null, foreign_keys: 1, defer_foreign_keys: 0, ignore_check_constraints: 0, legacy_alter_table: 0, temp_object_count: 0 }]
       : query.id === "foreignKeyHealth" ? [{ foreign_key_violation_count: "0" }]
-        : query.id.startsWith("output_") ? [{ table_name: query.id, row_count: "0" }] : [] }));
+        : query.id.startsWith("output_") ? [{ table_name: query.id, row_count: "0" }]
+          : ["reservedReferences", "legacyAssertion"].includes(query.id) ? [{ row_count: "0" }] : [] }));
   await assert.doesNotReject(readOutputSchemaPreflight({ prepare: sql => sql, batch: async () => replies() }));
   for (const [change, expected] of [
     [rows => rows.pop(), /schema_preflight_incomplete/],
