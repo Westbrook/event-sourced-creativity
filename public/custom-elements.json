@@ -13388,7 +13388,7 @@
                 {
                   "name": "target",
                   "type": {
-                    "text": "import(\"/Users/westbrook/.codex/visualizations/2026/08/31/01a059a1-f735-7421-9876-6b87c7d301f3/forma-3d-production-20260902/checkout/src/model/workspace-intelligence\").CreativeActionScope & { kind: \"configure\"; medium: CreativeMedium | null; sourceRevision: string; }"
+                    "text": "import(\"./src/model/workspace-intelligence\").CreativeActionScope & { kind: \"configure\"; medium: CreativeMedium | null; sourceRevision: string; }"
                   }
                 },
                 {

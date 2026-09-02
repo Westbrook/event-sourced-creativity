@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { portableManifestType } from "./lib/component-manifest-types.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const checkOnly = process.argv.includes("--check");
@@ -39,7 +40,7 @@ const typeText = (node) => {
   try {
     const type = checker.getTypeAtLocation(node);
     const literalUnion = type.isUnion() && type.types.every((item) => item.isStringLiteral() || item.isNumberLiteral() || (item.flags & ts.TypeFlags.BooleanLiteral) !== 0);
-    const text = checker.typeToString(type, node, ts.TypeFormatFlags.NoTruncation | (literalUnion ? ts.TypeFormatFlags.InTypeAlias : 0));
+    const text = portableManifestType(checker.typeToString(type, node, ts.TypeFormatFlags.NoTruncation | (literalUnion ? ts.TypeFormatFlags.InTypeAlias : 0)), root);
     return text === "FormaOption[]"
       ? "{ label: string; value: string; disabled?: boolean; description?: string }[]"
       : text === "FormaNavigationDestination[]"
@@ -283,7 +284,7 @@ function fieldsOf(node, properties) {
       const method = { kind: "method", name };
       if (member.parameters.length) method.parameters = member.parameters.map((parameter) => ({ name: propertyName(parameter.name), type: { text: typeText(parameter) } }));
       const signature = checker.getSignatureFromDeclaration(member);
-      if (signature) method.return = { type: { text: checker.typeToString(signature.getReturnType()) } };
+      if (signature) method.return = { type: { text: portableManifestType(checker.typeToString(signature.getReturnType()), root) } };
       const description = documentation(member);
       if (description) method.description = description;
       results.set(name, method);
