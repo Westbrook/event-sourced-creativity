@@ -15,7 +15,7 @@ for (const [method, suffix, cookie, expected] of [
   ["POST", "", "", 405], ["HEAD", "", "", 405], ["GET", "?sql=DROP%20TABLE%20users", "", 400],
   ["GET", "", "forma_impersonation=anything", 409], ["GET", "", "forma_project_context=anything", 409],
 ]) test(`schema preflight rejects ${method}/${suffix || cookie || "method"} before database access`, async () => {
-  const env = { get DB() { assert.fail("Rejected input must not reach startup or a DB binding"); } };
+  const env = { get DB() { return assert.fail("Rejected input must not reach startup or a DB binding"); } };
   const response = await handleOutputSchemaPreflight(new Request("http://localhost" + OUTPUT_SCHEMA_PREFLIGHT_PATH + suffix, { method, headers: { cookie } }), env);
   assert.equal(response.status, expected); assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
@@ -47,12 +47,21 @@ test("schema preflight denies the current unprivileged principal without queryin
 });
 
 test("schema preflight withholds all partial or oversized metadata", async () => {
-  const replies = () => OUTPUT_SCHEMA_PREFLIGHT_QUERIES.map(() => ({ success: true, results: [] }));
-  for (const change of [rows => rows.pop(), rows => { rows[0].success = false; },
-    rows => { rows[0].results = Array.from({ length: 1001 }, () => ({})); },
-    rows => { rows[0].results = [{ sql: "x".repeat(512001) }]; }]) {
+  const replies = () => OUTPUT_SCHEMA_PREFLIGHT_QUERIES.map(query => ({ success: true, results:
+    query.id === "settings" ? [{ sqlite_version: null, foreign_keys: 1, defer_foreign_keys: 0, ignore_check_constraints: 0, legacy_alter_table: 0, temp_object_count: 0 }]
+      : query.id === "foreignKeyHealth" ? [{ foreign_key_violation_count: "0" }]
+        : query.id.startsWith("output_") ? [{ table_name: query.id, row_count: "0" }] : [] }));
+  await assert.doesNotReject(readOutputSchemaPreflight({ prepare: sql => sql, batch: async () => replies() }));
+  for (const [change, expected] of [
+    [rows => rows.pop(), /schema_preflight_incomplete/],
+    [rows => { rows[0].success = false; }, /schema_preflight_incomplete/],
+    [rows => { rows[0].results = []; }, /schema_preflight_incomplete/],
+    [rows => { rows[5].results[0].row_count = "-1"; }, /schema_preflight_incomplete/],
+    [rows => { rows[1].results = Array.from({ length: 1001 }, () => ({})); }, /schema_preflight_too_large/],
+    [rows => { rows[1].results = [{ sql: "x".repeat(512001) }]; }, /schema_preflight_too_large/],
+  ]) {
     const rows = replies(); change(rows);
-    await assert.rejects(readOutputSchemaPreflight({ prepare: sql => sql, batch: async () => rows }), /schema_preflight_(incomplete|too_large)/);
+    await assert.rejects(readOutputSchemaPreflight({ prepare: sql => sql, batch: async () => rows }), expected);
   }
 });
 

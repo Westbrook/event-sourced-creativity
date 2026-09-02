@@ -9,7 +9,7 @@ const hook = registerHooks({ resolve(specifier, context, next) {
   const local = context.parentURL?.startsWith(root) && !context.parentURL.includes("/node_modules/");
   return next(local && specifier.startsWith(".") && !/\.[a-z0-9]+$/iu.test(specifier) ? specifier + ".ts" : specifier, context);
 } });
-const { readOutputSchemaPreflight } = await import("../worker/output-schema-preflight.ts");
+const { readOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_QUERIES } = await import("../worker/output-schema-preflight.ts");
 hook.deregister();
 const { Miniflare, Log, LogLevel } = createRequire(import.meta.resolve("wrangler"))("miniflare");
 
@@ -27,6 +27,7 @@ test("schema preflight queries execute read-only against disposable actual local
     await db.batch(sql.split("--> statement-breakpoint").map(part => part.trim()).filter(Boolean).map(sql => db.prepare(sql)));
   }
   const before = await db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name").all();
+  for (const query of OUTPUT_SCHEMA_PREFLIGHT_QUERIES) await assert.doesNotReject(db.prepare(query.sql).all(), query.id);
   const snapshot = await readOutputSchemaPreflight(db);
   assert.equal(snapshot.complete, true);
   assert.equal(snapshot.groups.settings[0].foreign_keys, 1);

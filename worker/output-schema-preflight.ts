@@ -14,14 +14,12 @@ const maximumRows = 1000;
 // or application-row projection. Overflow fails closed rather than certifying
 // a truncated inventory. These reads do not certify the hosted migration runner.
 export const OUTPUT_SCHEMA_PREFLIGHT_QUERIES = [
-  { id: "settings", sql: `SELECT sqlite_version() AS sqlite_version,
+  { id: "settings", sql: `SELECT NULL AS sqlite_version,
     (SELECT foreign_keys FROM pragma_foreign_keys) AS foreign_keys,
     (SELECT defer_foreign_keys FROM pragma_defer_foreign_keys) AS defer_foreign_keys,
     (SELECT ignore_check_constraints FROM pragma_ignore_check_constraints) AS ignore_check_constraints,
     (SELECT legacy_alter_table FROM pragma_legacy_alter_table) AS legacy_alter_table,
-    (SELECT count(*) FROM temp.sqlite_schema) AS temp_object_count,
-    CAST((SELECT page_count FROM pragma_page_count) AS TEXT) AS page_count,
-    (SELECT page_size FROM pragma_page_size) AS page_size` },
+    (SELECT count(*) FROM temp.sqlite_schema) AS temp_object_count` },
   { id: "catalog", sql: `SELECT type,name,tbl_name,sql FROM main.sqlite_schema
     WHERE lower(name) IN (${names}) OR lower(tbl_name) IN (${names})
     ORDER BY tbl_name COLLATE BINARY,type COLLATE BINARY,name COLLATE BINARY LIMIT 1001` },
@@ -53,7 +51,7 @@ export async function readOutputSchemaPreflight(db: D1Database) {
     const rows = results[index]!.results as Record<string, unknown>[];
     if (rows.length !== 1) throw new Error("schema_preflight_incomplete");
     if (query.id === "settings") {
-      if (typeof rows[0]!.sqlite_version !== "string" || !/^\d+$/u.test(String(rows[0]!.page_count))) throw new Error("schema_preflight_incomplete");
+      if (rows[0]!.sqlite_version !== null || !["foreign_keys", "defer_foreign_keys", "ignore_check_constraints", "legacy_alter_table", "temp_object_count"].every(key => Number.isSafeInteger(rows[0]![key]) && Number(rows[0]![key]) >= 0)) throw new Error("schema_preflight_incomplete");
     } else {
       const count = rows[0]![query.id === "foreignKeyHealth" ? "foreign_key_violation_count" : "row_count"];
       if (typeof count !== "string" || !/^(?:0|[1-9]\d*)$/u.test(count)) throw new Error("schema_preflight_incomplete");
@@ -61,7 +59,8 @@ export async function readOutputSchemaPreflight(db: D1Database) {
     }
   }
   const snapshot = { contract: "forma.output-schema-preflight.v1", capturedAt: new Date().toISOString(), complete: true,
-    execution: { api: "D1Database.batch", metadataOnly: true, hostedMigrationCertified: false },
+    execution: { api: "D1Database.batch", metadataOnly: true, hostedMigrationCertified: false,
+      engineVersion: "unavailable: D1 does not authorize sqlite_version()" },
     groups: Object.fromEntries(OUTPUT_SCHEMA_PREFLIGHT_QUERIES.map((query, index) => [query.id, results[index]!.results])) };
   if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > 512_000) throw new Error("schema_preflight_too_large");
   return snapshot;
