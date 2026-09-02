@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AUDIO_ADAPTER_CONTRACT, audioAuthoringConflict, audioContextDescription, audioContexts, audioFileExtension, audioMimeType, normalizeAudioCues, normalizeAudioUsage, VIDEO_AUDIO_REFERENCE_CONTRACT } from "../src/model/audio.ts";
+import { audioDurationMetadata, audioPlaybackTiming, AUDIO_ADAPTER_CONTRACT, audioAuthoringConflict, audioContextDescription, audioContexts, audioFileExtension, audioMimeType, normalizeAudioCues, normalizeAudioUsage, VIDEO_AUDIO_REFERENCE_CONTRACT } from "../src/model/audio.ts";
+import { foldEvents } from "../src/model/events.ts";
+import { storeGeneratedMedia } from "../worker/media-api.ts";
 import { boundedAudioExcerpt, verifiedAudioTiming } from "../src/model/audio-container.ts";
 import { summarizeAudioSamples } from "../src/model/audio-browser.ts";
 import { providerFacingCreativeContext } from "../src/model/prompt-policy.ts";
@@ -515,4 +517,33 @@ test("audio failure guidance names Lyria and Fal rather than video or OpenAI",()
     assert.match(guidance.title,expected);
     assert.doesNotMatch(guidance.summary,/silent video|OpenAI credential/i);
   }
+});
+
+
+test("persisted generated media measures the saved bytes and replacing media replaces timing",async()=>{
+  const objects=new Map(),env={MEDIA:{async put(key,bytes,options){objects.set(key,{bytes,options});}}};
+  const first=await storeGeneratedMedia(env,"timing-owner","timing-artifact",wavRecording(123.56),"test-audio","audio/wav");
+  assert.equal(first.durationSeconds,123.56);
+  assert.equal(objects.get(first.key).options.customMetadata.durationSeconds,"123.56");
+  const firstMetadata={source_media_sha256:first.contentHash,...audioDurationMetadata(first,90)};
+  assert.deepEqual(audioPlaybackTiming(firstMetadata,first.url),{seconds:123.56,basis:"measured"});
+  const replacement=await storeGeneratedMedia(env,"timing-owner","timing-artifact",wavRecording(7),"test-audio","audio/wav");
+  assert.equal(first.url,replacement.url);assert.notEqual(first.contentHash,replacement.contentHash);
+  assert.equal(objects.get(first.key).options.customMetadata.durationSeconds,"7");
+  assert.equal(audioPlaybackTiming({...firstMetadata,source_media_sha256:replacement.contentHash},replacement.url),null);
+});
+
+test("audio source edits invalidate old timing without erasing authored words or permissions",()=>{
+  const properties={media_url:"/api/media/original.wav",media_type:"audio/wav",source_content_hash:"a".repeat(64),
+    duration_seconds:123.56,analysis_provenance:{method:"browser-local-web-audio"},transcript:"Keep these authored words",include_in_output:false};
+  const event=(sequence,type,payload)=>({eventId:"audio-timing-"+sequence,streamId:"audio-timing",sequence,occurredAt:"2026-09-02T00:00:00Z",recordedAt:"2026-09-02T00:00:00Z",actor:"user",clientId:"test",correlationId:"test",causationId:null,compensatesEventId:null,schemaVersion:1,type,payload});
+  const initial=[event(1,"ProjectCreated",{project_id:"p",name:"Timing"}),event(2,"DocumentCreated",{project_id:"p",document_id:"d",title:"Timing"}),event(3,"BlockCreated",{project_id:"p",document_id:"d",block_id:"audio",type:"audio",properties})];
+  for(const [type,key,next] of [["BlockPropertyEdited","media_url","/api/media/replaced.wav"],["BlockPropertyEdited","source_content_hash","b".repeat(64)],["ChipEdited","media_type","audio/mpeg"]]){
+    const edit=event(4,type,{block_id:"audio",property_path:key,property:key,new_value:next});
+    const current=foldEvents([...initial,edit],Infinity,"d").blocks[0].properties;
+    assert.equal(current.duration_seconds,undefined);assert.equal(current.analysis_provenance,undefined);
+    assert.equal(current.transcript,properties.transcript);assert.equal(current.include_in_output,false);
+  }
+  const unchanged=foldEvents([...initial,event(4,"BlockPropertyEdited",{block_id:"audio",property_path:"media_url",new_value:properties.media_url})],Infinity,"d").blocks[0];
+  assert.equal(unchanged.properties.duration_seconds,123.56);
 });

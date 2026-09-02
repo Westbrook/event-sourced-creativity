@@ -12,9 +12,39 @@ export type PaidProviderSubmission = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Frozen per-call evidence. A client ID is a trace, never provider idempotency. */
+  requestDigest?: string;
+  reasoningEffort?: string;
+  maximumOutputTokens?: number;
+  submittedAt?: string;
+  responseReceivedAt?: string;
+  httpRequestId?: string;
+  completionStatus?: string;
+  incompleteReason?: string;
+  cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  reasoningTokens?: number;
+  pricingVersion?: string;
+  textInputCostMicrousd?: number;
+  textOutputCostMicrousd?: number;
+  effectiveModel?: string;
+  routingPhase?: string;
+  routingVersion?: string;
+  serviceTier?: string;
+  cachePolicy?: string;
+  usageCostBasis?: string;
+  pricingReceipt?: Record<string, unknown>;
+  latencyMs?: number;
+  validationStatus?: "pending" | "valid" | "invalid";
+  validationIssueCount?: number;
 };
 
 export type PaidProviderSubmissionObserver = (receipt: PaidProviderSubmission) => void | Promise<void>;
+
+/** Source-free billing evidence survives private-body retention and cancellation. */
+export const PAID_PROVIDER_FINANCIAL_FIELDS = ["clientRequestId", "provider", "operation", "model", "unitId", "status", "providerRequestId", "costMicrousd", "inputTokens", "outputTokens", "totalTokens",
+  "requestDigest", "reasoningEffort", "maximumOutputTokens", "submittedAt", "responseReceivedAt", "httpRequestId", "completionStatus", "incompleteReason",
+  "cachedInputTokens", "cacheWriteInputTokens", "reasoningTokens", "pricingVersion", "textInputCostMicrousd", "textOutputCostMicrousd", "effectiveModel", "routingPhase", "routingVersion", "serviceTier", "cachePolicy", "usageCostBasis", "pricingReceipt", "latencyMs"] as const satisfies readonly (keyof PaidProviderSubmission)[];
 
 export function definitiveProviderRejection(status: number) {
   return [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(status);
@@ -63,30 +93,50 @@ export function mergeProviderSubmissions(previous: unknown, patch: unknown) {
     if (existing && (existing.provider !== receipt.provider || existing.operation !== receipt.operation || existing.model !== receipt.model)) throw new Error("provider_submission_identity_changed");
     if (existing?.providerRequestId && receipt.providerRequestId && existing.providerRequestId !== receipt.providerRequestId
       || existing?.unitId && receipt.unitId && existing.unitId !== receipt.unitId) throw new Error("provider_submission_identity_changed");
+    for (const key of ["requestDigest", "reasoningEffort", "maximumOutputTokens", "responseRef", "pricingVersion", "routingPhase", "routingVersion", "serviceTier", "cachePolicy", "submittedAt", "responseReceivedAt", "httpRequestId", "completionStatus", "incompleteReason", "usageCostBasis", "latencyMs"] as const) {
+      if (existing?.[key] !== undefined && receipt[key] !== undefined && existing[key] !== receipt[key]) throw new Error("provider_submission_evidence_changed");
+    }
     if (existing && rank[existing.status] > rank[receipt.status]) continue;
     if (existing && ["completed", "rejected"].includes(existing.status) && existing.status !== receipt.status) throw new Error("provider_submission_terminal_state_changed");
     if (existing && existing.status !== "pending" && receipt.status === "rejected") throw new Error("accepted_provider_submission_cannot_be_rejected");
     if (existing?.status === "completed" && Number.isFinite(existing.costMicrousd) && Number.isFinite(receipt.costMicrousd) && existing.costMicrousd !== receipt.costMicrousd) throw new Error("provider_submission_cost_changed");
+    for (const key of ["inputTokens", "outputTokens", "totalTokens", "cachedInputTokens", "cacheWriteInputTokens", "reasoningTokens", "textInputCostMicrousd", "textOutputCostMicrousd", "effectiveModel"] as const) {
+      if (existing?.status === "completed" && existing[key] !== undefined && receipt[key] !== undefined && existing[key] !== receipt[key]) throw new Error("provider_submission_usage_changed");
+    }
+    if (existing?.validationStatus && existing.validationStatus !== "pending" && receipt.validationStatus && receipt.validationStatus !== "pending" && (existing.validationStatus !== receipt.validationStatus || existing.validationIssueCount !== undefined && receipt.validationIssueCount !== undefined && existing.validationIssueCount !== receipt.validationIssueCount)) throw new Error("provider_submission_validation_changed");
+    if (existing?.pricingReceipt && receipt.pricingReceipt && JSON.stringify(existing.pricingReceipt) !== JSON.stringify(receipt.pricingReceipt)) throw new Error("provider_submission_pricing_changed");
     merged[receipt.clientRequestId] = { ...existing, ...receipt };
+    if (existing?.validationStatus && existing.validationStatus !== "pending" && receipt.validationStatus === "pending") {
+      merged[receipt.clientRequestId].validationStatus = existing.validationStatus;
+      merged[receipt.clientRequestId].validationIssueCount = existing.validationIssueCount;
+    }
   }
   return merged;
 }
 
 /** The expression is supplied only by server code, never from a request. */
-export function unresolvedProviderSubmissionSql(resultExpression = "result_json") {
+function providerSubmissionProblemSql(resultExpression: string, pendingIsUnresolved: boolean, includeLegacy: boolean) {
   const root=`COALESCE(${resultExpression},'{}')`;
   const entries=`CASE WHEN json_type(${root},'$.providerSubmissions')='object' THEN json_extract(${root},'$.providerSubmissions') ELSE '{}' END`;
   const value="CASE WHEN paid_submission.type='object' THEN paid_submission.value ELSE '{}' END";
   const field=(key:string)=>`json_extract(${value},'$.${key}')`;
-  return `(COALESCE(json_extract(COALESCE(${resultExpression},'{}'),'$.providerSubmissionLegacyUncertain'),0)=1 OR EXISTS(
+  return `(${includeLegacy ? `COALESCE(json_extract(COALESCE(${resultExpression},'{}'),'$.providerSubmissionLegacyUncertain'),0)=1 OR ` : ""}EXISTS(
     SELECT 1 FROM json_each(${entries}) paid_submission WHERE paid_submission.type!='object'
       OR paid_submission.key='' OR COALESCE(${field("clientRequestId")},'')!=paid_submission.key
       OR COALESCE(${field("provider")},'') NOT IN ('openai','fal')
       OR COALESCE(${field("operation")},'') NOT IN ('planning','image','video','audio')
       OR COALESCE(json_type(${value},'$.model'),'null')!='text' OR COALESCE(${field("model")},'')=''
-      OR COALESCE(${field("status")},'') NOT IN ('accepted','completed','rejected')
+      OR COALESCE(${field("status")},'') NOT IN (${pendingIsUnresolved ? "'accepted','completed','rejected'" : "'pending','accepted','completed','rejected'"})
       OR json_type(${value},'$.costMicrousd') IS NOT NULL AND (json_type(${value},'$.costMicrousd') NOT IN ('integer','real') OR ${field("costMicrousd")}<0))
     OR COALESCE(json_type(${root},'$.providerSubmissions'),'object')!='object')`;
+}
+
+export function unresolvedProviderSubmissionSql(resultExpression = "result_json") {
+  return providerSubmissionProblemSql(resultExpression, true, true);
+}
+
+export function invalidProviderSubmissionSql(resultExpression = "result_json") {
+  return providerSubmissionProblemSql(resultExpression, false, false);
 }
 
 export function unsettledProviderSubmissionSql(resultExpression = "result_json") {

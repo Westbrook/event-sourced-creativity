@@ -451,3 +451,15 @@ test("a source lost after one paid page retains that original verified spend and
     assert.equal(retained.body.sceneCostExisting.preview.bindingHash,preview.bindingHash);assert.equal(f.counts().document_jobs,1);assert.equal(calls.length,1);
   }finally{f.close();}
 });
+
+
+test("Scene free preview shares trimmed UTF-16 guidance boundaries without queue or provider work",async t=>{
+  noNetwork(t);const f=await createSceneCostFixture(1);
+  try{
+    const before=f.counts();
+    for(const field of ["audience","tone"]){
+      for(const value of ["x".repeat(121),"🎵".repeat(61)]){const result=await f.preview({[field]:value});assert.equal(result.response.status,400);assert.equal(result.body.error,"document_render_guidance_too_long");assert.equal(result.body.fieldErrors[0].field,field);assert.deepEqual(f.counts(),before);}
+      const accepted=await f.preview({[field]:"  "+"🎵".repeat(60)+"  "});assert.equal(accepted.response.status,200,JSON.stringify(accepted.body));assert.deepEqual(f.counts(),before);
+    }
+  }finally{f.close();}
+});

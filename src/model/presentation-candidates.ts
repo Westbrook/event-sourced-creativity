@@ -78,6 +78,7 @@ export type PresentationCandidateDetail = PresentationCandidateSummary & {
   slides: PresentationCandidateSlide[];
   citationChecks?: PresentationCandidateCitationCheck[];
   accounting?: PresentationCandidateAccounting;
+  revision?: { token: string; fields: PresentationCandidateEdit[] };
   normalizationChanges: Array<{ path: string; originalValue: string; normalizedValue: string; reason: string }>;
 };
 
@@ -385,4 +386,91 @@ export function presentationCandidateOriginalValidation(checkpoint: Record<strin
   const accepted = locallyRecoverable;
   return { schema_version: 1 as const, adapter_version: candidateText(receipt.presentation_adapter_version),
     outcome: rejected ? "rejected" as const : accepted ? "accepted" as const : "unconfirmed" as const };
+}
+
+export type PresentationCandidateEdit = { path: string; value: string };
+export type PresentationCandidateRevisionRequest = {
+  revisionToken: string;
+  idempotencyKey: string;
+  confirmed: true;
+  edits: PresentationCandidateEdit[];
+};
+export type PresentationCandidateRevisionResult = {
+  jobId: string; documentId: string; responseId: string; artifactId: string;
+  providerCalls: 0; incrementalCostMicrousd: 0; approval: "unapproved"; reused: boolean;
+};
+
+const revisionFieldPath = /^items\.(?:0|[1-9]\d*)\.(?:title|body|slide\.(?:kicker|bullets\.(?:0|[1-9]\d*)|visual\.(?:label|value|data\.(?:0|[1-9]\d*)\.(?:label|value))))$/u;
+const revisionRecord = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+/** Catalog only existing visible string leaves. This is not the sanitized preview round-tripped as an artifact. */
+export function presentationCandidateEditableFields(raw: string, privateReferences: readonly string[] = []): PresentationCandidateEdit[] {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  const root = revisionRecord(parsed), fields: PresentationCandidateEdit[] = [];
+  if (!root || !Array.isArray(root.items)) return fields;
+  const add = (path: string, value: unknown) => {
+    if (typeof value === "string" && value.length <= 8_000
+      && sanitizePresentationCandidateText(value, privateReferences) === value) fields.push({ path, value });
+  };
+  root.items.forEach((value, index) => {
+    const item = revisionRecord(value); if (!item) return;
+    const prefix = `items.${index}`;
+    add(`${prefix}.title`, item.title); add(`${prefix}.body`, item.body);
+    const slide = revisionRecord(item.slide); if (!slide) return;
+    add(`${prefix}.slide.kicker`, slide.kicker);
+    if (Array.isArray(slide.bullets)) slide.bullets.forEach((bullet, i) => add(`${prefix}.slide.bullets.${i}`, bullet));
+    const visual = revisionRecord(slide.visual); if (!visual) return;
+    add(`${prefix}.slide.visual.label`, visual.label); add(`${prefix}.slide.visual.value`, visual.value);
+    if (Array.isArray(visual.data)) visual.data.forEach((datum, i) => {
+      const row = revisionRecord(datum); if (!row) return;
+      add(`${prefix}.slide.visual.data.${i}.label`, row.label); add(`${prefix}.slide.visual.data.${i}.value`, row.value);
+    });
+  });
+  return fields.length <= 512 ? fields : [];
+}
+
+/** Strict patches preserve source assignments, quotations, citation provenance, numeric precision and item/layout identity. */
+export function applyPresentationCandidateEdits(raw: string, edits: unknown, privateReferences: readonly string[] = []): { raw: string; changedPaths: string[] } | null {
+  if (!Array.isArray(edits) || edits.length > 128 || new TextEncoder().encode(JSON.stringify(edits)).byteLength > 64 * 1024) return null;
+  const allowed = new Map(presentationCandidateEditableFields(raw, privateReferences).map(field => [field.path, field.value]));
+  if (!allowed.size) return null;
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
+  const seen = new Set<string>(), changedPaths: string[] = [];
+  for (const edit of edits) {
+    const entry = revisionRecord(edit);
+    if (!entry || Object.keys(entry).some(key => key !== "path" && key !== "value")
+      || typeof entry.path !== "string" || !revisionFieldPath.test(entry.path) || !allowed.has(entry.path) || seen.has(entry.path)
+      || typeof entry.value !== "string" || entry.value.length > 8_000
+      || sanitizePresentationCandidateText(entry.value, privateReferences) !== entry.value) return null;
+    seen.add(entry.path);
+    const parts = entry.path.split("."), key = parts.pop()!;
+    let target: unknown = parsed;
+    for (const part of parts) {
+      if (!target || typeof target !== "object" || !Object.hasOwn(target, part)) return null;
+      target = (target as Record<string, unknown>)[part];
+    }
+    if (!target || typeof target !== "object" || !Object.hasOwn(target, key) || typeof (target as Record<string, unknown>)[key] !== "string") return null;
+    if (allowed.get(entry.path) !== entry.value) changedPaths.push(entry.path);
+    (target as Record<string, unknown>)[key] = entry.value;
+  }
+  return { raw: JSON.stringify(parsed), changedPaths: changedPaths.sort() };
+}
+
+/** Markdown follows the resulting audience-facing slides, never stale rejected provider prose. */
+export function presentationCandidateRevisionMarkdown(output: { title: string; items: DocumentArtifactDraftItem[] }): string {
+  return [`# ${output.title}`, ...output.items.map((item, index) => {
+    const slide = item.slide, visual = slide?.visual, quote = slide?.quote;
+    return [
+      `## ${index + 1}. ${item.title}`, ...(slide?.kicker ? [slide.kicker] : []), item.body,
+      ...(quote?.text ? [`> ${quote.text} — ${[quote.speaker, quote.role].filter((value, i, all) => value && all.indexOf(value) === i).join(", ")}`] : []),
+      ...(slide?.bullets ?? []).map(value => `- ${value}`),
+      ...(visual?.value && visual.value !== quote?.text ? [visual.label ? `${visual.label}: ${visual.value}` : visual.value] : visual?.label ? [visual.label] : []),
+      ...(visual?.exactValue ? [`Exact value: ${visual.exactValue}${visual.unit ? ` ${visual.unit}` : ""}`] : []),
+      ...(visual?.displayValue ? [`Displayed value: ${visual.displayValue}${visual.unit ? ` ${visual.unit}` : ""}`] : []),
+      ...(visual?.data ?? []).map(datum => `- ${datum.label}: ${datum.displayValue || datum.value}${datum.exactValue && datum.exactValue !== (datum.displayValue || datum.value) ? ` (exact: ${datum.exactValue})` : ""}`),
+      ...(item.notes ? [item.notes] : []),
+    ].filter(Boolean).join("\n");
+  })].join("\n\n");
 }

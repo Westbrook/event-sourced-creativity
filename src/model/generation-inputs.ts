@@ -1,3 +1,4 @@
+import { safePresentationProviderLabels } from "./generation-execution-evidence.ts";
 import type { DocumentArtifact } from "./document-artifacts";
 import type { CreativeEvent, CreativeOutput } from "./events";
 import type { DocumentJob } from "./document-jobs";
@@ -71,6 +72,7 @@ function privateGenerationInput(job:DocumentJob,receipt:Record<string,unknown>,c
 function safeGenerationReceipt(value:Record<string,unknown>,privateInput:Record<string,unknown>|null){
   if(!Object.keys(value).length)return null;
   const planner=record(privateInput?.planner),source=record(privateInput?.source),request=record(privateInput?.request),accounting=record(privateInput?.accounting);
+  const presentationLabels=(value.artifact_kind??privateInput?.artifact_kind)==="slides"?safePresentationProviderLabels(value):null;
   const providerStatus=textOrNull(value.provider_request_status)??textOrNull(planner.request_status)??"unknown";
   const sourceStatus=textOrNull(value.source_transmission_status)??textOrNull(source.status)??"unknown";
   const authoredCount=numberOrNull(value.authored_slide_count)??numberOrNull(request.authored_slide_count);
@@ -85,7 +87,8 @@ function safeGenerationReceipt(value:Record<string,unknown>,privateInput:Record<
     artifact_kind:textOrNull(value.artifact_kind)??textOrNull(privateInput?.artifact_kind),
     production_mode:textOrNull(value.production_mode)??textOrNull(request.production_mode),
     provider:textOrNull(value.provider)??textOrNull(planner.provider),
-    model:textOrNull(value.model)??textOrNull(planner.model),
+    model:presentationLabels?presentationLabels.model:textOrNull(value.model)??textOrNull(planner.model),
+    ...(presentationLabels??{}),
     requested_slide_count:numberOrNull(value.requested_slide_count)??numberOrNull(request.requested_slide_count),
     authored_slide_count:authoredCount,
     predicted_slide_count:predictedCount,

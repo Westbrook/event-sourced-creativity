@@ -2,7 +2,7 @@ import { slideCountAccepted, type SlideCountPolicy } from "./presentation-count-
 import type { ImageFocalPoint } from "./focal-point.ts";
 import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
-import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
+import { protectedPresentationScoreContradictions, resolvePresentationSourceReferences, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 
 export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
@@ -519,8 +519,33 @@ export type DocumentArtifactValidationOptions={
   requireAllProtectedContent?:boolean;
 };
 
+/** An unnumbered source may explicitly require one exact phrase at both bookends. */
+function sourceAuthorizedUnnumberedBookendCopy(values:readonly unknown[],duplicate:SlideDeckCopyIssue,contract:PresentationSourceContract,pageStart:number){
+  const audienceCopy=/^(?:title|body|slide\.visual\.value|slide\.quote\.text|slide\.bullets\.\d+)$/u;
+  if(contract.numberedOutline.length||pageStart!==0||duplicate.firstSlide!==0
+    ||duplicate.secondSlide!==values.length-1||duplicate.secondSlide<=0
+    ||!audienceCopy.test(duplicate.firstPath)||!audienceCopy.test(duplicate.secondPath)
+    ||duplicate.firstPath==="title"&&duplicate.secondPath==="title"
+    ||text(duplicate.first)!==text(duplicate.second))return false;
+  const phrase=text(duplicate.first);
+  const opening=contract.protectedMessages.filter((message)=>message.placement==="opening"&&message.slideNumber===1&&message.text===phrase);
+  const closing=contract.protectedMessages.filter((message)=>message.placement==="closing"&&message.text===phrase
+    &&(contract.slideCountPolicy?.kind==="flexible"?values.length-1:message.slideNumber-1)===duplicate.secondSlide);
+  if(!opening.length||!closing.length)return false;
+  const attributed=(slideIndex:number,message:PresentationSourceContract["protectedMessages"][number])=>{
+    const resolved=resolvePresentationSourceReferences(slideSourceIds(values[slideIndex]),contract,{allowDurableIds:true});
+    return resolved.valid&&(message.sourceBlockId?resolved.blockIds.includes(message.sourceBlockId)
+      :Boolean(message.sourceAlias&&resolved.sourceAliases.includes(message.sourceAlias)));
+  };
+  // A matching phrase cannot authenticate a foreign source or an unrelated block.
+  // Keep the generic comparator and every within-slide/other-copy check unchanged.
+  return opening.some((message)=>attributed(duplicate.firstSlide,message))
+    &&closing.some((message)=>attributed(duplicate.secondSlide,message));
+}
+
 /** Preserve only independently authored visual evidence and an exact opening-to-closing promise. */
 function sourceAuthorizedRepeatedPresentationCopy(values:readonly unknown[],duplicate:SlideDeckCopyIssue,contract:PresentationSourceContract,pageStart=0){
+  if(sourceAuthorizedUnnumberedBookendCopy(values,duplicate,contract,pageStart))return true;
   const visualEvidence=duplicate.firstPath==="slide.visual.value"&&/^slide\.visual\.data\.\d+\.value$/u.test(duplicate.secondPath);
   const opening=contract.numberedOutline.find((slide)=>slide.index===0);
   const closing=contract.numberedOutline.find((slide)=>slide.index===(contract.authoredSlideCount??contract.numberedOutline.length)-1);

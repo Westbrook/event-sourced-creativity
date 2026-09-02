@@ -146,6 +146,11 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
 }
 
 export function applicationFailureDetail(code: string, scope?: unknown, status: number | null = null): ProviderFailureDetail {
+  if (code === "document_render_guidance_too_long" || code === "document_render_guidance_invalid") return {
+    code, category: "server", scope: "request", action: "edit_request",
+    message: "Audience and Tone must be text, each no longer than 120 UTF-16 code units after trimming outer whitespace.",
+    retryable: false, retryAfterMs: null, requestId: null, httpStatus: status,
+  };
   const normalizedScope = scope === "workspace" ? "workspace" : "user";
   if (code === "budget_hard_cap_reached" || code === "budget_user_hard_cap_reached" || code === "budget_workspace_hard_cap_reached") {
     return {

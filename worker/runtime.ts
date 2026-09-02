@@ -13,6 +13,10 @@ export interface WorkerEnv {
   OPENAI_API_KEY?: string;
   OPENAI_PROJECT?: string;
   OPENAI_MODEL?: string;
+  OPENAI_SLIDES_COMPOSITION_MODEL?: string;
+  OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT?: string;
+  OPENAI_SLIDES_REPAIR_MODEL?: string;
+  OPENAI_SLIDES_REPAIR_REASONING_EFFORT?: string;
   OPENAI_IMAGE_MODEL?: string;
   FAL_KEY?: string;
   FAL_IMAGE_MODEL?: string;

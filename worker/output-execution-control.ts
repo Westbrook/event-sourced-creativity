@@ -14,6 +14,7 @@ import { preflightOutputNativeTarget, type OutputNativeSettings } from "./output
 import { claimOutputProviderCall, settleOutputProviderCall, readOutputSlots, outputSlotFromRow, outputScopeAuthority, outputAssertionStatements, OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import type { authoritativeCreativeContext } from "./context-authority.ts";
 import { priceTextUsageBreakdownMicrousd, priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
+import { estimateOpenAITextCallMaximumMicrousd } from "./openai-text-cost.ts";
 
 const parsed=(raw:string|null|undefined):Record<string,unknown>=>{try{const value:unknown=JSON.parse(raw??"{}");return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}catch{return{};}};
 export type OutputJobBinding={scope:OutputScope;slot:OutputOperationSlot;retentionPolicy:Record<string,unknown>|null};
@@ -114,10 +115,15 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const callKey=attempt.logicalCallKey;
    const route=settings.calls.find(route=>route.stage===callKey);
    if(!callKey||!route||route.model!==attempt.model||!attempt.requestDigest||!Number.isSafeInteger(attempt.maximumInputTokens)||!Number.isSafeInteger(attempt.maximumOutputTokens)||attempt.maximumInputTokens<0||attempt.maximumOutputTokens<0)throw new OutputConflictError("output_provider_stage_not_authorized",403);
+   if(settings.kind==="render_document"&&(!route.presentationRoute||!attempt.presentationRoute
+    ||!Number.isSafeInteger(route.maximumInputTokens)||attempt.maximumInputTokens>Number(route.maximumInputTokens)
+    ||attempt.maximumOutputTokens!==route.maximumOutputTokens
+    ||await outputDigest(attempt.presentationRoute)!==await outputDigest(route.presentationRoute)))throw new OutputConflictError("output_provider_route_changed",403);
    const priorTokens=[...observedReceipts.values()].filter(receipt=>receipt.status==="completed").reduce((sum,receipt)=>sum+Number(receipt.totalTokens??0),0);
    if(priorTokens+attempt.maximumInputTokens+attempt.maximumOutputTokens>slot.maximumTokens)throw new OutputConflictError("output_token_allowance_exceeded",429);
    const maximumUsage={inputTokens:attempt.maximumInputTokens,outputTokens:attempt.maximumOutputTokens,totalTokens:attempt.maximumInputTokens+attempt.maximumOutputTokens};
-   const pricedMaximum=callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd:priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
+   const pricedMaximum=route.presentationRoute?estimateOpenAITextCallMaximumMicrousd(attempt.model,attempt.maximumInputTokens,attempt.maximumOutputTokens)
+    :callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd:priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
    if(pricedMaximum>route.maximumMicrousd)throw new OutputConflictError("output_call_cost_allowance_exceeded",429);
    const assertions:OutputSqlAssertion[]=[...liveAssertions(),{sql:`EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.owner_id=? AND live.stream_id=? AND live.correlation_id=? AND live.attempt_count=? AND live.status='running'
       AND live.lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))

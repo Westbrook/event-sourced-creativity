@@ -85,12 +85,13 @@ export type ProductionFrameReceipt = {
 };
 
 type ManagedProductionCallbacks = {
+  presentationModelRoutes?: import("./presentation-model-routing.ts").PresentationModelRoutes;
   onProviderSubmission?: import("../src/model/provider-submission.ts").PaidProviderSubmissionObserver;
   signal?: AbortSignal;
   progress?: (stage: string, message: string, checkpoint?: ProductionCheckpoint) => void | Promise<void>;
   checkpoint?: (state: ProductionCheckpoint) => void;
   plannerAttempt?: (state: { model: string; responseId: string; responseIds: string[]; usage: ProviderUsage; latencyMs: number }) => void | Promise<void>;
-  plannerResponse?: (state:ProviderResponseReceipt&{pageIndex:number;pageCount:number;globalStartIndex:number})=>void|Promise<void>;
+  plannerResponse?: (state:ProviderResponseReceipt&{pageIndex:number;pageCount:number;globalStartIndex:number})=>void|{responseRef:string}|Promise<void|{responseRef:string}>;
   plannerPreflight?: (attempt: ProviderAttemptPreflight) => void | Promise<void>;
   plannerDispatchGuard?: () => void;
 };
@@ -512,7 +513,7 @@ export async function generateManagedArtifactDraft(
         productionMode: "managed",
         productionPlan: input.production,
         productionScenes: scenes,
-        productionPage: pageOptions(index),
+        presentationModelRoutes: input.presentationModelRoutes, productionPage: pageOptions(index),
         signal: input.signal,
         ...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),
         onProviderAttempt:recordPaidAttempt,
@@ -667,7 +668,7 @@ export async function generateManagedArtifactDraft(
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: presentationPages?.[pageIndex]?.snapshot ?? combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, audioProviderModel: input.audioProviderModel, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight,onBeforeProviderDispatch:input.plannerDispatchGuard },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, audioProviderModel: input.audioProviderModel, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", presentationModelRoutes:input.presentationModelRoutes, productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight,onBeforeProviderDispatch:input.plannerDispatchGuard },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);

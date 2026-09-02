@@ -545,8 +545,8 @@ test("repairs an incomplete provider slide plan once and retains exact validatio
   const originalFetch=globalThis.fetch;const requests=[];
   const incomplete={title:"Field study",summary:"A broken first pass",content_markdown:"# Field study",presentation:{...presentation,footer_label:"Field study"},items:[{title:"",body:"",notes:"",image_prompt:"",context_group_ids:[],slide:{layout:"split",kicker:"",bullets:[],visual:{kind:"bars",label:"",value:"",data:[]}}}]};
   const repaired={title:"Field study",summary:"A resolved deck",content_markdown:"# Field study\n\nOne clear progression.",presentation:{...presentation,footer_label:"Field study"},items:[{title:"Protect the opening",body:"",notes:"Explain why the field remains visible.",image_prompt:"No raster image.",context_group_ids:[],slide:{layout:"metric",kicker:"Evidence",bullets:[],visual:{kind:"metric",label:"Open field",value:"82%",data:[]}}}]};
-  globalThis.fetch=async(_input,init={})=>{const request=JSON.parse(String(init.body));requests.push(request);const output=requests.length===1?incomplete:repaired;return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(output),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});};
-  try{const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-test"},"user-1","slides",{documentTitle:"Field study",snapshot:{facts:[],relationships:[]},options:{itemCount:1,locale:"ja-JP"}});assert.equal(requests.length,2);for(const request of requests){assert.match(request.instructions,/selected language \(ja-JP\)/);assert.match(request.instructions,/Preserve the original language and exact text of user-authored document titles/);assert.equal(JSON.parse(request.input).document_title,"Field study");}assert.equal(requests[1].text.format.name,"document_slides_repair");assert.equal(result.output.items[0]?.title,"Protect the opening");assert.equal(result.inputReceipt.validation.repair_attempted,true);assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="missing_title"));assert.deepEqual(result.inputReceipt.validation.repair_issues,[]);assert.deepEqual(result.usage,{inputTokens:200,outputTokens:100,totalTokens:300});}
+  globalThis.fetch=async(_input,init={})=>{const request=JSON.parse(String(init.body));requests.push(request);const output=requests.length===1?incomplete:repaired;return Response.json({id:`response-${requests.length}`,model:"gpt-5.6-terra",output_text:JSON.stringify(output),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});};
+  try{const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-5.6-terra"},"user-1","slides",{documentTitle:"Field study",snapshot:{facts:[],relationships:[]},options:{itemCount:1,locale:"ja-JP"}});assert.equal(requests.length,2);for(const request of requests){assert.match(request.instructions,/selected language \(ja-JP\)/);assert.match(request.instructions,/Preserve the original language and exact text of user-authored document titles/);assert.equal(JSON.parse(request.input).document_title,"Field study");}assert.equal(requests[1].text.format.name,"document_slides_repair");assert.equal(result.output.items[0]?.title,"Protect the opening");assert.equal(result.inputReceipt.validation.repair_attempted,true);assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="missing_title"));assert.deepEqual(result.inputReceipt.validation.repair_issues,[]);assert.deepEqual(result.usage,{inputTokens:200,outputTokens:100,totalTokens:300});}
   finally{globalThis.fetch=originalFetch;}
 });
 
@@ -574,11 +574,11 @@ test("locally heals repeated slide openings and generic captions while registeri
   };
   globalThis.fetch=async(_input,init={})=>{
     requests.push(JSON.parse(String(init.body)));
-    return Response.json({id:"locally-repaired-pitch",model:"gpt-test",output_text:JSON.stringify(generated),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
+    return Response.json({id:"locally-repaired-pitch",model:"gpt-5.6-terra",output_text:JSON.stringify(generated),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
   };
 
   try{
-    const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-test"},"user-1","slides",{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-5.6-terra"},"user-1","slides",{
       documentTitle:"One context, many paths",
       snapshot:{facts:[],relationships:[]},
       options:{itemCount:1},
@@ -620,10 +620,14 @@ test("first-time storyboards prefer coherent production without silently changin
 
   const component=await readFile(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8");
   assert.match(component,/#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false/);
-  assert.match(component,/#selectArtifactKind\(kind:DocumentArtifactKind\)\{if\(this\.#kind!==kind\)this\.#clearSceneCost\(\);const selected=selectArtifactProductionKind/);
+  const selection=component.slice(component.indexOf("  #selectArtifactKind("),component.indexOf("  #rememberRequestDraft("));
+  assert.match(selection,/if\(this\.#kind!==kind\)\{\s*this\.#requestDrafts\.set\(this\.#kind,\{[^\n]+\}\);\s*this\.#clearSceneCost\(\);\s*\}/u,"leaving a format preserves its own draft before retiring its Scene quote");
+  assert.match(selection,/const changed=this\.#kind!==kind,saved=changed\?this\.#requestDrafts\.get\(kind\):null;/u);
+  assert.match(selection,/const selected=selectArtifactProductionKind\(\{kind:this\.#kind,mode:changed\?"manual":this\.#productionMode,storyboardManagedDefault:this\.#storyboardManagedDefault,storyboardManualOptOut:this\.#storyboardManualOptOut\},kind\);/u);
+  assert.match(selection,/this\.#productionMode=saved\?\.productionMode\?\?selected\.mode/u,"restore only this format's deliberate production mode, otherwise apply its safe default");
   const opener=component.slice(component.indexOf("  async openRender("),component.indexOf("  async openArtifactById("));
   assert.match(opener,/if\(kind\)this\.#selectArtifactKind\(kind\)/);assert.match(opener,/return this\.#openCreate\(!kind,current\)/);
-  assert.match(component,/name="artifact-kind"[^\n]*@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\)/);
+  assert.match(component,/name="artifact-kind"[^\n]*@change=\$\{\(\)=>\{this\.#retireRequestReview\(\);this\.#selectArtifactKind\(kind\)/,"format changes retire any pending failed-request restoration before selecting the new format");
   assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#sceneDraftChanged\(\);this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;this\.#storyboardManagedDefault=false/);
   assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#sceneDraftChanged\(\);this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;/,"switching to manual production must revoke soundtrack-provider transfer consent");
   assert.match(component,/value="managed"[^\n]*@change=\$\{\(\)=>\{this\.#sceneDraftChanged\(\);this\.#productionMode="managed";this\.#sendSoundtrackToVideoProvider=false;/,"switching to managed production must revoke soundtrack-provider transfer consent");

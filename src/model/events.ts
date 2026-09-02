@@ -1,3 +1,4 @@
+import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
 import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, type DocumentArtifact } from "./document-artifacts.ts";
@@ -302,7 +303,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         const b = blocks.get(String(p.block_id)); const path = String(p.property_path ?? "");
         if (b && path === "position") b.position = String(p.new_value ?? b.position);
         else if (b && path === "type") b.type = String(p.new_value ?? b.type);
-        else if (b && path) b.properties[path] = p.new_value;
+        else if (b && path) { b.properties = audioMetadataAfterSourceEdit(b.type, b.properties, path, p.new_value); b.properties[path] = p.new_value; }
         if (b) b.sourceEvents.push(event.eventId);
         break;
       }
@@ -320,7 +321,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         break;
       }
       case "BlockRelationRemoved": { const relation=blockRelations.get(String(p.relation_id??""));if(relation){relation.removed=true;relation.sourceEvents.push(event.eventId);if(relation.kind==="context_contains"||relation.kind==="action_participant"){blocks.get(relation.fromBlockId)?.sourceEvents.push(event.eventId);blocks.get(relation.toBlockId)?.sourceEvents.push(event.eventId);}}break; }
-      case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
+      case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties = audioMetadataAfterSourceEdit(b.type, b.properties, String(p.property ?? "value"), p.new_value); b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionRequested": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "pending"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionCompleted": {
         const b = blocks.get(String(p.block_id)); const chips = Array.isArray(p.chips) ? p.chips : [];

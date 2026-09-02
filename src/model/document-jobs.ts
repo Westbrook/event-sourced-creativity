@@ -332,6 +332,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   }
   const result=job?.result&&typeof job.result==="object"?job.result:{};
   const receipt=result.generationReceipt&&typeof result.generationReceipt==="object"&&!Array.isArray(result.generationReceipt)?result.generationReceipt as Record<string,unknown>:{};
+  if(detail?.code==="document_render_guidance_too_long"||detail?.code==="document_render_guidance_invalid")return{title:"Request settings need attention",summary:"Audience and Tone must be text, each no longer than 120 UTF-16 code units after trimming outer whitespace. This is an application validation error, not a provider failure.",actionLabel:null,actionUrl:null,retryAllowed:false};
   const providerStatus=typeof receipt.provider_request_status==="string"?receipt.provider_request_status:"";
   const transmissionStatus=typeof receipt.source_transmission_status==="string"?receipt.source_transmission_status:"";
   const failureStage=typeof receipt.failure_stage==="string"?receipt.failure_stage:job?.stage??"";

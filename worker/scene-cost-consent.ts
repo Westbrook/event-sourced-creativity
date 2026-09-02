@@ -1,3 +1,4 @@
+import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { buildManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production.ts";
 import { documentRenderTokenReservation } from "../src/model/generation-budget.ts";
 import { foldEvents } from "../src/model/events.ts";
@@ -75,8 +76,10 @@ export async function prepareSceneCostConsent(
   if (payload.artifactKind !== "scene" || payload.sceneMedium !== undefined && !isSceneMedium(payload.sceneMedium)
     || payload.productionMode !== undefined && payload.productionMode !== "manual" && payload.productionMode !== "managed") fail("scene_cost_request_invalid", 400);
   if (payload.itemCount !== undefined && (!Number.isSafeInteger(payload.itemCount) || Number(payload.itemCount) < 1)
-    || ["audience", "tone"].some(key => payload[key] !== undefined && (typeof payload[key] !== "string" || String(payload[key]).length > 120))
     || payload.locale !== undefined && (typeof payload.locale !== "string" || !payload.locale || payload.locale.length > 40)) fail("scene_cost_request_invalid", 400);
+  const guidanceProblem = documentRenderGuidanceProblem(payload);
+  if (guidanceProblem) fail(guidanceProblem.error, 400);
+  const guidance = documentRenderGuidance(payload);
   const initial = user.projectExecution
     ? await readProjectSourceEvents(env, user.projectExecution, { synchronize: options.synchronize === true })
     : await readWorkspaceEvents(env, user.streamId);
@@ -143,8 +146,8 @@ export async function prepareSceneCostConsent(
   const request: SceneCostRequest = {
     documentId, requestId: payload.sceneRequestId, sceneMedium: configuration.medium, productionMode,
     ...(payload.itemCount === undefined ? {} : { itemCount: Number(payload.itemCount) }),
-    audience: typeof payload.audience === "string" ? payload.audience.trim() : "",
-    tone: typeof payload.tone === "string" ? payload.tone.trim() : "",
+    audience: guidance.audience,
+    tone: guidance.tone,
     locale: typeof payload.locale === "string" ? payload.locale.toLowerCase() : "en",
     ...(typeof payload.workflowId === "string" ? { workflowId: payload.workflowId } : {}),
     ...(typeof payload.workflowStageId === "string" ? { workflowStageId: payload.workflowStageId } : {}),

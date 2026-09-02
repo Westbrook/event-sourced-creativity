@@ -14,6 +14,8 @@ import { prepareBudgetReservation, prepareCostBudgetReservation, type PilotUser 
 import { selectImageAdapter } from "./image-adapter.ts";
 import { outputImageBudget } from "./output-image-budget.ts";
 import { hasKnownTextModelPricing, priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
+import { estimateOpenAITextCallMaximumMicrousd, OpenAITextAccountingError } from "./openai-text-cost.ts";
+import { resolvePresentationModelRoutes, PresentationModelConfigurationError, type PresentationModelRoute } from "./presentation-model-routing.ts";
 import { outputDigest, type OutputBridgeTargetInput, type OutputExecutionBridge, type OutputPreparedAdmission } from "./output-requirements-api.ts";
 import { OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputNativeResult } from "./output-native-result.ts";
@@ -21,7 +23,10 @@ import { cleanupExpiredOrRevokedOutputWork } from "./output-execution-control.ts
 
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
 const unavailable=(targetId:string,reasonCode:string,reason:string):OutputNativeTargetPreflight=>({targetId,available:false,reasonCode,transferCode:"output_transfer_none_owned_adoption",reason,provider:null,model:null,route:null,maximumMicrousd:0,maximumCalls:0,maximumTokens:0,settings:{},transferDescription:"No source or file is sent by this check. You can use an owned file after inspection and review."});
-export type OutputNativeCallRoute={stage:string;provider:string;model:string;maximumMicrousd:number};
+export type OutputNativeCallRoute={
+ stage:string;provider:string;model:string;maximumMicrousd:number;
+ presentationRoute?:PresentationModelRoute;maximumInputTokens?:number;maximumOutputTokens?:number;
+};
 export type OutputNativeSettings={
  kind:"generate"|"render_document";payload:Record<string,unknown>;calls:OutputNativeCallRoute[];
  executionPolicy?:typeof OUTPUT_NATIVE_EXECUTION_POLICY;
@@ -58,7 +63,7 @@ export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput)
  if(!["image","slides"].includes(target.media_kind))return unavailable(target.id,"output_native_medium_adoption_only","This medium uses verified owned-file adoption in this release; no provider job will be substituted.");
  if(!env.OPENAI_API_KEY)return unavailable(target.id,"output_native_planner_unconfigured","The planning provider is not configured. Saving and owned-file adoption remain available.");
  const plannerModel=env.OPENAI_MODEL??"gpt-5.6-terra";
- if(!hasKnownTextModelPricing(plannerModel))return unavailable(target.id,"output_native_planner_price_unknown","The configured planning model has no known price contract.");
+ if(target.media_kind!=="slides"&&!hasKnownTextModelPricing(plannerModel))return unavailable(target.id,"output_native_planner_price_unknown","The configured planning model has no known price contract.");
  const facts=Array.isArray(input.context.snapshot.facts)?input.context.snapshot.facts.map(record):[];
  if(!facts.some(fact=>fact.active!==false&&String(fact.type).toLowerCase()!=="output"&&fact.intent!=="prohibit"&&fact.effect!=="must_not_include"))return unavailable(target.id,"output_native_source_required","Add an active authorized source before creating this target.");
  const common={productionMode:"manual",budgetAcknowledged:true,preflightAcknowledged:true,outputTargetInstructions:providerInputInstructions(input)};
@@ -72,10 +77,22 @@ export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput)
   const contract=buildPresentationSourceContract(input.context.snapshot,{itemCount:counts.itemCount,...(counts.requestedSlideCount===undefined?{}:{requestedSlideCount:counts.requestedSlideCount}),slideCountPolicy:counts.slideCountPolicy});
   if(contract.sourceIssues?.length||!contract.sources.some(source=>source.sourceKind==="block"))return unavailable(target.id,contract.sourceIssues?.[0]?.code??"output_native_slide_source_unresolved",contract.sourceIssues?.[0]?.message??"The deck needs an authorized factual source.");
   const maxOutput=manualPresentationMaximumOutputTokens(counts.slideCountPolicy,counts.itemCount);
-  const perCall=Math.max(500_000,priceTextUsageBreakdownMicrousd(plannerModel,{inputTokens:maximumInputTokens,outputTokens:maxOutput,totalTokens:maximumInputTokens+maxOutput}).totalMicrousd);
-  maximumMicrousd=perCall*2;maximumTokens=documentRenderTokenReservation("slides",counts.itemCount,2);
-  settings={kind:"render_document",payload:{...common,artifactKind:"slides",itemCount:counts.itemCount,slideCountPolicy:counts.slideCountPolicy,...(counts.requestedSlideCount===undefined?{}:{requestedSlideCount:counts.requestedSlideCount})},calls:[{stage:"planning:0:initial",provider:"openai",model:plannerModel,maximumMicrousd:perCall},{stage:"planning:0:repair",provider:"openai",model:plannerModel,maximumMicrousd:perCall}]};
-  provider="openai";model=plannerModel;route="document-slides-manual-v1";
+  let calls:OutputNativeCallRoute[];
+  try{
+   const routes=resolvePresentationModelRoutes(env);
+   // These exact route fields and caps are included in the persisted quote digest.
+   const quotedCall=(stage:string,presentationRoute:PresentationModelRoute):OutputNativeCallRoute=>({
+    stage,provider:"openai",model:presentationRoute.model,presentationRoute,maximumInputTokens,maximumOutputTokens:maxOutput,
+    maximumMicrousd:Math.max(500_000,estimateOpenAITextCallMaximumMicrousd(presentationRoute.model,maximumInputTokens,maxOutput)),
+   });
+   calls=[quotedCall("planning:0:initial",routes.composition),quotedCall("planning:0:repair",routes.repair)];
+  }catch(error){
+   if(error instanceof PresentationModelConfigurationError||error instanceof OpenAITextAccountingError)return unavailable(target.id,error.code,error.message);
+   throw error;
+  }
+  maximumMicrousd=calls.reduce((sum,call)=>sum+call.maximumMicrousd,0);maximumTokens=documentRenderTokenReservation("slides",counts.itemCount,2);
+  settings={kind:"render_document",payload:{...common,artifactKind:"slides",itemCount:counts.itemCount,slideCountPolicy:counts.slideCountPolicy,...(counts.requestedSlideCount===undefined?{}:{requestedSlideCount:counts.requestedSlideCount})},calls};
+  provider="openai";model=calls[0]!.model;route="document-slides-manual-v1";
  }else{
   if(!target.aspect_ratio)return unavailable(target.id,"output_native_image_ratio_required","Confirm the image aspect ratio first.");
   const imageRender=outputExactImageRender(target.aspect_ratio);

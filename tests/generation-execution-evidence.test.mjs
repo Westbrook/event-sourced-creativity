@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generationExecutionSummary, knownProviderRejection, managedProductionInputEvidence, isManagedVideoInspection } from "../src/model/generation-execution-evidence.ts";
+import { generationExecutionSummary, knownProviderRejection, managedProductionInputEvidence, isManagedVideoInspection, presentationProviderLabels, safePresentationProviderLabels } from "../src/model/generation-execution-evidence.ts";
 import { failedGenerationInputInspection } from "../src/model/generation-inputs.ts";
 import { generationFailureGuidance } from "../src/model/document-jobs.ts";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
@@ -139,4 +139,127 @@ test("legacy rendered-item-only provider_job_id evidence contributes exact dedup
   const input=checkpoint();input.providerSubmissions={planner:input.providerSubmissions.planner};delete input.productionAnchor;delete input.productionSceneReceipts;
   input.renderedItems=[{provider_job_id:"clip-one",media_url:"/api/media/one.mp4"},{provider_job_id:"clip-two",media_url:"/api/media/two.mp4"},{provider_job_id:"clip-one",media_url:"/api/media/one.mp4"}];
   const result=generationExecutionSummary(input);assert.equal(result.actual_provider_call_count,3);assert.equal(result.actual_media_call_count,2);assert.equal(result.provider_call_breakdown_complete,true);
+});
+
+
+test("a legacy pending slideshow repair stays uncertain after a completed initial response", () => {
+  for (const generic of [false, true]) {
+    const initial = { clientRequestId: "initial", provider: "openai", operation: "planning", model: "gpt-5.6-terra",
+      status: "completed", providerRequestId: "initial-response", costMicrousd: 12000 };
+    const input = { artifactKind: "slides", presentationProviderSubmission: "pending", presentationProviderClientRequestId: "repair",
+      plannerResponseId: "initial-response", plannerResponseIds: ["initial-response"],
+      generationReceipt: { artifact_kind: "slides", provider_request_status: "submission_unknown", actual_provider_call_count: 1,
+        reservation_microusd: 1000000, settled_cost_microusd: null, reservation_status: "executing" },
+      ...(generic ? { providerSubmissions: { initial } } : {}) };
+    const before = JSON.stringify(input), result = generationExecutionSummary(input, { code: "provider_submission_uncertain" });
+    assert.equal(result.provider_request_status, "submission_unknown");
+    assert.equal(result.provider_submission_uncertain, true);
+    assert.equal(result.unresolved_provider_call_count, null);
+    assert.equal(result.provider_call_breakdown_complete, false);
+    assert.equal(result.actual_provider_call_count, 1);
+    assert.equal(result.reservation_status, "executing");
+    assert.equal(result.settled_cost_microusd, null);
+    assert.equal(JSON.stringify(input), before);
+    input.providerSubmissions = { initial, repair: { ...initial, clientRequestId: "repair", status: "pending", providerRequestId: undefined, costMicrousd: undefined } };
+    delete input.providerSubmissions.repair.costMicrousd;
+    assert.equal(generationExecutionSummary(input).unresolved_provider_call_count, 1);
+    input.presentationProviderClientRequestId = "another-unrepresented-repair";
+    assert.equal(generationExecutionSummary(input).unresolved_provider_call_count, null);
+  }
+});
+
+test("invalid generic paid evidence is uncertain for ordinary slideshow jobs too", () => {
+  for (const providerSubmissions of [null, [], { bad: null },
+    { bad: { clientRequestId: "different", provider: "openai", operation: "planning", model: "gpt-5.6-terra", status: "completed" } },
+    { bad: { clientRequestId: "bad", provider: "openai", operation: "planning", model: "gpt-5.6-terra", status: "unknown" } },
+    { bad: { clientRequestId: "bad", provider: "openai", operation: "planning", model: "gpt-5.6-terra", status: "completed", costMicrousd: -1 } }]) {
+    const result = generationExecutionSummary({ artifactKind: "slides", providerSubmissions,
+      generationReceipt: { actual_provider_call_count: 1, reservation_status: "executing", settled_cost_microusd: null } });
+    assert.equal(result.provider_submission_uncertain, true);
+    assert.equal(result.unresolved_provider_call_count, null);
+    assert.equal(result.provider_call_breakdown_complete, false);
+    assert.equal(result.actual_provider_call_count, 1);
+    assert.equal(result.actual_planner_call_count, null);
+    assert.equal(result.settled_cost_microusd, null);
+  }
+});
+
+test("redacted execution summaries cannot turn reported uncertainty into a known zero", () => {
+  for (const declared of [
+    { provider_request_status: "submission_unknown" }, { provider_submission_uncertain: true },
+  ]) {
+    const receipt = { execution_evidence_version: 1, actual_provider_call_count: 1, provider_submission_uncertain: false,
+      unresolved_provider_call_count: 0, provider_call_breakdown_complete: true, reservation_status: "executing", settled_cost_microusd: null, ...declared };
+    const once = generationExecutionSummary({ generationReceipt: receipt });
+    assert.equal(once.provider_submission_uncertain, true);
+    assert.equal(once.unresolved_provider_call_count, null);
+    assert.equal(once.provider_call_breakdown_complete, false);
+    assert.deepEqual(generationExecutionSummary({ generationReceipt: once }), once);
+    assert.equal(receipt.unresolved_provider_call_count, 0);
+  }
+  const legacy = generationExecutionSummary({ presentationProviderSubmission: "pending", plannerResponseId: "initial-response",
+    generationReceipt: { execution_evidence_version: 1, unresolved_provider_call_count: 0, provider_submission_uncertain: false } });
+  assert.equal(legacy.provider_submission_uncertain, true);
+  assert.equal(legacy.unresolved_provider_call_count, null);
+  const publicReceipt = { execution_evidence_version: 1, provider_submission_uncertain: true, unresolved_provider_call_count: 2,
+    provider_call_breakdown_complete: true, actual_provider_call_count: 1, settled_cost_microusd: null };
+  assert.deepEqual(generationExecutionSummary({ generationReceipt: publicReceipt }), publicReceipt);
+  const failure = generationExecutionSummary({ generationReceipt: { execution_evidence_version: 1, unresolved_provider_call_count: 0 } }, { code: "provider_submission_uncertain" });
+  assert.equal(failure.provider_submission_uncertain, true);
+  assert.equal(failure.unresolved_provider_call_count, null);
+});
+
+
+test("new slideshow receipts expose safe per-call models, efforts and tariffs instead of an invented aggregate model",()=>{
+  const version="openai-text-2026-09-02";
+  const input={artifactKind:"slides",generationReceipt:{artifact_kind:"slides",model:"gpt-5.6-luna",provider:"openai",provider_request_status:"completed",reservation_status:"settled",settled_cost_microusd:6_640,input_ref:"retained-input"},providerSubmissions:{
+    first:{clientRequestId:"first",provider:"openai",operation:"planning",status:"completed",providerRequestId:"PRIVATE_PROVIDER_RESPONSE_1",unitId:"planning:0:initial",model:"gpt-5.6-terra",effectiveModel:"gpt-5.6-terra",reasoningEffort:"medium",routingPhase:"composition",pricingVersion:version,usageCostBasis:"measured_usage_published_tariff",costMicrousd:1_840,requestDigest:"PRIVATE_REQUEST_DIGEST",responseRef:"PRIVATE_RESPONSE_REF"},
+    second:{clientRequestId:"second",provider:"openai",operation:"planning",status:"completed",providerRequestId:"PRIVATE_PROVIDER_RESPONSE_2",unitId:"planning:0:repair",model:"gpt-5.6-sol",effectiveModel:"gpt-5.6-sol",reasoningEffort:"high",routingPhase:"validation-repair",pricingVersion:version,usageCostBasis:"measured_usage_request_policy_published_tariff",costMicrousd:4_800,preparedPrompt:"PRIVATE_PROMPT",sourceBlockId:"PRIVATE_SOURCE_BLOCK"},
+  }};
+  const before=JSON.stringify(input),summary=generationExecutionSummary(input);
+  assert.equal(summary.model,null);assert.deepEqual(summary.model_ids,["gpt-5.6-terra","gpt-5.6-sol"]);
+  assert.deepEqual(summary.requested_reasoning_efforts,["medium","high"]);assert.equal(summary.pricing_version,version);
+  assert.deepEqual(summary.provider_call_labels.map(call=>[call.unit_id,call.requested_model,call.effective_model,call.requested_reasoning_effort,call.cost_basis]),[
+    ["planning:0:initial","gpt-5.6-terra","gpt-5.6-terra","medium","measured_usage_published_tariff"],
+    ["planning:0:repair","gpt-5.6-sol","gpt-5.6-sol","high","measured_usage_request_policy_published_tariff"],
+  ]);
+  assert.equal(summary.settled_cost_microusd,6_640);assert.doesNotMatch(JSON.stringify(summary),/PRIVATE_/);
+  assert.equal(JSON.stringify(input),before,"display projection never mutates settled evidence");
+  const redacted={artifactKind:"slides",generationReceipt:summary};
+  assert.deepEqual(generationExecutionSummary(redacted),summary);
+  const job={jobId:"label-job",documentId:"label-document",kind:"render_document",status:"completed",productionMode:"manual",attemptCount:1,promptTechnique:"prose",members:[],result:redacted};
+  const inspection=failedGenerationInputInspection(job,[],{"retained-input":JSON.stringify({job_id:"label-job",document_id:"label-document",artifact_kind:"slides",planner:{provider:"openai",model:"gpt-5.6-luna"}})});
+  const receipt=inspection.receipt.generation_receipt;
+  assert.equal(receipt.model,null,"a retained old single-model input cannot overwrite a mixed-model result");
+  assert.deepEqual(receipt.model_ids,summary.model_ids);assert.deepEqual(receipt.provider_call_labels,summary.provider_call_labels);
+  assert.doesNotMatch(JSON.stringify(receipt),/PRIVATE_/);
+
+  input.providerSubmissions.second.pricingVersion="openai-text-2026-10-01";
+  const changed=presentationProviderLabels(input,true);assert.equal(changed.pricing_version,null);
+  assert.deepEqual(changed.pricing_versions,[version,"openai-text-2026-10-01"],"distinct frozen tariffs cannot be reported as one tariff");
+  delete input.providerSubmissions.second.pricingVersion;
+  assert.equal(presentationProviderLabels(input,true).pricing_version,null,"missing tariff evidence is not replaced by the remaining call's version");
+});
+
+test("slideshow label projection keeps pending and unsafe metadata unknown and leaves legacy/media receipts unchanged",()=>{
+  const input={artifactKind:"slides",generationReceipt:{artifact_kind:"slides",model:"gpt-5.6-terra"},providerSubmissions:{
+    pending:{clientRequestId:"pending",provider:"openai",operation:"planning",status:"pending",model:"gpt-5.6-sol",effectiveModel:"gpt-5.6-sol",reasoningEffort:"high",routingPhase:"validation-repair",pricingVersion:"openai-text-2026-09-02",unitId:"planning:0:repair"},
+  }};
+  const pending=generationExecutionSummary(input);assert.equal(pending.model,null);assert.deepEqual(pending.model_ids,[]);
+  assert.deepEqual(pending.requested_model_ids,["gpt-5.6-sol"]);assert.equal(pending.provider_call_labels[0].effective_model,null);
+  assert.equal(pending.unresolved_provider_call_count,1);
+  const completed=structuredClone(input);
+  Object.assign(completed.providerSubmissions.pending,{status:"completed",providerRequestId:"undisclosed-model-response",inputTokens:200,outputTokens:120,totalTokens:320,costMicrousd:3200});
+  delete completed.providerSubmissions.pending.effectiveModel;
+  const undisclosed=generationExecutionSummary(completed);
+  assert.equal(undisclosed.model,null);assert.deepEqual(undisclosed.model_ids,[]);
+  assert.deepEqual(undisclosed.requested_model_ids,["gpt-5.6-sol"]);
+  assert.equal(undisclosed.provider_call_labels[0].effective_model,null,"completion does not disclose an omitted response model");
+  const unsafe=safePresentationProviderLabels({provider_call_labels:[{unit_id:"PRIVATE_UNIT",status:"completed",requested_model:"PRIVATE_MODEL",effective_model:"PRIVATE_MODEL",requested_reasoning_effort:"PRIVATE_EFFORT",pricing_version:"PRIVATE_TARIFF",cost_basis:"PRIVATE_BASIS",prompt:"PRIVATE_PROMPT"}]});
+  assert.doesNotMatch(JSON.stringify(unsafe),/PRIVATE_/);assert.equal(unsafe.model,null);assert.equal(unsafe.pricing_version,null);
+  delete input.providerSubmissions.pending.pricingVersion;delete input.providerSubmissions.pending.routingPhase;
+  assert.equal(presentationProviderLabels(input),null,"historical unversioned receipts keep their existing labels");
+  const legacy=generationExecutionSummary(input);assert.equal(legacy.model,"gpt-5.6-terra");assert.equal(legacy.provider_call_labels,undefined);
+  input.providerSubmissions.pending.pricingVersion="openai-text-2026-09-02";input.artifactKind="audio";input.generationReceipt.artifact_kind="audio";input.generationReceipt.model="audio-model";
+  const media=generationExecutionSummary(input);assert.equal(media.model,"audio-model");assert.equal(media.provider_call_labels,undefined);
 });

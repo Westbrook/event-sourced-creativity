@@ -7,7 +7,9 @@ import worker from "../dist/server/index.js";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
 import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobCanRecoverProviderRender, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
 import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
-import { appendAuditEvent } from "../worker/runtime.ts";
+import { appendAuditEvent, readWorkspaceEvents } from "../worker/runtime.ts";
+import { foldEvents } from "../src/model/events.ts";
+import { artifactReviewState } from "../src/model/context-health.ts";
 import { isSceneCostPreview } from "../src/model/scene-cost-consent.ts";
 
 const workspaceRoot=new URL("../",import.meta.url).href;
@@ -1038,23 +1040,50 @@ test("renews the foreground presentation heartbeat while a legitimate provider r
   }finally{release.resolve();globalThis.fetch=previousFetch;context.mock.timers.reset();}
 });
 
-test("keeps a long-running twelve-block presentation and repeated lease renewals below the hosted subrequest ceiling",async(context)=>{
-  const fixture=await reliabilityWorker();const documentId=await seedIndependentPresentation(fixture,"subrequest-headroom-presentation-document");
-  const admission=await fixture.request("/api/document-jobs",json(presentationAdmission(documentId,"foreground-hosted-subrequest-headroom")));
+for(const [label,slideCount,repair] of [["a long-running twelve-block presentation",12,false],["a six-slide presentation with one bounded repair",6,true]])test(`keeps ${label} and repeated lease renewals below the conservative subrequest budget`,async(context)=>{
+  const fixture=await reliabilityWorker();const documentId=await seedIndependentPresentation(fixture,"subrequest-headroom-presentation-document",slideCount);
+  const request=presentationAdmission(documentId,"foreground-hosted-subrequest-headroom");
+  request.payload.itemCount=slideCount;request.payload.requestedSlideCount=slideCount;
+  const admission=await fixture.request("/api/document-jobs",json(request));
   assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));
   const {job}=await admission.json();const before=fixture.controls.bindingCalls;
   context.mock.timers.enable({apis:["Date","setTimeout"],now:Date.now()});
-  const entered=Promise.withResolvers(),release=Promise.withResolvers(),previousFetch=globalThis.fetch;let providerCalls=0;
-  globalThis.fetch=async(_url,init={})=>{providerCalls+=1;entered.resolve();await release.promise;return Response.json({id:"subrequest-headroom-presentation-response",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});};
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),previousFetch=globalThis.fetch;let providerCalls=0,validatedAtCommit=false;
+  const retained=()=>fixture.sqlite.prepare("SELECT content FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.job_id')=? ORDER BY created_at,content_id").all(job.jobId).map(row=>JSON.parse(row.content));
+  fixture.controls.beforeRun=async statement=>{
+    if(!statement.sql.startsWith("UPDATE document_jobs SET status='committing'"))return;
+    const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    const calls=Object.values(checkpoint.providerSubmissions);
+    assert.equal(calls.length,repair?2:1);
+    assert.equal(calls.at(-1).validationStatus,"valid","changed validation evidence remains durable before artifact commit");
+    assert.equal(calls.at(-1).validationIssueCount,0);validatedAtCommit=true;
+  };
+  globalThis.fetch=async(_url,init={})=>{
+    providerCalls+=1;
+    const clientRequestId=new Headers(init.headers).get("X-Client-Request-Id");
+    const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(checkpoint.presentationProviderClientRequestId,clientRequestId);
+    assert.equal(checkpoint.presentationProviderSubmission,"pending");
+    assert.equal(checkpoint.providerSubmissions[clientRequestId].status,"pending","the exact call is durable before dispatch");
+    assert.match(checkpoint.providerSubmissions[clientRequestId].requestDigest,/^[a-f0-9]{64}$/u);
+    if(providerCalls===2){const initial=retained();assert.equal(initial.length,1);assert.equal(initial[0].output_text,"{}");assert.equal(initial[0].call.providerRequestId,"subrequest-headroom-presentation-response-1");assert.equal(initial[0].call.costMicrousd,12000);}
+    entered.resolve();await release.promise;
+    return Response.json({id:`subrequest-headroom-presentation-response-${providerCalls}`,model:"gpt-5.6-terra",output_text:repair&&providerCalls===1?"{}":JSON.stringify(independentProviderResponse(init.body)),usage:providerCalls===1?{input_tokens:1200,output_tokens:800,total_tokens:2000}:{input_tokens:2100,output_tokens:900,total_tokens:3000}});
+  };
   try{
     const execution=fixture.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"});await entered.promise;
     for(let renewal=0;renewal<4;renewal+=1){context.mock.timers.tick(DOCUMENT_JOB_HEARTBEAT_MS);await flushExecution();}
     release.resolve();const completed=await execution;
     assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));
-    assert.equal((await completed.json()).job.status,"completed");
+    const result=(await completed.json()).job;assert.equal(result.status,"completed");
     const databaseSubrequests=fixture.controls.bindingCalls-before;
-    assert.ok(databaseSubrequests+providerCalls<50,`${databaseSubrequests} D1 binding calls and ${providerCalls} paid-provider request must retain headroom below Cloudflare's 50-subrequest free-tier ceiling`);
-    assert.equal(providerCalls,1);
+    assert.ok(databaseSubrequests+providerCalls<50,`${databaseSubrequests} D1 binding calls and ${providerCalls} paid-provider requests must stay below the repository's conservative 50-request budget; actual hosted quotas require separate verification`);
+    assert.equal(providerCalls,repair?2:1);assert.equal(validatedAtCommit,true);
+    const envelopes=retained();assert.equal(envelopes.length,providerCalls);
+    assert.equal(new Set(envelopes.map(envelope=>envelope.call.clientRequestId)).size,providerCalls);
+    assert.equal(envelopes.reduce((sum,envelope)=>sum+envelope.call.totalTokens,0),repair?5000:2000);
+    assert.equal(envelopes.reduce((sum,envelope)=>sum+envelope.call.costMicrousd,0),repair?27000:12000);
+    assert.equal(result.result.generationReceipt.settled_cost_microusd,repair?27000:12000);
   }finally{release.resolve();globalThis.fetch=previousFetch;context.mock.timers.reset();}
 });
 
@@ -1807,30 +1836,23 @@ test("captures a truthful failed receipt and releases both reservations when loc
   }finally{globalThis.fetch=previousFetch;}
 });
 
-test("fails closed for an unpriced slideshow model before provider submission and releases its complete reservation",async()=>{
+test("rejects unsupported slideshow configuration before queueing, reserving or provider contact",async()=>{
   const fixture=await reliabilityWorker();
   await authoredOutline(fixture,12);
   fixture.environment.OPENAI_MODEL="unpriced-presentation-model";
+  const counts=()=>Object.fromEntries(["document_jobs","budget_reservations","cost_budget_reservations"].map(table=>[table,fixture.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count]));
+  const before=counts();
   const previousFetch=globalThis.fetch;
   let providerCalls=0;
   globalThis.fetch=async()=>{providerCalls+=1;throw new Error("An unpriced model must never receive authorized source text.");};
   try{
-    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"unpriced-slideshow-model"}}));
-    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
-    const {job}=await accepted.json();
-    assert.equal(job.result.generationReceipt.reservation_is_application_hard_cap,true);
-    assert.equal(job.result.generationReceipt.maximum_authorized_cost_microusd,1_000_000);
-    await fixture.runJob(job);
-
-    const response=await fixture.request(`/api/document-jobs/${job.jobId}`);
-    assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
-    const failed=(await response.json()).job;
-    assert.equal(failed.status,"failed");
-    assert.equal(failed.errorDetail.code,"presentation_model_pricing_unavailable");
+    const response=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"unpriced-slideshow-model"}}));
+    assert.equal(response.status,503,JSON.stringify(await response.clone().json()));
+    const refusal=await response.json();
+    assert.equal(refusal.error,"presentation_model_configuration_invalid");
+    assert.equal(refusal.field,"OPENAI_MODEL");
     assert.equal(providerCalls,0);
-    assert.equal(failed.result.generationReceipt.provider_request_status,"not_submitted");
-    assert.equal(failed.result.generationReceipt.source_transmission_status,"not_transmitted");
-    assert.equal(failed.result.generationReceipt.settled_cost_microusd,0);
+    assert.deepEqual(counts(),before,"invalid server routing cannot create a job or a budget hold to release later");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
   }finally{globalThis.fetch=previousFetch;}
@@ -2235,6 +2257,159 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
   }finally{globalThis.fetch=previousFetch;}
 });
 
+
+/** SIMULATED provider responses exercise the real candidate authority, validation and atomic revision path. */
+async function rejectedRevisionFixture({project=false,invalidSource=false}={}){
+  const fixture=await reliabilityWorker(),documentId=await seedIndependentPresentation(fixture,`revision-document-${crypto.randomUUID()}`,6);
+  let headers={},projectAccessId=null,organizationId=null;
+  if(project){
+    const workspace=await fixture.request("/api/workspaces",json({name:"Private candidate revision"}));
+    assert.equal(workspace.status,201);organizationId=(await workspace.json()).organizationId;
+    const registered=await fixture.request(`/api/workspaces/${organizationId}/projects`,json({projectId:"project-atmosphere"}));
+    assert.equal(registered.status,201);projectAccessId=(await registered.json()).projectAccessId;
+    const opened=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST"});
+    assert.equal(opened.status,200);headers={cookie:opened.headers.get("set-cookie").split(";")[0]};
+  }
+  const sourceRequest=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,{...init,headers:{...headers,...Object.fromEntries(new Headers(init.headers))}}),fixture.environment,path);
+  let providerCalls=0;
+  const previousFetch=globalThis.fetch;
+  globalThis.fetch=async(url,init={})=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");providerCalls++;
+    const draft=independentProviderResponse(init.body),slide=draft.items[4].slide,alias=slide.source_ids[0];
+    slide.layout="comparison";slide.visual={kind:"comparison",label:"Source-bound publication",value:"",data:[
+      {label:"Repeated implementation claim",value:"Repeated implementation claim",weight:1,source_ids:[alias]},
+      {label:"Document ownership",value:"The author chooses which draft to retain",weight:1,source_ids:[alias]},
+    ]};
+    if(invalidSource)draft.items[2].slide.source_ids=["blk_999"];
+    return Response.json({id:`revision-candidate-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(draft),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:100}}});
+  };
+  try{
+    const admission=presentationAdmission(documentId,`candidate-revision-${crypto.randomUUID()}`);
+    Object.assign(admission.payload,{itemCount:6,requestedSlideCount:6});
+    const admitted=await sourceRequest("",json(admission));assert.equal(admitted.status,202,await admitted.clone().text());
+    const{job}=await admitted.json();
+    const executed=await sourceRequest(`${job.jobId}/run`,{method:"POST"});assert.equal(executed.status,200,await executed.clone().text());
+    const failed=(await executed.json()).job;assert.equal(failed.status,"failed");assert.equal(providerCalls,2,JSON.stringify(failed));
+    const detailed=await sourceRequest(`${job.jobId}/presentation-candidates/revision-candidate-2`);
+    assert.equal(detailed.status,200,await detailed.clone().text());
+    const detail=(await detailed.json()).candidate;
+    assert.ok(detail.revision,JSON.stringify({accounting:detail.accounting,issues:detail.issues}));
+    const payload={revisionToken:detail.revision.token,idempotencyKey:`local-revision-${crypto.randomUUID()}`,confirmed:true,
+      edits:[{path:"items.4.slide.visual.data.0.value",value:"Conversion remains source-grounded"}]};
+    const revise=(body=payload,extraHeaders={})=>sourceRequest(`${job.jobId}/presentation-candidates/revision-candidate-2/revisions`,json(body,extraHeaders));
+    return{...fixture,documentId,job,detail,payload,revise,sourceRequest,projectAccessId,organizationId,get providerCalls(){return providerCalls;},restore(){globalThis.fetch=previousFetch;}};
+  }catch(error){globalThis.fetch=previousFetch;throw error;}
+}
+
+for(const project of [false,true])test(`explicit ${project?"project":"personal"} candidate revision creates one new unapproved draft without altering paid failure or spending`,async()=>{
+  const fixture=await rejectedRevisionFixture({project});
+  try{
+    const original=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId);
+    const evidence=fixture.sqlite.prepare("SELECT * FROM private_content WHERE kind IN('provider-response','document-artifact-input') ORDER BY content_id").all();
+    const counters=fixture.sqlite.prepare("SELECT * FROM cost_budget_counters ORDER BY scope,scope_id").all();
+    const reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    const usage=fixture.sqlite.prepare("SELECT * FROM events WHERE type='GenerationUsageRecorded' ORDER BY sequence").all();
+    const response=await fixture.revise();assert.equal(response.status,201,await response.clone().text());
+    const revised=await response.json();assert.equal(revised.providerCalls,0);assert.equal(revised.incrementalCostMicrousd,0);assert.equal(revised.approval,"unapproved");assert.equal(revised.reused,false);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId),original);
+    for(const row of evidence)assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(row.content_id),row);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_counters ORDER BY scope,scope_id").all(),counters);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM events WHERE type='GenerationUsageRecorded' ORDER BY sequence").all(),usage);
+    assert.equal(fixture.providerCalls,2);
+    const event=fixture.sqlite.prepare("SELECT actor,payload FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.artifact_id')=?").get(revised.artifactId);
+    assert.equal(event.actor,"user:dev-local-creative");
+    const completed=JSON.parse(event.payload),saved=fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(completed.content_ref);
+    const output=parseDocumentArtifactContent(saved.content);assert.ok(output);
+    assert.equal(output.items[4].slide.visual.data[0].value,"Conversion remains source-grounded");
+    assert.match(output.content_markdown,/Repeated implementation claim: Conversion remains source-grounded/u);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='ArtifactApproved' AND json_extract(payload,'$.artifact_id')=?").get(revised.artifactId).count,0);
+    const reviewEvents=await readWorkspaceEvents(fixture.environment,"creative:dev-local-creative");
+    const reviewProjection=foldEvents(reviewEvents,Number.POSITIVE_INFINITY,fixture.documentId,"project-atmosphere");
+    const reviewArtifact=reviewProjection.artifacts.find(artifact=>artifact.id===revised.artifactId);assert.ok(reviewArtifact);
+    assert.equal(artifactReviewState(reviewArtifact,reviewProjection.blocks,reviewEvents).status,"draft");
+    const receipt=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(completed.input_ref).content);
+    assert.equal(receipt.presentation_revision.source_job_id,fixture.job.jobId);
+    assert.equal(receipt.presentation_revision.original_validation.outcome,"rejected");
+    assert.deepEqual(receipt.presentation_revision.changed_paths,["items.4.slide.visual.data.0.value"]);
+    assert.ok(receipt.accounting.source_generation_settled_cost_microusd>0);assert.equal(receipt.accounting.incremental_cost_microusd,0);
+    assert.doesNotMatch(event.payload,/original_validation|source_receipt_sha256|source_generation_settled_cost/u,"private historical receipt bytes are not copied into shared completion metadata");
+    if(project){
+      assert.equal(fixture.sqlite.prepare("SELECT visibility FROM project_resource_scopes WHERE resource_kind='artifact' AND resource_id=? AND project_access_id=?").get(revised.artifactId,fixture.projectAccessId).visibility,"collaborative_output");
+      assert.equal(fixture.sqlite.prepare("SELECT visibility FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? AND project_access_id=?").get(completed.input_ref,fixture.projectAccessId).visibility,"actor_private");
+      assert.equal(fixture.sqlite.prepare("SELECT classification FROM private_content_retention_scopes WHERE content_id=?").get(completed.input_ref).classification,"governed-evidence");
+    }
+    const replay=await fixture.revise();assert.equal(replay.status,200,await replay.clone().text());
+    assert.equal((await replay.json()).artifactId,revised.artifactId);
+    const different=await fixture.revise({...fixture.payload,edits:[{path:"items.4.slide.visual.data.0.value",value:"Every revision remains independently reviewable"}]});
+    assert.equal(different.status,409);assert.equal((await different.json()).error,"presentation_revision_idempotency_conflict");
+    const conflict=await fixture.revise({...fixture.payload,edits:[]});assert.equal(conflict.status,422,"a replay with an invalid new payload must never reuse a prior valid artifact");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(fixture.documentId).count,1);
+  }finally{fixture.restore();}
+});
+
+test("candidate revision rejects private source edits, residual fidelity failures, unconfirmed cost, stale tokens and foreign actors",async()=>{
+  const fixture=await rejectedRevisionFixture({invalidSource:true});
+  try{
+    const before=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+    for(const edits of [[{path:"items.2.slide.source_ids.0",value:"blk_1"}], [{path:"items.4.slide.visual.data.0.exact_value",value:"99"}], [{path:"items.0.__proto__.title",value:"forged"}]]){
+      const denied=await fixture.revise({...fixture.payload,edits});assert.equal(denied.status,400,await denied.clone().text());
+    }
+    const residual=await fixture.revise();assert.equal(residual.status,422,await residual.clone().text());
+    const issues=(await residual.json()).issues;assert.ok(issues.some(issue=>issue.code==="unknown_source_reference"));
+    assert.doesNotMatch(JSON.stringify(issues),/blk_999|PRIVATE_AUTHORED_SLIDE_/u);
+    assert.equal((await fixture.revise({...fixture.payload,revisionToken:"0".repeat(64)})).status,409);
+    assert.equal((await fixture.revise({...fixture.payload,confirmed:false})).status,400);
+    assert.equal((await fixture.revise(fixture.payload,{origin:"https://foreign.example"})).status,403);
+    const foreign={"oai-authenticated-user-id":"revision-foreign-author","oai-authenticated-user-email":"revision-foreign-author@example.test"};
+    await fixture.request("/api/session",{headers:foreign});fixture.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","revision-foreign-author");
+    assert.equal((await fixture.revise(fixture.payload,foreign)).status,404);
+    const row=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId),checkpoint=JSON.parse(row.result_json);
+    fixture.sqlite.prepare("UPDATE cost_budget_reservations SET status='executing' WHERE reservation_id=?").run(checkpoint.costReservationId);
+    assert.equal((await fixture.revise()).status,409);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,before);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(fixture.documentId).count,0);
+    assert.equal(fixture.providerCalls,2);
+  }finally{fixture.restore();}
+});
+
+for(const race of ["source","authored-redaction","retention","principal","project-session","artifact-write"])test(`candidate revision atomically refuses ${race} change without orphan artifacts`,async()=>{
+  const fixture=await rejectedRevisionFixture({project:race==="project-session"});
+  try{
+    const original=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId);
+    const before=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+    const batch=fixture.environment.DB.batch.bind(fixture.environment.DB);let raced=false;
+    fixture.environment.DB.batch=async statements=>{
+      if(!raced&&statements.some(statement=>statement.sql.includes("INSERT INTO event_write_stage")&&statement.values[11]==="DocumentRenderCompleted")){
+        raced=true;
+        if(race==="source")await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user:dev-local-creative","BlockPropertyEdited",{document_id:fixture.documentId,project_id:"project-atmosphere",block_id:"PRIVATE_AUTHORED_SLIDE_5",property_path:"text",new_value:"The source changed before the revision committed."});
+        if(race==="authored-redaction")fixture.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')='PRIVATE_AUTHORED_SLIDE_5')").run(new Date().toISOString());
+        if(race==="retention")fixture.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE kind='provider-response' AND json_extract(content,'$.response_id')=?").run("2000-01-01T00:00:00.000Z","revision-candidate-2");
+        if(race==="principal")fixture.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("dev-local-creative");
+        if(race==="project-session")fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id=?").run(new Date().toISOString(),"dev-local-creative");
+        if(race==="artifact-write")fixture.sqlite.exec("CREATE TRIGGER fail_candidate_revision BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'candidate_revision_test_failure'); END");
+      }
+      return batch(statements);
+    };
+    const denied=await fixture.revise();assert.equal(denied.status,409,await denied.clone().text());assert.equal(raced,true);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId),original);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,before);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(fixture.documentId).count,0);
+    assert.equal(fixture.providerCalls,2);
+  }finally{fixture.restore();}
+});
+
+test("concurrent candidate revision replay produces one event and one artifact",async()=>{
+  const fixture=await rejectedRevisionFixture();
+  try{
+    const responses=await Promise.all([fixture.revise(),fixture.revise()]);
+    const results=await Promise.all(responses.map(async response=>{assert.ok([200,201].includes(response.status),await response.clone().text());return response.json();}));
+    assert.equal(results[0].artifactId,results[1].artifactId);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(fixture.documentId).count,1);
+    assert.equal(fixture.providerCalls,2);
+  }finally{fixture.restore();}
+});
+
 test("an adapter upgrade cannot promote a historically rejected paid presentation or rewrite its receipt",async()=>{
   const fixture=await reliabilityWorker();
   const documentId=await seedIndependentPresentation(fixture,"historical-rejection-review-only");
@@ -2284,6 +2459,19 @@ test("an adapter upgrade cannot promote a historically rejected paid presentatio
       assert.equal(retained.result_json,original,"review and blocked recovery do not migrate immutable failure accounting");
       assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
     }
+    const stillFailed=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId);
+    const privateReview=await requestSourceJob(`${job.jobId}/presentation-candidates/historical-review-only-response`);
+    assert.equal(privateReview.status,200);const detail=(await privateReview.json()).candidate;
+    assert.equal(detail.reviewOnlyReason,"historical-validation-rejection");assert.ok(detail.revision);
+    const explicit=await requestSourceJob(`${job.jobId}/presentation-candidates/historical-review-only-response/revisions`,json({
+      revisionToken:detail.revision.token,idempotencyKey:"historical-explicit-reuse-123456",confirmed:true,edits:[],
+    }));
+    assert.equal(explicit.status,201,await explicit.clone().text());
+    assert.equal((await explicit.json()).approval,"unapproved");
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId),stillFailed,
+      "explicit reuse creates a separate draft, never retroactive provider success");
+    const stillBlocked=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});assert.equal(stillBlocked.status,409);
+    assert.equal((await stillBlocked.json()).reason,"historical_validation_rejection");
     assert.equal(providerCalls,1,"reviewing and blocking recovery never submit another provider request");
   }finally{globalThis.fetch=previousFetch;}
 });
@@ -3179,4 +3367,96 @@ test("shows stale project presentation recovery without exposing actor-private r
   assert.equal(receipt.provider_request_status,"not_submitted");
   assert.equal(receipt.source_transmission_status,"not_transmitted");
   assert.equal(receipt.settled_cost_microusd,0);
+});
+
+
+test("guidance boundaries reject before queueing, reserving, private capture or any provider contact on both admission paths",async t=>{
+  const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="synthetic-guidance-key";await fixture.drainBackground();
+  t.mock.method(globalThis,"fetch",async()=>assert.fail("Invalid guidance must never contact a provider"));
+  const counts=()=>Object.fromEntries(["document_jobs","budget_reservations","cost_budget_reservations","private_content"].map(table=>[table,fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count]));
+  const before=counts();
+  for(const artifactKind of ["slides","short_story","audio","video"]){
+    for(const field of ["audience","tone"]){
+      for(const [value,code] of [["x".repeat(121),"document_render_guidance_too_long"],["🎵".repeat(61),"document_render_guidance_too_long"],[{},"document_render_guidance_invalid"]]){
+        const payload={artifactKind,productionMode:"manual",itemCount:6,paidMediaConfirmed:true,[field]:value};
+        const queued=await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload})),fixture.environment);
+        assert.equal(queued.status,400);const body=await queued.json();assert.equal(body.error,code);assert.equal(body.fieldErrors[0].field,field);assert.equal(body.attemptSubmission,"not-submitted");
+        const direct=await handleEvents(new Request("http://localhost/api/events",json({...payload,action:"render_document",documentId:"doc-atmosphere",sourceSurface:"document"})),fixture.environment);
+        assert.equal(direct.status,400);assert.equal((await direct.json()).error,code);assert.deepEqual(counts(),before);
+      }
+    }
+  }
+});
+
+
+
+// Retained draft boundaries: simulated provider responses and isolated in-memory SQL only.
+for (const state of ["unknown-call", "accepted-unsettled-call", "missing-usage", "partial-draft", "managed-mode"]) test(`retained draft revision denies ${state}`, async () => {
+  const fixture=await rejectedRevisionFixture();
+  try {
+    const jobRow=fixture.sqlite.prepare("SELECT result_json,request_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId);
+    const checkpoint=JSON.parse(jobRow.result_json),request=JSON.parse(jobRow.request_json);
+    if(state==="unknown-call"){
+      checkpoint.presentationProviderSubmission="pending";
+      checkpoint.generationReceipt={...checkpoint.generationReceipt,provider_request_status:"submission_unknown",provider_submission_uncertain:true,unresolved_provider_call_count:1};
+    }
+    if(state==="accepted-unsettled-call"){
+      const submissions=Object.values(checkpoint.providerSubmissions??{});
+      assert.ok(submissions.length);
+      submissions[submissions.length-1].status="accepted";
+    }
+    if(state==="missing-usage"){
+      const prepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
+      fixture.environment.DB.prepare=sql=>{
+        const statement=prepare(sql);
+        if(sql.startsWith("SELECT 1 AS present FROM events WHERE stream_id=? AND actor='worker:policy'")){
+          const bind=statement.bind.bind(statement);
+          statement.bind=(...values)=>{const bound=bind(...values);bound.first=async()=>null;return bound;};
+        }
+        return statement;
+      };
+    }
+    if(state==="partial-draft"){
+      const stored=fixture.sqlite.prepare("SELECT content_id,content FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.response_id')='revision-candidate-2'").get();
+      const envelope=JSON.parse(stored.content),raw=JSON.parse(envelope.output_text);raw.items.pop();
+      envelope.output_text=JSON.stringify(raw);
+      envelope.content_sha256=Buffer.from(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(envelope.output_text))).toString("hex");
+      const captured=checkpoint.presentationCandidates.find(candidate=>candidate.responseId==="revision-candidate-2");
+      captured.contentSha256=envelope.content_sha256;captured.candidateBytes=new TextEncoder().encode(envelope.output_text).byteLength;
+      fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify(envelope),stored.content_id);
+    }
+    if(state==="managed-mode")request.productionMode="managed";
+    fixture.sqlite.prepare("UPDATE document_jobs SET result_json=?,request_json=? WHERE job_id=?").run(JSON.stringify(checkpoint),JSON.stringify(request),fixture.job.jobId);
+    const original=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId);
+    const before=fixture.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n;
+    const denied=await fixture.revise();
+    assert.equal(denied.status,409,`${state}: ${await denied.clone().text()}`);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n,before);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(fixture.documentId).n,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId),original);
+    assert.equal(fixture.providerCalls,2);
+  } finally {fixture.restore();}
+});
+
+for (const race of ["financial-evidence", "candidate-source", "author-capability"]) test(`retained draft revision atomic ${race} race`, async () => {
+  const fixture=await rejectedRevisionFixture({project:race==="author-capability"});
+  try {
+    const original=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId);
+    const before=fixture.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n;
+    const batch=fixture.environment.DB.batch.bind(fixture.environment.DB);let raced=false;
+    fixture.environment.DB.batch=async statements=>{
+      if(!raced&&statements.some(statement=>statement.sql.includes("INSERT INTO event_write_stage")&&statement.values[11]==="DocumentRenderCompleted")){
+        raced=true;
+        if(race==="financial-evidence")fixture.sqlite.prepare("UPDATE cost_budget_reservations SET status='executing' WHERE reservation_id=?").run(JSON.parse(original.result_json).costReservationId);
+        if(race==="candidate-source")fixture.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE kind='document-artifact-input' AND json_extract(content,'$.job_id')=?").run("2000-01-01T00:00:00.000Z",fixture.job.jobId);
+        if(race==="author-capability")fixture.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE user_id=?").run(new Date().toISOString(),"dev-local-creative");
+      }
+      return batch(statements);
+    };
+    const denied=await fixture.revise();assert.equal(denied.status,409,await denied.clone().text());assert.equal(raced,true);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(fixture.job.jobId),original);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n,before);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(fixture.documentId).n,0);
+    assert.equal(fixture.providerCalls,2);
+  } finally {fixture.restore();}
 });
