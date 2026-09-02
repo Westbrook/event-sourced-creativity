@@ -41,11 +41,6 @@ test("authored format synonyms map to every supported editable output kind", () 
     ["A research report", "short_story"],
     ["A commercial proposal", "short_story"],
     ["A launch email", "short_story"],
-    ["A textured 3D model", "model3d"],
-    ["A three-dimensional asset", "model3d"],
-    ["A 3-D mesh", "model3d"],
-    ["Text-to-3D", "model3d"],
-    ["An image-to-3D model", "model3d"],
   ];
 
   for (const [format, expected] of cases) {
@@ -68,27 +63,6 @@ test("an explicitly visual-only deliverable blocks vague pitch inference without
   assert.equal(inferDocumentArtifactKind([
     block("format", "A faithful slideshow", { image_format: "landscape" }),
   ]), "slides", "a stale visual-format field cannot replace an explicit presentation");
-});
-
-test("3D model intent preserves authored precedence and does not reclassify image or video references", () => {
-  assert.equal(inferDocumentArtifactKind([
-    block("format", "Text-to-3D model from a short description and image references."),
-    block("direction", "A product video using the finished asset."),
-  ], "Launch presentation"), "model3d");
-  assert.equal(inferDocumentArtifactKind([
-    block("format", "A product video featuring a 3D model."),
-  ]), "video");
-  assert.equal(inferDocumentArtifactKind([
-    block("format", "A 3D animation."),
-  ]), "video");
-  assert.equal(inferDocumentArtifactKind([
-    block("model3d", "An existing 3D model used as reference."),
-  ]), null, "an input model does not request a generated model");
-  assert.equal(inferDocumentArtifactKind([
-    block("format", "Text-to-3D", { active: false }),
-    block("exclusion", "Never generate a 3D model."),
-  ]), null);
-  assert.equal(inferDocumentArtifactKind([], "3D model study"), "model3d");
 });
 
 test("inactive, removed, excluded, negative, and audience-only text never drives output selection", () => {
@@ -135,9 +109,6 @@ test("structured camel-case and snake-case authored format values remain first-c
     ["deliveryFormat", "proposal", "short_story"],
     ["requested_medium", "film", "video"],
     ["requestedMedium", "shot list", "storyboard"],
-    ["output_kind", "model3d", "model3d"],
-    ["artifactKind", "model3d", "model3d"],
-    ["requestedMedium", "text-to-3D", "model3d"],
   ];
 
   for (const [property, value, expected] of cases) {

@@ -143,9 +143,6 @@ export function buildDocumentDuplicationPlan(input: DocumentDuplicationInput): D
     if (Array.isArray(value)) return value.map(copyProperties);
     if (!value || typeof value !== "object") return value;
     return Object.fromEntries(Object.entries(value).map(([key, item]) => {
-      // The retained PNG commits to this complete recipe, including its original source identities.
-      // Rebinding the editable scene requires a new capture and a new immutable media receipt.
-      if (key === "reference_composition") return [key, structuredClone(item)];
       if (contextKeys.has(key) || groupKeys.has(key)) return [key, remap(item, contextIds)];
       if (blockKeys.has(key)) return [key, remap(item, blockIds)];
       if (blockLists.has(key)) return [key, remapList(item, blockIds)];

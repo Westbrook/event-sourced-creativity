@@ -1,7 +1,3 @@
-import { validateModel3dRequest, estimateModel3dCostMicrousd, type Model3dSettings } from "../model/model3d";
-import { validateModel3dAsset, MAX_MODEL3D_UPLOAD_BYTES } from "../model/model3d-assets";
-import type { Model3dView } from "../model/model3d-view";
-import { referenceCompositionSources, validateReferenceComposition, normalizeReferenceComposition, type ReferenceCompositionRecipe } from "../model/reference-composition";
 import { projectIntake, type ProjectIntake } from "../model/project-intake";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
 import { copyOutputRequirementCreationEvents } from "../model/output-requirement-copy.ts";
@@ -35,7 +31,7 @@ import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
 import { documentArtifactRevision, isDocumentArtifactKind, parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
-import { artifactContextEvents, imageOutputContextEvents, model3dArtifactContextReadiness } from "../model/output-context";
+import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType, CONTEXT_CONTAINS_RELATION, isContextCompositionRelation, normalizeActionBlockReferences } from "../model/combined-context";
 import { eventProfileRank } from "../model/event-profiles";
@@ -78,7 +74,7 @@ export type CommittedEventIdentity = Readonly<{ eventId:string; type:CreativeEve
 export type EventWriteAcknowledgment = Readonly<{ observationId:string; owner:EventWriteOwner; action:"append"|"batch"|"canvas_sync"|"project_intake"; requestedClientEventIds:readonly string[]; committed:readonly CommittedEventIdentity[]; rejectedIndices:readonly number[]; outcome:"not-attempted"|"observed"|"unconfirmed"; observedHead:number|null; privateUnavailable:boolean }>;
 export type EventWriteResult = Readonly<{ appended:CreativeEvent[]; acknowledgment:EventWriteAcknowledgment; publication:"published"|"withheld"|"none" }>;
 export type WithheldEventWrite = Readonly<{publication:"withheld";acknowledgment:EventWriteAcknowledgment}>;
-export type AppendOptions = { current?:()=>boolean; expected?:number; remember?:boolean; rebaseAttempts?:number; silent?:boolean; background?:boolean; onAcknowledgment?:(receipt:EventWriteAcknowledgment)=>void };
+export type AppendOptions = { expected?:number; remember?:boolean; rebaseAttempts?:number; silent?:boolean; background?:boolean; onAcknowledgment?:(receipt:EventWriteAcknowledgment)=>void };
 export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index?:number;type?:string;reason:string}>; head:number; retryable:boolean; error:string; acknowledgment?:EventWriteAcknowledgment; pause?:"source-retired" };
 type EventSourceRead = { source:CapturedSourceOwnership; id:number; profile:AccountSnapshotProfile; identity:AccountSnapshotIdentity; cacheFence:AccountSnapshotFence; complete:boolean; from:number; cookieGeneration:number };
 type ProjectContextCookieRequest = { ready:Promise<void>; settled:boolean; admitted:boolean; current:()=>boolean; matches:(session:PilotSession|null)=>boolean; reconciliation:Promise<void>|null };
@@ -90,7 +86,7 @@ export type PilotSession = {
   impersonation: { active:true; impersonationId:string; personaId:string; replaySessionId:string; actor:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; fictionalUser:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; startedAt:string; expiresAt:string } | null;
   policy: { version: string; accepted: boolean; passiveCapture: false; attentionCapture?: { available: boolean; defaultOn: false; retentionDays: number; rawInputCapture: false }; externalAssetsRequireAssertion: true; retentionDays: number; evidenceRetentionDays?:number; sharing: string };
   canvas: { version:string; mode:"internal"|"pilot"; pilotAvailable:boolean; access:boolean; accessReason:"administrator-internal-review"|"pilot-approved"|"pilot-gate-incomplete"|"role-not-eligible"; blockedBy:Array<"trust_safety"|"counsel"|"second_image_adapter">; requirements:Array<{id:"trust_safety"|"counsel"|"second_image_adapter";label:string;summary:string;approved:boolean;approvedBy:string|null;approvedByUserId:string|null;approvedAt:string|null;evidenceRef:string|null;details:Record<string,unknown>}> };
-  provider: { name: string; model: string; plannerModel?: string; plannerConfigured?: boolean; configured: boolean; imageProvider?:string; imageProviders?:Array<{provider:string;model:string;previewModel?:string;editModel?:string;configured:boolean}>; videoProvider?:string; videoModel?:string; videoReferenceModel?:string; videoAdapterVersion?:string; videoConfigured?:boolean; model3dConfigured?:boolean; model3dModel?:string; model3dReferenceModel?:string; videoApiSunset?:string|null; audioProvider?:string; audioModel?:string; audioConfigured?:boolean; audioModels?:Array<{model:string;label:string;capabilities:readonly string[];maximumDurationSeconds:number;pricing:{mode:string;amountMicrousd:number;minimumBillableSeconds?:number}}> };
+  provider: { name: string; model: string; plannerModel?: string; plannerConfigured?: boolean; configured: boolean; imageProvider?:string; imageProviders?:Array<{provider:string;model:string;previewModel?:string;editModel?:string;configured:boolean}>; videoProvider?:string; videoModel?:string; videoReferenceModel?:string; videoAdapterVersion?:string; videoConfigured?:boolean; videoApiSunset?:string|null; audioProvider?:string; audioModel?:string; audioConfigured?:boolean; audioModels?:Array<{model:string;label:string;capabilities:readonly string[];maximumDurationSeconds:number;pricing:{mode:string;amountMicrousd:number;minimumBillableSeconds?:number}}> };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
   costBudgets: GenerationCostBudgets;
   audience?: ApplicationId;
@@ -2341,7 +2337,6 @@ async syncDocumentJobs(){
     if(kind==="prompt_fan")return 4_000_000;
     if(kind!=="render_document")return 1_000_000;
     const artifactKind=String(payload.artifactKind??"");
-    if(artifactKind==="model3d")return estimateModel3dCostMicrousd(payload.model3dSettings);
     if(artifactKind==="scene"){const consent=payload.sceneCostConsent as Partial<SceneCostApproval>|undefined;const {confirmed,...preview}=consent??{};if(confirmed!==true||!isSceneCostPreview(preview))throw new Error("scene_cost_confirmation_required");return preview.maximumMicrousd;}
     const audioCost=artifactKind==="audio"?selectAudioAdapterContract(normalizeAudioRequestProfile(payload.audioProfile,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{}),payload.audioProviderModel?{preferredModel:String(payload.audioProviderModel)}:{}).estimatedCostMicrousd:0;
     if(payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video","audio"].includes(artifactKind)){const production=buildManagedProductionPlan(artifactKind as DocumentArtifactKind,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??payload.requestedSlideCount??0),...(artifactKind==="slides"?{requestedSlideCount:Number(payload.requestedSlideCount??payload.itemCount??0)}:{})});return production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioCost:0);}
@@ -2379,8 +2374,7 @@ async syncDocumentJobs(){
   async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
     const sourceOwner=this.captureSourceOwnership(),sourceProjectId=this.projection.get().projectId;
     const scene=kind==="render_document"&&payload.artifactKind==="scene";
-    const guarded=scene||kind==="render_document"&&payload.artifactKind==="model3d";
-    const check=()=>{this.#assertSourceOwnership(sourceOwner);if(guarded&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
+    const check=()=>{this.#assertSourceOwnership(sourceOwner);if(scene&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     if(!payload.locale&&["preview","generate","prompt_fan","render_document"].includes(kind))payload={...payload,locale:typeof document==="undefined"?"en":document.documentElement.lang||"en"};
     const authorization=this.#activeAuthorizationScope();
     if(!this.#canRequestProjectOutputs())throw new Error("Your project role does not permit creating outputs.");
@@ -2404,7 +2398,7 @@ async syncDocumentJobs(){
       this.#assertAuthorizationScope(authorization);check();await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);check();
       const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;
       let dispatched=false;
-      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,{current:()=>dispatched||this.sourceOwnershipActive(sourceOwner)&&(!guarded||!controls.current||controls.current()),onDispatch:()=>{dispatched=true;controls.onDispatch?.();}});
+      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,{current:()=>dispatched||this.sourceOwnershipActive(sourceOwner)&&(!scene||!controls.current||controls.current()),onDispatch:()=>{dispatched=true;controls.onDispatch?.();}});
       this.#assertAuthorizationScope(authorization);
       const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness;attemptSubmission?:string;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}};
       this.#assertAuthorizationScope(authorization);
@@ -2418,7 +2412,7 @@ async syncDocumentJobs(){
       }
       if(kind==="structure_adaptive"&&!adaptiveJobMatchesRequest(body.job,{documentId,canvasId:typeof payload.canvasId==="string"?payload.canvasId:null,sourceSurface,requestKey}))throw new Error(currentFormaLocale().messages["next.exact.unavailable"]??"The exact planning request changed.");
       const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");
-      if(!this.sourceOwnershipActive(sourceOwner)||guarded&&controls.current&&!controls.current()){
+      if(!this.sourceOwnershipActive(sourceOwner)||scene&&controls.current&&!controls.current()){
         this.#sourcePausedJobs.set(body.job.jobId,authorization);
         const reference=this.#privateJobReference(body.job);
         this.documentJobs.set([reference,...this.documentJobs.get().filter(job=>job.jobId!==reference.jobId)]);this.notify();
@@ -3503,7 +3497,7 @@ async syncDocumentJobs(){
 
 
   async #appendBatchNow(events:EventInput[],options:AppendOptions,observation:EventWriteObservation):Promise<EventWriteResult>{
-    const source=observation.source,active=()=>this.sourceOwnershipActive(source)&&!observation.paused&&(!options.current||options.current());
+    const source=observation.source,active=()=>this.sourceOwnershipActive(source)&&!observation.paused;
     if(!active())return this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld",options);
     if(!options.background)this.busy.set(events[0]?.type??"append");this.appendFailure.set("");this.notify();
     try{
@@ -3799,110 +3793,10 @@ async syncDocumentJobs(){
     }catch{owner.cancel();return false;}
   }
 
-  /** Upload only after the originating file picker has recorded its rights confirmation. */
-  async uploadModel3dFile(file:File,guard:()=>boolean=()=>true,options:{documentId?:string;rightsConfirmed?:boolean}={}){
-    const source=this.captureSourceOwnership(),documentId=options.documentId??this.projection.get().documentId;
-    const current=()=>this.sourceOwnershipActive(source)&&this.projection.get().documentId===documentId&&guard();
-    try{
-      if(!current()||options.rightsConfirmed!==true)return false;
-      if(file.size>MAX_MODEL3D_UPLOAD_BYTES)throw new Error("Choose a GLB model smaller than 64 MB.");
-      validateModel3dAsset(await file.arrayBuffer());if(!current())return false;
-      const form=new FormData();form.append("file",file);form.append("rightsConfirmed","true");form.append("nonSensitiveConfirmed","true");
-      const response=await this.guardedFetch("/api/media",{method:"POST",body:form},"upload this licensed 3D model",{current});
-      const media=await response.json() as {url?:string;mimeType?:string;contentHash?:string;error?:string};
-      if(!current())return false;
-      if(!response.ok||!media.url||!media.contentHash)throw new Error(media.error??"The 3D model could not be uploaded.");
-      const referenceId=crypto.randomUUID(),blockId=crypto.randomUUID();
-      const events:EventInput[]=[
-        {type:"ReferenceIngested",payload:{reference_id:referenceId,source_type:"model3d-upload",source_ref:media.url,content_hash:media.contentHash,source_mime_type:media.mimeType,rights_class:"asserted"}},
-        {type:"RightsAsserted",payload:{reference_id:referenceId,rights_class:"owned_or_licensed",assertion_method:"explicit-upload-confirmation"}},
-        {type:"BlockCreated",payload:{block_id:blockId,document_id:documentId,type:"model3d",handle:`model3d/${blockId}`,position:`z${this.head.get()}`,
-          properties:{label:file.name,subtype:"Object",intent:"include",weight:.72,authority:"authored",model_url:media.url,model_mime_type:media.mimeType,
-            model_content_hash:media.contentHash,model_reference_id:referenceId,rights_class:"owned_or_licensed",pixel_reference_mode:"context_only"}}}
-      ];
-      const result=await this.appendBatchWithReceipt(events,{rebaseAttempts:6,current});
-      if(result.publication!=="published"||!current()||!result.appended.some(event=>event.type==="BlockCreated"))return false;
-      this.patchUi({focusBlockId:blockId,editingBlockId:blockId});return true;
-    }catch(error){if(current())this.toast(error instanceof Error?error.message:"The 3D model could not be uploaded.");return false;}
-  }
-
-  async saveReferenceComposition(capture:{blob:Blob;recipe:ReferenceCompositionRecipe;label:string;targetBlockId?:string},guard:()=>boolean=()=>true):Promise<boolean>{
-    const source=this.captureSourceOwnership(),projection=this.projection.get(),originDocumentId=projection.documentId;
-    const target=capture.targetBlockId?projection.libraryBlocks.find(block=>block.id===capture.targetBlockId&&!block.removed&&block.type==="reference"&&block.properties.reference_composition):null;
-    if(capture.targetBlockId&&(!target||target.locked))return false;
-    const documentId=target?.documentId??originDocumentId;
-    const targetFingerprint=target?generationRevisionFor({media:target.properties.media_url,recipe:target.properties.reference_composition}):null;
-    const originalComposition=normalizeReferenceComposition(target?.properties.reference_composition);
-    const retainedSources=new Set(originalComposition?.sources?.map(item=>item.blockId)??[]);
-    const recipe=structuredClone(capture.recipe),label=capture.label.trim()||"Reference composition";
-    const current=()=>{const state=this.projection.get(),actual=target?state.libraryBlocks.find(block=>block.id===target.id):null;
-      return this.sourceOwnershipActive(source)&&state.documentId===originDocumentId&&guard()
-        &&(!target||Boolean(actual&&!actual.locked&&!actual.removed&&actual.type==="reference"&&targetFingerprint===generationRevisionFor({media:actual.properties.media_url,recipe:actual.properties.reference_composition})))
-        &&!validateReferenceComposition(recipe,referenceCompositionSources(target?state.libraryBlocks.filter(block=>block.id!==target.id&&block.projectId===target.projectId&&(block.documentId===documentId||retainedSources.has(block.id))):state.blocks,this.events.get()));};
-    try{
-      if(!current()||capture.blob.type!=="image/png")return false;
-      const form=new FormData();form.append("file",new File([capture.blob],"reference-composition.png",{type:"image/png"}));
-      form.append("rightsConfirmed","true");form.append("nonSensitiveConfirmed","true");form.append("referenceComposition",JSON.stringify(recipe));
-      const response=await this.guardedFetch("/api/media",{method:"POST",body:form},"save this reference composition",{current});
-      const media=await response.json() as {url?:string;contentHash?:string;error?:string};if(!current())return false;
-      if(!response.ok||!media.url||!media.contentHash)throw new Error(media.error??"The reference composition could not be saved.");
-      const referenceId=crypto.randomUUID(),blockId=target?.id??crypto.randomUUID();
-      const events:EventInput[]=[
-        {type:"ReferenceIngested",payload:{reference_id:referenceId,source_type:"reference-composition",source_ref:media.url,content_hash:media.contentHash,source_mime_type:"image/png",rights_class:"asserted"}},
-        {type:"RightsAsserted",payload:{reference_id:referenceId,rights_class:"owned_or_licensed",assertion_method:"explicit-reference-composition"}},
-      ];
-      const properties:Record<string,unknown>={label,subtype:"Composition",reference_id:referenceId,media_url:media.url,media_type:"image/png",
-        source_mime_type:"image/png",source_content_hash:media.contentHash,pixel_reference_mode:"preserve_composition",reference_composition:recipe,extraction_status:"unavailable"};
-      if(target)events.push(...Object.entries(properties).map(([key,value])=>({type:"BlockPropertyEdited",payload:{block_id:blockId,document_id:documentId,property_path:key,old_value:target.properties[key]??null,new_value:value,source_surface:"reference-compositor"}})));
-      else events.push({type:"BlockCreated",payload:{block_id:blockId,document_id:documentId,type:"reference",handle:`reference/composition-${blockId}`,position:`z${this.head.get()}`,
-        properties:{...properties,intent:"include",weight:.8,authority:"authored"}}});
-      // The explicit composition action replaces its constituent visual inputs with the reviewed scene.
-      for(const id of new Set(recipe.sources.map(item=>item.blockId))){
-        const block=(target?projection.libraryBlocks:projection.blocks).find(item=>item.id===id);
-        if(block&&block.documentId===documentId&&block.properties.pixel_reference_mode&&block.properties.pixel_reference_mode!=="context_only")events.push({type:"BlockPropertyEdited",payload:{block_id:id,document_id:documentId,property_path:"pixel_reference_mode",old_value:block.properties.pixel_reference_mode,new_value:"context_only",source_surface:"reference-compositor"}});
-      }
-      const result=await this.appendBatchWithReceipt(events,{rebaseAttempts:1,current});
-      if(result.publication!=="published"||!this.sourceOwnershipActive(source)||!result.appended.some(event=>event.type===(target?"BlockPropertyEdited":"BlockCreated")))return false;
-      if(guard()&&this.projection.get().documentId===documentId)this.patchUi({focusBlockId:blockId});return true;
-    }catch(error){if(current())this.toast(error instanceof Error?error.message:"The reference composition could not be saved.");return false;}
-  }
-
-  /** The model identity and chosen image are frozen together before an image is reusable. */
-  async saveModel3dView(blockId:string,capture:{blob:Blob;view:Model3dView;src:string},guard:()=>boolean=()=>true):Promise<boolean>{
-    const retainedCapture={blob:capture.blob,view:structuredClone(capture.view),src:capture.src};
-    const source=this.captureSourceOwnership(),documentId=this.projection.get().documentId;
-    const original=this.projection.get().libraryBlocks.find(block=>block.id===blockId&&block.type==="model3d"&&!block.removed);
-    if(!original||original.locked||retainedCapture.src!==original.properties.model_url)return false;
-    const originalHash=String(original.properties.model_content_hash??""),previousView=original.properties.media_url??null;
-    const current=()=>{const block=this.projection.get().libraryBlocks.find(item=>item.id===blockId);return this.sourceOwnershipActive(source)
-      &&this.projection.get().documentId===documentId&&guard()&&Boolean(block&&!block.removed&&!block.locked&&block.type==="model3d"
-        &&block.properties.model_url===retainedCapture.src&&block.properties.model_content_hash===originalHash&&(block.properties.media_url??null)===previousView);};
-    try{
-      if(!current()||retainedCapture.blob.type!=="image/png")return false;
-      const form=new FormData();form.append("file",new File([retainedCapture.blob],"model-view.png",{type:"image/png"}));
-      form.append("rightsConfirmed","true");form.append("nonSensitiveConfirmed","true");form.append("modelUrl",retainedCapture.src);
-      form.append("modelContentHash",originalHash);form.append("modelView",JSON.stringify(retainedCapture.view));
-      const response=await this.guardedFetch("/api/media",{method:"POST",body:form},"save this 3D model view",{current});
-      const media=await response.json() as {url?:string;contentHash?:string;error?:string};if(!current())return false;
-      if(!response.ok||!media.url||!media.contentHash)throw new Error(media.error??"The model view could not be saved.");
-      const referenceId=crypto.randomUUID();
-      const properties:Record<string,unknown>={reference_id:referenceId,media_url:media.url,media_type:"image/png",source_mime_type:"image/png",
-        source_content_hash:media.contentHash,model_view:structuredClone(retainedCapture.view),pixel_reference_mode:original.properties.pixel_reference_mode??"context_only"};
-      const events:EventInput[]=[
-        {type:"ReferenceIngested",payload:{reference_id:referenceId,source_type:"model3d-view",source_ref:media.url,content_hash:media.contentHash,source_mime_type:"image/png",rights_class:"asserted"}},
-        {type:"RightsAsserted",payload:{reference_id:referenceId,rights_class:original.properties.rights_class==="account-generated"?"account-generated":"owned_or_licensed",assertion_method:"explicit-model-view-capture"}},
-        ...Object.entries(properties).map(([key,value])=>({type:"BlockPropertyEdited",payload:{block_id:blockId,document_id:original.documentId,property_path:key,old_value:original.properties[key]??null,new_value:value,source_surface:"model3d-viewer"}}))
-      ];
-      const result=await this.appendBatchWithReceipt(events,{rebaseAttempts:1,current});
-      return result.publication==="published"&&this.sourceOwnershipActive(source)&&result.appended.some(event=>event.type==="BlockPropertyEdited");
-    }catch(error){if(current())this.toast(error instanceof Error?error.message:"The model view could not be saved.");return false;}
-  }
-
   async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer",options:{reveal?:boolean;presentation?:SlidePresentation|null}={}){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===artifactId);
     if(!artifact){this.toast("That output is no longer available.");return null;}
-    if(artifact.kind==="model3d"){const readiness=model3dArtifactContextReadiness(artifact);if(!readiness.supported){this.toast(readiness.reason??"This model needs a self-contained GLB before it can be used as context.");return null;}}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding output context.");return null;}
     const existingBlocks=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const ownedChildIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const existingSourceItemIds=existingBlocks.filter((block)=>ownedChildIds.has(block.id)).map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
     const availableFrames=artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:artifact.kind==="video"?artifact.items.filter((item)=>Boolean(item.mediaUrl)&&String(item.mediaType??"").startsWith("video/")).length:0;
@@ -3934,8 +3828,7 @@ async syncDocumentJobs(){
       if(options.reveal!==false)await this.revealOutputInput(existing.id,destinationDocumentId);return{rootBlockId:existing.id,created:false,blockCount:0};
     }
     const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;if(!this.sourceOwnershipActive(sourceOwner))return null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
-    const contentHash=this.events.get().find(event=>event.eventId===output.sourceEventId)?.payload.source_content_hash;
-    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content:direction,contentHash:typeof contentHash==="string"?contentHash:null,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
+    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content:direction,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
     if(parent&&options.identityReference){const created=result.events.find((event)=>event.type==="BlockCreated");if(created){const properties=created.payload.properties as Record<string,unknown>;created.payload={...created.payload,properties:{...properties,pixel_reference_mode:"context_only",context_reference_kind:"character_identity",likeness_transfer_consent:false}};}}
     if(parent)result.events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:parent.id,to_block_id:result.blockIds[0],kind:CONTEXT_CONTAINS_RELATION,properties:{member_order:projection.libraryBlockRelations.filter((item)=>isContextCompositionRelation(item.kind)&&item.fromBlockId===parent.id).length,relation_label:options.identityReference?"Identity reference":"Reference",relativity:1},source_surface:sourceSurface}});
     const write=await this.appendBatchWithReceipt(result.events,{rebaseAttempts:6});if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);const created=write.appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
@@ -4316,34 +4209,7 @@ async syncDocumentJobs(){
     }
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{model3dPrompt?:string;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
-    if(kind==="model3d"){
-      const source=this.captureSourceOwnership(),documentId=options.documentId??this.projection.get().documentId;
-      const projection=this.projection.get(),context=this.#generationContext(documentId);
-      const current=()=>this.sourceOwnershipActive(source)&&this.projection.get().documentId===documentId
-        &&this.#canRequestProjectOutputs()&&(!options.current||options.current());
-      try{
-        if(!current())return false;
-        if(!this.session.get()?.provider.model3dConfigured)throw new Error("3D generation is not configured for this workspace.");
-        if(options.paidMediaConfirmed!==true)throw new Error("Review the 3D generation cost before submitting.");
-        const ids=options.model3dReferenceBlockIds??[];
-        if(!Array.isArray(ids)||new Set(ids).size!==ids.length)throw new Error("Choose each 3D reference only once.");
-        const references=ids.map(id=>projection.blocks.find(block=>block.id===id&&!block.removed&&block.properties.active!==false&&(block.type==="reference"||block.type==="model3d")));
-        if(references.some(block=>!block||!String(block.properties.media_url??"").startsWith("/api/media/")
-          ||block.properties.pixel_reference_mode==="context_only"||!block.properties.pixel_reference_mode
-          ||["avoid","prohibit"].includes(blockIntentFor(block.type,block.properties))))throw new Error("Choose active image references with visual use enabled. Save a view for each 3D model first.");
-        const validation=validateModel3dRequest({prompt:options.model3dPrompt??"",settings:options.model3dSettings,referenceCount:ids.length,
-          referenceMimeTypes:references.map(block=>String(block!.properties.media_type??block!.properties.source_mime_type??""))});
-        if(!validation.valid)throw new Error(validation.issues[0]?.message??"Review the 3D request settings.");
-        const settings={model3dPrompt:options.model3dPrompt??"",model3dSettings:structuredClone(validation.settings),model3dReferenceBlockIds:[...ids]};
-        const requestKey=`render:model3d:${context.documentRevision}:${generationRevisionFor(settings)}`;
-        const result=await this.#startDocumentJob("render_document",{...context,...settings,requestKey,artifactKind:"model3d",productionMode:"manual",
-          locale:options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en"),paidMediaConfirmed:true,itemCount:1},
-          options.sourceSurface??"document",documentId,{current,onDispatch:options.onDispatch});
-        if(current())this.toast(result.reused?"This exact 3D request is already in progress.":"3D model queued. You can keep working while it is prepared.");
-        return true;
-      }catch(error){if(current())this.toast(error instanceof Error?error.message:"The 3D model could not be started.");return false;}
-    }
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
     if(kind==="scene"){
       const documentId=options.documentId??this.projection.get().documentId,session=this.session.get(),authorization=this.#activeAuthorizationScope();
       const request:SceneCostRequest={documentId,requestId:options.sceneRequestId??"",sceneMedium:isSceneMedium(options.sceneMedium)?options.sceneMedium:"visual",

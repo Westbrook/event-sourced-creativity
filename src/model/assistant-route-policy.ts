@@ -146,7 +146,7 @@ export const ASSISTANT_PAGE_PLAYBOOKS: Record<AssistantPage, readonly string[]> 
   chat: ["summarize-context", "review-open-proposals", "propose-next-action"],
   library: ["find-reusable-context", "inspect-selected-resource", "propose-next-action"],
   activity: ["explain-recent-activity", "review-failed-work", "resume-authorized-work"],
-  deliver: ["find-ready-results", "explain-review-status", "review-supported-output-formats"],
+  deliver: ["find-ready-results", "explain-review-status", "review-seven-output-formats"],
   sessions: ["summarize-unfinished-intent", "resume-authorized-work", "review-recent-decisions"],
   scout: ["explain-research", "review-scout-findings", "propose-next-action"],
   memory: ["explain-preferences", "inspect-consent", "review-recent-decisions"],

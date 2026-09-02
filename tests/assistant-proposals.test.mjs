@@ -17,7 +17,7 @@ test("decomposes user intent into the smallest separately approvable typed decis
   const actions = normalizeAssistantActions("Add audience: urban gardeners; Add palette: forest green; Add audio: warm analog score; Never include fire", context);
   assert.deepEqual(actions.map((action) => action.blockType), ["audience", "palette", "audio", "exclusion"]);
   assert.equal(actions[3].intent, "prohibit");
-  assert.deepEqual(ASSISTANT_SUPPORTED_BLOCK_TYPES, BLOCK_TYPES.filter((definition)=>definition.type!=="reference"&&definition.type!=="model3d").map((definition)=>definition.type));
+  assert.equal(ASSISTANT_SUPPORTED_BLOCK_TYPES.length, BLOCK_TYPES.length);
 });
 
 test("natural conversational conjunctions and separate sentences produce independently approvable decisions", () => {
@@ -60,11 +60,6 @@ test("French, Arabic, and Japanese requests classify meaningful non-Latin contex
 test("questions never mutate and references cannot be fabricated from a text prompt", () => {
   assert.deepEqual(normalizeAssistantActions("What is the current direction?", context), []);
   assert.deepEqual(normalizeAssistantActions("Add reference: uploaded source image", context), []);
-  assert.deepEqual(normalizeAssistantActions("Add model3d: a ceramic vase", context), []);
-  for (const blockType of ["reference", "model3d"]) {
-    assert.deepEqual(assistantActionEvents({ kind: "context.create", blockType, text: "A ceramic vase", intent: "include" }, context,
-      { blockId: "unverified-source", relationId: "relation", turnId: "turn" }), []);
-  }
   assert.deepEqual(normalizeAssistantActions("Add a warm color", { ...context, scope: { projectId: "project-a", documentId: null } }), []);
 });
 

@@ -7,7 +7,6 @@ export type DocumentOutputIntentBlock = {
 };
 
 const mediumPatterns: ReadonlyArray<readonly [DocumentArtifactKind, RegExp]> = [
-  ["model3d", /\b(?:model3d|(?:text|image)[\s-]*to[\s-]*3[\s-]*d|(?:3[\s-]*d|three[\s-]+dimensional)[\s-]+(?:models?|assets?|mesh(?:es)?|objects?))\b/iu],
   ["storyboard", /\b(?:story\s*board|shot\s*list|frame\s*sequence|visual\s*sequence)\b/iu],
   ["slides", /\b(?:slide\s*deck|slide\s*show|slideshow|power\s*point|keynote|presentation|pitch\s*deck|slides?|deck)\b/iu],
   ["video", /\b(?:video|film|motion\s*(?:piece|graphic|design|treatment)|animation|cinematic|reel|movie)\b/iu],

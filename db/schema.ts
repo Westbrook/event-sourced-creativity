@@ -1247,7 +1247,7 @@ export const outputPlanTargets = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId] }),
     foreignKey({ columns: [table.scopeKey, table.planRevisionId], foreignColumns: [outputPlanRevisions.scopeKey, outputPlanRevisions.planRevisionId] }),
-    check("output_plan_targets_check_1", sql.raw("media_kind IN('image','slides','audio','video','document','model3d','unknown')")),
+    check("output_plan_targets_check_1", sql.raw("media_kind IN('image','slides','audio','video','document','unknown')")),
     check("output_plan_targets_check_2", sql.raw("required IN(0,1)")),
     check("output_plan_targets_check_3", sql.raw("selected IN(0,1)")),
     check("output_plan_targets_check_4", sql.raw("typeof(ordinal)='integer' AND ordinal>=0")),
@@ -1414,7 +1414,7 @@ export const outputAssets = sqliteTable(
     primaryKey({ columns: [table.scopeKey, table.assetId] }),
     foreignKey({ columns: [table.createdEventId], foreignColumns: [events.eventId] }),
     check("output_assets_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0")),
-    check("output_assets_check_2", sql.raw("media_kind IN('image','slides','audio','video','document','model3d')")),
+    check("output_assets_check_2", sql.raw("media_kind IN('image','slides','audio','video','document')")),
     uniqueIndex("idx_output_assets_unique_1").on(table.storageKey),
   ],
 );
@@ -1469,7 +1469,7 @@ export const outputAssetStorageWrites = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.scopeKey, table.assetId] }),
     foreignKey({ columns: [table.publicationEventId], foreignColumns: [events.eventId] }),
-    check("output_asset_storage_writes_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=67108864")),
+    check("output_asset_storage_writes_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=24000000")),
     check("output_asset_storage_writes_check_2", sql.raw("status IN('writing','written','cleanup_pending','deleted')")),
     check("output_asset_storage_writes_check_3", sql.raw("write_acknowledged IN(0,1)")),
     check("output_asset_storage_writes_check_4", sql.raw("(organization_id IS NULL AND project_access_id IS NULL AND context_id IS NULL) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND context_id IS NOT NULL)")),

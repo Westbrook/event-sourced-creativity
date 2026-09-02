@@ -69,8 +69,6 @@ export type ProductionWorkflowStageState = {
 type StageRecipe = { format: ProductionFormat; optional?: boolean; dependsOn?: ProductionFormat[] };
 
 const PRODUCTION_WORKFLOW_RECIPES: Record<ProductionFormat, readonly StageRecipe[]> = {
-  // The dedicated 3D adapter is a single explicit generation; no planner stages are implied.
-  model3d: [],
   image: [
     { format: "short_story", optional: true },
     { format: "scene", optional: true, dependsOn: ["short_story"] },

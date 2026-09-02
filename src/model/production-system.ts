@@ -1,4 +1,4 @@
-import { productionTeamFor, supportsManagedProduction, type ManagedProductionFormat, type ManagedProductionPlan, type ProductionFormat } from "./managed-production.ts";
+import { productionTeamFor, type ManagedProductionPlan, type ProductionFormat } from "./managed-production.ts";
 import { VIDEO_ADAPTER_CONTRACT } from "./video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACT } from "./audio.ts";
 
@@ -37,7 +37,7 @@ export type ProductionSystemContract = {
   capabilities: ProductionSystemCapabilities;
 };
 
-const capabilities = (format: ManagedProductionFormat): ProductionSystemCapabilities => ({
+const capabilities = (format: ProductionFormat): ProductionSystemCapabilities => ({
   unitKinds: format === "video" ? ["plan", "look-development", "write", "render-video", "review", "assemble"]
     : format === "audio" ? ["plan", "write", "render-audio", "review", "assemble"]
     : format === "storyboard" ? ["plan", "write", "render-image", "review", "assemble"]
@@ -53,7 +53,7 @@ const capabilities = (format: ManagedProductionFormat): ProductionSystemCapabili
   delivery: format === "video" ? "ordered-scene-reel" : format === "image" || format === "audio" || format === "short_story" || format === "scene" ? "single-artifact" : "ordered-item-collection",
 });
 
-const contractFor = (format: ManagedProductionFormat): ProductionSystemContract => ({
+const contractFor = (format: ProductionFormat): ProductionSystemContract => ({
   adapterId: `${format.replaceAll("_", "-")}-managed-production-system`,
   adapterVersion: "1.0.0",
   format,
@@ -61,7 +61,7 @@ const contractFor = (format: ManagedProductionFormat): ProductionSystemContract 
   capabilities: capabilities(format),
 });
 
-export const PRODUCTION_SYSTEMS: Readonly<Record<ManagedProductionFormat, ProductionSystemContract>> = {
+export const PRODUCTION_SYSTEMS: Readonly<Record<ProductionFormat, ProductionSystemContract>> = {
   audio: contractFor("audio"),
   video: contractFor("video"),
   storyboard: contractFor("storyboard"),
@@ -71,14 +71,10 @@ export const PRODUCTION_SYSTEMS: Readonly<Record<ManagedProductionFormat, Produc
   image: contractFor("image"),
 };
 
-export function productionSystemFor(format: ProductionFormat): ProductionSystemContract {
-  if (!supportsManagedProduction(format)) throw new Error("managed_production_format_unsupported");
-  return PRODUCTION_SYSTEMS[format];
-}
+export const productionSystemFor = (format: ProductionFormat) => PRODUCTION_SYSTEMS[format];
 
 /** Provider-neutral, auditable work graph; delivery never advertises unsupported composition or frame locking. */
 export function productionUnitsForPlan(plan: ManagedProductionPlan, options:{audioEstimatedCostMicrousd?:number}={}): ProductionUnit[] {
-  if (!supportsManagedProduction(plan.format)) throw new Error("managed_production_format_unsupported");
   const units: ProductionUnit[] = [{
     id: "production-plan",
     kind: "plan",

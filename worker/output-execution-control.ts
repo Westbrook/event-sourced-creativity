@@ -14,7 +14,6 @@ import { preflightOutputNativeTarget, type OutputNativeSettings } from "./output
 import { claimOutputProviderCall, settleOutputProviderCall, readOutputSlots, outputSlotFromRow, outputScopeAuthority, outputAssertionStatements, OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import type { authoritativeCreativeContext } from "./context-authority.ts";
 import { priceTextUsageBreakdownMicrousd, priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
-import { estimateModel3dCostMicrousd } from "../src/model/model3d.ts";
 
 const parsed=(raw:string|null|undefined):Record<string,unknown>=>{try{const value:unknown=JSON.parse(raw??"{}");return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}catch{return{};}};
 export type OutputJobBinding={scope:OutputScope;slot:OutputOperationSlot;retentionPolicy:Record<string,unknown>|null};
@@ -58,7 +57,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const {scope,slot}=binding;
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
- const current=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+ const current=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
  if(!current.available||await outputDigest(current)!==slot.routeDigest)throw new OutputConflictError("output_native_route_changed",409);
  const projectJobAuthority=documentJobProjectAuthority(user,job.document_id,job.job_id);
  const liveAssertions=()=>[...authority.assertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
@@ -67,8 +66,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const billingOwner=user.billingUserId??user.userId;
  const checkpoint=parsed(job.result_json);
  const period=checkpoint.costReservationPeriod;
- const artifactKind=job.kind==="generate"?"image":String(settings.payload.artifactKind);
- const operation=job.kind==="generate"?"image-generation":`document-render:${artifactKind}`;
+ const operation=job.kind==="generate"?"image-generation":"document-render:slides";
  if(typeof period!=="string"||!/^\d{4}-\d{2}$/u.test(period)||checkpoint.reservationId!==slot.tokenReservationId||checkpoint.costReservationId!==slot.costReservationId||checkpoint.costReservationMicrousd!==slot.maximumMicrousd)throw new OutputConflictError("output_admitted_reservations_missing",409);
  const periodDeadline=Date.parse(`${period}-01T00:00:00.000Z`);
  const nextPeriod=Number.isFinite(periodDeadline)?new Date(periodDeadline):null;
@@ -119,7 +117,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const priorTokens=[...observedReceipts.values()].filter(receipt=>receipt.status==="completed").reduce((sum,receipt)=>sum+Number(receipt.totalTokens??0),0);
    if(priorTokens+attempt.maximumInputTokens+attempt.maximumOutputTokens>slot.maximumTokens)throw new OutputConflictError("output_token_allowance_exceeded",429);
    const maximumUsage={inputTokens:attempt.maximumInputTokens,outputTokens:attempt.maximumOutputTokens,totalTokens:attempt.maximumInputTokens+attempt.maximumOutputTokens};
-   const pricedMaximum=callKey==="model3d:initial"?estimateModel3dCostMicrousd(settings.payload.model3dSettings):callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd:priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
+   const pricedMaximum=callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd:priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
    if(pricedMaximum>route.maximumMicrousd)throw new OutputConflictError("output_call_cost_allowance_exceeded",429);
    const assertions:OutputSqlAssertion[]=[...liveAssertions(),{sql:`EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.owner_id=? AND live.stream_id=? AND live.correlation_id=? AND live.attempt_count=? AND live.status='running'
       AND live.lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -133,7 +131,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
        AND cost.reserved_microusd=? AND token.reserved_tokens=? AND cost.status='executing' AND token.status='active')`,bindings:[slot.costReservationId,slot.tokenReservationId,billingOwner,job.stream_id,job.correlation_id,operation,period,slot.maximumMicrousd,slot.maximumTokens]}];
    const claim=await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
    if(!claim.claimed)throw new OutputConflictError("output_provider_call_already_consumed",409);
-   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="model3d:initial"?"model3d":"image",pending:false,dispatched:false});
+   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":"image",pending:false,dispatched:false});
   },
   beforeProviderDispatch(clientRequestId){
    const call=claimedCalls.get(clientRequestId);
@@ -157,8 +155,8 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const planning=[...observedReceipts.values()].filter(value=>value.operation==="planning"&&value.status==="completed");
    const plannerFields=receipt.operation==="planning"&&receipt.status==="completed"?{plannerModel:receipt.model,plannerResponseId:receipt.providerRequestId??"",plannerResponseIds:planning.map(value=>value.providerRequestId).filter(Boolean),plannerUsage:planning.reduce((total,value)=>({inputTokens:total.inputTokens+Number(value.inputTokens??0),outputTokens:total.outputTokens+Number(value.outputTokens??0),totalTokens:total.totalTokens+Number(value.totalTokens??0)}),{inputTokens:0,outputTokens:0,totalTokens:0})}:{};
    const financial={...plannerFields,providerSubmissionProtocol:1,providerSubmissions:{[receipt.clientRequestId]:safe},reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,
-    ...(artifactKind==="slides"?{presentationProviderSubmission:"confirmed"}:{}),
-    generationReceipt:{provider:receipt.provider,model:receipt.model,artifact_kind:artifactKind,provider_request_status:"submitted",source_transmission_status:"transmitted",reservation_status:"executing"}};
+    ...(job.kind==="render_document"?{presentationProviderSubmission:"confirmed"}:{}),
+    generationReceipt:{provider:receipt.provider,model:receipt.model,artifact_kind:job.kind==="generate"?"image":"slides",provider_request_status:"submitted",source_transmission_status:"transmitted",reservation_status:"executing"}};
    await env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?),updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?")
     .bind(JSON.stringify(financial),new Date().toISOString(),job.job_id,user.userId,job.stream_id,job.correlation_id).run();
    const known=Number.isSafeInteger(receipt.costMicrousd)&&Number(receipt.costMicrousd)>=0;
@@ -299,7 +297,7 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
  const safe:Record<string,PaidProviderSubmission>={};
  for(const call of calls.results){
   const receipt=receipts.find(value=>value.clientRequestId===call.client_request_id);
-  const expectedOperation=String(call.stage_key).startsWith('planning:')?'planning':call.stage_key==='model3d:initial'?'model3d':'image';
+  const expectedOperation=String(call.stage_key).startsWith('planning:')?'planning':'image';
   if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==expectedOperation
     ||!['completed','rejected'].includes(receipt.status))continue;
   const knownCost=receipt.status==='rejected'?0:receipt.costMicrousd;

@@ -175,8 +175,7 @@ const slideVisualSchema={
     },
   },
 };
-type PlannedDocumentArtifactKind = Exclude<DocumentArtifactKind, "model3d">;
-const documentArtifactSchema=(kind:PlannedDocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId,expectedItemCount?:number,audioConstraints?:ReturnType<typeof audioPreparationConstraints>|null,slideCountPolicy?:SlideCountPolicy)=>{
+const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId,expectedItemCount?:number,audioConstraints?:ReturnType<typeof audioPreparationConstraints>|null,slideCountPolicy?:SlideCountPolicy)=>{
   const itemProperties:Record<string,unknown>={title:{type:"string",...(kind==="slides"?{minLength:1}:{})},body:{type:"string"},notes:{type:"string"},image_prompt:{type:"string"},context_group_ids:{type:"array",maxItems:24,items:{type:"string"}}};
   const itemRequired=["title","body","notes","image_prompt","context_group_ids"];
   if(kind==="slides"){itemProperties.slide=slideVisualSchema;itemRequired.push("slide");}
@@ -542,7 +541,7 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
 
 const authoredVisualCategoryCopyInstructions="Concise source-authored visual.data row labels may repeat verbatim inside a longer independently meaningful slide title or body when the labels categorize its evidence; preserve both the authored argument and every structured row label. A hero-type or metric visual needs exactly one meaningful source-authored visual.value distinct from its title, body, kicker, and label; it requires no visual.data rows. Preserve the selected evidence source_ids and never invent a claim or add chart rows to satisfy a hero visual. When authored evidence supplies categories without independent measurements or descriptions, use an architecture visual with an empty string for each category-only row value. Never copy a visual.data row label, slide title, or slide body into a category-only row value; a simple source-authored title and question need no duplicate diagram rows. Distinct source-authored rows on different slides may retain the same exact short factual status when their evidence labels differ. Never invent a measurement merely to populate a category. Real scorecard, bars, and matrix measurements must remain complete and exact.";
 
-const artifactInstructions:Record<PlannedDocumentArtifactKind,string>={
+const artifactInstructions:Record<DocumentArtifactKind,string>={
   audio:"Create an original, production-ready music and sound-design brief. Preserve the document’s narrative purpose, authored emotional arc, ordered dramatic beats, atmosphere, musical texture, tempo when genuinely specified, instrumentation, and deliberate silence. Translate opted-in audio descriptions into musical meaning without copying an existing recording, recognizable melody, artist, or voice. content_markdown is a complete original composition brief with concise timed or ordered sections. Use one item whose body describes the complete arrangement, whose notes describe cue timing and vocal policy, and whose image_prompt describes an optional visual reference without implying that an image was supplied. Never invent measured tempo, duration, transcription, licensed lyrics, or artist approval.",
   short_story:"Write a polished short story, not a treatment. Preserve the document's named subjects, setting, tone, constraints, and spatial relationships. content_markdown is the complete story. Items are titled narrative movements with their prose in body; notes briefly explain continuity, and image_prompt describes an optional illustration.",
   scene:"Write one production-readable scene for film or television. content_markdown must use clear screenplay conventions: scene heading, action, character names, dialogue, and parentheticals only when useful. Build the scene around visible action, composition, visual staging, meaningful camera direction, spatial relationships, atmosphere, and the authored dramatic progression. Items are playable visual beats in order; body contains the beat's visible action and authored dialogue, notes preserve staging and camera continuity, and image_prompt describes its strongest frame.",
@@ -951,7 +950,6 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
 }
 
 export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
-  if(kind==="model3d")throw new Error("model3d_dedicated_adapter_required");
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   if(kind==="slides"&&input.options?.productionPage&&input.options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");

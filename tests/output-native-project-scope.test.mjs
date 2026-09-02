@@ -127,37 +127,6 @@ test("the shared prepared SELECT preserves exact source hydration without synchr
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM output_atomic_assertions").get().n, 0);
 });
 
-test("project media custody includes model originals, saved views and every generated model file", async () => {
-  const state = await fixture();
-  try {
-    const url = key => "/api/media/" + encodeURIComponent(key);
-    const original = "owner/models/original.glb", view = "owner/models/front.png", mesh = "owner/generated/model.glb", alternate = "owner/generated/model.obj", texture = "owner/generated/albedo.png", preview = "owner/generated/preview.webp";
-    state.append("ReferenceIngested", { reference_id: "original-reference", source_ref: url(original), content_hash: "a".repeat(64), rights_class: "owned" });
-    state.append("ReferenceIngested", { reference_id: "view-reference", source_ref: url(view), content_hash: "b".repeat(64), rights_class: "owned" });
-    const created = state.append("BlockCreated", { project_id: "project", document_id: "document", block_id: "model-block", type: "model3d", properties: {
-      model_reference_id: "original-reference", reference_id: "view-reference", model_url: url(original), model_mime_type: "model/gltf-binary", media_url: url(view), media_type: "image/png",
-    } });
-    const completed = state.append("DocumentRenderCompleted", { project_id: "project", document_id: "document", artifact_id: "model-output", artifact_kind: "model3d", title: "Vessel", media_url: url(mesh), media_type: "model/gltf-binary", items: [], settings: { model3d_files: [
-      { url: url(mesh), mimeType: "model/gltf-binary", role: "mesh" }, { url: url(alternate), mimeType: "model/obj", role: "mesh" },
-      { url: url(texture), mimeType: "image/png", role: "texture" }, { url: url(preview), mimeType: "image/webp", role: "preview" },
-    ] } }, "worker:renderer");
-    await synchronizeProjectScope(state.env, state.scope);
-    const media = state.sqlite.prepare("SELECT resource_id,source_event_id FROM project_resource_scopes WHERE resource_kind='media'").all();
-    assert.deepEqual(media.map(row => row.resource_id).sort(), [original, view, mesh, alternate, texture, preview].sort());
-    for (const row of media) assert.equal(row.source_event_id, [original, view].includes(row.resource_id) ? created.eventId : completed.eventId);
-    assert.deepEqual(state.sqlite.prepare("SELECT resource_id FROM project_resource_scopes WHERE resource_kind='reference' ORDER BY resource_id").all().map(row => row.resource_id), ["original-reference", "view-reference"]);
-    const context = { ...state.scope, principalUserId: "owner", permissions: ["project.read"], role: "owner" };
-    const page = await projectAccess.readProjectEventPage(state.env, context, 0, 5000, false);
-    assert.equal(page.events.find(event => event.eventId === created.eventId).payload.properties.model_url, url(original));
-    assert.deepEqual(page.events.find(event => event.eventId === completed.eventId).payload.settings.model3d_files.map(file => file.url), [mesh, alternate, texture, preview].map(url));
-    state.append("BlockPropertyEdited", { project_id: "project", document_id: "document", block_id: "model-block", property_path: "model_url", old_value: url(original), new_value: null });
-    await synchronizeProjectScope(state.env, state.scope);
-    const removed = await projectAccess.readProjectEventPage(state.env, context, 0, 5000, false);
-    assert.equal(removed.events.find(event => event.eventId === created.eventId).payload.properties.model_url, undefined, "former mesh URL is removed from shared event payloads");
-    assert.equal(JSON.stringify(removed.events).includes(url(original)), false, "a property-edit old value cannot disclose the detached mesh");
-  } finally { state.sqlite.close(); }
-});
-
 test("read-only Output source proof refuses a stale or quarantined project and never reactivates it", async () => {
   for (const mutation of ["UPDATE project_migration_states SET last_owner_sequence=0", "UPDATE project_migration_states SET status='disabled'", "DELETE FROM project_resource_scopes WHERE resource_kind='manifest_version'"]) {
     const state = await fixture(); state.sqlite.exec(mutation);

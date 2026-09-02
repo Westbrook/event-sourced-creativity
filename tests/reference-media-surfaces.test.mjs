@@ -52,7 +52,7 @@ test("reusable-block editing restricts image previews, image URLs, and pixel con
   assert.match(editor, /\$\{imageReference\?html`<div class="library-reference-editor">/);
   assert.match(editor, /library-reference-source" data-reference-medium=\$\{selectedReferenceMedium\}/);
   assert.match(editor, /block\.properties\.source_excerpt\?\?block\.properties\.text/);
-  assert.ok(editor.includes('if(this.#type==="reference"&&(block.type!=="reference"||isImageReference(block.properties))){if(!block.properties.reference_composition)add("media_url"'), "ordinary image URLs remain editable while saved scene pixels retain their verified composition receipt");
+  assert.match(editor, /if\(this\.#type==="reference"&&\(block\.type!=="reference"\|\|isImageReference\(block\.properties\)\)\)\{add\("media_url"/);
   assert.match(editor, /source_mime_type:mimeType,media_type:mimeType/, "newly uploaded images retain their verified media classification");
   assert.match(editor, /rightsConfirmed/);
   assert.match(editor, /owned_or_licensed/);

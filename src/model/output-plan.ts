@@ -216,7 +216,7 @@ export function compileOutputPlan(specs: readonly OutputRequirementSpec[], optio
   const recognizedPolicyKeys = new Set<string>();
   for (const entry of plan.obligations) for (const id of [entry.id, entry.deliverable_id]) {
     recognizedPolicyKeys.add(id);
-    for (const unit of ["presentation", "slide", "episode", "video", "image", "second", "document", "model", "member"]) recognizedPolicyKeys.add(`${id}:${unit}`);
+    for (const unit of ["presentation", "slide", "episode", "video", "image", "second", "document", "member"]) recognizedPolicyKeys.add(`${id}:${unit}`);
   }
   for (const [key, policy] of Object.entries(options.count_policies ?? {})) {
     if (!recognizedPolicyKeys.has(key)) plan.issues.push(issue("unknown_count_policy_target", `count_policies.${key}`, "This count decision refers to an item outside the compiled requirement revision."));

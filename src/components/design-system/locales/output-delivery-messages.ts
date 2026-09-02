@@ -3,11 +3,6 @@ import { FORMA_OUTPUT_DELIVERY_CYCLE_MESSAGES } from "./output-delivery-cycle-me
 
 /** Output delivery interface copy. Tuple order is English, French, Arabic, Japanese. */
 const entries = {
-  "output.delivery.model3dExactPrompt": ["Exact prompt sent to Rodin", "Instruction exacte envoyée à Rodin", "النص الدقيق المرسل إلى Rodin", "Rodinに送信する正確なプロンプト"],
-  "output.delivery.model3dSettings": ["3D settings: {format}; {tier}; materials {material}; mesh {mesh}.", "Réglages 3D : {format} ; {tier} ; matériaux {material} ; maillage {mesh}.", "إعدادات النموذج ثلاثي الأبعاد: {format}؛ {tier}؛ المواد {material}؛ الشبكة {mesh}.", "3D設定：{format}、{tier}、マテリアル{material}、メッシュ{mesh}。"],
-  "output.delivery.model3dDefaults": ["Automatic texture detail, random seed, no paid add-ons. Review each mesh and its materials; generated models may need cleanup before production use.", "Détail des textures automatique, graine aléatoire, aucun supplément payant. Vérifiez chaque maillage et ses matériaux ; les modèles générés peuvent nécessiter des retouches avant utilisation.", "تفاصيل نسيج تلقائية وبذرة عشوائية دون إضافات مدفوعة. راجع كل شبكة وموادها؛ قد تحتاج النماذج المولدة إلى تنقيح قبل استخدامها في الإنتاج.", "テクスチャの詳細は自動、シードはランダム、有料追加機能はありません。各メッシュとマテリアルを確認してください。生成モデルは本番利用前に修正が必要な場合があります。"],
-  "output.delivery.model3dReferences": ["Ordered reference images ({count})", "Images de référence dans l’ordre ({count})", "الصور المرجعية بالترتيب ({count})", "順序付き参照画像（{count}件）"],
-  "output.delivery.model3dNoReferences": ["Text-to-3D: no reference images are sent.", "Texte vers 3D : aucune image de référence n’est envoyée.", "من النص إلى نموذج ثلاثي الأبعاد: لا تُرسل صور مرجعية.", "テキストから3D：参照画像は送信されません。"],
   "output.delivery.contextDocumentIdentity": ["Document {identity}", "Document {identity}", "المستند {identity}", "ドキュメント {identity}"],
   "output.delivery.contextRequirement": ["Requirement {number}: {name}","Exigence {number} : {name}","المتطلب {number}: {name}","要件{number}: {name}"],
   "output.delivery.contextRequirementIdentity": ["Requirement: {name} ({identity})","Exigence : {name} ({identity})","المتطلب: {name} ({identity})","要件: {name}（{identity}）"],
@@ -343,7 +338,6 @@ const entries = {
   "output.delivery.unit.image": ["images", "images", "صور", "画像"],
   "output.delivery.unit.second": ["seconds", "secondes", "ثوانٍ", "秒"],
   "output.delivery.unit.document": ["documents", "documents", "مستندات", "ドキュメント"],
-  "output.delivery.unit.model": ["3D models", "modèles 3D", "نماذج ثلاثية الأبعاد", "3Dモデル"],
   "output.delivery.unit.member": ["series members", "éléments de série", "عناصر السلسلة", "シリーズの項目"],
   "output.delivery.unit.unknown": ["unspecified units", "unités non précisées", "وحدات غير محددة", "未指定の単位"],
   "output.delivery.issue.asset_structure_unverified": [
@@ -461,7 +455,7 @@ const labels = {
   grant: { authorized: "state.authorized", active: "state.active", completed: "state.completed", revoked: "state.revoked", exceeded: "state.exceeded", expired: "state.expired" },
   job: { queued: "state.queued", running: "state.running", committing: "state.committing", completed: "state.succeeded", partial: "state.partial", failed: "state.failed", canceled: "state.cancelled", cancelled: "state.cancelled" },
   operation: { authorized: "state.authorized", queued: "state.queued", running: "state.running", completed: "state.completed", succeeded: "state.succeeded", failed: "state.failed", cancelled: "state.cancelled", canceled: "state.cancelled", unavailable: "unavailable", uncertain: "state.uncertain" },
-  unit: { presentation: "unit.presentation", slide: "unit.slide", episode: "unit.episode", video: "unit.video", image: "unit.image", second: "unit.second", document: "unit.document", model: "unit.model", member: "unit.member" },
+  unit: { presentation: "unit.presentation", slide: "unit.slide", episode: "unit.episode", video: "unit.video", image: "unit.image", second: "unit.second", document: "unit.document", member: "unit.member" },
 } as const satisfies Record<string, Readonly<Record<string, OutputDeliveryMessageKey>>>;
 
 export type OutputDeliveryLabelCategory = keyof typeof labels;

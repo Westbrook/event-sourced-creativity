@@ -100,7 +100,7 @@ export function outputContinuationChoices(input: OutputContinuationInput): reado
       "output.delivery.inspectionCaveat", "These are bounded structural and header checks, not proof of decoding, playback, meaningful content, source coverage, accessibility, or rights. Review the exact file before accepting it.", exactResult));
   }
   const native = snapshot.permissions.canRequest && snapshot.capabilities.nativeGeneration && outputNativeReadiness(snapshot).allowed
-    && target.selected && !target.blocking_issues.length && ["image", "slides", "model3d"].includes(target.media_kind) && state?.capability !== "unsupported";
+    && target.selected && !target.blocking_issues.length && ["image", "slides"].includes(target.media_kind) && state?.capability !== "unsupported";
   if (native) actions.push(action("native", "output.delivery.actionCreate", "Review how to create this output",
     "output.delivery.checkRun", "Check availability and cost · no generation"));
   if (snapshot.permissions.canAuthor && snapshot.capabilities.ownedFileAdoption && outputSourceReadiness(snapshot).allowed)

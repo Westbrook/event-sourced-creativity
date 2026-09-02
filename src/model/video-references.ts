@@ -2,7 +2,6 @@ import { referencePixelMode, sendsReferencePixels, type ReferencePixelMode } fro
 import type { CreativeBlock, CreativeEvent } from "./events.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
 import { VIDEO_ADAPTER_CONTRACT } from "./video-adapter.ts";
-import { normalizeModel3dView } from "./model3d-view.ts";
 
 export type VideoReferencePreflightItem = {
   block: CreativeBlock;
@@ -44,10 +43,8 @@ export function videoReferencePreflight(blocks:CreativeBlock[],events:CreativeEv
     const referenceId=text(event.payload.reference_id);if(!referenceId)continue;
     if(event.type==="RightsAsserted"||event.type==="ReferenceIngested"&&Boolean(event.payload.rights_class))rights.add(referenceId);
   }
-  const activeBlocks=blocks.filter((block)=>["reference","model3d"].includes(block.type)&&!block.removed&&promptFactIsActive(block));
-  const available=(block:CreativeBlock)=>Boolean(text(block.properties.media_url))&&(block.type!=="model3d"||Boolean(normalizeModel3dView(block.properties.model_view))&&block.properties.media_type==="image/png"&&Boolean(text(block.properties.model_url)));
-  const unavailablePixelCount=activeBlocks.filter((block)=>sendsReferencePixels(referencePixelMode(block.properties.pixel_reference_mode))&&!available(block)).length;
-  const items=activeBlocks.filter(available).map((block):VideoReferencePreflightItem=>{
+  const activeBlocks=blocks.filter((block)=>block.type==="reference"&&!block.removed&&promptFactIsActive(block));const unavailablePixelCount=activeBlocks.filter((block)=>sendsReferencePixels(referencePixelMode(block.properties.pixel_reference_mode))&&!text(block.properties.media_url)).length;
+  const items=activeBlocks.filter((block)=>Boolean(text(block.properties.media_url))).map((block):VideoReferencePreflightItem=>{
     const mode=referencePixelMode(block.properties.pixel_reference_mode);const sequence=Number(block.properties.storyboard_frame_index);const sourceArtifactKind=text(block.properties.source_artifact_kind);const referenceSetKind=text(block.properties.reference_set_kind);const isStoryboardFrame=sourceArtifactKind==="storyboard"||referenceSetKind==="storyboard";
     const label=text(block.properties.storyboard_shot_title)||text(block.properties.label)||block.handle;const shotDirection=text(block.properties.storyboard_shot_direction)||text(block.properties.text);const cameraDirection=text(block.properties.storyboard_camera_direction);const framePrompt=text(block.properties.storyboard_frame_prompt);
     return{block,mode,sendsPixels:sendsReferencePixels(mode),rightsConfirmed:rights.has(text(block.properties.reference_id)),isStoryboardFrame,storyboardId:text(block.properties.source_artifact_id)||text(block.properties.reference_set_id)||text(block.properties.context_set_id),storyboardTitle:text(block.properties.storyboard_title)||"Storyboard",sequence:Number.isFinite(sequence)&&sequence>0?sequence:null,frameCount:Number.isFinite(Number(block.properties.storyboard_frame_count))?Number(block.properties.storyboard_frame_count):null,label,shotDirection,cameraDirection,framePrompt,mediaUrl:text(block.properties.media_url),focalPoint:block.properties.focal_point};

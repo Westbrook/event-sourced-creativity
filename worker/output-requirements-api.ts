@@ -1,8 +1,8 @@
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { inspectOutputRequirement, parseOutputRequirement, outputCountSatisfies, outputRequirementInterpretationNeedsReview, validateOutputCountPolicy, type OutputCountPolicy, type OutputQuantity, type OutputRequirementSpec } from "../src/model/output-requirements.ts";
 import { compileOutputPlan, summarizeOutputPlan, type OutputPlan, type OutputPlanTarget, type OutputTargetState } from "../src/model/output-plan.ts";
-import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, MAX_OUTPUT_MODEL3D_ASSET_BYTES, validOutputAssetName, type OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
-import { createOutputDeliveryArchive, createOutputDeliveryArchiveStream, outputDeliveryScopeForPlan, planOutputDeliveryParts, type OutputDeliveryManifestInput, type OutputDeliveryScopeInput, type OutputDeliveryPart, type OutputDeliveryScopeAmendmentInput } from "../src/model/output-delivery-archive.ts";
+import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, validOutputAssetName, type OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
+import { createOutputDeliveryArchive, outputDeliveryScopeForPlan, planOutputDeliveryParts, type OutputDeliveryManifestInput, type OutputDeliveryScopeInput, type OutputDeliveryPart, type OutputDeliveryScopeAmendmentInput } from "../src/model/output-delivery-archive.ts";
 import { OUTPUT_PREFLIGHT_TARGET_MAX_COUNT } from "../src/model/output-delivery-contract.ts";
 import type { OutputAssetRow, OutputCommandResponse, OutputConfirmedPlan, OutputConfirmationOptions, OutputPlanSuggestions, OutputGrantRow, OutputNativeTargetPreflight, OutputPreflight, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../src/model/output-delivery-contract.ts";
 import { outputScopeAmendmentReasonIssue } from "../src/model/output-scope-amendment.ts";
@@ -38,8 +38,6 @@ const json = (value: unknown, status = 200) => Response.json(outputJsonValue(val
 function fail(code: string, status = 400): never { throw new OutputConflictError(code, status); }
 const identifier = (value: unknown, code = "invalid_identifier") => typeof value === "string" && idPattern.test(value) ? value : fail(code);
 const ownedBuffer = (bytes: Uint8Array): ArrayBuffer => { const copy = new Uint8Array(bytes.byteLength); copy.set(bytes); return copy.buffer; };
-/** Internal model bytes are privately owned for this request; avoid a second 64 MiB allocation. */
-const assetBuffer = (bytes: Uint8Array): ArrayBuffer => bytes.byteLength > MAX_OUTPUT_ASSET_BYTES && bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : ownedBuffer(bytes);
 
 export function canonicalOutputJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -64,8 +62,6 @@ export type OutputBridgeTargetInput = {
   request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser;
   confirmedPlan: OutputConfirmedPlan; target: OutputPlanTarget;
   context: ReturnType<typeof authoritativeCreativeContext>;
-  /** Already authorized source events for read-only reference rights verification. */
-  sourceEvents?: readonly CreativeEvent[];
   sourceDigest: string; requirementsDigest: string;
 };
 export type OutputPreparedAdmission = {
@@ -442,7 +438,7 @@ async function buildSnapshot(trusted: OutputTrustedContext, bridge?: OutputExecu
     revision: outputRevision(trusted.ownerHead), requirementRevision: trusted.requirementsDigest, sourceRevision: trusted.sourceDigest, sourceVerification, requirements: trusted.requirements, confirmedPlan, targetStates,
     summary: confirmedPlan ? qualifyPackageSummary(summarizeOutputPlan(confirmedPlan.plan, targetStates, availability)) : null, requirementSummaries, requirementFileCounts, scopeAmendments,
     assets, results, grants, permissions: { canAuthor: model.complete && canAuthor, canRequest: model.complete && (trusted.projectContext ? hasCapability(trusted.principal, "project.output.request", capScope) : canAuthor), canReview: model.complete && canReview, canDownload: model.complete && (trusted.projectContext ? hasCapability(trusted.principal, "project.read", capScope) : true), independentReview: trusted.scope.kind === "project" },
-    capabilities: { nativeGeneration: model.complete && Boolean(bridge), ownedFileAdoption: model.complete, supportedFileExtensions: ["png", "jpg", "wav", "mp3", "mp4", "pptx", "glb"], limitations: ["Stored source and target versions are checked conservatively against the full Document.", "File inspection checks structure and measured properties; human content and rights review remains required.", ...trusted.sourceProblems, ...model.reasonCodes, ...historyProblems, ...(!bridge ? ["Native generation has no installed execution bridge."] : [])], limitationCodes: ["output_full_document_recheck", "output_inspection_requires_human_review", ...trusted.sourceProblems, ...model.reasonCodes, ...historyProblems, ...(!bridge ? ["output_native_execution_unavailable"] : [])] } };
+    capabilities: { nativeGeneration: model.complete && Boolean(bridge), ownedFileAdoption: model.complete, supportedFileExtensions: ["png", "jpg", "wav", "mp3", "mp4", "pptx"], limitations: ["Stored source and target versions are checked conservatively against the full Document.", "File inspection checks structure and measured properties; human content and rights review remains required.", ...trusted.sourceProblems, ...model.reasonCodes, ...historyProblems, ...(!bridge ? ["Native generation has no installed execution bridge."] : [])], limitationCodes: ["output_full_document_recheck", "output_inspection_requires_human_review", ...trusted.sourceProblems, ...model.reasonCodes, ...historyProblems, ...(!bridge ? ["output_native_execution_unavailable"] : [])] } };
 }
 
 /** Trusted worker-only resolver shared by admission, dispatch, provider guards and recovery. */
@@ -698,7 +694,7 @@ async function confirmPlan(trusted: OutputTrustedContext, body: Record<string, u
 }
 
 function bridgeTarget(trusted: OutputTrustedContext, plan: OutputConfirmedPlan, target: OutputPlanTarget): OutputBridgeTargetInput {
-  return { request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, target, context: requireCurrentSource(trusted), sourceEvents: trusted.events, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest };
+  return { request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, target, context: requireCurrentSource(trusted), sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest };
 }
 
 async function preflightPlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
@@ -778,7 +774,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId: uuidV7(), costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
-  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, sourceEvents: trusted.events, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness });
+  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness });
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
   const write = commandWrite(trusted, body, digest, "request");
   const sourceAssertions = [...(write.sourceAssertions ?? [])], captured = new Set(sourceAssertions.map(canonicalOutputJson));
@@ -878,7 +874,7 @@ async function readBoundedRequest(request: Request, maximumBytes: number): Promi
 type PreparedAsset = { id: string; name: string; storageKey: string; inspection: OutputAssetInspection; mediaKind: OutputAssetRow["mediaKind"]; createdAt: string; sourceDigest: string; origin: Record<string, unknown> };
 async function prepareOwnedAsset(trusted: OutputTrustedContext, bytes: Uint8Array, name: string, origin: Record<string, unknown>, command: { key: string; digest: string; assertions?: OutputSqlAssertion[] }): Promise<PreparedAsset> {
   if (!validOutputAssetName(name)) fail("invalid_output_asset_name");
-  const inspection = await inspectOutputAsset(bytes, name, { snapshot: false });
+  const inspection = await inspectOutputAsset(bytes, name);
   if (inspection.status !== "inspected" || !inspection.kind || !inspection.sha256 || !inspection.mimeType) return fail(inspection.errors[0] ?? "output_asset_unsupported", 415);
   const candidateId = uuidV7(), candidateStorage = outputAssetStorageIdentity(trusted.scope, candidateId, inspection);
   const claimed = await claimOutputAssetStorage(trusted.env, { scope: trusted.scope, assetId: candidateId, commandKey: command.key, requestDigest: command.digest, sourceDigest: trusted.sourceDigest, storageKey: candidateStorage.key, sha256: inspection.sha256, byteLength: bytes.byteLength, expectedHead: trusted.ownerHead, expectedProjectHead: trusted.projectHead, sourceAssertions: [...trusted.sourceAssertions, ...(command.assertions ?? []), ...retainedOutputBodyAssertions(trusted.scope)] });
@@ -888,7 +884,7 @@ async function prepareOwnedAsset(trusted: OutputTrustedContext, bytes: Uint8Arra
   if (!claimed.claimed && (receipt.status !== "written" || receipt.write_acknowledged !== 1 || receipt.publication_event_id)) fail("output_asset_write_reconciliation_required", 409);
   try {
     if (claimed.claimed) {
-      const acknowledgement = await trusted.env.MEDIA.put(storage.key, assetBuffer(bytes), { httpMetadata: { contentType: inspection.mimeType }, customMetadata: storage.metadata });
+      const acknowledgement = await trusted.env.MEDIA.put(storage.key, ownedBuffer(bytes), { httpMetadata: { contentType: inspection.mimeType }, customMetadata: storage.metadata });
       if (!acknowledgement || record(acknowledgement).key !== storage.key) fail("output_asset_write_unacknowledged", 409);
       await acknowledgeOutputAssetStorage(trusted.env, receipt);
     } else {
@@ -923,8 +919,8 @@ async function storeUpload(trusted: OutputTrustedContext, request: Request) {
   if (request.headers.get("x-output-rights-confirmed") !== "true") fail("owned_file_rights_attestation_required", 403);
   let name = "";
   try { name = decodeURIComponent(request.headers.get("x-output-filename") ?? ""); } catch { fail("invalid_output_asset_name"); }
-  const bytes = await readBoundedRequest(request, /\.glb$/iu.test(name) ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES);
-  const inspection = await inspectOutputAsset(bytes, name, { snapshot: false });
+  const bytes = await readBoundedRequest(request, MAX_OUTPUT_ASSET_BYTES);
+  const inspection = await inspectOutputAsset(bytes, name);
   if (inspection.status !== "inspected") return json({ error: "output_asset_not_inspectable", inspection }, 415);
   const digest = await outputDigest({ ...body, name, sha256: inspection.sha256, rightsAttested: true });
   const previous = await readOutputCommand(trusted.env, trusted.scope, identifier(body.clientMutationId, "client_mutation_id_required"), digest, { allowUnavailableReceipt: true });
@@ -960,9 +956,9 @@ async function loadOutputAssetEvidence(trusted: OutputTrustedContext, assetId: s
 async function loadExactAsset(trusted: OutputTrustedContext, assetId: string, preloaded?: OutputBulkAssetEvidence) {
   const { row, name, origin } = await loadOutputAssetEvidence(trusted, assetId, preloaded);
   const object = await trusted.env.MEDIA.get(String(row.storage_key));
-  if (!object || Number(object.size ?? 0) > (row.media_kind === "model3d" ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES) || !outputAssetStorageCustodyMatches({ ownerUserId: trusted.scope.ownerUserId, projectId: trusted.scope.projectId, documentId: trusted.scope.documentId, scopeKey: trusted.scope.key, assetId, sha256: String(row.content_sha256), storageKey: String(row.storage_key) }, object.customMetadata)) fail("output_asset_custody_mismatch", 409);
+  if (!object || Number(object.size ?? 0) > MAX_OUTPUT_ASSET_BYTES || !outputAssetStorageCustodyMatches({ ownerUserId: trusted.scope.ownerUserId, projectId: trusted.scope.projectId, documentId: trusted.scope.documentId, scopeKey: trusted.scope.key, assetId, sha256: String(row.content_sha256), storageKey: String(row.storage_key) }, object.customMetadata)) fail("output_asset_custody_mismatch", 409);
   const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
-  const inspection = await inspectOutputAsset(bytes, name, { snapshot: false });
+  const inspection = await inspectOutputAsset(bytes, name);
   if (inspection.status !== "inspected" || inspection.sha256 !== row.content_sha256 || inspection.byteLength !== row.byte_length || inspection.mimeType !== row.mime_type) fail("output_asset_bytes_changed", 409);
   const expectedStorage = outputAssetStorageIdentity(trusted.scope, assetId, inspection);
   if (expectedStorage.key !== row.storage_key && expectedStorage.legacyKey !== row.storage_key) fail("output_asset_custody_mismatch", 409);
@@ -1163,7 +1159,7 @@ async function prepareDelivery(trusted: OutputTrustedContext, body: Record<strin
   const scope = outputDeliveryScopeForPlan(plan.plan, { status: snapshot.summary?.scope_known ? partial ? "partial" : "complete" : "unknown", inventoryComplete: snapshot.summary?.scope_known === true, includedTargetIds: entries.map((entry) => entry.targetId) });
   const archiveInput: OutputDeliveryManifestInput = { schemaVersion: 1, deliveryId: manifestId, planId: plan.id, planRevision: plan.revisionId, createdAt, targets: entries.map((entry) => ({ targetId: entry.targetId, fileId: entry.assetId, acceptanceId: entry.acceptanceId })), scope, ...history };
   const fileIds = new Set(entries.map((entry) => entry.assetId));
-  const files = snapshot.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength, kind: asset.mediaKind }));
+  const files = snapshot.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength }));
   if (files.length !== fileIds.size) fail("output_delivery_file_inventory_changed", 409);
   const parts = planOutputDeliveryParts(files, archiveInput);
   const manifest = { schemaVersion: 1, id: manifestId, planId: plan.id, planRevisionId: plan.revisionId, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, isPartial: partial, createdAt, entries, summary: snapshot.summary, scope, parts, ...history };
@@ -1194,7 +1190,7 @@ async function downloadDelivery(trusted: OutputTrustedContext, manifestId: strin
   const archiveInput: OutputDeliveryManifestInput = { schemaVersion: 1, deliveryId: manifestId, planId: plan.id, planRevision: plan.revisionId, createdAt: String(manifest.createdAt), targets: pinned.map((entry) => ({ targetId: entry.targetId, fileId: entry.assetId, acceptanceId: entry.acceptanceId })), ...(savedScope ? { scope: savedScope } : {}), ...history };
   const model = requireCompleteOutputReadModel(await readOutputModel(trusted));
   const fileIds = new Set(pinned.map((entry) => entry.assetId));
-  const files = model.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength, kind: asset.mediaKind }));
+  const files = model.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength }));
   if (files.length !== fileIds.size) fail("output_delivery_file_inventory_changed", 409);
   const currentParts = planOutputDeliveryParts(files, archiveInput);
   const parts = Array.isArray(manifest.parts) ? manifest.parts as OutputDeliveryPart[] : currentParts;
@@ -1210,16 +1206,7 @@ async function downloadDelivery(trusted: OutputTrustedContext, manifestId: strin
     if (!evidence) fail("output_asset_unavailable", 404);
     assets.set(fileId, await loadExactAsset(trusted, fileId, evidence));
   }
-  const archiveFiles = [...assets.entries()].map(([id, asset]) => ({ id, name: asset.name, bytes: asset.bytes, expectedSha256: asset.inspection.sha256! }));
-  const archiveManifest = { ...archiveInput, packagePart: { index: part.index, parts } };
-  if (archiveFiles.some(file => file.bytes.byteLength > MAX_OUTPUT_ASSET_BYTES)) {
-    // Large meshes remain singleton parts. Their hashes are rechecked before
-    // the same final authority proof discloses a bounded streaming ZIP.
-    const archive = await createOutputDeliveryArchiveStream(archiveFiles, archiveManifest, { snapshot: false });
-    const completion = archive.manifest.deliveryStatus, packageCount = archive.manifest.packagePart.count;
-    return discloseOutputResponse(trusted, () => ({ body: archive.stream, init: { headers: { "content-type": archive.mimeType, "content-length": String(archive.byteLength), "content-disposition": `attachment; filename="forma-outputs-${completion}${packageCount > 1 ? `-part-${part.index}-of-${packageCount}` : ""}.zip"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-delivery-completion": completion, "x-output-delivery-scope": "entire-delivery-package", "x-output-package-part": String(part.index), "x-output-package-parts": String(packageCount), "x-output-contains-complete-package": packageCount === 1 ? "true" : "false" } } }), deliveryAssertions(trusted, plan, pinned));
-  }
-  const archive = await createOutputDeliveryArchive(archiveFiles, archiveManifest);
+  const archive = await createOutputDeliveryArchive([...assets.entries()].map(([id, asset]) => ({ id, name: asset.name, bytes: asset.bytes, expectedSha256: asset.inspection.sha256! })), { ...archiveInput, packagePart: { index: part.index, parts } });
   const completion = archive.manifest.deliveryStatus, packageCount = archive.manifest.packagePart.count;
   // The shared final proof owns synchronous construction of this exact archive response.
   return discloseOutputResponse(trusted, () => ({ body: ownedBuffer(archive.bytes), init: { headers: { "content-type": archive.mimeType, "content-disposition": `attachment; filename="forma-outputs-${completion}${packageCount > 1 ? `-part-${part.index}-of-${packageCount}` : ""}.zip"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-delivery-completion": completion, "x-output-delivery-scope": "entire-delivery-package", "x-output-package-part": String(part.index), "x-output-package-parts": String(packageCount), "x-output-contains-complete-package": packageCount === 1 ? "true" : "false", "x-output-sha256": archive.sha256 } } }),
@@ -1228,7 +1215,7 @@ async function downloadDelivery(trusted: OutputTrustedContext, manifestId: strin
 
 async function downloadAsset(trusted: OutputTrustedContext, assetId: string) {
   const asset = await loadExactAsset(trusted, assetId);
-  return discloseOutputResponse(trusted, () => ({ body: assetBuffer(asset.bytes), init: { headers: { "content-type": asset.inspection.mimeType!, "content-disposition": `attachment; filename="output.${asset.inspection.extension}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-sha256": asset.inspection.sha256!, "x-output-review": "File inspection download does not establish assignment acceptance or complete delivery." } } }), [
+  return discloseOutputResponse(trusted, () => ({ body: ownedBuffer(asset.bytes), init: { headers: { "content-type": asset.inspection.mimeType!, "content-disposition": `attachment; filename="output.${asset.inspection.extension}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-sha256": asset.inspection.sha256!, "x-output-review": "File inspection download does not establish assignment acceptance or complete delivery." } } }), [
     { sql: "EXISTS(SELECT 1 FROM output_assets asset JOIN event_private_payloads body ON body.private_event_id=asset.created_event_id AND body.redacted_at IS NULL WHERE asset.scope_key=? AND asset.asset_id=? AND asset.document_id=? AND asset.redacted_at IS NULL AND asset.content_sha256=?)", bindings: [trusted.scope.key, assetId, trusted.scope.documentId, asset.inspection.sha256!] }], outputAssetReadAssertions(trusted.scope, [asset.row]));
 }
 

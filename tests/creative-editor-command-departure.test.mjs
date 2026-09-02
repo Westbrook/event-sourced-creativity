@@ -33,8 +33,7 @@ function assertDestination(x, before) {
   assert.ok(x.classed(chooser, "next-format-dialog")); assert.equal(chooser.owner.tag, "forma-workspace");
   assert.equal(chooser.owner.store, h.store); assert.ok(chooser.owner.isConnected);
   const formats = tree.visible("button").filter(node => node.owner.tag === "forma-ui-choice-card" && x.within(node, chooser));
-  assert.equal(formats.length, 8, "The actual healthy command reaches all eight free format controls, including 3D");
-  assert.ok(formats.some(node => node.owner.value === "model3d"), "The prepared output chooser includes 3D models");
+  assert.equal(formats.length, 7, "The actual healthy command reaches all seven free format controls");
 }
 
 test("C ordinary Editor command / pristine populated native source / en", options, async t => {

@@ -16,9 +16,7 @@ import {
   type ConsequentialBinding,
 } from "./consequential-consent.ts";
 import { contextSourceHash, prepareDocumentAuthority } from "./context-authoring-authority.ts";
-import { verifyModel3dBlockAssets, verifySourceDocumentEvidence } from "./media-api.ts";
-import { assertDerivedReferenceProvenance } from "./derived-reference-guard.ts";
-import { normalizeReferenceComposition } from "../src/model/reference-composition.ts";
+import { verifySourceDocumentEvidence } from "./media-api.ts";
 import { hasCapability, type BudgetReservationGuard, type PilotUser } from "./pilot-policy.ts";
 import { readProjectSourceEvents } from "./project-access.ts";
 import { serializeEvent, type EventRow, type WorkerEnv } from "./runtime.ts";
@@ -281,9 +279,7 @@ async function sourceAdmission(env: WorkerEnv, prepared: Prepared, intent: CopyI
     addResource("block", block.id);
     if (block.documentId) addResource("document", block.documentId);
     if (block.canvasId) addResource("canvas", block.canvasId);
-    for (const key of ["reference_id", "model_reference_id"] as const) {
-      if (typeof block.properties[key] === "string" && block.properties[key]) addResource("reference", block.properties[key]);
-    }
+    if (typeof block.properties.reference_id === "string" && block.properties.reference_id) addResource("reference", block.properties.reference_id);
   }
   for (const relation of projection.libraryBlockRelations) addResource("relation", relation.id);
   for (const collection of projection.collections) addResource("collection", collection.id);
@@ -315,26 +311,10 @@ async function sourceAdmission(env: WorkerEnv, prepared: Prepared, intent: CopyI
     if (rights.issue) throw new Error("document_duplicate_source_rights_" + rights.issue);
     if (rights.validUntil && rights.validUntil < expiresAt) expiresAt = rights.validUntil;
   };
-  const copiedBlockIds = new Set(blocks.map((block) => block.id));
-  const assetBlocks = new Map(blocks.map((block) => [block.id, block]));
-  for (const block of assetBlocks.values()) {
-    if (!block.properties.reference_composition) continue;
-    try {
-      await assertDerivedReferenceProvenance({ env, ownerId: owner, properties: block.properties, blockId: block.id,
-        sourceEvents: events, projectScope: binding.scope ?? undefined });
-    } catch { throw new Error("document_duplicate_source_evidence_unavailable"); }
-    const recipe = normalizeReferenceComposition(block.properties.reference_composition);
-    if (!recipe) throw new Error("document_duplicate_source_evidence_unavailable");
-    for (const retained of recipe.sources) {
-      const original = projection.libraryBlocks.find((candidate) => candidate.id === retained.blockId && !candidate.removed);
-      if (!original) throw new Error("document_duplicate_source_evidence_unavailable");
-      assetBlocks.set(original.id, original);
-    }
-  }
-  for (const block of assetBlocks.values()) {
+  for (const block of blocks) {
     considerRights(block.properties);
-    const referenceIds = new Set([block.properties.reference_id, block.properties.model_reference_id].filter((value): value is string => typeof value === "string" && Boolean(value)));
-    for (const referenceId of referenceIds) {
+    const referenceId = String(block.properties.reference_id ?? "");
+    if (referenceId) {
       const receipts = events.filter((event) => ["ReferenceIngested", "RightsAsserted"].includes(event.type)
         && String(event.payload.reference_id ?? "") === referenceId);
       const latest = receipts.at(-1);
@@ -345,31 +325,17 @@ async function sourceAdmission(env: WorkerEnv, prepared: Prepared, intent: CopyI
       considerRights(latest.payload);
       receipts.forEach((event) => ids.add(event.eventId)); addResource("reference", referenceId);
     }
-    if (block.type === "model3d" && (block.properties.model_url || block.properties.media_url)
-      && !await verifyModel3dBlockAssets(env, owner, block.properties, binding.scope?.projectAccessId)) {
-      throw new Error("document_duplicate_source_evidence_unavailable");
-    }
-    for (const [mediaProperty, referenceProperty] of [["media_url", "reference_id"], ["model_url", "model_reference_id"]] as const) {
-      const mediaUrl = block.properties[mediaProperty];
-      if (!mediaUrl) continue;
+    const mediaUrl = block.properties.media_url;
+    if (mediaUrl) {
       let key = "";
       try { if (typeof mediaUrl === "string" && mediaUrl.startsWith("/api/media/")) key = decodeURIComponent(mediaUrl.slice("/api/media/".length)); } catch { /* rejected below */ }
-      if (!key || !mediaKeyMatchesOwnerNamespace(key, owner) || !referenceIds.has(String(block.properties[referenceProperty] ?? ""))) throw new Error("document_duplicate_source_media_unavailable");
-      if (block.type === "model3d") {
-        const receipt = events.findLast((event) => event.type === "ReferenceIngested"
-          && event.payload.reference_id === block.properties[referenceProperty]);
-        const hashProperty = mediaProperty === "model_url" ? "model_content_hash" : "source_content_hash";
-        if (!receipt || (receipt.payload.source_ref ?? receipt.payload.media_url) !== mediaUrl || receipt.payload.content_hash !== block.properties[hashProperty]) {
-          throw new Error("document_duplicate_source_evidence_unavailable");
-        }
-      }
+      if (!key || !mediaKeyMatchesOwnerNamespace(key, owner) || !referenceId) throw new Error("document_duplicate_source_media_unavailable");
       const object = typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
       if (!object || object.customMetadata?.ownerId !== owner) throw new Error("document_duplicate_source_media_unavailable");
       if (block.type === "reference" && !await verifySourceDocumentEvidence(env, owner, mediaUrl, block.properties)) {
         throw new Error("document_duplicate_source_evidence_unavailable");
       }
-      addResource("media", key);
-      if (copiedBlockIds.has(block.id)) copiedMediaKeys.add(key);
+      addResource("media", key); copiedMediaKeys.add(key);
     }
     for (const [key, kind, candidates] of [
       ["source_document_id", "document", projection.documents],
@@ -445,14 +411,12 @@ async function sourceAdmission(env: WorkerEnv, prepared: Prepared, intent: CopyI
   const commitGuard: AuthoringCommitProof = !copiedMediaRows.length ? guard : Object.assign((allocatedEvents: readonly EventRow[]) => {
     const latest = new Map<string, string>();
     for (const event of allocatedEvents) if (event.type === "BlockCreated") {
+      const mediaUrl = record(event.payload.properties).media_url;
+      if (typeof mediaUrl !== "string" || !mediaUrl.startsWith("/api/media/")) continue;
+      let key = ""; try { key = decodeURIComponent(mediaUrl.slice("/api/media/".length)); } catch { throw new Error("document_duplicate_source_media_unavailable"); }
       const source = blocks.find((block) => block.id === event.payload.copied_from_block_id);
-      for (const mediaProperty of ["media_url", "model_url"] as const) {
-        const mediaUrl = record(event.payload.properties)[mediaProperty];
-        if (typeof mediaUrl !== "string" || !mediaUrl.startsWith("/api/media/")) continue;
-        let key = ""; try { key = decodeURIComponent(mediaUrl.slice("/api/media/".length)); } catch { throw new Error("document_duplicate_source_media_unavailable"); }
-        if (!copiedMediaKeys.has(key) || source?.properties[mediaProperty] !== mediaUrl) throw new Error("authoring_write_proof_required");
-        latest.set(key, event.eventId);
-      }
+      if (!copiedMediaKeys.has(key) || source?.properties.media_url !== mediaUrl) throw new Error("authoring_write_proof_required");
+      latest.set(key, event.eventId);
     }
     if (copiedMediaRows.some((row) => !latest.has(String(row.resource_id)))) throw new Error("authoring_write_proof_required");
     const expected = scopedResources.map((row) => row.resource_kind === "media" && latest.has(String(row.resource_id))

@@ -6,10 +6,7 @@
  * Callers must bind these facts to this SHA-256 and run their separate review
  * and authorization gates. A filename and a browser-supplied MIME are not proof.
  */
-import { MAX_MODEL3D_UPLOAD_BYTES, validateModel3dAsset } from "./model3d-assets.ts";
-
 export const MAX_OUTPUT_ASSET_BYTES = 24_000_000;
-export const MAX_OUTPUT_MODEL3D_ASSET_BYTES = MAX_MODEL3D_UPLOAD_BYTES;
 export const MAX_OUTPUT_ASSET_NAME_BYTES = 180;
 const MAX_EXPANDED_BYTES = 32 * 1024 * 1024;
 const MAX_XML_BYTES = 1024 * 1024;
@@ -21,7 +18,7 @@ const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-export type OutputAssetKind = "image" | "audio" | "video" | "presentation" | "model3d";
+export type OutputAssetKind = "image" | "audio" | "video" | "presentation";
 export type OutputAssetFacts = {
   width?: number;
   height?: number;
@@ -41,19 +38,12 @@ export type OutputAssetFacts = {
   audioCodec?: string;
   rotationDegrees?: number;
   externalHyperlinkCount?: number;
-  meshCount?: number;
-  primitiveCount?: number;
-  vertexCount?: number;
-  materialCount?: number;
-  textureCount?: number;
-  animationCount?: number;
-  nodeCount?: number;
 };
 export type OutputAssetInspection = {
   status: "inspected" | "unsupported" | "invalid";
   kind: OutputAssetKind | null;
   mimeType: string | null;
-  extension: "png" | "jpg" | "wav" | "mp3" | "mp4" | "pptx" | "glb" | null;
+  extension: "png" | "jpg" | "wav" | "mp3" | "mp4" | "pptx" | null;
   byteLength: number;
   sha256: string | null;
   facts: OutputAssetFacts;
@@ -950,38 +940,13 @@ async function inspectPptx(bytes: Uint8Array): Promise<ParsedAsset> {
   return { kind: "presentation", mimeType: PPTX_MIME, extension: "pptx", facts: { slideCount: slides.length, hiddenSlideCount, slideWidthEmu: Number(width), slideHeightEmu: Number(height), externalHyperlinkCount }, checks: ["zip-local-central-consistency", "zip-crc-and-expansion-bounds", "office-xml-structure", "macro-and-external-media-rejection", "ordered-presentation-slide-relationships"], limitations: ["Slide count includes hidden slides, which are separately counted. Slide rendering, useful content, citations, accessibility, and linked-page safety require review; external hyperlinks were not fetched."] };
 }
 
-function inspectGlb(bytes: Uint8Array): ParsedAsset {
-  let model: Record<string, unknown>;
-  try { model = validateModel3dAsset(bytes).json; }
-  catch { return fail("invalid_glb_model"); }
-  const meshes = model.meshes as Array<{ primitives: Array<{ attributes: { POSITION: number } }> }>;
-  const accessors = model.accessors as Array<{ count: number }>;
-  let primitiveCount = 0, vertexCount = 0;
-  for (const mesh of meshes) for (const primitive of mesh.primitives) {
-    primitiveCount += 1;
-    vertexCount += accessors[primitive.attributes.POSITION]!.count;
-  }
-  const count = (key: string) => Array.isArray(model[key]) ? model[key].length : 0;
-  return {
-    kind: "model3d", mimeType: "model/gltf-binary", extension: "glb",
-    facts: { meshCount: meshes.length, primitiveCount, vertexCount, materialCount: count("materials"), textureCount: count("textures"), animationCount: count("animations"), nodeCount: count("nodes") },
-    checks: ["glb-v2-chunk-boundaries", "gltf-self-contained-resources", "gltf-buffer-and-accessor-bounds", "gltf-finite-geometry-and-index-ranges", "gltf-embedded-image-framing", "gltf-scene-references"],
-    limitations: ["Geometry and embedded resource boundaries were checked. Model appearance, materials, animation playback, and the selected view require visual review. Counts describe stored mesh primitives and their vertex attributes, not visible or unique vertices."],
-  };
-}
-
-/**
- * Inspect exact file bytes; no MIME or dimension assertions from the caller are accepted.
- * Snapshotting is the public default. Internal callers may disable it only when
- * they own immutable input bytes and guarantee no mutation until inspection ends.
- */
-export async function inspectOutputAsset(input: Uint8Array, declaredName?: string, options: { snapshot?: boolean } = {}): Promise<OutputAssetInspection> {
+/** Inspect exact file bytes; no MIME or dimension assertions from the caller are accepted. */
+export async function inspectOutputAsset(input: Uint8Array, declaredName?: string): Promise<OutputAssetInspection> {
   const empty: OutputAssetInspection = { status: "invalid", kind: null, mimeType: null, extension: null, byteLength: input instanceof Uint8Array ? input.byteLength : 0, sha256: null, facts: {}, checks: [], limitations: ["Inspection does not grant acceptance, rights, provenance, or a claim of useful or grounded content."], limitationCodes: ["output_inspection_not_acceptance"], errors: [] };
   if (!(input instanceof Uint8Array) || !input.byteLength) return { ...empty, errors: ["empty_output_asset"] };
-  const isGlb = input.byteLength >= 4 && input[0] === 0x67 && input[1] === 0x6c && input[2] === 0x54 && input[3] === 0x46;
-  if (input.byteLength > (isGlb ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES)) return { ...empty, errors: ["output_asset_too_large"] };
+  if (input.byteLength > MAX_OUTPUT_ASSET_BYTES) return { ...empty, errors: ["output_asset_too_large"] };
   if (declaredName !== undefined && !validOutputAssetName(declaredName)) return { ...empty, errors: ["unsafe_output_asset_name"] };
-  const bytes = options.snapshot === false ? input : new Uint8Array(input);
+  const bytes = new Uint8Array(input);
   empty.sha256 = await outputAssetSha256(bytes);
   try {
     let parsed: ParsedAsset;
@@ -991,9 +956,8 @@ export async function inspectOutputAsset(input: Uint8Array, declaredName?: strin
     else if (bytes.length >= 3 && (ascii(bytes, 0, 3) === "ID3" || bytes[0] === 255 && (bytes[1]! & 0xe0) === 0xe0)) parsed = inspectMp3(bytes);
     else if (bytes.length >= 8 && ascii(bytes, 4) === "ftyp") parsed = inspectMp4(bytes);
     else if (bytes.length >= 4 && ascii(bytes, 0) === "PK\x03\x04") parsed = await inspectPptx(bytes);
-    else if (isGlb) parsed = inspectGlb(bytes);
     else fail("output_asset_format_unsupported", true);
-    const formatLimitations = { png: "output_png_visual_review_required", jpg: "output_jpeg_decode_review_required", wav: "output_wav_listening_review_required", mp3: "output_mp3_listening_review_required", mp4: "output_mp4_playback_review_required", pptx: "output_pptx_content_review_required", glb: "output_model3d_visual_review_required" };
+    const formatLimitations = { png: "output_png_visual_review_required", jpg: "output_jpeg_decode_review_required", wav: "output_wav_listening_review_required", mp3: "output_mp3_listening_review_required", mp4: "output_mp4_playback_review_required", pptx: "output_pptx_content_review_required" };
     return { ...empty, ...parsed, status: "inspected", errors: [], limitations: [...empty.limitations, ...parsed.limitations], limitationCodes: [...empty.limitationCodes!, ...(parsed.extension ? [formatLimitations[parsed.extension]] : [])] };
   } catch (error) {
     return { ...empty, status: error instanceof InspectionFailure && error.unsupported ? "unsupported" : "invalid", errors: [error instanceof InspectionFailure ? error.code : "asset_inspection_failed"] };

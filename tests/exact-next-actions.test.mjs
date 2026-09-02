@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {readFileSync} from "node:fs";
-import {creativeNextActions,creativeNextTargetAvailable,creativePreparationChoice,describeCreativeProposal,followCreativeNextTarget,requestedCreativeMedium} from "../src/model/workspace-intelligence.ts";
-import {DOCUMENT_ARTIFACT_KINDS} from "../src/model/document-artifacts.ts";
+import {creativeNextActions,creativeNextTargetAvailable,creativePreparationChoice,followCreativeNextTarget,requestedCreativeMedium} from "../src/model/workspace-intelligence.ts";
 import {adaptiveRequestKey,adaptiveJobMatchesRequest} from "../src/model/adaptive-request.ts";
 import {outputComparisonHistory} from "../src/model/output-comparison.ts";
 import {foldEvents} from "../src/model/events.ts";
 import {canvasDocumentTarget,documentJobMatchesSurface} from "../src/model/canvas-document-target.ts";
 import {FORMA_NEXT_ACTION_MESSAGES} from "../src/components/design-system/locales/next-action-messages.ts";
-const formats=["image",...DOCUMENT_ARTIFACT_KINDS];
+const formats=["image","short_story","scene","slides","storyboard","video","audio"];
 const block=(id="direction",properties={})=>({id,projectId:"p",documentId:"b",type:"direction",removed:false,scope:"document",canvasId:null,properties:{text:"A clear direction",weight:1,intent:"include",...properties},sourceEvents:["source-1"]});
 const output=(id="image",extra={})=>({id,documentId:"b",canvasId:null,title:id,sequence:7,quality:"high",purpose:"final",discarded:false,promptFanId:null,provider:"test-provider",mediaUrl:`/api/media/${id}`,...extra});
 const artifact=(id="deck",kind="slides",extra={})=>({id,documentId:"b",title:id,kind,sequence:8,...extra});
@@ -16,7 +15,7 @@ const job=(jobId="job",extra={})=>({jobId,documentId:"b",canvasId:null,kind:"ren
 const facts=(extra={})=>({projectId:"p",documentId:"b",canvasId:null,authorityKey:"actor:permission-1",canRead:true,canAuthor:true,canConfigure:true,blocks:[block()],outputs:[],artifacts:[],jobs:[],...extra});
 const ports=(calls)=>Object.fromEntries(["context","configure","output","artifact","job","compare"].map((kind)=>[kind,(target)=>calls.push({kind,target})]));
 
-test("exact next actions open each saved form by identity without configuration or generation",async()=>{
+test("exact next actions open each of the seven saved forms by identity without configuration or generation",async()=>{
   for(const format of formats){
     const state=facts(format==="image"?{outputs:[output("saved-image")]}:{artifacts:[artifact(`saved-${format}`,format)]}),action=creativeNextActions(state)[0],calls=[];
     assert.equal(action.id,"open-output");assert.equal(action.target.documentId,"b");
@@ -26,7 +25,7 @@ test("exact next actions open each saved form by identity without configuration 
   }
 });
 
-test("exact next actions prepare all explicit media without dispatch and leave ambiguous goals as a choice",async()=>{
+test("exact next actions prepare all seven explicit media without dispatch and leave ambiguous goals as a choice",async()=>{
   for(const format of formats){
     const state=facts({blocks:[block("format",{output_kind:format})]}),action=creativeNextActions(state)[0],calls=[];
     assert.equal(action.id,"configure-output");assert.equal(action.target.medium,format);
@@ -35,20 +34,6 @@ test("exact next actions prepare all explicit media without dispatch and leave a
   const ambiguous=facts({blocks:[block("one",{output_kind:"slides"}),block("two",{output_kind:"video"})]});
   assert.equal(requestedCreativeMedium(ambiguous),null);assert.equal(creativeNextActions(ambiguous)[0].target.medium,null);
   assert.equal(requestedCreativeMedium(facts({blocks:[block("avoid",{output_kind:"audio",intent:"prohibit"})]})),null);
-});
-
-test("3D model configuration and proposals use a readable label without treating model references as output requests",()=>{
-  for(const lifecycle of [undefined,{sourceBlockIds:[],reviews:[],deliveries:[],output:{state:"ready",scopeKnown:true,requirementBlockIds:[],choices:[]}}]){
-    const state=facts({blocks:[block("format",{output_kind:"model3d"})],lifecycle});
-    const action=creativeNextActions(state).find(candidate=>candidate.target.kind==="configure");
-    assert.equal(action.target.medium,"model3d");
-    assert.equal(action.title,"3D model");
-    assert.equal(requestedCreativeMedium(facts({blocks:[{...block("input-model"),type:"model3d"}],lifecycle})),null);
-  }
-  assert.deepEqual(describeCreativeProposal([
-    {type:"BlockCreated",payload:{type:"model3d",properties:{text:"A ceramic vessel"}}},
-    {type:"BlockCreated",payload:{type:"model3d",properties:{}}},
-  ]),["Add 3D model: “A ceramic vessel”","Add a 3D model"]);
 });
 
 test("exact next actions prioritize existing nonimage work over optional failed siblings and remain useful to readers",async()=>{

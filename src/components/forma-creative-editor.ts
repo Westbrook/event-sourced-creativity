@@ -17,8 +17,6 @@ import { isImageReference, referenceMedium } from "../model/reference-media";
 import { audioMimeType } from "../model/audio";
 import { browserAudioDuration } from "../model/audio-browser";
 import { renderAudioPlayer } from "./audio-playback";
-import { model3dMimeType } from "../model/model3d-assets";
-import { referenceCompositionSources, type ReferenceCompositionRecipe } from "../model/reference-composition";
 import "./icons-authoring";
 import "./spatial-scope-editor";
 import "./output-visual";
@@ -31,8 +29,6 @@ import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./output-input-editor";
 import "./context-intelligence";
-import "./reference-compositor";
-import type { ReferenceCompositor } from "./reference-compositor";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -47,7 +43,7 @@ const EDITOR_SECTIONS: readonly EditorSection[] = [
   { id: "picture", label: "The picture", description: "What appears, where it happens, and how it moves", types: ["subject", "environment", "action", "motion", "scale"], starter: "subject" },
   { id: "look", label: "The look", description: "How the work should be framed, lit, and styled", types: ["composition", "camera", "lighting", "style", "material", "palette", "typography", "audio"], starter: "style" },
   { id: "delivery", label: "The guardrails", description: "Where it goes, what it owes, and what it must protect or avoid", types: ["format", "output", "brand", "exclusion", "accessibility"], starter: "format" },
-  { id: "references", label: "Visual references", description: "Images that make the direction easier to see", types: ["reference", "model3d"], starter: "reference" },
+  { id: "references", label: "Visual references", description: "Images that make the direction easier to see", types: ["reference"], starter: "reference" },
 ] as const;
 
 const FRIENDLY_LABELS: Record<BlockKind, string> = {
@@ -74,7 +70,6 @@ const FRIENDLY_LABELS: Record<BlockKind, string> = {
   exclusion: "General constraint",
   accessibility: "Accessibility",
   reference: "Reference image",
-  model3d: "3D model",
   sketch: "Sketch",
 };
 
@@ -96,8 +91,6 @@ const slug = (value: string, id = "") => value.toLowerCase().normalize("NFKD").r
 const strengthFor = (weight: number) => weight >= .82 ? "lead" : weight >= .5 ? "balanced" : "supporting";
 const weightFor = (strength: string) => strength === "lead" ? .94 : strength === "supporting" ? .34 : .65;
 const intentCopy = (intent: BlockIntent) => intent === "prohibit" ? "Never use" : intent === "avoid" ? "Avoid" : intent === "prefer" ? "Prefer" : "Include";
-const hasContextInspector = (item: CreativeBlock | undefined) => Boolean(item && (item.type.toLowerCase() === "output"
-  || item.type === "model3d" || item.type === "reference" && item.properties.reference_composition));
 
 export class FormaCreativeEditor extends AlternativeStudio {
   #selectedId = "";
@@ -107,12 +100,8 @@ export class FormaCreativeEditor extends AlternativeStudio {
   #newText = "";
   #newStrength = "balanced";
   #pendingReference: File | null = null;
-  #pendingReferenceCurrent: () => boolean = () => false;
-  #pendingReferenceDocumentId = "";
   #rightsConfirmed = false;
   #uploading = false;
-  #referenceComposition: { id: string; current: () => boolean } | null = null;
-  #compositionSaving = false;
   #pendingSaves: { current: () => boolean; count: number } | null = null;
 
   #commandSelectedItem() {
@@ -128,7 +117,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   #commandNativeWorkBlocked() {
     const item = this.#commandSelectedItem();
-    if (!item || hasContextInspector(item)) return false;
+    if (!item || item.type.toLowerCase() === "output") return false;
     const form = this.querySelector(".creative-editor-inspector")?.querySelector("form");
     if (!form) return true;
     const selectedValue = (name: string) => {
@@ -150,18 +139,12 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const identity = this.#commandSelectionIdentity(), children = this.captureAlternativeCommandChildren();
     return { element: this, current: () => this.isConnected && this.#commandSelectionIdentity() === identity && children.current(),
       blocked: () => Boolean(this.#pendingSaves && this.#pendingSaves.count > 0 && this.#pendingSaves.current())
-        || this.#creating || Boolean(this.#pendingReference) || this.#uploading || Boolean(this.#referenceComposition) || this.#compositionSaving
+        || this.#creating || Boolean(this.#pendingReference) || this.#uploading
         || this.#commandNativeWorkBlocked() || children.blocked(),
       reason: () => "next.lifecycle.currentWorkOpen" };
   }
 
   protected override updated() {
-    if (this.#pendingReference && !this.#pendingReferenceCurrent()) this.#cancelReference();
-    if (this.#referenceComposition && !this.#referenceComposition.current()) {
-      this.#referenceComposition = null;
-      this.#compositionSaving = false;
-      this.requestUpdate();
-    }
     const create = this.querySelector<HTMLDialogElement>(".creative-add-dialog");
     if (this.#creating) ensureModalDialog(create);
     const reference = this.querySelector<HTMLDialogElement>(".creative-reference-dialog");
@@ -169,7 +152,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
   }
 
   #openCreate(type: BlockKind = "direction", intent: BlockIntent = "include") {
-    if (type === "reference" || type === "model3d") return;
+    if (type === "reference") return;
     this.#newType = type;
     this.#newIntent = intent;
     this.#newText = "";
@@ -189,16 +172,6 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const file = input.files?.[0];
     input.value = "";
     if (!file) return;
-    if (input.accept?.includes(".glb") && !model3dMimeType(file)) {
-      this.store.toast(this.i18n.t("model3d.asset.format", "Choose a self-contained GLB (.glb) model."));
-      return;
-    }
-    const source = this.store.captureSourceOwnership(), route = this.store.route.get();
-    this.#pendingReferenceDocumentId = this.store.projection.get().documentId;
-    this.#pendingReferenceCurrent = () => this.isConnected && this.#pendingReference === file
-      && this.store.sourceOwnershipActive(source) && this.store.route.get() === route
-      && this.store.projection.get().documentId === this.#pendingReferenceDocumentId;
-    if (this.#creating) this.#closeCreate();
     this.#pendingReference = file;
     this.#rightsConfirmed = false;
     this.requestUpdate();
@@ -207,26 +180,16 @@ export class FormaCreativeEditor extends AlternativeStudio {
   #cancelReference() {
     this.querySelector<HTMLDialogElement>(".creative-reference-dialog")?.close();
     this.#pendingReference = null;
-    this.#pendingReferenceDocumentId = "";
     this.#rightsConfirmed = false;
     this.requestUpdate();
   }
 
   async #confirmReference() {const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     const file = this.#pendingReference;
-    if (!file || !this.#rightsConfirmed || this.#uploading || !this.#pendingReferenceCurrent()) return;
+    if (!file || !this.#rightsConfirmed || this.#uploading) return;
     this.#uploading = true;
     this.requestUpdate();
     try {
-      if (model3dMimeType(file)) {
-        const saved = await this.store.uploadModel3dFile(file, () => this.#pendingReferenceCurrent() && this.#rightsConfirmed,
-          { documentId: this.#pendingReferenceDocumentId, rightsConfirmed: true });
-        if (saved && this.#pendingReferenceCurrent()) {
-          this.#selectedId = this.store.ui.focusBlockId;
-          this.#cancelReference();
-        }
-        return;
-      }
       const isAudio=Boolean(audioMimeType(file.type));
       let sample;
       if(!isAudio)try { sample = await sampleImageFile(file); } catch { sample = undefined; }
@@ -262,49 +225,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
     }
   }
 
-  #openReferenceComposition() {
-    const source = this.store.captureSourceOwnership(), documentId = this.store.projection.get().documentId,
-      route = this.store.route.get(), id = crypto.randomUUID();
-    const current = () => this.isConnected && this.#referenceComposition?.id === id
-      && this.store.sourceOwnershipActive(source) && this.store.projection.get().documentId === documentId
-      && this.store.route.get() === route;
-    this.#referenceComposition = { id, current };
-    this.requestUpdate();
-  }
-
-  #closeReferenceComposition(event?: Event) {
-    if (this.#compositionSaving) return;
-    const compositor = this.querySelector<ReferenceCompositor>("forma-reference-compositor");
-    if (event && event.currentTarget !== compositor) return;
-    compositor?.closeForOwner();
-    this.#referenceComposition = null;
-    this.requestUpdate();
-  }
-
-  async #saveReferenceComposition(event: CustomEvent<{ blob: Blob; recipe: ReferenceCompositionRecipe; label: string }>) {
-    const origin = this.#referenceComposition;
-    if (!origin?.current() || this.#compositionSaving || event.currentTarget !== this.querySelector("forma-reference-compositor")) return;
-    this.#compositionSaving = true;
-    this.requestUpdate();
-    try {
-      const saved = await this.store.saveReferenceComposition(event.detail, origin.current);
-      if (saved && origin.current()) {
-        this.#selectedId = this.store.ui.focusBlockId;
-        this.#compositionSaving = false;
-        this.#closeReferenceComposition();
-      }
-    } finally {
-      if (this.#referenceComposition === origin) {
-        this.#compositionSaving = false;
-        this.requestUpdate();
-      }
-    }
-  }
-
   async #create(event: SubmitEvent) {const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     event.preventDefault();
     const text = this.#newText.trim();
-    if (!text || this.#newType === "model3d") return;
+    if (!text) return;
     const projection = this.store.projection.get();
     const id = crypto.randomUUID();
     const appended = await this.store.append({
@@ -334,7 +258,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   async #save(event: SubmitEvent, item: CreativeBlock) {
     event.preventDefault();
-    if (item.locked || hasContextInspector(item)) return;
+    if (item.locked) return;
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const audioRecording=item.type==="audio"&&Boolean(item.properties.media_url);
     const currentDraft = audioRecording?null:outputInputDraft(item);
@@ -344,7 +268,6 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const strength = String(data.get("strength") ?? strengthFor(Number(item.properties.weight ?? .65)));
     const currentText = audioRecording?String(item.properties.description??""):outputInputDraft(item)?.markdown ?? textFor(item);
     const nextType = String(data.get("item-type") ?? item.type);
-    if (nextType === "model3d") return;
     const currentIntent = blockIntentFor(item.type, item.properties);
     const nextIntent = String(data.get("item-intent") ?? currentIntent);
     const storedIntent = String(item.properties.intent ?? "");
@@ -485,8 +408,8 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const negativeConstraint = isNegativeIntent(intent);
     const selected = this.#selectedId === item.id;
     const included = Number(item.properties.weight ?? .65) > 0;
-    const image = kind === "model3d" || kind === "reference" && isImageReference(item.properties) ? String(item.properties.media_url ?? "") : "";
-    const medium = kind === "model3d" ? "model3d" : kind === "reference" ? referenceMedium(item.properties) : "unknown";
+    const image = kind === "reference" && isImageReference(item.properties) ? String(item.properties.media_url ?? "") : "";
+    const medium = kind === "reference" ? referenceMedium(item.properties) : "unknown";
     const glyph = medium === "audio" ? "audio" : medium === "video" ? "video" : medium === "text" || medium === "document" ? "document" : blockIconName(kind);
     const itemLabel = labelFor(item);
     return html`<article class=${`creative-editor-item intent-${intent} ${negativeConstraint ? "negative-constraint" : ""} ${selected ? "selected" : ""} ${included ? "" : "paused"}`} draggable="true"
@@ -508,9 +431,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const selectedIntent = selected ? blockIntentFor(selected.type, selected.properties) : "include";
     const selectedIsExclusion = isNegativeIntent(selectedIntent);
     const selectedLabel = selected ? labelFor(selected) : "Reference";
-    const hasNonImageReference = projection.blocks.some((item) => item.type === "model3d" || item.type === "reference" && !isImageReference(item.properties));
-    const compositionSources = referenceCompositionSources(projection.blocks, this.store.events.get());
-    const pendingModel = Boolean(this.#pendingReference && model3dMimeType(this.#pendingReference));
+    const hasNonImageReference = projection.blocks.some((item) => item.type === "reference" && !isImageReference(item.properties));
     const history=generationHistoryItems(projection.outputs);const latestItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const latest=latestItem?.kind==="output"?latestItem.output:undefined;const latestSequence=latestItem?.sequence??0;const previewProgress=this.store.documentPreviewProgress(projection.documentId);
     const blockIds = new Set(projection.blocks.map((item) => item.id));
     const previewOutdated = Boolean(latestItem && this.store.events.get().some((event) => event.sequence > latestSequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
@@ -537,8 +458,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
               ${QUICK_TOOLS.map((tool) => html`<forma-ui-choice-card compact .label=${this.i18n.system(tool.label??FRIENDLY_LABELS[tool.type])} .detail=${this.i18n.system(tool.description??blockTypeDefinition(tool.type)?.description??"")} .iconName=${blockIconName(tool.type)} .value=${`${tool.type}:${tool.intent}`} @forma-action=${() => this.#openCreate(tool.type, tool.intent)}></forma-ui-choice-card>`)}
             </div>
             <button class="creative-tool-more" @click=${() => this.#openCreate()}>${icon("plus")} More ways to shape the work</button>
-            <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label><label class="creative-reference-tool creative-model3d-tool">${icon(blockIconName("model3d"))}<span><b>${this.i18n.t("model3d.upload.choose","Choose a 3D model")}</b><small>${this.i18n.t("model3d.upload.detail","Upload a self-contained GLB up to 64 MB, then save the view that should guide generation.")}</small></span><input type="file" accept=".glb,model/gltf-binary" @change=${this.#queueReference}></label><label class="creative-reference-tool creative-audio-tool">${icon("audio")}<span><b>${this.i18n.t("artifact.audio.label","Audio")}</b><small>${this.i18n.t("audio.reference.private","Private audio reference")}</small></span><input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" @change=${this.#queueReference}></label></form>
-            ${compositionSources.length ? html`<button type="button" class="creative-tool-more reference-composition-open" @click=${this.#openReferenceComposition}>${icon("layers")} ${this.i18n.t("model3d.composition.open","Compose reference scene")}</button>` : nothing}
+            <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label><label class="creative-reference-tool creative-audio-tool">${icon("audio")}<span><b>${this.i18n.t("artifact.audio.label","Audio")}</b><small>${this.i18n.t("audio.reference.private","Private audio reference")}</small></span><input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" @change=${this.#queueReference}></label></form>
             <footer><b>Not sure where to start?</b><p>Set the goal first. A clear goal makes every later choice easier to judge.</p><button @click=${() => this.#openCreate("direction")}>Set the goal ${icon("arrow")}</button></footer>
           </aside>
 
@@ -579,13 +499,13 @@ export class FormaCreativeEditor extends AlternativeStudio {
           </main>
 
           <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
-            ${hasContextInspector(selected) ? html`<forma-context-block .block=${selected} surface="editor"></forma-context-block>` : selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();const form=event.currentTarget as HTMLFormElement;form.querySelector("forma-output-input-editor")?.reset();const rich=form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]');if(rich){rich.value=textFor(selected);const textarea=rich.querySelector("textarea");if(textarea)textarea.value=textFor(selected);rich.requestUpdate();}const textarea=form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');if(textarea)textarea.value=textFor(selected);const type=form.querySelector<HTMLSelectElement>('select[name="item-type"]'),intent=form.querySelector<HTMLSelectElement>('select[name="item-intent"]');if(type)type.value=selected.type;if(intent)intent.value=blockIntentFor(selected.type,selected.properties);for(const radio of form.querySelectorAll<HTMLInputElement>('input[name="strength"]'))radio.checked=radio.value===strengthFor(Number(selected.properties.weight??.65));this.#selectedId=selected.id;this.store.patchUi({focusBlockId:selected.id,editingBlockId:""});this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".creative-editor-item.selected .creative-editor-item-main")?.focus({preventScroll:true}));}}}>
+            ${selected?.type.toLowerCase()==="output" ? html`<forma-context-block .block=${selected}></forma-context-block>` : selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();const form=event.currentTarget as HTMLFormElement;form.querySelector("forma-output-input-editor")?.reset();const rich=form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]');if(rich){rich.value=textFor(selected);const textarea=rich.querySelector("textarea");if(textarea)textarea.value=textFor(selected);rich.requestUpdate();}const textarea=form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');if(textarea)textarea.value=textFor(selected);const type=form.querySelector<HTMLSelectElement>('select[name="item-type"]'),intent=form.querySelector<HTMLSelectElement>('select[name="item-intent"]');if(type)type.value=selected.type;if(intent)intent.value=blockIntentFor(selected.type,selected.properties);for(const radio of form.querySelectorAll<HTMLInputElement>('input[name="strength"]'))radio.checked=radio.value===strengthFor(Number(selected.properties.weight??.65));this.#selectedId=selected.id;this.store.patchUi({focusBlockId:selected.id,editingBlockId:""});this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".creative-editor-item.selected .creative-editor-item-main")?.focus({preventScroll:true}));}}}>
               <header><span>${selectedIsExclusion ? this.i18n.system("Guardrail selected") : this.i18n.system("Selected")}</span><h2>${selectedIntent==="include"?this.i18n.system(selectedLabel):this.i18n.system("{intent} {type}",{intent:this.i18n.system(intentCopy(selectedIntent)),type:this.i18n.system(selectedLabel).toLocaleLowerCase(this.i18n.locale)})}</h2><p>${selectedIsExclusion ? this.i18n.system("This is a negative {value} constraint. It tells the preview what must not appear; it never becomes a positive focus.", { value: this.i18n.system(selectedLabel).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Change the role, intent, wording, and influence of this decision.")}</p></header>
               ${selected.type === "reference" && isImageReference(selected.properties) && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)} .targetId=${selected.id} .referenceId=${String(selected.properties.reference_id??"")} .focalPoint=${selected.properties.focal_point}></forma-reference-image>` : nothing}
               ${selected.type === "reference" && !isImageReference(selected.properties) ? html`<div class="creative-inspector-source" data-reference-medium=${referenceMedium(selected.properties)}><span>${icon(referenceMedium(selected.properties)==="audio"?"audio":referenceMedium(selected.properties)==="video"?"video":"document")}</span><blockquote>${String(selected.properties.source_excerpt??selected.properties.text??selected.properties.description??selected.properties.label??"")}</blockquote></div>` : nothing}
               ${selected.type==="audio"?html`${renderAudioPlayer(String(selected.properties.media_url??""),String(selected.properties.label??selected.handle),this.i18n,{transcript:String(selected.properties.transcript??selected.properties.lyrics??"")})}<fieldset class="audio-permissions" ?disabled=${selected.locked}><legend>${this.i18n.t("artifact.audio.label","Audio")}</legend>${([{"path":"inform_generation","key":"inform"},{"path":"include_in_output","key":"include"},{"path":"allow_provider_audio_transfer","key":"transfer"}] as const).map(({path,key})=>{const hint=`editor-audio-${selected.id}-${key}`;return html`<label class="audio-permission"><input type="checkbox" aria-describedby=${hint} .checked=${selected.properties[path]===true} @change=${(event:Event)=>void this.store.append({type:"BlockPropertyEdited",payload:{block_id:selected.id,property_path:path,old_value:selected.properties[path]===true,new_value:(event.currentTarget as HTMLInputElement).checked,source_surface:"creative-editor"}})}><span><b>${this.i18n.t(`audio.use.${key}.label`,"")}</b><small id=${hint}>${this.i18n.t(`audio.use.${key}.description`,"")}</small></span></label>`;})}</fieldset>`:nothing}
               ${selected.type === "reference" && isImageReference(selected.properties) ? html`<forma-reference-pixel-policy .block=${selected} surface="editor" compact></forma-reference-pixel-policy>` : nothing}
-              <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked||selected.type==="audio"&&Boolean(selected.properties.media_url)}>${BLOCK_TYPES.filter((item) => item.type !== "model3d").map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
+              <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked||selected.type==="audio"&&Boolean(selected.properties.media_url)}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
               <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${this.i18n.system(intent.label)} · ${this.i18n.system(intent.description)}</option>`)}</select></label>
               <div class="creative-role-intent-summary"><b>${this.i18n.system(intentCopy(selectedIntent))} · ${this.i18n.system(selectedLabel)}</b><small>${localizedSpatialScopeLabel(selected.properties.spatial_scope,this.i18n)}</small></div>
               ${selected.type==="audio"&&selected.properties.media_url?html`<label><span>${this.i18n.t("audio.reference.description","Describe what you hear")}</span><textarea name="copy" rows="6" .value=${String(selected.properties.description??"")} ?disabled=${selected.locked}></textarea></label>`:outputInputDraft(selected)?html`<forma-output-input-editor .block=${selected} source="creative-editor"></forma-output-input-editor>`:selected.properties.source_artifact_item_id||selected.properties.source_output_id?html`<forma-ui-rich-text name="copy" .label=${selected.properties.source_artifact_item_id?selected.properties.source_artifact_kind==="video"?this.i18n.system("Video scene direction"):this.i18n.system("Storyboard shot direction"):this.i18n.system("Image direction")} .value=${textFor(selected)} .rows=${7} ?disabled=${selected.locked}></forma-ui-rich-text>`:html`<label><span>${selectedIsExclusion ? this.i18n.system("What must the work avoid?") : this.i18n.system("What should it say?")}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>`}
@@ -609,8 +529,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         <form class="modal-card creative-add-card" @submit=${this.#create}>
           <button type="button" class="icon-button modal-close" aria-label="Close" @click=${this.#closeCreate}>${icon("close")}</button>
           <h2 id="creative-add-title">Add context</h2><p>${isNegativeIntent(this.#newIntent) ? this.i18n.system("Choose what kind of decision this is, then name what must stay out. The role remains explicit while the intent compiles as a negative guardrail.") : this.i18n.system("Choose what the instruction concerns and how the plan should treat it. You can change both later.")}</p>
-          <label class="creative-reference-tool creative-add-model3d-tool">${icon(blockIconName("model3d"))}<span><b>${this.i18n.t("model3d.upload.choose","Choose a 3D model")}</b><small>${this.i18n.t("model3d.upload.detail","Upload a self-contained GLB up to 64 MB, then save the view that should guide generation.")}</small></span><input type="file" accept=".glb,model/gltf-binary" @change=${this.#queueReference}></label>
-          <label><span>Role in the plan</span><select @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference" && item.type !== "model3d").map((item) => html`<option value=${item.type} ?selected=${item.type === this.#newType}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
+          <label><span>Role in the plan</span><select @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type} ?selected=${item.type === this.#newType}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
           ${this.#newType==="output"?nothing:html`<label><span>Intent</span><select @change=${(event: Event) => { this.#newIntent = (event.target as HTMLSelectElement).value as BlockIntent; this.requestUpdate(); }}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === this.#newIntent}>${this.i18n.system(intent.label)} · ${this.i18n.system(intent.description)}</option>`)}</select></label>`}
           <label><span>${isNegativeIntent(this.#newIntent) ? this.i18n.system("What {value} must be excluded?", { value: this.i18n.system(FRIENDLY_LABELS[this.#newType]).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Your instruction")}</span><textarea autofocus required rows="4" placeholder=${isNegativeIntent(this.#newIntent) ? this.#newType==="subject"?this.i18n.system("For example: people under 20 years old"):this.i18n.system("For example: an unwanted {type}",{type:this.i18n.system(FRIENDLY_LABELS[this.#newType]).toLocaleLowerCase(this.i18n.locale)}) : this.i18n.system(blockTypeDefinition(this.#newType)?.prompt ?? "")} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
           ${this.#newType==="output"?nothing:html`<fieldset><legend>${isNegativeIntent(this.#newIntent) ? this.i18n.system("How strongly should this guardrail apply?") : this.i18n.system("How much should it lead?")}</legend>${(isNegativeIntent(this.#newIntent) ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${this.i18n.system(label)}</span></label>`)}</fieldset>`}
@@ -618,16 +537,14 @@ export class FormaCreativeEditor extends AlternativeStudio {
         </form>
       </dialog>` : nothing}
 
-      ${this.#referenceComposition?.current() ? html`<forma-reference-compositor .sources=${compositionSources} .disabled=${this.#compositionSaving} @composition-capture=${this.#saveReferenceComposition} @composition-close=${this.#closeReferenceComposition}></forma-reference-compositor>` : nothing}
-
-      ${this.#pendingReference && this.#pendingReferenceCurrent() ? html`<dialog class="modal creative-reference-dialog" closedby="any" aria-labelledby="creative-reference-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelReference(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelReference(); }}>
+      ${this.#pendingReference ? html`<dialog class="modal creative-reference-dialog" closedby="any" aria-labelledby="creative-reference-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelReference(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelReference(); }}>
         <form class="modal-card creative-reference-card" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(this.#rightsConfirmed&&!this.#uploading)void this.#confirmReference();}}>
           <button type="button" class="icon-button modal-close" aria-label="Close" ?disabled=${this.#uploading} @click=${this.#cancelReference}>${icon("close")}</button>
-          <span class="eyebrow">${pendingModel ? this.i18n.t("model3d.block.label", "3D model") : audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.reference.private","Private audio reference"):this.i18n.system("Add a visual reference")}</span><h2 id="creative-reference-title">${pendingModel ? this.i18n.t("model3d.upload.review", "Review this 3D model") : audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.reference.description","Describe what you hear"):this.i18n.system("Use this image in the plan?")}</h2>
-          <div class="creative-reference-receipt"><span>${icon(pendingModel ? blockIconName("model3d") : audioMimeType(this.#pendingReference.type)?"audio":"image")}</span><div><b>${this.#pendingReference.name}</b><small>${(this.#pendingReference.size / 1_048_576).toFixed(1)} MB</small></div></div>
-          <p>${pendingModel ? this.i18n.t("model3d.upload.privacy", "The original model stays private. Choose and save a view before using it as an image reference; the mesh itself is not sent to image or video generators.") : audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.use.inform.description","Use only your written description to shape images, stories, presentations, video, and music."):this.i18n.system("The editor will prepare color, mood, layout, material, lighting, and spatial cues. You choose which ones become part of the plan.")}</p>
-          <label class="rights-check"><input type="checkbox" aria-describedby="creative-reference-rights-hint" .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}><span><b>${pendingModel || audioMimeType(this.#pendingReference.type)?this.i18n.system("I own this source or have a license that permits this use."):this.i18n.system("I own this image or have permission to use it.")}</b><small id="creative-reference-rights-hint">${pendingModel ? this.i18n.system("In a controlled pilot, I also confirm this source contains no sensitive information. This assertion is recorded with the reference and does not transfer ownership.") : audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.upload.rightsNotice","I also confirm this recording contains no sensitive information. Upload remains private; creative influence, accompaniment, and provider transfer each require separate approval."):this.i18n.system("In a controlled pilot, I also confirm it contains no sensitive information. This confirmation stays with the image wherever it is reused.")}</small></span></label>
-          <footer><button type="button" class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelReference}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading}>${pendingModel ? this.#uploading ? this.i18n.system("Uploading securely…") : this.i18n.system("Confirm & add reference") : audioMimeType(this.#pendingReference.type)?this.#uploading?this.i18n.system("Uploading securely…"):this.i18n.t("artifact.audio.label","Audio"):this.#uploading?this.i18n.system("Adding image…"):this.i18n.system("Add image")}</button></footer>
+          <span class="eyebrow">${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.reference.private","Private audio reference"):this.i18n.system("Add a visual reference")}</span><h2 id="creative-reference-title">${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.reference.description","Describe what you hear"):this.i18n.system("Use this image in the plan?")}</h2>
+          <div class="creative-reference-receipt"><span>${icon(audioMimeType(this.#pendingReference.type)?"audio":"image")}</span><div><b>${this.#pendingReference.name}</b><small>${(this.#pendingReference.size / 1_048_576).toFixed(1)} MB</small></div></div>
+          <p>${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.use.inform.description","Use only your written description to shape images, stories, presentations, video, and music."):this.i18n.system("The editor will prepare color, mood, layout, material, lighting, and spatial cues. You choose which ones become part of the plan.")}</p>
+          <label class="rights-check"><input type="checkbox" aria-describedby="creative-reference-rights-hint" .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}><span><b>${audioMimeType(this.#pendingReference.type)?this.i18n.system("I own this source or have a license that permits this use."):this.i18n.system("I own this image or have permission to use it.")}</b><small id="creative-reference-rights-hint">${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.upload.rightsNotice","I also confirm this recording contains no sensitive information. Upload remains private; creative influence, accompaniment, and provider transfer each require separate approval."):this.i18n.system("In a controlled pilot, I also confirm it contains no sensitive information. This confirmation stays with the image wherever it is reused.")}</small></span></label>
+          <footer><button type="button" class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelReference}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading}>${audioMimeType(this.#pendingReference.type)?this.#uploading?this.i18n.system("Uploading securely…"):this.i18n.t("artifact.audio.label","Audio"):this.#uploading?this.i18n.system("Adding image…"):this.i18n.system("Add image")}</button></footer>
         </form>
       </dialog>` : nothing}
     `;

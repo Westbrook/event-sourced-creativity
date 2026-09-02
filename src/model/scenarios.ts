@@ -3,8 +3,8 @@ import type { CreativeEvent } from "./events";
 import { BLOCK_TYPES } from "./block-types.ts";
 import { imageFormatEventFields, providerRenderFormat } from "./image-format.ts";
 import { CANVAS_INTERACTIONS } from "./canvas-interactions.ts";
-import { defaultSlidePresentation, normalizeSlideVisual } from "./document-artifacts.ts";
-import { REPLAY_ARTIFACT_KINDS, replayContextFingerprint, reverseEngineerWorkProduct } from "./replay-workflows.ts";
+import { DOCUMENT_ARTIFACT_KINDS, defaultSlidePresentation, normalizeSlideVisual } from "./document-artifacts.ts";
+import { replayContextFingerprint, reverseEngineerWorkProduct } from "./replay-workflows.ts";
 export { REPLAY_CAPABILITIES } from "./replay-coverage.ts";
 
 export type ScenarioKey = "creative-loop" | "document-evolution" | "document-artifacts" | "output-workbench" | "library-canvas" | "async-return" | "concurrency" | "promotion" | "taste-time" | "attention-friction" | "revision-race" | "experimental-consumption" | "operational-safety" | "canvas-usage" | "replay-persona" | "intent-recovery" | "artifact-reconstruction";
@@ -53,14 +53,14 @@ const baseTypes: Record<ScenarioKey, Array<[string, string]>> = {
   ],
   "document-artifacts": [
     ["user","ProjectCreated"],["user","DocumentCreated"],["user","EmptyCanvasChosen"],["user","DocumentProductionWorkflowConfigured"],
-    ...REPLAY_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","BlockCreated"]] as Array<[string,string]>),
+    ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","BlockCreated"]] as Array<[string,string]>),
     ["user","OutputRenamed"],["user","DocumentArtifactEdited"],["user","ArtifactReviewRequested"],["user","ArtifactApproved"],["user","ArtifactChangesRequested"],
     ["user","DocumentArtifactExported"],["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderFailed"],
   ],
   "output-workbench": [
     ["user","ProjectCreated"],["user","DocumentCreated"],["user","IntentDeclared"],["user","DocumentViewVisited"],["user","BlockCreated"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","IdeationPreviewCompleted"],["user","IdeationPromoted"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],
-    ...REPLAY_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","DocumentArtifactExported"]] as Array<[string,string]>),
-    ...Array.from({length:REPLAY_ARTIFACT_KINDS.length+1},()=>["user","BlockCreated"] as [string,string]),
+    ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","DocumentArtifactExported"]] as Array<[string,string]>),
+    ...Array.from({length:DOCUMENT_ARTIFACT_KINDS.length+1},()=>["user","BlockCreated"] as [string,string]),
     ["user","CollectionCreated"],["user","CollectionItemAdded"],["user","ObjectSaved"],["user","ShareLinkCreated"],["user","ShareLinkRevoked"],["user","AttentionEpisodeObserved"],
   ],
   "library-canvas": [
@@ -147,7 +147,7 @@ function normalizeReplayNarrative(source:CreativeEvent[],streamId:string):Creati
       else{payload={...payload,session_id:activeSession,snapshot_ref:{...((payload.snapshot_ref&&typeof payload.snapshot_ref==="object"&&!Array.isArray(payload.snapshot_ref))?payload.snapshot_ref as Record<string,unknown>:{}),project_id:projectId,...(activeDocument?{document_id:activeDocument}:{})}};activeSession=null;}
     }
     if(type==="GenerationCompleted"&&event.actor==="worker:generator"&&payload.output_brief||type==="DocumentRenderCompleted"){
-      const documentId=String(payload.document_id??"");if(documentId){const forms=completedFormsByDocument.get(documentId)??new Set<string>();forms.add(type==="GenerationCompleted"?"image":String(payload.artifact_kind??""));completedFormsByDocument.set(documentId,forms);if(["image",...REPLAY_ARTIFACT_KINDS].every((kind)=>forms.has(kind)))completedOutcomeDocument=documentId;}
+      const documentId=String(payload.document_id??"");if(documentId){const forms=completedFormsByDocument.get(documentId)??new Set<string>();forms.add(type==="GenerationCompleted"?"image":String(payload.artifact_kind??""));completedFormsByDocument.set(documentId,forms);if(["image",...DOCUMENT_ARTIFACT_KINDS].every((kind)=>forms.has(kind)))completedOutcomeDocument=documentId;}
     }
     if(index===source.length-1&&completedOutcomeDocument&&activeDocument!==completedOutcomeDocument){type="DocumentOpened";payload={...payload,project_id:projectId,document_id:completedOutcomeDocument,previous_document_id:activeDocument,returned_to_completed_work:true};activeDocument=completedOutcomeDocument;}
     payload=rewriteReplayEvidencePayload(payload,rewrittenIds,rewrittenSequences,event.streamId,streamId);
@@ -642,7 +642,7 @@ function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): R
     const requestedOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="DocumentRenderRequested").length-1);
     const completedOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="DocumentRenderCompleted").length-1);
     const viewedOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="DocumentArtifactViewed").length-1);
-    const kindFor=(ordinal:number)=>REPLAY_ARTIFACT_KINDS[Math.min(ordinal,REPLAY_ARTIFACT_KINDS.length-1)];
+    const kindFor=(ordinal:number)=>DOCUMENT_ARTIFACT_KINDS[Math.min(ordinal,DOCUMENT_ARTIFACT_KINDS.length-1)];
     const artifactId=(kind:string)=>`artifact-${key}-${cycle}-${kind}`;
     if(type==="BlockCreated"){
       const inputOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="BlockCreated").length-1);

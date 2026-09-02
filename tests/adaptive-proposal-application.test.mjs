@@ -29,17 +29,12 @@ test("adaptive proposal model: precise human-edited whitespace and metadata surv
  assert.equal(result.events[0].payload.properties.text,text);assert.equal(result.events[0].payload.properties.label,"My title");
  assert.equal(result.changes[0].text,text);
 });
-for(const definition of BLOCK_TYPES.filter(item=>item.type!=="reference"&&item.type!=="model3d"))test("adaptive proposal model: supported "+definition.type+" retains the existing vocabulary",()=>{
+for(const definition of BLOCK_TYPES)test("adaptive proposal model: supported "+definition.type+" retains the existing vocabulary",()=>{
  const current={...structure,active_decision:{...structure.active_decision,type:definition.type}};
  const result=plan([{proposalId:"/active_decision"}],{structure:current});
  assert.equal(result.events[0].payload.type,definition.type);assert.equal(result.events[0].payload.properties.subtype,definition.subtypes[0]);
  if(definition.type==="audio")assert.deepEqual(Object.fromEntries(["audio_role","inform_generation","include_in_output","allow_provider_audio_transfer"].map(key=>[key,result.events[0].payload.properties[key]])),
    {audio_role:"score",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false});
-});
-for(const type of ["reference","model3d"])test("adaptive proposal model: "+type+" must come from verified assets instead of text-only creation",()=>{
- const current={...structure,active_decision:{...structure.active_decision,type}};
- assert.throws(()=>plan([{proposalId:"/active_decision"}],{structure:current}),/adaptive_changes_invalid_edit/u);
- assert.throws(()=>adaptiveProposalSelections([{proposalId:"/active_decision",edit:{type}}]),/adaptive_changes_invalid_edit/u);
 });
 test("adaptive proposal model: explicit Canvas placement creates the native block and item together",()=>{
  const selection={proposalId:"/suggested_blocks/0",placement:{x:-120,y:340,w:300,h:210}},result=plan([selection],{canvasId:"board"});

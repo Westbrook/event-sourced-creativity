@@ -1,10 +1,6 @@
 import { createOutputAdmissionReads, outputAdmissionGovernanceAssertions } from "./output-admission-reads.ts";
 import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
-import { OUTPUT_MODEL3D_EXECUTION_POLICY, OUTPUT_NATIVE_EXECUTION_POLICY, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
-import { validateModel3dRequest } from "../src/model/model3d.ts";
-import { promptFactIsActive } from "../src/model/prompt-policy.ts";
-import { prepareModel3dRequest } from "./model3d-request.ts";
-import { ProviderRequestError } from "./provider-errors.ts";
+import { OUTPUT_NATIVE_EXECUTION_POLICY } from "../src/model/output-execution-policy.ts";
 import type { OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
 import type { ImageFormat } from "../src/model/image-format.ts";
 import { validateProviderImageDimensions } from "../src/model/image-format.ts";
@@ -28,24 +24,10 @@ const unavailable=(targetId:string,reasonCode:string,reason:string):OutputNative
 export type OutputNativeCallRoute={stage:string;provider:string;model:string;maximumMicrousd:number};
 export type OutputNativeSettings={
  kind:"generate"|"render_document";payload:Record<string,unknown>;calls:OutputNativeCallRoute[];
- executionPolicy?:OutputNativeExecutionPolicy;
+ executionPolicy?:typeof OUTPUT_NATIVE_EXECUTION_POLICY;
  imageBudget?:NonNullable<ReturnType<typeof outputImageBudget>>;
  imageRender?:{format:ImageFormat;size:`${number}x${number}`};
 };
-type Model3dReferencePreparation = Awaited<ReturnType<typeof prepareModel3dRequest>>;
-const model3dReferenceReads = new WeakMap<object, Array<{ env: OutputBridgeTargetInput["env"]; events: OutputBridgeTargetInput["sourceEvents"]; key: string; prepared: Promise<Model3dReferencePreparation> }>>();
-
-/** One read per source set in a single immutable admission context, even for many targets. */
-function prepareOutputModel3dReferences(input: OutputBridgeTargetInput, references: Record<string, unknown>[], settings: Model3dReferencePreparation["settings"]) {
- const referenceBlockIds=references.map(fact=>String(fact.block_id??""));
- const key=JSON.stringify([input.scope.key,input.scope.actorUserId,input.scope.contextId,input.sourceDigest,referenceBlockIds]);
- const reads=model3dReferenceReads.get(input.context)??[];
- const previous=reads.find(read=>read.env===input.env&&read.events===input.sourceEvents&&read.key===key);
- if(previous)return previous.prepared;
- const prepared=prepareModel3dRequest({env:input.env,ownerId:input.scope.ownerUserId,snapshot:input.context.snapshot,sourceEvents:input.sourceEvents??[],prompt:input.target.instruction_text,settings,referenceBlockIds,...(input.scope.kind==="project"?{projectScope:{organizationId:input.scope.organizationId!,projectAccessId:input.scope.projectAccessId!,projectId:input.scope.projectId,ownerUserId:input.scope.ownerUserId,actorUserId:input.scope.actorUserId}}:{})});
- reads.push({env:input.env,events:input.sourceEvents,key,prepared});model3dReferenceReads.set(input.context,reads);
- return prepared;
-}
 
 /** Exact geometry only. No implicit crop, approximate ratio, resize, or provider fallback. */
 export function outputExactImageRender(ratio:{width:number;height:number}):{format:ImageFormat;size:`${number}x${number}`}|null{
@@ -73,7 +55,6 @@ export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput)
  const {target,env}=input;
  if(!target.selected||target.blocking_issues.length)return unavailable(target.id,target.blocking_issues[0]?.code??"output_native_target_not_selected",target.blocking_issues[0]?.message??"Select this resolved target before creating it.");
  if(target.source_scope.kind!=="document")return unavailable(target.id,"output_native_document_scope_required","Native creation currently requires the full authorized Document. Scoped targets can be completed with a verified owned file.");
- if(target.media_kind==="model3d")return preflightOutputModel3dTarget(input);
  if(!["image","slides"].includes(target.media_kind))return unavailable(target.id,"output_native_medium_adoption_only","This medium uses verified owned-file adoption in this release; no provider job will be substituted.");
  if(!env.OPENAI_API_KEY)return unavailable(target.id,"output_native_planner_unconfigured","The planning provider is not configured. Saving and owned-file adoption remain available.");
  const plannerModel=env.OPENAI_MODEL??"gpt-5.6-terra";
@@ -118,23 +99,6 @@ export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput)
   transferDescription:"After you authorize and start, the authorized Document source context and selected target instructions go to the disclosed provider. Native image attempts also send the exact final image prompt as text to OpenAI (omni-moderation-latest) for at most one additional automatic safety check before image creation. This check is not counted as a generation call and is currently free under OpenAI’s pricing. If reference pixels are required, native image generation is unavailable. This preflight sends nothing. Account and provider ceilings are separate; the displayed cap bounds application admission, not a guarantee of provider billing."};
 }
 
-/** The reviewed target wording is the exact provider prompt; no planning rewrite is charged. */
-export async function preflightOutputModel3dTarget(input:OutputBridgeTargetInput):Promise<OutputNativeTargetPreflight> {
- const {target,env}=input;
- if(!env.FAL_KEY)return unavailable(target.id,"output_native_model3d_unconfigured","Configure the fal provider before creating a 3D model. Owned GLB adoption remains available.");
- if(target.aspect_ratio||target.content_quantity)return unavailable(target.id,"output_native_model3d_contract_unsupported","A 3D model has no image aspect ratio or slide/duration count. Review these output requirements before creating it.");
- const facts=Array.isArray(input.context.snapshot.facts)?input.context.snapshot.facts.map(record):[];
- const references=facts.filter(fact=>promptFactIsActive(fact)&&["reference","model3d"].includes(String(fact.type))&&sendsReferencePixels(record(fact.properties).pixel_reference_mode));
- const checked=validateModel3dRequest({prompt:target.instruction_text,referenceCount:references.length});
- if(!checked.valid){const problem=checked.issues[0]!;return {...unavailable(target.id,problem.code,problem.message),reasonValues:{promptCharacters:checked.promptCharacters,maximumCharacters:1024}};}
- let prepared:Model3dReferencePreparation;
- try{const referencePreparation=await prepareOutputModel3dReferences(input,references,checked.settings);prepared={...referencePreparation,references:[...referencePreparation.references],referenceBlockIds:[...referencePreparation.referenceBlockIds],prompt:target.instruction_text,settings:checked.settings,model:checked.model,estimatedCostMicrousd:checked.estimatedCostMicrousd};}
- catch(error){return unavailable(target.id,"output_native_model3d_reference_unavailable",error instanceof ProviderRequestError?error.detail.message:"Review the selected reference images and their saved rights before creating this 3D model.");}
- const settings:OutputNativeSettings={kind:"render_document",payload:{productionMode:"manual",artifactKind:"model3d",model3dPrompt:prepared.prompt,model3dSettings:prepared.settings,model3dReferenceBlockIds:prepared.referenceBlockIds,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true},calls:[{stage:"model3d:initial",provider:"fal",model:prepared.model,maximumMicrousd:prepared.estimatedCostMicrousd}],executionPolicy:OUTPUT_MODEL3D_EXECUTION_POLICY};
- Object.assign(settings,{model3dReferences:prepared.references.map(reference=>({blockId:reference.blockId,label:reference.label,mimeType:reference.mimeType}))});
- return {targetId:target.id,available:true,reasonCode:"output_native_model3d_ready",reason:"One Rodin request creates a GLB using the exact reviewed prompt, ordered reference images, and disclosed settings. Provider content checks apply; acceptance is not guaranteed. Review the mesh and materials before accepting delivery.",reasonValues:{maximumExecutionSeconds:OUTPUT_MODEL3D_EXECUTION_POLICY.maximumMilliseconds/1000},transferCode:"output_transfer_model3d_after_authorization",provider:"fal",model:prepared.model,route:prepared.references.length?"document-model3d-image-manual-v1":"document-model3d-text-manual-v1",maximumMicrousd:prepared.estimatedCostMicrousd,maximumCalls:1,maximumTokens:1,settings,transferDescription:"After authorization and Start, Forma sends the exact displayed prompt, settings, and listed reference images in order to fal.ai / Hyper3D Rodin. The first reference guides materials. Original mesh files are not sent. This preflight sends nothing."};
-}
-
 async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareAdmission"]>[0]&{governanceWitness?:OutputGovernanceWitness}):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[]}>{
  const readScope=createOutputAdmissionReads({request:input.request,env:input.env,documentId:input.scope.documentId,actorUserId:input.scope.actorUserId,billingUserId:input.principal.billingUserId??input.principal.userId,organizationId:input.scope.organizationId,projectAccessId:input.scope.projectAccessId},
   input.governanceWitness?{witness:input.governanceWitness,source:{ownerUserId:input.scope.ownerUserId,projectId:input.scope.projectId,contextId:input.scope.contextId??"",sourceDigest:input.sourceDigest,contextSnapshotDigest:await outputDigest(input.context.snapshot)}}:undefined);
@@ -155,7 +119,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   if(job.user.userId!==input.scope.actorUserId||job.user.streamId!==`creative:${input.scope.ownerUserId}`)throw new OutputConflictError("output_job_scope_mismatch",403);
   const billingOwner=job.user.billingUserId??job.user.userId;
   const budgetScope=job.user.projectExecution?{organizationId:job.user.projectExecution.organizationId,projectAccessId:job.user.projectExecution.projectAccessId,actorUserId:job.user.projectExecution.actorUserId}:undefined;
-  const budgetContext={streamId:job.user.streamId,correlationId:slot.jobId,operation:job.kind==="generate"?"image-generation":`document-render:${String(settings.payload.artifactKind)}`,...(budgetScope?{projectScope:budgetScope}:{})};
+  const budgetContext={streamId:job.user.streamId,correlationId:slot.jobId,operation:job.kind==="generate"?"image-generation":"document-render:slides",...(budgetScope?{projectScope:budgetScope}:{})};
   const token=await prepareBudgetReservation(input.env,billingOwner,slot.maximumTokens,{...budgetContext,reservationId:slot.tokenReservationId,outputAdmissionReads:readScope});
   if(!token.ok)throw new OutputConflictError("output_token_budget_unavailable",429);
   const cost=await prepareCostBudgetReservation(input.env,billingOwner,slot.maximumMicrousd,{...budgetContext,period:token.period,reservationId:slot.costReservationId,outputAdmissionReads:readScope,maximumMicrousd:slot.maximumMicrousd,allowUserOverage:false});

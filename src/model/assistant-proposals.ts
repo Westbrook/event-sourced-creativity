@@ -59,7 +59,7 @@ const typePatterns: Array<[BlockKind, RegExp]> = [
 ];
 
 export function inferAssistantBlockType(value: string): BlockKind {
-  const label = value.match(/^\s*(?:(?:add|create|include|set|use|ajoute|ajouter|crée|créer)\s+)?([a-z_][a-z0-9_]*)\s*:/iu)?.[1]?.toLocaleLowerCase();
+  const label = value.match(/^\s*(?:(?:add|create|include|set|use|ajoute|ajouter|crée|créer)\s+)?([a-z_]+)\s*:/iu)?.[1]?.toLocaleLowerCase();
   if (label && isBlockKind(label)) return label;
   return typePatterns.find(([, pattern]) => pattern.test(value))?.[0] ?? "direction";
 }
@@ -119,7 +119,7 @@ export function normalizeAssistantActions(message: string, context: AssistantCon
       continue;
     }
     const blockType = inferAssistantBlockType(part);
-    if (!isBlockKind(blockType) || blockType === "reference" || blockType === "model3d") continue;
+    if (!isBlockKind(blockType) || blockType === "reference") continue;
     const intent: BlockIntent = blockType === "exclusion" && /\b(?:never|prohibit|forbid|jamais)\b|(?:ممنوع|禁止)/iu.test(part) ? "prohibit" : blockType === "exclusion" ? "avoid" : "include";
     actions.push({ kind: "context.create", blockType, text: part.slice(0, 600), intent });
   }
@@ -134,7 +134,7 @@ export function assistantActionEvents(action: AssistantContextAction, context: A
   const source = { project_id: projectId, document_id: documentId, source_surface: "assistant", source_chat_turn_id: identifiers.turnId };
   const target = (id: string) => context.decisionAtoms.find((decision) => decision.id === id);
   if (action.kind === "context.create") {
-    if (!isBlockKind(action.blockType) || action.blockType === "reference" || action.blockType === "model3d" || !action.text.trim()
+    if (!isBlockKind(action.blockType) || action.blockType === "reference" || !action.text.trim()
       || action.blockType === "exclusion" && !["avoid", "prohibit"].includes(action.intent)) return [];
     const definition = blockTypeDefinition(action.blockType);
     const subtype = definition?.subtypes[0] ?? "General";
@@ -173,4 +173,4 @@ export function assistantActionEvents(action: AssistantContextAction, context: A
   return [{ type: "BlockRelationRemoved", payload: { ...source, relation_id: existing.id, from_block_id: from.id, to_block_id: to.id, kind: action.relationKind } }];
 }
 
-export const ASSISTANT_SUPPORTED_BLOCK_TYPES = BLOCK_TYPES.filter((definition) => definition.type !== "reference" && definition.type !== "model3d").map((definition) => definition.type);
+export const ASSISTANT_SUPPORTED_BLOCK_TYPES = BLOCK_TYPES.map((definition) => definition.type);

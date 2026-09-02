@@ -80,9 +80,6 @@ export function presentationTokenReservation(maximumProviderCalls = 2) {
 
 /** Media must not consume or masquerade as the separately reserved planning slice. */
 export function documentRenderTokenReservation(kind: string, itemCount = 1, maximumProviderCalls = 2) {
-  // Rodin receives the authored prompt directly. Keep only the ledger's minimum
-  // positive reservation; completion records zero language-model tokens.
-  if (kind === "model3d") return 1;
   const media = kind === "storyboard" ? Math.max(1, safeAmount(itemCount)) * 24_000 : kind === "video" ? 24_000 : 0;
   return documentPlanningTokenReservation(maximumProviderCalls) + media;
 }
@@ -93,7 +90,6 @@ const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
   "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission", "presentationProviderClientRequestId", "presentationCandidates", "presentationRecoveryOnly", "recoverablePresentationCandidate",
   "reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "prepaidProviderCostMicrousd", "audioEstimatedCostMicrousd",
   "providerJobId", "providerRequestId", "providerModel", "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "storyboardProviderSubmission", "storyboardProviderRequestedAt", "storyboardProviderAcceptedAt", "storyboardSafeRecovery", "storyboardRejectedProviderReceipt", "videoInputReceipt", "audioInputReceipt", "renderedItems",
-  "model3dInputReceipt", "model3dProviderSubmission", "model3dEstimatedCostMicrousd", "model3dProviderFiles",
   "productionPlan", "productionSceneReceipts", "productionFrameReceipts", "productionPrepaidSceneIds", "productionPrepaidAnchor", "productionAnchor",
 ] as const;
 

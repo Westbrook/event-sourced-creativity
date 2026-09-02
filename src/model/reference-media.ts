@@ -1,6 +1,4 @@
-import { isModel3dMediaSource, normalizeModel3dView } from "./model3d-view.ts";
-
-export type ReferenceMedium = "image" | "audio" | "video" | "model3d" | "document" | "text" | "unknown";
+export type ReferenceMedium = "image" | "audio" | "video" | "document" | "text" | "unknown";
 
 const DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
@@ -16,7 +14,6 @@ const DOCUMENT_MIME_TYPES = new Set([
 const IMAGE_EXTENSIONS = new Set(["apng", "avif", "bmp", "gif", "heic", "heif", "ico", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
 const AUDIO_EXTENSIONS = new Set(["aac", "aif", "aiff", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "weba"]);
 const VIDEO_EXTENSIONS = new Set(["avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ogv", "webm"]);
-const MODEL3D_EXTENSIONS = new Set(["glb", "gltf", "fbx", "obj", "stl", "usd", "usdz"]);
 const DOCUMENT_EXTENSIONS = new Set(["doc", "docx", "odp", "ods", "odt", "pdf", "ppt", "pptx", "rtf", "xls", "xlsx"]);
 const TEXT_EXTENSIONS = new Set(["csv", "json", "jsonl", "md", "markdown", "text", "tsv", "txt", "xml", "yaml", "yml"]);
 
@@ -26,7 +23,6 @@ function fromMime(value: unknown): ReferenceMedium {
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("audio/")) return "audio";
   if (mime.startsWith("video/")) return "video";
-  if (mime.startsWith("model/") || ["application/x-fbx", "application/vnd.autodesk.fbx", "application/x-wavefront-obj", "application/x-stl", "application/sla"].includes(mime)) return "model3d";
   if (mime.startsWith("text/")) return "text";
   if (DOCUMENT_MIME_TYPES.has(mime) || mime.startsWith("application/vnd.openxmlformats-officedocument.")) return "document";
   if (/^application\/(?:json|xml|(?:[\w.-]+\+)(?:json|xml)|(?:x-)?yaml)$/.test(mime)) return "text";
@@ -39,7 +35,6 @@ function fromKind(value: unknown): ReferenceMedium {
   if (["image", "image-upload", "generated-image", "image-reference", "photo", "photograph", "picture", "illustration", "visual"].includes(kind)) return "image";
   if (["audio", "audio-upload", "audio-reference", "sound", "soundtrack", "speech", "voice", "music"].includes(kind)) return "audio";
   if (["video", "video-upload", "video-reference", "movie", "film"].includes(kind)) return "video";
-  if (["model3d", "3d-model", "model-upload", "model3d-upload", "generated-model3d"].includes(kind)) return "model3d";
   if (["document", "document-upload", "pdf", "word", "presentation", "spreadsheet", "slides", "powerpoint", "excel"].includes(kind)) return "document";
   if (["text", "text-upload", "pasted-text", "plain-text", "plaintext", "markdown", "written", "excerpt"].includes(kind)) return "text";
   return "unknown";
@@ -53,7 +48,6 @@ function fromExtension(value: unknown): ReferenceMedium {
   if (IMAGE_EXTENSIONS.has(extension)) return "image";
   if (AUDIO_EXTENSIONS.has(extension)) return "audio";
   if (VIDEO_EXTENSIONS.has(extension)) return "video";
-  if (MODEL3D_EXTENSIONS.has(extension)) return "model3d";
   if (DOCUMENT_EXTENSIONS.has(extension)) return "document";
   if (TEXT_EXTENSIONS.has(extension)) return "text";
   return "unknown";
@@ -65,11 +59,6 @@ function fromExtension(value: unknown): ReferenceMedium {
  * silently become an image solely because a block happens to have the reference type.
  */
 export function referenceMedium(properties: Record<string, unknown>): ReferenceMedium {
-  const mediaUrl = typeof properties.media_url === "string" ? properties.media_url.trim() : "";
-  const modelUrl = typeof properties.model_url === "string" ? properties.model_url.trim() : "";
-  // An original mesh is separate from its authored image view. Older or invalid
-  // blocks must not turn model bytes into pixels through a generic image hint.
-  if (modelUrl && (!mediaUrl || mediaUrl === modelUrl)) return "model3d";
   for (const value of [properties.source_mime_type, properties.media_type, properties.mime_type, properties.mimeType]) {
     const medium = fromMime(value);
     if (medium !== "unknown") return medium;
@@ -80,6 +69,7 @@ export function referenceMedium(properties: Record<string, unknown>): ReferenceM
     if (medium !== "unknown") return medium;
   }
 
+  const mediaUrl = typeof properties.media_url === "string" ? properties.media_url.trim() : "";
   if (mediaUrl) {
     for (const value of [mediaUrl, properties.file_name, properties.filename, properties.label]) {
       const medium = fromExtension(value);
@@ -97,16 +87,4 @@ export function referenceMedium(properties: Record<string, unknown>): ReferenceM
 
 export function isImageReference(properties: Record<string, unknown>): boolean {
   return referenceMedium(properties) === "image";
-}
-
-/** Readiness for the visual-use control; the server separately verifies asset ownership and rights. */
-export function hasSavedModel3dView(properties: Record<string, unknown>): boolean {
-  const mediaUrl = properties.media_url;
-  const originalUrl = properties.model_url;
-  return isModel3dMediaSource(originalUrl) && isModel3dMediaSource(mediaUrl) && mediaUrl !== originalUrl
-    && properties.model_mime_type === "model/gltf-binary" && properties.media_type === "image/png" && properties.source_mime_type === "image/png"
-    && /^[a-f0-9]{64}$/i.test(String(properties.model_content_hash ?? "")) && /^[a-f0-9]{64}$/i.test(String(properties.source_content_hash ?? ""))
-    && typeof properties.model_reference_id === "string" && Boolean(properties.model_reference_id)
-    && typeof properties.reference_id === "string" && Boolean(properties.reference_id) && properties.reference_id !== properties.model_reference_id
-    && normalizeModel3dView(properties.model_view) !== null;
 }

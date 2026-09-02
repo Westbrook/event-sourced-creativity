@@ -86,7 +86,7 @@ export function normalizeDecompositionProposals(source:string,candidates:unknown
   return candidates.flatMap((candidate,index)=>{
     const item=record(candidate),type=String(item.type??"");
     const text=normalize(String(item.text??item.instruction??"")),sourceExcerpt=normalize(String(item.source_excerpt??item.sourceExcerpt??""));
-    if(!isBlockKind(type)||(type==="reference"||type==="model3d")||!decompositionIsGrounded(source,text,sourceExcerpt))return[];
+    if(!isBlockKind(type)||type==="reference"||!decompositionIsGrounded(source,text,sourceExcerpt))return[];
     const key=`${type}\u0000${text.toLocaleLowerCase()}`;if(seen.has(key))return[];seen.add(key);
     const proposedSubtype=normalize(String(item.subtype??""));
     const subtype=blockTypeDefinition(type)?.subtypes.includes(proposedSubtype)?proposedSubtype:suggestedSubtype(type);
@@ -120,7 +120,7 @@ export function researchBlockText(block:Pick<CreativeBlock,"handle"|"properties"
 
 /** Existing decisions remain authoritative: the model can select a block, never rewrite it. */
 export function existingResearchSuggestion(input:{area:"inferred"|"related";block:CreativeBlock;reason:string;documentId:string;distance?:number}):ContextResearchSuggestion|null{
-  if(!isBlockKind(input.block.type)||input.block.type==="model3d"||input.block.properties.model_url||input.block.removed||input.block.properties.organization_context_package_binding_id)return null;
+  if(!isBlockKind(input.block.type)||input.block.removed||input.block.properties.organization_context_package_binding_id)return null;
   const text=researchBlockText(input.block);if(!text)return null;
   const inDocument=input.block.scope!=="library"&&input.block.documentId===input.documentId;
   if(input.area==="inferred"&&!inDocument)return null;
@@ -130,7 +130,7 @@ export function existingResearchSuggestion(input:{area:"inferred"|"related";bloc
 export function contextResearchCandidates(target:CreativeBlock,blocks:readonly CreativeBlock[],relations:readonly CreativeBlockRelation[],documentId:string){
   const targetWords=new Set(words(researchBlockText(target)).filter((word)=>word.length>2).map(stem));
   const connected=new Set(relations.filter((relation)=>!relation.removed&&(relation.fromBlockId===target.id||relation.toBlockId===target.id)).flatMap((relation)=>[relation.fromBlockId,relation.toBlockId]));
-  return blocks.filter((block)=>block.id!==target.id&&block.type!=="model3d"&&!block.properties.model_url&&!block.removed&&block.projectId===target.projectId&&!block.properties.organization_context_package_binding_id)
+  return blocks.filter((block)=>block.id!==target.id&&!block.removed&&block.projectId===target.projectId&&!block.properties.organization_context_package_binding_id)
     .map((block)=>{
       const shared=words(researchBlockText(block)).filter((word)=>targetWords.has(stem(word))).length;
       const distance=block.scope!=="library"&&block.documentId===documentId?0:1;
@@ -140,7 +140,7 @@ export function contextResearchCandidates(target:CreativeBlock,blocks:readonly C
 }
 
 export function newLearnedSuggestion(input:{id:string;type:unknown;subtype?:unknown;text:unknown;reason?:unknown;sourceUrl?:unknown;imageUrl?:unknown;license?:unknown;attribution?:unknown},existing:readonly CreativeBlock[]):ContextResearchSuggestion|null{
-  const type=String(input.type??"");if(!isBlockKind(type)||type==="model3d")return null;
+  const type=String(input.type??"");if(!isBlockKind(type))return null;
   const text=normalize(String(input.text??""));if(!text||existing.some((block)=>researchBlockText(block).toLocaleLowerCase()===text.toLocaleLowerCase()))return null;
   const safeUrl=(value:unknown,host?:string)=>{try{const url=new URL(String(value??""));const local=url.hostname==="localhost"||url.hostname.endsWith(".localhost")||url.hostname==="[::1]"||/^(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/u.test(url.hostname);return url.protocol==="https:"&&!url.username&&!url.password&&!local&&(!host||url.hostname===host)?url.toString():null;}catch{return null;}};
   const imageUrl=safeUrl(input.imageUrl,"upload.wikimedia.org"),sourceUrl=safeUrl(input.sourceUrl);

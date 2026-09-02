@@ -493,7 +493,6 @@ const MAIN170_OUTPUT_ORIGINAL_SNAPSHOT_ID = "bf24355f-2406-5fad-af45-b45c024f044
 const main170MetadataHash = value => createHash("sha256").update(value).digest("hex");
 const main170MetadataSnapshot = index => JSON.parse(readFileSync(new URL("meta/" + String(index).padStart(4, "0") + "_snapshot.json", migrationDirectory), "utf8"));
 const main170MetadataHistory = () => readMigrationFiles({ migrationsFolder: fileURLToPath(migrationDirectory) });
-const currentSchemaSnapshot = () => main170MetadataSnapshot(actualMigrations().at(-1).idx);
 const main170MetadataOutputNames = () => Object.keys(main170MetadataSnapshot(22).tables).filter(name => name.startsWith("output_")).sort();
 const main170MetadataExists = (sqlite, name) => Boolean(sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name));
 const main170MetadataReceipts = sqlite => sqlite.prepare("SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at").all().map(row => ({ ...row }));
@@ -522,7 +521,7 @@ function main170MetadataExistingRows(sqlite) {
   ]));
 }
 function main170MetadataOutputShape(sqlite) {
-  const generated = currentSchemaSnapshot(), outputNames = main170MetadataOutputNames();
+  const generated = main170MetadataSnapshot(22), outputNames = main170MetadataOutputNames();
   assert.equal(outputNames.length, 16);
   for (const table of outputNames) {
     assert.ok(main170MetadataExists(sqlite, table), table);
@@ -577,9 +576,9 @@ test("main170 source metadata: accepted 0–21 SQL and snapshots remain byte-exa
   assert.equal(new Set(journal.entries.map(entry => entry.tag)).size, journal.entries.length);
 });
 
-test("main170 source metadata: snapshot 22 retains the accepted 87-table history and the latest snapshot matches the current schema", async () => {
-  const schema = await import("../db/schema.ts"), previous = main170MetadataSnapshot(21), composite = main170MetadataSnapshot(22), current = currentSchemaSnapshot();
-  const generated = JSON.parse(JSON.stringify(await generateSQLiteDrizzleJson(schema, current.prevId)));
+test("main170 source metadata: snapshot 22 is the actual generated 87-table schema and links only to accepted snapshot 21", async () => {
+  const schema = await import("../db/schema.ts"), previous = main170MetadataSnapshot(21), composite = main170MetadataSnapshot(22);
+  const generated = JSON.parse(JSON.stringify(await generateSQLiteDrizzleJson(schema, previous.id)));
   assert.equal(composite.version, "6"); assert.equal(composite.dialect, "sqlite");
   assert.equal(composite.prevId, previous.id); assert.match(composite.id, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u);
   assert.notEqual(composite.id, MAIN170_OUTPUT_ORIGINAL_SNAPSHOT_ID);
@@ -587,9 +586,9 @@ test("main170 source metadata: snapshot 22 retains the accepted 87-table history
   for (let index = 0; index < 22; index++) assert.notEqual(composite.id, main170MetadataSnapshot(index).id);
   assert.equal(Object.keys(previous.tables).length, 71); assert.equal(Object.keys(composite.tables).length, 87);
   for (const [name, table] of Object.entries(previous.tables)) assert.deepEqual(composite.tables[name], table, name);
-  const { id: _generatedId, ...generatedShape } = generated, { id: _savedId, ...savedShape } = current;
+  const { id: _generatedId, ...generatedShape } = generated, { id: _savedId, ...savedShape } = composite;
   assert.deepEqual(savedShape, generatedShape, "Saved snapshot comes from the installed generator and actual schema, not a hand-written subset");
-  assert.deepEqual(await generateSQLiteMigration(current, generated), [], "The latest snapshot causes no duplicate SQL for the unchanged schema");
+  assert.deepEqual(await generateSQLiteMigration(composite, generated), [], "The composite snapshot causes no new SQL for the unchanged schema");
 });
 
 test("main170 source metadata: the installed loader uses the original SQL bytes and journal order, not the numeric tag prefix", () => {
@@ -646,8 +645,7 @@ test("main170 source metadata is NOT deployment certification: recorded upstream
     seedLegacyRows(sqlite);
     const before = main170MetadataExistingRows(sqlite), receipts = main170MetadataReceipts(sqlite);
     main170MetadataMigrate(sqlite, history);
-    const later = history.filter(entry => entry.folderMillis > receipts.at(-1).created_at);
-    assert.deepEqual(main170MetadataReceipts(sqlite), [...receipts, ...main170MetadataExpectedReceipts(later)], "Only later migrations apply; absent accepted predecessors remain absent");
+    assert.deepEqual(main170MetadataReceipts(sqlite), receipts);
     assert.deepEqual(main170MetadataExistingRows(sqlite), before);
     for (const table of ["consequential_executions", "consequential_execution_steps", "authoring_commits"]) assert.equal(main170MetadataExists(sqlite, table), false, table + " is still missing");
     assert.equal(tableColumns(sqlite, "assistant_turns").some(column => column.name === "request_json"), false);

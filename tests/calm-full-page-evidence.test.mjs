@@ -297,13 +297,13 @@ test("current shared author notifications and synthetic jobs count by actual bra
  await f.settle();assert.equal(f.tree().visible("button").filter(node=>["Stop","Create output","Inspect inputs"].includes(node.text)).length,0);
 });
 
-for(const medium of ["image","short_story","scene","slides","storyboard","video","audio","model3d"]){
+for(const medium of ["image","short_story","scene","slides","storyboard","video","audio"]){
  test("two rendered preparation choices reach the exact "+medium+" executor without submission",async t=>{
   const f=await full(t),original=f.store.projection.get(),actor=f.store.session.get().user.userId,blocks=original.blocks.map(block=>[block.id,block.properties.text]);
   const choices=[];
   const launch=f.find("button",byChoice("configure-output"));choices.push(launch.attributes["data-choice-value"]);await f.act(launch);await settlePreparationChooser(f);
   const chooser=f.tree().visible("dialog").find(byClass("next-format-dialog"));assert.ok(chooser);
-  assert.deepEqual(f.tree().visible("button").filter(node=>nodeWithin(node,byClass("next-format-dialog"))&&node.owner.tag==="forma-ui-choice-card").map(node=>node.attributes["data-choice-value"]),["image","short_story","scene","slides","storyboard","video","audio","model3d"],"all actual format entries retained");
+  assert.deepEqual(f.tree().visible("button").filter(node=>nodeWithin(node,byClass("next-format-dialog"))&&node.owner.tag==="forma-ui-choice-card").map(node=>node.attributes["data-choice-value"]),["image","short_story","scene","slides","storyboard","video","audio"],"all actual format entries retained");
   const format=f.find("button",byChoice(medium));choices.push(format.attributes["data-choice-value"]);await f.act(format);
   assert.equal(choices.length,2,"navigation choices end at executor preparation, not automatic execution");
   const dialogs=f.tree().visible("dialog");

@@ -9,12 +9,11 @@ const resolution = registerHooks({ resolve(specifier, context, nextResolve) {
   const local = typeof context.parentURL === "string" && context.parentURL.startsWith(root) && !context.parentURL.includes("/node_modules/");
   return nextResolve(local && specifier.startsWith(".") && !/\.[a-z0-9]+$/iu.test(specifier) ? specifier + ".ts" : specifier, context);
 } });
-const [{ default: worker }, runtime, model, sourceDocuments, ownership, copyProof, requirements, outputPlan, consent, contextAuthority, derivedReferences] = await Promise.all([
+const [{ default: worker }, runtime, model, sourceDocuments, ownership, copyProof, requirements, outputPlan, consent, contextAuthority] = await Promise.all([
   import("../worker/index.ts"), import("../worker/runtime.ts"),
   import("../src/model/events.ts"), import("../src/model/source-documents.ts"), import("../src/model/media-ownership.ts"),
   import("../worker/authoring-event-proof.ts"), import("../src/model/output-requirements.ts"), import("../src/model/output-plan.ts"),
   import("../worker/consequential-consent.ts"), import("../worker/context-authoring-authority.ts"),
-  import("../worker/derived-reference-guard.ts"),
 ]).finally(() => resolution.deregister());
 
 const json = (body, headers = {}) => ({ method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -389,137 +388,6 @@ test("copy preserves immutable source evidence and rights, and changed or expire
       assert.equal((await inspect(await state.copy(confirm(pending, "retrieve")))).stale, true);
       const before = counts(state);
       assert.equal((await state.copy(confirm(pending))).status, 409);
-      assert.equal((await state.copy(operation())).status, 409); assert.deepEqual(counts(state), before);
-    } finally { await state.close(); }
-  }
-});
-
-async function seedModel3dContext(state, { savedView = true } = {}) {
-  const modelKey = ownership.ownerMediaNamespace(state.ownerId) + "/models/source.glb";
-  const viewKey = ownership.ownerMediaNamespace(state.ownerId) + "/models/source-view.png";
-  const modelUrl = "/api/media/" + encodeURIComponent(modelKey), viewUrl = "/api/media/" + encodeURIComponent(viewKey);
-  const modelHash = "a".repeat(64), viewHash = "b".repeat(64);
-  const view = { version: 1, position: [0, 0, 6.4], target: [0, 0, 0], fov: 35, background: "#ffffff" };
-  const object = (mimeType, metadata) => ({ size: 256, customMetadata: { ownerId: state.ownerId, mimeType, rights: "asserted", ...metadata },
-    writeHttpMetadata(headers) { headers.set("content-type", mimeType); } });
-  state.media.set(modelKey, object("model/gltf-binary", { modelFormat: "glb", sha256: modelHash }));
-  if (savedView) state.media.set(viewKey, object("image/png", { sha256: viewHash, modelSourceKey: modelKey, modelSourceSha256: modelHash, modelView: JSON.stringify(view) }));
-  const properties = { text: "Ceramic vessel", model_url: modelUrl, model_mime_type: "model/gltf-binary", model_content_hash: modelHash,
-    model_reference_id: "copy-model-original", rights_class: "owned_or_licensed", ...(savedView ? {
-      media_url: viewUrl, media_type: "image/png", source_mime_type: "image/png", source_content_hash: viewHash,
-      reference_id: "copy-model-view", model_view: view, pixel_reference_mode: "subject",
-    } : {}) };
-  await state.seed([
-    ["ReferenceIngested", { project_id: scope.projectId, reference_id: properties.model_reference_id, source_ref: modelUrl, content_hash: modelHash, rights_class: "owned_or_licensed" }],
-    ...(savedView ? [["ReferenceIngested", { project_id: scope.projectId, reference_id: properties.reference_id, source_ref: viewUrl, content_hash: viewHash, rights_class: "owned_or_licensed" }]] : []),
-    ["BlockCreated", { project_id: scope.projectId, document_id: scope.documentId, block_id: "copy-model", type: "model3d", handle: "model/vessel", position: "z1", properties }],
-  ]);
-  return { properties, modelKey, viewKey };
-}
-
-test("3D document copies retain both original mesh and saved image custody with their independent rights", async () => {
-  for (const mode of ["personal", "migrated", "shared", "editor"]) {
-    const state = await fixture({ mode });
-    try {
-      const source = await seedModel3dContext(state), proposed = await preview(state);
-      const applied = await inspect(await state.copy(confirm(proposed)));
-      const copied = (await projection(state, applied.documentId)).blocks.find((block) => block.type === "model3d");
-      assert.deepEqual(copied.properties, source.properties);
-      assert.notEqual(copied.id, "copy-model");
-      if (mode === "shared" || mode === "editor") {
-        for (const key of [source.modelKey, source.viewKey]) {
-          const row = state.sqlite.prepare("SELECT event.payload FROM project_resource_scopes resource JOIN events event ON event.event_id=resource.source_event_id WHERE resource.project_access_id=? AND resource.resource_kind='media' AND resource.resource_id=?").get(state.projectAccessId, key);
-          assert.equal(JSON.parse(row.payload).block_id, copied.id, "each asset stays anchored to the complete copied context");
-        }
-      }
-      const pending = await preview(state);
-      await state.seed([["RightsAsserted", { project_id: scope.projectId, reference_id: source.properties.model_reference_id, rights_class: "revoked" }]]);
-      assert.equal((await state.copy(confirm(pending))).status, 409);
-      assert.equal((await state.copy(operation())).status, 409, "a retained saved view does not replace original mesh rights");
-    } finally { await state.close(); }
-  }
-});
-
-test("3D copying supports a mesh before a view is saved and rejects changed original or camera evidence", async () => {
-  for (const fault of ["none", "missing-model", "changed-model-hash", "changed-camera", "missing-model-rights", "wrong-model-receipt"]) {
-    const state = await fixture();
-    try {
-      const source = await seedModel3dContext(state, { savedView: fault !== "none" });
-      if (fault === "missing-model") state.media.delete(source.modelKey);
-      if (fault === "changed-model-hash") state.media.get(source.modelKey).customMetadata.sha256 = "c".repeat(64);
-      if (fault === "changed-camera") state.media.get(source.viewKey).customMetadata.modelView = JSON.stringify({ ...source.properties.model_view, position: [6.4, 0, 0] });
-      if (fault === "missing-model-rights") await state.seed([["RightsAsserted", { project_id: scope.projectId, reference_id: source.properties.model_reference_id, rights_class: "unknown" }]]);
-      if (fault === "wrong-model-receipt") await state.seed([["ReferenceIngested", { project_id: scope.projectId, reference_id: source.properties.model_reference_id, source_ref: source.properties.model_url, content_hash: "d".repeat(64), rights_class: "owned_or_licensed" }]]);
-      if (fault === "none") {
-        const proposed = await preview(state), applied = await inspect(await state.copy(confirm(proposed)));
-        const copied = (await projection(state, applied.documentId)).blocks.find((block) => block.type === "model3d");
-        assert.deepEqual(copied.properties, source.properties); assert.equal(copied.properties.media_url, undefined);
-      } else {
-        const before = counts(state), failed = await inspect(await state.copy(operation()), 409);
-        assert.match(failed.error, /^document_duplicate_source_/u); assert.deepEqual(counts(state), before);
-      }
-    } finally { await state.close(); }
-  }
-});
-
-test("shared 3D edits validate the final camera and image together before recording the batch", async () => {
-  const state = await fixture({ mode: "shared" });
-  try {
-    const source = await seedModel3dContext(state);
-    await preview(state); // Synchronize model and view custody before the direct authoring request.
-    const edit = (property, value) => ({ type: "BlockPropertyEdited", payload: {
-      project_id: scope.projectId, document_id: scope.documentId, block_id: "copy-model", property_path: property, new_value: value,
-    } });
-    const submit = events => state.request("/api/events", json({ action: "batch", events }, state.headers));
-    const view = { ...source.properties.model_view, position: [6.4, 0, 0] };
-    const before = counts(state);
-    const refused = await inspect(await submit([edit("model_view", view)]), 403);
-    assert.equal(refused.error, "model3d_asset_not_verified"); assert.deepEqual(counts(state), before);
-    const nextKey = ownership.ownerMediaNamespace(state.ownerId) + "/models/right.png", nextUrl = "/api/media/" + encodeURIComponent(nextKey), nextHash = "c".repeat(64);
-    state.media.set(nextKey, { size: 256, customMetadata: { ...state.media.get(source.viewKey).customMetadata, sha256: nextHash, modelView: JSON.stringify(view), projectAccessId: state.projectAccessId },
-      writeHttpMetadata(headers) { headers.set("content-type", "image/png"); } });
-    state.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'media',?,?,?,?, 'collaborative_output',NULL,?,?)")
-      .run(state.projectAccessId, nextKey, state.organizationId, scope.projectId, state.ownerId, state.ownerId, new Date().toISOString());
-    await inspect(await submit([
-      { type: "ReferenceIngested", payload: { project_id: scope.projectId, reference_id: "copy-model-right-view", source_ref: nextUrl, content_hash: nextHash, rights_class: "owned_or_licensed" } },
-      edit("model_view", view), edit("media_url", nextUrl), edit("source_content_hash", nextHash), edit("reference_id", "copy-model-right-view"),
-    ]));
-    const model = (await projection(state)).blocks.find(block => block.id === "copy-model");
-    assert.equal(model.properties.model_url, source.properties.model_url);
-    assert.equal(model.properties.media_url, nextUrl); assert.deepEqual(model.properties.model_view, view);
-  } finally { await state.close(); }
-});
-
-test("composition document copies preserve the PNG receipt and original 3D view lineage with live rights", async () => {
-  for (const mode of ["personal", "shared"]) {
-    const state = await fixture({ mode });
-    try {
-      const source = await seedModel3dContext(state), key = ownership.ownerMediaNamespace(state.ownerId) + "/models/composition.png";
-      const recipe = { version: 1, aspect: "1:1", width: 1536, height: 1536, background: "#ffffff",
-        sources: [{ id: "copy-model:view", blockId: "copy-model", label: "Vessel view", mediaUrl: source.properties.media_url, contentHash: source.properties.source_content_hash, kind: "model-view" }],
-        layers: [{ id: "layer-one", sourceId: "copy-model:view", x: 50, y: 50, scale: 70, opacity: 100 }] };
-      const recipeDigest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(recipe)))), byte => byte.toString(16).padStart(2, "0")).join("");
-      const properties = { text: "Vessel layout", reference_id: "copy-composition-reference", media_url: "/api/media/" + encodeURIComponent(key), media_type: "image/png",
-        source_mime_type: "image/png", source_content_hash: "e".repeat(64), reference_composition: recipe, pixel_reference_mode: "preserve_composition", rights_class: "owned_or_licensed" };
-      state.media.set(key, { size: 256, customMetadata: { ownerId: state.ownerId, mimeType: "image/png", rights: "asserted", sha256: properties.source_content_hash,
-        referenceCompositionVersion: "1", referenceCompositionSha256: recipeDigest }, writeHttpMetadata(headers) { headers.set("content-type", "image/png"); } });
-      await state.seed([
-        ["ReferenceIngested", { project_id: scope.projectId, reference_id: properties.reference_id, source_ref: properties.media_url, content_hash: properties.source_content_hash, rights_class: "owned_or_licensed" }],
-        ["BlockCreated", { project_id: scope.projectId, document_id: scope.documentId, block_id: "copy-composition", type: "reference", handle: "reference/composition", position: "z2", properties }],
-        ["BlockRehomed", { project_id: scope.projectId, block_id: "copy-model", scope: "library" }],
-      ]);
-      const proposed = await preview(state), applied = await inspect(await state.copy(confirm(proposed)));
-      const copied = (await projection(state, applied.documentId)).blocks.find(block => block.properties.reference_composition);
-      assert.deepEqual(copied.properties, properties);
-      const assertCurrent = () => runtime.readEvents(state.env, state.stream).then(sourceEvents => derivedReferences.assertDerivedReferenceProvenance({
-        env: state.env, ownerId: state.ownerId, properties: copied.properties, blockId: copied.id, sourceEvents,
-        ...(mode === "shared" ? { projectScope: { organizationId: state.organizationId, projectAccessId: state.projectAccessId, projectId: scope.projectId, ownerUserId: state.ownerId, actorUserId: state.ownerId } } : {}),
-      }));
-      await assertCurrent();
-      await state.seed([["RightsAsserted", { project_id: scope.projectId, reference_id: source.properties.model_reference_id, rights_class: "revoked" }]]);
-      await assert.rejects(assertCurrent, /rights|license/i);
-      await inspect(await state.request("/api/events?after=0&limit=2000&content=0", { headers: state.headers }));
-      const before = counts(state);
       assert.equal((await state.copy(operation())).status, 409); assert.deepEqual(counts(state), before);
     } finally { await state.close(); }
   }

@@ -1,5 +1,5 @@
 export type BlockGroup = "intent" | "scene" | "craft" | "constraint" | "evidence";
-export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "action" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "output" | "brand" | "exclusion" | "accessibility" | "reference" | "model3d" | "sketch";
+export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "action" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "output" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
 export type BlockIntent = "include" | "prefer" | "avoid" | "prohibit";
 export type ReferencePixelMode = "context_only" | "inspiration" | "preserve_composition" | "preserve_subject" | "preserve_style";
 
@@ -84,7 +84,6 @@ export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"exclusion", label:"Exclusion", description:"A failure mode or motif the work must avoid", prompt:"What would break the direction?", group:"constraint", subtypes:["Visual exclusion","Semantic exclusion","Safety boundary","Failure mode"] },
   { type:"accessibility", label:"Accessibility", description:"Perceptual and cultural requirements for clear access", prompt:"What must remain perceivable and understandable?", group:"constraint", subtypes:["Contrast","Legibility","Motion sensitivity","Cultural clarity"] },
   { type:"reference", label:"Reference", description:"Owned or licensed evidence that grounds a decision", prompt:"Choose an owned or licensed reference…", group:"evidence", subtypes:["Mood","Composition","Material","Color","Pixel"] },
-  { type:"model3d", label:"3D model", description:"An owned or licensed 3D asset with a saved image view", prompt:"Describe how this model should guide the result…", group:"evidence", subtypes:["Object","Character","Environment","Product"] },
   { type:"sketch", label:"Sketch", description:"Authored marks, masks, annotations, and spatial gestures", prompt:"Draw or describe the spatial idea…", group:"evidence", subtypes:["Gesture","Layout","Mask","Annotation"] },
 ] as const;
 

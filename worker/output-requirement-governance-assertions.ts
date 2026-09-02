@@ -405,7 +405,7 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
         AND requested.sequence<=event.sequence AND requested.sequence<=(${fixedHead})
         AND requested.correlation_id=job.correlation_id AND requested.client_id='server:document-job:render_document'
         AND requested.actor='user:'||job.owner_id AND json_extract(requested.payload,'$.artifact_id')=target.id
-        AND json_extract(requested.payload,'$.artifact_kind') IN('slides','model3d')
+        AND json_extract(requested.payload,'$.artifact_kind')='slides'
         AND json_extract(requested.payload,'$.project_id')=plan.project_id AND json_extract(requested.payload,'$.document_id')=plan.document_id
         AND ${retainedOtherIdentity("requested_body", "requested", ["project_id", "document_id", "artifact_id", "artifact_kind"])})`;
 

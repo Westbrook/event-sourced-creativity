@@ -1,5 +1,4 @@
 import { promptFactIsActive } from "./prompt-policy.ts";
-import type { DocumentArtifactKind } from "./document-artifacts.ts";
 
 export const COMBINED_CONTEXT_ROLES = ["character","location","object","wardrobe","scene","sequence","slide_chapter","message","visual_system","custom"] as const;
 export type CombinedContextRole = typeof COMBINED_CONTEXT_ROLES[number];
@@ -243,9 +242,9 @@ const roleBehavior=(role:CombinedContextRole)=>({
 
 const applicationBehavior=(application:CombinedContextApplication)=>({isolate:"Do not let any member affect unrelated targets.",co_locate:"Introduce, apply, and resolve these members at the same point.",ordered:"Preserve the listed member order.",recur:"If the group recurs, recur with the members together as the same recognizable unit."}[application]);
 
-export function combinedContextPromptDirectives(snapshot:Record<string,unknown>,output:"image"|DocumentArtifactKind="image"){
+export function combinedContextPromptDirectives(snapshot:Record<string,unknown>,output:"image"|"video"|"audio"|"short_story"|"scene"|"slides"|"storyboard"="image"){
   return combinedContextGroups(snapshot).map((group,index)=>{
-    const outputRule=output==="model3d"?"Bind these shape, material, and surface decisions to the named 3D subject. Saved model views supply image guidance; they do not transfer editable mesh geometry or guarantee hidden surfaces.":output==="slides"?"Reserve one slide or a contiguous run of slides for this group; identify that assignment before drafting slide copy.":output==="audio"?"Keep this motif, emotional cue, instrumentation, and soundscape attached to its intended dramatic moment; preserve authored cue order and never leak it into unrelated scenes.":output==="short_story"||output==="scene"?"Keep these decisions at the same narrative moments, scene beats, or aspects of the named subject.":output==="video"||output==="storyboard"?"Keep these decisions together in the same shots or ordered shot range; preserve chronology when ordered.":"Bind these decisions to one visual target and prevent their attributes from spreading to other subjects or regions.";
+    const outputRule=output==="slides"?"Reserve one slide or a contiguous run of slides for this group; identify that assignment before drafting slide copy.":output==="audio"?"Keep this motif, emotional cue, instrumentation, and soundscape attached to its intended dramatic moment; preserve authored cue order and never leak it into unrelated scenes.":output==="short_story"||output==="scene"?"Keep these decisions at the same narrative moments, scene beats, or aspects of the named subject.":output==="video"||output==="storyboard"?"Keep these decisions together in the same shots or ordered shot range; preserve chronology when ordered.":"Bind these decisions to one visual target and prevent their attributes from spreading to other subjects or regions.";
     const members=group.members.map((member)=>`${member.order+1}. ${member.role}: ${member.path&&member.path.length>1?member.path.join(" > "):member.label} (${Math.round(member.relativity*100)}% relative)`).join(" | ");
     return `${index+1}. “${group.name}” targets ${group.role.replaceAll("_"," ")} “${group.target}” at ${Math.round(group.relativity*100)}% group relativity. ${roleBehavior(group.role)} ${applicationBehavior(group.application)} ${outputRule} Members: ${members}`;
   });

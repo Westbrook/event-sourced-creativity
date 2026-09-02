@@ -30,11 +30,6 @@ type AlternativeShellOptions = {
 };
 
 export abstract class AlternativeStudio extends FormaElement {
-  protected openModel3dUpload() {
-    const { documentId, documentTitle } = this.store.projection.get();
-    return navigateInApp(this, navigation => navigation.route(withDocumentInRoute("/studio/editor", documentId, documentTitle)));
-  }
-
   /** Child-local work only; Shell retains Source, authority, route and gesture ownership. */
   protected captureAlternativeCommandChildren(): CommandDeparture {
     const { projectId, documentId } = this.store.projection.get();
@@ -135,7 +130,6 @@ export class FormaContextBoard extends AlternativeStudio {
   }
 
   #prepare(type: BlockKind) {
-    if (type === "model3d") return;
     const store = this.store, { projectId, documentId } = store.projection.get(), route = store.route.get();
     const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
     const focus = captureOutputNavigationFocus(this.ownerDocument), revision = ++this.#addRevision, raw = this.#text;
@@ -160,7 +154,7 @@ export class FormaContextBoard extends AlternativeStudio {
   async #add(event: SubmitEvent) {
     event.preventDefault();
     const raw = this.#text, text = raw.trim(), type = this.#type, subtype = this.#subtype, revision = this.#addRevision;
-    if (!text || type === "model3d") return;
+    if (!text) return;
     const store = this.store, projection = store.projection.get(), route = store.route.get();
     const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
     const scopeCurrent = () => this.isConnected && this.store === store && store.route.get() === route
@@ -250,13 +244,11 @@ export class FormaContextBoard extends AlternativeStudio {
         <div>
           <h2 id="board-capture-title">Add context</h2>
           <p>Choose the kind of creative decision you want to shape. You can edit or remove it later.</p>
-          <button type="button" class="button secondary compact" @click=${() => this.openModel3dUpload()}>${this.i18n.t("model3d.upload.label", "Upload an owned or licensed 3D model")}</button>
-          <p class="section-note">${this.i18n.t("model3d.upload.detail", "Upload a self-contained GLB up to 64 MB, then save the view that should guide generation.")}</p>
         </div>
         <form class="board-quick-add" @submit=${this.#add}>
           <label>Block type
-            <select .value=${this.#type} @change=${(event: Event) => { const type = (event.target as HTMLSelectElement).value as BlockKind; if (type === "model3d") return; this.#addRevision++; this.#type = type; this.#subtype = suggestedSubtype(this.#type); this.#userSelectedType = true; this.requestUpdate(); }}>
-              ${BLOCK_TYPES.filter((item) => item.type !== "model3d").map((item) => html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}
+            <select .value=${this.#type} @change=${(event: Event) => { this.#addRevision++; this.#type = (event.target as HTMLSelectElement).value as BlockKind; this.#subtype = suggestedSubtype(this.#type); this.#userSelectedType = true; this.requestUpdate(); }}>
+              ${BLOCK_TYPES.map((item) => html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}
             </select>
           </label>
           <label>Starting point
