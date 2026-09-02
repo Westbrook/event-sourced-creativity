@@ -13,7 +13,7 @@ const participantKey=(value:string)=>value.toLocaleLowerCase().normalize("NFKD")
 const participantMentions=(text:string)=>[...text.normalize("NFC").matchAll(/@([\p{L}\p{M}\p{N}_/-]+)/gu)].map((match)=>participantKey(match[1].split("/").at(-1)??match[1]));
 const slug=(value:string)=>participantKey(value).slice(0,44)||"decision";
 const sameScope=(a:CreativeBlock,b:CreativeBlock)=>a.projectId===b.projectId&&a.scope===b.scope&&(a.scope==="document"?a.documentId===b.documentId:a.scope==="canvas"?a.canvasId===b.canvasId:true);
-const protectedBlock=(block:CreativeBlock)=>block.removed||block.locked||Boolean(block.properties.source_evidence_hash)||Object.keys(block.properties).some((key)=>key.startsWith("organization_context_package_")||key==="organization_context_source_block_id")||Boolean(creativeContextRightsIssue(block.properties));
+const protectedBlock=(block:CreativeBlock)=>block.removed||block.locked||block.type==="model3d"||Boolean(block.properties.model_url)||Boolean(block.properties.source_evidence_hash)||Object.keys(block.properties).some((key)=>key.startsWith("organization_context_package_")||key==="organization_context_source_block_id")||Boolean(creativeContextRightsIssue(block.properties));
 const labelOf=(block:CreativeBlock)=>String(block.properties.label??block.handle??block.type);
 
 /** Server-resolved proposals only. IDs and the exact entire plan are retained before human confirmation. */
@@ -37,7 +37,7 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
   for(const item of proposals){
     if(item.decomposition){
       const original=item.decomposition,edit=item.edit??{},proposal={...original,...edit};
-      if(!isBlockKind(proposal.type)||proposal.type==="reference"||!blockTypeDefinition(proposal.type)?.subtypes.includes(proposal.subtype)
+      if(!isBlockKind(proposal.type)||(proposal.type==="reference"||proposal.type==="model3d")||!blockTypeDefinition(proposal.type)?.subtypes.includes(proposal.subtype)
         ||!proposal.text?.trim()||!proposal.label?.trim()||proposal.text.length>1800||proposal.label.length>160)throw new Error("context_changes_invalid_edit");
       if(proposal.type==="action"){
         const mentions=participantMentions(proposal.text);
@@ -66,7 +66,7 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
         roots.set(item.key,copied.get(existing.id)!);
       }
     }else if(item.research){
-      if(item.edit||item.research.area!=="learned"||item.research.type==="reference")throw new Error("context_changes_review_only");
+      if(item.edit||item.research.area!=="learned"||(item.research.type==="reference"||item.research.type==="model3d"))throw new Error("context_changes_review_only");
       roots.set(item.key,createId());
     }else throw new Error("context_changes_proposal_missing");
   }

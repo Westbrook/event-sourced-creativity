@@ -7,7 +7,7 @@ export function outputAssetDocumentPrefix(scope: Pick<StorageScope, "ownerUserId
   return `output-requirements/${encode(scope.ownerUserId)}/${encode(scope.projectId)}/${encode(scope.documentId)}/`;
 }
 export function outputAssetObjectKeys(scope: StorageScope, assetId: string, sha256: string, extension: string) {
-  if (!/^[a-f0-9]{64}$/u.test(sha256) || !/^(?:png|jpg|jpeg|wav|mp3|mp4|pptx)$/u.test(extension)) throw new Error("invalid_output_asset_storage_identity");
+  if (!/^[a-f0-9]{64}$/u.test(sha256) || !/^(?:png|jpg|jpeg|wav|mp3|mp4|pptx|glb)$/u.test(extension)) throw new Error("invalid_output_asset_storage_identity");
   const safeLegacy = [scope.ownerUserId, assetId].every((part) => /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,159}$/u.test(part));
   return { key: `${outputAssetDocumentPrefix(scope)}${encode(assetId)}/${sha256}.${extension}`, legacyKey: safeLegacy ? `output-requirements/${scope.ownerUserId}/${assetId}/${sha256}.${extension}` : null };
 }

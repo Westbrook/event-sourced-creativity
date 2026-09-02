@@ -1,6 +1,42 @@
 /** Stable, server-owned messages only. Authored content is never passed through this registry. */
 type Translation = readonly [string, string, string, string];
 const groups = {
+  model3dReady: { codes: "output_native_model3d_ready", text: [
+    "One Rodin request creates a GLB using the exact reviewed prompt, ordered reference images, and disclosed settings. Provider content checks apply; acceptance is not guaranteed. Review the mesh and materials before accepting delivery.",
+    "Une requête Rodin crée un GLB avec l’instruction exacte relue, les images de référence ordonnées et les paramètres affichés. Les contrôles de contenu du fournisseur s’appliquent ; l’acceptation n’est pas garantie. Vérifiez le maillage et les matériaux avant d’accepter la livraison.",
+    "ينشئ طلب Rodin واحد ملف GLB باستخدام النص الدقيق الذي راجعته والصور المرجعية المرتبة والإعدادات الموضحة. تُطبّق فحوص محتوى المزوّد ولا يُضمن القبول. راجع الشبكة والمواد قبل قبول التسليم.",
+    "Rodinへの1回の依頼で、確認済みの正確なプロンプト、順序付き参照画像、表示された設定を使ってGLBを作成します。プロバイダーのコンテンツ審査が適用され、受理は保証されません。納品を承認する前にメッシュとマテリアルを確認してください。",
+  ] },
+  model3dTransfer: { codes: "output_transfer_model3d_after_authorization", text: [
+    "After authorization and Start, Forma sends the exact displayed prompt, settings, and listed reference images in order to fal.ai / Hyper3D Rodin. The first reference guides materials. Original mesh files are not sent. This preflight sends nothing.",
+    "Après l’autorisation et le démarrage, Forma envoie l’instruction exacte affichée, les paramètres et les images de référence dans l’ordre à fal.ai / Hyper3D Rodin. La première référence guide les matériaux. Les fichiers de maillage originaux ne sont pas envoyés. Cette vérification préalable n’envoie rien.",
+    "بعد الإذن والبدء، ترسل Forma النص المعروض كما هو والإعدادات والصور المرجعية المدرجة بالترتيب إلى fal.ai / Hyper3D Rodin. يوجّه المرجع الأول المواد. لا تُرسل ملفات الشبكة الأصلية. لا يرسل هذا الفحص المسبق شيئًا.",
+    "許可して開始すると、Formaは表示された正確なプロンプト、設定、一覧の参照画像を順番にfal.ai / Hyper3D Rodinへ送信します。最初の参照画像がマテリアルを方向付けます。元のメッシュファイルは送信されません。この事前確認では何も送信しません。",
+  ] },
+  model3dUnconfigured: { codes: "output_native_model3d_unconfigured", text: [
+    "Configure the fal provider before creating a 3D model. Owned GLB adoption remains available.", "Configurez le fournisseur fal avant de créer un modèle 3D. L’importation de vos GLB reste disponible.", "اضبط مزوّد fal قبل إنشاء نموذج ثلاثي الأبعاد. يظل استيراد ملفات GLB التي تملكها متاحًا.", "3Dモデルを作成する前にfalプロバイダーを設定してください。所有するGLBの取り込みは引き続き利用できます。",
+  ] },
+  model3dContract: { codes: "output_native_model3d_contract_unsupported", text: [
+    "A 3D model has no image aspect ratio or slide/duration count. Review these output requirements before creating it.", "Un modèle 3D n’a pas de rapport d’image ni de nombre de diapositives ou de durée. Revoyez ces exigences avant de le créer.", "لا يملك النموذج ثلاثي الأبعاد نسبة أبعاد صورة أو عدد شرائح أو مدة. راجع متطلبات المخرجات هذه قبل إنشائه.", "3Dモデルには画像の縦横比、スライド数、時間の条件はありません。作成前に納品要件を確認してください。",
+  ] },
+  model3dReferences: { codes: "model3d_reference_count model3d_reference_selection_invalid", text: [
+    "Rodin accepts at most five ordered reference images. Select fewer active pixel references or choose references in the 3D generation dialog. No reference is silently dropped.", "Rodin accepte au plus cinq images de référence ordonnées. Activez moins de références en pixels ou choisissez-les dans la fenêtre de génération 3D. Aucune référence n’est supprimée silencieusement.", "يقبل Rodin خمس صور مرجعية مرتبة على الأكثر. قلّل المراجع النشطة التي ترسل بكسلاتها أو اختر المراجع في نافذة التوليد ثلاثي الأبعاد. لا يُحذف أي مرجع دون إعلامك.", "Rodinの参照画像は順序付きで最大5枚です。有効なピクセル参照を減らすか、3D生成ダイアログで参照を選択してください。参照を黙って省くことはありません。",
+  ] },
+  model3dReferenceUnavailable: { codes: "output_native_model3d_reference_unavailable", text: [
+    "Review the selected reference images and confirm their saved rights. Save a current PNG view for each 3D model reference before trying again.", "Vérifiez les images de référence sélectionnées et confirmez leurs droits enregistrés. Enregistrez une vue PNG actuelle de chaque modèle 3D utilisé comme référence avant de réessayer.", "راجع الصور المرجعية المحددة وأكّد حقوقها المحفوظة. احفظ عرض PNG حديثًا لكل نموذج ثلاثي الأبعاد مرجعي قبل المحاولة مجددًا.", "選択した参照画像と保存済みの利用権限を確認してください。再試行する前に各3Dモデル参照の最新のPNGビューを保存してください。",
+  ] },
+  model3dPromptRequired: { codes: "model3d_prompt_required model3d_prompt_invalid", text: [
+    "Write the exact 3D subject description in this deliverable’s instructions, or select an image reference. The prompt is sent unchanged.", "Décrivez exactement le sujet 3D dans les instructions du livrable ou sélectionnez une image de référence. L’instruction est envoyée sans modification.", "اكتب الوصف الدقيق للعنصر ثلاثي الأبعاد في تعليمات هذا المخرج أو اختر صورة مرجعية. يُرسل النص دون تغيير.", "この成果物の指示に3D対象の正確な説明を入力するか、参照画像を選択してください。プロンプトは変更せずに送信します。",
+  ] },
+  model3dPromptLength: { codes: "model3d_prompt_too_long", text: [
+    "The exact 3D prompt has {promptCharacters} characters. Shorten the deliverable instructions to {maximumCharacters} characters or fewer. Your text is retained without truncation.", "L’instruction 3D exacte compte {promptCharacters} caractères. Réduisez les instructions du livrable à {maximumCharacters} caractères ou moins. Votre texte est conservé sans troncature.", "يتكون النص الدقيق للنموذج ثلاثي الأبعاد من {promptCharacters} حرفًا. اختصر تعليمات المخرج إلى {maximumCharacters} حرفًا أو أقل. يُحفظ نصك دون اقتطاع.", "正確な3Dプロンプトは{promptCharacters}文字です。成果物の指示を{maximumCharacters}文字以内に短くしてください。元の文章は切り詰めずに保持します。",
+  ] },
+  model3dInvalid: { codes: "invalid_glb_model", text: [
+    "This GLB could not be verified as a self-contained 3D model. Export it again as GLB 2.0 with embedded textures and uncompressed geometry, then inspect the new file.", "Ce GLB n’a pas pu être vérifié comme modèle 3D autonome. Exportez-le à nouveau en GLB 2.0 avec textures intégrées et géométrie non compressée, puis inspectez le nouveau fichier.", "تعذر التحقق من ملف GLB كنموذج ثلاثي الأبعاد مكتفٍ بذاته. أعد تصديره بصيغة GLB 2.0 مع أنسجة مضمنة وهندسة غير مضغوطة ثم افحص الملف الجديد.", "このGLBを自己完結型の3Dモデルとして検証できませんでした。テクスチャを埋め込み、ジオメトリを非圧縮にしてGLB 2.0で書き出し直し、新しいファイルを検査してください。",
+  ] },
+  model3dReview: { codes: "output_model3d_visual_review_required", text: [
+    "GLB structure and embedded assets were checked. Inspect the 3D geometry, materials, scale, and intended use before accepting delivery. Rendering and useful content were not verified.", "La structure GLB et les ressources intégrées ont été vérifiées. Examinez la géométrie 3D, les matériaux, l’échelle et l’usage prévu avant d’accepter la livraison. Le rendu et l’utilité du contenu n’ont pas été vérifiés.", "فُحصت بنية GLB والموارد المضمنة. افحص الشكل ثلاثي الأبعاد والمواد والمقياس والاستخدام المقصود قبل قبول التسليم. لم يُتحقق من العرض أو فائدة المحتوى.", "GLB構造と埋め込みアセットを検査しました。納品を承認する前に3D形状、マテリアル、縮尺、用途を確認してください。レンダリングと内容の有用性は未検証です。",
+  ] },
   unknown: { codes: "", text: [
     "Forma could not identify this problem. Keep your draft and check the current plan and recorded operations before trying again.",
     "Forma n’a pas pu identifier ce problème. Conservez votre brouillon et vérifiez le plan actuel et les opérations enregistrées avant de réessayer.",

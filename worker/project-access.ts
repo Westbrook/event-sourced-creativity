@@ -19,6 +19,7 @@ import { combineAuthoringGuards, prepareAuthoringEventBatch, prepareAuthoringMed
 
 import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
 import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
+import { validateModel3dAssetEvents } from "./model3d-event-guards.ts";
 
 const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
@@ -214,6 +215,14 @@ const mediaKey=(value:unknown)=>{
   try{return decodeURIComponent(value.slice(prefix.length));}catch{return"";}
 };
 
+/** A generated model can contain a primary mesh, other export formats, textures and previews. */
+const artifactMediaKeys=(artifact:CreativeProjection["libraryArtifacts"][number])=>{
+  const modelFiles=artifact.kind==="model3d"&&Array.isArray(artifact.settings.model3d_files)?artifact.settings.model3d_files:[];
+  return [artifact.mediaUrl,...artifact.items.map((item)=>item.mediaUrl),...modelFiles.flatMap((file)=>
+    file&&typeof file==="object"&&!Array.isArray(file)?[(file as Record<string,unknown>).url]:[])]
+    .map(mediaKey).filter(Boolean);
+};
+
 export type ProjectPublicationResource={kind:string;id:string;visibility:"collaborative_output"|"actor_private"|"internal";sourceEventId:string|null;actorUserId:string};
 
 /** One resource mapping serves full synchronization and trusted native publication. */
@@ -228,8 +237,7 @@ export function projectPublicationResources(outputs:CreativeProjection["libraryO
   for(const artifact of artifacts){
     if(artifact.contentRef)add("content",artifact.contentRef,artifact.sourceEventId);
     if(artifact.inputRef)add("content",artifact.inputRef,artifact.sourceEventId,"actor_private");
-    if(artifact.mediaUrl)add("media",mediaKey(artifact.mediaUrl),artifact.sourceEventId);
-    for(const item of artifact.items)if(item.mediaUrl)add("media",mediaKey(item.mediaUrl),artifact.sourceEventId);
+    for(const key of new Set(artifactMediaKeys(artifact)))add("media",key,artifact.sourceEventId);
   }
   return resources;
 }
@@ -279,8 +287,9 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   const outputIds=new Set(projectOutputs.map((output)=>output.id));
   const artifactIds=new Set(projectArtifacts.map((artifact)=>artifact.id));
   const generationIds=new Set(projectOutputs.map((output)=>output.generationId).filter(Boolean));
-  const referenceIds=new Set(projection.libraryBlocks.map((block)=>String(block.properties.reference_id??"")).filter(Boolean));
-  const referenceMedia=projection.libraryBlocks.map((block)=>({key:mediaKey(block.properties.media_url),sourceEventId:block.sourceEvents.at(-1)??null})).filter((item)=>item.key);
+  const referenceIds=new Set(projection.libraryBlocks.flatMap((block)=>[block.properties.reference_id,block.properties.model_reference_id]).map((value)=>String(value??"")).filter(Boolean));
+  const referenceMedia=projection.libraryBlocks.flatMap((block)=>[block.properties.media_url,block.properties.model_url]
+    .map((url)=>({key:mediaKey(url),sourceEventId:block.sourceEvents.at(-1)??null}))).filter((item)=>item.key);
   const previousResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,resource.source_event_id,resource.actor_user_id,
     CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
@@ -393,7 +402,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     ["collection",collectionIds],["output",outputIds],["artifact",artifactIds],["reference",referenceIds],["canvas",canvasIds],
     ["canvas_item",canvasItemIds],["canvas_arrangement",arrangementIds],["canvas_context",contextSetIds],["manifest_version",new Set(["canvas-v1"])],
     ["content",new Set([...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1)).map((resource)=>resource.resource_id)])],
-    ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap((artifact)=>[mediaKey(artifact.mediaUrl),...artifact.items.map((item)=>mediaKey(item.mediaUrl))]),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
+    ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap(artifactMediaKeys),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
   ]);
   for(const resource of previousResources.results){
     if(resource.resource_kind==="job"||resource.resource_kind==="share")continue;
@@ -484,7 +493,7 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
     for(const [key,item] of Object.entries(value as Record<string,unknown>)){
       if(/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|(?:video|audio)_input_receipt|artifact_plan/i.test(key))continue;
       if(key==="content_ref"&&!contentIds.has(String(item)))continue;
-      if((key==="media_url"||key==="source_ref")&&typeof item==="string"&&mediaKey(item)&&!activeResources.get("media")?.has(mediaKey(item)))continue;
+      if(typeof item==="string"&&mediaKey(item)&&!activeResources.get("media")?.has(mediaKey(item)))continue;
       safe[key]=redact(item);
     }
     return safe;
@@ -850,8 +859,10 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
     if(action?.type!=="action")return"invalid_action_participant_owner";
     if(!action||!participant||action.scope!==participant.scope)return"cross_scene_action_reference";
   }
-  if(guardedProperties.reference_id&&!await exists("reference",String(guardedProperties.reference_id)))return"foreign_reference_resource";
-  if(guardedProperties.media_url){const key=mediaKey(guardedProperties.media_url);if(!key||!await exists("media",key))return"foreign_media_resource";}
+  for(const property of ["reference_id","model_reference_id"] as const)
+    if(guardedProperties[property]&&!await exists("reference",String(guardedProperties[property])))return"foreign_reference_resource";
+  for(const property of ["media_url","model_url"] as const)
+    if(guardedProperties[property]){const key=mediaKey(guardedProperties[property]);if(!key||!await exists("media",key))return"foreign_media_resource";}
   if(type==="BlockCreated"&&String(payload.type??"")==="reference"&&properties.media_url){
     if(!await verifySourceDocumentEvidence(env,context.ownerUserId,properties.media_url,properties))return"source_evidence_not_verified";
     if(properties.source_evidence_hash){const sources=pending.get("verified_source")??new Set<string>();sources.add(block);pending.set("verified_source",sources);}
@@ -1171,6 +1182,12 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       if(typeof payload.new_title==="string")target.title=payload.new_title.normalize("NFC").trim();
     }
   }
+  if(incoming.some((event)=>event.type==="BlockCreated"
+    ?event.payload?.type==="model3d"||Object.keys(event.payload?.properties&&typeof event.payload.properties==="object"?event.payload.properties:{}).some((key)=>key.startsWith("model_"))
+    :["BlockPropertyEdited","ChipEdited"].includes(String(event.type))&&["type","model_url","model_mime_type","model_content_hash","model_reference_id","model_view","media_url","media_type","source_mime_type","source_content_hash","reference_id","pixel_reference_mode"].includes(String(event.type==="ChipEdited"?event.payload?.property:event.payload?.property_path)))){
+    const issue=await validateModel3dAssetEvents({env,ownerId:context.ownerUserId,sourceEvents:await readProjectSourceEvents(env,context),events:incoming,projectAccessId:context.projectAccessId});
+    if(issue)return Response.json(issue,{status:issue.status});
+  }
   const pending:PendingProjectResources=new Map();
   const currentResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,json_extract(event.payload,'$.canvas_id') AS canvas_id
     FROM project_resource_scopes resource LEFT JOIN events event ON event.event_id=resource.source_event_id
@@ -1379,8 +1396,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     }
     if(event.type==="BlockCreated"){
       const properties=payload.properties&&typeof payload.properties==="object"?payload.properties as Record<string,unknown>:{};
-      const key=mediaKey(properties.media_url);
-      if(key){
+      for(const key of new Set([mediaKey(properties.media_url),mediaKey(properties.model_url)].filter(Boolean))){
         if(bulkAuthoring)bulkMediaRows.push([event.eventId,context.projectAccessId,context.organizationId,key]);
         else statements.push(env.DB.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND organization_id=? AND resource_kind='media' AND resource_id=? AND EXISTS(SELECT 1 FROM events WHERE event_id=?)")
           .bind(event.eventId,context.projectAccessId,context.organizationId,key,event.eventId));
@@ -1394,7 +1410,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     appended.push(event);
   }
   const invalidatesResources=incoming.some(({type,payload})=>/Removed$|Restored$|Discarded$|Rehomed$/.test(String(type??""))
-    ||(type==="BlockPropertyEdited"||type==="ChipEdited")&&["media_url","reference_id","source_document_id","source_block_id","source_output_id"].includes(String(type==="BlockPropertyEdited"?payload?.property_path:payload?.property)));
+    ||(type==="BlockPropertyEdited"||type==="ChipEdited")&&["media_url","model_url","reference_id","model_reference_id","source_document_id","source_block_id","source_output_id"].includes(String(type==="BlockPropertyEdited"?payload?.property_path:payload?.property)));
   let writeProof:BudgetReservationGuard|undefined;
   if(bulkAuthoring){
     if(!bulkAdmission)throw new Error("invalid_authoring_operation");

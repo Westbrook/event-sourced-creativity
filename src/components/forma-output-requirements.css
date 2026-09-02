@@ -41,3 +41,10 @@ forma-output-requirements summary:focus-visible { outline:3px solid var(--forma-
 .output-remove-confirm { padding:1rem; border:1px solid var(--forma-color-danger, CanvasText); border-radius:.6rem; margin-block:.5rem; }
 @media (max-width:36rem) { .output-requirements .output-actions > button { flex:1 1 100%; } .output-target { padding:.75rem; } .output-result { padding-inline:.7rem; } }
 @media (forced-colors:active) { .output-requirements, .output-target, .output-result, .output-provider-disclosure { border:1px solid CanvasText; } }
+.output-model3d-disclosure pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-block-size: 16rem;
+  overflow: auto;
+  font: inherit;
+}

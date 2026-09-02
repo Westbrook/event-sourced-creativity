@@ -25,11 +25,14 @@ import { renderVideoReel } from "./video-reel";
 import { renderAudioPlayer } from "./audio-playback";
 import { MAX_AUDIO_UPLOAD_BYTES, normalizeAudioCues } from "../model/audio";
 import { analyzeAudioLocally } from "../model/audio-browser";
+import { normalizeModel3dView, type Model3dCaptureDetail } from "../model/model3d-view";
+import "./model3d-viewer";
 import "./reference-image";
 import "./reference-palette-picker";
 import "./reference-findings";
 import "./spatial-scope-editor";
 import "./reference-pixel-policy";
+import "./reference-composition-editor";
 import "./image-format-editor";
 import "./output-input-editor";
 import "./context-intelligence";
@@ -58,6 +61,7 @@ export class ContextBlock extends FormaElement {
   #imagePalette: string[] = [];
   #editingFocused = false;
   #analyzingAudio=false;
+  #savingModelView: object | null = null;
   #detailDraft:{parentId:string;label:string;value:string;type:BlockKind}|null=null;
   #reuseParentId="";
   #characterSaving:Promise<void>=Promise.resolve();
@@ -162,7 +166,7 @@ export class ContextBlock extends FormaElement {
           && editor.block.id === this.block.id && editor.source === this.surface
           && editor.block.properties.source_artifact_id === this.block.properties.source_artifact_id
           && editor.block.properties.source_artifact_kind === this.block.properties.source_artifact_kind;
-        return Boolean(this.#savingDraft
+        return Boolean(this.#savingDraft || this.#savingModelView
           || this.#draftChanged && (outputInputDraft(this.block) ? this.#structuredDraftDiffers() : this.#ordinaryDraftDiffers())
           || sameEditor && editor?.localWorkBlocked);
       },
@@ -662,7 +666,7 @@ export class ContextBlock extends FormaElement {
       .find((binding)=>binding.id===String(p.organization_context_package_binding_id)&&binding.projectAccessId===context.projectAccessId):undefined;
     const governedPackage=governed?this.store.organizationContextPackages.get().find((item)=>item.id===governed.packageId):undefined;
     const governedVersion=governed?this.store.organizationContextVersions.get()[governed.versionId]:undefined;
-    if(!canAuthor||governed)return html`<article class="context-block context-block--read-only intent-${intent} ${focused?"brief-focus":""}" tabindex="0" data-block-id=${this.block.id} aria-label="${readableType}, ${sourceKind?String(p.label??this.block.handle):this.block.handle}, intent ${intentLabel}"><div class="block-rail"><span class="block-rail-code" aria-hidden="true">${icon(symbol)}</span></div><div class="block-body"><header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${readableType}</h3><span class="handle" dir="auto">${sourceKind?String(p.label??this.block.handle):this.block.handle}</span></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${intentLabel}</span><span class="context-lock-state">${this.i18n.t(this.block.locked?"context.controls.locked":"context.controls.unlocked",this.block.locked?"Locked":"Unlocked")}</span></div></header>${governed?html`<p class="block-governed-context"><b dir="auto">${governedPackage?.name??this.i18n.system("Organization context")}</b>${governedVersion?` · v${governedVersion.version}`:""} <button type="button" class="button ghost compact" @click=${()=>navigateInApp(this,navigation=>navigation.route("/library"))}>${this.i18n.system("Organization context")}</button></p>`:nothing}${colors.length?html`<div class="palette-strip" aria-label="Saved palette">${colors.map((color)=>html`<i style=${`--swatch:${color}`}></i>`)}</div>`:nothing}${copy?html`<p class="block-copy" data-forma-content="primary" dir="auto">${displayCopy}</p>`:nothing}${this.#referenceSource(p,medium)}${this.block.type==="reference"&&p.media_url&&medium==="image"?html`<img src=${String(p.media_url)} alt=${String(p.label??this.block.handle)} loading="lazy">`:nothing}${this.#audioContext(p,true)}${this.#characterContext(p,true)}${this.#contextComposition(true)}${this.#sourceEvidence(p)}${this.#protectedCopy(p)}<forma-context-intelligence .block=${this.block} .surface=${this.surface} .readOnly=${true}></forma-context-intelligence><div class="block-meta"><span>${Math.round(Number(p.weight??.5)*100)}%</span><span class=${`authority ${authority}`}>${this.i18n.t(`context.authority.${authority}`,this.i18n.system(authority))}</span><button class="why-button" aria-label="Why does this block have these values?" @click=${()=>this.store.patchUi({inspectorOpen:true,selectedEventId:this.block.sourceEvents.at(-1)??""})}>Why?</button></div></div></article>`;
+    if(!canAuthor||governed)return html`<article class="context-block context-block--read-only intent-${intent} ${focused?"brief-focus":""}" tabindex="0" data-block-id=${this.block.id} aria-label="${readableType}, ${sourceKind?String(p.label??this.block.handle):this.block.handle}, intent ${intentLabel}"><div class="block-rail"><span class="block-rail-code" aria-hidden="true">${icon(symbol)}</span></div><div class="block-body"><header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${readableType}</h3><span class="handle" dir="auto">${sourceKind?String(p.label??this.block.handle):this.block.handle}</span></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${intentLabel}</span><span class="context-lock-state">${this.i18n.t(this.block.locked?"context.controls.locked":"context.controls.unlocked",this.block.locked?"Locked":"Unlocked")}</span></div></header>${governed?html`<p class="block-governed-context"><b dir="auto">${governedPackage?.name??this.i18n.system("Organization context")}</b>${governedVersion?` · v${governedVersion.version}`:""} <button type="button" class="button ghost compact" @click=${()=>navigateInApp(this,navigation=>navigation.route("/library"))}>${this.i18n.system("Organization context")}</button></p>`:nothing}${colors.length?html`<div class="palette-strip" aria-label="Saved palette">${colors.map((color)=>html`<i style=${`--swatch:${color}`}></i>`)}</div>`:nothing}${copy?html`<p class="block-copy" data-forma-content="primary" dir="auto">${displayCopy}</p>`:nothing}${this.#referenceSource(p,medium)}${this.block.type==="reference"&&p.media_url&&medium==="image"?html`<img src=${String(p.media_url)} alt=${String(p.label??this.block.handle)} loading="lazy">`:nothing}${this.#modelContext(p,true)}${this.#audioContext(p,true)}${this.#characterContext(p,true)}${this.#contextComposition(true)}${this.#sourceEvidence(p)}${this.#protectedCopy(p)}<forma-context-intelligence .block=${this.block} .surface=${this.surface} .readOnly=${true}></forma-context-intelligence><div class="block-meta"><span>${Math.round(Number(p.weight??.5)*100)}%</span><span class=${`authority ${authority}`}>${this.i18n.t(`context.authority.${authority}`,this.i18n.system(authority))}</span><button class="why-button" aria-label="Why does this block have these values?" @click=${()=>this.store.patchUi({inspectorOpen:true,selectedEventId:this.block.sourceEvents.at(-1)??""})}>Why?</button></div></div></article>`;
     return html`<article class="context-block intent-${intent} ${focused?"brief-focus":""} ${this.#dropPosition?`drop-${this.#dropPosition}`:""}" tabindex="0" data-block-id=${this.block.id} aria-label="${readableType}, ${sourceKind?String(p.label??this.block.handle):this.block.handle}, intent ${intentLabel}" @dragover=${this.#dragOver} @dragleave=${()=>{this.#dropPosition="";this.requestUpdate();}} @drop=${this.#drop}>
       <div class="block-rail">
         <button class="drag-handle" .draggable=${!this.block.locked} aria-label=${this.block.locked?this.i18n.system("Unlock block to reorder"):this.i18n.system("Drag block to reorder")} title=${this.block.locked?this.i18n.system("Unlock block to reorder"):this.i18n.system("Drag to reorder")} @dragstart=${this.#dragStart} @dragend=${()=>{this.#dropPosition="";this.requestUpdate();}}><span class="block-rail-code" aria-hidden="true">${icon(symbol)}</span><span class="block-drag-dots" aria-hidden="true">${icon("dots")}</span></button>
@@ -676,6 +680,8 @@ export class ContextBlock extends FormaElement {
           <label class="block-intent"><span>Use as</span><select ?disabled=${this.block.locked} aria-label=${this.i18n.system("{value} intent", { value: definition?.label??this.block.type })} .value=${intent} @change=${(event:Event)=>this.#changeIntent((event.target as HTMLSelectElement).value as BlockIntent)}>${BLOCK_INTENTS.map((option)=>html`<option value=${option.id} ?selected=${option.id===intent}>${this.i18n.system(option.label)}</option>`)}</select></label>
         </form>
         ${this.#referenceSource(p,medium)}
+        ${this.#modelContext(p)}
+        ${p.reference_composition ? html`<forma-reference-composition-editor .block=${this.block} .surface=${this.surface}></forma-reference-composition-editor>` : nothing}
         ${this.block.type === "reference"&&medium==="image" ? html`<forma-reference-image .src=${String(p.media_url??"")} .alt=${String(p.label??this.block.handle)} .targetId=${this.block.id} .referenceId=${String(p.reference_id??"")} .focalPoint=${p.focal_point}></forma-reference-image>` : nothing}
         ${this.#audioContext(p)}
         ${this.#characterContext(p)}
@@ -713,6 +719,35 @@ export class ContextBlock extends FormaElement {
     return html`<section class="context-protected-copy"><b>${this.i18n.t("context.controls.protected", "Protected wording")}</b>${[...new Set([exact, ...phrases].filter(Boolean))].map((phrase) => html`<p dir="auto">${phrase}</p>`)}</section>`;
   }
 
+  async #saveModelView(event: CustomEvent<Model3dCaptureDetail>) {
+    event.stopPropagation();
+    if (this.#savingModelView || !this.#canEdit() || this.block.locked || this.block.type !== "model3d") return;
+    const store = this.store, source = store.captureSourceOwnership(), blockId = this.block.id;
+    const route = store.route.get(), modelUrl = String(this.block.properties.model_url ?? ""), modelHash = this.block.properties.model_content_hash;
+    const pending = {};
+    const current = () => this.isConnected && this.#savingModelView === pending && this.store === store
+      && store.sourceOwnershipActive(source) && store.route.get() === route && this.#canEdit()
+      && this.block.id === blockId && !this.block.locked && this.block.properties.model_url === modelUrl
+      && this.block.properties.model_content_hash === modelHash;
+    if (!modelUrl || event.detail.src !== modelUrl || !store.sourceOwnershipActive(source)) return;
+    this.#savingModelView = pending; this.requestUpdate();
+    try { await store.saveModel3dView(blockId, event.detail, current); }
+    finally { if (this.#savingModelView === pending) { this.#savingModelView = null; this.requestUpdate(); } }
+  }
+
+  #modelContext(properties: Record<string, unknown>, readOnly = false) {
+    if (this.block.type !== "model3d") return nothing;
+    const src = String(properties.model_url ?? ""), view = normalizeModel3dView(properties.model_view);
+    const saved = Boolean(properties.media_url && properties.source_content_hash && view);
+    return html`<section class="model3d-context" aria-label=${this.i18n.t("model3d.context.title", "3D model and saved view")}>
+      ${src ? html`<forma-model3d-viewer .src=${src} .view=${view} .readonly=${readOnly || this.block.locked} .disabled=${Boolean(this.#savingModelView)} @model3d-capture=${this.#saveModelView}></forma-model3d-viewer>` : nothing}
+      <p>${this.i18n.t("model3d.context.explanation", "Choose a view here and save it as an image. Generations use that saved view; rotating the preview does not change it.")}</p>
+      ${saved ? html`<figure><img src=${String(properties.media_url)} alt=${this.i18n.t("model3d.context.savedAlt", "Saved model view for generation")} loading="lazy"><figcaption>${this.i18n.t("model3d.context.saved", "Saved image view")}</figcaption></figure>` : html`<p role="status">${this.i18n.t("model3d.context.missingView", "Save a view before using this model as an image reference.")}</p>`}
+      <forma-reference-pixel-policy .block=${this.block} .surface=${this.surface} .readOnly=${readOnly} .disabled=${Boolean(this.#savingModelView)}></forma-reference-pixel-policy>
+      ${src ? html`<a href=${src} download=${String(properties.model_filename ?? "model.glb")}>${this.i18n.t("model3d.context.download", "Download original GLB")}</a>` : nothing}
+    </section>`;
+  }
+
   #authoredSummary(block = this.block, ancestors = new Set<string>()): TemplateResult {
     const p = block.properties, intent = blockIntentFor(block.type, p), definition = blockTypeDefinition(block.type);
     const copy = String(p.artifact_markdown ?? p.text ?? p.source_excerpt ?? p.description ?? p.label ?? "");
@@ -725,6 +760,7 @@ export class ContextBlock extends FormaElement {
         ${this.#protectedCopy(p)}
         ${colors.length ? html`<div class="palette-strip" aria-label=${this.i18n.t("context.controls.palette", "Saved palette")}>${colors.map((color) => html`<i style=${`--swatch:${color}`}><span class="sr-only">${color}</span></i>`)}</div>` : nothing}
         ${block.type === "reference" && referenceMedium(p) === "image" && p.media_url ? html`<forma-reference-image .src=${String(p.media_url)} .alt=${String(p.label ?? block.handle)} .targetId=${block.id} .referenceId=${String(p.reference_id ?? "")} .focalPoint=${p.focal_point}></forma-reference-image>` : nothing}
+        ${block.type === "model3d" ? html`${p.media_url ? html`<img class="model3d-saved-view" src=${String(p.media_url)} alt=${this.i18n.t("model3d.context.savedAlt", "Saved model view for generation")} loading="lazy">` : nothing}<p>${p.media_url ? this.i18n.t("model3d.context.saved", "Saved image view") : this.i18n.t("model3d.context.missingView", "Save a view before using this model as an image reference.")}</p>` : nothing}
         ${block.type === "audio" ? renderAudioPlayer(String(p.media_url ?? ""), String(p.label ?? block.handle), this.i18n, { transcript: String(p.transcript ?? p.lyrics ?? "") }) : nothing}
         ${isCharacterContext(block.type, p) ? html`<p class="character-context-summary" dir="auto">${characterProfileSummary(p)}</p>` : nothing}
         ${children.length ? html`<ol class="context-authored-children">${children.map(({ block: child }) => html`<li>${this.#authoredSummary(child, new Set([...ancestors, block.id]))}</li>`)}</ol>` : nothing}

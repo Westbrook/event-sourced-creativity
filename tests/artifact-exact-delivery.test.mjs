@@ -224,11 +224,11 @@ const sourceOwnershipMembers=actualClassMembers(storeSource,"FormaStore",[
   "#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive",
 ]);
 const SourceOwnership=eval(stripTypeScriptTypes("(class {"+sourceOwnershipMembers+"})"));
-const privateSourceMembers=actualClassMembers(componentSource,"DocumentArtifacts",["#privateSourceRevision","#privateSourceCurrent"]);
 const between=(source,start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a);assert.ok(a>=0&&b>a,start);return source.slice(a,b);};
-const openingMethods=between(componentSource,"  async openArtifactById(","  // Exact read-only job")
-  +between(componentSource,"  async #openArtifact(","  async #create(")
-  +between(componentSource,"  async #artifactBinding(","  async #download(")+"\n"+privateSourceMembers;
+const openingMethods=actualClassMembers(componentSource,"DocumentArtifacts",[
+  "openArtifactById","#openArtifact","#artifactBinding","#targetDocumentId",
+  "#privateSourceRevision","#privateSourceCurrent",
+]);
 // Production methods remain verbatim; only their former lexical eval inputs
 // become explicit dependencies visible to both the harness and static analysis.
 const fixtureClass=(source,bindings)=>new Function(...Object.keys(bindings),'"use strict"; return '+stripTypeScriptTypes(source)+";")(...Object.values(bindings));
@@ -238,20 +238,22 @@ function viewerFixture(){
   const document={activeElement:new HTMLElement()};
   const dialog={open:false,close(){this.open=false;},setAttribute(){},addEventListener(){}};
   const ensureModalDialog=target=>{target.open=true;trace.push("modal");};
+  // Retained exact bytes are the fixture input; transport must stay unused.
+  const rejectIO=operation=>{trace.push("unexpected:"+operation);throw new Error("Unexpected viewer fixture I/O: "+operation);};
   const store=Object.assign(new SourceOwnership(),{captureAuthorizationScope:()=>({key:"authority",shared:true}),authorizationScopeActive:()=>state.active,
-    projection:{get:()=>({libraryArtifacts:[artifact]})},events:{get:()=>state.events},content:{get:()=>({content:state.bytes})},
-    session:{get:()=>({projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation:false},ensurePrivateContent:async()=>null});
+    projection:{get:()=>({documentId:"document",libraryArtifacts:[artifact]})},events:{get:()=>state.events},content:{get:()=>({content:state.bytes})},
+    session:{get:()=>({projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation:false},ensurePrivateContent:async contentRef=>rejectIO("content:"+contentRef)});
   const declared=new Set(["openArtifact","artifactBinding","targetDocumentId","revealWorkbenchPane","viewDialog","showArtifactIntent","privateSourceRevision","privateSourceCurrent"]);
   const fields=[...new Set([...openingMethods.matchAll(/#([A-Za-z][A-Za-z0-9_]*)/g)].map(match=>match[1]))].filter(name=>!declared.has(name));
   const Probe=fixtureClass(`(class {
-    ${fields.map(name=>"#"+name+"=null;").join("\n")}
+    ${actualClassMembers(componentSource,"DocumentArtifacts",fields.map(name=>"#"+name))}
     store=store;documentId="document";isConnected=true;
     get updateComplete(){return Promise.resolve().then(()=>state.beforeUpdate());}requestUpdate(){}
-    #targetDocumentId(){return this.documentId;}async #revealWorkbenchPane(){}
+    async #revealWorkbenchPane(){}
     #viewDialog(){return dialog;}async #showArtifactIntent(_artifact,intent){trace.push("intent:"+intent);}
     current(){return this.#viewerCurrent?.();}
     ${openingMethods}
-  })`,{state,trace,dialog,store,document,HTMLElement,ensureModalDialog,documentArtifactRevision});
+  })`,{state,trace,dialog,store,document,HTMLElement,ensureModalDialog,documentArtifactRevision,fetch:async input=>rejectIO(String(input))});
   return{host:new Probe(),state,trace,dialog};
 }
 
@@ -271,6 +273,7 @@ test("a successful exact opening keeps authorized Save/Restore editable but lose
   assert.equal(f.host.current(),true,"a valid open editing session must not be frozen to the prior bytes");
   board="board-b";assert.equal(f.host.current(),false);
   board="board-a";f.state.active=false;assert.equal(f.host.current(),false);
+  assert.deepEqual(f.trace,["modal"],"the exact opening and authority checks use only retained content");
 });
 
 

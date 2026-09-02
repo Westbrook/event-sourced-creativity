@@ -50,7 +50,7 @@ export function localizedGenerationFailureGuidance(guidance: GenerationFailureGu
   if(stopped)return{...guidance,title:locale.system(guidance.title),summary:stopped,actionLabel:guidance.actionLabel?locale.system(guidance.actionLabel):null};
   if (englishLocale(locale)) return guidance;
   let summary = guidance.summary;
-  const retry = summary.match(/^The server already retried\. Wait about (\d+) seconds before trying again\.$/iu);
+  const retry = summary.match(/^(?:The server already retried\. )?Wait about (\d+) seconds before trying again\.$/iu);
   if (retry) summary = locale.t("job.progress.detail.retrySeconds", "", { seconds: locale.number(Number(retry[1])) });
   else {
     const translated = locale.system(summary);

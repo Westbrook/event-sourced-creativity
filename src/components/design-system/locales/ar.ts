@@ -5,6 +5,9 @@ import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
 import { FORMA_OUTCOME_MESSAGES } from "./outcome-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./context-controls-messages.ts";
+import { FORMA_MODEL3D_MESSAGES } from "./model3d-messages.ts";
+import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
+import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
   "sessions.blank.originalCreated": "تم إنشاء المستند الأصلي. لم يُستخدم هذا الاسم لإنشاء مستند آخر.",
@@ -25,6 +28,9 @@ const messages: Record<string, string> = {
   ...FORMA_OUTCOME_MESSAGES.ar,
   ...FORMA_NEXT_ACTION_MESSAGES.ar,
   ...FORMA_CONTEXT_CONTROL_MESSAGES.ar,
+  ...FORMA_MODEL3D_MESSAGES.ar,
+  ...FORMA_MODEL3D_VIEWER_MESSAGES.ar,
+  ...REFERENCE_COMPOSITION_MESSAGES.ar,
   ...FORMA_RESPONSIVE_MESSAGES.ar,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.ar,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ar,
