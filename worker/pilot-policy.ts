@@ -1405,6 +1405,9 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     if(auth.impersonation)return Response.json({error:"return_to_principal_before_internal_access"},{status:409,headers:{"cache-control":"private, no-store"}});
     const allowed=new Set<FormaCapability>(applicationDefinition(audience).requiredCapabilities);
     if(audience==="product"&&principal.role==="admin")allowed.add("evaluation.actual.run");
+    // This Engineering control needs both existing grants; exposing the grant
+    // does not create it or relax the metadata endpoint's fresh authorization.
+    if(audience==="engineering"&&hasCapability(principal,"engineering.diagnostics.read")&&hasCapability(principal,"platform.identity.manage"))allowed.add("platform.identity.manage");
     const capabilities=principal.access.capabilities.filter((capability)=>allowed.has(capability));
     const access={role:principal.role,capabilities:principal.access.capabilities,canvasAccess:principal.access.canvasAccess};
     const availableApplications=APPLICATIONS.filter((application)=>application.id==="creative"||application.id==="canvas"&&principal.access.canvasAccess||application.requiredCapabilities.some((capability)=>principal.access.capabilities.includes(capability)))

@@ -48,6 +48,17 @@ test("schema preflight denies the current unprivileged principal without queryin
   assert.equal(response.status, 403); assert.equal(metadataBatches, 0);
 });
 
+test("Engineering's actual session exposes the existing dual grant required by schema preflight", async t => {
+  const f = await createSceneCostFixture(1); t.after(() => f.close()); await f.drainBackground();
+  const response = await f.request("/api/session?audience=engineering");
+  assert.equal(response.status, 200);
+  const session = await response.json();
+  assert.equal(session.audience, "engineering");
+  assert.ok(session.capabilities.includes(identity));
+  assert.ok(session.capabilities.includes(diagnostics));
+  assert.equal(session.capabilities.includes("platform.provider.configure"), false);
+});
+
 test("schema preflight withholds all partial or oversized metadata", async () => {
   const replies = () => OUTPUT_SCHEMA_PREFLIGHT_QUERIES.map(query => ({ success: true, results:
     query.id === "settings" ? [{ sqlite_version: null, foreign_keys: 1, defer_foreign_keys: 0, ignore_check_constraints: 0, legacy_alter_table: 0, temp_object_count: 0 }]
