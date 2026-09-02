@@ -6,6 +6,9 @@ import { FORMA_RESPONSIVE_MESSAGES } from "./locales/responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./locales/next-action-messages.ts";
 import { FORMA_OUTCOME_MESSAGES } from "./locales/outcome-messages.ts";
 import { FORMA_CONTEXT_CONTROL_MESSAGES } from "./locales/context-controls-messages.ts";
+import { FORMA_MODEL3D_MESSAGES } from "./locales/model3d-messages.ts";
+import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./locales/model3d-viewer-messages.ts";
+import { REFERENCE_COMPOSITION_MESSAGES } from "./locales/reference-composition-messages.ts";
 import { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
 
 export { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
@@ -33,6 +36,9 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   ...FORMA_OUTCOME_MESSAGES.en,
   ...FORMA_NEXT_ACTION_MESSAGES.en,
   ...FORMA_CONTEXT_CONTROL_MESSAGES.en,
+  ...FORMA_MODEL3D_MESSAGES.en,
+  ...FORMA_MODEL3D_VIEWER_MESSAGES.en,
+  ...REFERENCE_COMPOSITION_MESSAGES.en,
   ...FORMA_RESPONSIVE_MESSAGES.en,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.en,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.en,

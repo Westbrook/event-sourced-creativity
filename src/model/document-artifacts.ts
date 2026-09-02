@@ -4,7 +4,7 @@ import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
 import { protectedPresentationScoreContradictions, resolvePresentationSourceReferences, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 
-export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
+export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
 
 /** Editable revision, distinct from the immutable generation/creation sequence. */
@@ -154,6 +154,7 @@ export const documentArtifactDefinition = (kind: DocumentArtifactKind) => ({
   storyboard: { label: "Storyboard", description: "A shot-by-shot previz sequence rendered as connected draft frames." },
   video: { label: "Video", description: "A playable motion interpretation rendered by the configured video provider." },
   audio: { label: "Audio", description: "An original, playable soundtrack shaped by the document’s creative direction." },
+  model3d: { label: "3D model", description: "A downloadable 3D asset created from a description or selected image references." },
 }[kind]);
 
 export function isDocumentArtifactKind(value: unknown): value is DocumentArtifactKind {

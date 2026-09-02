@@ -147,7 +147,7 @@ test("managed presentation requests reject unsupported counts, prevent duplicate
   assert.match(authoringSource, /value>MAX_MANAGED_PRESENTATION_SLIDES/);
   assert.match(authoringSource, /this\.#invalidSlideCount\?(?:this\.i18n\.system\("|`)Enter a whole number/);
   assert.match(authoringSource, /unsupportedAuthoredSlideCount=authoredSlideCount!==null&&authoredSlideCount>MAX_MANAGED_PRESENTATION_SLIDES/);
-  assert.match(authoringSource, /this\.#productionMode==="managed"&&this\.#kind!=="scene"&&!unsupportedAuthoredSlideCount\?buildManagedProductionPlan/);
+  assert.match(authoringSource, /this\.#productionMode==="managed"&&this\.#kind!=="scene"&&this\.#kind!=="model3d"&&!unsupportedAuthoredSlideCount\?buildManagedProductionPlan/);
   assert.match(authoringSource, /authored slides exceed the \$\{MAX_MANAGED_PRESENTATION_SLIDES\}-slide editable PowerPoint limit/);
   assert.match(authoringSource, /\|\|unsupportedAuthoredSlideCount\|\|/);
   assert.match(authoringSource, /if\(this\.#submitting\|\|this\.#referenceBusy/);

@@ -8,6 +8,13 @@ import { SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 
 const labels = { image: "Visual anchor", short_story: "Narrative", scene: "Screen scene", slides: "Presentation", storyboard: "Shot sequence", video: "Motion treatment", audio: "Original soundtrack" };
 
+test("replay rejects 3D models until durable model fixtures are supported", () => {
+  const product = { kind: "model3d", title: "A ceramic lantern" };
+  assert.equal(REPLAY_OUTPUT_KINDS.includes("model3d"), false);
+  assert.throws(() => reverseEngineerWorkProduct(product), /replay_output_kind_unsupported/);
+  assert.throws(() => buildNothingToSomethingWorkflow([product]), /replay_output_kind_unsupported/);
+});
+
 function productsFor(kind, additions = {}) {
   return [kind, ...REPLAY_OUTPUT_KINDS.filter((candidate) => candidate !== kind)].map((candidate, index) => ({
     kind: candidate,

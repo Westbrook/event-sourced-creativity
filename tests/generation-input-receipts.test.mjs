@@ -409,4 +409,8 @@ test("restored requests use only the selected attempt's authorized frozen settin
   assert.doesNotMatch(JSON.stringify(captured),/DO_NOT_COPY|paidRetryConfirmed/);
   const current=restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,request:{editable_settings:captured}})});
   assert.equal(current.tone,"Tone");assert.equal(current.presentationFidelity,"creative");
+  const model3dJob={...job,result:{...job.result,artifactKind:"model3d"}};
+  const model3dCaptured=captureDocumentRenderSettings({artifactKind:"model3d",itemCount:1,productionMode:"manual",model3dPrompt:"  Exact private prompt  ",model3dSettings:{seed:42},model3dReferenceBlockIds:["view-b","view-a"]});
+  const model3dInput={...retained,artifact_kind:"model3d",request:{editable_settings:model3dCaptured}};
+  assert.equal(restoreDocumentRenderSettings(model3dJob,{"restore-input":JSON.stringify(model3dInput)}),null,"unsupported 3D restoration must not substitute current settings for missing frozen controls");
 });

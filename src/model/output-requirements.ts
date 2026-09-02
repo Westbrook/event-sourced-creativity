@@ -8,8 +8,8 @@ export const OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH = 240;
 export const OUTPUT_PLAN_TARGET_LABEL_MAX_LENGTH = OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH + 5;
 /** Match portable scope capacity without deleting any row from an oversized saved assignment. */
 export const OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT = 1024;
-export type OutputMediaKind = "image" | "slides" | "audio" | "video" | "document" | "unknown";
-export type OutputQuantityUnit = "presentation" | "slide" | "episode" | "video" | "image" | "second" | "document" | "member";
+export type OutputMediaKind = "image" | "slides" | "audio" | "video" | "document" | "model3d" | "unknown";
+export type OutputQuantityUnit = "presentation" | "slide" | "episode" | "video" | "image" | "second" | "document" | "model" | "member";
 export type OutputQuantity =
   | { kind: "unknown"; unit: OutputQuantityUnit; reason?: string }
   | { kind: "exact"; unit: OutputQuantityUnit; value: number }
@@ -70,8 +70,8 @@ export type OutputRequirementInspection = { status: "valid" | "invalid" | "unsup
 export type OutputParseResult = { recognized: boolean; spec: OutputRequirementSpec | null; issues: OutputIssue[]; needs_confirmation: true };
 export type OutputRequirementInput = { id: string; [key: string]: unknown };
 
-const mediaKinds = new Set<OutputMediaKind>(["image", "slides", "audio", "video", "document", "unknown"]);
-const units = new Set<OutputQuantityUnit>(["presentation", "slide", "episode", "video", "image", "second", "document", "member"]);
+const mediaKinds = new Set<OutputMediaKind>(["image", "slides", "audio", "video", "document", "model3d", "unknown"]);
+const units = new Set<OutputQuantityUnit>(["presentation", "slide", "episode", "video", "image", "second", "document", "model", "member"]);
 const originKinds = new Set(["authored", "interpreted", "suggested", "confirmed"]);
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
@@ -236,7 +236,7 @@ function deliverable(value: unknown, path: string, issues: OutputIssue[], ids: S
   if (Array.isArray(value.format_variants) && value.format_variants.length && object(value.series)) issues.push(issue("unsupported_series_variants", path, "Schema 1 does not implicitly cross-multiply series members and format variants; use explicit deliverables."));
   if (value.required === true && Array.isArray(value.format_variants) && value.format_variants.length && value.format_variants.every((entry) => object(entry) && entry.required === false)) issues.push(issue("required_group_without_required_member", `${path}.format_variants`, "A required group needs required members; optional choices alone cannot fulfill an unspecified obligation."));
   if (value.required === true && object(value.series) && value.series.state === "resolved" && Array.isArray(value.series.members) && value.series.members.length && value.series.members.every((entry) => object(entry) && entry.required === false)) issues.push(issue("required_group_without_required_member", `${path}.series.members`, "A required series needs required members; optional choices alone cannot fulfill an unspecified obligation."));
-  const expectedUnits: Partial<Record<OutputMediaKind, OutputQuantityUnit>> = { image: "image", slides: "presentation", audio: "episode", video: "video", document: "document" };
+  const expectedUnits: Partial<Record<OutputMediaKind, OutputQuantityUnit>> = { image: "image", slides: "presentation", audio: "episode", video: "video", document: "document", model3d: "model" };
   const expected = expectedUnits[value.media_kind as OutputMediaKind];
   if (expected && object(value.quantity) && value.quantity.unit !== expected) issues.push(issue("media_quantity_unit_mismatch", `${path}.quantity.unit`, `This deliverable uses ${expected} quantities.`));
   if (value.media_kind === "slides" && object(value.content_quantity) && value.content_quantity.unit !== "slide") issues.push(issue("content_quantity_unit_mismatch", `${path}.content_quantity.unit`, "Presentation content is counted in slides."));
@@ -402,13 +402,24 @@ export function parseOutputRequirement(input: OutputRequirementInput, previous?:
   const make = (kind: OutputMediaKind, key: string, title: string, clause: string, series = false): OutputDeliverable => {
     const candidates = prior?.deliverables.filter((entry) => entry.media_kind === kind && Boolean(entry.series) === series) ?? [];
     const id = matchIdentity(`${input.id}:deliverable:${key}`, candidates, used, issues, `deliverables.${key}`, priorIds);
-    const unit: OutputQuantityUnit = kind === "image" ? "image" : kind === "slides" ? "presentation" : kind === "audio" ? "episode" : kind === "video" ? "video" : kind === "document" ? "document" : "member";
+    const unit: OutputQuantityUnit = kind === "image" ? "image" : kind === "slides" ? "presentation" : kind === "audio" ? "episode" : kind === "video" ? "video" : kind === "document" ? "document" : kind === "model3d" ? "model" : "member";
     return { id, label: title, media_kind: kind, required: true, quantity: unknownQuantity(unit, "Agree how many finished deliverables are required."), source_scope: { kind: "document" }, coverage: { kind: "unresolved", description: "Confirm which Document content this deliverable should cover." }, original_text: clause, value_origins: { media_kind: interpreted(clause), required: interpreted(clause), quantity: interpreted(), source_scope: interpreted("Use the complete Document as the initial evidence scope; Output instructions are separate."), coverage: interpreted() } };
   };
   const imageRequest = /social\s+media\s+images?/i.test(label) || /^\s*output\s+images?\b/i.test(content);
   const videoRequest = /social\s+media\s+videos?/i.test(label) || /^\s*output\s+videos?\b/i.test(content);
+  const modelRequest = /\b(?:3d|three[ -]dimensional)\s+models?\b/i.test(label) || /^\s*(?:output|create|generate|make|deliver|export)\s+(?:(?:one|a|an|\d+(?:\s*(?:[-–—]|to)\s*\d+)?)[ ]+)?(?:3d|three[ -]dimensional)\s+models?\b/i.test(content);
   const executiveRequest = /executive\s+summary/i.test(label) || /\b(?:slideshow|slide\s+show|presentation|deck)\b/i.test(content) && /\b(?:podcast|episode|series)\b/i.test(content);
-  if (imageRequest || videoRequest) {
+  if (modelRequest) {
+    const entry = make("model3d", "model3d", "3D models", content);
+    const ranged = content.match(/\b(\d+)\s*(?:[-–—]|to)\s*(\d+)\s+(?:3d|three[ -]dimensional)\s+models?\b/i);
+    const exact = content.match(/\b(one|a|an|\d+)\s+(?:3d|three[ -]dimensional)\s+models?\b/i);
+    const count = exact ? /^(?:a|an)$/i.test(exact[1]!) ? 1 : singularCount(exact[1]) : null;
+    entry.quantity = ranged ? { kind: "range", unit: "model", min: Number(ranged[1]), max: Number(ranged[2]) } : count === null ? unknownQuantity("model", "Agree how many finished 3D models are required.") : { kind: "exact", unit: "model", value: count };
+    entry.value_origins.quantity = ranged || exact ? authored((ranged ?? exact)![0]) : interpreted();
+    entry.coverage = { kind: "document_context" };
+    entry.value_origins.coverage = interpreted("Use the authorized Document's creative context. A saved model view is a separate image reference, not the original mesh.");
+    deliverables.push(entry);
+  } else if (imageRequest || videoRequest) {
     const kind = imageRequest ? "image" : "video", entry = make(kind, kind, imageRequest ? "Social media images" : "Social media videos", content);
     entry.coverage = { kind: "document_context" };
     entry.value_origins.coverage = interpreted("Use the authorized Document's creative context. This does not assert exhaustive topic coverage.");

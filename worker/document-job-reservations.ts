@@ -216,7 +216,10 @@ export function interruptedDocumentJobUsage(
     &&!(receipt.unitId==="continuity-anchor"&&prepaidAnchor)&&!prepaidSceneIds.has(String(receipt.unitId??"").replace(/^scene:/,""))
     &&!represented.some((item)=>item.providerSubmissionId===receipt.clientRequestId||item.provider_submission_id===receipt.clientRequestId
       ||receipt.providerRequestId&&(item.providerJobId===receipt.providerRequestId||item.provider_request_id===receipt.providerRequestId))
-    &&!(receipt.operation!=="image"&&receipt.providerRequestId&&checkpoint.providerJobId===receipt.providerRequestId));
+    // Only audio/video have a dedicated single-provider charge above. A Rodin
+    // completion remains billable when its request ID is also in the checkpoint.
+    &&!((receipt.operation==="video"&&request.artifactKind==="video"||receipt.operation==="audio"&&request.artifactKind==="audio")
+      &&receipt.providerRequestId&&checkpoint.providerJobId===receipt.providerRequestId));
   for(const receipt of unattached){inputTokens+=positiveInteger(receipt.inputTokens);outputTokens+=positiveInteger(receipt.outputTokens);totalTokens+=positiveInteger(receipt.totalTokens);}
   const unattachedMediaCostMicrousd=unattached.reduce((total,receipt)=>total+positiveInteger(receipt.costMicrousd),0);
   const plannerCostMicrousd = paidPlanning.length?options.plannerAlreadyRecorded||options.plannerCostAlreadyRecorded?0:Math.max(0,paidPlanning.reduce((total,receipt)=>total+positiveInteger(receipt.costMicrousd),0)-positiveInteger(options.plannerCostAlreadyRecordedMicrousd)):remainingDocumentPlannerCost(plannerModel,costedPlannerUsage,options.plannerCostAlreadyRecordedMicrousd).totalMicrousd;

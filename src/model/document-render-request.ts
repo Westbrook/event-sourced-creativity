@@ -23,6 +23,9 @@ export type RestoredDocumentRenderSettings = {
 export function restoreDocumentRenderSettings(job: DocumentJob, content: Record<string, string>): RestoredDocumentRenderSettings | null {
   if (job.kind !== "render_document" || !isDocumentArtifactKind(job.result?.artifactKind)) return null;
   const kind = job.result.artifactKind;
+  // This receipt schema does not capture the exact 3D prompt, settings, or ordered references.
+  // Do not claim restoration by substituting unrelated defaults or the current 3D draft.
+  if (kind === "model3d") return null;
   const receipt = record(job.result.generationReceipt), reference = receipt?.input_ref;
   if (typeof reference !== "string" || !Object.hasOwn(content, reference)) return null;
   let retained: Record<string, unknown> | null;

@@ -677,7 +677,22 @@ test("keeps text, structured slides, storyboard, and video rendering behind dura
   for(const source of [component,canvas]){assert.match(source,/forma-presentation-deck/);assert.match(source,/\.preferenceKey=\$\{artifact\.id\}/);assert.match(source,/\.deckTitle=\$\{artifact\.title\}/);assert.match(source,/\.documentId=\$\{artifact\.documentId\}/);}assert.match(deckComponent,/Show deck label/);assert.match(deckComponent,/Slide style/);assert.match(deckComponent,/SLIDE_STYLE_PRESETS\.map/);assert.match(deckComponent,/slide-style-changed/);assert.match(deckComponent,/DECK_STYLE_PREFERENCE/);assert.match(deckComponent,/List/);assert.match(deckComponent,/Slideshow/);assert.match(deckComponent,/Download PDF/);assert.match(deckComponent,/renderPresentationPdf/);assert.match(deckComponent,/application\/pdf/);assert.match(deckComponent,/DocumentArtifactExported/);assert.match(deckComponent,/ArrowLeft/);assert.match(deckComponent,/ArrowRight/);assert.match(deckComponent,/Previous/);assert.match(deckComponent,/Next/);assert.match(deckComponent,/normalizeSlideItem/);assert.doesNotMatch(deckComponent,/normalizeSlideDeckItems/,"approved slides must not undergo provider-draft cross-slide de-duplication");assert.match(deckComponent,/writeSlideFooterLabelPreference/);assert.match(slideComponent,/presentation\.footerLabel/);assert.match(slideComponent,/style-\$\{presentation\.stylePreset\}/);assert.doesNotMatch(slideComponent,/>\$\{presentation\.theme\}</);
   assert.match(styles,/\.presentation-deck-frame \{[^}]*aspect-ratio: 16\/9;/);assert.match(styles,/\.presentation-deck-frame \.presentation-slide \{ aspect-ratio: auto;/);
   for(const style of ["gallery","editorial","nocturne","field-notes"])assert.match(styles,new RegExp(`\\.presentation-slide\\.style-${style}`));assert.match(styles,/\.artifact-slides > li/);assert.match(styles,/\.presentation-slide-body > section > ul > li/);assert.match(styles,/list-style: disc/);assert.doesNotMatch(styles,/\.artifact-slides li \{/);
-  for(const kind of DOCUMENT_ARTIFACT_KINDS){assert.match(component,new RegExp(kind));assert.match(canvas,new RegExp(kind));}
+  for(const kind of DOCUMENT_ARTIFACT_KINDS)assert.match(component,new RegExp(kind));
+  // Canvas still has six direct launch/inline-view formats. The upstream 3D owner
+  // is DocumentArtifacts; its exact-output action is also reachable from Canvas.
+  // Enum membership alone does not certify a native Canvas 3D launcher or viewer.
+  const canvasKinds=["short_story","scene","slides","storyboard","video","audio"];
+  assert.deepEqual(DOCUMENT_ARTIFACT_KINDS,[...canvasKinds,"model3d"],"audit both surfaces when another format is added");
+  for(const kind of canvasKinds)assert.match(canvas,new RegExp(kind));
+  assert.match(component,/if\(this\.#kind==="model3d"\)\{await this\.#createModel3d\(\);return;\}/);
+  assert.match(component,/forma-model3d-viewer/);assert.match(component,/model3d-output-files/);
+  const deliveryStart=canvas.indexOf("async #openArtifactDelivery("),deliveryEnd=canvas.indexOf("\n  #closeCanvasArtifact()",deliveryStart);
+  assert.ok(deliveryStart>=0&&deliveryEnd>deliveryStart,"Canvas retains its kind-independent exact-output handoff");
+  const delivery=canvas.slice(deliveryStart,deliveryEnd);
+  assert.match(delivery,/if\(!current\("opening"\)\)return false;/);
+  assert.match(delivery,/querySelector\("forma-document-artifacts"\)\?\.openArtifactById\(artifact\.id,/);
+  assert.match(delivery,/expectedRevision:revision/);assert.match(delivery,/expectedContentSha256:delivery\.contentSha256/);
+  assert.match(delivery,/intent:delivery\.intent,current/);
 });
 
 test("uses the complete Seedance 2.0 duration contract across four through fifteen seconds",()=>{

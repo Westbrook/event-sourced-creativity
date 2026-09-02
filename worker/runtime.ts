@@ -1,4 +1,4 @@
-import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
+import { OUTPUT_REQUIREMENTS_SCHEMA, OUTPUT_MODEL3D_SCHEMA_STATE_SQL, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
 import { markOutputSchemaReady } from "./output-schema-state.ts";
 import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
@@ -252,7 +252,7 @@ export const PILOT_COHORT_DELETION_TRIGGER_SQL=`CREATE TRIGGER IF NOT EXISTS pil
 export function ensureSchema(env: WorkerEnv): Promise<void> {
   const initialized = initializedSchemas.get(env.DB);
   if (initialized) return initialized;
-  const initialization = env.DB.batch([
+  const initialization = env.DB.batch<{ current: number }>([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (
       event_id TEXT PRIMARY KEY NOT NULL, stream_id TEXT NOT NULL, sequence INTEGER NOT NULL,
       occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL, client_id TEXT NOT NULL,
@@ -475,7 +475,11 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare(PILOT_PARTICIPANT_OWNER_DELETION_TRIGGER_SQL),
     env.DB.prepare(PILOT_COHORT_DELETION_TRIGGER_SQL),
     ...OUTPUT_REQUIREMENTS_SCHEMA.map((sql) => env.DB.prepare(sql)),
-  ]).then(() => {
+    // Read the migration route in this existing bootstrap round trip. The
+    // following migration/validation transaction still rechecks all guards.
+    env.DB.prepare(OUTPUT_MODEL3D_SCHEMA_STATE_SQL),
+  ]).then(async (results) => {
+    await upgradeOutputRequirementsSchema(env.DB, results.at(-1)?.results[0]?.current);
     readySchemas.add(env.DB);
     markOutputSchemaReady(env.DB);
   }).catch((error: unknown) => {

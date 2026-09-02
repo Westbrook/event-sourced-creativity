@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { generationExecutionSummary, knownProviderRejection, managedProductionInputEvidence, isManagedVideoInspection, presentationProviderLabels, safePresentationProviderLabels } from "../src/model/generation-execution-evidence.ts";
 import { failedGenerationInputInspection } from "../src/model/generation-inputs.ts";
 import { generationFailureGuidance } from "../src/model/document-jobs.ts";
+import { hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission } from "../src/model/provider-submission.ts";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
 import en from "../src/components/design-system/locales/system-en.ts";
 import fr from "../src/components/design-system/locales/system-fr.ts";
@@ -112,6 +113,62 @@ test("legacy pending audio remains uncertain even when a generic map contains on
   const result=generationExecutionSummary(input);assert.equal(result.unresolved_provider_call_count,null);assert.equal(result.provider_submission_uncertain,true);
   input.providerSubmissions.audio={clientRequestId:"audio",provider:"fal",operation:"audio",model:"audio-model",status:"pending"};
   assert.equal(generationExecutionSummary(input).unresolved_provider_call_count,1);
+});
+
+test("a legacy 3D pending marker defeats stale zero summaries and placeholder request IDs",()=>{
+  for(const normalized of [false,true])for(const providerJobId of [undefined,"pending","submitted","unknown","PENDING","bad id"]){
+    const input={artifactKind:"model3d",model3dProviderSubmission:"pending",...(providerJobId===undefined?{}:{providerJobId}),
+      generationReceipt:{artifact_kind:"model3d",...(normalized?{execution_evidence_version:1}:{}),actual_provider_call_count:0,
+        unresolved_provider_call_count:0,provider_submission_uncertain:false,provider_call_breakdown_complete:true,
+        reservation_microusd:1_000_000,reservation_status:"executing",settled_cost_microusd:null}};
+    const before=structuredClone(input),result=generationExecutionSummary(input);
+    assert.equal(hasUnresolvedProviderSubmission(input),true);
+    assert.equal(result.provider_submission_uncertain,true);
+    assert.equal(result.unresolved_provider_call_count,null);
+    assert.equal(result.provider_call_breakdown_complete,false);
+    assert.equal(result.reservation_microusd,1_000_000);assert.equal(result.reservation_status,"executing");assert.equal(result.settled_cost_microusd,null);
+    assert.deepEqual(generationExecutionSummary({generationReceipt:result}),result,"redaction cannot restore the stale zero");
+    assert.deepEqual(input,before,"summary never changes the original checkpoint or accounting");
+  }
+});
+
+test("only a retained pending Fal 3D call supplies the legacy marker's exact unresolved count",()=>{
+  for(const [provider,operation,expected] of [["fal","model3d",1],["fal","image",null],["openai","model3d",null]]){
+    const input={artifactKind:"model3d",model3dProviderSubmission:"pending",providerSubmissions:{
+      current:{clientRequestId:"current",provider,operation,model:"rodin",status:"pending"},
+    },generationReceipt:{artifact_kind:"model3d",execution_evidence_version:1,actual_provider_call_count:0,
+      unresolved_provider_call_count:0,provider_submission_uncertain:false,provider_call_breakdown_complete:true,
+      reservation_status:"executing",settled_cost_microusd:null}};
+    const result=generationExecutionSummary(input);
+    assert.equal(result.provider_submission_uncertain,true);
+    assert.equal(result.unresolved_provider_call_count,expected);
+    assert.equal(result.provider_call_breakdown_complete,expected===1);
+    assert.equal(result.reservation_status,"executing");assert.equal(result.settled_cost_microusd,null);
+  }
+});
+
+test("accepted and completed exact 3D requests resolve a stale legacy marker without inventing settlement",()=>{
+  for(const status of ["accepted","completed"])for(const duplicateLegacyId of [false,true]){
+    const completed=status==="completed";
+    const input={artifactKind:"model3d",model3dProviderSubmission:"pending",...(duplicateLegacyId?{providerJobId:"rodin-request-1"}:{}),
+      providerSubmissions:{current:{clientRequestId:"current",provider:"fal",operation:"model3d",model:"rodin",status,
+        providerRequestId:"rodin-request-1",...(completed?{costMicrousd:1_000_000}:{})}},
+      generationReceipt:{artifact_kind:"model3d",execution_evidence_version:1,actual_provider_call_count:1,
+        provider_submission_uncertain:false,unresolved_provider_call_count:0,provider_call_breakdown_complete:true,
+        reservation_status:completed?"settled":"executing",settled_cost_microusd:completed?1_000_000:null}};
+    const before=structuredClone(input),result=generationExecutionSummary(input);
+    assert.equal(hasUnresolvedProviderSubmission(input),false);
+    assert.equal(hasUnsettledProviderSubmission(input),!completed,"provider acceptance is not financial settlement");
+    assert.equal(result.provider_submission_uncertain,false);assert.equal(result.unresolved_provider_call_count,0);
+    assert.equal(result.provider_call_breakdown_complete,true);assert.equal(result.actual_provider_call_count,1);assert.equal(result.actual_media_call_count,1);
+    assert.equal(result.reservation_status,input.generationReceipt.reservation_status);assert.equal(result.settled_cost_microusd,input.generationReceipt.settled_cost_microusd);
+    assert.deepEqual(input,before);
+  }
+  const receipt={artifact_kind:"model3d",execution_evidence_version:1,actual_provider_call_count:1,
+    provider_submission_uncertain:false,unresolved_provider_call_count:0,provider_call_breakdown_complete:true,
+    reservation_status:"executing",settled_cost_microusd:null};
+  assert.deepEqual(generationExecutionSummary({artifactKind:"model3d",model3dProviderSubmission:"pending",providerJobId:"rodin-request-1",generationReceipt:receipt}),receipt,
+    "a valid legacy accepted ID remains compatible after private observer records are omitted");
 });
 
 test("dynamic request and input states have exact translations in all four application languages",()=>{

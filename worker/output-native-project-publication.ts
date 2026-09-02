@@ -3,7 +3,7 @@ import { eventWriteBindings, type EventRow, type WorkerEnv } from "./runtime.ts"
 import { projectDocumentPublicationEvents, projectPublicationResources, prepareProjectResourceScopeStatement } from "./project-access.ts";
 import { OutputConflictError, outputAssertionStatements, outputScopeAuthority, type OutputOperationSlot, type OutputScope } from "./output-requirements-ledger.ts";
 
-type NativeJob={job_id:string;owner_id:string;stream_id:string;document_id:string;correlation_id:string;kind:string};
+type NativeJob={job_id:string;owner_id:string;stream_id:string;document_id:string;correlation_id:string;kind:string;request_json?:string};
 export type OutputNativeProjectPublication={scope:OutputScope;slot:OutputOperationSlot;job:NativeJob};
 const actors:Record<string,string>={
   DocumentRenderRequested:"user",GenerationRequested:"user",ContextCompiled:"worker:compiler",
@@ -27,6 +27,8 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
     ||job.owner_id!==scope.actorUserId||job.stream_id!==`creative:${scope.ownerUserId}`||job.document_id!==scope.documentId
     ||!["generate","render_document"].includes(job.kind)||events.length>16)throw new OutputConflictError("output_job_scope_mismatch",403);
   const project={organizationId:scope.organizationId,projectAccessId:scope.projectAccessId,projectId:scope.projectId,ownerUserId:scope.ownerUserId};
+  let artifactKind="slides";
+  try{const request=JSON.parse(job.request_json??"{}");if(request.artifactKind==="model3d")artifactKind="model3d";}catch{/* Existing jobs without a readable request retain the slides-only contract. */}
   const first=events[0]!,last=events.at(-1)!;
   const eventIds=new Set<string>();
   for(const [offset,event] of events.entries()){
@@ -39,13 +41,13 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
       ||documentEvents.has(event.type)&&payload.document_id!==scope.documentId
       ||payload.canvas_id||payload.context_set_id||payload.report_space)throw new OutputConflictError("output_native_route_unsupported",422);
     eventIds.add(event.eventId);
-    if(event.type.startsWith("DocumentRender")&&(job.kind!=="render_document"||payload.artifact_kind!=="slides"))throw new OutputConflictError("output_native_route_unsupported",422);
+    if(event.type.startsWith("DocumentRender")&&(job.kind!=="render_document"||payload.artifact_kind!==artifactKind))throw new OutputConflictError("output_native_route_unsupported",422);
     if(["GenerationRequested","ContextCompiled","GenerationCompleted"].includes(event.type)&&job.kind!=="generate")throw new OutputConflictError("output_native_route_unsupported",422);
     if(event.type==="GenerationCompleted"&&(!Array.isArray(payload.object_ids)||payload.object_ids.length!==1||typeof payload.object_ids[0]!=="string"||!payload.object_ids[0]
       ||payload.object_id!=null&&payload.object_id!==payload.object_ids[0]||typeof payload.media_url!=="string"||!payload.media_url.startsWith("/api/media/")
       ||payload.quality!=="high"||payload.purpose!=="final"))throw new OutputConflictError("output_native_route_unsupported",422);
     if(event.type==="DocumentRenderCompleted"&&(!payload.artifact_id||!payload.content_ref||!payload.input_ref||payload.content_ref===payload.input_ref
-      ||payload.requested_by_user_id!==scope.actorUserId||payload.media_url||!Array.isArray(payload.items)||payload.items.some((item)=>item&&typeof item==="object"&&(item as Record<string,unknown>).media_url)))
+      ||payload.requested_by_user_id!==scope.actorUserId||(artifactKind==="model3d"?typeof payload.media_url!=="string"||!payload.media_url.startsWith("/api/media/"):Boolean(payload.media_url))||!Array.isArray(payload.items)||payload.items.some((item)=>item&&typeof item==="object"&&(item as Record<string,unknown>).media_url)))
       throw new OutputConflictError("output_native_route_unsupported",422);
   }
   const now=new Date().toISOString();
@@ -75,7 +77,7 @@ export function prepareOutputNativeProjectPublicationStatements(env:WorkerEnv,in
       AND EXISTS(SELECT 1 FROM project_resource_scopes document WHERE document.project_access_id=plan.project_access_id AND document.organization_id=plan.organization_id
         AND document.project_id=plan.project_id AND document.owner_user_id=plan.owner_user_id AND document.resource_kind='document' AND document.resource_id=plan.document_id))`,
     bindings:[scope.key,slot.slotId,job.job_id,slot.grantId,slot.planRevisionId,slot.targetId,slot.sourceDigest,slot.targetContractDigest,
-      scope.actorUserId,scope.contextId,now,job.kind==="generate"?"image":"slides",scope.ownerUserId,scope.organizationId,scope.projectAccessId,scope.projectId,scope.documentId,
+      scope.actorUserId,scope.contextId,now,job.kind==="generate"?"image":artifactKind,scope.ownerUserId,scope.organizationId,scope.projectAccessId,scope.projectId,scope.documentId,
       job.owner_id,job.stream_id,job.document_id,job.correlation_id,job.kind]}));
   // A lost head race may append nothing, allowing appendEvents to retry. A
   // partially appended batch must roll back; it can never strand event bodies.

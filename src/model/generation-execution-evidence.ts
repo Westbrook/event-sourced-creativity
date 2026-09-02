@@ -1,4 +1,4 @@
-import { providerSubmissions, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, invalidProviderSubmissions } from "./provider-submission.ts";
+import { providerSubmissions, hasUnresolvedModel3dSubmission, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, invalidProviderSubmissions } from "./provider-submission.ts";
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value : null;
@@ -83,9 +83,10 @@ function certifiedSceneLocalStop(checkpoint:Record<string,unknown>,receipt:Recor
 /** Read-only presentation of retained evidence. Never changes a submission or a reservation. */
 export function generationExecutionSummary(checkpoint: Record<string, unknown>, failure: unknown = null, sceneIdentity?:ScenePolicyStopProjectionIdentity) {
   const receipt = record(checkpoint.generationReceipt);
+  const model3dLegacyPending = hasUnresolvedModel3dSubmission(checkpoint);
   const reportedUncertain = receipt.provider_submission_uncertain === true
     || receipt.provider_request_status === "submission_unknown" || record(failure).code === "provider_submission_uncertain";
-  const legacyMarker = checkpoint.providerSubmissionLegacyUncertain === true || checkpoint.presentationProviderSubmission === "pending"
+  const legacyMarker = model3dLegacyPending || checkpoint.providerSubmissionLegacyUncertain === true || checkpoint.presentationProviderSubmission === "pending"
     || checkpoint.audioProviderSubmission === "pending" && !text(checkpoint.providerJobId)
     || checkpoint.storyboardProviderSubmission === "pending" && !text(checkpoint.providerJobId);
   // The server removes private observer records after deriving this projection.
@@ -126,6 +127,7 @@ export function generationExecutionSummary(checkpoint: Record<string, unknown>, 
   const sceneUnsettled=sceneCertificatePresent&&hasUnsettledProviderSubmission(checkpoint);
   const presentationRequestId = text(checkpoint.presentationProviderClientRequestId);
   const legacyPending = invalid || checkpoint.providerSubmissionLegacyUncertain === true
+    || model3dLegacyPending && !pending.some((entry) => entry.provider === "fal" && entry.operation === "model3d")
     || checkpoint.audioProviderSubmission === "pending" && !text(checkpoint.providerJobId) && !pending.some((entry) => entry.operation === "audio")
     || checkpoint.storyboardProviderSubmission === "pending" && !text(checkpoint.providerJobId) && !pending.some((entry) => entry.operation === "image")
     // A completed initial response says nothing about the later repair's submission.
