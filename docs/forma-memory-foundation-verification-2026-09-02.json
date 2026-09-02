@@ -1,0 +1,35 @@
+{
+  "scope": "isolated-offline-foundation",
+  "branch": "codex/forma-memory-foundation",
+  "baseCommit": "8d4431c05ee63afa948ed27d8a5734ebeb8bf1d3",
+  "activation": "off; synthetic-only shadow",
+  "checks": {
+    "focusedTests": {
+      "passed": 95,
+      "failed": 0,
+      "skipped": 0
+    },
+    "typecheck": "passed",
+    "scopedLint": "passed",
+    "localBuild": "passed",
+    "trackedApplicationFilesChanged": false,
+    "documentationLinksVerified": 43
+  },
+  "providerCalls": 0,
+  "databaseWrites": 0,
+  "deployed": false,
+  "semanticModelEvaluation": false,
+  "sourceSha256": {
+    "src/model/scoped-memory.ts": "2f608ba4bf181d6292a0d66043143173bce345634f56776442d204d31d8283e7",
+    "src/model/memory-observations.ts": "aa5de7fb07f75d8a9ac2163978130e62bb18aa9d60e005f508dc5ebf8224e9db",
+    "src/model/memory-conversation.ts": "c0b8f0f24ee428f135b589add50759c28cee85cec95bc5a6ccec186ba934532c",
+    "worker/memory-shadow.ts": "852cc70a16437de107a9075ca8bb4eb66f9ed64e3218728f590033932f1ce99e",
+    "scripts/evaluate-memory-shadow.mjs": "074cc7deec6f561dc33c711df89f044cdc6dcc3688951ea6e1a46284a2b2bf37",
+    "scripts/fixtures/memory-shadow.json": "43735f4733dad294a123288b1c6b0f363aa74047e9f774829e058b9863d0aa9d",
+    "tests/helpers/scoped-memory.mjs": "b2a72b7ce77a2adcb9f15bb6a6fe1e91c00cae1f39faab76684a885377775d11",
+    "tests/scoped-memory.test.mjs": "dc32ce1567147a6c81a405de55b3573186829282b1e9addf46cb29d51cca43f2",
+    "tests/memory-observations.test.mjs": "27154758ef9df771b48d2a0483f0f2cf423b83400a55832b5fd52826e668df75",
+    "tests/memory-conversation.test.mjs": "9e982f0f710a31df6480cde2084ffc61dffba4bbf491864654bd3067266dcc50",
+    "tests/memory-shadow.test.mjs": "ee7a5b8ab2af9d9dff69865cf5625192bb604fde5c55dbb396d281a9ec8e4fb8"
+  }
+}
