@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "now": "2026-09-02T06:00:00.000Z",
+  "timeZone": "America/New_York",
+  "actorUserId": "synthetic-user",
+  "custodianId": "synthetic-organization",
+  "scopes": [
+    { "id": "organization", "kind": "organization", "parentId": null },
+    { "id": "project", "kind": "project", "parentId": "organization" },
+    { "id": "nested-project", "kind": "project", "parentId": "project" },
+    { "id": "document", "kind": "document", "parentId": "nested-project" },
+    { "id": "block", "kind": "block", "parentId": "document" },
+    { "id": "artifact", "kind": "artifact", "parentId": "document" }
+  ],
+  "events": [
+    { "id": "action-1", "sequence": 1, "type": "DocumentOpened", "scopeId": "document", "kind": "document", "episodeId": "visit-1", "at": "2026-08-30T14:00:00.000Z" },
+    { "id": "action-2", "sequence": 2, "type": "BlockPropertyEdited", "scopeId": "block", "kind": "block", "episodeId": "visit-1", "at": "2026-08-30T14:05:00.000Z" },
+    { "id": "action-3", "sequence": 3, "type": "BlockPropertyEdited", "scopeId": "block", "kind": "block", "episodeId": "visit-2", "at": "2026-08-31T14:05:00.000Z" },
+    { "id": "action-4", "sequence": 4, "type": "BlockPropertyEdited", "scopeId": "block", "kind": "block", "episodeId": "visit-3", "at": "2026-09-01T14:05:00.000Z" },
+    { "id": "action-5", "sequence": 5, "type": "DocumentArtifactViewed", "scopeId": "artifact", "kind": "artifact", "episodeId": "visit-3", "at": "2026-09-01T14:10:00.000Z" },
+    { "id": "action-6", "sequence": 6, "type": "ProposalAccepted", "scopeId": "block", "kind": "block", "episodeId": "visit-3", "outcomeId": "assisted-edit", "at": "2026-09-01T14:15:00.000Z", "payload": { "source_surface": "assistant" } },
+    { "id": "action-7", "sequence": 7, "type": "BlockPropertyEdited", "scopeId": "block", "kind": "block", "episodeId": "visit-3", "outcomeId": "assisted-edit", "at": "2026-09-01T14:15:01.000Z", "payload": { "source_surface": "assistant" } },
+    { "id": "action-8", "sequence": 8, "type": "DocumentArtifactExported", "scopeId": "artifact", "kind": "artifact", "episodeId": "visit-3", "at": "2026-09-01T14:20:00.000Z" }
+  ],
+  "conversation": [
+    { "id": "chat-1", "turnId": "turn-1", "sequence": 2, "role": "user", "text": "Keep this chart concise and preserve the exact approved title." },
+    { "id": "chat-2", "turnId": "turn-1", "sequence": 5, "role": "assistant", "text": "A possible chart edit is to shorten the legend. This is only a proposal." },
+    { "id": "chat-3", "turnId": "turn-2", "sequence": 8, "role": "user", "text": "Keep the current legend for now. Compare the two document revisions first." },
+    { "id": "chat-4", "turnId": "turn-2", "sequence": 11, "role": "assistant", "text": "The comparison can focus on the changed chart labels without editing the document." }
+  ]
+}
