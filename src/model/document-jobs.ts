@@ -275,8 +275,9 @@ export function documentJobFailure(job: DocumentJob) {
 
 /** A saved provider request can only be resumed after a genuinely recoverable transport/result failure. */
 export function documentJobCanRecoverProviderRender(job: DocumentJob) {
-  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" && job.result?.artifactKind !== "audio" && job.result?.artifactKind !== "storyboard") return false;
+  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" && job.result?.artifactKind !== "audio" && job.result?.artifactKind !== "storyboard" && job.result?.artifactKind !== "model3d") return false;
   if (job.result.artifactKind === "storyboard" && !confirmedStoryboardProviderRequest(job.result)) return false;
+  if (job.result.artifactKind === "model3d" && !confirmedModel3dProviderRequest(job.result)) return false;
   const sceneReceipts = job.result.productionSceneReceipts && typeof job.result.productionSceneReceipts === "object"
     ? Object.values(job.result.productionSceneReceipts as Record<string, Record<string, unknown>>)
     : [];
@@ -288,7 +289,7 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
     && job.result.audioProviderSubmission === "confirmed" && typeof job.result.providerJobId === "string"
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(job.result.providerJobId)
     && !["pending", "submitted", "unknown"].includes(job.result.providerJobId.toLowerCase());
-  const recoverableReservationFailure=failure?.code==="cost_reservation_invalid_or_expired"||failure?.code==="cost_reservation_already_in_use"||failure?.code==="execution_interrupted";
+  const recoverableReservationFailure=failure?.code==="cost_reservation_invalid_or_expired"||failure?.code==="cost_reservation_already_in_use"||failure?.code==="execution_interrupted"||job.result.artifactKind==="model3d"&&failure?.code==="local_persistence_failed";
   return Boolean((failure?.retryable||recoverableReservationFailure||originalSourceAudio)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
@@ -299,6 +300,13 @@ function confirmedStoryboardProviderRequest(result: Record<string, unknown>) {
     && typeof providerJobId === "string"
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(providerJobId)
     && !["pending", "submitted", "unknown"].includes(providerJobId.toLowerCase());
+}
+
+function confirmedModel3dProviderRequest(result: Record<string, unknown>) {
+  return result.model3dProviderSubmission === "confirmed"
+    && typeof result.providerJobId === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(result.providerJobId)
+    && !["pending", "submitted", "unknown"].includes(result.providerJobId.toLowerCase());
 }
 
 /** Only advertise a paid slideshow replay when its newest rejection can be repaired without relaxing validation. */
@@ -337,7 +345,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   const failureStage=typeof receipt.failure_stage==="string"?receipt.failure_stage:job?.stage??"";
   const acceptedStoryboardRender=result.artifactKind==="storyboard"&&confirmedStoryboardProviderRequest(result);
   const uncertainStoryboardRender=result.artifactKind==="storyboard"&&(result.storyboardProviderSubmission==="pending"||result.storyboardProviderSubmission==="confirmed"&&!acceptedStoryboardRender);
-  const recoverableSubmittedRender=job?.kind==="render_document"&&((result.artifactKind==="video"||result.artifactKind==="audio")&&Boolean(result.providerJobId||result.recoverableProductionProviderRequest)||acceptedStoryboardRender);
+  const recoverableSubmittedRender=job?.kind==="render_document"&&((result.artifactKind==="video"||result.artifactKind==="audio")&&Boolean(result.providerJobId||result.recoverableProductionProviderRequest)||acceptedStoryboardRender||result.artifactKind==="model3d"&&confirmedModel3dProviderRequest(result));
   if(uncertainStoryboardRender&&(detail?.code==="execution_interrupted"||detail?.code==="provider_submission_uncertain"||detail?.category==="network"||detail?.category==="server"||providerStatus==="submission_unknown"))return{title:"Storyboard submission could not be confirmed",summary:"A paid storyboard frame may already have been submitted, but Forma has no confirmed provider request to resume. Automatic resubmission was stopped to prevent a duplicate charge.",actionLabel:null,actionUrl:null,retryAllowed:false};
   if(detail?.code==="execution_interrupted"||!detail&&fallback==="execution_interrupted"){
     if(providerStatus==="submission_unknown")return{title:"Provider submission could not be confirmed",summary:"The generation worker stopped while a paid provider request may have been in flight. Do not submit another request until the original attempt is reconciled.",actionLabel:null,actionUrl:null,retryAllowed:false};
@@ -347,6 +355,15 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   }
   if (!detail) {
     return { title: "The generation could not be completed", summary: TRUSTED_GENERATION_FAILURE_FALLBACKS.has(fallback) ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  }
+  if(result.artifactKind==="model3d"||detail.code.startsWith("model3d_")||detail.code.startsWith("fal_model3d_")){
+    if(detail.category==="safety")return{title:"Rodin stopped this 3D request",summary:"Review the subject, prompt, and selected image views for the provider’s content restrictions before starting a changed request. A text request also creates an internal image that must pass the provider’s checks.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(detail.code==="model3d_prompt_too_long")return{title:"Shorten the 3D prompt",summary:"Use 1,024 characters or fewer. Review the exact prompt and keep the subject, shape, and material details that matter most; Forma does not truncate your text.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(detail.code==="model3d_provider_not_configured"||detail.category==="authentication")return{title:"Fal 3D generation is not configured",summary:"Configure a valid server-side Fal key before creating this model.",actionLabel:"Review Fal keys",actionUrl:"https://fal.ai/dashboard/keys",retryAllowed:false};
+    if(detail.category==="quota")return{title:"The Fal account cannot fund this 3D model",summary:"Resolve the Fal account limit or add credits before starting another model.",actionLabel:"Review Fal billing",actionUrl:"https://fal.ai/dashboard/billing",retryAllowed:false};
+    if(detail.httpStatus===400||detail.httpStatus===422)return{title:"Review the 3D settings and references",summary:"Choose supported Rodin settings and up to five JPG, PNG, or WebP views of the same subject. The first selected view guides the materials. Review the saved provider detail before changing this request.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(confirmedModel3dProviderRequest(result)&&(detail.retryable||detail.code==="local_persistence_failed"||detail.code==="execution_interrupted"))return{title:"The saved 3D model can be recovered",summary:"Retrieve the accepted Rodin request using its saved prompt, reference views, and payment receipt. Recovery does not purchase another generation.",actionLabel:null,actionUrl:null,retryAllowed:true};
+    if(detail.category==="rate_limit")return{title:"Fal is limiting 3D generation",summary:detail.retryAfterMs?`Wait about ${Math.max(1,Math.ceil(detail.retryAfterMs/1000))} seconds before trying again.`:"Wait briefly before requesting more 3D models.",actionLabel:null,actionUrl:null,retryAllowed:detail.retryable};
   }
   if(job?.kind==="render_document"&&job.status==="failed"&&result.artifactKind==="audio"
     &&detail.code==="context_source_version_mismatch"&&detail.category!=="safety"&&detail.httpStatus===409

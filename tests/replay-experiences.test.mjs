@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DOCUMENT_ARTIFACT_KINDS } from "../src/model/document-artifacts.ts";
+import { REPLAY_ARTIFACT_KINDS } from "../src/model/replay-workflows.ts";
 import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
 import { DEFAULT_REPLAY_EXPERIENCE, REPLAY_EXPERIENCE_PROFILES, normalizeReplayExperienceId } from "../src/model/replay-experiences.ts";
 import { buildComprehensiveScenario, buildScenario, SCENARIOS, SCENARIO_EVENT_TYPES, scenarioEventCount } from "../src/model/scenarios.ts";
@@ -21,12 +21,12 @@ test("the output workbench gives every deliverable its own creative job",()=>{
   const events=buildScenario("output-workbench",scenarioEventCount("output-workbench"));
   const evidence=events.filter((event)=>event.type==="GenerationCompleted"||event.type==="DocumentRenderCompleted");
   const forms=new Map(evidence.map((event)=>[event.type==="GenerationCompleted"?"image":event.payload.artifact_kind,record(event.payload.output_brief)]));
-  assert.deepEqual(new Set(forms.keys()),new Set(["image",...DOCUMENT_ARTIFACT_KINDS]));
+  assert.deepEqual(new Set(forms.keys()),new Set(["image",...REPLAY_ARTIFACT_KINDS]));
   assert.ok([...forms.values()].every((brief)=>brief.title&&brief.purpose&&brief.audience&&brief.success_signal&&Array.isArray(brief.beats)&&brief.beats.length>=3));
   assert.equal(new Set([...forms.values()].map((brief)=>brief.title)).size,forms.size);
   assert.ok(new Set([...forms.values()].map((brief)=>brief.audience)).size>=5);
   const bodies=events.filter((event)=>event.type==="DocumentRenderCompleted").flatMap((event)=>event.payload.items??[]).map((item)=>item.body).filter(Boolean);
-  assert.ok(bodies.length>=DOCUMENT_ARTIFACT_KINDS.length);
+  assert.ok(bodies.length>=REPLAY_ARTIFACT_KINDS.length);
 });
 
 test("the Library and Canvas scenario proves reuse before generation",()=>{

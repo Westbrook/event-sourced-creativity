@@ -31,6 +31,7 @@ const blockIcons: Readonly<Record<BlockKind, FormaIconName>> = {
   exclusion: "warning",
   accessibility: "eye",
   reference: "image",
+  model3d: "layers",
   sketch: "edit",
 };
 
@@ -41,6 +42,7 @@ const artifactIcons: Readonly<Record<DocumentArtifactKind, FormaIconName>> = {
   storyboard: "storyboard",
   video: "video",
   audio: "audio",
+  model3d: "layers",
 };
 
 const creatorAxisIcons: Readonly<Record<CreatorAxis, FormaIconName>> = {

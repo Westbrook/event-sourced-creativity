@@ -53,7 +53,7 @@ export function adaptiveProposalSelections(value:unknown):AdaptiveProposalSelect
     if(item.edit!==undefined&&(!item.edit||Array.isArray(item.edit)||typeof item.edit!=="object")
       ||edit&&Object.entries(edit).some(([key,value])=>!["type","subtype","label","text"].includes(key)||typeof value!=="string"
         ||value.length>(key==="text"?16_000:key==="label"?160:120)||!value.trim()))fail("adaptive_changes_invalid_edit");
-    if(edit?.type!==undefined&&(typeof edit.type!=="string"||!isBlockKind(edit.type)))fail("adaptive_changes_invalid_edit");
+    if(edit?.type!==undefined&&(typeof edit.type!=="string"||!isBlockKind(edit.type)||edit.type==="reference"||edit.type==="model3d"))fail("adaptive_changes_invalid_edit");
     if(placement&&(Object.keys(placement).length!==4||Object.keys(placement).some(key=>!["x","y","w","h"].includes(key))
       ||Object.values(placement).some(value=>typeof value!=="number"||!Number.isFinite(value)||Math.abs(value)>1_000_000)
       ||Number(placement.w)<1||Number(placement.h)<1)||item.placement!==undefined&&(!item.placement||typeof item.placement!=="object"||Array.isArray(item.placement)))fail("adaptive_changes_invalid_placement");
@@ -75,7 +75,7 @@ export function buildAdaptiveProposalApplication(input:{projection:CreativeProje
   for(const selection of selections){
     const original=options.get(selection.proposalId);if(!original)fail("adaptive_changes_proposal_missing");
     const proposal={...original,...selection.edit};
-    if(!isBlockKind(proposal.type)||!blockTypeDefinition(proposal.type)?.subtypes.includes(proposal.subtype)
+    if(!isBlockKind(proposal.type)||proposal.type==="reference"||proposal.type==="model3d"||!blockTypeDefinition(proposal.type)?.subtypes.includes(proposal.subtype)
       ||!proposal.label.trim()||proposal.label.length>160||!proposal.text.trim()||proposal.text.length>16_000)fail("adaptive_changes_invalid_edit");
     if(selection.targetBlockId){
       if(selection.placement)fail("adaptive_changes_placement_requires_create");
