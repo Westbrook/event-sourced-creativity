@@ -1,0 +1,88 @@
+{
+  "scope": "isolated-offline-persistence",
+  "verifiedOn": "2026-09-02",
+  "branch": "codex/forma-memory-foundation",
+  "parentCommit": "6570a78aed27232000d15317acf15734e2a511ef",
+  "applicationBaseCommit": "8d4431c05ee63afa948ed27d8a5734ebeb8bf1d3",
+  "runtime": "v24.16.0",
+  "activation": "off; synthetic-only source and store adapters",
+  "checks": {
+    "focusedTests": {
+      "passed": 150,
+      "failed": 0,
+      "skipped": 0,
+      "newThisSlice": 55,
+      "command": "node --experimental-strip-types --test tests/scoped-memory.test.mjs tests/memory-observations.test.mjs tests/memory-conversation.test.mjs tests/memory-shadow.test.mjs tests/memory-source-adapter.test.mjs tests/memory-persistence.test.mjs tests/conversation-context.test.mjs tests/taste.test.mjs tests/attention.test.mjs tests/brief.test.mjs tests/indexing.test.mjs"
+    },
+    "typecheck": {
+      "status": "passed",
+      "command": "node node_modules/typescript/bin/tsc --noEmit --incremental false"
+    },
+    "scopedLint": {
+      "status": "passed",
+      "command": "node node_modules/eslint/bin/eslint.js src/model/memory-observations.ts worker/memory-source-adapter.ts worker/memory-sql.ts worker/memory-store.ts tests/helpers/memory-persistence.mjs tests/memory-source-adapter.test.mjs tests/memory-persistence.test.mjs scripts/evaluate-memory-persistence.mjs"
+    },
+    "localBuild": {
+      "status": "passed",
+      "command": "node --run build",
+      "warnings": [
+        "Existing large client chunks",
+        "Existing ineffective dynamic import of output-requirements-ledger"
+      ]
+    },
+    "database": "Real local SQLite through the existing D1-compatible harness; NOT deployed D1 verification",
+    "repeatableMigrationAndRollback": "passed",
+    "separateProcessReopen": "passed",
+    "postCommitProcessExitAndReplay": "passed",
+    "atomicPublicationAndErasureRollback": "passed",
+    "databaseClockDeadlineAtFinalGenerationWrite": "passed",
+    "actorAndCustodianIsolation": "passed",
+    "independentLearningAndRecall": "passed",
+    "metadataOnlyOptOutAndExpiryCleanup": "passed",
+    "attentionWithdrawalWithPendingConversation": "passed",
+    "documentationLinksVerified": 54,
+    "liveImportCallers": [],
+    "sharedRuntimeAndUIFilesChanged": false,
+    "activeMigrationJournalChanged": false,
+    "mainWorktreeModifiedByThisSlice": false,
+    "specialistCheckoutModified": false,
+    "browserVerification": false
+  },
+  "localSyntheticSqlWrites": true,
+  "providerCalls": 0,
+  "remoteDatabaseCalls": 0,
+  "deployed": false,
+  "semanticModelEvaluation": false,
+  "durableJobAdmission": false,
+  "schedulerInstalled": false,
+  "indexConsumerInstalled": false,
+  "physicalBackupErasureOrRestoreVerified": false,
+  "sourceSha256": {
+    "db/memory-shadow/0001_shadow_memory.sql": "3edfb68dddfd9ee3898e924d35984c6082e5d4a3a9411d1cce24e4ff25c63cdb",
+    "src/model/scoped-memory.ts": "2f608ba4bf181d6292a0d66043143173bce345634f56776442d204d31d8283e7",
+    "src/model/memory-observations.ts": "34ca5ba2c6bce0c14a288ee8c0f7f8a3ca5b3a55c3762e7a161daf965c41db8c",
+    "src/model/memory-conversation.ts": "c0b8f0f24ee428f135b589add50759c28cee85cec95bc5a6ccec186ba934532c",
+    "worker/memory-shadow.ts": "852cc70a16437de107a9075ca8bb4eb66f9ed64e3218728f590033932f1ce99e",
+    "worker/memory-sql.ts": "b9ae95f403426f03d8cff7e0439aba55e7581487300c2d882f9bf1170e8bd5c1",
+    "worker/memory-source-adapter.ts": "e8858ce1b50c3aceeaf238ac8554a3234b8fcc62be49f9fd13f7ed1ac60c7b2d",
+    "worker/memory-store.ts": "4b100d6dd074a258641fd4a8e9e86e78e8b3a691e6c3af1ba247b14dad00ed08",
+    "scripts/evaluate-memory-shadow.mjs": "074cc7deec6f561dc33c711df89f044cdc6dcc3688951ea6e1a46284a2b2bf37",
+    "scripts/evaluate-memory-persistence.mjs": "2b4308bb7c60aa488eb57ceb619e9e65e25f0b7b5bfa3bd140225b58e0362b0e",
+    "scripts/fixtures/memory-shadow.json": "43735f4733dad294a123288b1c6b0f363aa74047e9f774829e058b9863d0aa9d",
+    "tests/helpers/scoped-memory.mjs": "b2a72b7ce77a2adcb9f15bb6a6fe1e91c00cae1f39faab76684a885377775d11",
+    "tests/helpers/memory-persistence.mjs": "772cf1a43616f5dd4e5c66bd1fc6ac289079690fc6344631563d0f358c41827d",
+    "tests/output-server-test-helpers.mjs": "3c923da0e3836f055230c947a96649c3d8c292d591daff034abb808593e7522b",
+    "tests/scoped-memory.test.mjs": "dc32ce1567147a6c81a405de55b3573186829282b1e9addf46cb29d51cca43f2",
+    "tests/memory-observations.test.mjs": "27154758ef9df771b48d2a0483f0f2cf423b83400a55832b5fd52826e668df75",
+    "tests/memory-conversation.test.mjs": "9e982f0f710a31df6480cde2084ffc61dffba4bbf491864654bd3067266dcc50",
+    "tests/memory-shadow.test.mjs": "ee7a5b8ab2af9d9dff69865cf5625192bb604fde5c55dbb396d281a9ec8e4fb8",
+    "tests/memory-source-adapter.test.mjs": "105b03a43e957896c82d98a356f107ac512c9a11d9b4f73228044be5d366f085",
+    "tests/memory-persistence.test.mjs": "08983b97da54c8671dd8e3c8d8b8c94489b41bffedbc70e951d3a381d4380ff2",
+    "tests/conversation-context.test.mjs": "8880c66ed9dec7dfc94718f472cd10c69423ee64c1cfa48f06e74b00efb02970",
+    "tests/taste.test.mjs": "d86fec1a9d940ed7e2ea9aa7ee7c69052280eb0c295236acdca19672046bd0de",
+    "tests/attention.test.mjs": "3ce30e6ff1c4ef2143b52eecda898ccc018387c6820bf34d09f3a4549c56f2a4",
+    "tests/brief.test.mjs": "ffc4af63479316cfa1c2bf361fe59e755a929df70a2a1b61454ad594851d779f",
+    "tests/indexing.test.mjs": "57c3127f184ba1e9af97df5161d5db51168924481135ffd09f254055c83d7534"
+  },
+  "evaluationSha256": "4e31b777e989ade146b3e2a01c4e197b609788e1d0ad0376dd14ca288cf5f214"
+}

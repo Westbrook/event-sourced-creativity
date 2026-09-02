@@ -1,6 +1,8 @@
 # Forma memory: first isolated implementation
 
-**Status:** First offline foundation implemented; no live memory collection, serving, scheduling, migration or deployment enabled.
+**Historical status at `6570a78`:** First offline foundation implemented; no live memory collection, serving, scheduling, migration or deployment enabled.
+
+**Current follow-up:** The [second isolated persistence slice](forma-memory-persistence-status-2026-09-02.md) adds local synthetic SQL storage, guarded source reading and real restart/erasure tests. This page and its verification receipt preserve the first slice's evidence; statements below about no database/storage describe that earlier commit, not the current worktree. Live integration remains off.
 
 This implements the safe starting portion of the [scope-aware memory plan](forma-scope-aware-memory-plan-2026-09-02.md). It is **not** completion of that plan or a production memory service.
 

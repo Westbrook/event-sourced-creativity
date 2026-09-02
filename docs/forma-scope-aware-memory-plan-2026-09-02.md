@@ -1,6 +1,6 @@
 # Forma: scope-aware memory expansion plan
 
-**Status:** Architecture and delivery plan, 2026-09-02. The first additive, offline-only foundation has been implemented in an isolated worktree; see [implementation status](forma-memory-foundation-status-2026-09-02.md). The full plan is not implemented or deployed. Proposed defaults below are starting points for evaluation, not measurements or authorization to collect more data, retain it longer, or incur background provider costs.
+**Status:** Architecture and delivery plan, 2026-09-02. The [first offline foundation](forma-memory-foundation-status-2026-09-02.md) and a [second isolated persistence slice](forma-memory-persistence-status-2026-09-02.md) have been implemented and tested in a separate worktree. Local synthetic SQL storage is now exercised, but live source authority, semantic models, deployed scheduling and UI/assistant integration remain off. The full plan is not implemented or deployed. Proposed defaults below are starting points for evaluation, not measurements or authorization to collect more data, retain it longer, or incur background provider costs.
 
 ## 1. Product outcome
 

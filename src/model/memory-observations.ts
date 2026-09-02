@@ -2,7 +2,7 @@ import type { CreativeEvent } from "./events.ts";
 import { isPhantomAttentionEpisode } from "./attention.ts";
 import {
   memoryKey, memoryScopeGrant, memorySourceEligible, memorySourceMatches, memorySourceRef, memoryTime,
-  type MemoryAccess, type MemoryOrigin, type MemoryScopeGraph, type MemorySource, type MemorySourceRef,
+  type MemoryAccess, type MemoryOrigin, type MemoryPurpose, type MemoryScopeGraph, type MemorySource, type MemorySourceRef,
 } from "./scoped-memory.ts";
 
 export type MemoryAction = "encounter" | "inspect" | "compare" | "edit" | "commit" | "reuse"
@@ -65,6 +65,8 @@ const ACTIONS: Readonly<Record<string, MemoryAction>> = {
   AttentionEpisodeObserved: "attention",
 };
 const ASSISTED = new Set(["ProposalAccepted", "ProposalRejected", "ProposalDeclined", "BriefItemAccepted", "BriefItemIgnored", "BriefDismissed"]);
+/** Used by the disconnected source reader before it requests any private body. */
+export const memoryEventAction = (type: string): MemoryAction | null => ACTIONS[type] ?? null;
 const COPY_FIELDS = ["copied_from_block_id", "forked_from_block_id", "copied_from_relation_id", "forked_from_relation_id", "source_block_id", "source_output_id", "source_generation_id", "source_artifact_id", "source_document_id", "source_claim_ref"];
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const usableId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
@@ -83,10 +85,10 @@ function observationOrigin(event: CreativeEvent, source: MemorySource): MemoryOr
  * payload maps, keystrokes or pointer paths are copied into observations.
  */
 export function normalizeMemoryObservation(receipt: MemoryEventReceipt, access: MemoryAccess, graph: MemoryScopeGraph,
-  attention?: MemoryAttentionGrant): MemoryObservation | null {
+  attention?: MemoryAttentionGrant, purpose: MemoryPurpose = "learn"): MemoryObservation | null {
   const { event, source } = receipt;
   const action = ACTIONS[event.type];
-  if (!action || !memorySourceEligible(source, access, graph, "learn")
+  if (!action || !memorySourceEligible(source, access, graph, purpose)
     || event.eventId !== source.id || event.streamId !== source.streamId || event.sequence !== source.sequence
     || event.eventId.startsWith("optimistic:") || event.streamId.startsWith("optimistic:") || event.clientId.includes("optimistic")
     || source.actorUserId !== access.actorUserId || !(event.actor === "user" || event.actor === `user:${access.actorUserId}`)
@@ -97,7 +99,7 @@ export function normalizeMemoryObservation(receipt: MemoryEventReceipt, access: 
   if (synthetic && access.environment !== "synthetic") return null;
   if (receipt.targets.some((target) => !usableId(target.id) || !usableId(target.revision)
     || !["project", "document", "block", "artifact", "output", "canvas"].includes(target.kind)
-    || !memoryScopeGrant(access, graph, target.scopeId, "learn"))) return null;
+    || !memoryScopeGrant(access, graph, target.scopeId, purpose))) return null;
   let activeMs = 0;
   if (action === "attention") {
     const cutoff = attention?.forgottenThrough[source.streamId] ?? 0;
@@ -117,7 +119,7 @@ export function normalizeMemoryObservation(receipt: MemoryEventReceipt, access: 
   const independentEvidence = source.independentEvidence && receipt.lineageResolved === true && origin === "user" && !event.compensatesEventId
     && ["edit", "commit", "reuse", "critique"].includes(action);
   const expiresAt = new Date(Math.min(memoryTime(source.expiresAt), memoryTime(source.happenedAt) + access.retentionDays * 86_400_000,
-    memoryTime(access.enrollmentExpiresAt), ...receipt.targets.map((target) => memoryTime(memoryScopeGrant(access, graph, target.scopeId, "learn")!.expiresAt)),
+    memoryTime(access.enrollmentExpiresAt), ...receipt.targets.map((target) => memoryTime(memoryScopeGrant(access, graph, target.scopeId, purpose)!.expiresAt)),
     action === "attention" ? memoryTime(event.payload.expires_at) : Infinity,
     action === "attention" ? memoryTime(event.payload.ended_at) + 14 * 86_400_000 : Infinity,
     action === "attention" ? memoryTime(attention!.expiresAt) : Infinity,
