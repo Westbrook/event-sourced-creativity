@@ -464,7 +464,7 @@ function moduleFor(name) {
   return modules.get(name);
 }
 
-const authorTextAttributes = new Set(["label", "heading", "detail", "help", "error", "placeholder", "action", "busy-label", "summary", "trigger", "confirm", "cancel", "eyebrow"]);
+const authorTextAttributes = new Set(["label", "heading", "detail", "help", "error", "placeholder", "action", "busy-label", "summary", "trigger", "trigger-accessible-name", "confirm", "cancel", "eyebrow"]);
 const invariantValueElements = new Set(["forma-ui-button", "forma-ui-icon-button", "forma-ui-choice-card", "forma-ui-chip", "forma-ui-checkbox", "forma-ui-switch", "forma-ui-radio-group", "forma-ui-select", "forma-ui-language-picker", "forma-ui-segmented-control", "forma-ui-tabs", "forma-ui-list-item", "forma-ui-card", "forma-ui-page-header", "forma-ui-notice", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]);
 const internalMessagesByTag = {
   "forma-ui-button": ["action.default", "action.working", "action.busy"],

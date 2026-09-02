@@ -113,7 +113,8 @@ async function shareWithIndependentReviewer(worker) {
   return { ownerHeaders, reviewerHeaders, base, reviewer };
 }
 
-export async function createReviewHost(t, { locale = "en", shared = false, legacy = null, final = false, unverified = false, artifactKind = "short_story", costReceipts = [], managed = false } = {}) {
+export async function createReviewHost(t, { locale = "en", shared = false, legacy = null, final = false, unverified = false, artifactKind = "short_story", costReceipts = [], managed = false, managedPilot = false } = {}) {
+  if (managedPilot) assert.equal(shared, true, "A managed pilot fixture requires its actual shared project");
   const worker = await createSceneCostFixture(1, "visual", { depth: true });
   const original = (await readWorkspaceEvents(worker.env, worker.streamId)).find(event => event.type === "DocumentRenderCompleted" && event.payload.artifact_id === "saved-scene-story");
   assert.ok(original && !("_private_ref" in original.payload), "clone the actual retained source, never its redacted public envelope");
@@ -151,7 +152,27 @@ export async function createReviewHost(t, { locale = "en", shared = false, legac
       "ArtifactApproved", legacy === "missing-binding" ? old : exact);
   }
   const sharing = shared ? await shareWithIndependentReviewer(worker) : null;
+  if (managedPilot) {
+    // Reuse scene-pilot-fixture's real owner policy setup before the ordinary
+    // Store bootstrap and every existing financial snapshot. No session flag,
+    // approval, budget row or successful response is synthesized.
+    worker.setScopedHeaders({});
+    try {
+      const configured = await worker.request("/api/workspaces/" + worker.sharing.organizationId + "/pilot",
+        worker.json({ maxParticipants: 3, participantCapMicrousd: 15_000_000, organizationCapMicrousd: 45_000_000 }));
+      assert.equal(configured.status, 201, await configured.clone().text());
+    } finally { worker.setScopedHeaders(sharing.ownerHeaders); }
+  }
   const h = await createSceneStoreHost({ count: 1, shared, workerFixture: worker });
+  if (managedPilot) {
+    const context = h.store.session.get().projectContext;
+    assert.ok(context, "The ordinary Worker session retains the actual selected project");
+    assert.equal(context.organizationId, worker.sharing.organizationId);
+    assert.equal(context.projectAccessId, worker.sharing.projectAccessId);
+    assert.equal(context.projectId, worker.projectId);
+    assert.equal(context.ownerUserId, worker.owner);
+    assert.equal(context.managedPilot, true, "Required independent review comes from the real managed-pilot policy");
+  }
   h.store.patchUi({ instrumentation: false });
   const pending = new Set(), replies = [];
   h.transport = async request => {

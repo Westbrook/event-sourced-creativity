@@ -6,6 +6,7 @@ const messages: Record<string, string> = {
   "system.auto.1g1qzzo.110": "Transfère uniquement les données saisies par l’utilisateur vers ce formulaire existant ; toutes les autorisations requises pour les livrables doivent de nouveau être réunies avant de préparer la proposition.",
   "system.auto.1akiecf.88": "Une seule proposition locale rattachée au contexte actuel. Seule l’action explicite « Enregistrer » de la carte existante peut l’enregistrer durablement.",
   "system.auto.jf2bs7.90": "Uniquement l’opération exacte issue du formulaire, déjà prise en charge par un seul gestionnaire enregistré ; aucun contrôle temporaire de la route ou du focus n’est acquis.",
+  "system.auto.vcfvld.80": "Nom accessible facultatif du déclencheur natif ; le texte visible reste inchangé.",
   "system.auto.1eh5z6w.74": "Seule cette visionneuse actuelle précise, en lecture seule, peut être exclue du périmètre de son parent.",
   "system.auto.7jaeh8.82": "Admet uniquement un départ ordinaire de l’interface encore valide ; ne bloque jamais les retraits liés à la confidentialité ou au chargement.",
   "system.auto.1qiom3q.70": "Prise en charge sans contenu, partagée entre les gestionnaires de navigation existants de cette vue.",

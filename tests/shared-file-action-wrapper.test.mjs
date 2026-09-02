@@ -116,3 +116,36 @@ test("current reader keeps Library inspection without the author-only import or 
   assert.ok(!own(f, "button").some(node => node.attributes["data-context-controls-id"] === "__new__"));
   assert.equal(f.state.requests.length, 0);
 });
+
+test("Library native file focus follows its dynamic label and clears the existing sticky shell", () => {
+  const originalInput = declarations(base, ".file-button input");
+  assert.equal(originalInput.position, "absolute");
+  assert.equal(originalInput.opacity, "0");
+  assert.equal(originalInput.width, "1px", "other native file-picker owners keep their existing mechanism");
+  assert.equal(originalInput.height, "1px");
+  assert.equal(declarations(base, ".file-button").position, "relative");
+  assert.equal(declarations(css, formSelector + " > label.button.file-button")["white-space"], "normal",
+    "translated labels may wrap; native reveal must not assume a fixed half-height");
+  const focusSelector = '.file-button:has(> input[type="file"]:focus-visible)';
+  assert.equal(declarations(css, focusSelector)["outline-offset"], "3px");
+  assert.equal(declarations(css, focusSelector).outline,
+    "var(--forma-focus-ring-width, 3px) solid var(--forma-focus-ring-color, var(--orange))");
+  const library = fs.readFileSync(new URL("../src/components/forma-library.ts", import.meta.url), "utf8");
+  assert.match(library, /<form @submit=[\s\S]*?<label class="button secondary file-button">[\s\S]*?<input type="file" accept="application\/json" @change=/u,
+    "the actual input, label association and original change owner remain native");
+  const selector = 'forma-library .page-header--library > .page-header-actions > form > .file-button > input[type="file"]';
+  const target = declarations(base, selector);
+  assert.deepEqual({ inset: target.inset, width: target.width, height: target.height, margin: target.margin, cursor: target.cursor },
+    { inset: "0", width: "100%", height: "100%", margin: "0", cursor: "inherit" });
+  assert.equal(target["scroll-margin-block"], "var(--forma-focus-clearance)");
+  assert.equal(target["scroll-margin-block-start"], "calc(var(--forma-topbar-height) + var(--forma-focus-clearance))");
+  for (const untouched of ["position", "opacity", "display", "visibility", "pointer-events", "overflow", "outline"])
+    assert.equal(target[untouched], undefined, "the Library geometry rule does not replace native/label paint: " + untouched);
+  const short = [];
+  base.walkRules(rule => { if (rule.selectors.includes(selector) && rule.parent.type === "atrule"
+    && rule.parent.name === "media" && rule.parent.params === "(max-height: 37.5rem) and (orientation: landscape)") short.push(rule); });
+  assert.equal(short.length, 1, "reuse the actual short-shell height condition, not a fixed per-language clearance");
+  assert.deepEqual(short[0].selectors, [selector]);
+  assert.deepEqual(Object.fromEntries(short[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "scroll-margin-block-start": "calc(var(--forma-short-topbar-height) + var(--forma-focus-clearance))" });
+});

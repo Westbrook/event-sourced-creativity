@@ -117,17 +117,56 @@ export class FormaSharedView extends FormaPresentationalElement {
     this.#presentationContentOverflow=overflow;
     this.requestUpdate();
   };
-  #navigatePresentation(index:number){
+  async #navigatePresentation(index:number){
     const active=this.#activePresentation;if(!active)return;
     const nextIndex=Math.max(0,Math.min(active.artifact.items.length-1,index));
-    this.#presentationContentOverflow=false;
-    if(this.#presentationReadingPreference===null){
-      const bounds=this.#presentationObserved?.getBoundingClientRect();
-      const narrow=Boolean(bounds&&presentationRequiresReadingPosture(bounds.width,Math.max(0,bounds.height-56)));
-      this.#presentationReading=narrow;
-    }
-    this.#activePresentation={...active,index:nextIndex};
-    this.requestUpdate();
+    const ownerDocument=this.ownerDocument,projection=this.#projection,items=active.artifact.items;
+    const revision=this.#loadRevision,token=this.token,route=location.pathname+location.search+location.hash;
+    const dialogs=this.querySelectorAll<HTMLDialogElement>(".shared-presentation-dialog"),dialog=dialogs[0];
+    const selector=".shared-presentation-stage > nav > button";
+    const buttons=[...this.querySelectorAll<HTMLButtonElement>(selector)];
+    const trigger=ownerDocument.activeElement;
+    const boundary=nextIndex!==active.index&&items.length>1
+      ?nextIndex===0&&trigger===buttons[0]?0:nextIndex===items.length-1&&trigger===buttons[1]?1:-1:-1;
+    const eligible=boundary!==-1&&this.isConnected&&projection?.artifacts.includes(active.artifact)
+      &&dialogs.length===1&&dialog.isConnected&&dialog.open&&dialog.matches(":modal")
+      &&dialog.closest("forma-shared-view")===this&&buttons.length===2
+      &&buttons.every(button=>button.isConnected&&button.ownerDocument===ownerDocument
+        &&button.getAttribute("type")==="button"&&button.closest(".shared-presentation-dialog")===dialog
+        &&button.closest("forma-shared-view")===this)&&!buttons[boundary].matches(":disabled");
+    // The existing focus lease rejects later pointer, keyboard or focus work.
+    // Only a currently focused native boundary button can acquire this handoff.
+    const focus=eligible?captureOutputNavigationFocus(ownerDocument):null;
+    const nextActive={...active,index:nextIndex};
+    try{
+      this.#presentationContentOverflow=false;
+      if(this.#presentationReadingPreference===null){
+        const bounds=this.#presentationObserved?.getBoundingClientRect();
+        const narrow=Boolean(bounds&&presentationRequiresReadingPosture(bounds.width,Math.max(0,bounds.height-56)));
+        this.#presentationReading=narrow;
+      }
+      this.#activePresentation=nextActive;
+      this.requestUpdate();
+      if(!focus)return;
+      await this.updateComplete;
+      // Object identity retires index A-B-A and same-artifact close/reopen,
+      // even when token, source ID and the final numeric index happen to match.
+      if(!this.isConnected||this.ownerDocument!==ownerDocument||this.#activePresentation!==nextActive
+        ||this.#loadRevision!==revision||this.token!==token||this.#projection!==projection
+        ||active.artifact.items!==items||nextActive.index!==nextIndex
+        ||route!==location.pathname+location.search+location.hash
+        ||!dialog.isConnected||!dialog.open||!dialog.matches(":modal")
+        ||dialog.closest("forma-shared-view")!==this)return;
+      const currentDialogs=this.querySelectorAll<HTMLDialogElement>(".shared-presentation-dialog");
+      const currentButtons=[...this.querySelectorAll<HTMLButtonElement>(selector)];
+      if(currentDialogs.length!==1||currentDialogs[0]!==dialog||currentButtons.length!==2
+        ||currentButtons.some((button,position)=>button!==buttons[position]||!button.isConnected
+          ||button.ownerDocument!==ownerDocument||button.closest(".shared-presentation-dialog")!==dialog
+          ||button.closest("forma-shared-view")!==this))return;
+      const peer=buttons[1-boundary];
+      if(!buttons[boundary].matches(":disabled")||peer.matches(":disabled"))return;
+      focus.run(peer,()=>{peer.focus({preventScroll:true});return ownerDocument.activeElement===peer;});
+    }finally{focus?.dispose();}
   }
   #presentationPointerDown(event:PointerEvent){if(event.pointerType==="touch")this.#presentationTouchStart={x:event.clientX,y:event.clientY};}
   #presentationPointerUp(event:PointerEvent){const start=this.#presentationTouchStart;this.#presentationTouchStart=null;if(event.pointerType!=="touch"||!start||!this.#activePresentation)return;const horizontal=event.clientX-start.x,vertical=event.clientY-start.y;if(Math.abs(horizontal)<48||Math.abs(horizontal)<Math.abs(vertical)*1.5)return;const direction=this.matches(":dir(rtl)")?(horizontal<0?-1:1):(horizontal<0?1:-1);this.#navigatePresentation(this.#activePresentation.index+direction);}

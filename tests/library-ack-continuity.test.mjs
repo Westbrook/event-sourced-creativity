@@ -949,15 +949,34 @@ function cManualDialog(q) {
   assert.equal(dialogs.length, 1); return dialogs[0];
 }
 
-function cManualAction(q) {
-  const tree = q.f.tree(), dialog = q.manual === "output-card" ? null
+// Reuse the original E witness's current owner and native popovertarget default.
+async function cManualOpenMore(q) {
+  const initial = eManualPopupCurrent(q);
+  if (!initial.panel.port.matches(":popover-open")) {
+    assert.equal(initial.trigger.hiddenBy, null);
+    assert.equal(initial.trigger.port.matches(":disabled"), false);
+    q.f.native.emit("pointerdown", initial.trigger.port);
+    q.f.native.focus(initial.trigger.port);
+    initial.trigger.port.click();
+    await q.f.settle();
+  }
+  const current = eManualPopupCurrent(q);
+  assert.equal(current.owner, initial.owner);
+  assert.equal(current.panel.port.matches(":popover-open"), true);
+  return current;
+}
+
+async function cManualAction(q) {
+  const popup = ["output-card", "artifact-viewer"].includes(q.manual) ? await cManualOpenMore(q) : null;
+  const tree = popup?.tree ?? q.f.tree(), dialog = q.manual === "output-card" ? null
     : tree.visible("dialog").find(node => node.owner === q.caller && node.port.open
       && classed(node, q.manual === "generation-actions" ? "generation-details-dialog" : q.manual === "prompt-fan" ? "prompt-fan-dialog" : "document-artifact-view"));
   if (q.manual !== "output-card") assert.ok(dialog);
   const name = q.manual === "generation-actions" ? q.f.i18n.system("Use and edit the selected image as reusable input")
     : q.manual === "prompt-fan" ? "Use and edit the Prose image as input"
     : q.manual === "artifact-viewer" ? q.f.i18n.system("Use {value} as input", { value: "short story" }) : null;
-  const actions = tree.visible("button").filter(node => node.owner === q.caller && (!dialog || inside(node, dialog))
+  const actions = tree.visible("button").filter(node => node.owner === (popup?.owner ?? q.caller)
+    && (!dialog || inside(node, dialog)) && (!popup || inside(node, popup.panel))
     && (name ? node.attributes["aria-label"] === name : node.text.trim().endsWith(q.f.i18n.system("Use & edit input"))));
   assert.equal(actions.length, 1); const action = actions[0];
   assert.ok(action.port.isConnected && q.f.renderer.nodes.includes(action.port));
@@ -1076,7 +1095,7 @@ for (const caller of cManualCallers) for (const changed of [false, true]) test(
     const focusObservation=caller==="artifact-viewer"&&!changed?cManualOriginalFocusObservation(t,q):null;
     let raw = null, field = null, canonical = null;
     if (changed && caller === "output-card") {
-      await cLibraryCopyCustodyClick(q, f.find("button", node => node.owner === q.caller && node.text.trim().endsWith(f.i18n.system("Taste evidence"))));
+      await cTasteToggle(q);
       field = () => f.find("input", node => node.owner === q.caller && String(node.attributes.maxlength) === "120");
       raw = "  keep this precise raw Taste B — 未保存  "; const input = field();
       f.native.emit("pointerdown", input.port); f.native.focus(input.port); input.port.value = raw;
@@ -1095,7 +1114,7 @@ for (const caller of cManualCallers) for (const changed of [false, true]) test(
     }
     const a = await q.arm(), floor = { events: JSON.stringify(h.store.events.get()), head: h.store.head.get(), requests: h.requests.length };
     let done = false, failure = null, newer = null, lateFocus = 0;
-    const action = cManualAction(q); f.native.emit("pointerdown", action.port); f.native.focus(action.port);
+    const action = await cManualAction(q); f.native.emit("pointerdown", action.port); f.native.focus(action.port);
     q.pending = f.act(action, "click", { button: 0, defaultPrevented: false });
     void q.pending.then(() => { done = true; }, error => { failure = error; done = true; });
     try {
@@ -1135,7 +1154,7 @@ for (const caller of cManualCallers) for (const changed of [false, true]) test(
         if (caller === "output-card") await f.act(input, "input");
         assert.equal(field().port.value, caller === "output-card" ? "" : canonical);
         await cLibraryCopyCustodyNoWrite(q, floor);
-        const fresh = cManualAction(q); f.native.emit("pointerdown", fresh.port); f.native.focus(fresh.port);
+        const fresh = await cManualAction(q); f.native.emit("pointerdown", fresh.port); f.native.focus(fresh.port);
         q.pending = f.act(fresh, "click", { button: 0, defaultPrevented: false }); void q.pending.catch(() => {});
         await q.reached(); a.gate.resolve(); await q.pending; await f.settle(); copied = await cManualEffects(q);
       }
@@ -1179,7 +1198,7 @@ test("C manual retained output reuse / Library artifact viewer / healthy origina
   t.mock.method(h.store,"setRoute",function(...args){
     const returned=Reflect.apply(setRoute,this,args);calls.push({args,returned});return returned;
   });
-  const action=cManualAction(q);f.native.emit("pointerdown",action.port);f.native.focus(action.port);
+  const action=await cManualAction(q);f.native.emit("pointerdown",action.port);f.native.focus(action.port);
   q.pending=f.act(action,"click",{button:0,defaultPrevented:false});void q.pending.catch(()=>{});
   try{
     await q.reached();assert.equal(a.response.status,200);assert.equal(a.response.bodyUsed,false);
@@ -1217,7 +1236,7 @@ test("C manual retained output reuse / Library artifact viewer / newer Search su
   const close=q.manualNative.holdNextClose(originalDialog),a=await q.arm(),expectedRoot=libraryRootRoute(a.route);
   const calls=[],setRoute=h.store.setRoute;
   t.mock.method(h.store,"setRoute",function(...args){const returned=Reflect.apply(setRoute,this,args);calls.push({args,returned});return returned;});
-  const action=cManualAction(q);f.native.emit("pointerdown",action.port);f.native.focus(action.port);
+  const action=await cManualAction(q);f.native.emit("pointerdown",action.port);f.native.focus(action.port);
   q.pending=f.act(action,"click",{button:0,defaultPrevented:false});void q.pending.catch(()=>{});
   try{
     await q.reached();assert.equal(a.response.status,200);assert.equal(a.response.bodyUsed,false);
@@ -1332,7 +1351,10 @@ function cTasteField(q,kind,{visible=false}={},tree=q.f.tree()){
   assert.equal(matches.length,1);assert.ok(matches[0].port.isConnected);assert.equal(matches[0].port.matches(":disabled"),false);return matches[0];
 }
 async function cTasteToggle(q){
-  const button=q.f.find("button",node=>node.owner===q.caller&&node.text.trim().endsWith(q.f.i18n.system("Taste evidence")));
+  const current=await cManualOpenMore(q);
+  const buttons=current.tree.visible("button").filter(node=>node.owner===current.owner&&inside(node,current.panel)
+    &&node.text.trim().endsWith(q.f.i18n.system("Taste evidence")));
+  assert.equal(buttons.length,1);const button=buttons[0];
   await cLibraryCopyCustodyClick(q,button);
 }
 function cTasteOpenNote(q){
@@ -1499,7 +1521,8 @@ function cSlidesMenuCurrent(q) {
   return { tree, viewer, menu, owner, panel, trigger, action };
 }
 
-// Only this current Slides target receives closed-popover box reflection. It
+// Only the explicitly selected current popup target receives closed-popover box
+// reflection. Current Slides and future E witnesses opt in independently. It
 // reads the existing real panel's native state; it never supplies currentness,
 // remaps activeElement, opens the panel, or invokes an application method.
 function cSlidesMenuGeometry(t, current) {
@@ -1515,13 +1538,13 @@ function cSlidesMenuGeometry(t, current) {
   return () => node.getClientRects().length > 0;
 }
 
-async function cSlidesMenuClick(q, current, visible, trace) {
+async function cSlidesMenuClick(q, current, visible, trace, captureBodyClass = "artifact-viewer-actions-body") {
   const { f } = q, node = current.action.port;
   assert.equal(current.action.hiddenBy, null); assert.ok(visible()); assert.equal(node.matches(":disabled"), false);
   assert.ok(node.isConnected && f.renderer.nodes.includes(node));
   const path = []; for (let row = current.action; row; row = row.parent) path.push(row);
   const capture = path.filter(row => row.handlers?.click?.capture === true);
-  assert.equal(capture.length, 1); assert.ok(classed(capture[0], "artifact-viewer-actions-body"));
+  assert.equal(capture.length, 1); assert.ok(classed(capture[0], captureBodyClass));
   assert.equal(typeof capture[0].handlers.click.handleEvent, "function");
   let stopped = false, immediate = false; const pending = [];
   const event = { type: "click", target: node, currentTarget: null, eventPhase: 0, bubbles: true, cancelable: true,
@@ -1533,7 +1556,7 @@ async function cSlidesMenuClick(q, current, visible, trace) {
   const invoke = (row, phase) => {
     const handler = row.handlers?.click; if (!handler || immediate) return;
     event.currentTarget = row.port ?? row.component; event.eventPhase = phase === "target" ? 2 : phase === "capture" ? 1 : 3;
-    trace.push({ phase, tag: row.tag, exactViewer: event.currentTarget === current.viewer.port,
+    trace.push({ phase, tag: row.tag, exactViewer: event.currentTarget === current.viewer?.port,
       targetVisible: visible(), popoverOpen: current.panel.port.matches(":popover-open") });
     const returned = typeof handler === "function" ? handler.call(row.owner, event) : handler.handleEvent(event);
     if (returned?.then) pending.push(returned);
@@ -1597,6 +1620,138 @@ test("C manual retained output reuse / current Slides native menu / healthy orig
     assert.equal(f.tree().visible("dialog").filter(node => node.owner === q.caller && node.port.open).length, 0);
   } finally { a.gate.resolve(); if (q.pending) await q.pending; }
 });
+
+// Future E only: actual popup-origin copies, not inventory/handler-presence proof.
+// Reuse Atomic's frozen current Slides finite capture/native-visibility seam.
+function eManualPopupCurrent(q) {
+  const { f } = q, popupClass = q.manual === "output-card" ? "output-actions-popover" : "artifact-viewer-actions-popover";
+  const tree = f.tree(), viewers = q.manual === "artifact-viewer" ? tree.visible("dialog").filter(node => node.owner === q.caller
+    && classed(node, "document-artifact-view") && node.port.open) : [];
+  assert.equal(viewers.length, q.manual === "artifact-viewer" ? 1 : 0);
+  const viewer = viewers[0] ?? null, menus = tree.nodes.filter(node => node.component?.tag === "forma-ui-popover"
+    && classed(node, popupClass) && node.component.isConnected && node.component.closest(q.caller.tag) === q.caller);
+  assert.equal(menus.length, 1, "E prerequisite: the exact actual owner's native More exists");
+  const menu = menus[0], owner = menu.component;
+  if (viewer) { assert.ok(inside(menu, viewer)); assert.ok(viewer.port.isConnected && f.renderer.nodes.includes(viewer.port)); }
+  const panels = tree.nodes.filter(node => node.owner === owner && node.tag === "section"
+    && node.attributes.popover === "auto" && inside(node, menu));
+  const triggers = tree.visible("button").filter(node => node.owner === owner
+    && classed(node, "ui-popover-trigger") && inside(node, menu));
+  assert.equal(panels.length, 1); assert.equal(triggers.length, 1);
+  const panel = panels[0], trigger = triggers[0];
+  assert.equal(trigger.attributes.popovertarget, panel.attributes.id);
+  const name = q.manual === "artifact-viewer" ? f.i18n.system("Use {value} as input", { value: "short story" }) : null;
+  const actions = tree.nodes.filter(node => node.tag === "button" && node.owner === owner && inside(node, panel)
+    && (name ? node.attributes["aria-label"] === name : node.text.trim().endsWith(f.i18n.system("Use & edit input"))));
+  assert.equal(actions.length, 1); const action = actions[0];
+  assert.ok([panel.port, trigger.port, action.port].every(port => port?.isConnected && f.renderer.nodes.includes(port)));
+  assert.equal(action.port.closest("forma-ui-popover"), owner);
+  assert.equal(action.port.closest(q.caller.tag), q.caller); assert.equal(action.port.closest("forma-shell"), f.host);
+  assert.equal(typeof action.handlers.click, "function");
+  return { tree, viewer, menu, owner, panel, trigger, action };
+}
+
+// Opt-in reflection of native popover removal for this original captured owner.
+// The finite renderer replaces its query tree before disconnectedCallback runs.
+// Never infer removal from an ACK/route, or close a connected same-ID successor.
+function eManualPopupRemoval(t, q, current) {
+  const { f } = q, { owner, panel } = current, node = panel.port, id = panel.attributes.id;
+  assert.equal(owner.tag, "forma-ui-popover"); assert.equal(node.owner, owner);
+  assert.equal(node.attributes.popover, "auto"); assert.equal(typeof id, "string"); assert.ok(id);
+  assert.ok(owner.isConnected && node.isConnected && f.renderer.nodes.includes(node));
+  const read = () => ({ ownerConnected: owner.isConnected, panelConnected: node.isConnected,
+    panelPresent: f.renderer.nodes.includes(node),
+    sameOwnerNodes: f.renderer.nodes.filter(candidate => candidate.owner === owner).length,
+    connectedSameIdNodes: f.renderer.nodes.filter(candidate => candidate.isConnected && candidate.attributes.id === id).length,
+    open: f.renderer.openPopovers.has(id) });
+  const authoredPanels = current.tree.nodes.filter(row => row.port?.isConnected && row.attributes.id === id);
+  assert.equal(authoredPanels.length, 1, "One current authored native panel, not its ancestor renderer replicas");
+  assert.equal(authoredPanels[0].port, node);
+  assert.equal(authoredPanels[0].owner, owner);
+  const draw = f.renderer.draw, descriptor = Object.getOwnPropertyDescriptor(f.renderer, "draw"), records = [];
+  const reflectedDraw = function(...args) {
+    const result = Reflect.apply(draw, this, args), before = read();
+    if (!records.length && before.ownerConnected === false && before.panelConnected === false
+      && !before.panelPresent && before.sameOwnerNodes === 0 && before.connectedSameIdNodes === 0) {
+      const active = f.native.document.activeElement, otherIds = [...f.renderer.openPopovers].filter(value => value !== id);
+      const removedOpenId = f.renderer.openPopovers.delete(id);
+      assert.equal(f.native.document.activeElement, active, "Native removal reflection cannot assign focus");
+      assert.deepEqual([...f.renderer.openPopovers], otherIds, "Only this disconnected original ID may retire");
+      records.push({ ...before, removedOpenId, openAfter: f.renderer.openPopovers.has(id) });
+    }
+    return result;
+  };
+  f.renderer.draw = reflectedDraw;
+  t.after(() => {
+    // Do not reinstall an older wrapper after the existing lifetime cleanup.
+    if (f.renderer.draw !== reflectedDraw) return;
+    if (descriptor) Object.defineProperty(f.renderer, "draw", descriptor); else delete f.renderer.draw;
+  });
+  return { records, read };
+}
+
+for (const caller of ["output-card", "artifact-viewer"]) test(
+  "E current More preserves the original copy and exact editable arrival / " + caller,
+  { concurrency: false, timeout: 60_000 }, async t => {
+    const q = await cManualPage(t, caller), { f, h, worker } = q;
+    const a = await q.arm(), floor = { events: JSON.stringify(h.store.events.get()), head: h.store.head.get(), requests: h.requests.length };
+    const closed = eManualPopupCurrent(q), closedVisible = cSlidesMenuGeometry(t, closed);
+    assert.equal(closed.panel.port.matches(":popover-open"), false); assert.ok(closed.action.hiddenBy); assert.equal(closedVisible(), false);
+    f.native.emit("pointerdown", closed.trigger.port); f.native.focus(closed.trigger.port);
+    closed.trigger.port.click(); await f.settle(); await cLibraryCopyCustodyNoWrite(q, floor);
+    // q.arm/NoWrite settle the complete host. Capture this final actual tree only afterward.
+    const current = eManualPopupCurrent(q), visible = cSlidesMenuGeometry(t, current), trace = [];
+    assert.equal(current.owner, closed.owner); assert.equal(current.panel.port.matches(":popover-open"), true);
+    assert.equal(current.action.hiddenBy, null); assert.ok(visible());
+    const panelId = current.panel.attributes.id, bodyClass = caller === "output-card" ? "output-secondary-actions" : "artifact-viewer-actions-body";
+    const removal = eManualPopupRemoval(t, q, current);
+    let done = false, failure = null;
+    f.native.emit("pointerdown", current.action.port); f.native.focus(current.action.port);
+    q.pending = cSlidesMenuClick(q, current, visible, trace, bodyClass);
+    void q.pending.then(() => { done = true; }, error => { failure = error; done = true; });
+    try {
+      await untilScene(() => Boolean(a.receipt || a.error || done), "E native popup action reaches original Worker response or explicit refusal");
+      if (a.error || failure) throw a.error ?? failure;
+      if (!a.receipt) {
+        await q.pending; await cLibraryCopyCustodyNoWrite(q, floor);
+        t.diagnostic("E_POPUP_COPY " + JSON.stringify({ caller, phase: "before-original-dispatch", trace, originalStatus: null,
+          routeUnchanged: h.store.route.get() === a.route, historyPrivateFiscalResumeExact: true }));
+      }
+      assert.ok(a.receipt, "An enabled healthy popup action must admit the original copy before its trigger is hidden");
+      await q.reached(); assert.equal(a.response.status, 200); assert.equal(a.response.bodyUsed, false);
+      assert.equal(h.store.route.get(), a.route, "An unsettled copy does not own destination navigation");
+      assert.equal(removal.records.length, 0, "Pending current-owner redraw is not native removal");
+      assert.equal(removal.read().ownerConnected, true);
+      assert.equal(f.renderer.openPopovers.has(panelId), true, "Original pending copy retains its own current More presentation");
+      if (caller === "artifact-viewer") assert.equal(cManualDialog(q).port.open, true);
+      a.gate.resolve(); await q.pending; await q.manualNative.settle(); await f.settle();
+      const copied = await cManualEffects(q);
+      assert.deepEqual(trace.slice(0, 2).map(value => value.phase), ["capture", "target"]);
+      assert.equal(trace.filter(value => value.phase === "target").length, 1);
+      const viewerBubbles = trace.filter(value => value.phase === "bubble" && value.tag === "dialog");
+      assert.equal(viewerBubbles.length, caller === "artifact-viewer" ? 1 : 0);
+      if (caller === "artifact-viewer") assert.equal(viewerBubbles[0].exactViewer, true);
+      assert.equal(trace[0].targetVisible, true); assert.equal(trace[1].targetVisible, true);
+      assert.equal(a.delivered, 1); assert.equal(documentIdFromRoute(h.store.route.get()), worker.documentId);
+      assert.equal(h.store.ui.editingBlockId, copied.id);
+      const targets = f.components().filter(component => component.tag === "forma-context-block" && component.isConnected
+        && component.store === h.store && component.block?.id === copied.id && component.surface === "document");
+      assert.equal(targets.length, 1); assert.equal(targets[0].readOnly, false);
+      cManualRenderedEditor(q, copied, targets[0]);
+      const nativeRemoval = removal.read();
+      t.diagnostic("E_POPUP_NATIVE_REMOVAL " + JSON.stringify({ caller, current: nativeRemoval, records: removal.records }));
+      if (caller === "output-card") {
+        assert.deepEqual(nativeRemoval, { ownerConnected: false, panelConnected: false, panelPresent: false,
+          sameOwnerNodes: 0, connectedSameIdNodes: 0, open: false });
+        assert.equal(removal.records.length, 1, "Exactly the retired original owner supplied the removal proof");
+      }
+      assert.equal(f.renderer.openPopovers.has(panelId), false, "Only the acknowledged original closes its popup on arrival");
+      t.diagnostic("E_POPUP_COPY " + JSON.stringify({ caller, phase: "original-arrival", trace, originalStatus: a.response.status,
+        eventTypes: a.receipt.appended.map(event => event.type), copiedBlockId: copied.id,
+        historyPrivateFiscalResumeExact: true,
+        evidence: "actual native-menu handlers and original RAM Worker; explicit finite capture and panel visibility, not browser/provider evidence" }));
+    } finally { a.gate.resolve(); if (q.pending) await q.pending; }
+  });
 
 
 // One local-route contrast: Library's keyed editor is intentionally retained by
@@ -1940,3 +2095,74 @@ test("C Library new reusable block / different catalog choice retains its emitte
   assert.equal(optionBinding(current, "Campaign goal").part, initial.part); assert.equal(editor.navigationBlocked, false);
   await unchanged();
 });
+
+// E4: one exact native edit handler at a time changes A to B and back to A.
+// The original three Taste witnesses above remain unchanged; identical final
+// bytes do not make a newer local editing intent belong to an older ACK.
+for (const editedField of ["axis", "polarity", "value", "note"]) test(
+  "E4 Taste original Worker200 preserves same-opening A-B-A / " + editedField,
+  { concurrency: false, timeout: 60_000 }, async t => {
+    const q = await cManualPage(t, "output-card", { taste: true }), { f, h } = q, caller = q.caller;
+    assert.ok(caller.isConnected && caller.store === h.store); assert.equal(caller.output.id, q.originalOutput.id);
+    assert.equal(Boolean(h.store.session.get().projectContext), false);
+    const original = h.store.critiqueObject; q.tasteCalls = [];
+    t.mock.method(h.store, "critiqueObject", function (...args) {
+      const call = { args, returned: undefined }; q.tasteCalls.push(call);
+      const promise = Reflect.apply(original, this, args); call.promise = promise;
+      promise.then(value => { call.returned = value; }, error => { call.error = error; }); return promise;
+    });
+    await cTasteToggle(q); await cTasteFill(q, cTasteA); q.tasteOriginal = { ...cTasteA };
+    const a = await q.arm(), submit = cTasteRecord(q), form = cTasteForm(q);
+    assert.equal(submit.port.matches(":disabled"), false); assert.equal(submit.hiddenBy, null);
+    f.native.emit("pointerdown", submit.port); f.native.focus(submit.port);
+    q.pending = f.act(form, "submit", { submitter: submit.port }); void q.pending.catch(() => {});
+    try {
+      await q.reached(); await f.settle();
+      assert.equal(q.tasteCalls.length, 1); assert.equal(q.tasteCalls[0].returned, undefined);
+      assert.equal(cTasteRecord(q).port.matches(":disabled"), true);
+      assert.deepEqual(cTasteRead(q), cTasteA);
+      const edits = [];
+      for (const value of [cTasteB[editedField], cTasteA[editedField]]) {
+        if (editedField === "axis" || editedField === "polarity") {
+          const control = cTasteControl(q, node => editedField === "axis" ? node.text === value : classed(node, value));
+          assert.equal(control.port.matches(":disabled"), false);
+          await cLibraryCopyCustodyClick(q, control);
+        } else {
+          const field = editedField === "note" ? cTasteOpenNote(q) : cTasteField(q, "value", { visible: true });
+          assert.equal(field.owner, caller); assert.ok(field.port.isConnected && f.renderer.nodes.includes(field.port));
+          assert.equal(field.port.matches(":disabled"), false);
+          f.native.emit("pointerdown", field.port); f.native.focus(field.port); field.port.value = value;
+          await f.act(field, "input");
+        }
+        const observed = cTasteRead(q); edits.push(observed);
+        assert.deepEqual(observed, { ...cTasteA, [editedField]: value }, "Only the selected real field changes; no other handler masks its A-B-A currency");
+        assert.equal(q.caller, caller); assert.ok(caller.isConnected && caller.store === h.store);
+        assert.equal(h.store.route.get(), a.route);
+        assert.ok(h.store.sourceOwnershipActive(q.source) && h.store.authorizationScopeActive(q.authorization));
+        assert.deepEqual(caller.output, q.originalOutput);
+        assert.equal(h.store.busy.get(), "critique-object"); assert.equal(q.tasteCalls[0].returned, undefined);
+        assert.equal(cTasteRecord(q).port.matches(":disabled"), true);
+        assert.equal(h.requests.filter(eventPost).length, 1, "Editing does not retry or replace the original critique");
+      }
+      const before = cTasteRead(q);
+      assert.deepEqual(before, cTasteA, "The newer draft has the original bytes in the same still-open form");
+      a.gate.resolve(); await q.pending; await f.settle();
+      const event = await libraryAckEffects(q), forms = cTasteForms(q), after = forms.length ? cTasteRead(q) : null;
+      assert.equal(event.type, "ObjectCritiqued"); assert.equal(a.delivered, 1); assert.equal(a.response.status, 200);
+      assert.equal(h.store.route.get(), a.route); assert.ok(caller.isConnected && caller.store === h.store);
+      assert.deepEqual(caller.output, q.originalOutput);
+      t.diagnostic("E4_TASTE_SAME_OPENING_ABA " + JSON.stringify({ editedField, edits, before, after,
+        originalEvent: a.sql, originalNoteRef: event.payload.note_ref, actualStoreReturned: q.tasteCalls[0].returned,
+        actual200Delivered: a.delivered, originalWriteCount: h.requests.filter(eventPost).length,
+        formVisible: forms.length === 1, originalHistoryPrivateFiscalExact: true, physicalOrProviderClaim: false }));
+      assert.equal(forms.length, 1, "The original ACK cannot close a newer A-B-A editing intent");
+      assert.deepEqual(after, cTasteA, "All exact raw fields and selectors of the newer intent remain available");
+      assert.equal(cTasteRecord(q).port.matches(":disabled"), false, "The retained current draft is usable once the original recording settles");
+      assert.equal(cTasteOpenNote(q).port.value, cTasteA.note);
+      assert.equal(h.requests.filter(eventPost).length, 1, "No automatic second critique is sent for the preserved draft");
+      await cLibraryCopyCustodyClick(q, cTasteControl(q, node => node.text === f.i18n.system("Cancel")));
+      assert.equal(cTasteForms(q).length, 0, "Deliberate Close/Cancel remains available after settlement");
+      await cTasteToggle(q); assert.deepEqual(cTasteRead(q), cTasteA, "Existing close-and-reopen retention is not converted into discard");
+      await libraryAckEffects(q);
+    } finally { a.gate.resolve(); if (q.pending) await q.pending; }
+  });

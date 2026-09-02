@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 // focus updates activeElement and delivers focusin as a browser would; this is
 // deterministic component evidence, not a browser/AT certificate.
 export function installOutputNavigationFocusNative(t, f, ports) {
-  const { documentPort, ElementPort } = ports;
+  const { documentPort, ElementPort, artifactDialogOwner } = ports;
   const focusDocument=f.storeHost?.document??documentPort;
   const restore=[];
   const replace=(object,key,descriptor)=>{
@@ -55,6 +55,17 @@ export function installOutputNavigationFocusNative(t, f, ports) {
   // keyed template. Its own close EventPart includes that exact key ancestry;
   // neither a class match nor the original import's data confers identity.
   const importDialogs=new Map(),seenImportDialogs=new Set();
+  // Default off. Only the caller's exact actual artifact host may retain its
+  // own current close EventPart; no finite tag or matching title grants identity.
+  const artifactDialogs=new Map(),seenArtifactDialogs=new Set();
+  const artifactDialogCurrent=record=>record.owner===artifactDialogOwner&&record.owner===f.host
+    &&record.owner.isConnected&&record.owner.store===record.store&&record.owner.documentId===record.documentId
+    &&record.owner.source===record.surface&&record.owner.parentElement===record.parent
+    &&record.store.sourceOwnershipActive(record.source);
+  const retireArtifactDialog=owner=>{
+    const previous=artifactDialogs.get(owner);if(previous)previous.node.isConnected=false;
+    artifactDialogs.delete(owner);
+  };
   const value=f.renderer.value.bind(f.renderer);
   f.renderer.value=(part,owner,path,caches)=>{
     const markup=value(part,owner,path,caches);
@@ -70,7 +81,7 @@ export function installOutputNavigationFocusNative(t, f, ports) {
   };
   const draw=f.renderer.draw.bind(f.renderer);
   f.renderer.draw=(...args)=>{
-    const previous=new Set(f.renderer.nodes);articleTemplates.clear();seenArticles.clear();seenCommandTriggers.clear();seenImportDialogs.clear();structure=null;drawing=true;
+    const previous=new Set(f.renderer.nodes);articleTemplates.clear();seenArticles.clear();seenCommandTriggers.clear();seenImportDialogs.clear();seenArtifactDialogs.clear();structure=null;drawing=true;
     try{return draw(...args);}finally{
       drawing=false;structure=null;const present=new Set(f.renderer.nodes);
       for(const [owner,record]of articles)if(!seenArticles.has(owner)||!present.has(record.node)){
@@ -81,6 +92,9 @@ export function installOutputNavigationFocusNative(t, f, ports) {
       }
       for(const [owner,record]of importDialogs)if(!owner.isConnected||!seenImportDialogs.has(owner)||!present.has(record.node)){
         record.node.isConnected=false;importDialogs.delete(owner);
+      }
+      for(const [owner,record]of artifactDialogs)if(!seenArtifactDialogs.has(owner)||!present.has(record.node)||!artifactDialogCurrent(record)){
+        retireArtifactDialog(owner);
       }
       if(typeof f.tree==="function")for(const node of previous)if(!present.has(node))node.isConnected=false;
     }
@@ -278,6 +292,39 @@ export function installOutputNavigationFocusNative(t, f, ports) {
         }
       }
     }
+    if(drawing&&artifactDialogOwner&&owner===artifactDialogOwner&&owner===f.host){
+      const anchors=f.renderer.nodes.slice(start).filter(node=>node.owner===owner&&node.tag==="dialog"
+        &&String(node.attributes.class??"").split(/\s+/u).includes("document-artifact-view"));
+      const fresh=anchors.length===1?anchors[0]:null;
+      const token=fresh?.full.match(/\s@close=(?:["'])?__bound_(\d+)__(?:["'])?(?=[\s>])/u);
+      const binding=token?f.renderer.bindings[Number(token[1])]:null;
+      if(owner.isConnected&&binding?.owner===owner&&typeof binding.part==="string"
+        &&/\/template:\d+\/part:\d+$/u.test(binding.part)
+        &&typeof binding.value==="function"&&binding.value===fresh.handlers.close
+        &&!/\s[.?]?open(?=[\s=>])/u.test(fresh.full)){
+        const previous=artifactDialogs.get(owner);
+        const same=previous?.node.isConnected&&previous.part===binding.part
+          &&f.renderer.previousNodes?.includes(previous.node)&&artifactDialogCurrent(previous);
+        const source=same?previous.source:owner.store?.captureSourceOwnership?.();
+        if(source&&owner.store.sourceOwnershipActive(source)){
+          let node=fresh;
+          if(same){
+            node=previous.node;
+            const label=node.getAttribute("aria-label");
+            // Native close/focus methods, listeners and unbound open state stay
+            // on their original object. Refresh only current committed metadata.
+            for(const key of["full","properties","propertyParts","handlers"])node[key]=fresh[key];
+            node.attributes={...fresh.attributes};
+            if(!Object.hasOwn(node.attributes,"aria-label")&&label!==null)node.attributes["aria-label"]=label;
+            node.parentElement=owner;node.isConnected=true;
+            f.renderer.nodes[f.renderer.nodes.indexOf(fresh)]=node;fresh.isConnected=false;
+          }else retireArtifactDialog(owner);
+          artifactDialogs.set(owner,{owner,node,part:binding.part,store:owner.store,documentId:owner.documentId,
+            surface:owner.source,parent:owner.parentElement,source});
+          seenArtifactDialogs.add(owner);
+        }else retireArtifactDialog(owner);
+      }else retireArtifactDialog(owner);
+    }
     for (const node of f.renderer.nodes.slice(start)) own(node);
   };
   for (const node of f.renderer.nodes) own(node);
@@ -286,6 +333,17 @@ export function installOutputNavigationFocusNative(t, f, ports) {
     if (selector.includes(",")) return selector.split(",").flatMap(value => f.renderer.query(owner, value.trim()));
     const actual = !f.renderer.updatingOwner ? treeIndex() : null;
     const literalOwner=owner == null ? undefined : actual?.byPort.get(owner);
+    // One actual artifact query, only on the opted-in retained current dialog.
+    // Compose existing attribute filtering and native ancestry; no new grammar.
+    const artifactDialog=artifactDialogs.get(artifactDialogOwner);
+    if(literalOwner&&selector==='.artifact-direct-editor textarea[rows="12"]'
+      &&artifactDialog?.node===owner&&owner.isConnected&&artifactDialogCurrent(artifactDialog)){
+      return f.renderer.query(owner,'textarea[rows="12"]').filter(node=>{
+        const editor=node.closest(".artifact-direct-editor");
+        return node.isConnected&&node.owner===artifactDialogOwner&&editor?.owner===artifactDialogOwner
+          &&editor.isConnected&&owner.contains(editor);
+      });
+    }
     // Bounded descendant grammar, resolved from current emitted ancestry.
     // The generic first-class port must not return the form for ".editor input".
     const fieldDescendant = actual && selector.match(/^(\.[\w-]+)\s+(input|textarea)$/u);

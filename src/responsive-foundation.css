@@ -3429,6 +3429,7 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
 }
 
 .shared-output > .shared-presentation-open {
+  color: var(--forma-color-text);
   justify-self: start;
   margin-inline: var(--forma-row-inset-inline);
 }
@@ -4440,5 +4441,468 @@ forma-presentation-deck {
     padding-inline: .45rem;
     overflow: visible;
     white-space: normal;
+  }
+}
+
+/* Public share chrome follows the existing reading-region width policy.
+ * Keep the full-bleed hero, shared page gutter and independent guest shell. */
+.shared-locale-switcher,
+.shared-view > header,
+.shared-view > .shared-hero {
+  padding-inline: max(var(--page-gutter), calc((100% - 1300px) / 2 + var(--page-gutter)));
+}
+
+.shared-view > :is(header, .shared-hero) {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.shared-view > header {
+  flex-wrap: wrap;
+  gap: var(--forma-cluster-gap);
+}
+
+.shared-view > .shared-grid {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 1300px;
+  padding-inline: var(--page-gutter);
+}
+
+.shared-view > .shared-grid > :is(.shared-results, .shared-direction) {
+  min-inline-size: 0;
+}
+
+@media (min-width: 90rem) {
+  .shared-locale-switcher,
+  .shared-view > header,
+  .shared-view > .shared-hero {
+    padding-inline: var(--page-gutter);
+  }
+
+  .shared-view > .shared-grid {
+    max-inline-size: none;
+  }
+}
+
+/* Only the three existing Slides viewers: 44px is a control floor, not a
+ * ceiling on a translated header. Reserve the header in normal flow and
+ * leave the existing contain-fit artboard and reading posture unchanged. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) {
+    grid-template-rows: auto minmax(0, 1fr);
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) {
+    position: relative;
+    z-index: auto;
+    inset: auto;
+    display: flex;
+    block-size: auto;
+    min-block-size: var(--forma-hit-target);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: var(--forma-cluster-gap);
+    overflow: visible;
+    pointer-events: auto;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.artifact-viewer-identity, div:first-child, h2) {
+    flex: 1 1 16rem;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.document-artifact-reader-actions, .shared-presentation-actions) {
+    position: static;
+    inset: auto;
+    display: flex;
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: var(--forma-cluster-gap);
+    pointer-events: auto;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > .button,
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.document-artifact-reader-actions, .shared-presentation-actions) > :is(.button, .icon-button) {
+    inline-size: auto;
+    block-size: auto;
+    min-inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    max-inline-size: 100%;
+    align-self: stretch;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > .button,
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.document-artifact-reader-actions, .shared-presentation-actions) > .button {
+    flex: 0 1 auto;
+    padding-inline: var(--forma-control-inset-inline);
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+/* The shared viewer deliberately stacks its narrow header. Its identity
+ * uses content height there, rather than the row layout's 16rem basis. */
+@media (max-width: 30rem) and (max-height: 37.5rem) and (orientation: landscape) {
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card > header > div:first-child {
+    flex-basis: auto;
+  }
+}
+
+/* Shared native chrome gets clear paint space; only content owns clipping. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card {
+    overflow: visible;
+    padding-block: max(var(--forma-focus-clearance), env(safe-area-inset-top, 0px)) max(var(--forma-focus-clearance), env(safe-area-inset-bottom, 0px));
+    padding-inline: max(var(--forma-focus-clearance), var(--forma-safe-inline-start, 0px)) max(var(--forma-focus-clearance), var(--forma-safe-inline-end, 0px));
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card > header {
+    padding-block: 0;
+  }
+
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card > .shared-presentation-stage[data-slide-posture] {
+    overflow: visible;
+  }
+}
+
+/* Slides chrome owns background shape, not content clipping. The actual
+ * content viewport/readers retain their own clipping and scrolling. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] {
+    block-size: calc(100dvb - (var(--artifact-viewer-edge,1rem) * 2));
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] {
+    overflow: visible;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] > article.document-artifact-reader {
+    block-size: 100%;
+    max-block-size: 100%;
+    overflow: visible;
+    border-radius: inherit;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"]:not([data-output-focus="true"]) > article.document-artifact-reader:has(> .artifact-review-actions:not([hidden]),> .artifact-review-guidance,> .artifact-revision-history:not([hidden])) {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > article.modal-card.canvas-artifact-viewer-card {
+    overflow: visible;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] > article.document-artifact-reader > .artifact-viewer-header,
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > article.modal-card.canvas-artifact-viewer-card > header {
+    border-start-start-radius: inherit;
+    border-start-end-radius: inherit;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] > article.document-artifact-reader > footer,
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > article.modal-card.canvas-artifact-viewer-card > footer {
+    border-end-start-radius: inherit;
+    border-end-end-radius: inherit;
+  }
+}
+
+/* Normal Document Slides keep full identity and evidence in ordinary flow.
+ * The existing card scrolls past a growing header to a complete content track;
+ * focused and direct-editor owners keep their independent policies. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) {
+    grid-template-rows: max-content 100% auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: var(--forma-focus-clearance);
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity {
+    display: block;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > :is(.artifact-viewer-kicker, h2),
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > .artifact-viewer-details > summary {
+    max-inline-size: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > .artifact-viewer-kicker > span {
+    max-inline-size: 100%;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > h2 {
+    display: block;
+    -webkit-line-clamp: unset;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .document-artifact-reader-actions {
+    align-self: flex-start;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header :is(button, summary):not([popover] *),
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > footer :is(button, a[href]):not([popover] *) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Normal Canvas Slides reuse the Document card's independent content track.
+ * The existing card scrolls past complete chrome; Focus stays optional. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) {
+    grid-template-rows: max-content 100% auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: var(--forma-focus-clearance);
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) > :is(button.canvas-viewer-focus-toggle, button.modal-close),
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) > header :is(button, summary):not([popover] *),
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) > footer :is(button, a[href]):not([popover] *) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Canvas Close shares its existing Focus peer's native paint priority. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card > .modal-close {
+    z-index: 2;
+  }
+}
+
+/* Focused Canvas keeps the same horizontal native peers, with real space
+ * for their external focus paint and the natural-flow header beside them. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="true"] > article.modal-card.canvas-artifact-viewer-card > :is(button.canvas-viewer-focus-toggle, button.modal-close) {
+    inset-block-start: calc(env(safe-area-inset-top, 0px) + var(--forma-focus-clearance));
+    inset-inline-end: calc(var(--forma-safe-inline-end, 0px) + var(--forma-focus-clearance));
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="true"] > article.modal-card.canvas-artifact-viewer-card > button.canvas-viewer-focus-toggle {
+    inset-inline-end: calc(var(--forma-safe-inline-end, 0px) + var(--forma-hit-target) + (var(--forma-focus-clearance) * 2));
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="true"] > article.modal-card.canvas-artifact-viewer-card > header {
+    min-block-size: calc(var(--forma-hit-target) + (var(--forma-focus-clearance) * 2));
+    padding-inline-start: var(--forma-focus-clearance);
+    padding-inline-end: calc((var(--forma-hit-target) * 2) + (var(--forma-focus-clearance) * 3));
+  }
+}
+
+/* Normal Canvas chrome reserves the height of its existing absolute peers
+ * before the next in-flow content row, independently of title wrapping. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card > header {
+    min-block-size: calc(var(--forma-hit-target) + (var(--forma-focus-clearance) * 2));
+  }
+}
+
+/* The current Slides navigation owns its count, including in reading mode. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav > .presentation-deck-position {
+    position: static;
+    min-inline-size: 3.25rem;
+    padding: 0;
+    background: transparent;
+  }
+}
+
+/* Closed Canvas deck tools retain one native target, not an empty full row. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .canvas-artifact-viewer[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] {
+    inline-size: max-content;
+    justify-self: end;
+    padding: var(--forma-focus-clearance);
+  }
+}
+
+/* Closed Document deck tools reuse the same native intrinsic footprint. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .document-artifact-view[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] {
+    inline-size: max-content;
+    justify-self: end;
+    padding: var(--forma-focus-clearance);
+  }
+}
+
+/* Closed tools contain only their intrinsic native trigger; the open
+ * disclosure keeps its independently owned scrolling policy. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] {
+    overflow: visible;
+  }
+}
+
+/* Open tools keep standard gutters. The existing deck scrolls between their
+ * natural height and a full available-height stage, instead of erasing reading. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="true"] {
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-row-inset-inline);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) {
+    grid-template-rows: max-content 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar[data-tools-open="true"] {
+    max-block-size: none;
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar > div {
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-stage[data-slide-posture] {
+    block-size: auto;
+    margin: var(--forma-focus-clearance);
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-focus-clearance);
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar :is(button, select, input):not([popover] *),
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-stage[data-slide-posture] > :is(nav, .presentation-deck-supporting) > button,
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport > .presentation-deck-reading > .presentation-deck-reader-content > details > summary {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport {
+    box-sizing: border-box;
+    padding: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport > .presentation-deck-reading {
+    scroll-padding-block: var(--forma-focus-clearance);
+    scroll-margin-block: var(--forma-focus-clearance);
+    padding-block-end: var(--forma-focus-clearance);
+  }
+}
+
+/* Closing Tools keeps the same complete-height native stage. The intrinsic
+ * trigger scrolls in the existing deck instead of consuming reading space. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) {
+    grid-template-rows: max-content 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) > .presentation-deck-stage[data-slide-posture] {
+    block-size: auto;
+    margin: var(--forma-focus-clearance);
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-focus-clearance);
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) > .presentation-deck-toolbar :is(button, select, input):not([popover] *),
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) > .presentation-deck-stage[data-slide-posture] > :is(nav, .presentation-deck-supporting) > button {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* List uses the same sequential native fit as open slideshow Tools. Its
+ * existing list remains the content scroller, with room to reveal controls. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) {
+    grid-template-rows: max-content 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar[data-tools-open="true"] {
+    max-block-size: none;
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar > div {
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar :is(button, select, input):not([popover] *) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-list {
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-list :is(button, summary, a[href]) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Compact navigation has no clipped inner viewport: keep native focus paint
+ * in the stage gutters and let its existing peers wrap when space is tight. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+}
+
+/* The Canvas Slides footer is a native action row, not a deck overlay. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card > footer {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    display: flex;
+    max-inline-size: 100%;
+    padding: var(--forma-focus-clearance);
+    border: 0;
+    border-block-start: 1px solid var(--forma-color-border);
+    border-radius: 0;
+  }
+}
+
+/* The Document Slides footer reuses the native action row, not a deck overlay. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .document-artifact-view[data-artifact-kind="slides"][data-output-focus] > .document-artifact-reader {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"][data-output-focus] > .document-artifact-reader > footer {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    display: flex;
+    max-inline-size: 100%;
+    padding: var(--forma-focus-clearance);
+    border: 0;
+    border-block-start: 1px solid var(--forma-color-border);
+    border-radius: 0;
   }
 }

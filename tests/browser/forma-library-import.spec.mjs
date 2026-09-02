@@ -90,7 +90,7 @@ test("Library: a genuine retained archive can be inspected and dismissed without
   const openPreview = async prefix => {
     await tabTo(page, file);
     await expect(file).toBeFocused();
-    await verifyFocus(page, file, testInfo, prefix + "-input-label", { nativeFileLabel:true });
+    await verifyFocus(page, file, testInfo, prefix + "-input-label", { nativeFileLabel:true, overlaySelectors:[".forma-assistant-launcher", ":popover-open", ":modal", ".topbar"] });
     // Native file-dialog chrome is not certified: Playwright supplies only the
     // already-existing file to the real input; Forma does its real local parse.
     await file.setInputFiles([]);
@@ -122,7 +122,7 @@ test("Library: a genuine retained archive can be inspected and dismissed without
   await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
   await observeActive("library-03-dismiss-native-outcome");
-  await verifyFocus(page, file, testInfo, "library-03-restored-input-label", { nativeFileLabel:true });
+  await verifyFocus(page, file, testInfo, "library-03-restored-input-label", { nativeFileLabel:true, overlaySelectors:[".forma-assistant-launcher", ":popover-open", ":modal", ".topbar"] });
   expect(await catalog()).toEqual(before);
   expect(page.url()).toBe(beforeURL);
   await page.keyboard.press("Tab");
@@ -132,7 +132,7 @@ test("Library: a genuine retained archive can be inspected and dismissed without
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await observeActive("library-06-escape-native-outcome");
-  await verifyFocus(page, file, testInfo, "library-06-restored-input-label", { nativeFileLabel:true });
+  await verifyFocus(page, file, testInfo, "library-06-restored-input-label", { nativeFileLabel:true, overlaySelectors:[".forma-assistant-launcher", ":popover-open", ":modal", ".topbar"] });
   expect(await catalog()).toEqual(before);
   expect(page.url()).toBe(beforeURL);
   await page.keyboard.press("Tab");

@@ -222,10 +222,202 @@ export function measureFormaFocusVisibility(target, options = {}) {
   const overlaySelectors = options.overlaySelectors || [".forma-assistant-launcher", ":popover-open", ":modal"];
   const overlayNodes = queryAll(overlaySelectors);
   const overlays = overlayNodes.map(element => ({ node: element, measurement: geometry(element) }));
+  // This is a source-owned ordinary light-DOM proof, not a general paint-order
+  // engine. In one native modal, a positive-z direct button is above a lower
+  // direct header only when that header cannot contribute higher descendant
+  // contexts or generated paint. Closed shadow trees remain outside coverage.
+  const overlayPaintOrderProofs = [];
+  const modalHeaderBelowFocusedButton = (element, area, header, measurement) => {
+    if (element !== target || paintTarget !== target || area !== envelope
+      || !(element instanceof win.HTMLButtonElement) || header.tagName !== "HEADER") return null;
+    const card = element.parentElement, modal = card?.parentElement;
+    if (!card || header.parentElement !== card || !(modal instanceof win.HTMLDialogElement) || !modal.matches(":modal")) return null;
+    const proof = { kind: "native-modal-direct-header-below-positive-button", proven: false, scope: "observable-ordinary-light-dom-only",
+      control: describe(element), header: describe(header), card: describe(card), modal: describe(modal),
+      controlZ: null, headerZ: null, audit: [], rejected: [], geometryUnknown: measurement.unknown };
+    const reject = (node, reason) => proof.rejected.push({ element: describe(node), reason });
+    const integerZ = value => /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null;
+    const controlStyle = win.getComputedStyle(element), headerStyle = win.getComputedStyle(header);
+    proof.controlZ = integerZ(controlStyle.zIndex);
+    proof.headerZ = headerStyle.zIndex === "auto" ? 0 : integerZ(headerStyle.zIndex);
+    if (proof.controlZ === null || proof.controlZ <= 0) reject(element, "control has no strictly positive integer stacking level");
+    if (proof.headerZ === null || proof.controlZ === null || proof.headerZ >= proof.controlZ) reject(header, "header is not at a strictly lower stacking level");
+    if (!active || !focusVisible || !outlinePainted || element.matches(":disabled") || win !== win.top) {
+      reject(element, "not the current enabled keyboard-focused painted top-document native button");
+    }
+    if (controlStyle.position !== "absolute" || headerStyle.position !== "relative") {
+      reject(header, "unsupported direct-sibling positioning");
+    }
+    if (card.tagName !== "ARTICLE" || win.getComputedStyle(card).position !== "relative"
+      || win.getComputedStyle(card).display !== "grid" || modal.children.length !== 1 || modal.firstElementChild !== card
+      || card.querySelectorAll(":scope > header").length !== 1 || layer(element) !== modal || layer(header) !== modal
+      || doc.querySelectorAll("dialog:modal").length !== 1) reject(card, "not the exact single native modal/grid-card/direct-header topology");
+    if ([element, header, card, modal].some(node => node.getClientRects().length !== 1)) reject(card, "fragmented direct topology");
+    if (focusGeometry.unknown.length || measurement.unknown.some(entry =>
+      entry.reasons.some(reason => reason !== "rounded clipping near envelope"))) {
+      reject(header, "geometry uncertainty other than retained subtractive header rounding");
+    }
+
+    const properties = ["display", "position", "z-index", "opacity", "visibility", "pointer-events", "transform", "translate", "rotate", "scale",
+      "perspective", "transform-style", "filter", "backdrop-filter", "clip-path", "clip", "mask-image",
+      "contain", "container-type", "content-visibility", "mix-blend-mode", "isolation", "will-change", "zoom", "view-transition-name"];
+    const plain = { transform: "none", translate: "none", rotate: "none", scale: "none", perspective: "none",
+      "transform-style": "flat", filter: "none", "backdrop-filter": "none", "clip-path": "none", clip: "auto", "mask-image": "none",
+      contain: "none", "container-type": "normal", "content-visibility": "visible", "mix-blend-mode": "normal",
+      isolation: "auto", "will-change": "auto", "view-transition-name": "none" };
+    const ordinaryTags = new Set(["BUTTON", "ARTICLE", "DIALOG", "HEADER", "DIV", "SPAN", "P",
+      "H1", "H2", "H3", "H4", "H5", "H6", "B", "STRONG", "EM", "I", "SMALL"]);
+    const headerNodes = [header, ...header.querySelectorAll("*")];
+    for (const node of [element, card, modal, ...headerNodes]) {
+      const computed = win.getComputedStyle(node);
+      const css = Object.fromEntries(properties.map(name => [name, computed.getPropertyValue(name)]));
+      const inHeader = headerNodes.includes(node), descendant = inHeader && node !== header;
+      const pseudo = ["::before", "::after"].map(selector => {
+        const value = win.getComputedStyle(node, selector);
+        return { selector, content: value.content, display: value.display, position: value.position, zIndex: value.zIndex };
+      });
+      // A single finite blur of the exact common modal's backdrop is behind
+      // its own children; it does not reorder the audited header and button.
+      // This does not admit foreground filter or any descendant backdrop effect.
+      const modalBlur = node === modal ? /^blur\((\d+(?:\.\d+)?|\.\d+)px\)$/.exec(css["backdrop-filter"]) : null;
+      const commonModalBackdropBlur = Boolean(modalBlur && Number.isFinite(Number(modalBlur[1])));
+      proof.audit.push({ element: describe(node), inHeader, css, pseudo, commonModalBackdropBlur,
+        lightRoot: node.getRootNode() === doc, openShadow: Boolean(node.shadowRoot), assignedSlot: Boolean(node.assignedSlot) });
+      if (!(node instanceof win.HTMLElement) || !ordinaryTags.has(node.tagName) || !node.isConnected
+        || node.ownerDocument !== doc || node.getRootNode() !== doc || node.shadowRoot || node.assignedSlot || node.hasAttribute("is")) {
+        reject(node, "nonordinary, shadow, slotted, customized or stale observable subtree");
+      }
+      if (node !== modal && node.matches(":modal, :popover-open")) reject(node, "separate native top layer in audited subtree");
+      if (Object.entries(plain).some(([name, expected]) => css[name] !== expected
+          && !(name === "backdrop-filter" && commonModalBackdropBlur))
+        || !["1", "normal"].includes(css.zoom) || Number(css.opacity) !== 1) reject(node, "unsupported paint/context effect");
+      if (!["none", "contents"].includes(css.display) && css.visibility !== "visible") reject(node, "unsupported visibility");
+      if (css.display === "contents") reject(node, "boxless subtree is not supported");
+      if (pseudo.some(value => !["none", "normal"].includes(value.content) && value.display !== "none")) {
+        reject(node, "generated pseudo-element paint is not certified");
+      }
+      if (descendant) {
+        const z = css["z-index"] === "auto" ? 0 : integerZ(css["z-index"]);
+        if (z === null || z > 0 || !["static", "relative", "absolute"].includes(css.position)) {
+          reject(node, "higher or unsupported descendant stacking context");
+        }
+      }
+    }
+    // Clipping only subtracts from the audited lower header. Its raw rounded
+    // diagnostics stay in the result; no body-hit sample establishes z-order.
+    proof.proven = proof.rejected.length === 0;
+    return proof;
+  };
+  // This separate proof orders only two exact native paint roots. A hit on the
+  // focused button is not ring clearance: both atomic roots must be observed.
+  // Any additional rendered root (including a closing popover) stays unknown.
+  let renderedNativeInventory = null;
+  const ownModalBelowFocusedAutoPopover = (element, area, overlay, measurement) => {
+    if (element !== target || paintTarget !== target || area !== envelope
+      || !(element instanceof win.HTMLButtonElement) || !(overlay instanceof win.HTMLElement)) return null;
+    const popover = layer(element), modal = layer(overlay);
+    if (!(popover instanceof win.HTMLElement) || popover.popover !== "auto" || !popover.matches(":popover-open")
+      || !(modal instanceof win.HTMLDialogElement) || !modal.matches(":modal")
+      || popover === modal || !modal.contains(popover)) return null;
+    const proof = { kind: "native-auto-popover-above-own-modal-content", proven: false,
+      scope: "two-rendered-native-roots-observable-light-dom-only", control: describe(element),
+      overlay: describe(overlay), popover: describe(popover), modal: describe(modal),
+      chains: [], renderedRoots: [], rootBoxes: [], witness: null, rejected: [],
+      geometryUnknown: measurement.unknown };
+    const reject = (node, reason) => proof.rejected.push({ element: describe(node), reason });
+    if (!active || !focusVisible || !outlinePainted || element.matches(":disabled") || win !== win.top) {
+      reject(element, "not the current enabled keyboard-focused painted top-document native button");
+    }
+    if (focusGeometry.unknown.length || measurement.unknown.length) reject(overlay, "unresolved target or overlay geometry");
+    const modals = queryAll(["dialog:modal"]);
+    if (!modal.open || modals.length !== 1 || modals[0] !== modal || doc.fullscreenElement) {
+      reject(modal, "not the unique current native modal without fullscreen");
+    }
+    for (const start of [element, overlay]) {
+      const chain = [];
+      for (let node = start; node; node = node.parentElement) {
+        const renderedOverlay = win.getComputedStyle(node).getPropertyValue("overlay");
+        chain.push({ element: describe(node), overlay: renderedOverlay });
+        if (!node.isConnected || node.ownerDocument !== doc || node.getRootNode() !== doc
+          || node.shadowRoot || node.assignedSlot || node.tagName === "SLOT" || node.hasAttribute("is")) {
+          reject(node, "noncurrent, shadow, slotted or customized owner chain");
+        }
+        if (renderedOverlay !== (node === popover || node === modal ? "auto" : "none")
+          || node.matches(":fullscreen")) reject(node, "unrecognized rendered native layer in owner chain");
+        if (node === modal) break;
+      }
+      proof.chains.push(chain);
+      if (start.closest("dialog:modal") !== modal) reject(start, "owner chain does not terminate in the same current modal");
+    }
+    // A selected lower overlay cannot smuggle an unobservable native root in
+    // a custom/shadow subtree. Unrelated closed shadow trees remain a limit.
+    for (const node of [overlay, ...overlay.querySelectorAll("*")]) {
+      if (node.getRootNode() !== doc || node.shadowRoot || node.assignedSlot || node.tagName === "SLOT"
+        || node.localName.includes("-") || node.hasAttribute("is")) reject(node, "nonordinary observable overlay subtree");
+    }
+    if (!renderedNativeInventory) renderedNativeInventory = queryAll(["*"])
+      .map(node => ({ node, value: win.getComputedStyle(node).getPropertyValue("overlay") }))
+      .filter(entry => entry.value !== "none");
+    proof.renderedRoots = renderedNativeInventory.map(({ node, value }) => ({ element: describe(node), overlay: value,
+      popover: node.popover ?? null, popoverOpen: node.matches(":popover-open"), modal: node.matches(":modal") }));
+    if (renderedNativeInventory.length !== 2
+      || ![popover, modal].every(root => renderedNativeInventory.some(entry => entry.node === root && entry.value === "auto"))) {
+      reject(modal, "additional, pending-removal or unsupported rendered native layer");
+    }
+    const finitePx = value => /^(?:\d+(?:\.\d+)?|\.\d+)px$/.test(value) && Number.isFinite(Number.parseFloat(value));
+    const safeBoxes = [popover, modal].map(root => {
+      const measured = geometry(root), computed = win.getComputedStyle(root);
+      const radii = [computed.borderTopLeftRadius, computed.borderTopRightRadius, computed.borderBottomLeftRadius, computed.borderBottomRightRadius];
+      const corners = ["corner-top-left-shape", "corner-top-right-shape", "corner-bottom-left-shape", "corner-bottom-right-shape"]
+        .map(name => computed.getPropertyValue(name));
+      const parts = radii.flatMap(value => value.trim().split(/\s+/));
+      const supported = radii.every(value => value.trim().split(/\s+/).length <= 2) && parts.every(finitePx)
+        && corners.every(value => value === "round");
+      const radius = supported ? Math.max(0, ...parts.map(Number.parseFloat)) : NaN;
+      const box = measured.raw;
+      const safe = rectFromEdges({ left: box.left + radius, top: box.top + radius,
+        right: box.right - radius, bottom: box.bottom - radius });
+      proof.rootBoxes.push({ element: describe(root), raw: box, safe: supported ? safe : null, radii, corners,
+        pointerEvents: computed.pointerEvents, geometryUnknown: measured.unknown });
+      if (!supported || !positive(safe) || !measured.paintedBox || measured.unknown.length
+        || root.getClientRects().length !== 1 || computed.pointerEvents !== "auto") {
+        reject(root, "native root has no supported single hittable interior");
+      }
+      return safe;
+    });
+    if (!proof.rejected.length) {
+      const common = rectFromEdges({ left: Math.max(viewport.left, ...safeBoxes.map(box => box.left)),
+        top: Math.max(viewport.top, ...safeBoxes.map(box => box.top)),
+        right: Math.min(viewport.right, ...safeBoxes.map(box => box.right)),
+        bottom: Math.min(viewport.bottom, ...safeBoxes.map(box => box.bottom)) });
+      if (!positive(common)) reject(popover, "native roots have no common observed interior");
+      else {
+        const x = (common.left + common.right) / 2, y = (common.top + common.bottom) / 2;
+        const stack = doc.elementsFromPoint(x, y), popoverIndex = stack.indexOf(popover), modalIndex = stack.indexOf(modal);
+        proof.witness = { x, y, common, popoverIndex, modalIndex, stack: stack.map(describe) };
+        if (popoverIndex < 0 || modalIndex < 0 || popoverIndex !== stack.lastIndexOf(popover)
+          || modalIndex !== stack.lastIndexOf(modal) || popoverIndex >= modalIndex) {
+          reject(popover, "both exact atomic roots are not uniquely observed in descending paint order");
+        }
+      }
+    }
+    proof.proven = proof.rejected.length === 0;
+    return proof;
+  };
   const collisions = (element, area) => overlays.flatMap(({ node, measurement }) => {
     if (containsNode(node, element) || containsNode(element, node) || !measurement.paintedBox || !overlap(area, measurement.visible)) return [];
     const elementLayer = layer(element), overlayLayer = layer(node);
     if (elementLayer && !overlayLayer) return []; // Ordinary DOM cannot paint above the native top layer.
+    const nativeOrder = ownModalBelowFocusedAutoPopover(element, area, node, measurement);
+    if (nativeOrder) {
+      overlayPaintOrderProofs.push(nativeOrder);
+      if (nativeOrder.proven) return [];
+    }
+    const paintOrder = modalHeaderBelowFocusedButton(element, area, node, measurement);
+    if (paintOrder) {
+      overlayPaintOrderProofs.push(paintOrder);
+      if (paintOrder.proven) return [];
+    }
     const intersection = rectFromEdges({ left: Math.max(area.left, measurement.visible.left), top: Math.max(area.top, measurement.visible.top),
       right: Math.min(area.right, measurement.visible.right), bottom: Math.min(area.bottom, measurement.visible.bottom) });
     const elementBox = rectangle(element);
@@ -286,9 +478,12 @@ export function measureFormaFocusVisibility(target, options = {}) {
     coverage: { overlaySelectors, regionSelectors, checkVisibleControls: Boolean(options.checkVisibleControls),
       otherControls: "Foreign-overlay obstruction only; rounded clipping disjoint from all overlays is retained but not a failure.",
       openShadowRoots: roots.length - 1 },
-    overlays: overlays.map(({ measurement }) => measurement), regions, controls, failures, unassessed,
+    overlays: overlays.map(({ measurement }) => measurement), overlayPaintOrderProofs, regions, controls, failures, unassessed,
     limits: ["Finite body hit samples plus explicit overlay rectangle checks; not exhaustive pixel paint order.",
       "Decorative overlay shadows outside border boxes and pseudo-elements are not certified.",
+      "A current positive-z direct native modal button can discharge an audited lower ordinary sibling header; raw rounded diagnostics remain.",
+      "An exact auto-popover can discharge own-modal content only with two known rendered native roots and their observed atomic-root order; other layers remain unassessed.",
+      "Native-root order is not sampled ring-pixel clearance; known geometry and all other collision/paint guards remain independent.",
       "Focused-control/critical-region complex geometry and non-none target shadows cannot become an automatic pass.",
       "Round-corner proofs use a conservative inner rectangle for ordinary Chromium boxes; unsupported shapes, axes and scrollbars remain unassessed.",
       "Other controls' unresolved clipping-only rounded corners are not certified; disjoint conservative overlay boxes can be cleared.",

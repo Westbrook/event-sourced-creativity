@@ -120,6 +120,14 @@ store.events.set([
   {...event,eventId:"fixture-document",sequence:2,type:"DocumentCreated",payload:{document_id:documentId,project_id:projectId,title:"Responsive acceptance"}},
   {...event,eventId:"fixture-source",sequence:3,type:"BlockCreated",payload:{block_id:"approved-source",document_id:documentId,project_id:projectId,type:"direction",handle:"direction/approved-research",properties:{label:"Approved research",text:"Approved responsive presentation source"}}},
 ]);
+if(parameters.has("isolated")){
+  document.querySelector("#viewer").hidden=true;
+  document.querySelector("#preview").hidden=true;
+  document.querySelector("#shared").hidden=false;
+  const {mountIsolatedPresentation}=await import("/tests/presentation-responsive-isolated.fixture.mjs");
+  await mountIsolatedPresentation({surface:parameters.get("isolated"),root:document.querySelector("#shared"),
+    items,presentation,event,documentId,projectId});
+}else{
 const deck=document.querySelector("#deck");
 const thumbnail=document.querySelector("#thumbnail");
 deck.preferenceKey=`responsive-acceptance-${parameters.get("case")??"default"}-${presentation.stylePreset}`;
@@ -229,4 +237,5 @@ if(surface==="shared"){
   shared.token="responsive-fixture";
   document.querySelector("#shared").append(shared);
   await shared.updateComplete;
+}
 }

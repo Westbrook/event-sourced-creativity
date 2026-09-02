@@ -117,3 +117,38 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("actual LocaleController loc
     if (previousRegistry === undefined) delete globalThis.customElements; else globalThis.customElements = previousRegistry;
   }
 });
+
+test("generated Popover trigger name remains explicitly author-localized text", t => {
+  const tag = "forma-ui-popover", name = "triggerAccessibleName", attributeName = "trigger-accessible-name";
+  const popover = declarations.find(value => value.tagName === tag);
+  assert.ok(popover, "root regenerated the actual component manifest after E2 installation");
+  const member = popover.members.find(value => value.name === name);
+  const attribute = popover.attributes.find(value => value.name === attributeName);
+  assert.ok(member && attribute, "the actual installed public field and attribute are generated, not fabricated here");
+  const description = "Optional accessible name for the native trigger; visible text remains unchanged.";
+  assert.equal(member.kind, "field"); assert.equal(member.type.text, "string");
+  assert.equal(member.attribute, attributeName); assert.equal(member.default, '""');
+  assert.equal(member.description, description);
+  assert.equal(attribute.fieldName, name); assert.equal(attribute.type.text, "string");
+  assert.equal(attribute.description, description);
+  const source = readFileSync(new URL("../src/components/design-system/feedback.ts", import.meta.url), "utf8");
+  assert.ok(source.includes('triggerAccessibleName: { type: String, attribute: "trigger-accessible-name" }'));
+  assert.ok(source.includes("aria-label=" + "$" + "{this.triggerAccessibleName?.trim() || nothing}"));
+  const id = formaSystemMessageId(description);
+  assert.equal(id, "system.auto.vcfvld.80");
+  assert.equal(englishMessages[id], description);
+  for (const locale of ["fr", "ar", "ja"]) {
+    assert.ok(catalogs[locale][id]);
+    assert.notEqual(catalogs[locale][id], description, "the existing E2 documentation companion supplies " + locale);
+  }
+  const generator = readFileSync(new URL("../scripts/generate-custom-elements-manifest.mjs", import.meta.url), "utf8");
+  const sourcePolicy = generator.match(/const authorTextAttributes = new Set\(\[([^\]]+)\]\);/u);
+  assert.ok(sourcePolicy, "inspect the existing authored-text inventory, not a replacement metadata system");
+  const current = {
+    sourceListsAuthorText: sourcePolicy[1].includes(JSON.stringify(attributeName)),
+    manifestListsAuthorText: popover["x-forma"].i18n.authorTextAttributes.includes(attributeName),
+  };
+  t.diagnostic("E2_TRIGGER_NAME_CEM " + JSON.stringify({ tag, name, attributeName, ...current }));
+  assert.deepEqual(current, { sourceListsAuthorText: true, manifestListsAuthorText: true },
+    "both the existing source policy and its generated manifest must classify the localized native trigger name");
+});

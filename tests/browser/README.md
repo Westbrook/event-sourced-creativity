@@ -269,3 +269,56 @@ claiming the intentionally covered background is unobscured. Captures use the
 same calibrated observer and whole physical viewport mechanism. This is real
 Chromium rendering under emulated coarse-pointer media, not physical-device,
 touch-tap, coarse 200%-zoom, all Assistant states, AT, or production coverage.
+
+## Optional isolated E5 presentation-renderer probes
+
+These four separately named fixture cases are **not genuine account or
+populated-workflow coverage**. They reuse the original
+`presentation-responsive.fixture.html/.mjs` two-item synthetic presentation,
+actual SharedView, actual DocumentArtifacts, and actual
+FormaCanvasApplication → CanvasApplication classes. No handwritten viewer
+toolbar substitutes for those owners. Shared public-locale chrome, real share
+tokens, permission issuance, review/export, providers, AT and production are
+outside this fixture's scope.
+
+Root must separately have the existing source development server on loopback
+4180; the built genuine-app preview remains on 4178. The fixture project uses
+`FORMA_E5_SOURCE_BASE_URL` (default `http://127.0.0.1:4180`); they do not replace
+the original project's `FORMA_A11Y_BASE_URL`. Enable their membership explicitly:
+
+```sh
+FORMA_A11Y_ISOLATED_E5=1 pnpm test:a11y
+```
+
+At this packet's preimage the original 51-case suite contains 11 calibration
+and 40 app-flow cases. The four isolated cases make 55:
+Shared, Document and Canvas at French true desktop 200%, plus Canvas at English
+844×390. One isolated project declares those four explicit profile rows with
+test.describe/test.use geometry; there is no grep, name filter or skipped case.
+Without the flag, every original project selection remains unchanged.
+Use the normal complete source/finite gates before interpreting native results;
+the new optional probes are not a replacement for those gates or the original 51-case suite.
+
+The opt-in fixture declares its synthetic session/events through the real
+Store's public signals before mounting. Its only synthetic successful reads are
+the exact shared-projection GET, empty Document preserved-candidate GET,
+and Canvas event-poll GET. All other fixture fetches reject. Known
+observational telemetry is aborted without any successful
+ACK. A second context-wide guard, installed before navigation, aborts and fails
+every API/method bypass. No read or write reaches the account/API server; no
+provider or server DB is used. Real Canvas IndexedDB/schema and localStorage
+activity is allowed only within the existing fresh temporary browser profile;
+this is not a claim of zero browser-local writes. The declared legacy fixture
+session has no permissionEpoch, so native presence admission is not covered.
+
+Entry and return always use the actual current native button. Canvas card
+transforms and paint containment remain untouched: the unchanged observer's raw
+entry/return result is attached with explicit UNASSESSED_ENTRY_GEOMETRY, never
+counted as a clearance pass. Strict modal controls stop at the real :modal
+boundary and retain all default overlays; Canvas Focus/Close additionally
+assess the exact current sibling header. More actions are opened and traversed
+without executing them, and the Shared reading toggle is exercised without
+claiming reading-region glyph/fit certification. Normal/focused controls,
+Escape, Close, original source, native fields, current owner and invoker, and
+forbidden requests remain asserted. Layout boxes/ranges and screenshots are
+separately timed diagnostics, not a same-frame or complete-paint certificate.

@@ -27,6 +27,13 @@ test("Project contents: an ordinary unsent document dialog reflows and closes th
   const custody = () => owner.locator(".document-library-grid > article.document-card").evaluateAll(elements =>
     elements.map(element => ({ handle: element.querySelector("header small")?.textContent, title: element.querySelector("h3")?.textContent, text: element.textContent })));
   await expect(owner.locator(".document-library-grid > article.document-card").first()).toBeVisible();
+  // A visible card can still be awaiting its existing delivery read. Keep the
+  // complete custody snapshot, but start after each real controller has rendered.
+  for (const card of await owner.locator(".document-library-grid > article.document-card").all()) {
+    const delivery = card.locator(":scope > forma-output-requirements");
+    await expect(delivery).toHaveCount(1);
+    await expect(delivery.locator(':scope > section:not([aria-busy="true"])')).toHaveCount(1);
+  }
   const before = await custody(), beforeURL = page.url();
   expect(before.length).toBeGreaterThan(0);
   await attachJSON(testInfo, "project-contents-before", before);

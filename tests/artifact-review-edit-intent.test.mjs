@@ -447,3 +447,135 @@ test("finished edit: genuine source denial withholds private cleanup but keeps A
   assert.equal(p.retained().content_markdown,"Original A committed before source denial.");
   assert.deepEqual(p.h.store.content.get(),{});assert.equal(p.editor(),undefined);
 });
+
+test("E4 pending exact correction blocks incidental Close and preserves newer A-to-B-to-A until explicit Cancel",async t=>{
+  const p=await editSetup(t,{count:2}),reply=holdEditReply(p),source=p.h.store.captureSourceOwnership();
+  const owner={authorizationKey:source.authorization.key,actorUserId:p.state.owner,projectId:p.state.projectId,sourceGeneration:source.generation};
+  const rows=()=>Object.fromEntries(Object.keys(p.beforeFinance).map(table=>[table,p.state.sqlite.prepare("SELECT * FROM "+table+" ORDER BY rowid").all()]));
+  const beforeRows=rows(),a="A finished correction submitted by this one explicit Save.";
+  p.type(a);p.click(p.button("#saveArtifactEdit"));
+  const dispatched=await reply.entered.promise;assert.equal(dispatched.status,200,JSON.stringify(dispatched.body));
+  p.type("Newer unsubmitted B.");p.type(a);
+  assert.equal(p.editor().value,a);assert.equal(Object.hasOwn(p.button("#cancelArtifactEdit").attributes,"disabled"),true);
+  const close=p.own("button").find(node=>node.attributes["aria-label"]===p.f.i18n.t("action.close","Close"));
+  p.click(close);p.f.draw();
+  const pending={open:Boolean(p.view()?.open),raw:p.editor()?.value,toast:p.h.store.ui.toast};
+  const beforeAckFocus=p.f.trace.filter(value=>String(value).startsWith("focus:")).length;
+  reply.release.resolve();assert.equal(await p.finish(),true);
+  const afterAck={open:Boolean(p.view()?.open),raw:p.editor()?.value,
+    focusCalls:p.f.trace.filter(value=>String(value).startsWith("focus:")).length};
+  let cancelled=false;
+  if(p.editor()){
+    const cancel=p.button("#cancelArtifactEdit");assert.equal(Object.hasOwn(cancel.attributes,"disabled"),false);
+    p.click(cancel);p.f.draw();cancelled=p.editor()===undefined;
+  }
+  assert.equal(p.calls.length,1);assert.equal(p.patches().length,1);assert.equal(p.revision(),1);
+  assert.equal(p.retained().content_markdown,a);assert.deepEqual(rows(),beforeRows);
+  // Reuse the existing published-and-pruned oracle, not a retained success ledger.
+  const committed=dispatched.body.appended.filter(row=>row.actor!=="worker:validator");
+  assert.equal(committed.length,1);assert.equal(committed[0].type,"DocumentArtifactEdited");
+  assert.equal(committed[0].actor,"user:"+owner.actorUserId);assert.equal(committed[0].payload.artifact_id,"saved-scene-story");
+  assert.equal(committed[0].payload.document_id,p.state.documentId);assert.equal(committed[0].payload.project_id,owner.projectId);
+  assert.equal(committed[0].payload.revision,1);assert.equal(committed[0].payload.content_ref,p.state.contentRef);
+  for(const event of dispatched.body.appended)assert.deepEqual(p.h.store.events.get().find(row=>row.eventId===event.eventId),event);
+  assert.ok(p.h.store.sourceOwnershipActive(source));
+  assert.equal(p.h.store.session.get().user.userId,owner.actorUserId);assert.equal(p.h.store.session.get().projectContext.projectId,owner.projectId);
+  assert.deepEqual(p.h.store.eventWriteAcknowledgments(owner),[],"the actual observed ACK is published and pruned, not lost or replaced");
+  assert.equal(externalRequests,0);
+  assert.equal(pending.open,true,"the active Save remains in its original correction owner");
+  assert.equal(pending.raw,a);assert.equal(pending.toast,"Wait for the current save to finish before closing this output.");
+  assert.equal(afterAck.open,true);assert.equal(afterAck.raw,a,"A-to-B-to-A remains newer input, not an implicit discard");
+  assert.equal(afterAck.focusCalls,beforeAckFocus,"ACK cleanup never acquires a fresh user-focus lease");
+  assert.equal(cancelled,true);
+});
+
+test("E4 an old pending Save does not trap a later read-only opening of the same exact output",async t=>{
+  const p=await editSetup(t),reply=holdEditReply(p),source=p.h.store.captureSourceOwnership();
+  const owner={authorizationKey:source.authorization.key,actorUserId:p.state.owner,projectId:p.state.projectId,sourceGeneration:source.generation};
+  const rows=()=>Object.fromEntries(Object.keys(p.beforeFinance).map(table=>[table,p.state.sqlite.prepare("SELECT * FROM "+table+" ORDER BY rowid").all()]));
+  const beforeRows=rows(),a="Original A saved before its presentation retires.";
+  const labelOf=node=>{
+    assert.ok(node&&node.isConnected&&p.f.renderer.nodes.includes(node));
+    const at=p.f.renderer.markup.indexOf(node.full);assert.ok(at>=0);
+    return p.f.renderer.markup.slice(at+node.full.length,p.f.renderer.markup.indexOf("</button>",at)).replace(/<[^>]*>/gu,"").replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&amp;","&").trim();
+  };
+  const originalPrimaryLabel=labelOf(p.button("#showArtifactIntent"));assert.ok(originalPrimaryLabel);
+  const originalRaw=p.h.store.content.get()[p.state.contentRef],originalRoute=p.h.store.route.get();
+  const originalEventIds=p.h.store.events.get().map(event=>event.eventId);
+  p.type(a);p.click(p.button("#saveArtifactEdit"));
+  const dispatched=await reply.entered.promise;assert.equal(dispatched.status,200,JSON.stringify(dispatched.body));
+  p.view().close();p.f.draw();assert.equal(p.editor(),undefined,"forced native cleanup is not an ordinary dismissal request");
+  await p.open();assert.ok(p.view()?.open);assert.equal(p.editor(),undefined);
+  const closedby=p.view().attributes.closedby;
+  const menu=()=>p.f.renderer.query(p.f.host,"forma-ui-popover").find(value=>String(value.attributes?.class??"").split(/\s+/u).includes("artifact-viewer-actions-popover"));
+  assert.ok(menu());menu().querySelector(".ui-popover-trigger").click();await p.f.flush();
+  assert.equal(menu().querySelector(".ui-popover-panel").matches(":popover-open"),true);
+  const edit=p.button("#startArtifactEdit");assert.ok(edit&&edit.isConnected&&p.f.renderer.nodes.includes(edit));
+  const busyDisabled=Object.hasOwn(edit.attributes,"disabled"),busyTitle=edit.attributes.title;
+  const offset=p.f.renderer.markup.indexOf(edit.full);assert.ok(offset>=0);
+  const busyLabel=p.f.renderer.markup.slice(offset+edit.full.length,p.f.renderer.markup.indexOf("</button>",offset)).replace(/<[^>]*>/gu,"").trim();
+  // Reuse the current native disabled-button default; do not remove disabled
+  // or force the old handler to create an editor. Then separately challenge
+  // the current target's busy admission if the native default kept it current.
+  edit.click();p.f.draw();const nativeEntryBlocked=p.editor()===undefined;
+  let targetEntryBlocked=false;
+  if(nativeEntryBlocked){
+    const current=p.button("#startArtifactEdit");assert.ok(current&&current.isConnected&&p.f.renderer.nodes.includes(current));
+    await current.handlers.click.call(p.f.host,{target:current,currentTarget:current});p.f.draw();
+    targetEntryBlocked=p.editor()===undefined;
+  }
+  // The same current read-only presentation owns both pending actions. Keep
+  // the native disabled default and the existing target refusal distinct.
+  const readOnlyState=()=>({open:Boolean(p.view()?.open),editing:Boolean(p.editor()),
+    menuOpen:Boolean(menu()?.querySelector(".ui-popover-panel")?.matches(":popover-open")),
+    source:p.h.store.sourceOwnershipActive(source),actor:p.h.store.session.get()?.user.userId,
+    project:p.h.store.session.get()?.projectContext?.projectId,document:p.f.host.documentId,
+    route:p.h.store.route.get(),raw:p.h.store.content.get()[p.state.contentRef],
+    eventIds:p.h.store.events.get().map(event=>event.eventId),requests:p.h.requests.length});
+  const pendingActions=[];
+  for(const method of ["#showArtifactIntent","#addArtifactContext"]){
+    const node=p.button(method),label=labelOf(node),before=readOnlyState();
+    const presentation={method,disabled:Object.hasOwn(node.attributes,"disabled"),label,
+      accessibleName:node.attributes["aria-label"]??label,title:node.attributes.title??null};
+    node.click();await p.f.flush();const afterNative=readOnlyState();
+    const current=p.button(method);assert.ok(current&&current.isConnected&&p.f.renderer.nodes.includes(current));
+    await current.handlers.click.call(p.f.host,{target:current,currentTarget:current});await p.f.flush();
+    pendingActions.push({presentation,before,afterNative,afterTarget:readOnlyState()});
+  }
+  p.click(p.own("button").find(node=>node.attributes["aria-label"]===p.f.i18n.t("action.close","Close")));p.f.draw();
+  const closed=!p.view()?.open;
+  reply.release.resolve();assert.equal(await p.finish(),true);
+  assert.equal(p.calls.length,1);assert.equal(p.patches().length,1);assert.equal(p.revision(),1);
+  assert.equal(p.retained().content_markdown,a);assert.deepEqual(rows(),beforeRows);
+  // Reuse the existing published-and-pruned oracle, not a retained success ledger.
+  const committed=dispatched.body.appended.filter(row=>row.actor!=="worker:validator");
+  assert.equal(committed.length,1);assert.equal(committed[0].type,"DocumentArtifactEdited");
+  assert.equal(committed[0].actor,"user:"+owner.actorUserId);assert.equal(committed[0].payload.artifact_id,"saved-scene-story");
+  assert.equal(committed[0].payload.document_id,p.state.documentId);assert.equal(committed[0].payload.project_id,owner.projectId);
+  assert.equal(committed[0].payload.revision,1);assert.equal(committed[0].payload.content_ref,p.state.contentRef);
+  for(const event of dispatched.body.appended)assert.deepEqual(p.h.store.events.get().find(row=>row.eventId===event.eventId),event);
+  assert.ok(p.h.store.sourceOwnershipActive(source));
+  assert.equal(p.h.store.session.get().user.userId,owner.actorUserId);assert.equal(p.h.store.session.get().projectContext.projectId,owner.projectId);
+  assert.deepEqual(p.h.store.eventWriteAcknowledgments(owner),[],"the actual observed ACK is published and pruned, not lost or replaced");
+  assert.equal(externalRequests,0);
+  assert.equal(closedby,"any","old component-wide saving state does not own the newer read-only presentation");
+  assert.equal(busyDisabled,true);assert.equal(nativeEntryBlocked,true);assert.equal(targetEntryBlocked,true);
+  assert.equal(busyTitle,"A save is still pending. You can keep viewing or close this output.");
+  assert.equal(busyLabel,"Edit finished output (save pending)","busy status is visible on the existing action, not only in a hover title");
+  assert.equal(closed,true);assert.equal(p.view(),undefined);assert.equal(p.editor(),undefined);
+  for(const action of pendingActions){
+    assert.equal(action.before.open,true);assert.equal(action.before.editing,false);assert.equal(action.before.menuOpen,true);
+    assert.equal(action.before.source,true);assert.equal(action.before.actor,owner.actorUserId);assert.equal(action.before.project,owner.projectId);
+    assert.equal(action.before.document,p.state.documentId);assert.equal(action.before.route,originalRoute);assert.equal(action.before.raw,originalRaw);
+    assert.deepEqual(action.before.eventIds,originalEventIds);
+    assert.deepEqual(action.afterNative,action.before,"native pending activation cannot change the current read-only owner or make a request");
+    assert.deepEqual(action.afterTarget,action.before,"the same target's existing pending guard remains authoritative");
+  }
+  const pendingTitle="A save is still pending. You can keep viewing or close this output.";
+  assert.deepEqual(pendingActions.map(action=>action.presentation),[
+    {method:"#showArtifactIntent",disabled:true,label:originalPrimaryLabel+" (save pending)",
+      accessibleName:originalPrimaryLabel+" (save pending)",title:pendingTitle},
+    {method:"#addArtifactContext",disabled:true,label:"Use & edit short story (save pending)",
+      accessibleName:"Use short story as input (save pending)",title:pendingTitle},
+  ],"both existing actions visibly and accessibly explain the same pending guard");
+});

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calmFullPageNativePorts as ports, fullPageTree, registerCalmFullPageComponents } from "./helpers/calm-full-page-fixture.mjs";
 import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
+import { retainDeferredFocusInvokers } from "./helpers/deferred-focus-invokers.mjs";
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 const sessionValue=()=>({user:{userId:"fixture-operator",email:"operator@example.invalid",displayName:"Fixture operator",role:"admin"},
@@ -671,6 +672,87 @@ for (const locale of ["en", "ja"]) {
     assert.equal(f.title, title); assert.equal(f.announcement(), announcement);
     assert.deepEqual(f.completions, completed); assert.equal(f.mainFocus().length, focused);
     assert.equal(f.modules.length, 1); assert.equal(f.reads.length, 0);
+  });
+}
+
+// E healthy host contracts use the existing complete PublicShare/SharedView
+// classes and real catalogs. Only guest Responses/modal/native controls are
+// finite ports. No CSS geometry, native keyboard, AT or endpoint proof.
+function eSharedNodeText(f, node) {
+  const markup = f.owner().markup, start = markup.indexOf(node.full);
+  const end = markup.indexOf(`</${node.tag}>`, start + node.full.length);
+  assert.ok(start >= 0 && end >= start, "inspect the actual owned node's complete text");
+  return markup.slice(start + node.full.length, end).replace(/<[^>]*>/gu, "").trim();
+}
+function eSharedControl(f, className) {
+  const rows = f.renderer.nodes.filter(node => node.owner === f.owner() && node.tag === "button"
+    && String(node.attributes.class ?? "").split(/\s+/u).includes(className));
+  assert.equal(rows.length, 1, "one current native " + className);
+  assert.equal(rows[0].attributes.type, "button");
+  assert.ok(rows[0].isConnected && typeof rows[0].handlers.click === "function");
+  return rows[0];
+}
+function eSharedSlidesBody(locale) {
+  const body = sharedBody("Shared document " + locale);
+  body.projection.artifacts = [{ id: "shared-slides-A", documentId: "shared-document-A", kind: "slides",
+    title: "Authored slide deck " + locale, titleSource: "authored", summary: "Retained synthetic summary",
+    contentRef: null, itemCount: 2, mediaUrl: null, mediaType: null, provider: "synthetic", modelId: "synthetic",
+    latency: 0, sequence: 1, library: false, sourceEventId: "shared-artifact-A", sourceSurface: null,
+    settings: {}, presentation: null, items: [0, 1].map(index => ({ id: "shared-slide-" + index,
+      title: "Authored slide " + (index + 1), body: "Complete shared slide body " + (index + 1), notes: "",
+      imagePrompt: "", mediaUrl: null, mediaType: null, width: null, height: null, focalPoint: null, slide: null })) }];
+  return body;
+}
+for (const locale of ["en", "fr", "ar", "ja"]) {
+  test("E guest host: " + locale + " exact reading regions keep authored bidi text and independent native locale control", async t => {
+    const f = await hostFixture(t, "shared", locale);
+    const title = "Authored_" + "LongTitle".repeat(18) + "_عنوان_日本語";
+    const project = "مشروع_" + "LongProject".repeat(12) + "_Projet";
+    const body = sharedBody(title); body.projection.projectName = project;
+    await f.reply(0, response(body));
+    const owner = f.owner(), own = f.renderer.nodes.filter(node => node.owner === owner);
+    const mains = own.filter(node => node.tag === "main" && node.attributes.id === "main-content");
+    assert.equal(mains.length, 1); assert.equal(mains[0].attributes.tabindex, "-1");
+    for (const className of ["shared-hero", "shared-grid", "shared-results", "shared-direction"])
+      assert.equal(own.filter(node => String(node.attributes.class ?? "").split(/\s+/u).includes(className)).length, 1);
+    const titleNode = own.find(node => node.tag === "h1");
+    assert.equal(titleNode.attributes.dir, "auto"); assert.equal(eSharedNodeText(f, titleNode), title);
+    const projectNode = own.find(node => node.tag === "bdi");
+    assert.equal(projectNode.attributes.dir, "auto"); assert.equal(eSharedNodeText(f, projectNode), project);
+    const text = owner.markup.replace(/<[^>]*>/gu, " ").replace(/\s+/gu, " ");
+    assert.ok(text.includes(f.i18n.t("shared.description")));
+    assert.ok(text.includes(f.i18n.t("shared.footer")));
+    assert.ok(text.includes(f.i18n.t("shared.expires", undefined, { date: f.i18n.date(new Date(body.share.expiresAt), { dateStyle: "medium", timeStyle: "short" }) }).replace(/\s+/gu, " ")));
+    const language = f.language(); assert.ok(language.isConnected); assert.equal(language.tag, "select");
+    assert.equal(f.sessionReads.length, 0); assert.equal(f.modules.length, 0);
+    assert.deepEqual(f.reads.map(row => row.url), ["/api/shared/token-a"]);
+    assert.equal(f.clipboard.length, 0);
+  });
+  test("E Slides host: " + locale + " shared named dialog retains all native header actions and intentional reading posture", async t => {
+    const f = await hostFixture(t, "shared", locale), body = eSharedSlidesBody(locale);
+    await f.reply(0, response(body));
+    await f.act(eSharedControl(f, "shared-presentation-open"));
+    const dialog = () => f.renderer.nodes.find(node => node.owner === f.owner() && node.tag === "dialog"
+      && String(node.attributes.class ?? "").split(/\s+/u).includes("shared-presentation-dialog"));
+    assert.ok(dialog()); assert.equal(dialog().attributes["aria-labelledby"], "shared-presentation-heading");
+    const heading = f.renderer.nodes.find(node => node.owner === f.owner() && node.attributes.id === "shared-presentation-heading");
+    assert.equal(heading.attributes.dir, "auto"); assert.equal(eSharedNodeText(f, heading), body.projection.artifacts[0].title);
+    assert.equal(eSharedNodeText(f, eSharedControl(f, "shared-presentation-reading-toggle")), f.i18n.system("Read slide"));
+    assert.equal(eSharedNodeText(f, eSharedControl(f, "shared-presentation-focus-toggle")), f.i18n.system("Focus view"));
+    await f.act(eSharedControl(f, "shared-presentation-focus-toggle"));
+    assert.equal(dialog().attributes["data-output-focus"], "true");
+    assert.equal(eSharedNodeText(f, eSharedControl(f, "shared-presentation-focus-toggle")), f.i18n.system("Exit focus"));
+    await f.act(eSharedControl(f, "shared-presentation-reading-toggle"));
+    assert.equal(eSharedNodeText(f, eSharedControl(f, "shared-presentation-reading-toggle")), f.i18n.system("Slide view"));
+    const stage = f.renderer.nodes.find(node => node.owner === f.owner() && node.attributes["data-slide-posture"] === "reading");
+    assert.ok(stage, "actual bound reading posture, not serialized property-marker text");
+    assert.ok(f.owner().markup.includes(body.projection.artifacts[0].items[0].body));
+    const close = f.renderer.nodes.filter(node => node.owner === f.owner() && node.tag === "button"
+      && eSharedNodeText(f, node) === f.i18n.t("action.close", "Close"));
+    assert.equal(close.length, 1); assert.equal(close[0].attributes.type, "button");
+    await f.act(close[0]); assert.equal(dialog(), undefined);
+    assert.deepEqual(f.reads.map(row => row.url), ["/api/shared/token-a"], "only the original finite guest read; no media or provider operation");
+    assert.equal(f.sessionReads.length, 0); assert.equal(f.modules.length, 0); assert.equal(f.clipboard.length, 0);
   });
 }
 
@@ -1960,3 +2042,205 @@ for (const key of ["access", "replay"]) for (const mode of ["clean", "raw-discar
           attempts, sourceOwnerRetired: !originalOwner.isConnected, localResolutionRequests: 0 }));
       } finally { globalThis.fetch = dispatch; }
     });
+
+// E5: actual SharedView boundary navigation, using the existing public host,
+// responses, catalogs, native focus lease and EventPart button lifetime.
+// Modal promotion/state is still the declared finite modalPort, not a browser
+// or an execution of ensureNativeModalDialog. The retained native55 failure
+// establishes the real disabled-button -> BODY behavior; no BODY remapping is
+// invented here. No real share, principal, provider, server or DB is used.
+const eBoundaryNavSelector=".shared-presentation-stage > nav > button";
+const eBoundaryClass=(node,name)=>String(node.attributes?.class??"").split(/\s+/u).includes(name);
+async function eSharedBoundaryHost(t,locale="en"){
+  const f=await hostFixture(t,"shared",locale),owner=f.owner();
+  await registerCalmFullPageComponents(f,["forma-artifact-summary","forma-presentation-slide"]);
+  f.tree=()=>fullPageTree(f);
+  retainDeferredFocusInvokers(f,new Set([owner]));
+  const modalParts=new WeakMap(),modalStates=new WeakSet(),modalWrapped=new WeakSet();
+  const collect=f.renderer.collect.bind(f.renderer),ensure=ports.modalPort.ensureModalDialog;
+  ports.modalPort.ensureModalDialog=dialog=>{
+    const result=ensure(dialog);
+    if(result&&dialog?.owner===owner&&dialog.tag==="dialog"&&eBoundaryClass(dialog,"shared-presentation-dialog")&&dialog.open)
+      modalStates.add(dialog);
+    return result;
+  };
+  t.after(()=>{ports.modalPort.ensureModalDialog=ensure;});
+  f.renderer.collect=(markup,currentOwner)=>{
+    const start=f.renderer.nodes.length,result=collect(markup,currentOwner);
+    if(currentOwner!==owner||!owner.isConnected)return result;
+    const rows=f.renderer.nodes.slice(start).filter(node=>node.owner===owner&&node.tag==="dialog"
+      &&eBoundaryClass(node,"shared-presentation-dialog"));
+    if(rows.length!==1)return result;
+    const fresh=rows[0],token=fresh.full.match(/\s@close=(?:["'])?__bound_(\d+)__(?:["'])?(?=[\s>])/u);
+    const binding=token?f.renderer.bindings[Number(token[1])]:null;
+    if(binding?.owner!==owner||typeof binding.part!=="string"||typeof binding.value!=="function"
+      ||binding.value!==fresh.handlers.close||/\s[.?]?open(?=[\s=>])/u.test(fresh.full))return result;
+    modalParts.set(fresh,binding.part);
+    const previous=(f.renderer.previousNodes??[]).filter(node=>node.owner===owner&&node.tag==="dialog"
+      &&node.isConnected&&modalParts.get(node)===binding.part);
+    let node=fresh;
+    if(previous.length===1){
+      node=previous[0];
+      // Same committed close EventPart, not class/ID/data-derived identity.
+      // Preserve native open state, listeners and node-bound methods.
+      for(const key of["full","attributes","properties","propertyParts","handlers"])node[key]=fresh[key];
+      f.renderer.nodes[f.renderer.nodes.indexOf(fresh)]=node;fresh.isConnected=false;
+    }
+    if(!modalWrapped.has(node)){
+      const matches=node.matches.bind(node);
+      node.matches=selector=>selector===":modal"?node.isConnected&&node.open&&modalStates.has(node):matches(selector);
+      modalWrapped.add(node);
+    }
+    return result;
+  };
+  // Forward this one new descendant selector from the actual authored tree.
+  // Do not manufacture parents, a desired control or a second query grammar.
+  const query=f.renderer.query.bind(f.renderer);
+  f.renderer.query=(currentOwner,selector)=>{
+    if(currentOwner!==owner||selector!==eBoundaryNavSelector)return query(currentOwner,selector);
+    return f.tree().nodes.filter(row=>row.owner===owner&&row.tag==="button"&&row.port?.isConnected
+      &&row.parent?.tag==="nav"&&eBoundaryClass(row.parent.parent,"shared-presentation-stage"))
+      .map(row=>row.port);
+  };
+  const body=eSharedSlidesBody(locale);
+  await f.reply(0,response(body));
+  await f.act(eSharedControl(f,"shared-presentation-open"));
+  const dialog=eSharedBoundaryDialog(f),buttons=eSharedBoundaryButtons(f);
+  assert.ok(dialog.open&&dialog.matches(":modal"),"actual open handler requested the declared finite modal promotion");
+  assert.equal(buttons[0].matches(":disabled"),true);assert.equal(buttons[1].matches(":disabled"),false);
+  const summaries=[...f.renderer.instances.values()].map(row=>row.instance).filter(node=>node.isConnected
+    &&node.tag==="forma-artifact-summary"&&node.parentElement===owner);
+  assert.equal(summaries.length,1);
+  const baseline={owner,dialog,buttons,artifact:summaries[0].artifact,artifactJSON:JSON.stringify(summaries[0].artifact),
+    payloadJSON:JSON.stringify(body),body,route:f.route,token:owner.token,reads:f.reads.map(row=>row.url)};
+  assert.equal(f.native.listeners("focusin"),0);
+  return{f,baseline};
+}
+function eSharedBoundaryDialog(f){
+  const rows=f.tree().nodes.filter(row=>row.owner===f.owner()&&row.tag==="dialog"
+    &&eBoundaryClass(row,"shared-presentation-dialog"));
+  assert.equal(rows.length,1);assert.ok(rows[0].port?.isConnected);return rows[0].port;
+}
+function eSharedBoundaryButtons(f){
+  const rows=f.owner().querySelectorAll(eBoundaryNavSelector);
+  assert.equal(rows.length,2);assert.ok(rows.every(node=>node.isConnected&&node.owner===f.owner()));
+  assert.deepEqual(rows.map(node=>eSharedNodeText(f,node)),[f.i18n.system("Previous"),f.i18n.system("Next")]);
+  assert.ok(rows.every(node=>node.getAttribute("type")==="button"));return rows;
+}
+function eSharedBoundaryIndex(f,index){
+  const rows=f.tree().nodes.filter(row=>row.owner===f.owner()&&row.tag==="span"
+    &&row.attributes.role==="status"&&row.parent?.tag==="nav"&&eBoundaryClass(row.parent.parent,"shared-presentation-stage"));
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].text,f.i18n.system("{count} of {total}",{count:f.i18n.number(index+1),total:f.i18n.number(2)}));
+  assert.ok(f.owner().markup.includes("Complete shared slide body "+(index+1)));
+}
+function eSharedBoundaryCustody(f,b){
+  assert.equal(f.owner(),b.owner);assert.ok(b.owner.isConnected);
+  assert.equal(f.route,b.route);assert.equal(b.owner.token,b.token);
+  assert.equal(eSharedBoundaryDialog(f),b.dialog);
+  assert.deepEqual(eSharedBoundaryButtons(f),b.buttons);
+  const summaries=[...f.renderer.instances.values()].map(row=>row.instance).filter(node=>node.isConnected
+    &&node.tag==="forma-artifact-summary"&&node.parentElement===b.owner);
+  assert.equal(summaries.length,1);assert.equal(summaries[0].artifact,b.artifact);
+  assert.equal(JSON.stringify(summaries[0].artifact),b.artifactJSON);assert.equal(JSON.stringify(b.body),b.payloadJSON);
+  assert.deepEqual(f.reads.map(row=>row.url),b.reads);
+  assert.ok(f.reads.every(row=>(row.init.method??"GET")==="GET"));
+  assert.equal(f.sessionReads.length,0);assert.equal(f.modules.length,0);assert.equal(f.clipboard.length,0);
+}
+async function eSharedBoundaryKey(f,button,key){
+  assert.ok(button.isConnected);f.native.emit("keydown",button);
+  const dialog=eSharedBoundaryDialog(f),event={type:"keydown",key,target:button,currentTarget:dialog,
+    isComposing:false,metaKey:false,ctrlKey:false,altKey:false,defaultPrevented:false,
+    preventDefault(){this.defaultPrevented=true;},stopPropagation(){}};
+  dialog.handlers.keydown.call(f.owner(),event);assert.equal(event.defaultPrevented,true);await f.flush();
+}
+async function eSharedBoundaryPending(t){
+  const p=await eSharedBoundaryHost(t),{f,baseline:b}=p;
+  f.holdUpdates=true;await f.act(b.buttons[1]);eSharedBoundaryIndex(f,1);
+  assert.equal(eSharedBoundaryDialog(f),b.dialog);assert.deepEqual(eSharedBoundaryButtons(f),b.buttons);
+  assert.equal(b.buttons[1].matches(":disabled"),true);assert.equal(b.buttons[0].matches(":disabled"),false);
+  assert.equal(f.renderWaits.length,1,"the actual navigation handoff awaits its own updateComplete");
+  assert.equal(f.native.listeners("focusin"),1,"one original focus lease is pending, not a fake callback");
+  return p;
+}
+for(const locale of["en","fr","ar","ja"])test("E5 Shared boundary: "+locale+" exact disabled navigation transfers only to its current enabled peer",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryHost(t,locale);
+  const header=eSharedControl(f,"shared-presentation-focus-toggle");
+  f.native.focus(header);let count=f.native.nativeFocus.length;
+  await eSharedBoundaryKey(f,header,"End");eSharedBoundaryIndex(f,1);
+  assert.equal(f.native.document.activeElement,header);assert.equal(f.native.nativeFocus.length,count);
+  await eSharedBoundaryKey(f,header,"Home");eSharedBoundaryIndex(f,0);
+  assert.equal(f.native.document.activeElement,header);assert.equal(f.native.nativeFocus.length,count);
+  for(const[trigger,peer,index]of[[b.buttons[1],b.buttons[0],1],[b.buttons[0],b.buttons[1],0]]){
+    count=f.native.nativeFocus.length;await f.act(trigger);eSharedBoundaryIndex(f,index);
+    assert.equal(trigger.matches(":disabled"),true);assert.equal(peer.matches(":disabled"),false);
+    eSharedBoundaryCustody(f,b);
+    assert.equal(f.native.document.activeElement,peer,"the newly disabled original native button must hand off to the predetermined enabled peer");
+    assert.equal(f.native.nativeFocus.length,count+2,"one real activating focus and one current post-update handoff");
+    assert.deepEqual(f.native.nativeFocus.at(-1).args,[{preventScroll:true}]);
+    assert.equal(f.native.listeners("focusin"),0);
+  }
+});
+test("E5 Shared boundary: newer current header focus wins while navigation rendering is held",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryPending(t);
+  const header=eSharedControl(f,"shared-presentation-focus-toggle");
+  f.native.emit("pointerdown",header);f.native.focus(header);const count=f.native.nativeFocus.length;
+  await f.releaseRender();assert.equal(f.native.document.activeElement,header);assert.equal(f.native.nativeFocus.length,count);
+  assert.equal(f.native.listeners("focusin"),0);eSharedBoundaryCustody(f,b);
+});
+test("E5 Shared boundary: a later current navigation keeps the old held handoff retired",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryPending(t);
+  await f.act(b.buttons[0]);eSharedBoundaryIndex(f,0);
+  await f.act(b.buttons[1]);eSharedBoundaryIndex(f,1);
+  const count=f.native.nativeFocus.length,old=f.renderWaits.shift();assert.ok(old);
+  old.gate.resolve();await f.flush();
+  assert.equal(f.native.nativeFocus.length,count,"the old A-B-A continuation cannot focus");
+  await f.releaseRender();assert.equal(f.native.document.activeElement,b.buttons[0]);
+  assert.equal(f.native.nativeFocus.length,count+1,"only the newest exact opening may complete");
+  assert.equal(f.native.listeners("focusin"),0);eSharedBoundaryCustody(f,b);
+});
+test("E5 Shared boundary: same-artifact close and reopen do not inherit the old handoff",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryPending(t);
+  const close=f.tree().nodes.filter(row=>row.owner===f.owner()&&row.tag==="button"
+    &&row.text===f.i18n.t("action.close","Close"));assert.equal(close.length,1);
+  await f.act(close[0].port);
+  assert.equal(b.dialog.isConnected,false);assert.equal(b.buttons[0].isConnected,false);
+  await f.act(eSharedControl(f,"shared-presentation-open"));
+  const count=f.native.nativeFocus.length,old=f.renderWaits.shift();assert.ok(old);
+  old.gate.resolve();await f.flush();assert.equal(f.native.nativeFocus.length,count);
+  await f.releaseRender();const current=eSharedBoundaryDialog(f);
+  assert.notEqual(current,b.dialog);assert.ok(current.matches(":modal"));eSharedBoundaryIndex(f,0);
+  assert.equal(f.native.nativeFocus.slice(count).some(row=>b.buttons.includes(row.node)),false);
+  assert.equal(f.native.listeners("focusin"),0);assert.equal(JSON.stringify(b.artifact),b.artifactJSON);
+  assert.deepEqual(f.reads.map(row=>row.url),b.reads);
+});
+test("E5 Shared boundary: token A-B-A retires pending navigation before current load focus",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryPending(t);
+  await f.newToken("token-b");await f.newToken("token-a");
+  assert.equal(f.owner(),b.owner);assert.equal(b.owner.token,"token-a");
+  const count=f.native.nativeFocus.length,old=f.renderWaits.shift();assert.ok(old);
+  old.gate.resolve();await f.flush();assert.equal(f.native.nativeFocus.length,count);
+  f.holdUpdates=false;
+  await f.reply(2,response(eSharedSlidesBody("current-a")));
+  await f.reply(1,response(eSharedSlidesBody("retired-b")));
+  assert.equal(f.native.nativeFocus.slice(count).some(row=>b.buttons.includes(row.node)),false);
+  assert.ok(f.html().includes("Shared document current-a"));assert.equal(f.html().includes("Shared document retired-b"),false);
+  assert.deepEqual(f.reads.map(row=>row.url),["/api/shared/token-a","/api/shared/token-b","/api/shared/token-a"]);
+  assert.ok(f.reads.every(row=>(row.init.method??"GET")==="GET"));assert.equal(f.native.listeners("focusin"),0);
+  assert.equal(JSON.stringify(b.artifact),b.artifactJSON);
+});
+test("E5 Shared boundary: disconnected current owner cannot complete an old handoff",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryPending(t);
+  f.disconnect();const count=f.native.nativeFocus.length;await f.releaseRender();
+  assert.equal(b.owner.isConnected,false);assert.equal(f.native.nativeFocus.length,count);
+  assert.equal(f.native.listeners("focusin"),0);assert.equal(JSON.stringify(b.artifact),b.artifactJSON);
+  assert.deepEqual(f.reads.map(row=>row.url),b.reads);
+});
+test("E5 Shared boundary: a current peer withdrawn before completion is not focused",async t=>{
+  const{f,baseline:b}=await eSharedBoundaryPending(t);
+  const peer=eSharedBoundaryButtons(f)[0];
+  peer.setAttribute("disabled","");assert.equal(peer.matches(":disabled"),true);
+  const count=f.native.nativeFocus.length;await f.releaseRender();
+  assert.equal(f.native.nativeFocus.length,count);assert.equal(f.native.listeners("focusin"),0);
+  assert.equal(JSON.stringify(b.artifact),b.artifactJSON);assert.deepEqual(f.reads.map(row=>row.url),b.reads);
+});

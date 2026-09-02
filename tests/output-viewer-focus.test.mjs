@@ -76,7 +76,14 @@ function assertIntentControl(f, { intent, action, expanded = false, disabled = f
     assert.equal(Object.hasOwn(control.attributes, "aria-expanded"), false, "only the real native deck invoker owns its expanded state");
   } else {
     assert.equal(control.attributes["aria-controls"], panelId, "the control owns the exact artifact panel");
-    assert.equal(String(control.attributes["aria-expanded"]), String(expanded));
+    const editingExport = intent === "export" && disabled
+      && f.renderer.ownNodes(f.host, "section").some((node) => node.classList.contains("artifact-direct-editor"));
+    if (editingExport) {
+      assert.equal(f.renderer.query(f.host, "forma-ui-popover").filter((node) => node.attributes.class === "artifact-viewer-actions-popover").length, 0,
+        "an active correction exposes Save and Cancel directly, without an export disclosure");
+      assert.equal(Object.hasOwn(control.attributes, "aria-expanded"), false,
+        "the disabled export action does not claim expansion of the direct correction controls");
+    } else assert.equal(String(control.attributes["aria-expanded"]), String(expanded));
   }
   assert.equal(Object.hasOwn(control.attributes, "disabled"), disabled);
   const targets = f.renderer.ownNodes(f.host, "div").filter((node) => node.attributes.id === panelId);
@@ -139,7 +146,9 @@ test("slideshow geometry fits the real output viewport without subtracting imagi
 test("the governed artifact dialog exposes reversible focused viewing for every retained output type", () => {
   assert.match(artifacts, /class="document-artifact-view" data-output-focus=\$\{String\(this\.#viewerFocused\)\} data-artifact-kind=\$\{artifact\.kind\}/);
   assert.match(artifacts, /@cancel=\$\{this\.#cancelViewer\}/);
-  assert.match(artifacts, /#cancelViewer\(event:Event\)\{if\(!this\.#viewerFocused\)return;event\.preventDefault\(\);event\.stopPropagation\(\);this\.#setViewerFocus\(false\);\}/);
+  assert.match(artifacts, /#cancelViewer\(event:Event,exitFocus=true\)\{/);
+  assert.match(artifacts, /if\(this\.#activeId&&Boolean\(this\.#viewerCurrent\?\.\(\)\)&&this\.#editingId===this\.#activeId\)\{/, "ordinary dismissal belongs only to the current correction");
+  assert.match(artifacts, /if\(!exitFocus\|\|!this\.#viewerFocused\)return true;\s*event\.preventDefault\(\);event\.stopPropagation\(\);this\.#setViewerFocus\(false\);return false;/, "without a correction, native Escape still exits focus before closing");
   assert.match(artifacts, /class="icon-button artifact-viewer-focus-toggle"[^>]*aria-label=\$\{focusLabel\}[^>]*aria-pressed=\$\{this\.#viewerFocused\}/);
   assert.match(artifacts, /this\.i18n\.system\(this\.#viewerFocused\?"Exit focus":"Focus view"\)/);
   assert.match(artifacts, /\?disabled=\$\{editing\}/, "focused viewing must never strand unsaved direct edits");
@@ -402,16 +411,41 @@ test("anonymous shared presentations offer a safe full-size slideshow and comple
 
 function actualSlideExport(f) {
   const deck = f.renderer.query(f.host, "forma-presentation-deck")[0];
-  const footer = f.renderer.query(f.host, "forma-ui-popover").find(item => item.attributes.class === "artifact-viewer-actions-popover");
   assert.ok(deck, "the actual retained Slides renderer is mounted");
-  assert.ok(footer, "the separate actual More actions popover remains mounted");
+  assert.equal(f.store.session.get().projectContext.role, "viewer");
+  assert.deepEqual(f.store.session.get().projectContext.permissions, ["project.read", "project.review.approve"]);
+  assert.equal(f.renderer.query(f.host, "forma-ui-popover").filter(item =>
+    String(item.attributes.class ?? "").split(/\s+/u).includes("artifact-viewer-actions-popover")).length, 0,
+    "this reader's sole History alternative has no footer More disclosure");
+  const footers = f.renderer.ownNodes(f.host, "footer").filter(node => Object.hasOwn(node.attributes, "data-actions-open"));
+  const bodies = f.renderer.ownNodes(f.host, "div").filter(node => node.attributes.id === "artifact-viewer-actions-artifact-A");
+  const histories = ownButtons(f).filter(node => typeof node.handlers.click === "function" && node.handlers.click.toString().includes("#loadHistory"));
+  assert.equal(footers.length, 1); assert.equal(bodies.length, 1); assert.equal(histories.length, 1);
+  const footer = footers[0], body = bodies[0], history = histories[0];
+  for (const node of [footer, body, history]) {
+    assert.equal(node.owner, f.host); assert.equal(node.isConnected, true);
+    for (const attribute of ["hidden", "inert", "popover"]) assert.equal(Object.hasOwn(node.attributes, attribute), false);
+  }
+  assert.equal(history.attributes.type, "button");
+  assert.equal(Object.hasOwn(history.attributes, "disabled"), false);
+  // Use actual emitted markup/full references; these finite ports do not model DOM ancestry.
+  const opening = f.renderer.markup.indexOf(footer.full), start = opening + footer.full.length;
+  assert.ok(opening >= 0);
+  const end = f.renderer.markup.indexOf("</footer>", start);
+  assert.ok(end >= start);
+  const contents = f.renderer.markup.slice(start, end), bodyStart = contents.indexOf(body.full);
+  assert.ok(bodyStart >= 0);
+  assert.match(contents.slice(0, bodyStart), /^\s*<span>[^<]*<\/span>\s*$/u, "the actions body is directly in the current footer");
+  const direct = contents.slice(bodyStart + body.full.length).trim();
+  assert.ok(direct.startsWith(history.full), "the actual History control is directly in that actions body");
+  assert.match(direct.slice(history.full.length), /^[^<]+<\/button>\s*<\/div>$/u,
+    "History is the sole native footer action, without a nested menu or additional control");
   const trigger = f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-export"));
   const panel = f.renderer.ownNodes(deck, "div").find(node => node.attributes.id === trigger?.attributes.popovertarget);
-  const more = f.renderer.ownNodes(footer, "section").find(node => node.classList.contains("ui-popover-panel"));
-  assert.ok(trigger); assert.ok(panel); assert.ok(more);
+  assert.ok(trigger); assert.ok(panel);
   assert.equal(trigger.attributes.popovertarget, panel.attributes.id, "the existing native invoker uses its real instance-owned target");
   assert.equal(trigger.attributes["aria-controls"], panel.attributes.id);
-  return { trigger, panel, more };
+  return { trigger, panel };
 }
 
 for (const locale of ["en", "fr", "ar", "ja"]) test("the actual Slides Export handoff in " + locale + " owns only the deck export disclosure", async () => {
@@ -420,18 +454,18 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("the actual Slides Export ha
   let controls = actualSlideExport(f);
   assert.equal(Object.hasOwn(controls.trigger.attributes, "disabled"), false);
   assert.equal(controls.panel.matches(":popover-open"), false);
-  assert.equal(controls.more.matches(":popover-open"), false);
+  assert.deepEqual([...f.renderer.openPopovers], [], "no native disclosure is initially open");
   await primary.handlers.click.call(f.host, {}); await f.flush();
   assertIntentControl(f, { intent: "export", action: "export", expanded: true });
   controls = actualSlideExport(f);
   assert.equal(controls.panel.matches(":popover-open"), true, "the unchanged exact guarded action opens the real native deck export menu");
   assert.equal(String(controls.trigger.attributes["aria-expanded"]), "true");
-  assert.equal(controls.more.matches(":popover-open"), false, "Export does not open the unrelated additional-actions panel");
+  assert.deepEqual([...f.renderer.openPopovers], [controls.panel.attributes.id], "Export opens only the actual deck panel, not another native disclosure");
   controls.panel.hidePopover(); await f.flush();
   controls = actualSlideExport(f);
   assert.equal(controls.panel.matches(":popover-open"), false);
   assert.equal(String(controls.trigger.attributes["aria-expanded"]), "false");
-  assert.equal(controls.more.matches(":popover-open"), false);
+  assert.deepEqual([...f.renderer.openPopovers], [], "closing the deck panel leaves no native disclosure open");
   assert.equal(f.state.events.length, f.originalEventCount);
   assert.equal(f.state.requests.length, 0, "native menu inspection never generates or authorizes an export");
 });

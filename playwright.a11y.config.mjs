@@ -31,5 +31,9 @@ export default defineConfig({
     { name: "recovery-fr-200", testMatch: ["**/forma-project-contents.spec.mjs", "**/forma-library-import.spec.mjs", "**/forma-workspace-settings.spec.mjs", "**/forma-view-menu.spec.mjs"], use: { geometry: { viewport: null, window: { width: 838, height: 884 }, zoom: 2, locale: "fr" } } },
     { name: "assistant-coarse-320", testMatch: "**/forma-assistant-studio-slot.spec.mjs", use: { geometry: { viewport: { width: 320, height: 800 }, zoom: 1, hasTouch: true } } },
     { name: "assistant-coarse-ar-320", testMatch: "**/forma-assistant-studio-slot.spec.mjs", use: { geometry: { viewport: { width: 320, height: 800 }, zoom: 1, hasTouch: true, locale: "ar" } } },
+    ...(process.env.FORMA_A11Y_ISOLATED_E5 === "1" ? [
+      { name: "isolated-e5-presentation", testMatch: "**/isolated-presentation-owners.spec.mjs",
+        use: { baseURL: localTestOrigin(process.env.FORMA_E5_SOURCE_BASE_URL ?? "http://127.0.0.1:4180") } },
+    ] : []),
   ],
 });

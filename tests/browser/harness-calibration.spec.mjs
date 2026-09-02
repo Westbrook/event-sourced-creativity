@@ -48,6 +48,7 @@ test("observer distinguishes real focus, clipped rings, body obstruction and una
     { name: "pointer-transparent-overlay", css: "#overlay{position:fixed;left:60px;top:124px;width:120px;height:12px;background:black;pointer-events:none}", unknown: "focus-overlay-collision-paint-order" },
     { name: "transformed", css: "#pane{transform:translateX(2px)}", unknown: "focus-complex-geometry" },
     { name: "shadow", css: "#target{box-shadow:0 0 0 5px blue}", unknown: "focus-shadow-paint" },
+    { name: "ring-only-opaque-overlay", css: "#overlay{position:fixed;left:60px;top:106px;width:120px;height:3px;background:black}", unknown: "focus-overlay-collision-paint-order", bodyFits: true, ringOnlyOverlay: true },
   ];
   for (const item of cases) {
     await page.setContent(`${fixtureStyles}<style>${item.css}</style><button id="before">Start</button><div id="pane"><button id="target">Expected focus</button></div><div id="overlay"></div>`);
@@ -64,6 +65,22 @@ test("observer distinguishes real focus, clipped rings, body obstruction and una
       expect(raw.bottom).toBeLessThanOrEqual(intersection.bottom);
       expect(raw.left).toBeGreaterThanOrEqual(intersection.left);
       expect(raw.right).toBeLessThanOrEqual(intersection.right);
+    }
+    if (item.ringOnlyOverlay) {
+      const { raw, visible, envelope, hitSamples } = measured.focus;
+      expect(measured.focus.active).toBe(true);
+      expect(measured.focus.focusVisible).toBe(true);
+      expect(visible).toEqual(raw);
+      expect(hitSamples).toHaveLength(5);
+      expect(hitSamples.every(hit => hit.targetFirst)).toBe(true);
+      const overlay = measured.overlays.find(entry => entry.element.id === "overlay");
+      expect(overlay).toMatchObject({ paintedBox: true, opacity: 1, visibility: "visible", pointerEvents: "auto" });
+      expect(overlay.raw).toMatchObject({ left: 60, top: 106, right: 180, bottom: 109, width: 120, height: 3 });
+      expect(overlay.raw.top).toBeGreaterThanOrEqual(envelope.top);
+      expect(overlay.raw.bottom).toBeGreaterThan(envelope.top);
+      expect(overlay.raw.bottom).toBeLessThanOrEqual(raw.top);
+      expect(overlay.raw.left).toBeGreaterThanOrEqual(raw.left);
+      expect(overlay.raw.right).toBeLessThanOrEqual(raw.right);
     }
     if (item.failure) expect(measured.failures.map(entry => entry.code)).toContain(item.failure);
     else if (item.unknown) expect(measured.unassessed.map(entry => entry.code)).toContain(item.unknown);
@@ -99,6 +116,253 @@ test("observer respects native top-layer escape and open shadow/slot focus", asy
   await attachJSON(testInfo, "calibration-slotted-control", slotted);
   expect(slotted.pass).toBe(true);
   expect(slotted.coverage.openShadowRoots).toBe(1);
+
+  // Same real modal/card/direct-sibling topology as the reached Canvas Focus
+  // observation. Negative paint cases precede the desired lower-header pass.
+  const stackingCases = [
+    { name: "higher-pointer-transparent-header", css: "#header{z-index:3;background:black;pointer-events:none}", unknown: true },
+    { name: "raised-child-ring-only", css: "#raised{display:block;position:absolute;z-index:3;left:174px;top:10px;width:56px;height:3px;background:black;pointer-events:none}", unknown: true, raised: true },
+    { name: "raised-pseudo-ring-only", css: '#header::after{content:"";display:block;position:absolute;z-index:3;left:174px;top:10px;width:56px;height:3px;background:black;pointer-events:none}', unknown: true, pseudo: true },
+    { name: "auto-control-not-certified", css: "#target{z-index:auto}", bodyObstructed: true },
+    { name: "lower-header-positive-context", css: "", pass: true },
+    { name: "modal-and-header-backdrop-blur-unassessed", css: "#modal,#header{backdrop-filter:blur(10px)}", unknown: true, modalBlur: true, headerBlur: true },
+    { name: "common-modal-backdrop-blur", css: "#modal{backdrop-filter:blur(10px)}", pass: true, modalBlur: true },
+  ];
+  for (const item of stackingCases) {
+    await page.setContent(`${fixtureStyles}<style>
+      #modal{position:fixed;inset:80px auto auto 80px;width:318px;height:210px;margin:0;padding:8px;border:0;overflow:visible}
+      #card{position:relative;display:grid;box-sizing:border-box;width:300px;height:190px;padding:0;border:1px solid;overflow:hidden;border-radius:14px}
+      #start,#target{position:absolute;box-sizing:border-box;width:44px;height:44px;margin:0;box-shadow:none}
+      #start{left:16px;top:126px;z-index:2}
+      #target{left:180px;top:16px;z-index:2}
+      #header{position:relative;z-index:auto;grid-area:1/1;box-sizing:border-box;width:100%;height:92px;margin:0;padding:0;background:white}
+      #raised{display:none}
+      ${item.css}
+    </style>
+    <button id="open-modal" type="button" onclick="document.getElementById('modal').showModal()">Open modal</button>
+    <dialog id="modal"><article id="card"><button id="start" type="button">Start</button><button id="target" type="button">Focus</button><header id="header"><span>Ordinary header</span><span id="raised"></span></header></article></dialog>`);
+    await page.locator("#open-modal").click();
+    await expect(page.locator("#start")).toBeFocused();
+    await page.keyboard.press("Tab");
+    const target = page.locator("#target");
+    await expect(target).toBeFocused();
+    const topology = await target.evaluate(element => {
+      const parent = element.parentElement, header = parent.querySelector(":scope > header"), modal = parent.parentElement;
+      const style = getComputedStyle(element), headerStyle = getComputedStyle(header);
+      const raised = header.querySelector("#raised"), pseudo = getComputedStyle(header, "::after");
+      return { modal: modal instanceof HTMLDialogElement && modal.matches(":modal"),
+        directSiblings: header.parentElement === parent && parent.parentElement === modal,
+        position: style.position, zIndex: style.zIndex, headerPosition: headerStyle.position,
+        headerZIndex: headerStyle.zIndex, headerPointerEvents: headerStyle.pointerEvents,
+        backdropFilters: { modal: getComputedStyle(modal).backdropFilter, card: getComputedStyle(parent).backdropFilter,
+          control: style.backdropFilter, header: headerStyle.backdropFilter },
+        filters: { modal: getComputedStyle(modal).filter, card: getComputedStyle(parent).filter,
+          control: style.filter, header: headerStyle.filter },
+        raised: { rect: raised.getBoundingClientRect().toJSON(), zIndex: getComputedStyle(raised).zIndex,
+          pointerEvents: getComputedStyle(raised).pointerEvents },
+        pseudo: { content: pseudo.content, display: pseudo.display, position: pseudo.position,
+          zIndex: pseudo.zIndex, left: pseudo.left, top: pseudo.top, width: pseudo.width, height: pseudo.height,
+          pointerEvents: pseudo.pointerEvents } };
+    });
+    const measured = await target.evaluate(measureFormaFocusVisibility,
+      { requireFocusVisible: true, overlaySelectors: [":modal", "#header"] });
+    await attachJSON(testInfo, `calibration-modal-stacking-${item.name}`, { topology, measured });
+    expect(topology).toMatchObject({ modal: true, directSiblings: true, position: "absolute", headerPosition: "relative" });
+    expect(topology.zIndex).toBe(item.bodyObstructed ? "auto" : "2");
+    expect(topology.headerZIndex).toBe(item.name === "higher-pointer-transparent-header" ? "3" : "auto");
+    expect(topology.headerPointerEvents).toBe(item.name === "higher-pointer-transparent-header" ? "none" : "auto");
+    expect(measured.focus.active).toBe(true);
+    expect(measured.focus.focusVisible).toBe(true);
+    expect(measured.focus.raw.width).toBe(44);
+    expect(measured.focus.raw.height).toBe(44);
+    expect(measured.focus.visible).toEqual(measured.focus.raw);
+    expect(measured.focus.outlineExtent).toBe(6);
+    expect(measured.focus.unknown).toEqual([]);
+    expect(measured.focus.hitSamples).toHaveLength(5);
+    expect(measured.focus.hitSamples.every(hit => hit.targetFirst)).toBe(!item.bodyObstructed);
+    const header = measured.overlays.find(overlay => overlay.element.id === "header");
+    expect(header).toMatchObject({ paintedBox: true, opacity: 1, visibility: "visible" });
+    expect(header.unknown).toEqual([{ element: { tag: "ARTICLE", id: "card", className: null, role: null, ariaLabel: null },
+      reasons: ["rounded clipping near envelope"] }]);
+    if (item.raised) {
+      expect(topology.raised).toMatchObject({ zIndex: "3", pointerEvents: "none" });
+      const { rect } = topology.raised, { raw, envelope } = measured.focus;
+      expect(rect.height).toBe(3);
+      expect(rect.top).toBe(envelope.top);
+      expect(rect.bottom).toBeLessThanOrEqual(raw.top);
+      expect(rect.left).toBe(envelope.left);
+      expect(rect.right).toBe(envelope.right);
+    }
+    if (item.pseudo) expect(topology.pseudo).toEqual({ content: '""', display: "block", position: "absolute", zIndex: "3",
+      left: "174px", top: "10px", width: "56px", height: "3px", pointerEvents: "none" });
+    if (item.modalBlur) {
+      expect(topology.backdropFilters).toEqual({ modal: "blur(10px)", card: "none", control: "none",
+        header: item.headerBlur ? "blur(10px)" : "none" });
+      expect(topology.filters).toEqual({ modal: "none", card: "none", control: "none", header: "none" });
+      if (item.headerBlur) {
+        expect(measured.overlayPaintOrderProofs).toHaveLength(1);
+        expect(measured.overlayPaintOrderProofs[0].rejected).toContainEqual({
+          element: { tag: "HEADER", id: "header", className: null, role: null, ariaLabel: null },
+          reason: "unsupported paint/context effect" });
+      }
+    }
+    if (item.unknown) {
+      expect(measured.failures).toEqual([]);
+      expect(measured.unassessed.map(entry => entry.code)).toContain("focus-overlay-collision-paint-order");
+      expect(measured.pass).toBe(false);
+    } else if (item.bodyObstructed) {
+      expect(measured.failures.map(entry => entry.code)).toContain("focus-overlay-collision");
+      expect(measured.pass).toBe(false);
+    } else {
+      // All real topology/body/ring/hit/rounded prerequisites precede this
+      // intended old-observer failure. Five hits do not establish the proof.
+      expect(measured.failures).toEqual([]);
+      expect(measured.pass).toBe(true);
+      expect(measured.overlayPaintOrderProofs).toHaveLength(1);
+      expect(measured.overlayPaintOrderProofs[0]).toMatchObject({ proven: true,
+        kind: "native-modal-direct-header-below-positive-button", controlZ: 2, headerZ: 0 });
+    }
+  }
+
+  // Native layer order is separate from the preceding same-modal z proof.
+  // Every negative keeps the real focused button/body clear; no sampled body
+  // hit is allowed to certify a ring covered by another native paint root.
+  const nativePairCases = [
+    { name: "manual-target-not-admitted", manual: true },
+    { name: "missing-modal-root-witness", missingRoot: true },
+    { name: "later-manual-popover-ring-only", cover: "later" },
+    { name: "retiring-manual-popover-ring-only", cover: "retiring" },
+    { name: "other-control-and-region-not-admitted", otherScopes: true },
+    { name: "current-auto-popover-above-own-modal-content", pass: true },
+  ];
+  for (const item of nativePairCases) {
+    const cover = item.cover ? '<div id="cover" popover="manual"></div>' : "";
+    await page.setContent(fixtureStyles + `<style>
+      #open-modal{margin:0}
+      #modal{position:fixed;inset:80px auto auto 80px;box-sizing:border-box;width:600px;height:360px;margin:0;padding:0;border:0;border-radius:0;overflow:visible;background:white}
+      #start{position:absolute;left:380px;top:250px;margin:0}
+      #lower{position:absolute;left:40px;top:40px;width:330px;height:200px;margin:0;padding:0;z-index:2147483647;background:black}
+      #popup{position:fixed;inset:140px auto auto 120px;box-sizing:border-box;width:320px;height:210px;margin:0;padding:16px;border:0;border-radius:8px;overflow:visible;background:white;pointer-events:auto}
+      #target,#other{display:block;box-sizing:border-box;width:150px;height:44px;margin:0}
+      #region{width:150px;height:24px;margin:16px 0 0}
+      #other{margin-top:12px}
+      #cover{display:block;position:fixed;inset:150px auto auto 130px;box-sizing:border-box;width:162px;height:3px;margin:0;padding:0;border:0;border-radius:0;background:black;pointer-events:none;transition:overlay 60s allow-discrete}
+      #cover:popover-open{transition:none}
+      ${item.missingRoot ? "#modal,#modal::backdrop{pointer-events:none} #lower{pointer-events:auto}" : ""}
+    </style>
+    <button id="open-modal" type="button" onclick="document.getElementById('modal').showModal()">Open modal</button>
+    <dialog id="modal">
+      <button id="start" type="button" popovertarget="popup">Open native popover</button>
+      <header id="lower">Ordinary modal toolbar${item.cover === "retiring" ? cover : ""}</header>
+      <section id="popup" popover="${item.manual ? "manual" : "auto"}">
+        <button id="target" type="button"${item.cover ? ' popovertarget="cover"' : ""}>Expected action</button>
+        <p id="region">Retained copy</p><button id="other" type="button">Other action</button>
+      </section>
+      ${item.cover === "later" ? cover : ""}
+    </dialog>`);
+    await page.locator("#open-modal").click();
+    await expect(page.locator("#start")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#popup")).toBeVisible();
+    await expect(page.locator("#start")).toBeFocused();
+    await page.keyboard.press("Tab");
+    const target = page.locator("#target");
+    await expect(target).toBeFocused();
+    if (item.cover) {
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#cover")).toBeVisible();
+      await expect.poll(() => page.locator("#cover").evaluate(node =>
+        node.matches(":popover-open") && getComputedStyle(node).getPropertyValue("overlay") === "auto")).toBe(true);
+      if (item.cover === "retiring") {
+        // The open state has transition:none; the second native activation
+        // begins only the real closing overlay transition, not a mocked flag.
+        await page.keyboard.press("Enter");
+        await expect.poll(() => page.locator("#cover").evaluate(node =>
+          !node.matches(":popover-open") && getComputedStyle(node).getPropertyValue("overlay") === "auto")).toBe(true);
+      }
+      await expect(target).toBeFocused();
+    }
+    const topology = await target.evaluate(element => {
+      const popup = element.closest("[popover]"), modal = element.closest("dialog:modal");
+      const lower = modal.querySelector("#lower"), cover = modal.querySelector("#cover");
+      const popupBox = popup.getBoundingClientRect(), modalBox = modal.getBoundingClientRect();
+      const x = (Math.max(popupBox.left + 8, modalBox.left) + Math.min(popupBox.right - 8, modalBox.right)) / 2;
+      const y = (Math.max(popupBox.top + 8, modalBox.top) + Math.min(popupBox.bottom - 8, modalBox.bottom)) / 2;
+      const stack = document.elementsFromPoint(x, y);
+      const roots = [...document.querySelectorAll("*")].map(node => ({ node, overlay: getComputedStyle(node).getPropertyValue("overlay") }))
+        .filter(entry => entry.overlay !== "none");
+      return { nativeModal: modal instanceof HTMLDialogElement && modal.open && modal.matches(":modal"),
+        sameModal: modal.contains(popup) && lower.closest("dialog:modal") === modal,
+        popover: popup.popover, popoverOpen: popup.matches(":popover-open"),
+        modalPointerEvents: getComputedStyle(modal).pointerEvents,
+        lowerZ: getComputedStyle(lower).zIndex, modalCount: document.querySelectorAll("dialog:modal").length,
+        renderedRoots: roots.map(({ node, overlay }) => ({ id: node.id, overlay, popoverOpen: node.matches(":popover-open"), modal: node.matches(":modal") })),
+        witness: { x, y, popupIndex: stack.indexOf(popup), modalIndex: stack.indexOf(modal),
+          popupCount: stack.filter(node => node === popup).length, modalCount: stack.filter(node => node === modal).length,
+          stack: stack.map(node => ({ tag: node.tagName, id: node.id || null })) },
+        cover: cover ? { rect: cover.getBoundingClientRect().toJSON(), open: cover.matches(":popover-open"),
+          overlay: getComputedStyle(cover).getPropertyValue("overlay"), pointerEvents: getComputedStyle(cover).pointerEvents,
+          transitionProperty: getComputedStyle(cover).transitionProperty,
+          transitionBehavior: getComputedStyle(cover).transitionBehavior,
+          discreteSupported: CSS.supports("transition-behavior", "allow-discrete") } : null };
+    });
+    const measured = await target.evaluate(measureFormaFocusVisibility, { requireFocusVisible: true,
+      overlaySelectors: [":modal", ":popover-open", "#lower"],
+      ...(item.otherScopes ? { regionSelectors: ["#region"], checkVisibleControls: true } : {}) });
+    await attachJSON(testInfo, "calibration-native-pair-" + item.name, { topology, measured });
+    expect(topology).toMatchObject({ nativeModal: true, sameModal: true, popoverOpen: true,
+      popover: item.manual ? "manual" : "auto", modalCount: 1, lowerZ: "2147483647",
+      modalPointerEvents: item.missingRoot ? "none" : "auto" });
+    expect(topology.renderedRoots).toHaveLength(item.cover ? 3 : 2);
+    expect(topology.renderedRoots.every(root => root.overlay === "auto")).toBe(true);
+    expect(topology.witness.popupCount).toBe(1);
+    if (item.missingRoot) expect(topology.witness.modalCount).toBe(0);
+    else {
+      expect(topology.witness.modalCount).toBe(1);
+      expect(topology.witness.popupIndex).toBeLessThan(topology.witness.modalIndex);
+    }
+    expect(measured.focus.active).toBe(true);
+    expect(measured.focus.focusVisible).toBe(true);
+    expect(measured.focus.raw).toMatchObject({ left: 136, top: 156, width: 150, height: 44 });
+    expect(measured.focus.visible).toEqual(measured.focus.raw);
+    expect(measured.focus.outlineExtent).toBe(6);
+    expect(measured.focus.unknown).toEqual([]);
+    expect(measured.focus.hitSamples).toHaveLength(5);
+    expect(measured.focus.hitSamples.every(hit => hit.targetFirst)).toBe(true);
+    expect(measured.overlays.find(entry => entry.element.id === "lower"))
+      .toMatchObject({ paintedBox: true, opacity: 1, visibility: "visible", unknown: [] });
+    expect(measured.failures).toEqual([]);
+    if (item.cover) {
+      expect(topology.cover).toMatchObject({ open: item.cover === "later", overlay: "auto", pointerEvents: "none" });
+      expect(topology.cover.rect).toMatchObject({ left: 130, top: 150, right: 292, bottom: 153, width: 162, height: 3 });
+      expect(topology.cover.rect.top).toBe(measured.focus.envelope.top);
+      expect(topology.cover.rect.bottom).toBeLessThan(measured.focus.raw.top);
+      if (item.cover === "retiring") expect(topology.cover).toMatchObject({
+        discreteSupported: true, transitionProperty: "overlay", transitionBehavior: "allow-discrete" });
+    }
+    if (!item.pass) {
+      expect(measured.pass).toBe(false);
+      const code = item.otherScopes ? "visible-task-region-overlay-collision-paint-order" : "focus-overlay-collision-paint-order";
+      expect(measured.unassessed.map(entry => entry.code)).toContain(code);
+      if (item.otherScopes) {
+        expect(measured.controls.find(entry => entry.element.id === "other").collisions.map(entry => entry.overlay.id)).toContain("lower");
+      } else {
+        expect(measured.overlayPaintOrderProofs.filter(proof =>
+          proof.kind === "native-auto-popover-above-own-modal-content" && proof.proven)).toEqual([]);
+      }
+    } else {
+      // Every original observation and every negative above precedes this
+      // intended old-observer failure. Atomic-root order, never five body hits,
+      // must account for the entire otherwise-known focus envelope.
+      expect(measured.pass).toBe(true);
+      expect(measured.overlayPaintOrderProofs).toHaveLength(1);
+      expect(measured.overlayPaintOrderProofs[0]).toMatchObject({
+        kind: "native-auto-popover-above-own-modal-content", proven: true,
+        scope: "two-rendered-native-roots-observable-light-dom-only", rejected: [] });
+      expect(measured.overlayPaintOrderProofs[0].witness.popoverIndex)
+        .toBeLessThan(measured.overlayPaintOrderProofs[0].witness.modalIndex);
+    }
+  }
 });
 
 test("observer protects visible critical copy and does not credit wholly clipped old copy", async ({ page }, testInfo) => {

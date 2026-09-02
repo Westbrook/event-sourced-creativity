@@ -82,9 +82,12 @@ export class FormaUiDisclosure extends FormaSlottedElement {
 export class FormaUiPopover extends FormaPresentationalElement {
   static properties = {
     label: { type: String }, heading: { type: String }, detail: { type: String },
+    triggerAccessibleName: { type: String, attribute: "trigger-accessible-name" },
     actions: { attribute: false }, actionCurrent: { attribute: false }, content: { attribute: false }, triggerId: { attribute: false },
   };
   label = ""; heading = ""; detail = ""; actions: FormaOption[] = [];
+  /** Optional accessible name for the native trigger; visible text remains unchanged. */
+  triggerAccessibleName = "";
   /** Optional opening-ownership check for rendered actions; never authorization. */
   actionCurrent?: (value: string) => boolean;
   /** Authored light-DOM controls keep their native semantics and event handlers. */
@@ -144,7 +147,7 @@ export class FormaUiPopover extends FormaPresentationalElement {
   override render() {
     const label = this.label || this.i18n.t("popover.open"),opening=this.#actionOpening,actions=this.actions;
     return html`<div class="ui-popover" @keydown=${this.#key}>
-      <button type="button" id=${this.triggerId} class="button secondary ui-popover-trigger" popovertarget=${this.#id} aria-controls=${this.#id} aria-expanded=${String(this.#open)} @click=${this.#position}>${label}</button>
+      <button type="button" id=${this.triggerId} class="button secondary ui-popover-trigger" popovertarget=${this.#id} aria-controls=${this.#id} aria-expanded=${String(this.#open)} aria-label=${this.triggerAccessibleName?.trim() || nothing} @click=${this.#position}>${label}</button>
       <section id=${this.#id} class="ui-popover-panel" popover="auto" aria-label=${this.heading || label} @beforetoggle=${this.#beforeToggle} @toggle=${this.#toggle}>
         ${this.heading ? html`<h3>${this.heading}</h3>` : nothing}
         ${this.detail ? html`<p>${this.detail}</p>` : nothing}

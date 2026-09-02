@@ -6121,6 +6121,16 @@
             },
             {
               "kind": "field",
+              "name": "triggerAccessibleName",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Optional accessible name for the native trigger; visible text remains unchanged.",
+              "attribute": "trigger-accessible-name"
+            },
+            {
+              "kind": "field",
               "name": "triggerId",
               "type": {
                 "text": "string"
@@ -6155,6 +6165,15 @@
               },
               "default": "\"\"",
               "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "trigger-accessible-name",
+              "fieldName": "triggerAccessibleName",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Optional accessible name for the native trigger; visible text remains unchanged."
             }
           ],
           "events": [
@@ -6199,7 +6218,8 @@
               "authorTextAttributes": [
                 "detail",
                 "heading",
-                "label"
+                "label",
+                "trigger-accessible-name"
               ],
               "authorOwnedSlots": [],
               "optionTextPaths": [

@@ -845,7 +845,7 @@ for(const boundary of ["authorization","route","role"])test("collection actions 
   assert.equal(f.state.events.length,before);assert.equal(f.state.requests.length,0);
 });
 
-test("actual slides viewer actions reuse the shared popover while non-slide actions remain inline",async()=>{
+test("actual slides and non-slide viewer alternatives reuse the same shared native popover",async()=>{
   const f=fixture({artifact:true}),artifact=addFixtureDeck(f);
   const host=adoptPopoverHost(f,DocumentArtifacts,{documentId:"document-0"});
   const open=f.renderer.ownNodes(host,"button").find(node=>node.attributes["data-forma-content"]==="primary");
@@ -857,8 +857,12 @@ test("actual slides viewer actions reuse the shared popover while non-slide acti
   const g=fixture({artifact:true});const inlineHost=adoptPopoverHost(g,DocumentArtifacts,{documentId:"document-0"});
   const inlineOpen=g.renderer.ownNodes(inlineHost,"button").find(node=>node.attributes["data-forma-content"]==="primary");
   await inlineOpen.handlers.click.call(inlineHost,{target:inlineOpen,currentTarget:inlineOpen});g.draw();
-  assert.equal(g.renderer.query(inlineHost,"forma-ui-popover").filter(child=>child.attributes.class==="artifact-viewer-actions-popover").length,0);
-  assert.ok(g.renderer.markup.includes("Download Markdown"));
+  const nonSlide=ownedPopover(g,"artifact-viewer-actions-popover",inlineHost);
+  assert.equal(nonSlide.menu.label,g.i18n.t("action.more","More actions"));
+  assert.equal(nonSlide.panel.attributes.popover,"auto");
+  assert.equal(nonSlide.trigger.attributes.popovertarget,nonSlide.panel.attributes.id);
+  assert.equal(nonSlide.panel.matches(":popover-open"),false);
+  assert.ok(nonSlide.menu.markup.includes("Download Markdown"));
   assert.equal(g.state.requests.length,0);
 });
 
@@ -2470,3 +2474,261 @@ async function withCanvasCalmNavigation(t, { locale = "en", selected = false } =
   }
   return result;
 }
+
+
+// E4 cardinality uses the actual Canvas renderer/handlers and the existing
+// declared session/source ports. It is not browser, server-ACL, or geometry proof.
+// The complete original fixture/test prefix is unchanged.
+for (const scenario of [
+  { name: "shared reader", shared: true, author: false, alternatives: 1 },
+  { name: "personal reader", shared: false, author: false, alternatives: 2 },
+  { name: "shared author", shared: true, author: true, alternatives: 2 },
+  { name: "personal author", shared: false, author: true, alternatives: 3 },
+]) test("E4 Canvas Slides keeps exact " + scenario.name + " footer cardinality and Done custody", async () => {
+  const f = fixture({ populated: true, artifact: true, viewer: scenario.shared });
+  const originalSession = f.store.session.get();
+  // Declare the finite caller before capturing this viewer's ownership. Do not
+  // substitute a permission result or bypass the production canEditCanvas guard.
+  const session = scenario.shared
+    ? { ...originalSession, projectContext: { ...originalSession.projectContext,
+        role: scenario.author ? "owner" : "viewer",
+        permissions: [...originalSession.projectContext.permissions, ...(scenario.author ? ["project.author"] : [])] } }
+    : { ...originalSession, capabilities: originalSession.capabilities.filter(value => scenario.author || value !== "project.author") };
+  f.store.session.get = () => session;
+  f.draw();
+  const artifact = addFixtureDeck(f);
+  await f.store.append({ type: "CanvasItemPlaced", payload: { project_id: "p", canvas_id: "board-a",
+    item_id: "e4-cardinality-deck", source_kind: "artifact", source_id: artifact.id,
+    title: "Exact deck", block_type: "slides", frame: { x: 20, y: 20, w: 320, h: 240, z: "z" } } });
+  f.draw(); await f.flush();
+
+  const source = f.store.captureSourceOwnership(), authorization = f.store.captureAuthorizationScope();
+  const permissions = session.projectContext?.permissions ?? session.capabilities;
+  assert.ok(source && authorization);
+  assert.equal(authorization.shared, scenario.shared);
+  assert.equal(Boolean(session.projectContext), scenario.shared);
+  assert.ok(permissions.includes("project.read") && permissions.includes("project.canvas.use"));
+  assert.equal(permissions.includes("project.author"), scenario.author);
+  assert.equal(session.canvas.access, true);
+  if (scenario.shared) {
+    assert.equal(session.projectContext.projectId, "p");
+    assert.equal(session.projectContext.role, scenario.author ? "owner" : "viewer");
+  }
+  assert.equal(artifact.id, "artifact-a"); assert.equal(artifact.documentId, "document-0");
+  assert.equal(artifact.kind, "slides"); assert.equal(artifact.contentRef, "story-content");
+  assert.equal(f.store.canvasProjection.get().selectedCanvasId, "board-a");
+
+  const before = {
+    events: structuredClone(f.store.events.get()), head: f.store.head.get(),
+    content: structuredClone(f.store.content.get()), projection: structuredClone(f.store.projection.get()),
+    canvas: structuredClone(f.store.canvasProjection.get()), route: f.store.route.get(),
+    session: structuredClone(f.store.session.get()), selected: [...f.state.selected], chosen: f.state.chosen,
+    optimistic: structuredClone(f.store.optimisticEvents.get()),
+  };
+  const unchanged = () => {
+    assert.ok(f.store.sourceOwnershipActive(source) && f.store.authorizationScopeActive(authorization));
+    assert.deepEqual(f.store.session.get(), before.session);
+    assert.equal(f.store.route.get(), before.route);
+    assert.deepEqual(f.store.events.get(), before.events); assert.equal(f.store.head.get(), before.head);
+    assert.deepEqual(f.store.content.get(), before.content);
+    assert.deepEqual(f.store.projection.get(), before.projection);
+    assert.deepEqual(f.store.canvasProjection.get(), before.canvas);
+    assert.deepEqual(f.state.selected, before.selected); assert.equal(f.state.chosen, before.chosen);
+    assert.deepEqual(f.store.optimisticEvents.get(), before.optimistic);
+    assert.deepEqual(f.state.requests, []); assert.deepEqual(f.state.batches, []);
+    assert.deepEqual(f.clipboard, []);
+  };
+  unchanged();
+  const opener = f.native("button", node => node.attributes.class === "canvas-artifact-open");
+  assert.ok(opener?.isConnected && !opener.disabled);
+  opener.focus(); assert.equal(documentPort.activeElement, opener);
+  await opener.handlers.click.call(f.host, { target: opener, currentTarget: opener, stopPropagation() {} });
+  f.draw(); await f.flush();
+  const dialog = f.native("dialog", node => node.attributes.class === "modal canvas-artifact-viewer");
+  assert.ok(dialog?.open && dialog.isConnected);
+  assert.equal(dialog.attributes["data-artifact-kind"], "slides");
+  assert.equal(dialog.attributes["data-output-focus"], "false");
+  assert.equal(dialog.attributes["aria-labelledby"], "canvas-artifact-viewer-title");
+  const decks = f.renderer.query(f.host, "forma-presentation-deck").filter(owner => owner.parentElement === f.host);
+  assert.equal(decks.length, 1);
+  assert.equal(decks[0].preferenceKey, artifact.id); assert.equal(decks[0].documentId, artifact.documentId);
+  assert.deepEqual(decks[0].items.map(item => [item.title, item.body, item.notes]),
+    [["Exact slide", "Exact body", "Private notes"]]);
+  unchanged();
+
+  // Reach the old and successor rendering honestly. The old reader menu must
+  // complete Done/return before its final, intended cardinality failure.
+  const menus = f.renderer.query(f.host, "forma-ui-popover")
+    .filter(owner => owner.parentElement === f.host && owner.attributes.class === "artifact-viewer-actions-popover");
+  assert.ok(menus.length <= 1);
+  const grouped = menus.length === 1;
+  const owned = grouped ? openOwnedPopover(f, "artifact-viewer-actions-popover") : null;
+  if (owned) {
+    assert.equal(owned.menu.label, f.i18n.t("action.more", "More actions"));
+    assert.equal(owned.panel.attributes.popover, "auto");
+    assert.equal(owned.trigger.attributes.popovertarget, owned.panel.attributes.id);
+    assert.equal(owned.panel.matches(":popover-open"), true);
+  }
+  const actionOwner = owned?.menu ?? f.host;
+  const body = f.renderer.ownNodes(actionOwner, "div")
+    .find(node => node.attributes.id === "canvas-artifact-viewer-actions-" + artifact.id);
+  assert.ok(body?.isConnected);
+  const actions = f.renderer.ownNodes(actionOwner, "button").filter(node => node.parentElement === body);
+  assert.equal(actions.length, scenario.alternatives, "count the actual existing actions, including Done");
+  assert.equal(actions.filter(node => String(node.handlers.click).includes("#inputArtifactId")).length, Number(!scenario.shared));
+  assert.equal(actions.filter(node => String(node.handlers.click).includes("#reuseArtifact")).length, Number(scenario.author));
+  const done = actions.filter(node => String(node.handlers.click).includes("#closeCanvasArtifact"));
+  assert.equal(done.length, 1);
+  assert.equal(done[0].attributes.type, "button"); assert.equal(done[0].attributes.class, "button ghost");
+  assert.equal(done[0].disabled, false);
+  const captureAttached = body.handlers.click?.capture === true;
+  unchanged();
+
+  done[0].focus(); assert.equal(documentPort.activeElement, done[0]);
+  let prevented = false, stopped = false;
+  const gesture = { type: "click", target: done[0], currentTarget: done[0],
+    preventDefault() { prevented = true; }, stopPropagation() {}, stopImmediatePropagation() { stopped = true; } };
+  if (body.handlers.click) runPortHandler(body.handlers.click, actionOwner, { ...gesture, currentTarget: body });
+  assert.equal(prevented, false); assert.equal(stopped, false);
+  await done[0].handlers.click.call(f.host, gesture);
+  f.draw(); await f.flush();
+  assert.equal(dialog.open, false);
+  assert.equal(f.renderer.ownNodes(f.host, "dialog").filter(node => node.attributes.class === "modal canvas-artifact-viewer").length, 0);
+  const returned = f.native("button", node => node.attributes.class === "canvas-artifact-open");
+  assert.equal(returned, opener); assert.ok(returned.isConnected);
+  assert.equal(documentPort.activeElement, opener, "actual Done restores its retained current opener in this finite port");
+  assert.equal(f.openPopovers.size, 0);
+  unchanged();
+
+  assert.equal(grouped, scenario.alternatives > 1, "only multiple Canvas footer alternatives need More");
+  assert.equal(captureAttached, scenario.alternatives > 1, "only the grouped presentation owns the popover capture");
+});
+
+for (const scenario of [
+  { name: "Slides artifact", artifact: true, openerClass: "canvas-artifact-open",
+    dialogClass: "canvas-artifact-viewer", cardTag: "article", cardClass: "canvas-artifact-viewer-card" },
+  { name: "image output", artifact: false, openerClass: "canvas-image-open",
+    dialogClass: "canvas-output-viewer", cardTag: "div", cardClass: "canvas-output-viewer-card" },
+]) test("E5 Canvas " + scenario.name + " Escape preserves the current native dialog for its cancel owner", async t => {
+  const f = fixture({ populated: true, artifact: scenario.artifact });
+  let dialog, originalMatches, reflectedMatches;
+  try {
+    if (scenario.artifact) {
+      const artifact = addFixtureDeck(f);
+      await f.store.append({ type: "CanvasItemPlaced", payload: { project_id: "p", canvas_id: "board-a",
+        item_id: "e5-escape-deck", source_kind: "artifact", source_id: artifact.id,
+        title: "Exact deck", block_type: "slides", frame: { x: 20, y: 20, w: 320, h: 240, z: "z" } } });
+    } else {
+      // Reuse the saved-image event shape from canvas-board-lifecycle-ownership.
+      // This seeds this existing in-memory host only; no image/provider is requested.
+      const id = "e5-escape-image";
+      await f.store.append({ type: "GenerationCompleted", payload: { project_id: "p", document_id: "document-0",
+        canvas_id: "board-a", generation_id: id, object_ids: [id], title: "Current board saved image",
+        provider: "in-memory-saved-metadata", model_id: "fixture-saved-image", media_url: "/api/media/" + id,
+        media_type: "image/png", image_width: 640, image_height: 480 } });
+      await f.store.append({ type: "CanvasItemPlaced", payload: { project_id: "p", canvas_id: "board-a",
+        item_id: "e5-escape-image-card", source_kind: "output", source_id: id, title: "Current board saved image",
+        frame: { x: 20, y: 20, w: 320, h: 240, z: "z" } } });
+      const output = f.store.projection.get().libraryOutputs.find(value => value.id === id);
+      assert.ok(output && output.documentId === "document-0" && output.canvasId === "board-a" && output.mediaUrl);
+    }
+    f.draw(); await f.flush();
+    await f.select(0);
+    const source = f.store.captureSourceOwnership(), authorization = f.store.captureAuthorizationScope();
+    assert.ok(source && authorization);
+    const snapshot = () => ({
+      events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get(),
+      projection: f.store.projection.get(), canvas: f.store.canvasProjection.get(),
+      route: f.store.route.get(), session: f.store.session.get(), selected: [...f.state.selected],
+      chosen: f.state.chosen, optimistic: f.store.optimisticEvents.get(),
+      requests: f.state.requests, batches: f.state.batches, clipboard: f.clipboard,
+    });
+    const before = structuredClone(snapshot());
+    const unchanged = () => {
+      assert.ok(f.store.sourceOwnershipActive(source) && f.store.authorizationScopeActive(authorization));
+      assert.deepEqual(snapshot(), before);
+    };
+    const opener = f.native("button", node => node.attributes.class === scenario.openerClass);
+    assert.ok(opener?.isConnected && !opener.disabled);
+    opener.focus(); assert.equal(documentPort.activeElement, opener);
+    await opener.handlers.click.call(f.host, { target: opener, currentTarget: opener, shiftKey: false,
+      stopPropagation() {}, preventDefault() { assert.fail("ordinary viewer opening was prevented"); } });
+    f.draw(); await f.flush();
+    const dialogs = f.renderer.ownNodes(f.host, "dialog")
+      .filter(node => node.attributes.class === "modal " + scenario.dialogClass);
+    assert.equal(dialogs.length, 1);
+    [dialog] = dialogs;
+    assert.ok(dialog.isConnected && dialog.open);
+    if (scenario.artifact) assert.equal(dialog.attributes["data-artifact-kind"], "slides");
+    assert.equal(dialog.attributes["data-output-focus"], "false");
+    assert.equal(dialog.dataset.canvasTopLayer, "true");
+    assert.equal(typeof dialog.handlers.cancel, "function");
+    const cards = f.renderer.ownNodes(f.host, scenario.cardTag)
+      .filter(node => node.parentElement === dialog && node.attributes.class === "modal-card " + scenario.cardClass);
+    assert.equal(cards.length, 1);
+    const close = f.renderer.ownNodes(f.host, "button")
+      .filter(node => node.parentElement === cards[0] && node.attributes.class === "icon-button modal-close");
+    assert.equal(close.length, 1);
+    assert.ok(close[0].isConnected && !close[0].disabled);
+    assert.equal(close[0].closest("dialog"), dialog);
+    assert.equal(f.host.querySelector("." + scenario.dialogClass), dialog);
+    assert.equal(f.renderer.ownNodes(f.host, "dialog").length, 1);
+    close[0].focus(); assert.equal(documentPort.activeElement, close[0]);
+    const keyboards = (f.listeners.get("keydown") ?? []).filter(listener => typeof listener === "function"
+      && /^\(?event\)?=>this\.#onKey\(event\)$/u.test(Function.prototype.toString.call(listener).replace(/\s/gu, "")));
+    assert.equal(keyboards.length, 1, "one actual registered Canvas keyboard closure");
+
+    // The existing finite modal port records open/promotion, not :modal.
+    // Reflect ONLY this exact emitted, promoted dialog's declared native state.
+    // This is not browser promotion/default-action proof or an app predicate.
+    originalMatches = dialog.matches;
+    reflectedMatches = selector => selector === ":modal"
+      ? dialog.isConnected && dialog.open && dialog.dataset.canvasTopLayer === "true"
+      : originalMatches(selector);
+    dialog.matches = reflectedMatches;
+    assert.equal(dialog.matches(":modal"), true);
+    assert.equal(f.openPopovers.size, 0);
+    let prevented = false, stopped = false;
+    const path = [];
+    for (let node = close[0]; node; node = node.parentElement) path.push(node);
+    unchanged();
+    keyboards[0]({ type: "keydown", key: "Escape", defaultPrevented: false,
+      target: close[0], currentTarget: windowPort, composedPath: () => [...path, documentPort, windowPort],
+      preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+    await f.flush();
+    const current = f.renderer.ownNodes(f.host, "dialog")
+      .filter(node => node.attributes.class === "modal " + scenario.dialogClass);
+    t.diagnostic("E5 finite native-cancel boundary: " + JSON.stringify({
+      viewer: scenario.name, currentCount: current.length, sameDialog: current[0] === dialog,
+      originalConnected: dialog.isConnected, originalOpen: dialog.open, prevented, stopped,
+      activeTag: documentPort.activeElement?.tag, currentCloseActive: documentPort.activeElement === close[0],
+      openerActive: documentPort.activeElement === opener,
+      limit: "Declared exact native-modal state; actual browser Escape ordering remains separate native evidence.",
+    }));
+    unchanged();
+    assert.equal(prevented, false, "native cancel, not the board key handler, owns this unhandled Escape");
+    assert.equal(stopped, false);
+    assert.equal(current.length, 1, "Canvas must not retire the current viewer before native cancel");
+    assert.equal(current[0], dialog); assert.ok(dialog.isConnected && dialog.open);
+    assert.equal(documentPort.activeElement, close[0], "the board key handler must not move focus");
+
+    // Deliver the real emitted cancel EventPart only AFTER the desired boundary.
+    // No synthesized close/focus call or post-failure repair supplies the return.
+    let cancelPrevented = false;
+    dialog.handlers.cancel.call(f.host, { type: "cancel", target: dialog, currentTarget: dialog,
+      preventDefault() { cancelPrevented = true; } });
+    f.draw(); await f.flush();
+    assert.equal(cancelPrevented, true, "the existing dialog cancel handler owns close and return");
+    assert.equal(dialog.open, false);
+    assert.equal(f.renderer.ownNodes(f.host, "dialog")
+      .filter(node => node.attributes.class === "modal " + scenario.dialogClass).length, 0);
+    assert.equal(f.native("button", node => node.attributes.class === scenario.openerClass), opener);
+    assert.ok(opener.isConnected);
+    assert.equal(documentPort.activeElement, opener);
+    assert.equal(f.openPopovers.size, 0);
+    unchanged();
+  } finally {
+    if (dialog && dialog.matches === reflectedMatches) dialog.matches = originalMatches;
+    f.host.disconnectedCallback();
+  }
+});

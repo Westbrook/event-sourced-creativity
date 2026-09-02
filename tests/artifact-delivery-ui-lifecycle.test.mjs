@@ -160,7 +160,7 @@ function fixture({ kind = "short_story" } = {}) {
   const fields = fieldsCode(documentTree, code, declared, closeExpression);
   const probeSource = [
     "(class {", fields,
-    'store=store;documentId="A";source="library";isConnected=true;i18n={t:(_id,fallback)=>fallback??_id};',
+    'store=store;ownerDocument=document;documentId="A";source="library";isConnected=true;i18n={t:(_id,fallback)=>fallback??_id};',
     "get updateComplete(){return Promise.resolve().then(()=>state.beforeUpdate?.());}requestUpdate(){}",
     "querySelector(){return null;}",
     'querySelectorAll(selector){if(selector!=="forma-ui-popover")throw new Error("Unexpected viewer DOM selector: "+selector);return[];}',
@@ -185,9 +185,9 @@ function fixture({ kind = "short_story" } = {}) {
     "snapshotForTest(){return{activeId:this.#activeId,editingId:this.#editingId,draft:this.#editMarkdown,reviewNote:this.#reviewNote,reviewOpen:this.#reviewPanelOpen,binding:this.#deliveryBinding,bindingLoading:this.#deliveryBindingLoading};}",
     code, "})",
   ].join("\n");
-  const Probe = new Function("store", "state", "dialog", "trace", "document", "HTMLElement", "crypto", "ensureModalDialog", "documentArtifactRevision", "parseDocumentArtifactContent", "artifactDeliveryFor", "nextActionFacts", "fetch",
+  const Probe = new Function("store", "state", "dialog", "trace", "document", "HTMLElement", "crypto", "ensureModalDialog", "documentArtifactRevision", "parseDocumentArtifactContent", "artifactDeliveryFor", "nextActionFacts", "captureOutputNavigationFocus", "fetch",
     "return " + ts.transpileModule(probeSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText)(
-      store, state, dialog, trace, document, HTMLElement, crypto, ensureModalDialog, documentArtifactRevision, parseDocumentArtifactContent, artifactDeliveryFor, nextActionFacts,
+      store, state, dialog, trace, document, HTMLElement, crypto, ensureModalDialog, documentArtifactRevision, parseDocumentArtifactContent, artifactDeliveryFor, nextActionFacts, captureOutputNavigationFocus,
       async () => assert.fail("No network or provider operation is authorized by the fixture"),
     );
   const host = new Probe();
