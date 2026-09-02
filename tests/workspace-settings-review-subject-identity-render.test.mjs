@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { settingsFixture, endpoint, tokenPath, method, memberReadLiveLocale } from "./helpers/workspace-settings-whole-read-fixture.mjs";
+import { settingsFixture, endpoint, tokenPath, method, memberReadLiveLocale, path } from "./helpers/workspace-settings-whole-read-fixture.mjs";
 
 // Actual complete Settings/Store/render and the existing finite HTTP service.
 // These are emitted-subject/native-port contracts, not Worker approval, browser
 // required-validation, accessibility, pointer or queued-event timing proof.
+// Explicit E1 successors to the four archived combined-Overview cases. Review
+// subjects now live on Projects; incidental resampling uses its native GET-only
+// Refresh, not a hidden Members token command or a subject-retiring task detour.
+// The two primary held positive approval responses retain their original proof.
 const options = { timeout: 45_000, concurrency: false };
 const title = id => "Finite pending " + id;
 const packageRow = (id, draft) => ({ id, name: title(id), description: "Explicit finite review catalog input",
@@ -118,7 +122,7 @@ function reviewNativeParts(t, f) {
 }
 
 async function subjectFixture(t) {
-  const f = await settingsFixture(t), service = f.service, reply = service.reply;
+  const f = await settingsFixture(t, { section: "projects" }), service = f.service, reply = service.reply;
   const a = packageRow("review-package-A", "review-draft-A1"), b = packageRow("review-package-B", "review-draft-B1");
   let catalog = [a, b], expectedProbe = null, refreshes = 0;
   const probes = [], errors = [], native = reviewNativeParts(t, f);
@@ -137,7 +141,10 @@ async function subjectFixture(t) {
   };
   // Initial finite catalog enters through the original current resource reads.
   // No checkbox exists yet, so this setup route transition proves no retention.
-  f.navigate("B"); await f.flush(); f.navigate("A"); await f.flush();
+  f.navigate("B", "projects"); await f.flush(); f.navigate("A", "projects"); await f.flush();
+  assert.equal(f.store.route.get(), path("A", "projects"));
+  const initialCatalogReads = service.requests.filter(request => method(request) === "GET"
+    && request.url === endpoint("A", "/context-packages")).length;
   const owner = f.host, route = f.store.route.get(), source = f.store.captureSourceOwnership();
   const unchanged = structuredClone({ events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get(),
     user: f.store.session.get().user, authority: f.store.captureAuthorizationScope()?.key,
@@ -148,16 +155,13 @@ async function subjectFixture(t) {
     assert.deepEqual({ events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get(),
       user: f.store.session.get().user, authority: f.store.captureAuthorizationScope()?.key,
       budgets: f.store.session.get().budgets, costBudgets: f.store.session.get().costBudgets }, unchanged);
-    assert.equal(service.tokenCount.A, refreshes); assert.equal(service.tokenCount.B, 0);
-    assert.equal(service.credentials.A.length, refreshes); assert.equal(service.credentials.B.length, 0);
-    assert.equal(service.writes.length, refreshes);
-    for (const [index, write] of service.writes.entries()) {
-      assert.equal(write.method, "POST"); assert.equal(write.url, tokenPath("A")); assert.equal(write.body, null);
-      assert.equal(write.receipt.credentialId, "fixture-credential-A-" + (index + 1));
-      assert.equal(write.receipt.token, "fixture-token-A-" + (index + 1));
-    }
+    assert.equal(service.tokenCount.A, 0); assert.equal(service.tokenCount.B, 0);
+    assert.equal(service.credentials.A.length, 0); assert.equal(service.credentials.B.length, 0);
+    assert.equal(service.writes.length, 0, "Read-only resampling creates no token or acknowledgment");
+    assert.equal(service.requests.filter(request => method(request) === "GET"
+      && request.url === endpoint("A", "/context-packages")).length, initialCatalogReads + refreshes);
     assert.ok(service.requests.every(request => method(request) === "GET"
-      || method(request) === "POST" && (request.url === tokenPath("A") || probes.includes(request))));
+      || method(request) === "POST" && probes.includes(request)));
     f.assertNoExternal();
   };
   const rows = () => {
@@ -171,9 +175,13 @@ async function subjectFixture(t) {
   };
   const refresh = async next => {
     catalog = structuredClone(next);
-    // Existing actual native control -> original finite201 token operation ->
-    // original Store session refresh -> same-owner Settings #load. No approval.
-    f.issue(); refreshes++; await f.flush(); invariant(); return rows();
+    // Existing visible Projects Refresh -> same-owner Settings #load. This is
+    // GET-only resampling, not the former finite201 token/session-refresh chain.
+    const start = service.requests.length;
+    f.click(f.find("button", node => Object.hasOwn(node.attributes, "data-workspace-settings-refresh")));
+    refreshes++; await f.flush(); invariant();
+    assert.ok(service.requests.slice(start).every(request => method(request) === "GET"));
+    return rows();
   };
   const endpointWitness = async (record, row) => {
     native.check(record, true); assert.equal(record.field.defaultChecked, false);
@@ -193,7 +201,7 @@ async function subjectFixture(t) {
   invariant(); return { f, a, b, native, rows, named, refresh, invariant, endpointWitness };
 }
 
-test("Settings actual review subject retains its native check through same-subject refresh, rename and locale", options, async t => {
+test("E Projects review subject retains its native check through read-only refresh, rename and locale", options, async t => {
   const x = await subjectFixture(t), first = x.rows(), a0 = x.named(first, x.a), b0 = x.named(first, x.b);
   x.native.check(a0, true); assert.equal(b0.field.checked, false);
   const renamed = { ...x.a, name: "Same immutable A, renamed 日本語" };
@@ -207,7 +215,7 @@ test("Settings actual review subject retains its native check through same-subje
   await x.endpointWitness(a1, renamed); x.invariant();
 });
 
-test("Settings actual review subject follows reorder and retires a replaced pending version before another attestation", options, async t => {
+test("E Projects review subject follows read-only reorder and retires a replaced pending version before another attestation", options, async t => {
   const x = await subjectFixture(t), first = x.rows(), a0 = x.named(first, x.a), b0 = x.named(first, x.b);
   x.native.check(a0, true); assert.equal(b0.field.checked, false);
   const ordered = await x.refresh([x.b, x.a]), a1 = x.named(ordered, x.a), b1 = x.named(ordered, x.b);
@@ -237,11 +245,12 @@ test("Settings actual review subject follows reorder and retires a replaced pend
   x.invariant();
 });
 
-// Positive HTTP caller contract only. The original two identity/409 witnesses
-// remain exact; genuine Store/Worker approval receipts are covered separately.
-// One existing finite token completion drives a same-owner catalog refresh.
+// Positive HTTP caller contract only. The two identity/409 witnesses retain
+// their native subject assertions; genuine Worker receipts remain separate.
+// One existing Projects Refresh resamples the catalog while the exact PRIMARY
+// positive approval HTTP response is held. It creates no token/session ACK.
 // No Store method, application callback, currentness predicate or result is replaced.
-for (const retired of [false, true]) test("Settings original positive approval HTTP / "
+for (const retired of [false, true]) test("E Projects original positive approval HTTP with GET-only resampling / "
   + (retired ? "retired exact form cannot start the new subject's load" : "healthy exact form completes its current load"), options, async t => {
   const x = await subjectFixture(t), { f } = x, service = f.service;
   const current = x.named(x.rows(), x.a), owner = f.host, route = f.store.route.get();
@@ -255,7 +264,7 @@ for (const retired of [false, true]) test("Settings original positive approval H
   const unchanged = structuredClone({ events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get(),
     user: f.store.session.get().user, budgets: f.store.session.get().budgets, costBudgets: f.store.session.get().costBudgets });
   const prefix = service.requests.map(request => [method(request), request.url]);
-  const expectedReads = ["/api/workspaces", endpoint("A"), endpoint("A", "/pilot"), endpoint("A", "/retention"),
+  const expectedReads = ["/api/workspaces", endpoint("A"), endpoint("A", "/projects"), endpoint("A", "/pilot"), endpoint("A", "/retention"),
     endpoint("A", "/context-packages"), endpoint("A", "/assurance"), endpoint("A", "/security"),
     endpoint("A", "/holds"), endpoint("A", "/recovery"), tokenPath("A"), endpoint("A", "/deletion")].map(path => ["GET", path]);
   const expected = { version: x.a.pendingDraftVersion }, url = publishPath(x.a);
@@ -297,14 +306,12 @@ for (const retired of [false, true]) test("Settings original positive approval H
     assert.equal(service.writes.length, 0, "A finite HTTP shape is not an actual approval/commit receipt");
     next = retired ? { ...x.a, pendingDraftVersionId: "review-draft-A-next", pendingDraftVersion: 3,
       draftPreview: [{ ...x.a.draftPreview[0], text: "New current immutable subject while original A response is held" }] } : structuredClone(x.a);
-    f.issue(); await f.flush();
+    f.click(f.find("button", node => Object.hasOwn(node.attributes, "data-workspace-settings-refresh"))); await f.flush();
     assert.strictEqual(f.host, owner); assert.equal(f.store.route.get(), route);
     assert.equal(f.store.captureAuthorizationScope()?.key, authorization); assert.equal(f.store.sourceOwnershipActive(source), true);
-    assert.equal(service.pending, 0); assert.equal(service.writes.length, 1);
-    assert.equal(service.writes[0].method, "POST"); assert.equal(service.writes[0].url, tokenPath("A"));
-    assert.equal(service.writes[0].body, null); assert.equal(service.writes[0].receipt.credentialId, "fixture-credential-A-1");
-    assert.equal(service.writes[0].receipt.token, "fixture-token-A-1");
-    assert.equal(service.tokenCount.A, 1); assert.equal(service.credentials.A.length, 1);
+    assert.equal(service.pending, 0); assert.equal(service.writes.length, 0);
+    assert.equal(service.tokenCount.A, 0); assert.equal(service.credentials.A.length, 0);
+    assert.equal(service.tokenCount.B, 0); assert.equal(service.credentials.B.length, 0);
     const rows = x.native.rows(), subject = x.named(rows, next); assert.equal(rows.length, 2);
     assert.equal(current.form.isConnected, !retired);
     assert.equal(subject.form === current.form, !retired, "Only the changed immutable subject retires the original form");
@@ -314,8 +321,8 @@ for (const retired of [false, true]) test("Settings original positive approval H
     const beforeRelease = service.requests.length, beforeReads = service.requests.filter(request => method(request) === "GET").length;
     assert.deepEqual(service.requests.slice(0, prefix.length).map(request => [method(request), request.url]), prefix);
     assert.deepEqual(service.requests.slice(prefix.length).map(request => [method(request), request.url]),
-      [["POST", url], ["POST", tokenPath("A")], ["GET", "/api/session"], ["GET", "/api/workspaces/reviews"], ...expectedReads],
-      "The held original plus the one existing token/session/current-catalog refresh are exactly accounted for before release");
+      [["POST", url], ...expectedReads],
+      "The held primary approval plus one current Projects GET-only refresh are exactly accounted for before release");
     assert.equal(received[0].response.bodyUsed, false); gate.release.resolve();
     const result = await completion; assert.equal(result.error, undefined); assert.equal(result.value, undefined);
     await f.flush();
@@ -324,8 +331,8 @@ for (const retired of [false, true]) test("Settings original positive approval H
     assert.equal(f.store.ui.toast, f.i18n.system("Organization context version {version} was published. Following documents must explicitly accept the update.",
       { version: expected.version }), "The actual unchanged-authorization Store caller reaches its original positive feedback");
     assert.equal(service.requests.filter(request => method(request) === "POST" && request.url === url).length, 1);
-    assert.equal(service.requests.filter(request => method(request) === "POST").length, 2, "One original finite approval HTTP and one existing finite token operation only");
-    assert.equal(service.writes.length, 1, "The positive HTTP fixture never manufactures a backend approval receipt");
+    assert.equal(service.requests.filter(request => method(request) === "POST").length, 1, "Only the exact original finite approval HTTP; incidental Refresh is GET-only");
+    assert.equal(service.writes.length, 0, "The positive HTTP fixture never manufactures a backend approval or token receipt");
     assert.deepEqual({ events: f.store.events.get(), head: f.store.head.get(), content: f.store.content.get(),
       user: f.store.session.get().user, budgets: f.store.session.get().budgets, costBudgets: f.store.session.get().costBudgets }, unchanged);
     assert.strictEqual(f.host, owner); assert.equal(f.store.route.get(), route);
@@ -337,7 +344,8 @@ for (const retired of [false, true]) test("Settings original positive approval H
     t.diagnostic("SETTINGS_POSITIVE_ACK_CALLER " + JSON.stringify({ retired, originalStatus: received[0].response.status,
       originalJsonCalls: gate.jsonCalls, originalFormConnected: current.form.isConnected, sameOwner: f.host === owner,
       sameRoute: f.store.route.get() === route, beforeReads, afterReads: service.requests.filter(request => method(request) === "GET").length,
-      followup, finiteApprovalReceipt: false, evidence: "actual Settings/Store caller; original finite HTTP response; no Worker/pilot/browser approval claim" }));
+      followup, finiteApprovalReceipt: false, incidentalRefresh: "current Projects GET-only; no token/session ACK",
+      evidence: "actual Settings/Store caller; original held positive approval HTTP response; no Worker/pilot/browser approval claim" }));
     assert.deepEqual(followup, retired ? [] : expectedReads,
       retired ? "A true original ACK cannot acquire a fresh #load owner after its exact form retires"
         : "A current exact original form must complete the actual existing same-resource #load");

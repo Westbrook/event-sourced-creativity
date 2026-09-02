@@ -32,6 +32,8 @@ const sourceRows = async w => (await readWorkspaceEvents(w.env, w.streamId))
 
 async function assignmentPage(t, entry, settings = {}) {
   assert.equal(typeof (settings.projectAuthor ?? false), "boolean", "Project author membership is an explicit false-default fixture option");
+  const organizationRole = settings.organizationRole ?? "member";
+  assert.ok(["member", "administrator"].includes(organizationRole), "Only an explicit finite organization role is varied");
   const w = await createSceneCostFixture(1, "visual", { shared: true, depth: true });
   const share = w.sharing, reviewer = "assigned-reviewer";
   const identity = { "oai-authenticated-user-id": reviewer, "oai-authenticated-user-email": "assigned-reviewer@example.invalid" };
@@ -40,8 +42,8 @@ async function assignmentPage(t, entry, settings = {}) {
   // fixture. Permissions/session/task responses below all come from the Worker.
   w.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,'creator','pilot-2026-08-10',?,?,?)")
     .run(reviewer, identity["oai-authenticated-user-email"], "Assigned reviewer", now, now, now);
-  w.sqlite.prepare("INSERT INTO organization_memberships(membership_id,organization_id,user_id,role,status,invited_by_user_id,accepted_at,created_at,updated_at) VALUES(?,?,?,'member','active',?,?,?,?)")
-    .run("assigned-reviewer-org", share.organizationId, reviewer, w.owner, now, now, now);
+  w.sqlite.prepare("INSERT INTO organization_memberships(membership_id,organization_id,user_id,role,status,invited_by_user_id,accepted_at,created_at,updated_at) VALUES(?,?,?,?,'active',?,?,?,?)")
+    .run("assigned-reviewer-org", share.organizationId, reviewer, organizationRole, w.owner, now, now, now);
   w.sqlite.prepare("INSERT INTO project_memberships(membership_id,organization_id,project_access_id,project_id,user_id,role,status,granted_by_user_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'active',?,?,?)")
     .run("assigned-reviewer-project", share.organizationId, share.projectAccessId, w.projectId, reviewer, settings.projectAuthor ? "editor" : "viewer", w.owner, now, now);
   const memberPath = "/api/workspaces/" + share.organizationId + "/projects/" + share.projectAccessId + "/members/assigned-reviewer-project";
@@ -136,6 +138,11 @@ async function assignmentPage(t, entry, settings = {}) {
 
   const startingDocument = entry === "cross-project" ? w.documentId : entryDocument;
   const h = await createSceneStoreHost({ workerFixture: { ...w, documentId: startingDocument } });
+  // The existing selected-context Worker session initializes an eligible
+  // administrator's tenant counters before the unchanged beforeMoney snapshot.
+  // No extra read, counter seed, late snapshot or fiscal exemption is added.
+  if (organizationRole === "administrator") assert.equal(h.store.session.get().organizations
+    .find(organization => organization.organizationId === share.organizationId)?.role, organizationRole);
   // Complete native Location/History ports; production load uses location.href
   // for performance resource lookup. No load/route implementation is replaced.
   Object.defineProperty(h.location, "href", { get() { return this.origin + this.pathname + this.search + this.hash; } });

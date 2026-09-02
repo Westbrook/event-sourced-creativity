@@ -33,6 +33,49 @@ export async function verifyFocus(page, locator, testInfo, stage, options = {}) 
     await captureViewport(page, testInfo, stage);
   }
   const metrics = await browserMetrics(page);
+  if (metrics.documentScrollWidth > metrics.documentWidth + 1) {
+    // Diagnose the actual overflowing layout without changing native focus,
+    // scroll, styles, or the assertion. A clipped child is not a page owner.
+    const overflow = await page.evaluate(() => {
+      const describe = element => {
+        const style = getComputedStyle(element), bounds = element.getBoundingClientRect();
+        return {
+          tag: element.tagName, id: element.id, className: element.getAttribute("class"),
+          bounds: bounds.toJSON(), clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+          display: style.display, visibility: style.visibility, position: style.position,
+          overflowX: style.overflowX, overflowY: style.overflowY, contain: style.contain,
+          transform: style.transform, width: style.width, minWidth: style.minWidth, maxWidth: style.maxWidth,
+          left: style.left, right: style.right, boxSizing: style.boxSizing,
+        };
+      };
+      const width = document.documentElement.clientWidth, candidates = [];
+      for (const element of document.querySelectorAll("*")) {
+        const item = describe(element);
+        if (item.display === "none") continue;
+        const pseudos = ["::before", "::after"].flatMap(pseudo => {
+          const style = getComputedStyle(element, pseudo);
+          return style.display !== "none" && !["none", "normal"].includes(style.content) ? [{
+            pseudo, position: style.position, width: style.width, height: style.height,
+            left: style.left, right: style.right, top: style.top, bottom: style.bottom,
+            transform: style.transform, bounds: "unmeasured generated box",
+          }] : [];
+        });
+        const reasons = [];
+        if (item.bounds.width && (item.bounds.left < -1 || item.bounds.right > width + 1)) reasons.push("outside-layout-viewport");
+        if (item.scrollWidth > item.clientWidth + 1) reasons.push("own-scroll-overflow");
+        if (["absolute", "fixed"].includes(item.position)) reasons.push("out-of-flow");
+        if (pseudos.length) reasons.push("generated-box");
+        if (!reasons.length) continue;
+        const ancestors = [];
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.push(describe(parent));
+        candidates.push({ ...item, reasons, pseudos, ancestors });
+      }
+      return { root: describe(document.documentElement), body: describe(document.body),
+        viewport: { width, scrollX, scrollY }, candidates,
+        boundary: "Read-only light-DOM candidates, not proof of which box expands the root; generated-box bounds remain unmeasured." };
+    });
+    await attachJSON(testInfo, stage + "-horizontal-overflow", { metrics, ...overflow });
+  }
   expect(metrics.documentScrollWidth, `${stage}: page has horizontal overflow`).toBeLessThanOrEqual(metrics.documentWidth + 1);
   return observation;
 }

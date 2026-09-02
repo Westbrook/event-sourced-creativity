@@ -268,8 +268,10 @@ test("project documents and concrete specialist evidence precede aggregate dashb
   assert.ok(dashboard.indexOf('class="role-evidence"') < dashboard.indexOf('class="role-metric-grid"'));
   assert.match(dashboard, /dashboardHeadingLevel===1\?html`<h1/);
   assert.match(dashboard, /:html`<h2 id="role-dashboard-heading"/);
-  assert.ok(delivery.indexOf('class="delivery-decision-list"') < delivery.indexOf('class="delivery-decision-form"'));
-  assert.ok(delivery.indexOf('class="delivery-decision-list"') < delivery.lastIndexOf("this.dashboard("));
+  const deliveryRender = delivery.slice(delivery.indexOf("  override render() {"));
+  assert.match(deliveryRender, /class="delivery-decision-list"[\s\S]*?#decisionRow\([\s\S]*?class="delivery-decision-form"/u);
+  assert.ok(deliveryRender.indexOf('class="delivery-decision-list"') < deliveryRender.indexOf('class="delivery-decision-form"'));
+  assert.ok(deliveryRender.indexOf('class="delivery-decision-list"') < deliveryRender.lastIndexOf("this.dashboard("));
   assert.ok(adapter.indexOf('class="adapter-preview-form"') < adapter.lastIndexOf("super.render()"));
 });
 

@@ -211,7 +211,7 @@ function finiteSettingsService() {
   return state;
 }
 
-async function settingsFixture(t, { locale = "en", section = "overview" } = {}) {
+async function settingsFixture(t, { locale = "en", section = "members" } = {}) {
   // Reuse the actual shared helper ports, with one cleanup owner for this
   // combined fixture. Restore them after the existing Store has closed.
   const nativeCleanups = [];
@@ -344,7 +344,7 @@ async function settingsFixture(t, { locale = "en", section = "overview" } = {}) 
     else dispatch({ type: kind === "pointer" ? "pointerdown" : "keydown", target: other });
     return other;
   };
-  f.navigate = (key, nextSection = "overview") => { f.store.setRoute(path(key, nextSection)); f.draw(); };
+  f.navigate = (key, nextSection = "members") => { f.store.setRoute(path(key, nextSection)); f.draw(); };
   f.refreshAuthority = async (patch = {}) => { service.bump(patch); await f.store.refreshSession(); f.draw(); };
   f.disconnect = () => {
     ports.bindFixture(f); f.host.isConnected = false; f.host.disconnectedCallback();
@@ -384,7 +384,7 @@ async function settingsFixture(t, { locale = "en", section = "overview" } = {}) 
 for (const locale of ["en", "ja"]) test("workspace response ownership healthy private detail and one-time token " + locale, async t => {
   const f = await settingsFixture(t, { locale }); f.issue(); await f.flush();
   assert.ok(f.token("fixture-token-A-1"));
-  assert.match(f.privateText(), /PRIVATE_A_PACKAGE/u);
+  assert.match(f.privateText(), /PRIVATE_A_STORAGE/u);
   assert.equal(f.service.writes.length, 1); assert.equal(f.service.writes[0].url, tokenPath("A"));
   f.click(f.find("button", node => node.text === f.i18n.system("Hide token"))); await f.flush();
   assert.equal(f.token("fixture-token-A-1"), false);
@@ -432,7 +432,7 @@ test("workspace response ownership authorization retires cached private detail b
 });
 
 test("workspace response ownership current denied refresh is unavailable rather than endless loading", async t => {
-  const f = await settingsFixture(t); f.service.denied.add("A"); f.navigate("A", "members"); await f.flush();
+  const f = await settingsFixture(t, { section: "projects" }); f.service.denied.add("A"); f.navigate("A", "members"); await f.flush();
   assert.doesNotMatch(f.privateText(), /PRIVATE_A_MEMBER|PRIVATE_A_PACKAGE|PRIVATE_A_STORAGE/u);
   assert.ok(f.nodes("p").some(node => node.attributes.role === "alert"));
   assert.equal(f.nodes("p").some(node => node.attributes.role === "status" && node.text === f.i18n.t("status.loading", "Loading")), false);
@@ -442,7 +442,7 @@ test("workspace response ownership current denied refresh is unavailable rather 
 });
 
 test("workspace response ownership late failed load cannot overwrite healthy B", async t => {
-  const f = await settingsFixture(t), gate = f.service.queue(request => method(request) === "GET" && request.url === endpoint("A"),
+  const f = await settingsFixture(t, { section: "projects" }), gate = f.service.queue(request => method(request) === "GET" && request.url === endpoint("A"),
     "headers", { status: 503, body: { error: "workspace_unavailable" } });
   f.navigate("A", "members"); await gate.seen.promise; f.navigate("B"); await f.flush();
   gate.release.resolve(); await f.flush();
@@ -517,6 +517,9 @@ for (const key of ["canvasAccess", "reviewAccess"]) for (const interruption of [
     } else assert.equal(f.focusCalls.length, 0, "Older completion never steals newer focus");
   });
 
+// E presentation migration: Members retains member/security/token evidence.
+// Keep the same detail/held-package timing and assertion count, replacing only
+// presentation operands that assumed the former all-task Overview.
 // Same session/route, changed *detail* evidence: use the current supported token
 // action's acknowledged follow-up load. An authorization event would clear the
 // old detail before #load and miss this branch. The service is finite setup,
@@ -524,7 +527,13 @@ for (const key of ["canvasAccess", "reviewAccess"]) for (const interruption of [
 for (const change of ["unchanged", "role", "permissions"]) test(
   "workspace response ownership same-session detail refresh " + change, async t => {
     const f = await settingsFixture(t), service = f.service;
-    for (const marker of ["PRIVATE_A_MEMBER", "PRIVATE_A_PACKAGE", "PRIVATE_A_STORAGE", "PRIVATE_A_ASSURANCE"])
+    // E's new privacy operand is a controlled native value, not template text.
+    // Reuse the existing installed-Lit PropertyPart adapter so live/noChange
+    // resolve as they do on the real Members form; retain the same ACK/read test.
+    const { retentionNativeForm } = await import("./helpers/workspace-policy-native-fixture.mjs");
+    const native = retentionNativeForm(f, { defaultKey: "security" });
+    native.current();
+    for (const marker of ["PRIVATE_A_MEMBER", "PRIVATE_A_ADMIN", "PRIVATE_A_STORAGE", "private-a.example.invalid"])
       assert.ok(f.privateText().includes(marker), "Initial current evidence includes " + marker);
     const session = structuredClone(f.store.session.get()), serviceSessionBefore = structuredClone(service.session);
     const authorization = f.store.captureAuthorizationScope(), route = f.store.route.get();
@@ -567,21 +576,25 @@ for (const change of ["unchanged", "role", "permissions"]) test(
         finiteWrites: service.writes.length, sameRoute: f.store.route.get() === route,
       }));
       if (change === "unchanged") {
-        assert.match(f.privateText(), /PRIVATE_A_PACKAGE/u, "Healthy same-detail refresh keeps readable prior evidence");
+        assert.match(f.privateText(), /PRIVATE_A_MEMBER/u, "Healthy same-detail refresh keeps current authorized Members evidence");
         assert.match(f.privateText(), /PRIVATE_A_STORAGE/u);
         assert.equal(f.token("fixture-token-A-1"), true);
       } else {
-        assert.doesNotMatch(f.privateText(), /PRIVATE_A_PACKAGE|PRIVATE_A_STORAGE|PRIVATE_A_ASSURANCE|fixture-token-A-1/u,
-          "Changed detail withdraws prior secondary evidence and the one-time token before new evidence publishes");
+        assert.doesNotMatch(f.privateText(), /PRIVATE_A_STORAGE|private-a\.example\.invalid|fixture-token-A-1/u,
+          "Changed detail withdraws prior Members security evidence and the one-time token before new evidence publishes");
       }
       assert.equal(evidence.used && evidence.jsonCalls === 1, true,
         "Current refreshed detail must continue to its evidence read, not fail on the shadowed owner binding");
-      assert.equal(f.privateText().includes(freshName), false, "Held evidence has not published early");
+      assert.equal(f.privateText().includes("PRIVATE_A_STORAGE"), change === "unchanged",
+        "While auxiliary evidence is held, only unchanged detail retains the former Members security view");
       assert.equal(f.nodes("p").some(node => node.attributes.role === "alert"), false);
       evidence.release.resolve(); await f.flush(18);
-      assert.ok(f.privateText().includes(freshName), "Fresh current evidence reaches the actual renderer");
+      assert.equal(f.privateText().includes("PRIVATE_A_STORAGE"), change !== "role",
+        "Settled current evidence restores Members security only for the still-authorized organization owner");
       assert.match(f.privateText(), /PRIVATE_A_MEMBER/u, "Still-authorized current member detail remains usable");
-      assert.doesNotMatch(f.privateText(), /PRIVATE_A_PACKAGE/u, "Old package evidence is replaced, not concatenated");
+      assert.equal(f.tree().visible("tr").find(node => node.text.includes("PRIVATE_A_MEMBER"))?.text.includes(
+        f.i18n.t("workspace.admin.role." + (change === "role" ? "administrator" : "owner"))), true,
+        "The current actor row reflects the refreshed organization role rather than the former role");
       assert.equal(f.nodes("p").some(node => node.attributes.role === "alert"), false);
       assert.equal(f.nodes("p").some(node => node.attributes.role === "status"
         && node.text === f.i18n.t("status.loading", "Loading")), false);
@@ -589,7 +602,8 @@ for (const change of ["unchanged", "role", "permissions"]) test(
       assert.equal(hasTokenAction, change !== "role", "Current role, not the previous detail, controls owner-only reach");
       if (change === "role") assert.doesNotMatch(f.privateText(), /PRIVATE_A_STORAGE/u);
       if (change === "permissions") {
-        assert.doesNotMatch(f.privateText(), /PRIVATE_A_ASSURANCE/u);
+        assert.equal(f.tree().visible("a").some(node => node.attributes.href === path("A", "activity")), false,
+          "Removed audit permission withdraws the actual Activity destination");
         assert.equal(service.requests.slice(requestStart).some(request => request.url === endpoint("A", "/assurance")), false,
           "Removed audit permission cannot fetch or retain the old assurance evidence");
       }
@@ -743,7 +757,7 @@ test("B3 project members pending newer 200 is not proof against a delivered deni
 });
 
 test("B3 project members overlapping reads of two loaded projects are independent", options, async t => {
-  const f = await settingsFixture(t, { locale: "en", section: "overview" });
+  const f = await settingsFixture(t, { locale: "en", section: "members" });
   const secondId = "settings-access-second", secondName = "PRIVATE_SECOND_PROJECT";
   const base = structuredClone(f.service.reply({ url: endpoint("A"), init: {} }));
   base.body.projects.push({ ...base.body.projects[0], project_access_id: secondId,
@@ -824,7 +838,7 @@ test("B3 project members successful read cannot clear a separate current mutatio
 });
 
 test("B3 project members recovering one loaded project preserves another project's error", options, async t => {
-  const f = await settingsFixture(t, { locale: "en", section: "overview" });
+  const f = await settingsFixture(t, { locale: "en", section: "members" });
   const secondId = "settings-access-second", secondName = "PRIVATE_SECOND_PROJECT";
   const base = structuredClone(f.service.reply({ url: endpoint("A"), init: {} }));
   base.body.projects.push({ ...base.body.projects[0], project_access_id: secondId,
@@ -893,7 +907,7 @@ for (const status of [401, 403, 404]) test("B3 project member denial " + status 
 });
 
 test("B3 same-host locale recovery preserves the other loaded project's localized denial", options, async t => {
-  const f = await settingsFixture(t, { locale: "fr", section: "overview" }), language = memberReadLiveLocale(f);
+  const f = await settingsFixture(t, { locale: "fr", section: "members" }), language = memberReadLiveLocale(f);
   const host = f.host, controller = f.i18n, secondId = "settings-access-second", secondName = "PRIVATE_SECOND_PROJECT";
   const base = structuredClone(f.service.reply({ url: endpoint("A"), init: {} }));
   base.body.projects.push({ ...base.body.projects[0], project_access_id: secondId,
@@ -954,4 +968,29 @@ test("B3 arbitrary member-read diagnostic remains literal across same-host local
   assertUnchanged(f, original, 2); // Intercepted failure was recorded by the Store host, not the finite service.
   assert.equal(f.storeHost.requests.filter(isMemberRead).length, 3);
   assert.deepEqual(frenchVisible, [literal]); assert.deepEqual(japaneseVisible, [literal]);
+});
+
+for (const locale of ["en", "ja"]) test("Workspace E private evidence is reachable only in its current exact task " + locale, async t => {
+  const { withSettingsShellFixture } = await import("./helpers/workspace-settings-shell-fixture.mjs");
+  const f = await withSettingsShellFixture(t, setupTest => settingsFixture(setupTest, { locale, section: "members" }));
+  const authorization = f.store.captureAuthorizationScope(), source = structuredClone(f.store.events.get());
+  const tasks = [
+    { section: "projects", marker: "PRIVATE_A_PACKAGE", absent: /PRIVATE_A_MEMBER|PRIVATE_A_STORAGE|PRIVATE_A_ASSURANCE/u, view: "/projects" },
+    { section: "activity", marker: "PRIVATE_A_ASSURANCE", absent: /PRIVATE_A_MEMBER|PRIVATE_A_STORAGE|PRIVATE_A_PACKAGE/u, view: "/audit" },
+    { section: "members", marker: "PRIVATE_A_STORAGE", absent: /PRIVATE_A_PACKAGE|PRIVATE_A_ASSURANCE/u, view: "/members" },
+  ];
+  for (const task of tasks) {
+    const requestStart = f.service.requests.length;
+    // Activate the current rendered native AudienceNavigation link, including
+    // its actual child event and existing Settings #navigate/Store route path.
+    const link = f.find("a", node => node.attributes.href === path("A", task.section));
+    f.click(link); await f.flush();
+    assert.equal(f.store.route.get(), path("A", task.section));
+    assert.ok(f.privateText().includes(task.marker), "Actual authorized " + task.section + " evidence is still reachable");
+    assert.doesNotMatch(f.privateText(), task.absent, "Other task bodies are not restated as simultaneously visible");
+    assert.ok(f.service.requests.slice(requestStart).some(request => method(request) === "GET" && request.url === endpoint("A", task.view)));
+    assert.equal(f.store.authorizationScopeActive(authorization), true);
+    assert.deepEqual(f.store.events.get(), source); assert.deepEqual(f.service.writes, []);
+  }
+  f.assertNoExternal();
 });

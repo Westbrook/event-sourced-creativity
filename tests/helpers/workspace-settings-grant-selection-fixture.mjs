@@ -1,3 +1,6 @@
+// E task successor: default Grant entry is Projects; explicit Transfer stays
+// on Members. The native selectedness adapter below is unchanged. Old combined
+// Overview/Revoke scenarios remain archived and are not claimed byte-identical.
 // Complete current Settings/Store/native confirmation with finite HTTP.
 // The proven B3 R3 selected-option adapter retains the original semantics.
 // Root's lint-only forward drops an unused import and an implicit setter return;
@@ -26,7 +29,7 @@ const snapshot = f => structuredClone({ route: f.store.route.get(), session: f.s
 function nativeGrantSelection(f, { formHandler = "#grantProject", fieldName = "userId", roleField = true, allowNoPlaceholder = false } = {}) {
   const actualForms = formHandler === "#grantProject" ? actualGrantForm
     : current => current.tree().visible("form").filter(node => node.owner === current.host && String(node.handlers.submit).includes(formHandler));
-  const renderValue = f.renderer.value.bind(f.renderer), draw = f.draw;
+  const renderValue = f.renderer.value.bind(f.renderer), draw = f.draw, collect = f.renderer.collect.bind(f.renderer);
   let capturing = false, captures = [], retained = null, sequence = 0;
   const records = [], commits = [], fallbacks = [];
   f.renderer.value = (value, owner, at, caches) => {
@@ -88,13 +91,16 @@ function nativeGrantSelection(f, { formHandler = "#grantProject", fieldName = "u
     }
     item.text = fresh.text; item.node.textContent = fresh.text; return item;
   };
-  f.draw = () => {
-    captures = []; capturing = true;
-    let markup; try { markup = draw(); } finally { capturing = false; }
+  // Commit the existing retained native nodes before the renderer invokes
+  // post-update ownership checks. Repairing them after draw() would expose
+  // a transiently removed form to an otherwise current confirmation.
+  f.renderer.collect = (markup, owner) => {
+    const result = collect(markup, owner);
+    if (!capturing || owner !== f.host) return result;
     const forms = actualForms(f); assert.equal(forms.length, captures.length); assert.ok(forms.length <= 1);
     if (!forms.length) {
       if (retained) { retained.form.isConnected = false; retained.select.isConnected = false; }
-      retained = null; return markup;
+      retained = null; return result;
     }
     const form = forms[0], description = captures[0], tree = f.tree();
     // fullPageTree returns new tree nodes, so locate the same form in this tree.
@@ -140,7 +146,11 @@ function nativeGrantSelection(f, { formHandler = "#grantProject", fieldName = "u
     // Native FormData follows the currently selected OPTION's reflected value,
     // not a saved original userId map that would hide the suspected defect.
     f.forms.set(record.form, new Map([[fieldName, record.select.value], ...(role ? [["role", String(role.port.value || "viewer")]] : [])]));
-    return markup;
+    return result;
+  };
+  f.draw = () => {
+    captures = []; capturing = true;
+    try { return draw(); } finally { capturing = false; }
   };
   const current = () => { f.draw(); assert.ok(retained?.form.isConnected && retained.select.isConnected); return retained; };
   const choose = id => {
@@ -162,8 +172,8 @@ function nativeGrantSelection(f, { formHandler = "#grantProject", fieldName = "u
   return { current, choose, observation, records, commits, fallbacks };
 }
 
-async function fixture(t, locale, { memberRole = "member", selection = {} } = {}) {
-  const f = await settingsFixture(t, { locale, section: "overview" }), service = f.service, originalReply = service.reply;
+async function fixture(t, locale, { memberRole = "member", selection = {}, section = "projects" } = {}) {
+  const f = await settingsFixture(t, { locale, section }), service = f.service, originalReply = service.reply;
   const detail = structuredClone(originalReply({ url: endpoint("A"), init: {} }).body);
   const owner = detail.members.find(member => member.role === "owner"), sample = detail.members.find(member => member.role !== "owner");
   assert.ok(owner && sample);
@@ -184,16 +194,21 @@ async function fixture(t, locale, { memberRole = "member", selection = {} } = {}
     }
     return originalReply(request);
   };
-  // Setup uses ordinary route entry once. Every tested refresh below stays on
-  // the same Overview and exact same principal/source/template owner.
-  f.navigate("B", "overview"); await f.flush();
-  f.navigate("A", "overview"); await f.flush();
+  // The caller names an actual task before any raw selection. Subsequent
+  // refreshes retain that task and exact principal/source/template owner.
+  f.navigate("B", section); await f.flush();
+  f.navigate("A", section); await f.flush();
   const native = nativeGrantSelection(f, selection); f.draw();
   if (selection.allowNoPlaceholder) assert.deepEqual(native.current().options.filter(option => option.node.value !== "").map(option => option.node.value),
     [members.B.user_id, members.C.user_id, members.D.user_id]);
   else assert.deepEqual(native.current().options.map(option => option.node.value), ["", members.B.user_id, members.C.user_id, members.D.user_id]);
   assert.equal(new Set(native.current().options.filter(option => option.node.value !== "").map(option => option.text)).size, 3, "Unique visible names are a healthy identity prerequisite.");
-  assert.ok(f.nodes("table").some(table => table.text.includes(members.B.email)), "Current Overview really co-renders the member action and Grant field.");
+  if(section==="members")assert.ok(f.nodes("table").some(table=>table.text.includes(members.B.email)),
+    "Members really co-renders Revoke and Transfer.");
+  else{
+    assert.equal(section,"projects","The Grant fixture must enter its actual E task");
+    assert.ok(f.privateText().includes(detail.projects[0].project_name),"Projects renders the exact current Grant destination");
+  }
   return { f, service, detail, members, native };
 }
 

@@ -1,3 +1,5 @@
+// E setup-only task forward: true departure/return now uses Projects.
+// Original four ownership/source/selection/fiscal assertions remain exact.
 // Separate regression controls: the exact-eight selectedness cases are not
 // edited. Reuse their one actual Settings/native-option fixture. Finite current
 // session/HTTP transitions are not real permission writes or browser/AT proof.
@@ -20,9 +22,9 @@ for (const [boundary, locale] of [["query", "en"], ["organization", "ja"], ["aut
       assert.equal(old.record.form.isConnected, false, "A genuine query departure is not a focus fragment.");
       await f.flush();
     } else if (boundary === "organization") {
-      f.navigate("B", "overview"); assert.equal(old.record.form.isConnected, false);
+      f.navigate("B", "projects"); assert.equal(old.record.form.isConnected, false);
       await f.flush(); assert.equal(native.observation().value, "", "Another organization's chooser starts without A's selected member.");
-      f.navigate("A", "overview"); await f.flush();
+      f.navigate("A", "projects"); await f.flush();
     } else if (boundary === "authority removal") {
       // The base selectedness fixture admits a valid A detail for its same-owner
       // cases. This negative explicitly denies it after the finite session no

@@ -1,7 +1,8 @@
-// Current actual-host/Worker choice fixture. Functions below are byte-exact
-// from the root-executed eight-case baseline; only import/export packaging differs.
+// Current actual-host/Worker choice fixture. E adds only explicit exact-ID
+// current Edit entry before inspecting a disclosed selector; all prior choice,
+// authority, raw-name and command assertions remain unchanged.
 import assert from "node:assert/strict";
-import { money, receipts, updates } from "./product-delivery-update-draft-fixture.mjs";
+import { money, receipts, updates, enterCurrentDeliveryEditor } from "./product-delivery-update-draft-fixture.mjs";
 import { calmFullPageNativePorts as ports, fullPageTree } from "./calm-full-page-fixture.mjs";
 
 const normalize = value => String(value).replace(/[\u2066-\u2069]/gu, "").normalize("NFC").replace(/\s+/gu, " ").trim();
@@ -44,7 +45,13 @@ function seedExistingFixtureHistory(f, locale, colliding) {
   // No application authoring/grant operation is used to construct this fixture.
   return { people, decisionId, title, qualifierShaped, currentOwner: owner.user_id };
 }
+function enterOwnerChoiceEditor(f, seeded) {
+  const rows = f.updateRows().filter(record => record.form.getAttribute("data-delivery-decision-id") === seeded.decisionId);
+  assert.equal(rows.length, 1, "One current exact decision for the explicit E Edit entry.");
+  enterCurrentDeliveryEditor(f, rows[0]);
+}
 function choices(f, seeded, authoritativeOwners) {
+  enterOwnerChoiceEditor(f, seeded);
   const markup = f.draw(), tree = fullPageTree(f, markup);
   const selects = tree.visible("select").filter(node => node.attributes.name === "ownerUserId");
   assert.equal(selects.length, 2, "The actual create and exact existing-update owner selectors are both present.");
@@ -80,8 +87,8 @@ function choices(f, seeded, authoritativeOwners) {
       assert.equal(optionNodes.filter(node => node.attributes.value === "").length, 1);
       assert.equal(optionNodes.find(node => node.attributes.value === "").text, f.i18n.t("delivery.owner.me", "Assign to me"));
     }
-    // No focus/selection/default event is synthesized. This is actual emitted
-    // option/context text, not an OS picker or physical accessibility assertion.
+    // Only the explicit current Edit action precedes inspection. No owner
+    // selection or submit is synthesized; this is not a physical OS picker.
     return { kind, decisionId: form.attributes["data-delivery-decision-id"] ?? null,
       associatedLabel: normalize(label.text), formContext: normalize(form.text),
       surroundingContext: normalize(article?.text ?? form.text), completePageContext: normalize(tree.root.text),
@@ -91,4 +98,4 @@ function choices(f, seeded, authoritativeOwners) {
   return surfaces;
 }
 
-export { snapshot, setLocale, seedExistingFixtureHistory, choices, normalize, descendants, ancestor };
+export { snapshot, setLocale, seedExistingFixtureHistory, enterOwnerChoiceEditor, choices, normalize, descendants, ancestor };

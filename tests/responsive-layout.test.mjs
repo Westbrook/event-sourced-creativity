@@ -106,7 +106,7 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(navigation, /aria-label=\$\{this\.#focused \? (?:this\.i18n\.system\()?"Exit focused document view"\)? : (?:this\.i18n\.system\()?"Enter focused document view"\)?\}/);
   assert.match(navigation, /class="studio-mode-links"/);
   assert.match(navigation, /#revealActiveMode\(\)/);
-  assert.match(navigation, /a\[aria-current="page"\]/);
+  assert.match(navigation, /querySelector<HTMLElement>\("\.ui-popover-trigger"\)/, "the named current-view trigger, not hidden choices, stays in the navigation scrollport");
   assert.match(navigation, /scroller\.scrollLeft \+= activeBounds\.(?:left|right)/);
 });
 

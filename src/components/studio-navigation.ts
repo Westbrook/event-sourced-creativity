@@ -4,12 +4,15 @@ import { FormaElement, icon } from "./forma-element";
 import { navigateInApp } from "./command-departure";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { ensureModalDialog } from "./modal-dialog";
+import type { FormaUiPopover } from "./design-system/feedback";
 import { documentContextBlockFromRoute, documentFocusFromRoute, documentIdFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { generationHistoryItemIsDraft, generationHistoryItems, generationHistoryMix, outputQualityLabel, type CreativeBlock } from "../model/events";
 import { documentArtifactDefinition } from "../model/document-artifacts";
 import { artifactIconName, blockIconName } from "./icon-semantics";
 import "./icons-navigation";
 import "./design-system/choice-card";
+import "./design-system/feedback";
+import "./studio-navigation.css";
 import "./reference-image";
 
 type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
@@ -46,8 +49,10 @@ export class StudioModeNav extends FormaElement {
   #contextPickerRevision=0;
   #cancelContextCopy:(()=>void)|null=null;
   #revealedMode: StudioMode | null = null;
+  #viewMenuCurrent: (() => boolean) | null = null;
   #focusKeydown = (event: KeyboardEvent) => {
-    if (event.key === "Escape" && this.#focused && !document.querySelector("dialog[open]")) this.#setFocused(false);
+    if (event.key === "Escape" && !event.defaultPrevented && this.#focused
+      && !document.querySelector("dialog[open], :popover-open")) this.#setFocused(false);
   };
 
   override connectedCallback() {
@@ -62,9 +67,15 @@ export class StudioModeNav extends FormaElement {
 
   override disconnectedCallback() {
     this.#cancelContextCopy?.();this.#contextPickerRevision++;
+    this.querySelector<FormaUiPopover>(".studio-view-menu")?.close();
+    this.#viewMenuCurrent = null;
     window.removeEventListener("keydown", this.#focusKeydown);
     document.documentElement.removeAttribute("data-document-focus");
     super.disconnectedCallback();
+  }
+
+  protected override willUpdate() {
+    if (this.#viewMenuCurrent && !this.#viewMenuCurrent()) this.querySelector<FormaUiPopover>(".studio-view-menu")?.close();
   }
 
   protected override updated() {
@@ -78,19 +89,86 @@ export class StudioModeNav extends FormaElement {
     }
   }
 
-  #revealActiveMode() {
-    const scroller = this.querySelector<HTMLElement>(".studio-mode-links");
-    const activeLink = scroller?.querySelector<HTMLElement>('a[aria-current="page"]');
-    if (!scroller || !activeLink) return;
+  #revealActiveMode(scroller = this.querySelector<HTMLElement>(".studio-mode-links")) {
+    const activeControl = scroller?.querySelector<HTMLElement>(".ui-popover-trigger");
+    if (!scroller || !activeControl) return;
 
     const scrollerBounds = scroller.getBoundingClientRect();
-    const activeBounds = activeLink.getBoundingClientRect();
+    const activeBounds = activeControl.getBoundingClientRect();
     const breathingRoom = 8;
     if (activeBounds.left < scrollerBounds.left + breathingRoom) {
       scroller.scrollLeft += activeBounds.left - scrollerBounds.left - breathingRoom;
     } else if (activeBounds.right > scrollerBounds.right - breathingRoom) {
       scroller.scrollLeft += activeBounds.right - scrollerBounds.right + breathingRoom;
     }
+  }
+
+
+  #viewMenu(visibleModes: typeof modes, active: StudioMode) {
+    if (visibleModes.length < 2) {
+      this.#viewMenuCurrent = null;
+      return html`<span class="studio-current-view">${this.i18n.system(visibleModes[0]?.label ?? "Document")}</span>`;
+    }
+    const projection = this.store.projection.get(), route = this.store.route.get();
+    const projectId = projection.projectId, documentId = projection.documentId;
+    const sourceOwner = this.store.captureSourceOwnership();
+    const current = () => Boolean(this.isConnected && this.store.sourceOwnershipActive(sourceOwner)
+      && this.store.route.get() === route && this.store.projection.get().projectId === projectId
+      && this.store.projection.get().documentId === documentId);
+    this.#viewMenuCurrent = current;
+    const menu = () => this.querySelector<FormaUiPopover>(".studio-view-menu");
+    const currentMode = visibleModes.find(mode => mode.id === active) ?? visibleModes[0]!;
+    const links = html`<nav class="studio-view-options" aria-label=${this.i18n.t("studio.view.label", "Document views")}>${visibleModes.map(mode => {
+      const href = withDocumentFocusInRoute(withDocumentInRoute(mode.path, documentId, projection.documentTitle), this.#focused);
+      return html`<a data-studio-view=${mode.id} href=${href} class=${active === mode.id ? "active" : ""} aria-current=${active === mode.id ? "page" : nothing}
+        @click=${(event: MouseEvent) => {
+          if (event.defaultPrevented) return;
+          const popover = menu(), link = event.currentTarget as HTMLAnchorElement | null;
+          const context = this.store.session.get()?.projectContext;
+          const choiceCurrent = () => Boolean(current() && popover?.isConnected && link?.isConnected && popover.contains(link)
+            && link.getAttribute("href") === href && popover.querySelector(".ui-popover-panel")?.matches(":popover-open")
+            && (mode.id === "document" || !context || context.permissions.includes("project.author")));
+          if (!choiceCurrent()) { event.preventDefault(); return; }
+          // Keep ordinary link semantics for opening this exact view in another tab.
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          // Choosing this exact current URL only dismisses the menu, even with
+          // local work. It does not ask the Store to replace the current owner.
+          if (href === this.store.route.get()) { event.preventDefault(); popover!.close(true); return; }
+          this.#go(event, href, false, () => {
+            if (!choiceCurrent()) return false;
+            // Capture admission before native closure returns focus to the
+            // exact invoker. The shared navigation checks that lease again.
+            popover!.close(true);
+            return true;
+          });
+        }}>${this.i18n.system(mode.label)}</a>`;
+    })}</nav>`;
+    return html`<forma-ui-popover class="studio-view-menu"
+      .label=${this.i18n.t("studio.view.changeCurrent", "Change view · {view}", { view: this.i18n.system(currentMode.label) })}
+      .heading=${this.i18n.t("studio.view.change", "Change view")} .content=${links}
+      @focusin=${(event: FocusEvent) => {
+        const popover = menu(), target = event.composedPath()[0];
+        const panel = popover?.querySelector<HTMLElement>(".ui-popover-panel");
+        const scroller = this.querySelector<HTMLElement>(".studio-mode-nav");
+        if (!current() || !popover?.isConnected || event.currentTarget !== popover
+          || !(target instanceof HTMLElement) || target.tagName !== "BUTTON" || !target.isConnected
+          || target !== popover.querySelector(".ui-popover-trigger")
+          || popover.querySelectorAll(".ui-popover-trigger").length !== 1
+          || target.ownerDocument !== this.ownerDocument || this.ownerDocument.activeElement !== target
+          || target.matches(":disabled") || !target.matches(":focus-visible")
+          || !panel?.isConnected || panel.matches(":popover-open")
+          || target.getAttribute("popovertarget") !== panel.getAttribute("id")
+          || !scroller?.contains(popover) || scroller.closest("forma-studio-mode-nav") !== this
+          || scroller.querySelector(".ui-popover-trigger") !== target
+          || !["auto", "scroll"].includes(this.ownerDocument.defaultView?.getComputedStyle(scroller).overflowX ?? "")) return;
+        // Only the current horizontal owner moves; do not scroll the page or
+        // manipulate an open native panel to reveal a keyboard-focused trigger.
+        this.#revealActiveMode(scroller);
+      }}
+      @forma-toggle=${(event: CustomEvent<{ open: boolean }>) => {
+        const popover = menu();
+        if (event.detail.open && event.currentTarget === popover && !current()) popover?.close();
+      }}></forma-ui-popover>`;
   }
 
   #reflectFocus() {
@@ -108,11 +186,12 @@ export class StudioModeNav extends FormaElement {
     });
   }
 
-  #go(event:MouseEvent,path:string,present=false){
+  #go(event:MouseEvent,path:string,present=false,onAdmitted?:()=>boolean){
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     event.preventDefault();
     if(path===this.store.route.get())return;
     void navigateInApp(this,async navigation=>{
+      if(onAdmitted&&(!onAdmitted()||!navigation.current()))return false;
       const opened=await navigation.route(path);
       if(opened&&present&&navigation.current())await new Promise<void>(resolve=>requestAnimationFrame(()=>{
         if(navigation.current())document.getElementById("output-title")?.scrollIntoView({block:"start",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
@@ -311,9 +390,9 @@ export class StudioModeNav extends FormaElement {
       this.#reflectFocus();
     }
     const {roots,hasPreviousWork}=this.#contextPickerSources();const context=this.store.session.get()?.projectContext;const canAuthor=!context||context.permissions.includes("project.author");const visibleModes=canAuthor?modes:modes.filter((mode)=>mode.id==="document");
-    const familyOptions=[{id:"write",label:this.i18n.t("studio.family.write","Write"),path:"/"},...(canAuthor?[{id:"shape",label:this.i18n.t("studio.family.shape","Shape"),path:"/studio/board"}]:[]),{id:"present",label:this.i18n.t("studio.family.present","Present"),path:"/#output-title"}];
+    const familyOptions=[{id:"write",label:canAuthor?this.i18n.t("studio.family.write","Write"):this.i18n.t("studio.family.read","Read"),path:"/"},...(canAuthor?[{id:"shape",label:this.i18n.t("studio.family.shape","Shape"),path:"/studio/board"}]:[]),{id:"present",label:this.i18n.t("studio.family.present","Present"),path:"/#output-title"}];
     const families=html`<div class="studio-mode-families" role="group" aria-label=${this.i18n.t("studio.family.label","Creative work modes")}>${familyOptions.map((family)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(family.path,projection.documentId,projection.documentTitle),this.#focused);const presenting=this.store.route.get().includes("#output-title");const selected=family.id==="present"&&presenting||family.id==="write"&&!presenting&&["document","guided","chat"].includes(active)||family.id==="shape"&&["board","layers","adaptive","editor"].includes(active);return html`<a class=${`studio-mode-family ${selected?"selected":""}`} href=${href} @click=${(event:MouseEvent)=>this.#go(event,href,family.id==="present")}>${family.label}</a>`;})}</div>`;
-    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span>${families}<div class="studio-mode-links">${visibleModes.map((mode)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle),this.#focused);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,href)}>${this.i18n.system(mode.label)}</a>`;})}</div>${canAuthor?html`<button type="button" class="context-set-trigger" aria-label="Add context" title="Add context" @click=${()=>this.#openContextPicker()}>${icon("plus")}<span class="studio-mode-action-label">Add context</span></button>`:nothing}<button type="button" class="document-focus-toggle" aria-label=${this.#focused ? this.i18n.system("Exit focused document view") : this.i18n.system("Enter focused document view")} aria-pressed=${this.#focused} title=${this.#focused ? this.i18n.system("Restore project navigation and page context") : this.i18n.system("Give this document view the full workspace")} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${icon(this.#focused ? "collapse" : "expand")}</span><span class="studio-mode-action-label">${this.#focused ? this.i18n.system("Exit focus") : this.i18n.system("Focus view")}</span></button>${canAuthor&&this.#contextPickerOpen?this.#contextPicker(roots,hasPreviousWork):nothing}</nav>`;
+    return html`<nav class="studio-mode-nav" aria-label=${this.i18n.t("studio.view.label","Document views")}><span>${this.i18n.t("studio.view.label","Document views")}</span>${families}<div class="studio-mode-links">${this.#viewMenu(visibleModes,active)}</div>${canAuthor?html`<button type="button" class="context-set-trigger" aria-label="Add context" title="Add context" @click=${()=>this.#openContextPicker()}>${icon("plus")}<span class="studio-mode-action-label">Add context</span></button>`:nothing}<button type="button" class="document-focus-toggle" aria-label=${this.#focused ? this.i18n.system("Exit focused document view") : this.i18n.system("Enter focused document view")} aria-pressed=${this.#focused} title=${this.#focused ? this.i18n.system("Restore project navigation and page context") : this.i18n.system("Give this document view the full workspace")} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${icon(this.#focused ? "collapse" : "expand")}</span><span class="studio-mode-action-label">${this.#focused ? this.i18n.system("Exit focus") : this.i18n.system("Focus view")}</span></button>${canAuthor&&this.#contextPickerOpen?this.#contextPicker(roots,hasPreviousWork):nothing}</nav>`;
   }
 }
 

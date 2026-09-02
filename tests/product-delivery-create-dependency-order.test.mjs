@@ -1,6 +1,6 @@
 // Permanent additive counterpart of root-executed R6 baseline7d5a0ae8.
-// All helpers and four case bodies/oracles below are unchanged. Only standalone
-// freeze/runtime-import packaging is removed; the root owns the outer census.
+// E context forward: the existing exact-ID Edit action now precedes Update.
+// Every original helper/assertion stays exact; one import and interaction line change.
 // Genuine native Update -> actual RAM Worker PATCH -> ordinary report reorder;
 // no canonicalized original request, substituted receipt or provider request.
 import assert from "node:assert/strict";
@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import test, { after } from "node:test";
 import { productDeliveryFixture, snapshot, setLocale, seedExistingFixtureHistory,
   endpoint, nativeCreateSelection, seedDependencies } from "./helpers/product-delivery-create-selection-fixture.mjs";
-import { nativeUpdateForms } from "./helpers/product-delivery-update-draft-fixture.mjs";
+import { nativeUpdateForms, enterCurrentDeliveryEditor } from "./helpers/product-delivery-update-draft-fixture.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 export const observations = [];
@@ -87,6 +87,7 @@ for (const locale of ["en", "ja"]) for (const editedSet of [false, true])
         if (call.url === endpoint && call.method === "PATCH") patchReply = { status: http.status, body: await http.clone().json() };
         return http;
       };
+      enterCurrentDeliveryEditor(f, update);
       const beforeUpdateGet = calls(f, "GET").length;
       f.editUpdate(update, { status: "running" }); await f.submitUpdate(update); f.draw();
       assert.equal(calls(f, "PATCH").length, 1); assert.equal(patchReply?.status, 200);

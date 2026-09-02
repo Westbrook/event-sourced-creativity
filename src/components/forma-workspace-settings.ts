@@ -1148,11 +1148,74 @@ export class FormaWorkspaceSettings extends FormaElement{
     </section>`;
   }
 
-  #sectionLinks(organizationId:string,section:WorkspaceSection){
+  #sectionDestinations(organizationId:string){
     const permissions=new Set(this.#detail?.permissions??[]);
     const allowed=(item:WorkspaceSection)=>item==="overview"||item==="members"&&permissions.has("workspace.member.read")||item==="projects"&&permissions.has("workspace.project.read")||item==="usage"&&permissions.has("workspace.usage.read")||item==="activity"&&permissions.has("workspace.audit.read");
-    const destinations=sections.filter(allowed).map((item)=>({label:this.i18n.t(`workspace.admin.section.${item}`,item),value:item,href:`/settings/workspaces/${encodeURIComponent(organizationId)}/${item}`}));
+    return sections.filter(allowed).map((item)=>({label:this.i18n.t(`workspace.admin.section.${item}`,item),value:item,href:`/settings/workspaces/${encodeURIComponent(organizationId)}/${item}`}));
+  }
+
+  #refreshSettings(event:Event,owner:WorkspaceResponseOwner){
+    const control=event.currentTarget as HTMLElement|null;
+    if(this.#loading||this.#busy||this.#confirmation||this.#readUnavailable
+      ||!control?.isConnected||!this.contains(control)||!owner.authorized()
+      ||!this.#cacheOwner?.authorized()||!this.#detail)return;
+    // This deliberate read uses the existing collection owner. Native
+    // drafts and focus remain with their current controls; no command runs.
+    void this.#load();
+  }
+
+  #refreshSettingsControl(){
+    const owner=this.#captureOwner();
+    return html`<forma-ui-cluster gap="small"><button type="button" class="button secondary compact" data-workspace-settings-refresh aria-describedby="workspace-settings-refresh-help"
+      ?disabled=${this.#loading||this.#busy||Boolean(this.#confirmation)}
+      @click=${(event:Event)=>this.#refreshSettings(event,owner)}>${this.i18n.system(this.#loading?"Refreshing…":"Refresh")}</button><span id="workspace-settings-refresh-help">${this.i18n.t("workspace.admin.refreshHelp","Refresh reads current settings; it does not save your edits.")}</span></forma-ui-cluster>`;
+  }
+
+  #sectionLinks(organizationId:string,section:WorkspaceSection){
+    const destinations=this.#sectionDestinations(organizationId);
     return html`<forma-ui-audience-navigation class="workspace-settings-navigation" .label=${this.i18n.t("workspace.admin.navigation","Organization settings")} .value=${section} .destinations=${destinations} @forma-navigate=${(event:CustomEvent<{href:string}>)=>{event.preventDefault();this.#navigate(event.detail.href);}}></forma-ui-audience-navigation>`;
+  }
+
+  #organizationOverview(organizationId:string){
+    const detail=this.#detail,owner=this.#cacheOwner;
+    if(!detail||detail.organization.organizationId!==organizationId||!owner?.authorized())return nothing;
+    const destinations=this.#sectionDestinations(organizationId).filter((item)=>item.value!=="overview");
+    const reachable=new Set(destinations.map((item)=>item.value));
+    const permissions=new Set(detail.permissions??[]),manages=permissions.has("workspace.policy.manage");
+    const pilotVisible=Boolean(this.#pilot)&&(permissions.has("workspace.usage.read")||manages)
+      &&(Boolean(this.#pilot?.cohort)||(manages&&detail.organization.role==="owner"));
+    const descriptions:Partial<Record<WorkspaceSection,string>>={
+      members:[this.i18n.t("workspace.admin.memberCaption","Organization members and invitations"),detail.organization.role==="owner"?this.i18n.system("Identity & storage controls"):"",pilotVisible?this.i18n.system("Controlled pilot"):""].filter(Boolean).join(" · "),
+      projects:[this.i18n.system("Organization context"),this.#automation.size?this.i18n.system("Review scheduling & in-app automation"):""].filter(Boolean).join(" · "),
+      usage:[this.i18n.t("workspace.admin.settled","Settled spending"),this.i18n.t("workspace.admin.reserved","Active reservations"),manages?this.i18n.system("Retention & scoped legal holds"):"",pilotVisible?this.i18n.system("Controlled pilot"):""].filter(Boolean).join(" · "),
+      activity:[this.i18n.system("Trust & operational readiness"),detail.organization.role==="owner"?this.i18n.system("Encrypted recovery evidence"):""].filter(Boolean).join(" · "),
+    };
+    // Independently granted tasks can lack a readable section. Keep only those
+    // existing helpers here; do not broaden section reads or silently drop actions.
+    const preserved=[
+      !reachable.has("projects")?this.#contextPackages():nothing,
+      !reachable.has("projects")?this.#automationControls():nothing,
+      !reachable.has("activity")?this.#assuranceControls():nothing,
+      !reachable.has("usage")?this.#retentionControls():nothing,
+      !reachable.has("members")?this.#securityControls():nothing,
+      !reachable.has("activity")?this.#recoveryControls():nothing,
+      !reachable.has("members")?this.#provisioningControls():nothing,
+      !reachable.has("members")?this.#ownershipAndDeletionControls():nothing,
+      !reachable.has("members")&&!reachable.has("usage")?this.#pilotControls():nothing,
+    ].filter((content)=>content!==nothing);
+    return html`<div class="workspace-settings-grid">
+      ${this.#reviewQueue()}
+      <section class="workspace-settings-card" data-workspace-overview aria-labelledby="workspace-overview-heading">
+        <h2 id="workspace-overview-heading">${this.i18n.t("workspace.admin.section.overview","Overview")}</h2>
+        <dl class="workspace-settings-facts"><dt>${this.i18n.t("workspace.admin.role","Role")}</dt><dd>${this.i18n.t(`workspace.admin.role.${detail.organization.role}`,detail.organization.role)}</dd></dl>
+        <ul class="workspace-settings-list">${destinations.map((item)=>html`<li data-workspace-overview-section=${item.value}><div><b>${item.label}</b><span>${descriptions[item.value]}</span></div>
+          <a class="button secondary compact" href=${item.href} aria-label=${[this.i18n.t("workspace.admin.open","Open workspace settings"),"\u2068"+detail.organization.name+"\u2069",item.label].join(" · ")} @click=${(event:MouseEvent)=>{
+            if(!owner.authorized()||this.#detail?.organization.organizationId!==organizationId||!this.#sectionDestinations(organizationId).some((current)=>current.value===item.value)){event.preventDefault();return;}
+            this.#navigate(item.href,event);
+          }}>${item.label}</a></li>`)}</ul>
+      </section>
+      ${preserved.length?html`<section data-workspace-overview-preserved aria-label=${this.i18n.t("navigation.actions","Actions")}><forma-ui-stack gap="large">${preserved}</forma-ui-stack></section>`:nothing}
+    </div>`;
   }
 
   #invitations(){
@@ -1238,11 +1301,10 @@ export class FormaWorkspaceSettings extends FormaElement{
     if(this.#cacheOwner&&!this.#cacheOwner.authorized())this.#authorizationChanged();
     const {organizationId,section,invitations}=this.#route();
     const name=this.#detail?.organization.name??this.i18n.t("workspace.admin.heading","Workspaces & collaboration");
-    const permissions=new Set(this.#detail?.permissions??[]);
     if(organizationId&&this.#deletionJob&&["pending","partial","processing"].includes(this.#deletionJob.status)){
       return html`<section class="workspace-settings-page page-pad" aria-labelledby="workspace-settings-heading"><header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${this.i18n.t("workspace.admin.eyebrow","Creator settings")}</span><h1 id="workspace-settings-heading" dir="auto">${name}</h1></div></header>${this.#error?html`<p role="alert" class="workspace-settings-error">${this.#errorText()}</p>`:nothing}<p class="workspace-settings-notice" role="status" aria-live="polite">${this.#noticeText()}</p>${this.#deletionRecoveryControls()}</section>`;
     }
-    return html`<section class="workspace-settings-page page-pad" aria-labelledby="workspace-settings-heading"><header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${this.i18n.t("workspace.admin.eyebrow","Creator settings")}</span><h1 id="workspace-settings-heading" dir="auto">${name}</h1><p>${this.i18n.t("workspace.admin.description","Manage the organizations, invitations, shared projects, and spending you are authorized to see.")}</p></div>${organizationId&&this.#overview?.organizations.length?html`<label class="workspace-settings-organization-select">${this.i18n.t("workspace.admin.organization","Organization")}<select .value=${organizationId} @change=${(event:Event)=>{const control=event.currentTarget as HTMLSelectElement,target=control.value;control.value=organizationId;this.#navigate(`/settings/workspaces/${encodeURIComponent(target)}/overview`);}}>${this.#overview.organizations.filter((organization)=>Boolean(organization.permissions?.length)).map((organization)=>html`<option value=${organization.organizationId}>${organization.name}</option>`)}</select></label>`:nothing}</header>${this.store.session.get()?.projectContext?html`<aside class="workspace-settings-shared-notice"><span>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</span><button type="button" class="button secondary compact" @click=${()=>void navigateInApp(this,navigation=>this.store.leaveProjectContext(navigation))}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}${this.#error?html`<p role="alert" class="workspace-settings-error">${this.#errorText()}</p>`:nothing}<p class="workspace-settings-notice" role="status" aria-live="polite">${this.#noticeText()}</p>${this.#readUnavailable?html`<button type="button" class="button secondary compact" ?disabled=${this.#loading} @click=${()=>void this.#load()}>${this.i18n.t("action.retry","Try again")}</button>`:nothing}${organizationId&&this.#detail?html`<div class="workspace-settings-content" ?hidden=${this.#readUnavailable} ?inert=${this.#readUnavailable}>${this.#sectionLinks(organizationId,section)}${section==="members"?html`${this.#members()}${this.#pilotControls()}${this.#securityControls()}${this.#provisioningControls()}${this.#ownershipAndDeletionControls()}`:section==="projects"?html`${this.#reviewQueue()}${this.#contextPackages()}${this.#automationControls()}${this.#projects()}`:section==="usage"?html`${this.#usage()}${this.#retentionControls()}${this.#pilotControls()}`:section==="activity"?html`${this.#assuranceControls()}${this.#recoveryControls()}${this.#activity()}`:html`<div class="workspace-settings-grid">${this.#reviewQueue()}${this.#contextPackages()}${this.#automationControls()}${this.#assuranceControls()}${this.#retentionControls()}${this.#securityControls()}${this.#recoveryControls()}${this.#provisioningControls()}${this.#ownershipAndDeletionControls()}${this.#pilotControls()}${permissions.has("workspace.member.read")?this.#members():nothing}${permissions.has("workspace.project.read")?this.#projects():nothing}${!permissions.has("workspace.member.read")&&!permissions.has("workspace.project.read")?html`<section class="workspace-settings-card"><h2>${this.i18n.t("workspace.admin.section.overview","Overview")}</h2><p>${this.i18n.t("workspace.admin.description","Manage the organizations, invitations, shared projects, and spending you are authorized to see.")}</p></section>`:nothing}</div>`}</div>`:organizationId?this.#loading?html`<p role="status">${this.i18n.t("status.loading","Loading")}</p>`:html`<button type="button" class="button secondary compact" @click=${()=>void this.#load()}>${this.i18n.t("action.retry","Try again")}</button>`:invitations?this.#invitations():this.#landing()}</section>`;
+    return html`<section class="workspace-settings-page page-pad" aria-labelledby="workspace-settings-heading"><header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${this.i18n.t("workspace.admin.eyebrow","Creator settings")}</span><h1 id="workspace-settings-heading" dir="auto">${name}</h1><p>${this.i18n.t("workspace.admin.description","Manage the organizations, invitations, shared projects, and spending you are authorized to see.")}</p></div>${organizationId&&this.#overview?.organizations.length?html`<label class="workspace-settings-organization-select">${this.i18n.t("workspace.admin.organization","Organization")}<select .value=${organizationId} @change=${(event:Event)=>{const control=event.currentTarget as HTMLSelectElement,target=control.value;control.value=organizationId;this.#navigate(`/settings/workspaces/${encodeURIComponent(target)}/overview`);}}>${this.#overview.organizations.filter((organization)=>Boolean(organization.permissions?.length)).map((organization)=>html`<option value=${organization.organizationId}>${organization.name}</option>`)}</select></label>`:nothing}</header>${this.store.session.get()?.projectContext?html`<aside class="workspace-settings-shared-notice"><span>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</span><button type="button" class="button secondary compact" @click=${()=>void navigateInApp(this,navigation=>this.store.leaveProjectContext(navigation))}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}${this.#error?html`<p role="alert" class="workspace-settings-error">${this.#errorText()}</p>`:nothing}<p class="workspace-settings-notice" role="status" aria-live="polite">${this.#noticeText()}</p>${this.#readUnavailable?html`<button type="button" class="button secondary compact" ?disabled=${this.#loading} @click=${()=>void this.#load()}>${this.i18n.t("action.retry","Try again")}</button>`:nothing}${organizationId&&this.#detail?html`<div class="workspace-settings-content" ?hidden=${this.#readUnavailable} ?inert=${this.#readUnavailable}>${this.#sectionLinks(organizationId,section)}${this.#refreshSettingsControl()}${section==="members"?html`${this.#members()}${this.#pilotControls()}${this.#securityControls()}${this.#provisioningControls()}${this.#ownershipAndDeletionControls()}`:section==="projects"?html`${this.#reviewQueue()}${this.#contextPackages()}${this.#automationControls()}${this.#projects()}`:section==="usage"?html`${this.#usage()}${this.#retentionControls()}${this.#pilotControls()}`:section==="activity"?html`${this.#assuranceControls()}${this.#recoveryControls()}${this.#activity()}`:this.#organizationOverview(organizationId)}</div>`:organizationId?this.#loading?html`<p role="status">${this.i18n.t("status.loading","Loading")}</p>`:html`<button type="button" class="button secondary compact" @click=${()=>void this.#load()}>${this.i18n.t("action.retry","Try again")}</button>`:invitations?this.#invitations():this.#landing()}</section>`;
   }
 }
 

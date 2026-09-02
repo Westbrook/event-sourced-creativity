@@ -1,3 +1,6 @@
+// E successor: invitation and the real pilot-retention form co-render on Members.
+// Finite existing cohort, no activation; exact /retention reads and all original
+// known-ACK, header-first denial, raw B, original request and fiscal checks remain.
 // Root-only causal execution. Complete current Settings/Store + actual native
 // policy fixture and installed Lit Parts; finite HTTP, not Worker authorization.
 import assert from "node:assert/strict";
@@ -33,7 +36,7 @@ function currentInvitation(f){
 }
 
 function posture(f,native,original){
-  f.draw();const current=native.records().filter(record=>record.key==="retention");
+  f.draw();const current=native.records().filter(record=>record.key==="pilot-retention");
   assert.ok(current.length<=1,"No duplicate policy owner is manufactured");
   return{oldFormConnected:original.isConnected,currentForm:current[0]?.id??null,
     sameForm:current[0]?.form===original,raw:current.length?native.values():null,
@@ -43,7 +46,7 @@ function posture(f,native,original){
 
 for(const locale of ["en","ja"])for(const mode of ["healthy200","temporary503","known403"])test(
   "Policy unsent B through unrelated acknowledged resource "+mode+" and current recovery "+locale,options,async t=>{
-    const {f,service,native,target,snapshot}=await setup(t,{locale}),reply=service.reply;
+    const {f,service,native,target,snapshot}=await setup(t,{locale,section:"members",nativeKey:"pilot-retention",activePilot:true}),reply=service.reply;
     const inviteUrl=endpoint("A","/members"),reads=[],invitations=[];let first=true;
     service.reply=request=>{
       if(!get(request)){

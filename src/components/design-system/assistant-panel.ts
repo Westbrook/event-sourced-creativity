@@ -217,6 +217,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   }
 
   override disconnectedCallback() {
+    this.#clearStudioLauncher();
     window.removeEventListener("resize", this.#schedulePosition);
     window.removeEventListener("scroll", this.#schedulePosition, true);
     window.removeEventListener("focusin", this.#schedulePosition);
@@ -238,7 +239,16 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     super.updated(changed);
     if (changed.has("modes") && !this.modes.includes(this.#activeMode)) this.#activeMode = "guidance";
     if (changed.has("open") && this.open) queueMicrotask(() => { if (!this.specialist && !document.querySelector("dialog:modal")) this.querySelector<HTMLTextAreaElement>(".forma-assistant-input")?.focus(); });
-    if (changed.has("open") && !this.open && changed.get("open")) queueMicrotask(() => this.querySelector<HTMLButtonElement>(".forma-assistant-launcher")?.focus());
+    if (changed.has("open") && !this.open && changed.get("open")) {
+      const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
+      queueMicrotask(() => {
+        if (!this.isConnected || this.open || !launcher?.isConnected
+          || this.querySelector(".forma-assistant-launcher") !== launcher) return;
+        this.#positionLauncher();
+        if (this.isConnected && !this.open && launcher.isConnected
+          && this.querySelector(".forma-assistant-launcher") === launcher) launcher.focus();
+      });
+    }
     if (changed.has("messages") && !this.#sameRenderedMessages(changed.get("messages") as AssistantDisplayedMessage[] | undefined)) queueMicrotask(() => {
       const transcript = this.querySelector<HTMLElement>(".forma-assistant-transcript");
       if (transcript) transcript.scrollTop = transcript.scrollHeight;
@@ -248,6 +258,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       if (this.#modalReady !== ready) { this.#modalReady = ready; this.requestUpdate(); }
     } else this.#modalReady = false;
     if (this.open) {
+      this.#clearStudioLauncher();
       this.style.removeProperty("--forma-assistant-obstacle-offset");
       delete this.dataset.compactLauncher;
       delete this.dataset.tightLauncher;
@@ -265,8 +276,83 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     return this.messages.every((message, index) => JSON.stringify(visible(message)) === JSON.stringify(visible(previous[index]!)));
   }
 
+  #clearStudioLauncher() {
+    delete this.dataset.studioLauncher;
+    for (const name of ["left", "top", "size"]) this.style.removeProperty(`--forma-assistant-studio-${name}`);
+  }
+
+  #positionInStudioSlot() {
+    // The actual floating owner, not a session flag, qualifies this layout.
+    const owner = this.parentElement;
+    const shell = owner?.closest<HTMLElement>(".application-creative");
+    if (!this.isConnected || !owner?.matches("forma-creative-assistant") || !shell
+      || shell.getAttribute("data-layout-intent") !== "workbench"
+      || !(shell.getAttribute("data-nav-posture") === "compact" || shell.getAttribute("data-short-height") === "true")) return false;
+    const panels = [...shell.querySelectorAll("forma-assistant-panel")]
+      .filter(panel => panel.closest(".application-creative") === shell);
+    const main = shell.querySelector<HTMLElement>("#main-content");
+    if (panels.length !== 1 || panels[0] !== this || !main
+      || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return false;
+    const hosts = [...main.querySelectorAll<HTMLElement>("forma-studio-mode-nav")]
+      .filter(host => host.isConnected && host.closest("#main-content") === main
+        && host.closest(".application-creative") === shell && host.closest(".studio-header-stack"));
+    if (hosts.length !== 1) return false;
+    const host = hosts[0]!, nav = host.querySelector<HTMLElement>(".studio-mode-nav");
+    if (!nav || nav.closest("forma-studio-mode-nav") !== host
+      || host.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+    const style = getComputedStyle(host), bounds = host.getBoundingClientRect();
+    if (style.getPropertyValue("--forma-assistant-studio-slot").trim() !== "1" || style.display !== "grid") return false;
+    const columns = style.gridTemplateColumns.trim().split(/\s+/u).map(value => Number.parseFloat(value));
+    const gap = Number.parseFloat(style.columnGap), size = columns[1];
+    if (columns.length !== 2 || !columns.every(value => Number.isFinite(value) && value > 0)
+      || !Number.isFinite(gap) || gap < 0 || size === undefined || bounds.height < size
+      || bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight) return false;
+    const inset = style.direction === "rtl"
+      ? Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
+      : Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
+    if (!Number.isFinite(inset)) return false;
+    const left = style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
+    const top = bounds.top + (bounds.height - size) / 2;
+    const box = { left, right: left + size, top, bottom: top + size };
+    const navBox = nav.getBoundingClientRect();
+    if (navBox.width <= 0 || navBox.height <= 0
+      || (style.direction === "rtl" ? box.right + gap > navBox.left : navBox.right + gap > box.left)) return false;
+    // A reserved cell is not permission to reuse a transformed, hidden, or
+    // clipped old-page coordinate. Unknown geometry keeps the floating path.
+    for (let ancestor: HTMLElement | null = host; ancestor; ancestor = ancestor.parentElement) {
+      const computed = getComputedStyle(ancestor);
+      if (computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0
+        || [computed.transform, computed.translate, computed.rotate, computed.scale, computed.perspective,
+          computed.filter, computed.clipPath, computed.maskImage].some(value => value && value !== "none")
+        || Boolean(computed.zoom && !["normal", "1", "100%"].includes(computed.zoom))) return false;
+      const clipsX = /^(auto|scroll|hidden|clip)$/.test(computed.overflowX);
+      const clipsY = /^(auto|scroll|hidden|clip)$/.test(computed.overflowY);
+      if (!clipsX && !clipsY) continue;
+      // Client rectangles do not prove clearance inside a rounded clip.
+      if ([computed.borderTopLeftRadius, computed.borderTopRightRadius,
+        computed.borderBottomLeftRadius, computed.borderBottomRightRadius].some(radius =>
+        typeof radius !== "string" || !/^0(?:\.0+)?(?:px|%)?(?:\s+0(?:\.0+)?(?:px|%)?)?$/u.test(radius.trim()))) return false;
+      const clip = ancestor.getBoundingClientRect();
+      const x = clip.left + ancestor.clientLeft, y = clip.top + ancestor.clientTop;
+      if (clipsX && (box.left < x || box.right > x + ancestor.clientWidth)
+        || clipsY && (box.top < y || box.bottom > y + ancestor.clientHeight)) return false;
+    }
+    this.dataset.compactLauncher = "true";
+    this.dataset.tightLauncher = "true";
+    this.dataset.studioLauncher = "true";
+    this.style.removeProperty("--forma-assistant-obstacle-offset");
+    this.style.setProperty("--forma-assistant-studio-left", `${left}px`);
+    this.style.setProperty("--forma-assistant-studio-top", `${top}px`);
+    this.style.setProperty("--forma-assistant-studio-size", `${size}px`);
+    return true;
+  }
+
   #positionLauncher() {
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
+    this.#clearStudioLauncher();
+    // Following the same reserved cell is layout reflow, even under its own
+    // focus/hover. No collision search or lane change runs in that cell.
+    if (launcher && !this.open && this.#positionInStudioSlot()) return;
     const focused = document.activeElement;
     if (!launcher || this.open || launcher.contains(focused)) return;
     const hovered = launcher.matches(":hover");

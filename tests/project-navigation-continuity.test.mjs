@@ -965,13 +965,57 @@ function cChatCommandArrived(x, beforeRoute) {
   assert.equal(tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
     && !node.hiddenBy && c19NamingWithin(node, chooser)).length, 7);
 }
+// E3 keeps Chat in the current native View disclosure. This test-file-only
+// prerequisite opens that control; callers still perform the original link gesture.
+async function cNavigationChatView(f, href, settle) {
+  const h = f.navigationHost, before = await cOrdinaryNavBefore(f);
+  const modes = f.components().filter(owner => owner.tag === "forma-studio-mode-nav" && owner.isConnected && owner.store === h.store);
+  assert.equal(modes.length, 1); assert.equal(modes[0].closest("forma-shell"), f.host);
+  const menus = f.components().filter(owner => owner.tag === "forma-ui-popover"
+    && owner.parentElement === modes[0] && fObjectClassed(owner, "studio-view-menu"));
+  assert.equal(menus.length, 1); const menu = menus[0];
+  assert.ok(menu.isConnected && menu instanceof f.renderer.registry["forma-ui-popover"]); assert.equal(menu.store, h.store);
+  const snapshot = () => {
+    assert.ok(modes[0].isConnected && menu.isConnected && menu.parentElement === modes[0]);
+    const tree = f.tree(), triggers = tree.visible("button").filter(node => node.owner === menu && fObjectClassed(node, "ui-popover-trigger"));
+    const panels = tree.nodes.filter(node => node.owner === menu && fObjectClassed(node, "ui-popover-panel"));
+    assert.equal(triggers.length, 1); assert.equal(panels.length, 1); const trigger = triggers[0], panel = panels[0];
+    assert.ok(trigger.port.isConnected && panel.port.isConnected); assert.equal(trigger.port.matches(":disabled"), false);
+    assert.equal(panel.tag, "section"); assert.equal(panel.attributes.popover, "auto"); assert.ok(panel.attributes.id);
+    assert.equal(menu.querySelector(".ui-popover-trigger"), trigger.port); assert.equal(menu.querySelector(".ui-popover-panel"), panel.port);
+    assert.equal(trigger.attributes.popovertarget, panel.attributes.id); assert.equal(trigger.attributes["aria-controls"], panel.attributes.id);
+    return { tree, trigger, panel };
+  };
+  const original = snapshot();
+  if (!original.panel.port.matches(":popover-open")) {
+    assert.equal(original.trigger.attributes["aria-expanded"], "false");
+    f.native.emit("pointerdown", original.trigger.port); f.native.focus(original.trigger.port); original.trigger.port.click();
+    await settle();
+  }
+  assert.equal(h.store.route.get(), before.route, "Opening View does not navigate or resolve current work");
+  await cOrdinaryNavNoWrite(f, before);
+  const current = () => {
+    const { tree, trigger, panel } = snapshot();
+    assert.equal(panel.port.matches(":popover-open"), true); assert.equal(panel.hiddenBy, null);
+    assert.equal(trigger.attributes["aria-expanded"], "true");
+    const links = tree.visible("a").filter(node => node.owner === menu && c19NamingWithin(node, panel)
+      && Object.hasOwn(node.attributes, "data-studio-view"));
+    assert.deepEqual(links.map(node => node.attributes["data-studio-view"]), ["document", "board", "guided", "layers", "adaptive", "editor", "chat"]);
+    const choices = links.filter(node => node.attributes["data-studio-view"] === "chat" && node.attributes.href === href
+      && node.text === f.i18n.system("Chat"));
+    assert.equal(choices.length, 1); const link = choices[0]; assert.ok(link.port.isConnected);
+    assert.equal(link.port.matches(":disabled"), false); assert.equal(typeof link.handlers.click, "function");
+    assert.equal(link.port.handlers.click, link.handlers.click); return link;
+  };
+  current(); return current;
+}
 for (const locale of ["en", "ja"]) for (const changed of [false, true]) test(
   "C ordinary Chat command departure / " + locale + " / " + (changed ? "raw then deliberate clear" : "clean"),
   { concurrency: false, timeout: 45_000 }, async t => {
     const f = await navigationPage(t, locale, { nativePreparation: true }), h = f.navigationHost;
     await registerCalmFullPageComponents(f, ["forma-chat-studio"]);
     const chatHref = withDocumentInRoute("/studio/chat", h.ad, h.store.projection.get().documentTitle);
-    const link = f.find("a", node => node.owner.tag === "forma-studio-mode-nav" && node.attributes.href === chatHref);
+    const chatView = await cNavigationChatView(f, chatHref, () => cSessionCommandSettle(f)), link = chatView();
     assert.ok(link.port.isConnected); f.native.emit("pointerdown", link.port); f.native.focus(link.port);
     await f.act(link, "click", { button: 0 }); await cSessionCommandSettle(f);
     const owners = f.components().filter(component => component.tag === "forma-chat-studio");
@@ -7710,10 +7754,10 @@ test("C ordinary departure retains native Document rename / " + path + " / " + l
   const raw = "  Unsent ordinary route name B — 保留  ", input = field();
   assert.equal(input.port.matches(":disabled"), false); input.port.value = raw; await f.act(input, "input");
   assert.equal(field().properties.value, raw); assert.equal(field().port.value, raw);
+  let chatView = path === "mode" ? await cNavigationChatView(f, withDocumentInRoute("/studio/chat", h.ad, originalTitle), () => cOrdinaryNavSettle(f)) : null;
   const target = () => path === "header" ? f.find("button", node => node.owner === f.host && fObjectClassed(node, "brand"))
     : path === "rail" ? f.find("a", node => node.owner.tag === "forma-project-rail" && fObjectClassed(node, "rail-project-switch"))
-      : f.find("a", node => node.owner.tag === "forma-studio-mode-nav"
-        && node.attributes.href === withDocumentInRoute("/studio/chat", h.ad, originalTitle));
+      : chatView();
   const destination = path === "header" ? "/projects" : path === "rail" ? "/studio/project" : withDocumentInRoute("/studio/chat", h.ad, originalTitle);
   if (path !== "header") assert.equal(target().attributes.href, destination);
   await cOrdinaryNavSettle(f); const before = await cOrdinaryNavBefore(f);
@@ -7727,6 +7771,7 @@ test("C ordinary departure retains native Document rename / " + path + " / " + l
   await f.act(cancel, "click", { button: 0 }); await cOrdinaryNavSettle(f);
   assert.equal(f.tree().visible("input").filter(node => node.owner === owner && node.attributes.id === "document-title-input").length, 0);
   assert.equal(h.store.projection.get().documentTitle, originalTitle); await cOrdinaryNavNoWrite(f, before);
+  if (path === "mode") chatView = await cNavigationChatView(f, destination, () => cOrdinaryNavSettle(f));
   await cOrdinaryNavClick(f, target(), native); await cOrdinaryNavNoWrite(f, before);
   assert.equal(h.store.route.get(), destination); assert.equal(owner.isConnected, false);
   const tag = path === "header" ? "forma-projects" : path === "rail" ? "forma-project-contents" : "forma-chat-studio";

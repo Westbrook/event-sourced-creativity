@@ -175,9 +175,9 @@ function nativeFormLifetime(f, entry, { owner: nestedOwner } = {}) {
 }
 
 async function setup(t, entry, { locale = "en" } = {}) {
-  // Start on the unchanged fixture's supported healthy overview; install the
-  // additional finite usage/pilot shapes before navigating to those sections.
-  const f = await settingsFixture(t, { locale, section: "overview" }), service = f.service, originalReply = service.reply;
+  // Start on the existing Members task; install the additional finite
+  // usage/pilot shapes before navigating to their actual current sections.
+  const f = await settingsFixture(t, { locale, section: "members" }), service = f.service, originalReply = service.reply;
   const secondProject = { ...structuredClone(events[0]), eventId: "settings-project-B-created", sequence: events.length + 1,
     payload: { project_id: PROJECT_B, name: "Second legitimate personal project B" } };
   const setupEvents = [...structuredClone(events), secondProject];
@@ -474,7 +474,7 @@ for (const entry of [cases[1], cases[4]]) test("Workspace " + entry.id + " uncha
 
 for (const action of ["permission", "token"]) test("Workspace existing " + action + " notice retains message identity through FR-to-JA",
   { concurrency: false, timeout: 45000 }, async t => {
-    const f = await settingsFixture(t, { locale: "fr", section: action === "permission" ? "projects" : "overview" });
+    const f = await settingsFixture(t, { locale: "fr", section: action === "permission" ? "projects" : "members" });
     const language = liveLocale(f), host = f.host;
     if (action === "permission") {
       f.click(f.find("button", node => node.text === f.i18n.t("workspace.admin.viewAccess"))); await f.flush();

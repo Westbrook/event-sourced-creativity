@@ -1381,3 +1381,209 @@ test("D428 actual panel cannot borrow a file label belonging to a different nati
   assert.equal(x.overlap(box, [label.getBoundingClientRect()]).length, 1,
     "the unrelated-label area is deliberately unresolved by this narrow association contract");
 });
+
+// Reuse the complete Panel/D411 native-frame fixture. These inputs declare a
+// current Studio grid cell and its native client boxes; they are NOT a CSS
+// renderer, the complete R2 page, browser hit testing, or route/Source proof.
+// R2's real no-space receipt and the unchanged full-Shell contribution matrix
+// remain separate evidence. The CSS contract below lives in assistant-shell.
+function e3StudioSlot(t, { rtl = false, coarse = false, short = false } = {}) {
+  const x = d411Placement(t, [], { width: 320, height: 800 });
+  const state = { reserved: true, rtl, coarse, short, intent: "workbench", present: true,
+    connected: true, busy: false, hidden: false, duplicate: false, top: 166, clip: false, transform: "none" };
+  const size = () => state.coarse ? 48 : 44, height = () => size() + 9;
+  const hostBox = () => d411Rect(0, state.top, 320, height());
+  const navBox = () => state.reserved
+    ? d411Rect(state.rtl ? size() + 16 : 0, state.top, 320 - size() - 16, height())
+    : hostBox();
+  const shell = x.ancestor(d411Rect(0, 0, 320, 800));
+  const main = x.ancestor(d411Rect(0, 63, 320, 737));
+  const stack = x.ancestor(d411Rect(0, 119, 320, 100));
+  const host = x.ancestor(hostBox()), nav = x.ancestor(navBox());
+  main.parentElement = shell; stack.parentElement = main; host.parentElement = stack; nav.parentElement = host;
+  host.getBoundingClientRect = hostBox; nav.getBoundingClientRect = navBox;
+  Object.defineProperty(host, "isConnected", { get: () => state.connected });
+  Object.defineProperty(nav, "clientWidth", { get: () => navBox().width });
+  Object.defineProperty(nav, "clientHeight", { get: () => navBox().height });
+  shell.getAttribute = name => name === "data-layout-intent" ? state.intent
+    : name === "data-nav-posture" ? state.short ? "rail" : "compact"
+    : name === "data-short-height" ? String(state.short) : null;
+  shell.querySelectorAll = selector => {
+    assert.equal(selector, "forma-assistant-panel", "only actual floating-panel membership is supplied");
+    return state.present ? [x.f.panel] : [];
+  };
+  shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
+  main.getAttribute = name => { assert.equal(name, "aria-busy"); return String(state.busy); };
+  main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
+  main.querySelectorAll = selector => {
+    assert.equal(selector, "forma-studio-mode-nav");
+    return state.connected ? state.duplicate ? [host, otherHost] : [host] : [];
+  };
+  host.closest = selector => {
+    if (selector === "#main-content") return main;
+    if (selector === ".application-creative") return shell;
+    if (selector === ".studio-header-stack") return stack;
+    assert.equal(selector, "[hidden], [inert], [aria-hidden='true']"); return state.hidden ? stack : null;
+  };
+  const otherHost = x.ancestor(hostBox(), { isConnected: true, parentElement: stack, closest: host.closest });
+  host.querySelector = selector => { assert.equal(selector, ".studio-mode-nav"); return nav; };
+  nav.closest = selector => { assert.equal(selector, "forma-studio-mode-nav"); return host; };
+  const owner = {
+    matches: selector => selector === "forma-creative-assistant",
+    closest(selector) { assert.equal(selector, ".application-creative"); return shell; },
+  };
+  x.f.panel.parentElement = owner;
+  x.f.panel.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
+  const baseStyle = getComputedStyle;
+  // D411 already restores the original global descriptor in its own teardown.
+  // This case-local extension supplies only the explicit CSSOM/client inputs.
+  globalThis.getComputedStyle = element => ({ ...baseStyle(element), display: "block", visibility: "visible",
+    opacity: "1", clipPath: "none", maskImage: "none", direction: state.rtl ? "rtl" : "ltr",
+    borderTopLeftRadius: "0px", borderTopRightRadius: "0px", borderBottomLeftRadius: "0px", borderBottomRightRadius: "0px",
+    borderLeftWidth: "0px", borderRightWidth: "0px", paddingLeft: "0px", paddingRight: "0px",
+    getPropertyValue: () => "0px",
+    ...(element === host ? { display: state.reserved ? "grid" : "block", gridTemplateColumns: `${320 - size() - 16}px ${size()}px`,
+      columnGap: "8px", paddingLeft: state.rtl ? "8px" : "0px", paddingRight: state.rtl ? "0px" : "8px",
+      getPropertyValue: name => name === "--forma-assistant-studio-slot" && state.reserved ? "1" : "0" } : {}),
+    ...(element === nav ? { overflowX: "auto", overflowY: "hidden" } : {}),
+    ...(element === main ? { overflowY: state.clip ? "clip" : "visible", transform: state.transform,
+      borderTopLeftRadius: state.radius ?? "0px" } : {}),
+  });
+  main.clientHeight = 737;
+  const account = x.control(d411Rect(268, 9.5, 44, 44), { tagName: "BUTTON" });
+  const field = x.control(d411Rect(16, 576.328125, 273, 94.78125));
+  // Keep the native raw box. The unchanged production collector performs its
+  // own clipping through the declared current nav client rectangle.
+  const view = x.control(d411Rect(192.5, 170, 195.21875, 44), { tagName: "BUTTON", parentElement: nav });
+  x.controls.push(account, x.control(d411Rect(130.46875, 67.5, 177.53125, 44), { tagName: "BUTTON" }),
+    x.control(d411Rect(249.609375, 119, 70.390625, 44), { tagName: "BUTTON" }), view,
+    x.control(d411Rect(216.125, 219, 103.875, 44), { tagName: "BUTTON" }), field,
+    x.control(d411Rect(255.1875, 734, 60.796875, 66), { tagName: "A" }));
+  x.regions.push(x.control(d411Rect(16, 264, 273, 469), { tagName: "DETAILS" }));
+  x.launcher.isConnected = true;
+  x.launcher.getBoundingClientRect = () => {
+    const dock = x.f.panel.dataset.studioLauncher === "true";
+    const offset = Number.parseFloat(x.values.get("--forma-assistant-obstacle-offset") || "0");
+    const width = dock ? Number.parseFloat(x.values.get("--forma-assistant-studio-size"))
+      : x.f.panel.dataset.compactLauncher === "true" ? 44 : 137.1875;
+    const box = dock ? d411Rect(Number.parseFloat(x.values.get("--forma-assistant-studio-left")),
+      Number.parseFloat(x.values.get("--forma-assistant-studio-top")), width, width)
+      : d411Rect(310 - width, 680 - offset, width, 44);
+    x.boxes.push({ ...box, offset, compact: x.f.panel.dataset.compactLauncher === "true" }); return box;
+  };
+  const focuses = [];
+  x.launcher.focus = () => { x.f.document.activeElement = x.launcher; focuses.push({ box: x.launcher.getBoundingClientRect(),
+    dock: x.f.panel.dataset.studioLauncher, offset: x.values.get("--forma-assistant-obstacle-offset") }); };
+  x.f.document.activeElement = field;
+  const raw = "  Preserve this unsent Studio question — 保留  ";
+  x.f.panel.draftForTest = raw;
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope };
+  const custody = () => {
+    assert.equal(x.f.panel.draftForTest, raw); assert.equal(x.f.panel.tasks, before.tasks);
+    assert.equal(x.f.panel.messages, before.messages); assert.equal(x.f.panel.conversationScope, before.scope);
+    assert.deepEqual(x.f.emitted, []); assert.equal(x.f.panel.parentElement, owner);
+  };
+  const expected = () => d411Rect(state.rtl ? 8 : 312 - size(), state.top + 4.5, size(), size());
+  return Object.assign(x, { state, host, main, field, account, focuses, custody, expected });
+}
+
+for (const configuration of [{ rtl: false, coarse: false, short: false }, { rtl: true, coarse: true, short: true }]) {
+  test("E3 same native Assistant occupies its explicit Studio utility cell " + JSON.stringify(configuration), { concurrency: false }, t => {
+    const x = e3StudioSlot(t, configuration), focused = x.f.document.activeElement;
+    const box = x.run();
+    x.custody(); assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []);
+    assert.equal(x.host.isConnected, true); assert.equal(x.state.present, true);
+    assert.equal(x.overlap(box, [x.account.getBoundingClientRect()]).length, 0);
+    assert.deepEqual(box, x.expected(), "use the real reserved-cell input rather than another incidental floating gap");
+    assert.equal(x.f.panel.dataset.studioLauncher, "true"); assert.equal(x.f.panel.dataset.compactLauncher, "true");
+    assert.equal(x.f.panel.dataset.tightLauncher, "true");
+    assert.deepEqual(x.queries, [], "a current reserved cell needs no floating collision search");
+  });
+}
+
+test("E3 current Studio cell follows layout under its own hover and native focus without searching or refocusing", { concurrency: false }, t => {
+  const x = e3StudioSlot(t); x.hovered = true; x.f.document.activeElement = x.launcher;
+  x.state.top = 180; const first = x.run();
+  x.state.top = 204; const second = x.run();
+  x.custody(); assert.equal(x.f.document.activeElement, x.launcher); assert.deepEqual(x.focuses, []);
+  assert.deepEqual(first, d411Rect(268, 184.5, 44, 44)); assert.deepEqual(second, x.expected());
+  assert.deepEqual(x.queries, []); assert.equal(x.f.panel.dataset.studioLauncher, "true");
+});
+
+test("E3 docking retires the previous floating offset before an owned-focus host departure", { concurrency: false }, t => {
+  const x = e3StudioSlot(t); x.state.reserved = false;
+  const floating = x.run(), previousOffset = x.values.get("--forma-assistant-obstacle-offset");
+  assert.ok(Number.parseFloat(previousOffset) > 0, "the original finite floating routine really established an offset");
+  assert.equal(x.f.panel.dataset.studioLauncher, undefined);
+  x.state.reserved = true; const docked = x.run();
+  const dockOffset = x.values.get("--forma-assistant-obstacle-offset");
+  x.f.document.activeElement = x.launcher; x.hovered = true; x.state.connected = false;
+  const retired = x.run();
+  x.custody(); assert.equal(x.f.document.activeElement, x.launcher); assert.deepEqual(x.focuses, []);
+  assert.deepEqual(docked, x.expected());
+  assert.equal(x.f.panel.dataset.studioLauncher, undefined);
+  for (const name of ["left", "top", "size"]) assert.equal(x.values.has("--forma-assistant-studio-" + name), false);
+  assert.deepEqual(x.queries, [], "the original floating own-focus freeze still runs after dock cleanup");
+  assert.equal(dockOffset, undefined, "a successful dock must retire, not cache, the prior viewport's floating offset");
+  assert.equal(x.values.has("--forma-assistant-obstacle-offset"), false);
+  assert.equal(retired.top, 680); assert.notEqual(retired.top, floating.top);
+});
+
+for (const retirement of ["hidden", "offscreen", "clipped", "transformed", "disconnected", "duplicate", "busy", "posture"]) {
+  test("E3 invalid Studio anchor cannot retain a docked coordinate / " + retirement, { concurrency: false }, t => {
+    const x = e3StudioSlot(t); const first = x.run();
+    x.f.document.activeElement = x.launcher; x.hovered = true;
+    if (retirement === "hidden") x.state.hidden = true;
+    if (retirement === "offscreen") x.state.top = -60;
+    if (retirement === "clipped") { x.state.clip = true; x.main.clientHeight = 100; }
+    if (retirement === "transformed") x.state.transform = "matrix(1, 0, 0, 1, 0, 0)";
+    if (retirement === "disconnected") x.state.connected = false;
+    if (retirement === "duplicate") x.state.duplicate = true;
+    if (retirement === "busy") x.state.busy = true;
+    if (retirement === "posture") x.state.intent = "browse";
+    x.run();
+    x.custody(); assert.equal(x.f.document.activeElement, x.launcher); assert.deepEqual(x.focuses, []);
+    assert.deepEqual(first, d411Rect(268, 170.5, 44, 44), "this retirement began with an actual successful placement by the complete class");
+    assert.equal(x.f.panel.dataset.studioLauncher, undefined);
+    for (const name of ["left", "top", "size"]) assert.equal(x.values.has("--forma-assistant-studio-" + name), false);
+    assert.equal(x.values.has("--forma-assistant-obstacle-offset"), false);
+    assert.deepEqual(x.queries, []); assert.deepEqual(x.writes, []);
+  });
+}
+
+test("E3 close remeasures the current Studio cell before the one existing native return-focus", { concurrency: false }, async t => {
+  const x = e3StudioSlot(t); x.run();
+  x.f.panel.open = true; x.f.panel.updated(new Map([["open", false]]));
+  await Promise.resolve();
+  assert.equal(x.f.panel.dataset.studioLauncher, undefined, "the open panel is never constrained by dock coordinates");
+  assert.equal(x.f.frames.length, 0, "opening does not add a launcher RAF");
+  x.state.top = 210; x.f.panel.open = false;
+  x.f.panel.updated(new Map([["open", true]])); await Promise.resolve();
+  for (const callback of x.f.frames.splice(0)) callback(0);
+  x.custody(); assert.equal(x.focuses.length, 1, "reuse the existing close focus operation exactly once");
+  assert.equal(x.f.document.activeElement, x.launcher);
+  assert.deepEqual(x.focuses[0].box, x.expected(), "native return-focus must see the current cell, before its own-focus freeze");
+  assert.equal(x.focuses[0].dock, "true");
+  assert.equal(x.focuses[0].offset, undefined);
+});
+
+test("E3 an unsupported rounded or unknown clipping corner releases the cell without claiming arc clearance", { concurrency: false }, t => {
+  const x = e3StudioSlot(t), observations = [];
+  x.state.clip = true;
+  for (const radius of ["12px", "unknown-corner"]) {
+    x.state.radius = "0px";
+    const before = x.run();
+    x.f.document.activeElement = x.launcher; x.hovered = true; x.state.radius = radius;
+    x.run();
+    x.custody(); assert.equal(x.f.document.activeElement, x.launcher); assert.deepEqual(x.focuses, []);
+    observations.push({ radius, before, marker: x.f.panel.dataset.studioLauncher,
+      coordinates: ["left", "top", "size"].map(name => x.values.has("--forma-assistant-studio-" + name)),
+      offset: x.values.has("--forma-assistant-obstacle-offset"), queries: [...x.queries], writes: [...x.writes] });
+  }
+  for (const observed of observations) {
+    assert.deepEqual(observed.before, x.expected(), "the same clipped rectangle with zero-radius inputs first admits the cell");
+    assert.equal(observed.marker, undefined, observed.radius);
+    assert.deepEqual(observed.coordinates, [false, false, false]); assert.equal(observed.offset, false);
+    assert.deepEqual(observed.queries, []); assert.deepEqual(observed.writes, []);
+  }
+});

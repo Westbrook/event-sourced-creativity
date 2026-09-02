@@ -64,7 +64,7 @@ export async function confirmationFixture(t, { locale = "en", application = fals
   f.emitWindow = (type, extra = {}) => emitDocument(type, extra);
   f.focus = (node) => { doc.activeElement = node; f.trace.push(["focus", node]); emitDocument("focusin", { target: node }); };
   const mutation = (removed) => {
-    const records = [{ removedNodes: removed }], observers = [...f.mutations.keys()];
+    const records = [{ type: "childList", addedNodes: [], removedNodes: removed }], observers = [...f.mutations.keys()];
     queueMicrotask(() => { for (const observer of observers) if (f.mutations.has(observer)) observer.callback(records); });
   };
   ports.FixtureObserver.prototype.observe = function (node) { f.mutations.set(this, node); };

@@ -170,6 +170,7 @@ async function platformDeliveryFixture(t) {
   const { FormaProductDelivery } = await ports.loadActual("src/apps/product/delivery.ts");
   const { FormaProductApplication } = await ports.loadActual("src/apps/product/entry.ts");
   const { FormaProductInsights } = await ports.loadActual("src/apps/product/insights.ts");
+  const { FormaUiCluster } = await ports.loadActual("src/components/design-system/layout.ts");
   const navigation = await ports.loadActual("src/components/design-system/navigation.ts");
   const language = await ports.loadActual("src/components/design-system/language-picker.ts");
   const { FormaPlatformShell } = await ports.loadActual(shellPath);
@@ -178,6 +179,7 @@ async function platformDeliveryFixture(t) {
   f.renderer = new ports.RendererPort(f, { "forma-platform-assistant": FormaPlatformAssistant,
     "forma-assistant-panel": FormaAssistantPanel, "forma-product-delivery": FormaProductDelivery,
     "forma-product-application": FormaProductApplication, "forma-product-insights": FormaProductInsights,
+    "forma-ui-cluster": FormaUiCluster,
     "forma-ui-workspace-switcher": navigation.FormaUiWorkspaceSwitcher,
     "forma-ui-audience-navigation": navigation.FormaUiAudienceNavigation, "forma-ui-language-picker": language.FormaUiLanguagePicker });
   f.host = new FormaPlatformShell(); f.host.tag = "forma-platform-shell"; f.host.attributes = {}; f.host.isConnected = true;

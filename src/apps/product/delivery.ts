@@ -2,7 +2,9 @@ import { html, noChange, nothing } from "lit";
 import type { CommandDeparture } from "../../components/command-departure";
 import { repeat } from "lit/directives/repeat.js";
 import { qualifyDisplayCollisions } from "../../model/output-naming";
-import { FormaRoleDashboard, type DeliveryDecision } from "../../components/forma-role-dashboard";
+import "../../components/design-system/layout";
+import "./delivery.css";
+import { FormaRoleDashboard, type DeliveryDecision, type RoleReport } from "../../components/forma-role-dashboard";
 import { APPLICATIONS } from "../../platform/applications";
 import { DELIVERY_DECISION_STATUSES, deliveryNeedsReleaseAuthority, deliveryTransitionAllowed } from "../../platform/delivery-lifecycle";
 import { deliveryCreateIntentDigest, readDeliveryCreateReceipt, type DeliveryCreateIntent } from "../../platform/delivery-create-receipt";
@@ -16,6 +18,8 @@ export class FormaProductDelivery extends FormaRoleDashboard {
   #saving=false;
   #notice: DeliveryNotice | null = null;
   #failed=false;
+  #editingDecisionId = "";
+  #noticeDecisionId = "";
 
   #lifetime = 0;
   #resourceRoute = "";
@@ -25,7 +29,8 @@ export class FormaProductDelivery extends FormaRoleDashboard {
   #unsubscribe?: () => void;
   #retire = () => {
     this.#lifetime += 1; this.#save = null; this.#saving = false; this.#createIntent = null;
-    this.#notice = null; this.#failed = false; this.report = null; this.issue = ""; this.reportReadOutcome = "unavailable"; this.requestUpdate();
+    this.#notice = null; this.#failed = false; this.#editingDecisionId = ""; this.#noticeDecisionId = "";
+    this.report = null; this.issue = ""; this.reportReadOutcome = "unavailable"; this.requestUpdate();
   };
   #sessionChanged = () => { this.#retire(); if (platformSession.get()?.audience === "product" && this.isConnected) void this.refresh(); };
 
@@ -138,7 +143,10 @@ export class FormaProductDelivery extends FormaRoleDashboard {
     if (!scope || !this.isConnected || !form.isConnected || !this.contains(form)
       || !this.report || this.reportReadOutcome !== "ready" || this.issue
       || !platformSession.get()?.capabilities.includes("product.delivery.manage")) return null;
-    this.#save = save; this.#saving = true; this.#notice = null; this.#failed = false; this.requestUpdate();
+    this.#save = save; this.#saving = true; this.#notice = null; this.#failed = false;
+    // Presentation tracks the exact row only; native forms retain all draft/revision ownership.
+    this.#noticeDecisionId = form.getAttribute("data-delivery-decision-id") ?? "";
+    this.requestUpdate();
     return { save, current: () => this.#save === save && this.isConnected && form.isConnected && this.contains(form)
       && lifetime === this.#lifetime && scope === this.#scope()
       && Boolean(platformSession.get()?.capabilities.includes("product.delivery.manage")) };
@@ -387,6 +395,65 @@ export class FormaProductDelivery extends FormaRoleDashboard {
     finally{if(this.#save===operation.save){this.#save=null;this.#saving=false;this.requestUpdate();}}
   }
 
+  #toggleDecisionEditor(event: Event, decisionId: string) {
+    const invoker = event.currentTarget as HTMLElement;
+    const decision = this.report?.decisions?.find(candidate => candidate.decisionId === decisionId);
+    const canManage = platformSession.get()?.capabilities.includes("product.delivery.manage") ?? false;
+    if (!this.#scope() || this.issue || !this.isConnected || !invoker?.isConnected || !this.contains(invoker)
+      || !decision || !canManage || ["approved", "revoked"].includes(decision.status) && this.report?.approvalAuthority !== true) return;
+    this.#editingDecisionId = this.#editingDecisionId === decisionId ? "" : decisionId;
+    this.requestUpdate();
+  }
+
+  #decisionNames(decisions: readonly DeliveryDecision[]) {
+    const names = qualifyDisplayCollisions(decisions.map(decision => ({
+      key: decision.decisionId, label: "\u2068" + decision.title + "\u2069",
+    })), number => this.i18n.number(number), id => "\u2068" + encodeURIComponent(id) + "\u2069");
+    return new Map(decisions.map(decision => {
+      const name = names.get(decision.decisionId)!;
+      return [decision.decisionId, name.qualifier ? name.label : decision.title];
+    }));
+  }
+
+  #decisionRow(decision: DeliveryDecision, name: string, owners: NonNullable<RoleReport["owners"]>,
+    ownerNames: ReturnType<typeof qualifyDisplayCollisions>, names: ReadonlyMap<string, string>,
+    canManage: boolean, approvalAuthority: boolean) {
+    const locked = ["approved", "revoked"].includes(decision.status) && !approvalAuthority;
+    const editable = canManage && !locked, editing = editable && this.#editingDecisionId === decision.decisionId;
+    const editForm=this.#decisionForm(decision.decisionId),dirty=editForm?.getAttribute("data-delivery-dirty")==="true";const ownerValue=dirty?String((editForm?.elements.namedItem("ownerUserId") as HTMLSelectElement|null)?.value??""):decision.ownerUserId??"",statusValue=dirty?String((editForm?.elements.namedItem("status") as HTMLSelectElement|null)?.value??""):decision.status;const statuses=DELIVERY_DECISION_STATUSES.filter((status)=>deliveryTransitionAllowed(decision.status,status)&&(approvalAuthority||!deliveryNeedsReleaseAuthority(status))),ownerUnavailable=dirty&&!owners.some(owner=>owner.userId===ownerValue),statusUnavailable=dirty&&!statuses.some(status=>status===statusValue),conflict=dirty&&editForm?.getAttribute("data-delivery-revision")!==decision.updatedAt;
+    const identity = encodeURIComponent(decision.decisionId), headingId = "delivery-decision-title-" + identity;
+    const formId = "delivery-decision-edit-" + identity, named = "\u2068" + name + "\u2069";
+    const notice = this.#noticeDecisionId === decision.decisionId
+      ? this.#saving ? this.i18n.t("delivery.saving", "Saving…") : this.#noticeText() : "";
+    return html`<li data-forma-content="primary" data-delivery-decision-id=${decision.decisionId}><article>
+      <header><h2 id=${headingId} dir="auto">${name}</h2><span>${this.i18n.t(`shell.${decision.audience}`, decision.audience)}</span>
+        ${editable ? html`<button type="button" class="button secondary compact delivery-editor-toggle"
+          data-delivery-editor-toggle=${decision.decisionId} aria-controls=${formId} aria-expanded=${String(editing)}
+          @click=${(event: Event) => this.#toggleDecisionEditor(event, decision.decisionId)}>${this.i18n.t(
+            editing ? "delivery.hideEditNamed" : dirty ? "delivery.resumeEditNamed" : "delivery.editNamed",
+            editing ? "Hide editing fields for {name}" : dirty ? "Resume editing {name}" : "Edit decision {name}", { name: named })}</button>` : nothing}
+      </header>
+      <dl><div><dt>${this.i18n.t("delivery.owner", "Owner")}</dt><dd dir="auto">${decision.owner}</dd></div>
+        <div><dt>${this.i18n.t("delivery.status", "Status")}</dt><dd>${this.i18n.t(`delivery.status.${decision.status}`, decision.status)}</dd></div>
+        ${decision.dependencyIds.length ? html`<div><dt>${this.i18n.t("delivery.dependencies", "Existing dependencies")}</dt><dd dir="auto">${decision.dependencyIds.map(dependency => names.get(dependency) ?? this.i18n.t("delivery.unavailableDependency", "Unavailable decision")).join(" · ")}</dd></div>` : nothing}
+      </dl>
+      ${decision.evidence && !editing ? html`<p dir="auto">${decision.evidence}</p>` : nothing}
+      ${notice ? html`<p class="delivery-decision-notice" role=${this.#failed ? "alert" : "status"}
+        aria-live=${this.#failed ? "assertive" : "polite"}>${notice}</p>` : nothing}
+      ${editable ? html`<form id=${formId} class="delivery-decision-form" aria-labelledby=${headingId} ?hidden=${!editing} ?inert=${!editing} data-delivery-decision-id=${decision.decisionId} data-delivery-revision=${dirty?noChange:decision.updatedAt} @input=${(event:Event)=>this.#retainDecisionDraft(event,decision)} @change=${(event:Event)=>this.#retainDecisionDraft(event,decision)} @compositionstart=${(event:Event)=>this.#retainDecisionDraft(event,decision)} @submit=${(event:SubmitEvent)=>{
+          if(this.#editingDecisionId===decision.decisionId&&!this.issue)return this.#update(event,decision);
+          else event.preventDefault();
+        }}>
+        <p class="delivery-editor-note">${this.i18n.t("delivery.editDraftKept","Hiding these fields keeps your draft. Save explicitly to update this decision.")}</p>
+        <label>${this.i18n.t("delivery.title","Decision or milestone")}<input name="title" required maxlength="160" dir="auto" .value=${dirty?noChange:decision.title}></label><label>${this.i18n.t("delivery.owner","Owner")}<select name="ownerUserId" .value=${dirty?noChange:decision.ownerUserId??""}>${ownerUnavailable?html`<option value=${ownerValue} disabled .selected=${true}>${this.i18n.t("delivery.unavailableOwner","No longer an eligible owner")} · ${ownerValue}</option>`:nothing}${repeat(owners,(owner)=>owner.userId,(owner)=>html`<option value=${owner.userId} .selected=${owner.userId===ownerValue}>${ownerNames.get("owner:"+owner.userId)!.label}</option>`)}</select></label><label>${this.i18n.t("delivery.evidence","Current evidence")}<textarea name="evidence" maxlength="800" dir="auto" .value=${dirty?noChange:decision.evidence}></textarea></label><label>${this.i18n.t("delivery.status","Status")}<select name="status" .value=${dirty?noChange:decision.status}>${statusUnavailable?html`<option value=${statusValue} disabled .selected=${true}>${this.i18n.t("delivery.unavailableStatus","No longer available: {status}",{status:this.i18n.t("delivery.status."+statusValue,statusValue)})}</option>`:nothing}${repeat(statuses,(status)=>status,(status)=>html`<option value=${status} .selected=${status===statusValue}>${this.i18n.t(`delivery.status.${status}`,status)}</option>`)}</select></label>${conflict?html`<p class="delivery-editor-conflict" role="alert">${this.i18n.t("delivery.conflict","This decision changed. Refresh it and try again.")}</p>`:nothing}
+        <forma-ui-cluster class="delivery-editor-actions" alignment="stretch" gap="small">
+          ${dirty?html`<button class="button ghost compact" type="button" ?disabled=${this.#saving} @click=${(event:Event)=>this.#reloadDecision(event,decision)}>${this.i18n.t("delivery.discardDraft","Discard draft and reload saved values")}</button>`:nothing}<button class="button secondary compact" type="submit" aria-label=${this.i18n.t("delivery.saveNamed","Save decision {name}",{name:named})} ?disabled=${this.#saving||conflict||ownerUnavailable||statusUnavailable}>${this.#saving&&this.#noticeDecisionId===decision.decisionId?this.i18n.t("delivery.saving","Saving…"):this.i18n.t("delivery.save","Save decision")}</button>
+        </forma-ui-cluster>
+      </form>` : locked ? html`<p>${this.i18n.t("delivery.approvalLocked", "An approved or revoked decision can only be changed by a release approver.")}</p>` : nothing}
+    </article></li>`;
+  }
+
+
   override render() {
     const notice=this.#noticeText();
     const decisions=this.report?.decisions??[];
@@ -401,19 +468,24 @@ export class FormaProductDelivery extends FormaRoleDashboard {
       number=>this.i18n.t("delivery.ownerQualifier","Owner {number}",{number:this.i18n.number(number)}),
       key=>this.i18n.t("delivery.ownerIdentity","Owner ID {id}",{id:`\u2068[${encodeURIComponent(key.startsWith("owner:")?key.slice(6):"")}]\u2069`}));
     const byId=new Map(decisions.map((decision)=>[decision.decisionId,decision]));
-    if(!this.report||(this.issue&&this.reportReadOutcome!=="unavailable"))return html`<section class="delivery-planning page-pad" aria-labelledby="delivery-planning-heading"><h1 id="delivery-planning-heading">${this.i18n.t("delivery.decisions","Delivery decisions")}</h1>${this.#notice?html`<p role=${this.#failed?"alert":"status"}>${notice}</p>`:nothing}${this.issue?html`<p role="alert">${this.i18n.system(this.issue)}</p><button type="button" class="button secondary compact" @click=${()=>this.refresh()}>${this.i18n.t("role.refresh","Refresh evidence")}</button>`:html`<p role="status">${this.i18n.t("role.loading","Loading approved evidence…")}</p>`}</section>`;
+    const names=this.#decisionNames(decisions);
+    if(!this.report||(this.issue&&this.reportReadOutcome!=="unavailable")){this.#editingDecisionId = ""; this.#noticeDecisionId = ""; return html`<section class="delivery-planning page-pad" aria-labelledby="delivery-planning-heading"><h1 id="delivery-planning-heading">${this.i18n.t("delivery.decisions","Delivery decisions")}</h1>${this.#notice?html`<p role=${this.#failed?"alert":"status"}>${notice}</p>`:nothing}${this.issue?html`<p role="alert">${this.i18n.system(this.issue)}</p><button type="button" class="button secondary compact" @click=${()=>this.refresh()}>${this.i18n.t("role.refresh","Refresh evidence")}</button>`:html`<p role="status">${this.i18n.t("role.loading","Loading approved evidence…")}</p>`}</section>`;}
     const createSelection = this.#createSelections(this.#createForm()) ?? { ownerUserId: "", dependencyIds: [] };
     const createOwnerUnavailable = Boolean(createSelection.ownerUserId && !owners.some(owner => owner.userId === createSelection.ownerUserId));
     const unavailableCreateDependencies = createSelection.dependencyIds.filter(id => !byId.has(id));
     const createUnavailable = createOwnerUnavailable || unavailableCreateDependencies.length > 0;
+    const selected = byId.get(this.#editingDecisionId);
+    if (!selected || !canManage || ["approved", "revoked"].includes(selected.status) && !approvalAuthority) this.#editingDecisionId = "";
+    if (!byId.has(this.#noticeDecisionId)) this.#noticeDecisionId = "";
+    const externalNotice = notice || (this.#saving && this.issue ? this.i18n.t("delivery.saving", "Saving…") : "");
     const decisionPriority:Record<string,number>={failed:0,approval_required:1,running:2,planned:3,passed:4,approved:5,revoked:6,superseded:7};
     const visibleDecisions=[...decisions].sort((left,right)=>(decisionPriority[left.status]??8)-(decisionPriority[right.status]??8)||Date.parse(right.updatedAt)-Date.parse(left.updatedAt));
     return html`
       ${!readsDecisions?html`<section class="delivery-planning page-pad"><h1>${this.i18n.t("delivery.decisions","Delivery decisions")}</h1><p>${this.i18n.t("delivery.evidenceOnly","Your authorization includes release evidence and aggregate readiness; individual delivery decisions require separate access.")}</p></section>`:html`
       <section class="delivery-planning page-pad" aria-labelledby="delivery-planning-heading"><h1 id="delivery-planning-heading">${this.i18n.t("delivery.decisions","Delivery decisions")}</h1>
-      ${this.#notice?html`<p role=${this.#failed?"alert":"status"} aria-live=${this.#failed?"assertive":"polite"}>${notice}</p>`:nothing}
-      ${visibleDecisions.length?html`<ol class="delivery-decision-list" ?hidden=${Boolean(this.issue)} ?inert=${Boolean(this.issue)}>${repeat(visibleDecisions,(decision)=>decision.decisionId,(decision)=>{const locked=["approved","revoked"].includes(decision.status)&&!approvalAuthority;const editable=canManage&&!locked,editForm=this.#decisionForm(decision.decisionId),dirty=editForm?.getAttribute("data-delivery-dirty")==="true";const ownerValue=dirty?String((editForm?.elements.namedItem("ownerUserId") as HTMLSelectElement|null)?.value??""):decision.ownerUserId??"",statusValue=dirty?String((editForm?.elements.namedItem("status") as HTMLSelectElement|null)?.value??""):decision.status;const statuses=DELIVERY_DECISION_STATUSES.filter((status)=>deliveryTransitionAllowed(decision.status,status)&&(approvalAuthority||!deliveryNeedsReleaseAuthority(status))),ownerUnavailable=dirty&&!owners.some(owner=>owner.userId===ownerValue),statusUnavailable=dirty&&!statuses.some(status=>status===statusValue),conflict=dirty&&editForm?.getAttribute("data-delivery-revision")!==decision.updatedAt;return html`<li data-forma-content="primary"><article><header><h2 dir="auto">${decision.title}</h2><span>${this.i18n.t(`shell.${decision.audience}`,decision.audience)}</span></header><dl><div><dt>${this.i18n.t("delivery.owner","Owner")}</dt><dd dir="auto">${decision.owner}</dd></div><div><dt>${this.i18n.t("delivery.status","Status")}</dt><dd>${this.i18n.t(`delivery.status.${decision.status}`,decision.status)}</dd></div>${decision.dependencyIds.length?html`<div><dt>${this.i18n.t("delivery.dependencies","Existing dependencies")}</dt><dd dir="auto">${decision.dependencyIds.map((dependency)=>byId.get(dependency)?.title??this.i18n.t("delivery.unavailableDependency","Unavailable decision")).join(" · ")}</dd></div>`:nothing}</dl>${editable?html`<form class="delivery-decision-form" data-delivery-decision-id=${decision.decisionId} data-delivery-revision=${dirty?noChange:decision.updatedAt} @input=${(event:Event)=>this.#retainDecisionDraft(event,decision)} @change=${(event:Event)=>this.#retainDecisionDraft(event,decision)} @compositionstart=${(event:Event)=>this.#retainDecisionDraft(event,decision)} @submit=${(event:SubmitEvent)=>this.#update(event,decision)}><label>${this.i18n.t("delivery.title","Decision or milestone")}<input name="title" required maxlength="160" dir="auto" .value=${dirty?noChange:decision.title}></label><label>${this.i18n.t("delivery.owner","Owner")}<select name="ownerUserId" .value=${dirty?noChange:decision.ownerUserId??""}>${ownerUnavailable?html`<option value=${ownerValue} disabled .selected=${true}>${this.i18n.t("delivery.unavailableOwner","No longer an eligible owner")} · ${ownerValue}</option>`:nothing}${repeat(owners,(owner)=>owner.userId,(owner)=>html`<option value=${owner.userId} .selected=${owner.userId===ownerValue}>${ownerNames.get("owner:"+owner.userId)!.label}</option>`)}</select></label><label>${this.i18n.t("delivery.evidence","Current evidence")}<textarea name="evidence" maxlength="800" dir="auto" .value=${dirty?noChange:decision.evidence}></textarea></label><label>${this.i18n.t("delivery.status","Status")}<select name="status" .value=${dirty?noChange:decision.status}>${statusUnavailable?html`<option value=${statusValue} disabled .selected=${true}>${this.i18n.t("delivery.unavailableStatus","No longer available: {status}",{status:this.i18n.t("delivery.status."+statusValue,statusValue)})}</option>`:nothing}${repeat(statuses,(status)=>status,(status)=>html`<option value=${status} .selected=${status===statusValue}>${this.i18n.t(`delivery.status.${status}`,status)}</option>`)}</select></label>${conflict?html`<p role="alert">${this.i18n.t("delivery.conflict","This decision changed. Refresh it and try again.")}</p>`:nothing}${dirty?html`<button class="button ghost compact" type="button" ?disabled=${this.#saving} @click=${(event:Event)=>this.#reloadDecision(event,decision)}>${this.i18n.t("delivery.discardDraft","Discard draft and reload saved values")}</button>`:nothing}<button class="button secondary compact" type="submit" aria-label=${this.i18n.t("delivery.saveNamed","Save decision {name}",{name:`\u2068${decision.title}\u2069`})} ?disabled=${this.#saving||conflict||ownerUnavailable||statusUnavailable}>${this.#saving?this.i18n.t("delivery.saving","Saving…"):this.i18n.t("delivery.save","Save decision")}</button></form>`:html`${decision.evidence?html`<p dir="auto">${decision.evidence}</p>`:nothing}${locked?html`<p>${this.i18n.t("delivery.approvalLocked","An approved or revoked decision can only be changed by a release approver.")}</p>`:nothing}`}</article></li>`;})}</ol>`:html`<p data-forma-empty-state ?hidden=${Boolean(this.issue)}>${this.i18n.t("delivery.empty","No delivery decisions have been recorded yet.")}</p>`}
-      ${canManage?html`<form class="delivery-decision-form" data-delivery-create data-delivery-create-owner=${String(this.#lifetime)} ?hidden=${Boolean(this.issue)} ?inert=${Boolean(this.issue)} @change=${()=>this.requestUpdate()} @submit=${(event:SubmitEvent)=>this.#create(event)}><label>${this.i18n.t("delivery.title","Decision or milestone")}<input name="title" required maxlength="160" dir="auto"></label><label>${this.i18n.t("delivery.audience","Audience")}<select name="audience" required>${APPLICATIONS.map((application)=>html`<option value=${application.id}>${this.i18n.t(`shell.${application.id}`,application.label)}</option>`)}</select></label><label>${this.i18n.t("delivery.owner","Owner")}<select name="ownerUserId"><option value="" .selected=${createSelection.ownerUserId===""}>${this.i18n.t("delivery.owner.me","Assign to me")}</option>${createOwnerUnavailable?html`<option value=${createSelection.ownerUserId} disabled .selected=${true}>${this.i18n.t("delivery.unavailableOwner","No longer an eligible owner")} · ${createSelection.ownerUserId}</option>`:nothing}${repeat(owners,(owner)=>owner.userId,(owner)=>html`<option value=${owner.userId} .selected=${owner.userId===createSelection.ownerUserId}>${ownerNames.get("owner:"+owner.userId)!.label}</option>`)}</select></label><label>${this.i18n.t("delivery.evidence","Current evidence")}<textarea name="evidence" maxlength="800" dir="auto"></textarea></label>${decisions.length||unavailableCreateDependencies.length?html`<label>${this.i18n.t("delivery.dependencies","Existing dependencies")}<select name="dependencies" multiple>${repeat(unavailableCreateDependencies,(id)=>id,(id)=>html`<option value=${id} disabled .selected=${true}>${this.i18n.t("delivery.unavailableDependency","Unavailable decision")} · ${id}</option>`)}${repeat(decisions,(decision)=>decision.decisionId,(decision)=>html`<option value=${decision.decisionId} .selected=${createSelection.dependencyIds.includes(decision.decisionId)}>${decision.title}</option>`)}</select></label>${unavailableCreateDependencies.length?html`<button class="button ghost compact" type="button" ?disabled=${this.#saving} @click=${(event:Event)=>this.#removeUnavailableCreateDependencies(event)}>${this.i18n.t("delivery.removeUnavailableDependencies","Remove unavailable dependencies")}</button>`:nothing}`:nothing}${createUnavailable?html`<p role="status">${this.i18n.t("delivery.createSelectionsUnavailable","Choose a current owner and remove unavailable dependencies before adding a new decision.")}</p>`:nothing}<button class="button primary" type="submit" ?formnovalidate=${Boolean(this.#createIntent?.uncertain)} ?disabled=${this.#saving||createUnavailable&&!this.#createIntent?.uncertain}>${this.#saving?this.i18n.t("delivery.saving","Saving…"):this.#createIntent?.uncertain?this.i18n.t("delivery.retryOriginal","Retry original save"):this.i18n.t("delivery.add","Add delivery decision")}</button></form>`:html`<p>${this.i18n.t("delivery.readOnly","Your access allows review; managing decisions requires a separate authorization.")}</p>`}
+      ${externalNotice&&(this.issue||!byId.has(this.#noticeDecisionId))?html`<p role=${this.#failed?"alert":"status"} aria-live=${this.#failed?"assertive":"polite"}>${this.#noticeDecisionId?html`<bdi>${names.get(this.#noticeDecisionId)}</bdi>: `:nothing}${externalNotice}</p>`:nothing}
+      ${visibleDecisions.length?html`<ol class="delivery-decision-list" ?hidden=${Boolean(this.issue)} ?inert=${Boolean(this.issue)}>${repeat(visibleDecisions, decision => decision.decisionId, decision => this.#decisionRow(decision, names.get(decision.decisionId)!, owners, ownerNames, names, canManage, approvalAuthority))}</ol>`:html`<p data-forma-empty-state ?hidden=${Boolean(this.issue)}>${this.i18n.t("delivery.empty","No delivery decisions have been recorded yet.")}</p>`}
+      ${canManage?html`<form class="delivery-decision-form" data-delivery-create data-delivery-create-owner=${String(this.#lifetime)} ?hidden=${Boolean(this.issue)} ?inert=${Boolean(this.issue)} @change=${()=>this.requestUpdate()} @submit=${(event:SubmitEvent)=>this.#create(event)}><label>${this.i18n.t("delivery.title","Decision or milestone")}<input name="title" required maxlength="160" dir="auto"></label><label>${this.i18n.t("delivery.audience","Audience")}<select name="audience" required>${APPLICATIONS.map((application)=>html`<option value=${application.id}>${this.i18n.t(`shell.${application.id}`,application.label)}</option>`)}</select></label><label>${this.i18n.t("delivery.owner","Owner")}<select name="ownerUserId"><option value="" .selected=${createSelection.ownerUserId===""}>${this.i18n.t("delivery.owner.me","Assign to me")}</option>${createOwnerUnavailable?html`<option value=${createSelection.ownerUserId} disabled .selected=${true}>${this.i18n.t("delivery.unavailableOwner","No longer an eligible owner")} · ${createSelection.ownerUserId}</option>`:nothing}${repeat(owners,(owner)=>owner.userId,(owner)=>html`<option value=${owner.userId} .selected=${owner.userId===createSelection.ownerUserId}>${ownerNames.get("owner:"+owner.userId)!.label}</option>`)}</select></label><label>${this.i18n.t("delivery.evidence","Current evidence")}<textarea name="evidence" maxlength="800" dir="auto"></textarea></label>${decisions.length||unavailableCreateDependencies.length?html`<label>${this.i18n.t("delivery.dependencies","Existing dependencies")}<select name="dependencies" multiple>${repeat(unavailableCreateDependencies,(id)=>id,(id)=>html`<option value=${id} disabled .selected=${true}>${this.i18n.t("delivery.unavailableDependency","Unavailable decision")} · ${id}</option>`)}${repeat(decisions,(decision)=>decision.decisionId,(decision)=>html`<option value=${decision.decisionId} .selected=${createSelection.dependencyIds.includes(decision.decisionId)}>${names.get(decision.decisionId)!}</option>`)}</select></label>${unavailableCreateDependencies.length?html`<button class="button ghost compact" type="button" ?disabled=${this.#saving} @click=${(event:Event)=>this.#removeUnavailableCreateDependencies(event)}>${this.i18n.t("delivery.removeUnavailableDependencies","Remove unavailable dependencies")}</button>`:nothing}`:nothing}${createUnavailable?html`<p role="status">${this.i18n.t("delivery.createSelectionsUnavailable","Choose a current owner and remove unavailable dependencies before adding a new decision.")}</p>`:nothing}<button class="button primary" type="submit" ?formnovalidate=${Boolean(this.#createIntent?.uncertain)} ?disabled=${this.#saving||createUnavailable&&!this.#createIntent?.uncertain}>${this.#saving?this.i18n.t("delivery.saving","Saving…"):this.#createIntent?.uncertain?this.i18n.t("delivery.retryOriginal","Retry original save"):this.i18n.t("delivery.add","Add delivery decision")}</button></form>`:html`<p>${this.i18n.t("delivery.readOnly","Your access allows review; managing decisions requires a separate authorization.")}</p>`}
       </section>`}
       ${this.dashboard(this.i18n.t("shell.product", "Product & Quality"), this.i18n.t("product.delivery.heading", "Delivery readiness"), this.i18n.t("product.delivery.description", "Current delivery decisions, ownership, dependencies, and evidence. Human approvals remain explicit."))}`;
   }

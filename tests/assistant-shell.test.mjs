@@ -253,3 +253,41 @@ test("D428 tight launcher uses existing native inset-focus tokens and the same b
   // The original finite Window port does not dispatch focusin. This source
   // contract is not a claim of real event delivery or rendered focus paint.
 });
+
+test("E3 Studio utility reserves real space only beside an eligible current floating Assistant and retains the original scroll owner", async () => {
+  const [panel, styles, studio] = await Promise.all([
+    read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/design-system/assistant-panel.css"),
+    read("src/components/studio-navigation.css"),
+  ]);
+  assert.ok(panel.includes('if (!launcher || this.open || launcher.contains(focused)) return;'));
+  assert.ok(panel.includes('for (let attempt = 0; attempt < 8; attempt += 1)'));
+  assert.ok(panel.includes('for (let attempt = 0; attempt < 4; attempt += 1)'));
+  assert.ok(studio.includes('scroll-padding-inline: var(--forma-focus-clearance);'));
+  assert.ok(studio.includes('max-block-size: none;'));
+  const scope = '.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel)';
+  const selector = scope + ' .studio-header-stack > forma-studio-mode-nav';
+  const block = (target, start = 0) => {
+    const at = styles.indexOf(target + ' {', start), end = styles.indexOf('}', at);
+    assert.ok(at >= start && end > at, 'exact scoped Studio utility source rule: ' + target);
+    return styles.slice(at, end + 1);
+  };
+  const reservation = block(selector);
+  for (const declaration of ['--forma-assistant-studio-slot: 1;', 'display: grid;',
+    'grid-template-columns: minmax(0, 1fr) var(--forma-assistant-studio-control);',
+    'column-gap: var(--forma-focus-clearance, .5rem);',
+    'padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));'])
+    assert.ok(reservation.includes(declaration), declaration);
+  assert.equal(reservation.includes('max-block-size:'), false, 'a control minimum is not a row ceiling');
+  assert.equal(reservation.includes('overflow:'), false, 'the utility host must not acquire another scroll clip');
+  const nav = block(selector + ' > .studio-mode-nav');
+  for (const declaration of ['grid-column: 1;', 'min-inline-size: 0;', 'max-inline-size: 100%;']) assert.ok(nav.includes(declaration));
+  const coarse = styles.indexOf('@media (pointer: coarse)', styles.indexOf(selector));
+  assert.ok(coarse >= 0);
+  assert.ok(block(selector, coarse).includes('max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem))'));
+  const launcher = block('forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher');
+  for (const property of ['inline-size', 'min-inline-size', 'block-size', 'min-block-size'])
+    assert.ok(launcher.includes(property + ': var(--forma-assistant-studio-size);'), 'the button matches the same real cell in both dimensions');
+  assert.ok(styles.includes('forma-assistant-panel[data-studio-launcher="true"]:has(> .forma-assistant-launcher)'));
+  assert.ok(panel.includes('this.dataset.studioLauncher = "true";\n    this.style.removeProperty("--forma-assistant-obstacle-offset");'));
+});

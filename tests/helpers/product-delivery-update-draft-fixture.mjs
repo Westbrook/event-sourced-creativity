@@ -63,7 +63,10 @@ function nativeUpdateForms(f) {
     for (const [index, entry] of templates.entries()) {
       const fresh = nodes[index]; let record = records.find(item => item.path === entry.path);
       if (!record) record = { id: ++sequence, path: entry.path, form: fresh, fields: new Map(), attributes: new Map(), commits: [] };
-      else { record.form.handlers = fresh.handlers; f.renderer.nodes[f.renderer.nodes.indexOf(fresh)] = record.form; }
+      else {
+        record.form.handlers = fresh.handlers; record.form.full = fresh.full; record.form.properties = fresh.properties;
+        f.renderer.nodes[f.renderer.nodes.indexOf(fresh)] = record.form;
+      }
       // Actual bound attributes update individually. Unbound native dirty metadata
       // must not disappear merely because RendererPort allocated a fresh record.
       for (const [name, value] of Object.entries(fresh.attributes)) {
@@ -75,8 +78,16 @@ function nativeUpdateForms(f) {
         const committed = litParts.getAttributePartCommittedValue(part, value);
         if (committed !== noChange) record.form.setAttribute(name, String(committed ?? ""));
       }
+      // Boolean exposure bindings remove an earlier true value; unbound native
+      // dirty metadata above is deliberately retained. Observe the individual
+      // form as well as its list, without inferring CSS or physical visibility.
+      for (const name of ["hidden", "inert"]) {
+        if (Object.hasOwn(fresh.attributes, name)) record.form.setAttribute(name, "");
+        else record.form.removeAttribute(name);
+      }
       record.index = index; record.form.isConnected = true; record.form.parentElement = f.host;
-      record.hidden = Boolean(list && Object.hasOwn(list.attributes, "hidden")); record.inert = Boolean(list && Object.hasOwn(list.attributes, "inert"));
+      record.hidden = Object.hasOwn(record.form.attributes, "hidden") || Boolean(list && Object.hasOwn(list.attributes, "hidden"));
+      record.inert = Object.hasOwn(record.form.attributes, "inert") || Boolean(list && Object.hasOwn(list.attributes, "inert"));
       const descriptions = fields(entry.template);
       for (const description of descriptions) {
         let item = record.fields.get(description.name);
@@ -172,8 +183,44 @@ async function seedCreate(f, title, ownerUserId) {
   assert.equal(f.committed.at(-1)?.status, 201, "Seed is created by the actual form and Worker receipt.");
   return rows[0].decision_id;
 }
+function enterCurrentDeliveryEditor(f, record) {
+  f.draw();
+  if (!record.hidden && !record.inert) return;
+  assert.ok(record.form.isConnected && f.host.contains(record.form), "Retired forms cannot be revealed.");
+  const list = f.renderer.ownNodes(f.host, "ol").find(node => node.classList.contains("delivery-decision-list"));
+  assert.ok(list && !Object.hasOwn(list.attributes, "hidden") && !Object.hasOwn(list.attributes, "inert"),
+    "A hidden report/list cannot be crossed by the E entry forward.");
+  const id = record.form.getAttribute("data-delivery-decision-id");
+  assert.ok(id && Object.hasOwn(record.form.attributes, "hidden") && Object.hasOwn(record.form.attributes, "inert"),
+    "Only an individually collapsed editor receives the additional public action.");
+  const choices = f.renderer.ownNodes(f.host, "button").filter(node => node.attributes["data-delivery-editor-toggle"] === id);
+  assert.equal(choices.length, 1, "One current exact-ID Edit invoker.");
+  const button = choices[0];
+  assert.ok(button.isConnected && f.host.contains(button));
+  assert.equal(button.attributes["aria-expanded"], "false");
+  assert.equal(Object.hasOwn(button.attributes, "disabled"), false);
+  assert.equal(typeof button.handlers.click, "function");
+  button.click(); f.draw();
+  assert.ok(record.form.isConnected && f.host.contains(record.form));
+  assert.equal(record.form.getAttribute("data-delivery-decision-id"), id);
+  assert.equal(record.hidden || record.inert, false, "The actual Edit action reveals the same original native form.");
+}
+
+function withCurrentEditorEntry(f) {
+  // The original update matrix described user edit/save/discard operations
+  // before E added a reveal. Preserve all case bodies and native predicates:
+  // enter only through the current exact-ID public Edit control, never by
+  // changing hidden attributes, calling private methods or refreshing access.
+  const enter = record => enterCurrentDeliveryEditor(f, record);
+  const edit = f.editUpdate, submit = f.submitUpdate, reload = f.reloadUpdate;
+  f.editUpdate = (record, values) => { enter(record); return edit(record, values); };
+  f.submitUpdate = record => { enter(record); return submit(record); };
+  f.reloadUpdate = record => { enter(record); return reload(record); };
+  return f;
+}
+
 async function fixture(t, reorder = false) {
-  const f = nativeUpdateForms(await productDeliveryFixture(t));
+  const f = withCurrentEditorEntry(nativeUpdateForms(await productDeliveryFixture(t)));
   const manager = await grantManager(f, "patch-draft-manager"); await enterManager(f, manager);
   const originalTitle = "Existing exact milestone", originalId = await seedCreate(f, originalTitle, f.storeHost.worker.owner);
   let companionId = null;
@@ -233,4 +280,4 @@ function observe(name, x, extra) {
 }
 
 
-export { nativeUpdateForms, fixture, hold, assertOriginalWrite, observe, endpoint, calls, updates, receipts, money, grantManager, enterManager, seedCreate };
+export { nativeUpdateForms, enterCurrentDeliveryEditor, fixture, hold, assertOriginalWrite, observe, endpoint, calls, updates, receipts, money, grantManager, enterManager, seedCreate };

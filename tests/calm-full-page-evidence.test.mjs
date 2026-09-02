@@ -69,7 +69,60 @@ test("synthetic14 full Shell, real Creative route and all emitted descendants se
  assert.equal(f.components().filter(component=>component.tag==="forma-context-block").length,14);
  assert.equal(f.components().find(component=>component.tag==="forma-document-artifacts").launcherOnly,false,"not the old launcher-only fixture");
  assert.equal(tree.visible("input").filter(node=>node.attributes.type==="radio"&&node.owner.tag==="forma-context-block").length,14);
- const counts=resting(f);assert.deepEqual(counts,{button:22,select:1});
+ const counts=resting(f);
+ // Read-only contributor receipt before the exact count assertions.
+ // The current View's native ownership must be observed, not inferred from +1.
+ const e3Owners=f.components(),e3Controls=tree.nodes.filter(node=>node.tag==="button"||node.tag==="select");
+ const e3Entries=tree.nodes.filter(node=>node.tag==="details"&&byClass("output-recipe-entry")(node));
+ const e3Menus=e3Owners.filter(owner=>owner.tag==="forma-ui-popover"&&byClass("studio-view-menu")(owner));
+ const e3InRecipe=node=>e3Entries.some(entry=>nodeWithin(node,candidate=>candidate===entry));
+ t.diagnostic(JSON.stringify({diagnostic:"E3-current-full-page-view-control-provenance",visible:counts,
+  raw:{button:e3Controls.filter(node=>node.tag==="button").length,select:e3Controls.filter(node=>node.tag==="select").length},
+  nonRecipe:{button:e3Controls.filter(node=>node.tag==="button"&&!e3InRecipe(node)).length,
+   select:e3Controls.filter(node=>node.tag==="select"&&!e3InRecipe(node)).length},
+  disabledVisibleButtons:tree.visible("button").filter(node=>Object.hasOwn(node.attributes,"disabled")).length,
+  nativeControlCount:e3Controls.length,uniqueNativeControlCount:new Set(e3Controls.map(node=>node.port)).size,
+  controls:e3Controls.map((node,index)=>({index,tag:node.tag,id:node.attributes.id??null,type:node.attributes.type??null,
+   class:node.attributes.class??null,text:node.text,owner:node.owner.tag,ownerIndex:e3Owners.indexOf(node.owner),
+   ownerConnected:node.owner.isConnected,portIndex:f.renderer.nodes.indexOf(node.port),portConnected:node.port?.isConnected??false,
+   portOwnerSame:node.port?.owner===node.owner,hiddenBy:node.hiddenBy,disabledAttribute:Object.hasOwn(node.attributes,"disabled"),
+   nativeDisabled:node.port?.matches?.(":disabled")??null,inRecipe:e3InRecipe(node),viewOwnerIndex:e3Menus.indexOf(node.owner)})),
+  viewMenus:e3Menus.map(menu=>({ownerIndex:e3Owners.indexOf(menu),parentTag:menu.parentElement?.tag??null,
+   connected:menu.isConnected,sameStore:menu.store===f.store,
+   actualSharedPopover:typeof f.renderer.registry["forma-ui-popover"]==="function"&&menu instanceof f.renderer.registry["forma-ui-popover"],
+   triggers:e3Controls.filter(node=>node.owner===menu&&byClass("ui-popover-trigger")(node)).map(node=>({
+    portIndex:f.renderer.nodes.indexOf(node.port),nativeCurrent:menu.querySelector(".ui-popover-trigger")===node.port,
+    popovertarget:node.attributes.popovertarget??null,ariaControls:node.attributes["aria-controls"]??null,
+    ariaExpanded:node.attributes["aria-expanded"]??null})),
+   panels:tree.nodes.filter(node=>node.owner===menu&&byClass("ui-popover-panel")(node)).map(node=>({
+    id:node.attributes.id,popover:node.attributes.popover,portConnected:node.port?.isConnected??false,
+    nativeOpen:node.port?.matches?.(":popover-open")??null,hiddenBy:node.hiddenBy})),
+   options:tree.nodes.filter(node=>node.owner===menu&&Object.hasOwn(node.attributes,"data-studio-view")).map(node=>({
+    tag:node.tag,view:node.attributes["data-studio-view"],href:node.attributes.href,hiddenBy:node.hiddenBy,
+    portConnected:node.port?.isConnected??false}))}))}));
+ // The observed E3 +1 is exactly one current native View trigger, not a count exclusion.
+ assert.equal(e3Menus.length,1);const e3Menu=e3Menus[0],e3Navs=e3Owners.filter(owner=>owner.tag==="forma-studio-mode-nav");
+ assert.equal(e3Navs.length,1);assert.equal(e3Menu.parentElement,e3Navs[0]);
+ assert.ok(e3Menu instanceof f.renderer.registry["forma-ui-popover"]);
+ assert.ok(e3Menu.isConnected&&e3Navs[0].isConnected);assert.equal(e3Menu.store,f.store);
+ const e3MenuControls=e3Controls.filter(node=>node.owner===e3Menu);assert.equal(e3MenuControls.length,1);
+ const e3Trigger=e3MenuControls[0];
+ assert.deepEqual([e3Trigger.tag,e3Trigger.attributes.type,e3Trigger.text],["button","button","Change view · Document"]);
+ assert.ok(byClass("ui-popover-trigger")(e3Trigger)&&tree.visible("button").includes(e3Trigger));
+ assert.equal(e3InRecipe(e3Trigger),false);assert.equal(Object.hasOwn(e3Trigger.attributes,"disabled"),false);
+ assert.ok(e3Trigger.port?.isConnected);assert.equal(e3Trigger.port.owner,e3Menu);assert.equal(e3Trigger.port.matches(":disabled"),false);
+ assert.equal(e3Menu.querySelector(".ui-popover-trigger"),e3Trigger.port);
+ const e3Panels=tree.nodes.filter(node=>node.owner===e3Menu&&byClass("ui-popover-panel")(node));assert.equal(e3Panels.length,1);
+ const e3Panel=e3Panels[0];assert.equal(e3Panel.tag,"section");assert.ok(e3Panel.attributes.id);
+ assert.equal(e3Panel.attributes.popover,"auto");assert.ok(e3Panel.port?.isConnected);
+ assert.equal(e3Menu.querySelector(".ui-popover-panel"),e3Panel.port);assert.equal(e3Panel.port.matches(":popover-open"),false);
+ assert.equal(e3Trigger.attributes.popovertarget,e3Panel.attributes.id);assert.equal(e3Trigger.attributes["aria-controls"],e3Panel.attributes.id);
+ assert.equal(e3Trigger.attributes["aria-expanded"],"false");assert.equal(e3Panel.hiddenBy,e3Panel.attributes.id+"[closed-popover]");
+ const e3Options=tree.nodes.filter(node=>node.owner===e3Menu&&Object.hasOwn(node.attributes,"data-studio-view"));
+ assert.deepEqual(e3Options.map(node=>node.attributes["data-studio-view"]),["document","board","guided","layers","adaptive","editor","chat"]);
+ assert.ok(e3Options.every(node=>node.tag==="a"&&typeof node.attributes.href==="string"&&node.attributes.href.startsWith("/document/")
+  &&node.port?.isConnected&&node.hiddenBy===e3Panel.hiddenBy&&nodeWithin(node,ancestor=>ancestor===e3Panel)),"the seven current views remain hidden native anchors, not additional buttons");
+ assert.deepEqual(counts,{button:23,select:1});
  const d320Owners=f.components(),d320Controls=tree.nodes.filter(node=>node.tag==="button"||node.tag==="select");
  const d320Entries=tree.nodes.filter(node=>node.tag==="details"&&byClass("output-recipe-entry")(node));
  const d320GenerationOwners=d320Owners.filter(owner=>owner.tag==="forma-generation-actions");
@@ -101,13 +154,13 @@ test("synthetic14 full Shell, real Creative route and all emitted descendants se
  assert.equal(new Set(d320Controls.map(node=>node.port)).size,d320Controls.length,"raw DOM counts each actual native control once");
  assert.equal(d320GenerationOwners.length,1);assert.ok(d320GenerationOwners[0].isConnected);
  assert.equal(d320GenerationOwners[0].source,"document","the duplicate composer generation owner remains removed");
- assert.equal(tree.nodes.filter(node=>node.tag==="button"&&!inRecipe(node)).length,35,"all non-recipe button contributors retain the original count");
+ assert.equal(tree.nodes.filter(node=>node.tag==="button"&&!inRecipe(node)).length,36,"original 35 non-recipe buttons plus exactly one current View trigger");
  assert.equal(tree.nodes.filter(node=>node.tag==="select"&&!inRecipe(node)).length,2,"all non-recipe select contributors retain the original count");
- assert.equal(tree.nodes.filter(node=>node.tag==="button").length,37,"original 35 plus exactly two closed recipe buttons");
+ assert.equal(tree.nodes.filter(node=>node.tag==="button").length,38,"original 35 plus exactly two closed recipe buttons and one current View trigger");
  assert.equal(tree.nodes.filter(node=>node.tag==="select").length,3,"original two plus exactly one closed recipe select");
  assert.equal(tree.visible("button").filter(node=>Object.hasOwn(node.attributes,"disabled")).length,4,"disabled controls are not subtracted");
  assert.equal(f.storeHost.requests.filter(request=>request.init.method==="POST"&&!f.isReadOnlyResume(request)).length,0);
- t.diagnostic("Synthetic full hierarchy:22B/1S structurally visible;37B/3S emitted, including exactly2B/1S in the closed recipe entry; non-recipe contributors remain35B/2S. One retained generation owner in Results. Functional 718px studio/16px root ports, not browser geometry or the production study.");
+ t.diagnostic("Synthetic full hierarchy:23B/1S structurally visible;38B/3S emitted, including exactly2B/1S in the closed recipe entry; non-recipe contributors are36B/2S, the original35B/2S plus one current View trigger. One retained generation owner in Results. Functional 718px studio/16px root ports, not browser geometry or the production study.");
 });
 
 test("visibility negatives reject omitted nested components and expose actual hidden Results/closed details contributors",async t=>{

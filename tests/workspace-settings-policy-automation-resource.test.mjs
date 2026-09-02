@@ -1,5 +1,7 @@
+// E explicit successor: two original-custody/temporary-read scenarios now
+// use Projects Refresh. No invitation ACK or command is part of this scenario.
 // Additive pair only; reuse the already installed two-policy finite fixture and
-// actual current invitation/GET path. No private application loader or command.
+// actual current Projects Refresh/GET path. No private application loader or command.
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import fs from "node:fs";
@@ -13,11 +15,11 @@ const fixtureSource=fs.readFileSync(fixtureUrl,"utf8"),tree=ts.createSourceFile(
 assert.equal(tree.parseDiagnostics.length,0);
 const declarations=tree.statements.filter(node=>ts.isImportDeclaration(node)||ts.isVariableStatement(node)||ts.isFunctionDeclaration(node));
 const prefix=declarations.map(node=>node.getFullText(tree)).join("\n")
-  +"\nexport {automationFixture,currentInvitation,INVITE,FIRST,SECOND,key,RAW,noPolicyWrites};\n";
+  +"\nexport {automationFixture,currentRefresh,FIRST,SECOND,key,RAW,noPolicyWrites};\n";
 fixtureUrl.search="policy-automation-resource-declarations-only";
 const loader=registerHooks({load(url,context,next){return url===fixtureUrl.href?{format:"module",source:prefix,shortCircuit:true}:next(url,context);}});
 let fixture;try{fixture=await import(fixtureUrl.href);}finally{loader.deregister();}
-const {automationFixture,currentInvitation,INVITE,FIRST,SECOND,key,RAW,noPolicyWrites}=fixture;
+const {automationFixture,currentRefresh,FIRST,SECOND,key,RAW,noPolicyWrites}=fixture;
 const observations=[];
 after(()=>console.log("AUTOMATION_RESOURCE_CASES "+JSON.stringify({expected:2,observations:observations.length,originalCrossSurfaceTestsRegistered:0})));
 
@@ -33,7 +35,7 @@ function observed(f,native,originals){
 }
 
 for(const mode of ["healthy200","temporary503"])test("Policy automation same-owner current resource "+mode+" retains exact native drafts",{concurrency:false,timeout:30000},async t=>{
-  const {f,service,native,snapshot,inviteUrl}=await automationFixture(t,"reorder"),reply=service.reply;
+  const {f,service,native,snapshot,advanceReport}=await automationFixture(t,"reorder"),reply=service.reply;
   const target=endpoint("A","/projects/"+FIRST+"/automation"),delivered=[];let first=true;
   service.reply=request=>{
     const result=reply(request);
@@ -48,11 +50,11 @@ for(const mode of ["healthy200","temporary503"])test("Policy automation same-own
   const before=snapshot(),route=f.store.route.get(),scope=f.store.captureAuthorizationScope(),originals=new Map();
   for(const id of [FIRST,SECOND])originals.set(id,native.fill(RAW[id],key(id)).port);
   f.draw();const gate=service.queue(request=>method(request)==="GET"&&request.url===target,"body");
-  f.submit(currentInvitation(f),INVITE);
+  advanceReport();f.click(currentRefresh(f));
   try{
     await gate.seen.promise;await f.flush(12);
     for(const id of [FIRST,SECOND]){assert.equal(native.current(key(id)).port,originals.get(id));assert.deepEqual(native.values(key(id)),RAW[id]);}
-    assert.equal(service.writes.length,1);
+    assert.equal(service.writes.length,0);
   }finally{gate.release.resolve();await f.flush(24);}
   const settled=observed(f,native,originals),alerts=f.nodes("p").filter(node=>node.attributes.role==="alert").map(node=>node.text);
   const retries=f.nodes("button").filter(node=>String(node.handlers.click).includes("this.#load()"));
@@ -64,14 +66,14 @@ for(const mode of ["healthy200","temporary503"])test("Policy automation same-own
   }
   const recovered=observed(f,native,originals);
   assert.equal(service.pending,0);assert.equal(f.store.route.get(),route);assert.equal(f.store.authorizationScopeActive(scope),true);
-  assert.deepEqual(snapshot(),before);noPolicyWrites(f,service,1);
-  assert.deepEqual(service.writes.map(write=>({method:write.method,url:write.url,body:write.body})),[{method:"POST",url:inviteUrl,body:INVITE}]);
+  assert.deepEqual(snapshot(),before);noPolicyWrites(f,service);
+  assert.deepEqual(service.writes,[]);
   assert.ok(delivered.length>=1);assert.equal(delivered[0].delivered.status,mode==="healthy200"?200:503);
   for(const item of delivered.slice(1))assert.deepEqual(item.delivered,item.original);
   const observation={mode,settled,recovered,alerts,retryControls:retries.length,retryRequests,
-    deliveredStatuses:delivered.map(item=>item.delivered.status),invitationWrites:1,automationWrites:0,budgetWrites:0,
+    deliveredStatuses:delivered.map(item=>item.delivered.status),invitationWrites:0,explicitWholeRead:true,automationWrites:0,budgetWrites:0,
     providerAttempts:0,sourceAndFiscalUnchanged:true,
-    evidence:"Complete actual Settings/Store/Lit native forms; existing finite authorized two-project report + one current invitation ACK; only one automation503 delivery is substituted. No real automation, permission, email, finance or browser claim."};
+    evidence:"Complete actual Settings/Store/Lit native forms; existing finite authorized two-project report + one explicit current-task GET-only Refresh; only one automation503 delivery is substituted. No real automation, permission, email, finance or browser claim."};
   observations.push(observation);console.log("AUTOMATION_RESOURCE_OBSERVATION "+JSON.stringify(observation));
   // Record the current old-source omission and available controls before any
   // desired assertion; the candidate can use only a real current Retry.

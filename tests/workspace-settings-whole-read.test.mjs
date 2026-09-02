@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { settingsFixture, endpoint, tokenPath, method } from "./helpers/workspace-settings-whole-read-fixture.mjs";
 
-const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_PACKAGE", "PRIVATE_A_STORAGE", "PRIVATE_A_ASSURANCE"];
+// E presentation oracle: these are the actual current Members private surfaces.
+// Package/assurance task reach and denial recovery are covered separately.
+const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_STORAGE"];
 const TOKEN = "fixture-token-A-1";
 const SAVED = "A scoped provisioning token was created and is displayed only during this authorized session.";
 const options = { concurrency: false, timeout: 30_000 };
@@ -23,8 +25,8 @@ const expectedVisible = (privateAllowed, tokenAllowed, savedNotice = true) => ({
 for (const resource of ["overview", "detail"]) for (const status of [200, 403]) test(
   "B3 whole Workspace " + resource + " post-ACK same-session " + (status === 200 ? "healthy held200" : "known held403 privacy"),
   options, async t => {
-    const f = await settingsFixture(t, { locale: "en", section: "overview" }), service = f.service;
-    assert.deepEqual(visible(f).privateMarkers, PRIVATE, "all existing private fields genuinely render before this operation");
+    const f = await settingsFixture(t, { locale: "en", section: "members" }), service = f.service;
+    assert.deepEqual(visible(f).privateMarkers, PRIVATE, "all current Members private fields genuinely render before this operation");
     assert.equal(service.writes.length, 0); assert.equal(f.token(TOKEN), false);
     const original = currentSnapshot(f), serviceSession = structuredClone(service.session);
     const authorization = f.store.captureAuthorizationScope(), requestStart = service.requests.length;

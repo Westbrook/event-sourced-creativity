@@ -2,10 +2,13 @@
 // renderable; no malformed row's administrative action is activated.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { settingsFixture, endpoint, tokenPath, method, memberReadLiveLocale } from "./helpers/workspace-settings-whole-read-fixture.mjs";
+import { withSettingsShellFixture } from "./helpers/workspace-settings-shell-fixture.mjs";
+import { settingsFixture, endpoint, tokenPath, method, memberReadLiveLocale, clickWorkspaceTask } from "./helpers/workspace-settings-whole-read-fixture.mjs";
 
 const options = { concurrency: false, timeout: 30_000 };
-const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_PACKAGE", "PRIVATE_A_STORAGE", "PRIVATE_A_ASSURANCE"];
+// E presentation oracle: these are the actual current Members private surfaces.
+// Package/assurance task reach and denial recovery are covered separately.
+const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_STORAGE"];
 const TOKEN = "fixture-token-A-1", NOW = "2026-08-30T12:00:00.000Z";
 const SAVED = "A scoped provisioning token was created and is displayed only during this authorized session.";
 const cases = [
@@ -27,9 +30,9 @@ const snapshot = f => structuredClone({ route: f.store.route.get(), session: f.s
 
 for (const resource of cases) for (const shape of ["wrong-type-row-id", "error-envelope"]) test(
   "B3 exact " + resource.name + " does not certify newer " + shape + " against older denial", options, async t => {
-    const f = await settingsFixture(t, { locale: "en", section: "members" }), language = memberReadLiveLocale(f);
+    const f = await withSettingsShellFixture(t, setupTest => settingsFixture(setupTest, { locale: "en", section: "projects" })), language = memberReadLiveLocale(f);
     const target = get(endpoint("A", resource.suffix)), old = f.service.queue(target, "headers", { status: 403, body: { error: "access_denied" } });
-    f.navigate("A", "overview"); await f.until(() => old.used, "old exact resource waits at headers");
+    clickWorkspaceTask(f, "A", "members"); await f.until(() => old.used, "old exact resource waits at headers");
     language.change("ja"); await f.flush();
     assert.equal(Object.hasOwn(f.tokenButton().attributes, "disabled"), false);
     const original = snapshot(f), organizationId = f.service.reply({ url: endpoint("A"), init: {} }).body.organization.organizationId;

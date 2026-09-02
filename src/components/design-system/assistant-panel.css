@@ -444,3 +444,46 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 @media (forced-colors: active) {
   .forma-assistant-specialist { border: 1px solid CanvasText; }
 }
+
+/* Reserve actual space beside, not inside, the compact Studio scrollport.
+   The same floating owner keeps this width while its panel is open. */
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav {
+  --forma-assistant-studio-slot: 1;
+  --forma-assistant-studio-control: var(--forma-control-min-size, 2.75rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--forma-assistant-studio-control);
+  column-gap: var(--forma-focus-clearance, .5rem);
+  align-items: center;
+  padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+  box-sizing: border-box;
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav > .studio-mode-nav {
+  grid-column: 1;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+@media (pointer: coarse) {
+  .application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav {
+    --forma-assistant-studio-control: max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+}
+
+/* Placement affects only the existing collapsed button. Opening uses the
+   original viewport-sized panel; the compact/tight rules retain name/ring. */
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) > forma-creative-assistant > forma-assistant-panel[data-studio-launcher="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-studio-left);
+  top: var(--forma-assistant-studio-top);
+  inline-size: var(--forma-assistant-studio-size);
+  block-size: var(--forma-assistant-studio-size);
+  display: block;
+}
+
+forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-studio-size);
+  min-inline-size: var(--forma-assistant-studio-size);
+  block-size: var(--forma-assistant-studio-size);
+  min-block-size: var(--forma-assistant-studio-size);
+}

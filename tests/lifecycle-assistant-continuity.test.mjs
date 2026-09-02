@@ -416,10 +416,45 @@ async function lifecycleSiblingPage(t, locale, surface) {
   const p = h.store.projection.get(), expected = surface === "guided"
     ? withDocumentInRoute("/studio/guided", p.documentId, p.documentTitle)
     : withProjectTaskDocumentInRoute("/projects", p.documentId, h.store.route.get());
-  const entry = surface === "guided"
-    ? f.find("a", node => node.owner.tag === "forma-studio-mode-nav" && node.attributes.href === expected)
-    : f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+  let entry;
+  if (surface === "guided") {
+    // Reuse the accepted native View disclosure gesture before selecting its
+    // exact Guided anchor; do not bypass Shell admission or install a route.
+    const modes = f.components().filter(component => component.tag === "forma-studio-mode-nav"
+      && component.isConnected && component.store === h.store);
+    assert.equal(modes.length, 1); assert.equal(modes[0].closest("forma-shell"), f.host);
+    const menus = f.components().filter(component => component.tag === "forma-ui-popover"
+      && component.parentElement === modes[0] && classed(component, "studio-view-menu"));
+    assert.equal(menus.length, 1); const menu = menus[0];
+    assert.ok(menu.isConnected && menu instanceof f.renderer.registry["forma-ui-popover"]);
+    assert.equal(menu.store, h.store);
+    const trigger = f.find("button", node => node.owner === menu && classed(node, "ui-popover-trigger"));
+    assert.ok(trigger.port.isConnected); assert.equal(trigger.port.matches(":disabled"), false);
+    assert.equal(trigger.attributes["aria-expanded"], "false"); assert.equal(typeof trigger.attributes.popovertarget, "string");
+    const currentRoute = h.store.route.get(), source = h.store.captureSourceOwnership(), authorization = h.store.captureAuthorizationScope();
+    assert.ok(h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authorization));
+    native.emit("pointerdown", trigger.port); native.focus(trigger.port); trigger.port.click();
+    await x.settle();
+    assert.equal(h.store.route.get(), currentRoute, "opening View preserves the exact current route before sibling departure");
+    assert.ok(h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authorization));
+    assert.ok(modes[0].isConnected && menu.isConnected && menu.parentElement === modes[0]);
+    const tree = f.tree(), panels = tree.visible("section").filter(node => node.owner === menu && node.attributes.popover === "auto");
+    assert.equal(panels.length, 1); assert.equal(panels[0].port.matches(":popover-open"), true);
+    const currentTrigger = findIn(tree, "button", node => node.owner === menu && classed(node, "ui-popover-trigger"));
+    assert.equal(currentTrigger.attributes.popovertarget, panels[0].attributes.id);
+    assert.equal(currentTrigger.attributes["aria-controls"], panels[0].attributes.id);
+    assert.equal(currentTrigger.attributes["aria-expanded"], "true");
+    const links = tree.visible("a").filter(node => node.owner === menu && inside(node, panels[0])
+      && Object.hasOwn(node.attributes, "data-studio-view"));
+    assert.deepEqual(links.map(node => node.attributes["data-studio-view"]), ["document", "board", "guided", "layers", "adaptive", "editor", "chat"]);
+    const guided = links.filter(node => node.attributes["data-studio-view"] === "guided"
+      && node.attributes.href === expected && node.text === f.i18n.system("Guided brief"));
+    assert.equal(guided.length, 1); entry = guided[0];
+    assert.equal(typeof entry.handlers.click, "function"); assert.equal(entry.port.handlers.click, entry.handlers.click);
+  } else {
+    entry = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
       && node.attributes.href === expected);
+  }
   await activate(entry); assert.equal(h.store.route.get(), expected, "actual public entry reached the exact original Document route");
   const owners = f.components().filter(owner => owner.tag === (surface === "guided" ? "forma-guided-brief" : "forma-projects"));
   assert.equal(owners.length, 1); const owner = owners[0];

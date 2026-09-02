@@ -21,6 +21,7 @@ export const test = base.extend({
         viewport: geometry.viewport,
         baseURL,
         locale: geometry.locale ?? "en-US",
+        ...(geometry.hasTouch === true ? { hasTouch: true } : {}),
         serviceWorkers: "block",
         acceptDownloads: false,
         args: [

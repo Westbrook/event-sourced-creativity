@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { fixture, snapshot, ancestor, endpoint, method } from "./helpers/workspace-settings-grant-selection-fixture.mjs";
 
-const transferFixture = (t, locale) => fixture(t, locale, { memberRole: "administrator", selection: {
+const transferFixture = (t, locale) => fixture(t, locale, { memberRole: "administrator", section: "members", selection: {
   formHandler: "#confirmOwnershipTransfer", fieldName: "targetUserId", roleField: false, allowNoPlaceholder: true,
 } });
 const observations = [];

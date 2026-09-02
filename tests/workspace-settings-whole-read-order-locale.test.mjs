@@ -2,10 +2,13 @@
 // host/Store and existing finite native/HTTP fixture; no Worker authority is claimed.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { settingsFixture, endpoint, tokenPath, method, memberReadLiveLocale } from "./helpers/workspace-settings-whole-read-fixture.mjs";
+import { withSettingsShellFixture } from "./helpers/workspace-settings-shell-fixture.mjs";
+import { settingsFixture, endpoint, tokenPath, method, memberReadLiveLocale, clickWorkspaceTask } from "./helpers/workspace-settings-whole-read-fixture.mjs";
 
 const options = { concurrency: false, timeout: 30_000 };
-const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_PACKAGE", "PRIVATE_A_STORAGE", "PRIVATE_A_ASSURANCE"];
+// E presentation oracle: these are the actual current Members private surfaces.
+// Package/assurance task reach and denial recovery are covered separately.
+const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_STORAGE"];
 const TOKEN = "fixture-token-A-1";
 const SAVED = "A scoped provisioning token was created and is displayed only during this authorized session.";
 const snapshot = f => structuredClone({ route: f.store.route.get(), session: f.store.session.get(),
@@ -130,9 +133,9 @@ test("B3 whole-read opaque diagnostic stays literal through the same-host locale
 });
 
 async function pendingCollection(t, spec, phase) {
-  const f = await settingsFixture(t, { locale: "en", section: "members" }), language = memberReadLiveLocale(f);
+  const f = await withSettingsShellFixture(t, setupTest => settingsFixture(setupTest, { locale: "en", section: "projects" })), language = memberReadLiveLocale(f);
   const old = f.service.queue(packageRead, phase, spec);
-  f.navigate("A", "overview"); await f.until(() => old.used, "original exact collection reaches its parallel package read");
+  clickWorkspaceTask(f, "A", "members"); await f.until(() => old.used, "original exact collection reaches its parallel package read");
   // The existing LocaleController's public context publication requests a render
   // while base detail is present and this separate read remains pending. The
   // resulting ordinary token button is enabled; no private method is invoked.
@@ -188,20 +191,41 @@ test("B3 fully completed newer exact collection survives an older denied respons
   } finally { old.release.resolve(); await f.flush(); }
 });
 
-test("B3 completed project-member read cannot shield a different whole-resource denial", options, async t => {
-  const f = await settingsFixture(t), original = snapshot(f);
+// E retires the former simultaneous Overview token+project-access composition.
+// Its historical body remains pinned separately. This current Projects case
+// tests the same independent-resource certificate boundary without a token
+// gesture, route-retired ACK, hidden Members control or synthetic read result.
+test("B3 current Projects member read cannot certify a different whole-resource denial", options, async t => {
+  const f = await withSettingsShellFixture(t, setupTest => settingsFixture(setupTest, { section: "members" }));
   const denial = f.service.queue(packageRead, "headers", { status: 403, body: { error: "access_denied" } });
   try {
-    f.issue(); await f.until(() => denial.used, "actual post-ACK collection holds one exact resource");
-    await f.flush(); assert.equal(f.token(TOKEN), true);
+    clickWorkspaceTask(f, "A", "projects");
+    await f.until(() => denial.used, "current Projects collection holds one exact package response");
+    await f.flush();
+    const original = snapshot(f);
+    assert.match(f.privateText(), /PRIVATE_A_PROJECT/u, "The current Projects view is genuinely present");
+    assert.equal(f.token(TOKEN), false); assert.equal(saved(f), false);
     f.click(f.find("button", node => node.attributes["aria-label"] ===
       f.i18n.t("workspace.admin.viewAccessNamed", "View access to {name}", { name: "PRIVATE_A_PROJECT" })));
     await f.until(() => f.privateText().includes("PRIVATE_A_PROJECT_MEMBER"), "the independent current project-member read completes");
     assert.equal(f.service.requests.filter(memberRead).length, 1);
+    assert.deepEqual(f.service.writes, [], "No token or administrative mutation creates this read sequence");
     denial.release.resolve(); await f.flush();
-    assert.deepEqual(privateMarkers(f), []); assert.doesNotMatch(f.privateText(), /PRIVATE_A_PROJECT_MEMBER/u);
-    assert.equal(f.token(TOKEN), false); assert.equal(saved(f), true); assert.equal(denial.jsonCalls, 0);
-    await recover(f); assertOriginal(f, original);
+    assert.deepEqual(privateMarkers(f), []);
+    assert.doesNotMatch(f.privateText(), /PRIVATE_A_PROJECT|PRIVATE_A_PACKAGE/u,
+      "A completed member read is not a certificate for the denied whole package resource");
+    assert.equal(f.token(TOKEN), false); assert.equal(saved(f), false); assert.equal(denial.jsonCalls, 0);
+    const before = f.service.requests.length;
+    f.click(f.find("button", node => node.text === f.i18n.t("action.retry", "Try again")));
+    await f.until(() => f.privateText().includes("PRIVATE_A_PROJECT") && f.privateText().includes("PRIVATE_A_PACKAGE"),
+      "fresh authorized Projects evidence remains reachable without a mutation");
+    await f.flush();
+    assert.ok(f.service.requests.slice(before).every(request => method(request) === "GET"));
+    assert.equal(f.service.requests.slice(before).filter(packageRead).length, 1);
+    assert.doesNotMatch(f.privateText(), /PRIVATE_A_PROJECT_MEMBER/u, "The old independent member result was retired");
+    assert.equal(f.token(TOKEN), false); assert.equal(saved(f), false);
+    assert.deepEqual(alerts(f), []); assertOriginal(f, original, 0);
+    assert.equal(f.service.tokenCount.A, 0); assert.equal(f.service.tokenCount.B, 0);
   } finally { denial.release.resolve(); await f.flush(); }
 });
 

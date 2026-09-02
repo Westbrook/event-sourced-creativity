@@ -11,7 +11,7 @@ import { within } from "./workspace-policy-native-fixture.mjs";
 const sourceUrl = new URL("../workspace-settings-draft-completion.test.mjs", import.meta.url);
 const source = fs.readFileSync(sourceUrl, "utf8");
 const digest = value => createHash("sha256").update(value).digest("hex");
-assert.equal(digest(source), "bc5301c91306005e1804695f4358b3e9db76394abc6f076f4cd5ace7085c7e2b",
+assert.equal(digest(source), "6f2d6589efdd196a958fb00991c585b904b5458faec503656d30966f0167dd39",
   "exact locale checkpoints plus equivalent Boolean native identity diagnostics");
 const tsModule = await import(new URL("../../node_modules/typescript/lib/typescript.js", import.meta.url));
 const ts = tsModule.default ?? tsModule;

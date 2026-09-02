@@ -17,7 +17,7 @@ const within=(node,parent)=>{for(let value=node.parent;value;value=value.parent)
 // Native DOM holds the previously committed form while the actual host renders.
 // This test-only adapter extends the original six-case PropertyPart port: actual
 // AttributePart resolves metadata/live/noChange, and actual repeat paths own forms.
-function retentionNativeForm(f,{owner:nestedOwner}={}){
+function retentionNativeForm(f,{owner:nestedOwner,defaultKey="retention"}={}){
   const currentOwner=()=>nestedOwner?nestedOwner():f.host;
   let records=[],sequence=0,capturing=false,templates=[];const all=[],commits=[];
   const query=f.renderer.query.bind(f.renderer),renderValue=f.renderer.value.bind(f.renderer);
@@ -96,17 +96,17 @@ function retentionNativeForm(f,{owner:nestedOwner}={}){
     for(const record of records)if(!next.includes(record))disconnect(record);
     records=next;return markup;
   };
-  const record=(key="retention")=>{const found=records.filter(item=>item.key===key);assert.equal(found.length,1,"One current native policy form for "+key);return found[0];};
-  const current=(key="retention")=>{f.draw();const chosen=record(key),nodes=f.tree().visible("form").filter(node=>node.port===chosen.form);assert.equal(nodes.length,1);return nodes[0];};
+  const record=(key=defaultKey)=>{const found=records.filter(item=>item.key===key);assert.equal(found.length,1,"One current native policy form for "+key);return found[0];};
+  const current=(key=defaultKey)=>{f.draw();const chosen=record(key),nodes=f.tree().visible("form").filter(node=>node.port===chosen.form);assert.equal(nodes.length,1);return nodes[0];};
   const enabled=field=>{
     if(!field.port?.isConnected||field.hiddenBy||Object.hasOwn(field.attributes,"disabled")||field.properties.disabled===true||field.port.disabled)return false;
     if(Object.hasOwn(field.attributes,"readonly")||field.properties.readOnly===true)return false;
     for(let parent=field;parent;parent=parent.parent)if(Object.hasOwn(parent.attributes??{},"inert")||parent.tag==="fieldset"&&Object.hasOwn(parent.attributes,"disabled"))return false;
     return true;
   };
-  const eligibility=(key="retention")=>descriptions(current(key)).map(field=>({name:field.attributes.name,enabled:enabled(field)}));
-  const values=(key="retention")=>Object.fromEntries([...record(key).fields].map(([name,item])=>[name,item.property==="checked"?Boolean(item.node.checked):String(item.node.value)]));
-  const fill=(input,key="retention")=>{
+  const eligibility=(key=defaultKey)=>descriptions(current(key)).map(field=>({name:field.attributes.name,enabled:enabled(field)}));
+  const values=(key=defaultKey)=>Object.fromEntries([...record(key).fields].map(([name,item])=>[name,item.property==="checked"?Boolean(item.node.checked):String(item.node.value)]));
+  const fill=(input,key=defaultKey)=>{
     const form=current(key),chosen=record(key),fields=descriptions(form);
     assert.deepEqual(fields.map(field=>field.attributes.name).sort(),Object.keys(input).sort());
     for(const field of fields){
@@ -124,13 +124,25 @@ function retentionNativeForm(f,{owner:nestedOwner}={}){
     sync(chosen);return form;
   };
   const button=form=>{const buttons=f.tree().visible("button").filter(node=>within(node,form)&&node.attributes.type==="submit");assert.equal(buttons.length,1);return buttons[0];};
-  const submit=(key="retention")=>{const form=current(key),control=button(form);assert.equal(Object.hasOwn(control.attributes,"disabled"),false);assert.ok(eligibility(key).every(item=>item.enabled));return f.submit(form,Object.fromEntries(f.forms.get(form.port)));};
-  const discard=(key="retention")=>{const form=current(key),buttons=f.tree().visible("button").filter(node=>within(node,form)&&String(node.handlers.click).includes("#discardPolicy"));assert.equal(buttons.length,1);return f.click(buttons[0]);};
+  const submit=(key=defaultKey)=>{const form=current(key),control=button(form);assert.equal(Object.hasOwn(control.attributes,"disabled"),false);assert.ok(eligibility(key).every(item=>item.enabled));return f.submit(form,Object.fromEntries(f.forms.get(form.port)));};
+  const discard=(key=defaultKey)=>{const form=current(key),buttons=f.tree().visible("button").filter(node=>within(node,form)&&String(node.handlers.click).includes("#discardPolicy"));assert.equal(buttons.length,1);return f.click(buttons[0]);};
   return{current,fill,values,eligibility,button,submit,discard,all,commits,record,records:()=>[...records]};
 }
 
-async function setup(t,{locale="en"}={}){
-  const f=await settingsFixture(t,{locale}),service=f.service,reply=service.reply;
+async function setup(t,{locale="en",section="usage",nativeKey="retention",activePilot=false}={}){
+  // E separates real tasks. Start on supported Projects, install only finite
+  // read contracts, then enter the selected task before creating any raw draft.
+  const f=await settingsFixture(t,{locale,section:"projects"}),service=f.service,reply=service.reply;
+  const navigate=f.navigate;
+  f.navigate=(key,nextSection=section)=>navigate(key,nextSection);
+  const usage=key=>({organization:{organizationId:"settings-org-"+key,name:"Workspace "+key,role:service.roles[key]},period:"2026-08",
+    policy:{token_limit:100000,microusd_limit:60000000},cost:{used_microusd:2400,reserved_microusd:19644000},
+    tokens:{used_tokens:12,reserved_tokens:34},reservations:[],
+    outcomes:{activatedCreators:0,approvedDeliverables:0,releasedApprovedDeliverables:0,pendingReviews:0,
+      adoptedContextPackages:0,settledCostPerApprovedDeliverableMicrousd:null,averageReviewMinutes:null}});
+  const existingCohort={cohort_id:"finite-existing-pilot",status:"active",starts_at:"2026-08-29T12:00:00.000Z",
+    ends_at:"2026-09-28T12:00:00.000Z",max_participants:10,participant_cap_microusd:15000000,
+    organization_cap_microusd:150000000,source_classification:"non-sensitive-licensed"};
   let policy={transient_days:30,evidence_days:365,revision_days:90,legal_hold:0,version:1,updated_at:"2026-08-30T12:00:00.000Z"};
   const target=endpoint("A","/retention");
   service.reply=request=>{
@@ -145,11 +157,20 @@ async function setup(t,{locale="en"}={}){
       return{status:200,body:receipt};
     }
     assert.equal(method(request),"GET","No token, hold, budget, generation, organization or other mutation");
-    const value=reply(request);
+    const usageKey=["A","B"].find(key=>request.url===endpoint(key,"/usage"));
+    const value=usageKey
+      ?service.denied.has(usageKey)||service.roles[usageKey]!=="owner"
+        ?{status:403,body:{error:"access_denied"}}:{status:200,body:usage(usageKey)}
+      :reply(request);
+    if(activePilot&&["A","B"].some(key=>request.url===endpoint(key,"/pilot"))&&value.status===200)
+      value.body.cohort=structuredClone(existingCohort);
     if(request.url===target&&value.status===200)value.body.policy=structuredClone(policy);
     return value;
   };
-  const native=retentionNativeForm(f);native.current();
+  // The existing finite cohort is already active only when explicitly requested;
+  // no activation, budget, hold, token or provider command is introduced.
+  f.navigate("A",section);await f.flush(24);
+  const native=retentionNativeForm(f,{defaultKey:nativeKey});native.current();
   const snapshot=()=>structuredClone({events:f.store.events.get(),content:f.store.content.get(),head:f.store.head.get(),
     budgets:f.store.session.get().budgets,costBudgets:f.store.session.get().costBudgets,
     credentials:service.credentials,tokenCount:service.tokenCount});

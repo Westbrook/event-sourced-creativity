@@ -6,12 +6,13 @@ import test, { after } from "node:test";
 import { productDeliveryFixture } from "./helpers/product-delivery-native-fixture.mjs";
 import { nativeUpdateForms, endpoint } from "./helpers/product-delivery-update-draft-fixture.mjs";
 import { calmFullPageNativePorts as ports, fullPageTree } from "./helpers/calm-full-page-fixture.mjs";
-import { snapshot, setLocale, seedExistingFixtureHistory, normalize, descendants, ancestor } from "./helpers/product-delivery-owner-choice-fixture.mjs";
+import { snapshot, setLocale, seedExistingFixtureHistory, enterOwnerChoiceEditor, normalize, descendants, ancestor } from "./helpers/product-delivery-owner-choice-fixture.mjs";
 
 const observations = [];
 after(() => assert.equal(observations.length, 12, "All added actual prerequisites were reached."));
 const sorted = choices => [...choices].sort((a, b) => a.value < b.value ? -1 : a.value > b.value ? 1 : 0);
 function currentChoices(f, seeded) {
+  enterOwnerChoiceEditor(f, seeded);
   const tree = fullPageTree(f, f.draw());
   const selects = tree.visible("select").filter(node => node.attributes.name === "ownerUserId");
   assert.equal(selects.length, 2);

@@ -2003,10 +2003,30 @@ test("C Guided Brief saved subtype / retained story option stays representable w
   assert.equal(saved.properties.artifact_markdown, JSON.parse(x.worker.content).content_markdown);
   assert.equal(h.store.projection.get().blocks.filter(block => block.type === "message").length, 1);
   assert.equal(originalOwner.isConnected, false);
-  const returnTree = f.tree(), modes = f.components().filter(component => component.tag === "forma-studio-mode-nav"
+  const modes = f.components().filter(component => component.tag === "forma-studio-mode-nav"
     && component.isConnected && component.store === h.store);
   assert.equal(modes.length, 1); assert.equal(modes[0].closest("forma-shell"), f.host);
-  const links = returnTree.visible("a").filter(node => node.owner === modes[0] && node.attributes.href === x.before.route
+  // E3 keeps this exact Guided destination in the existing native View
+  // disclosure. Reuse its real trigger/default before querying visible links.
+  const menus = f.components().filter(component => component.tag === "forma-ui-popover"
+    && component.parentElement === modes[0] && cAlternativeClass(component, "studio-view-menu"));
+  assert.equal(menus.length, 1); const menu = menus[0]; assert.ok(menu.isConnected);
+  const trigger = f.find("button", node => node.owner === menu && cAlternativeClass(node, "ui-popover-trigger"));
+  assert.equal(trigger.attributes["aria-expanded"], "false"); assert.equal(trigger.port.matches(":disabled"), false);
+  assert.equal(typeof trigger.attributes.popovertarget, "string");
+  const currentRoute = h.store.route.get();
+  f.native.emit("pointerdown", trigger.port); f.native.focus(trigger.port); trigger.port.click();
+  await cAlternativeDrain(x);
+  assert.equal(h.store.route.get(), currentRoute, "opening View does not navigate or consume the copied-input destination");
+  assert.ok(modes[0].isConnected && menu.isConnected && menu.parentElement === modes[0]);
+  const returnTree = f.tree(), panels = returnTree.visible("section")
+    .filter(node => node.owner === menu && node.attributes.popover === "auto");
+  assert.equal(panels.length, 1); assert.equal(panels[0].port.matches(":popover-open"), true);
+  const currentTrigger = f.find("button", node => node.owner === menu && cAlternativeClass(node, "ui-popover-trigger"));
+  assert.equal(currentTrigger.attributes.popovertarget, panels[0].attributes.id);
+  assert.equal(currentTrigger.attributes["aria-expanded"], "true");
+  const links = returnTree.visible("a").filter(node => node.owner === menu && cAlternativeInside(node, panels[0])
+    && node.attributes["data-studio-view"] === "guided" && node.attributes.href === x.before.route
     && node.text === f.i18n.system("Guided brief"));
   assert.equal(links.length, 1); const link = links[0];
   assert.ok(link.port.isConnected); assert.equal(link.port.matches(":disabled"), false);

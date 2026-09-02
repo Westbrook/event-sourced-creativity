@@ -1,3 +1,6 @@
+// E successor: the same unrelated invitation ACK and /retention command-free read
+// now share the actual Members active-pilot retention form. Existing finite
+// cohort only; no pilot activation. All raw/authority/fiscal assertions remain.
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { setup, within, B, C, notice, endpoint, method } from "./helpers/workspace-policy-native-fixture.mjs";
@@ -30,7 +33,7 @@ function currentInvitation(f){
 }
 
 for(const changed of [false,true])test("Workspace unsent retention B survives another acknowledged action with "+(changed?"newer finite C":"unchanged finite X"),{concurrency:false,timeout:30000},async t=>{
-  const {f,service,native,target,snapshot}=await setup(t),originalReply=service.reply;
+  const {f,service,native,target,snapshot}=await setup(t,{section:"members",nativeKey:"pilot-retention",activePilot:true}),originalReply=service.reply;
   const inviteUrl=endpoint("A","/members"),reads=[],invitations=[];let policy=structuredClone(X);
   service.reply=request=>{
     if(method(request)!=="GET"){

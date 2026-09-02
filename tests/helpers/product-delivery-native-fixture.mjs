@@ -92,10 +92,15 @@ export async function productDeliveryFixture(t) {
   platformSession.reset(); const session = await platformSession.load("product");
   assert.equal(session.user.role, "admin"); assert.ok(session.capabilities.includes("product.delivery.manage"));
   const { FormaProductDelivery } = await ports.loadActual("src/apps/product/delivery.ts");
+  const { FormaUiCluster } = await ports.loadActual("src/components/design-system/layout.ts");
+  f.renderer.registry["forma-ui-cluster"] = FormaUiCluster;
   f.host = new FormaProductDelivery(); f.host.tag = "forma-product-delivery"; f.host.attributes = {}; f.host.isConnected = true;
   f.draw = () => { ports.bindFixture(f); return f.renderer.draw(f.host); };
   f.host.connectedCallback();
   await untilScene(() => f.draw().includes("delivery-decision-form"), "actual delivery report and create form arrive");
+  // E reuses the one existing initializer only when no selection interface is
+  // present. Retained FormData and stronger native OPTION ports keep ownership.
+  f.bindCreateFields = form => { if (!form.elements) createSelectionPort(form); };
   f.form = (method = "#create") => {
     f.draw(); const found = f.renderer.ownNodes(f.host, "form").filter((node) => node.handlers.submit?.toString().includes(method));
     assert.equal(found.length, 1, "one actual " + method + " form");

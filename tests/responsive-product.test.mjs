@@ -862,6 +862,10 @@ test("native overlay panels retain closed-state hiding and one RTL-safe position
     assert.match(winning(".ui-popover-panel[popover]","left",viewport)?.value??"",/--forma-popover-left/);
     assert.match(winning(".ui-popover-panel[popover]","max-inline-size",viewport)?.value??"",/--forma-popover-max-width/);
     assert.match(winning(".ui-popover-panel[popover]","max-block-size",viewport)?.value??"",/--forma-popover-max-height/);
+    assert.equal(winning(".ui-popover-panel[popover]","scroll-padding",viewport)?.value,".25rem",
+      "retain the existing inline native-scroll clearance");
+    assert.equal(winning(".ui-popover-panel[popover]","scroll-padding-block",viewport)?.value,"var(--forma-focus-clearance,.5rem)",
+      "E3: native vertical reveal reserves the shared outward focus-ring clearance");
   }
   for(const sheet of sheets)sheet.root.walkRules(rule=>{
     if(!rule.selector.includes("canvas-view-menu")||!rule.selector.includes("ui-popover-panel"))return;

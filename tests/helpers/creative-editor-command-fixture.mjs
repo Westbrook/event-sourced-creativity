@@ -159,6 +159,8 @@ function editorNative(t, f, owner) {
   return { current, field, raw, change, escape, submit };
 }
 
+export { editorNative as installCreativeEditorNative };
+
 export async function creativeEditorCommandPage(t, locale, { navigationDocument = false, emptyReusableContext = false } = {}) {
   const checkpoint = phase => t.diagnostic("C_EDITOR_SETUP " + JSON.stringify({ locale, phase, evidence: "actual complete class/native ports; not physical DOM" }));
   checkpoint("start");

@@ -1,3 +1,6 @@
+// E task migration: the four invitation-triggered boundaries use the actual
+// Members pilot-retention form; the two own-A controls stay on normal Usage.
+// Same finite ACK, endpoint, hidden/inert native owner and denial/read assertions.
 // Additive recovery boundaries. Actual complete Settings/Store, native controls
 // and installed Lit Parts; explicitly finite nonfinancial HTTP, not a browser.
 import assert from "node:assert/strict";
@@ -26,7 +29,7 @@ const invited=f=>f.i18n.t("workspace.admin.invited","A private, expiring invitat
 function retries(f){return f.nodes("button").filter(node=>String(node.handlers.click).includes("this.#load()"));}
 function retry(f){const controls=retries(f);assert.equal(controls.length,1,"One current explicit whole-collection Retry, not View access");f.click(controls[0]);}
 function heldNative(f,native,form,expected){
-  f.draw();const record=native.records().find(item=>item.key==="retention");
+  f.draw();const record=native.records().find(item=>item.key===native.record().key);
   assert.ok(record);assert.equal(record.form,form);assert.equal(form.isConnected,true);
   assert.deepEqual(native.values(),expected);
   const node=f.tree().nodes.find(item=>item.tag==="form"&&item.port===form);assert.ok(node);
@@ -92,7 +95,7 @@ test("Policy unavailable retained form is withdrawn at current denied headers an
   try{
     await denial.seen.promise;await f.flush(12);
     assert.equal(denial.jsonCalls,0);assert.equal(form.isConnected,false);assert.ok(fields.every(field=>!field.isConnected));
-    assert.equal(native.records().some(record=>record.key==="retention"),false);
+    assert.equal(native.records().some(record=>record.key==="pilot-retention"),false);
     assert.equal(f.values().includes(B.transientDays),false);assert.ok(notice(f).includes(invited(f)));
   }finally{denial.release.resolve();await f.flush(12);}
   retry(f);await f.flush(24);
@@ -108,7 +111,7 @@ test("Policy unavailable recovery cannot retain a draft across current positive 
   // This is not a permission command or a claim about a real second actor.
   service.roles.A="administrator";
   retry(f);await f.flush(24);
-  assert.equal(form.isConnected,false);assert.equal(native.records().some(record=>record.key==="retention"),false);
+  assert.equal(form.isConnected,false);assert.equal(native.records().some(record=>record.key==="pilot-retention"),false);
   assert.equal(f.values().includes(B.transientDays),false);assert.equal(retries(f).length,0);
   assert.ok(notice(f).includes(invited(f)));assert.equal(service.writes.length,1);
   service.roles.A="owner";f.navigate("B");await f.flush(24);f.navigate("A");await f.flush(24);

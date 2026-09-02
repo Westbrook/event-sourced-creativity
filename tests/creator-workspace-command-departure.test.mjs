@@ -194,8 +194,11 @@ test("Creator Workspace native section and organization choices retain unsent in
 
 // C121 residuals. Explicit finite Settings DTOs only; these are not actual
 // shared-project permission, context-cookie, package-approval or Worker proofs.
-async function contextPackageExitFixture(t, { shared = false, review = false } = {}) {
+// E1 staged successor: existing Projects owns context/review, Members Security.
+// Record the unchanged whole companion before installing this task migration.
+async function contextPackageExitFixture(t, { shared = false, review = false, section = "projects" } = {}) {
   assert.equal(shared && review, false, "The two finite scenarios stay separate");
+  assert.ok(["members", "projects"].includes(section), "These finite journeys select existing Members or Projects tasks");
   const x = await settingsCommandFixture(t, { policy: true }), { f, service } = x;
   const organizationId = "settings-org-A", root = "/api/workspaces/" + organizationId;
   let project = null, documentId = "", scopedEvents = [];
@@ -269,10 +272,10 @@ async function contextPackageExitFixture(t, { shared = false, review = false } =
     assert.equal(f.store.sourceOwnershipActive(f.store.captureSourceOwnership()), true);
   }
   const current = x.currentOwner(); assert.ok(current?.isConnected);
-  const overview = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
-    && node.owner.parentElement === current && node.attributes.href === settingsPath("A", "overview"));
-  f.click(overview); await f.flush();
-  assert.equal(f.store.route.get(), settingsPath("A", "overview"));
+  const destination = f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+    && node.owner.parentElement === current && node.attributes.href === settingsPath("A", section));
+  f.click(destination); await f.flush();
+  assert.equal(f.store.route.get(), settingsPath("A", section));
   assert.equal(service.pending, 0); assert.equal(service.writes.length, 0);
   x.sourceOwner = x.currentOwner(); x.route = f.store.route.get(); x.original = snapshot(f);
   x.documentId = documentId; x.packageId = packageId; x.draftId = draftId;
@@ -293,7 +296,7 @@ function exactLibraryRoute(x) {
   assert.equal(x.service.writes.length, 0); x.unchanged();
 }
 
-test("Creator Settings current scoped Library button admits pristine overview", options, async t => {
+test("Creator Settings current scoped Library button admits pristine Projects task", options, async t => {
   const x = await contextPackageExitFixture(t, { shared: true });
   const current = currentContextLibraryButton(x); x.f.click(current);
   // Current native handler + canonical route commit only. Destination rendering
@@ -301,17 +304,35 @@ test("Creator Settings current scoped Library button admits pristine overview", 
   exactLibraryRoute(x);
 });
 
-test("Creator Settings scoped Library button retains raw policy until actual Discard", options, async t => {
-  const x = await contextPackageExitFixture(t, { shared: true }), { f } = x;
+test("Creator Settings Members policy requires actual Discard before Projects and scoped Library departure", options, async t => {
+  const x = await contextPackageExitFixture(t, { shared: true, section: "members" }), { f } = x;
+  assert.equal(f.store.route.get(), settingsPath("A", "members"));
+  const libraryLabel = f.i18n.system("Choose exact decisions and licensed sources in the Library");
+  assert.equal(f.tree().visible("button").filter(node => node.owner === x.currentOwner() && node.text === libraryLabel).length, 0,
+    "Task separation does not co-render the Projects Library action with Members Security");
+  const projects = () => f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+    && node.owner.parentElement === x.currentOwner() && node.attributes.href === settingsPath("A", "projects"));
   const defaults = x.policy.values("security"), raw = { ...defaults, allowedDomains: "unsent-library-exit.example.invalid" };
   const form = x.policy.fill(raw, "security").port;
   assert.equal(form.getAttribute("data-workspace-policy-dirty"), "true");
-  f.click(currentContextLibraryButton(x));
-  assert.equal(f.store.route.get(), x.route, "Actual ordinary Library button cannot bypass current Settings work");
+  const requests = x.service.requests.length;
+  f.click(projects()); await f.flush();
+  assert.equal(f.store.route.get(), x.route, "The actual Projects task link cannot bypass current Members Security work");
+  assert.equal(f.store.ui.toast, f.i18n.t("next.lifecycle.currentWorkOpen"));
+  assert.equal(x.service.requests.length, requests, "Refused task departure starts no read or write");
   assert.equal(x.currentOwner(), x.sourceOwner); assert.equal(form.isConnected, true);
   assert.deepEqual(x.policy.values("security"), raw); assert.equal(serviceCount(x, "POST", invitation.url), 0); x.unchanged();
   x.policy.discard("security"); await f.flush();
   assert.deepEqual(x.policy.values("security"), defaults);
+  assert.equal(form.getAttribute("data-workspace-policy-dirty"), "false");
+  assert.equal(x.service.requests.length, requests, "Actual policy Discard remains local, not an acknowledgment or refresh");
+  x.unchanged();
+  f.click(projects()); await f.flush();
+  assert.equal(f.store.route.get(), settingsPath("A", "projects"));
+  assert.equal(form.isConnected, false, "Only the admitted task departure retires the discarded Members form");
+  assert.equal(f.tree().visible("form").filter(node => node.owner === x.currentOwner()
+    && node.attributes["data-workspace-policy"] === "security").length, 0);
+  assert.equal(x.service.pending, 0); assert.equal(x.service.writes.length, 0); x.unchanged();
   f.click(currentContextLibraryButton(x)); exactLibraryRoute(x);
 });
 

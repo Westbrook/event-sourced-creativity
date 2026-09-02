@@ -5,7 +5,9 @@ import test from "node:test";
 import { settingsFixture, endpoint, tokenPath, method } from "./helpers/workspace-settings-whole-read-fixture.mjs";
 
 const options = { concurrency: false, timeout: 30_000 };
-const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_PACKAGE", "PRIVATE_A_STORAGE", "PRIVATE_A_ASSURANCE"];
+// E presentation oracle: these are the actual current Members private surfaces.
+// Package/assurance task reach and denial recovery are covered separately.
+const PRIVATE = ["PRIVATE_A_MEMBER", "PRIVATE_A_STORAGE"];
 const TOKEN = "fixture-token-A-1";
 const SAVED = "A scoped provisioning token was created and is displayed only during this authorized session.";
 const get = url => request => method(request) === "GET" && request.url === url;

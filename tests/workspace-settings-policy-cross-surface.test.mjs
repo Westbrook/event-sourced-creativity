@@ -1,3 +1,6 @@
+// E explicit successors: security and automation use genuine same-task GET-only
+// Refresh instead of cross-task View access/invitation. Original ACK coverage
+// remains in separate Members pilot-retention cases; no ACK is claimed here.
 // Additive only: actual Workspace/Store, actual mounted Cluster and installed
 // Lit AttributePart/PropertyPart through the shared native-policy fixture.
 // No Worker, physical browser, policy/automation/budget command or provider.
@@ -9,7 +12,6 @@ const options={concurrency:false,timeout:30000};
 const FIRST="settings-access-A",SECOND="settings-access-A-second";
 const key=id=>"automation:"+id;
 const automationUrl=id=>endpoint("A","/projects/"+id+"/automation");
-const INVITE={email:"finite-policy-cross-surface@example.invalid",role:"member"};
 const X={
   [FIRST]:{enabled:false,notifyContextChanges:false,notifyOutputReady:false,reviewDueHours:48,reminderHours:24,version:1},
   [SECOND]:{enabled:false,notifyContextChanges:false,notifyOutputReady:false,reviewDueHours:72,reminderHours:12,version:1},
@@ -32,12 +34,12 @@ function sameNative(native,id,original,fields){
   assert.equal(native.current(id).port,original,"The exact keyed native form remains current");
   for(const [name,node]of fields){assert.equal(native.record(id).fields.get(name).node,node);assert.equal(node.isConnected,true);}
 }
-function noPolicyWrites(f,service,expectedWrites=0){
-  assert.equal(service.writes.length,expectedWrites);
-  for(const request of service.requests.filter(request=>method(request)!=="GET")){
-    assert.equal(method(request),"POST");assert.equal(request.url,endpoint("A","/members"));assert.deepEqual(request.body,INVITE);
-  }
-  assert.equal(service.requests.filter(request=>method(request)!=="GET").length,expectedWrites);
+function currentRefresh(f){
+  return f.find("button",node=>Object.hasOwn(node.attributes,"data-workspace-settings-refresh"));
+}
+function noPolicyWrites(f,service){
+  assert.equal(service.writes.length,0);
+  assert.ok(service.requests.every(request=>method(request)==="GET"),"The current-task action only reads");
   f.assertNoExternal();assert.deepEqual(f.transport.external,[]);
 }
 
@@ -67,15 +69,16 @@ test("Policy budget native input and Discard keep the exact form without any bud
   assert.equal(service.requests.length,requests);assert.deepEqual(snapshot(),before);noPolicyWrites(f,service);
 });
 
-test("Policy security native select survives a current View access read and explicit Discard",options,async t=>{
-  const {f,service,native,snapshot}=await setup(t),form=native.current("security").port,fields=nodes(native.record("security"));
+test("E Policy security native select survives current-task Refresh and explicit Discard",options,async t=>{
+  const {f,service,native,snapshot}=await setup(t,{section:"members",nativeKey:"security"}),form=native.current("security").port,fields=nodes(native.record("security"));
   const defaults=native.values("security"),before=snapshot(),route=f.store.route.get(),scope=f.store.captureAuthorizationScope();
   assert.equal(defaults.authenticationSource,"any");
   const later={...defaults,allowedDomains:"unsent-policy.example.invalid",authenticationSource:"local-development",maxSessionMinutes:"75"};
   native.fill(later,"security");f.draw();const requests=service.requests.length;
-  f.click(f.find("button",node=>node.text===f.i18n.t("workspace.admin.viewAccess","View access")));await f.flush(24);
+  f.click(currentRefresh(f));await f.flush(24);
   assert.deepEqual(service.requests.slice(requests).map(request=>({method:method(request),url:request.url})),
-    [{method:"GET",url:endpoint("A","/projects/"+FIRST+"/members")}]);
+    ["/api/workspaces",endpoint("A"),...["members","pilot","retention","context-packages","assurance","security","holds","recovery","security/provisioning-credentials","deletion"].map(suffix=>endpoint("A","/"+suffix))]
+      .map(url=>({method:"GET",url})));
   sameNative(native,"security",form,fields);assert.deepEqual(native.values("security"),later);
   assert.equal(native.record("security").fields.get("authenticationSource").node.value,"local-development");
   assert.equal(f.store.route.get(),route);assert.equal(f.store.authorizationScopeActive(scope),true);
@@ -86,79 +89,46 @@ test("Policy security native select survives a current View access read and expl
   assert.deepEqual(snapshot(),before);noPolicyWrites(f,service);
 });
 
-function currentInvitation(f){
-  const forms=f.nodes("form").filter(node=>node.owner===f.host&&String(node.handlers.submit).includes("#submitInvite"));
-  assert.equal(forms.length,1);const form=forms[0];
-  const fields=f.tree().nodes.filter(node=>within(node,form)&&["input","select"].includes(node.tag)&&node.attributes.name);
-  assert.deepEqual(fields.map(field=>field.attributes.name),["email","role"]);
-  for(const field of fields){
-    assert.ok(field.port.isConnected&&!field.hiddenBy);
-    assert.equal(Object.hasOwn(field.attributes,"disabled")||field.properties.disabled===true||field.port.disabled===true,false);
-    assert.equal(Object.hasOwn(field.attributes,"readonly"),false);
-    for(let parent=field;parent;parent=parent.parent)assert.equal(Object.hasOwn(parent.attributes??{},"inert")
-      ||parent.tag==="fieldset"&&Object.hasOwn(parent.attributes,"disabled"),false);
-    const value=INVITE[field.attributes.name];
-    if(field.tag==="select")assert.ok(f.tree().nodes.some(option=>option.tag==="option"&&within(option,field)
-      &&option.attributes.value===value&&!Object.hasOwn(option.attributes,"disabled")));
-    else assert.match(value,/^[^\s@]+@[^\s@]+\.[^\s@]+$/u);
-    field.port.value=value;
-    field.handlers[field.tag==="select"?"change":"input"]?.call(field.owner,{target:field.port,currentTarget:field.port,preventDefault(){},stopPropagation(){}});
-  }
-  const buttons=f.nodes("button").filter(node=>within(node,form)&&node.attributes.type==="submit");
-  assert.equal(buttons.length,1);assert.equal(Object.hasOwn(buttons[0].attributes,"disabled"),false);return form;
-}
-
 async function automationFixture(t,transition){
-  const state=await setup(t),{f,service,native}=state,reply=service.reply;
-  const inviteUrl=endpoint("A","/members"),invitations=[],reads=[];
+  const state=await setup(t),{f,service,native}=state,reply=service.reply,reads=[];
   let order=[FIRST,SECOND],policies=structuredClone(X);
   const names={[FIRST]:"PRIVATE_A_AUTOMATION_FIRST",[SECOND]:"PRIVATE_A_AUTOMATION_SECOND"};
   const overviewProject=id=>({organizationId:"settings-org-A",projectAccessId:id,projectId:"finite-project-"+id,projectName:names[id],role:"owner"});
   const detailProject=id=>({project_access_id:id,project_id:"finite-project-"+id,project_name:names[id],
     owner_user_id:"settings-principal",status:"active",created_at:"2026-08-30T12:00:00.000Z"});
   service.reply=request=>{
-    if(method(request)!=="GET"){
-      assert.equal(method(request),"POST");assert.equal(request.url,inviteUrl);assert.deepEqual(request.body,INVITE);
-      assert.equal(service.writes.length,0,"One unrelated finite invitation, never a policy or automation command");
-      const id="finite-policy-cross-surface-invitation",expiresAt="2026-09-06T12:00:00.000Z";
-      const receipt={invitationId:id,membershipId:id,status:"pending",expiresAt,
-        invitationUrl:"http://localhost/settings/workspaces/invitations?invitation="+id+"&token=finite-only"};
-      invitations.push({invitation_id:id,email_normalized:INVITE.email,role:INVITE.role,status:"pending",expires_at:expiresAt});
-      service.writes.push({method:"POST",url:inviteUrl,body:structuredClone(request.body),receipt:structuredClone(receipt)});
-      // Explicit finite current report data, not a real concurrent actor,
-      // project removal, automation activation or authorizing receipt.
-      order=transition==="reorder"?[SECOND,FIRST]:[SECOND];policies=structuredClone(C);
-      return{status:201,body:receipt};
-    }
+    assert.equal(method(request),"GET","The E successor has no invitation or policy command");
     const id=[FIRST,SECOND].find(candidate=>request.url===automationUrl(candidate));
     if(id){assert.ok(order.includes(id));reads.push({id,policy:structuredClone(policies[id])});return{status:200,body:{policy:structuredClone(policies[id])}};}
     const result=reply(request);
     if(result.status===200&&request.url==="/api/workspaces")result.body.projects=order.map(overviewProject);
     if(result.status===200&&[endpoint("A"),endpoint("A","/projects")].includes(request.url))result.body.projects=order.map(detailProject);
-    if(result.status===200&&[endpoint("A"),inviteUrl].includes(request.url))result.body.invitations.push(...structuredClone(invitations));
     return result;
   };
-  // Establish two authorized finite current rows using ordinary navigation,
-  // before either form contains an unsent draft. No private load invocation.
-  f.navigate("B");await f.flush(24);f.navigate("A");await f.flush(24);
+  // Enter the real Projects task before either form contains a draft.
+  f.navigate("A","projects");await f.flush(24);
   assert.deepEqual(records(native).map(record=>record.key),[key(FIRST),key(SECOND)]);
   for(const id of [FIRST,SECOND])assert.deepEqual(native.values(key(id)),raw(X[id]));
-  return{...state,inviteUrl,reads};
+  const advanceReport=()=>{
+    // Explicit finite read data, not a command, actual second actor or receipt.
+    order=transition==="reorder"?[SECOND,FIRST]:[SECOND];policies=structuredClone(C);
+  };
+  return{...state,reads,advanceReport};
 }
 
 for(const transition of ["reorder","remove-first"])test("Policy keyed automation native drafts survive current read "+transition,options,async t=>{
-  const {f,service,native,snapshot,inviteUrl,reads}=await automationFixture(t,transition);
+  const {f,service,native,snapshot,reads,advanceReport}=await automationFixture(t,transition);
   const before=snapshot(),route=f.store.route.get(),scope=f.store.captureAuthorizationScope(),originals=new Map(),fields=new Map();
   for(const id of [FIRST,SECOND]){
     originals.set(id,native.fill(RAW[id],key(id)).port);fields.set(id,nodes(native.record(key(id))));
   }
   f.draw();for(const id of [FIRST,SECOND])assert.deepEqual(native.values(key(id)),RAW[id]);
-  const gate=service.queue(request=>request.url===inviteUrl&&method(request)==="POST","headers"),readStart=reads.length;
-  f.submit(currentInvitation(f),INVITE);
+  const gate=service.queue(request=>request.url==="/api/workspaces"&&method(request)==="GET","body"),readStart=reads.length;
+  advanceReport();f.click(currentRefresh(f));
   try{
     await gate.seen.promise;f.draw();
     for(const id of [FIRST,SECOND]){sameNative(native,key(id),originals.get(id),fields.get(id));assert.deepEqual(native.values(key(id)),RAW[id]);}
-    assert.equal(reads.length,readStart,"No replacement read is fabricated before the actual invitation acknowledgment");
+    assert.equal(reads.length,readStart,"No project-policy replacement publishes before the actual whole-read body");
   }finally{gate.release.resolve();await f.flush(24);}
   const expected=transition==="reorder"?[SECOND,FIRST]:[SECOND];
   assert.equal(service.pending,0);assert.deepEqual(records(native).map(record=>record.key),expected.map(key));
@@ -184,6 +154,5 @@ for(const transition of ["reorder","remove-first"])test("Policy keyed automation
   sameNative(native,key(SECOND),originals.get(SECOND),fields.get(SECOND));assert.deepEqual(native.values(key(SECOND)),raw(C[SECOND]));
   assert.equal(originals.get(SECOND).getAttribute("data-workspace-policy-dirty"),"false");
   assert.equal(draftHint(f,native,key(SECOND)),"");assert.equal(service.requests.length,requests);
-  assert.deepEqual(snapshot(),before);assert.deepEqual(service.writes.map(write=>({method:write.method,url:write.url,body:write.body})),
-    [{method:"POST",url:inviteUrl,body:INVITE}]);noPolicyWrites(f,service,1);
+  assert.deepEqual(snapshot(),before);assert.deepEqual(service.writes,[]);noPolicyWrites(f,service);
 });

@@ -146,3 +146,126 @@ claim complete accessibility conformance.
 Primary references: [Playwright keyboard](https://playwright.dev/docs/api/class-keyboard),
 [extension testing](https://playwright.dev/docs/chrome-extensions), and
 [Chrome tabs zoom](https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom).
+
+## Conditional Workspace Settings observation
+
+The additive Settings case reuses the six existing EN/FR/AR geometry profiles;
+the current full-suite snapshot is 43 tests, retaining all previous 37 cases
+and all 11 calibrations. Keep the existing genuine Library archive variables
+when running the full suite. Do not select only Settings or replace its real
+account/organization data with a fixture.
+
+The actual authenticated main-document bootstrap or the app’s observed account
+GET, together with the successful workspaces GET and native Manage link,
+determines whether one organization can be traversed. The initial-session
+observer reads only the original owned navigation response or its same-navigation
+GET. It does not fetch authentication, inspect storage/private Store state,
+insert scripts, or attach the private HTML/session payload.
+Without a readable organization,
+the test result is **landing only**: every organization task is explicitly
+UNOBSERVED in the E1 coverage annotation and settings-native-coverage receipt.
+A green test without that receipt is not evidence of Settings task coverage.
+Authorized native task links and named GET Refresh are the only activated
+Settings controls. The first existing editable Members table role select is
+focused and left with Tab only; no arrows, selection change or mutation.
+
+Native field values and policy snapshots stay in browser memory. Attachments
+contain only equality, ownership/field descriptors and counts, not raw private
+form values, invitation URLs or provisioning tokens. Existing unsent work is
+preserved and prevents departure; no draft is manufactured for coverage.
+
+Refresh has no prescribed focus-return destination. Its original native
+trigger and actual post-read focus are compared without repair. Any movement
+is explicitly REVIEW REQUIRED in annotations/receipts, not a self-selected
+focus pass; adjudicate it before accepting the E1 slice even if the test
+completed. All expressly chosen native targets retain the existing strict
+focus/ring/clipping/overlay checks, true browser zoom and whole-viewport
+captures. The test is not a settings-save, popup, AT or production pass.
+
+## Conditional native Document View disclosure
+
+The additive View case belongs after the original E3 View18/24/25/27
+baseline/runtime/replay sequence, its whole dependent-file replays, and a new
+application build. It does not replace those gates. None of the preceding
+43 native cases is migrated or removed. The full unfiltered snapshot becomes
+49 tests: 11 calibrations, seven journeys in each of four main geometries,
+four journeys in each of the existing AR/FR profiles, and the two navigation
+journeys. Keep both genuine Library archive inputs for the full run.
+
+The test enters the existing Document through its canonical public /focus
+route. It does not activate the focus-mode toggle or write a storage preference.
+Actual session permissions distinguish the normal authored View disclosure
+from a real reader's Document plus Read/Present presentation. A reader result explicitly
+records View-menu coverage as UNOBSERVED, not as a disclosure pass.
+
+Native Tab traverses the existing Write/Shape/Present shortcuts without
+activation, then opens View with Enter. All seven ordinary native view links
+retain their real hrefs, translated names and current-Document marker. They
+are traversed, including reverse Tab, without activating another view.
+Escape must close the native panel and return to the exact trigger while
+Document focus mode remains active. Reopening and selecting the already
+current Document must only dismiss the panel. The native panel/trigger/link
+identities, URL/history length, raw field values and five saved articles must
+remain unchanged. Values stay in memory; receipts emit equality/descriptors.
+
+The same strict focus, outline, clipping, overlay, text-range, 44px floor,
+true-browser-zoom and physical-viewport capture checks are reused. An open
+native popover intentionally covers its background: every chosen target
+inside it remains strictly checked, but that background is not claimed
+unobscured. Closed-state checks retain the existing all-visible-control overlay
+check. No test-side focus or scroll repair is added. Coarse-pointer/Chat fit,
+other-view navigation, modifier/new-tab behavior, AT and production remain
+separate observations, not implied passes.
+
+The R4 epilogue follows every original author stage. It reopens View, reaches
+the last native view link with Tab, then presses Tab once to the existing
+direct Add context button without activating it. Its exact identity, native
+focus and full body/outline visibility remain strict. Compact icon-only text
+is intentionally hidden, so no new visible-text requirement is imposed there.
+
+If the real panel stays open on that outside control, Escape must close only
+View: the same outside native button, focused Document, URL/history, raw fields
+and five articles must remain. If native Tab already closes the panel, the
+receipt explicitly marks outside-open Escape UNOBSERVED; it does not press
+Escape in the closed state or claim that branch passed. Both branches preserve
+custody and use actual visible-focus captures. No test, project, helper,
+runtime or matrix is added beyond the same six View memberships.
+
+## Coarse Studio Assistant and current close return
+
+This addition runs one ordinary read-only journey in two new 320×800 projects:
+English and Arabic, with the existing Chromium context's opt-in touch support.
+The full unfiltered snapshot is 51: every preceding 49 case and all 11
+calibrations remain. Keep the same genuine Library archive inputs; no archive
+is created, re-exported, imported, or substituted by this addition.
+
+The browser must actually report coarse primary pointer, no primary hover,
+and touch support. Rendered measurements must prove a 48×48 current native
+launcher, inset focus ring, clear hit samples, the logical-end Studio cell and
+its gap from the original navigation scrollport. The native View trigger is
+focused without opening or activating it, checking reveal after reservation.
+Configuration flags alone are not evidence of those outcomes.
+
+Native Enter opens the existing enabled Assistant and observes its actual
+same-route history GET. The intended native message field receives focus;
+nothing is typed, sent, selected or approved. Native reverse Tab reaches Close,
+then Enter must return to the current native launcher in the same Panel owner.
+A second opening followed by Escape checks the other existing close action.
+Opening removes the old launcher node: the test checks the new current native
+button, not an invented promise to refocus a detached original element.
+Workspace title/fields/articles, route/history, and the actual unchanged
+Assistant input value are compared in memory. No dirty draft is manufactured;
+an empty initial value is not evidence of a dirty-draft lifecycle.
+
+The existing network guard is unchanged. Send, Review, Accept, specialist,
+generation, and other writes are never activated. The existing history GET
+cannot buy work, but its server path may perform schema setup or park existing
+unsigned legacy tasks; it is not universally DB-write-free. Root-owned source
+and task/provider/bookend evidence must retain that qualification.
+
+Closed-state checks retain all-visible-control overlay checks. While the
+nonmodal Assistant is open, chosen native targets remain strict without
+claiming the intentionally covered background is unobscured. Captures use the
+same calibrated observer and whole physical viewport mechanism. This is real
+Chromium rendering under emulated coarse-pointer media, not physical-device,
+touch-tap, coarse 200%-zoom, all Assistant states, AT, or production coverage.

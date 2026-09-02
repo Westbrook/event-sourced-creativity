@@ -21,7 +21,7 @@ const currentOrganizationForms = (f, owner) => f.tree().visible("form")
 const snapshot = h => structuredClone({ events: h.store.events.get(), head: h.store.head.get(),
   content: h.store.content.get(), session: h.store.session.get() });
 
-async function settingsContextPage(t, { entry = "cross-project", personalSource = false } = {}) {
+async function settingsContextPage(t, { entry = "cross-project", personalSource = false, organizationRole = "member" } = {}) {
   const cleanups = [], operations = [], previousFetch = globalThis.fetch;
   const ownedTest = { mock: t.mock, after(callback) { cleanups.push(callback); } };
   let q;
@@ -36,7 +36,7 @@ async function settingsContextPage(t, { entry = "cross-project", personalSource 
       finally { globalThis.fetch = previousFetch; }
     }
   });
-  q = await assignmentPage(ownedTest, entry, { differentTargets: true, personalSource });
+  q = await assignmentPage(ownedTest, entry, { differentTargets: true, personalSource, organizationRole });
   const { h, f } = q;
   globalThis.fetch = (url, init) => {
     assert.ok(String(url).startsWith("/api/"), "Only the actual RAM Worker is reachable");
