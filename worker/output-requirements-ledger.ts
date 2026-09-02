@@ -2,7 +2,7 @@ import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, uuidV7, type EventR
 import { POLICY_VERSION } from "./pilot-policy.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
-import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
+import { OUTPUT_REQUIREMENTS_SCHEMA, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
 
 export type OutputSqlValue = string | number | null;
 /** deadlineMs is server-only metadata for the same SQL proof; never a wire authority. */
@@ -26,6 +26,7 @@ const initialized = new WeakSet<object>();
 export async function ensureOutputRequirementsSchema(env: WorkerEnv) {
   if (initialized.has(env.DB) || outputSchemaIsReady(env.DB)) { markOutputSchemaReady(env.DB); return; }
   await env.DB.batch(OUTPUT_REQUIREMENTS_SCHEMA.map((sql) => env.DB.prepare(sql)));
+  await upgradeOutputRequirementsSchema(env.DB);
   initialized.add(env.DB);
   markOutputSchemaReady(env.DB);
 }

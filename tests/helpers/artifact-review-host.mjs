@@ -113,7 +113,7 @@ async function shareWithIndependentReviewer(worker) {
   return { ownerHeaders, reviewerHeaders, base, reviewer };
 }
 
-export async function createReviewHost(t, { locale = "en", shared = false, legacy = null, final = false, unverified = false, artifactKind = "short_story", costReceipts = [], managed = false, managedPilot = false } = {}) {
+export async function createReviewHost(t, { locale = "en", shared = false, legacy = null, final = false, unverified = false, artifactKind = "short_story", model3dFiles = null, costReceipts = [], managed = false, managedPilot = false } = {}) {
   if (managedPilot) assert.equal(shared, true, "A managed pilot fixture requires its actual shared project");
   const worker = await createSceneCostFixture(1, "visual", { depth: true });
   const original = (await readWorkspaceEvents(worker.env, worker.streamId)).find(event => event.type === "DocumentRenderCompleted" && event.payload.artifact_id === "saved-scene-story");
@@ -124,6 +124,15 @@ export async function createReviewHost(t, { locale = "en", shared = false, legac
     // Opt-in synthetic production metadata; no team, provider or charge is inferred.
     ...(managed ? { settings: { ...(original.payload.settings ?? {}), production_mode: "managed" } } : {}),
     ...(final ? { workflow_id: worker.workflow.id, workflow_stage_id: "short_story-final", workflow_sources: [] } : {}) };
+  // Opt-in retained-file metadata for the actual model3d viewer. This does
+  // not load a mesh, execute a provider, or create an export acknowledgment.
+  if (model3dFiles !== null) {
+    assert.equal(artifactKind, "model3d"); assert.ok(Array.isArray(model3dFiles));
+    completionPayload.settings = { ...(completionPayload.settings ?? {}), model3d_files: structuredClone(model3dFiles) };
+    const primary = model3dFiles.find(file => file.role === "mesh");
+    completionPayload.media_url = primary?.url ?? null;
+    completionPayload.media_type = primary?.mimeType ?? null;
+  }
   if (unverified) delete completionPayload.source_block_versions;
   const completed = await appendAuditEvent(worker.env, worker.streamId, "worker:renderer", "DocumentRenderCompleted", completionPayload);
   // Optional synthetic reporting metadata; no provider execution or ledger

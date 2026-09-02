@@ -247,7 +247,7 @@ test("atomically hands both paid-render reservations to the recovered provider a
   const freshCallSql=handoff[1].match(/freshOutput\?outputAssertionStatements\(env,\{sql:"([^"]+)"/u)?.[1];
   assert.ok(freshCallSql);
   assert.equal((freshCallSql.match(/\?/gu)??[]).length,2);
-  assert.match(jobsApi, /if \(previousAttempt > 0 && !handoffPaidProviderReservations\) await releaseInterruptedAttempt/);
+  assert.match(jobsApi, /if \(previousAttempt > 0 && !handoffPaidProviderReservations&&!settledModel3dRecovery\) await releaseInterruptedAttempt/);
 
   const tokenHandoff = jobsApi.match(/const TOKEN_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];
   const costHandoff = jobsApi.match(/const COST_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];

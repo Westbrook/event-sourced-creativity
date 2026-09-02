@@ -7,7 +7,9 @@ import { OUTPUT_REQUIREMENTS_SCHEMA } from "../worker/output-requirements-schema
 
 const localRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = process.env.FORMA_SOURCE_ROOT ?? localRoot;
-const outputMigration = readFileSync(resolve(localRoot, "drizzle/0018_output_requirements.sql"), "utf8");
+const legacyOutputMigration = readFileSync(resolve(localRoot, "drizzle/0018_output_requirements.sql"), "utf8");
+const model3dOutputMigration = readFileSync(resolve(localRoot, "drizzle/0022_output_model3d.sql"), "utf8");
+const outputMigration = `${legacyOutputMigration}\n${model3dOutputMigration}`;
 const priorMigrations = readdirSync(resolve(sourceRoot, "drizzle")).filter((name) => /^\d{4}_.*\.sql$/u.test(name) && Number(name.slice(0, 4)) < 18).sort();
 function coldProductionDatabase() {
   assert.equal(priorMigrations.length, 18);
@@ -46,4 +48,4 @@ function outputSchema(sqlite) {
 }
 function runtimeOnly(state) { for (const sql of OUTPUT_REQUIREMENTS_SCHEMA) state.sqlite.exec(sql); }
 
-export { coldProductionDatabase, outputSchema, outputMigration, runtimeOnly };
+export { coldProductionDatabase, outputSchema, outputMigration, legacyOutputMigration, model3dOutputMigration, runtimeOnly };

@@ -2,7 +2,9 @@ import { defaultSlidePresentation, DOCUMENT_ARTIFACT_KINDS, normalizeSlideVisual
 import type { CreativeEvent } from "./events.ts";
 import type { CreativeStudyKind } from "./replay-development.ts";
 
-export const REPLAY_OUTPUT_KINDS = ["image", ...DOCUMENT_ARTIFACT_KINDS] as const;
+/** Synthetic replay has no durable 3D fixture yet; do not fabricate a completed model from prose. */
+export const REPLAY_ARTIFACT_KINDS = DOCUMENT_ARTIFACT_KINDS.filter((kind) => kind !== "model3d");
+export const REPLAY_OUTPUT_KINDS = ["image", ...REPLAY_ARTIFACT_KINDS] as const;
 export type ReplayOutputKind = typeof REPLAY_OUTPUT_KINDS[number];
 
 export type FinishedWorkProduct = {
@@ -125,7 +127,8 @@ export function replayContextFingerprint(value: unknown) {
 }
 
 function normalizedProduct(product: FinishedWorkProduct): FinishedWorkProduct {
-  const kind = REPLAY_OUTPUT_KINDS.includes(product.kind) ? product.kind : "image";
+  if (!REPLAY_OUTPUT_KINDS.includes(product.kind)) throw new Error("replay_output_kind_unsupported");
+  const kind = product.kind;
   return {
     ...product,
     kind,

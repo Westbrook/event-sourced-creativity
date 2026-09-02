@@ -861,7 +861,7 @@ function cManualOriginalInputs(q, events, head) {
     { type: "BlockCreated", payload: { ...shared, block_id: blockId, type: "reference",
       handle: "reference/generated-" + output.id.slice(-8), position: "z" + String(head + 1).padStart(8, "0"), properties: {
         reference_id: referenceId, label: title, text: "Use this selected generation as visual inspiration for the next output.",
-        output_palette: [], palette: [], image_caption: title, media_url: output.mediaUrl, media_type: output.mediaType,
+        output_palette: [], palette: [], image_caption: title, media_url: output.mediaUrl, media_type: output.mediaType, source_mime_type: output.mediaType,
         width: output.width, height: output.height, focal_point: output.focalPoint, source_output_id: output.id,
         source_generation_id: output.generationId, source_output_content_ref: output.contentRef, source_output_prompt_ref: output.promptRef,
         source_document_id: output.documentId, prompt_technique: output.promptTechnique, prompt_fan_id: output.promptFanId,
