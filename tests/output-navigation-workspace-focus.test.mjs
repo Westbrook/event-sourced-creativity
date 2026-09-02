@@ -200,3 +200,152 @@ test("a retained native article never substitutes for the original source-revisi
  assert.notEqual(revision(),originalRevision);assert.equal(owned(node),false,"the unchanged actual focus predicate still rejects the older source owner");
  assert.equal(f.native.nativeFocus.length,focused,"source edits do not refocus through this fixture");
 });
+
+// R12 observed native Tab leaving Compare clipped through the read-only 1 s
+// sample. Reuse the whole Workspace/Store and existing native recorder. Output
+// rows below are declared fixture input, not new generation or provider evidence.
+// Only :focus-visible is supplied as native state; the actual EventPart receives
+// its current emitted light-DOM path. This is not browser scrolling/AT proof.
+test("current Workspace toolbar reveals native Compare without acquiring focus or changing work", async t => {
+ const f=await workspacePage(t),native=f.native;
+ f.appendEvent("GenerationCompleted",{generation_id:"native-toolbar-fixture",object_ids:["toolbar-output-a","toolbar-output-b"],
+  provider:"simulation",simulation:true,model_id:"fixture-only",quality:"high"});
+ await f.settle();
+ const owners=f.components().filter(owner=>owner.tag==="forma-workspace");
+ assert.equal(owners.length,1);const owner=owners[0];
+ const raw="  Keep this unsent Document question — 文書\nسؤال  ";
+ const ask=f.find("textarea",node=>node.owner===owner&&node.attributes.id==="creative-command");
+ ask.port.value=raw;await f.act(ask,"input");await f.settle();
+ const tree=f.tree(),toolbars=tree.visible("div").filter(node=>node.owner===owner
+  &&String(node.attributes.class??"").split(/\s+/u).includes("document-actions"));
+ assert.equal(toolbars.length,1);const toolbar=toolbars[0],header=toolbar.parent;
+ const buttons=tree.visible("button").filter(node=>node.parent===toolbar);
+ const compare=buttons.find(node=>node.text.trim()==="Compare");
+ assert.ok(compare?.port?.isConnected&&!compare.hiddenBy);
+ assert.equal(compare.port.tagName,"BUTTON");assert.equal(compare.port.matches(":disabled"),false);
+ assert.equal(compare.port.ownerDocument,native.document);
+ assert.equal(compare.port.closest("forma-workspace"),owner);
+ assert.equal(compare.port.closest(".document-actions"),toolbar.port);
+ assert.equal(toolbar.port.closest(".page-header--document"),header.port);
+ assert.equal(owner.querySelectorAll(".document-actions").length,1);
+ assert.equal(owner.querySelector(".document-actions"),toolbar.port);
+ assert.equal(f.store.projection.get().outputs.filter(row=>["toolbar-output-a","toolbar-output-b"].includes(row.id)).length,2);
+ const source=f.store.captureSourceOwnership(),route=f.store.route.get();
+ assert.ok(source&&f.store.sourceOwnershipActive(source));
+ const currentAsk=()=>f.find("textarea",node=>node.owner===owner&&node.attributes.id==="creative-command").port;
+ const retainedAsk=currentAsk();assert.equal(retainedAsk.value,raw);
+ const effects=()=>JSON.stringify({events:f.store.events.get(),head:f.store.head.get(),content:f.store.content.get(),
+  requests:f.storeHost.requests,outputRecords:f.outputRecords,session:f.store.session.get()});
+ const original=effects(),handler=toolbar.handlers.focusin;
+ assert.equal(typeof handler,"function","the actual current toolbar owns its native focusin EventPart");
+ const path=[];
+ for(let row=compare;row;row=row.parent){const port=row.port??row.component;if(port&&path.at(-1)!==port)path.push(port);}
+ if(!path.includes(native.document))path.push(native.document);
+ assert.equal(path[0],compare.port);assert.equal(path[1],toolbar.port);assert.equal(path[2],header.port);
+ const originalMatches=compare.port.matches;let focusVisible=true;
+ compare.port.matches=function(selector){return selector===":focus-visible"?focusVisible:originalMatches.call(this,selector);};
+ t.after(()=>{compare.port.matches=originalMatches;});
+ const observed=[];
+ const deliver=(label,nativePath=path)=>{
+  const active=native.document.activeElement,focusAt=native.nativeFocus.length,scrollAt=native.nativeScroll.length;
+  const before=effects(),currentRoute=f.store.route.get();
+  const result=handler.call(owner,{type:"focusin",target:compare.port,currentTarget:toolbar.port,composedPath:()=>nativePath,
+   preventDefault(){assert.fail("native focus is not canceled");},stopPropagation(){assert.fail("native focus is not intercepted");}});
+  assert.equal(result,undefined,"there is no deferred presentation owner");
+  assert.equal(native.document.activeElement,active);assert.equal(native.nativeFocus.length,focusAt);
+  assert.equal(f.store.route.get(),currentRoute);assert.equal(effects(),before);
+  assert.equal(retainedAsk.value,raw);
+  if(currentRoute===route&&f.store.sourceOwnershipActive(source))assert.equal(currentAsk(),retainedAsk);
+  observed.push({label,calls:native.nativeScroll.slice(scrollAt).map(call=>({sameCompare:call.node===compare.port,args:call.args}))});
+ };
+ native.focus(compare.port);deliver("current");
+ focusVisible=false;deliver("not-focus-visible");focusVisible=true;
+ compare.port.disabled=true;deliver("disabled");compare.port.disabled=false;
+ deliver("foreign-direct-path",[compare.port,header.port,toolbar.port,native.document]);
+ native.focus(currentAsk());deliver("focus-left");native.focus(compare.port);
+ assert.equal(effects(),original,"all ordinary reveals and rejected native events preserve every recorded effect");
+ f.store.route.set("/library");deliver("stale-route");
+ assert.equal(f.store.route.get(),"/library","a stale callback cannot navigate back");
+ f.store.route.set(route);
+ const session=f.store.session.get();f.store.session.set({...session,permissionEpoch:"native-toolbar-new-authority"});
+ assert.equal(f.store.sourceOwnershipActive(source),false);deliver("stale-source-authority");
+ assert.equal(f.store.session.get().permissionEpoch,"native-toolbar-new-authority");
+ t.diagnostic(JSON.stringify({evidence:"actual EventPart/native scroll arguments only; no geometry or automatic bubbling claim",observed}));
+ assert.deepEqual(observed,[
+  {label:"current",calls:[{sameCompare:true,args:[{block:"nearest",inline:"nearest",behavior:"instant"}]}]},
+  ...["not-focus-visible","disabled","foreign-direct-path","focus-left","stale-route","stale-source-authority"].map(label=>({label,calls:[]})),
+ ],"only the current enabled native toolbar target requests complete-box reveal");
+});
+
+// Conditional task-strip successor: no native failure or CSS geometry is
+// inferred here. Reuse the existing whole Workspace and scroll recorder; the
+// root browser journey must reach and preserve any failure before adoption.
+test("current Workspace pane focus reveals its native target without selecting a different pane", async t => {
+ const f=await workspacePage(t),native=f.native;
+ const owners=f.components().filter(owner=>owner.tag==="forma-workspace");
+ assert.equal(owners.length,1);const owner=owners[0];
+ const raw="  Preserve the current Write work — 原文  ";
+ const initialAsk=f.find("textarea",node=>node.owner===owner&&node.attributes.id==="creative-command");
+ initialAsk.port.value=raw;await f.act(initialAsk,"input");
+ const tree=f.tree(),groups=tree.visible("div").filter(node=>node.owner===owner
+  &&String(node.attributes.class??"").split(/\s+/u).includes("document-workbench-tasks"));
+ assert.equal(groups.length,1);const group=groups[0],container=group.parent;
+ const panes=tree.visible("button").filter(node=>node.parent===group);
+ assert.deepEqual(panes.map(node=>node.attributes["data-workbench-pane"]),["write","result","review"]);
+ assert.deepEqual(panes.map(node=>node.port.getAttribute("aria-pressed")),["true","false","false"]);
+ assert.equal(group.attributes.role,"group");assert.equal(typeof group.handlers.keydown,"function");
+ assert.equal(group.port.closest(".studio-main"),container.port);
+ assert.equal(group.port.closest("forma-workspace"),owner);
+ assert.equal(owner.querySelectorAll(".document-workbench-tasks").length,1);
+ const ask=f.find("textarea",node=>node.owner===owner&&node.attributes.id==="creative-command").port;
+ assert.equal(ask.value,raw);
+ const originalMode=owner.querySelector(".studio-grid").getAttribute("data-workbench-mode");
+ assert.equal(originalMode,"write");
+ const route=f.store.route.get(),source=f.store.captureSourceOwnership();assert.ok(source&&f.store.sourceOwnershipActive(source));
+ const effects=()=>JSON.stringify({events:f.store.events.get(),head:f.store.head.get(),content:f.store.content.get(),
+  requests:f.storeHost.requests,outputRecords:f.outputRecords,session:f.store.session.get()});
+ const original=effects(),handler=group.handlers.focusin;
+ assert.equal(typeof handler,"function","the current pane strip owns its native focusin EventPart");
+ const observed=[];let focusVisible=true;
+ const originalMatches=panes.map(node=>node.port.matches);
+ for(const [index,node]of panes.entries()){
+  assert.ok(node.port.isConnected);assert.equal(node.port.tagName,"BUTTON");
+  assert.equal(node.port.matches(":disabled"),false);assert.equal(node.port.ownerDocument,native.document);
+  node.port.matches=function(selector){return selector===":focus-visible"?focusVisible:originalMatches[index].call(this,selector);};
+ }
+ t.after(()=>{for(const [index,node]of panes.entries())node.port.matches=originalMatches[index];});
+ const deliver=(label,node)=>{
+  const path=[];for(let row=node;row;row=row.parent){const port=row.port??row.component;if(port&&path.at(-1)!==port)path.push(port);}
+  if(!path.includes(native.document))path.push(native.document);
+  assert.equal(path[0],node.port);assert.equal(path[1],group.port);assert.equal(path[2],container.port);
+  const active=native.document.activeElement,focusAt=native.nativeFocus.length,scrollAt=native.nativeScroll.length;
+  const before=effects(),currentRoute=f.store.route.get();
+  const result=handler.call(owner,{type:"focusin",target:node.port,currentTarget:group.port,composedPath:()=>path,
+   preventDefault(){assert.fail("native focus is not canceled");},stopPropagation(){assert.fail("native focus is not intercepted");}});
+  assert.equal(result,undefined);assert.equal(native.document.activeElement,active);
+  assert.equal(native.nativeFocus.length,focusAt);assert.equal(f.store.route.get(),currentRoute);
+  assert.equal(effects(),before);assert.equal(ask.value,raw);
+  assert.deepEqual(panes.map(value=>value.port.getAttribute("aria-pressed")),["true","false","false"],"focus does not select a pane");
+  if(currentRoute===route&&f.store.sourceOwnershipActive(source)){
+   assert.equal(owner.querySelector(".document-workbench-tasks"),group.port);
+   assert.equal(owner.querySelector(".studio-grid").getAttribute("data-workbench-mode"),originalMode);
+   assert.equal(f.find("textarea",value=>value.owner===owner&&value.attributes.id==="creative-command").port,ask);
+  }
+  observed.push({label,calls:native.nativeScroll.slice(scrollAt).map(call=>({sameTarget:call.node===node.port,args:call.args}))});
+ };
+ const result=panes[1],review=panes[2];
+ native.focus(result.port);deliver("result",result);
+ native.focus(review.port);deliver("review",review);
+ focusVisible=false;deliver("not-focus-visible",review);focusVisible=true;
+ review.port.disabled=true;deliver("disabled",review);review.port.disabled=false;
+ native.focus(ask);deliver("focus-left",review);native.focus(review.port);
+ assert.equal(effects(),original,"focus and rejected events preserve current authored and financial state");
+ f.store.route.set("/library");deliver("stale-route",review);
+ assert.equal(f.store.route.get(),"/library");
+ const reveal=[{sameTarget:true,args:[{block:"nearest",inline:"nearest",behavior:"instant"}]}];
+ t.diagnostic(JSON.stringify({evidence:"native target/argument contract; declared focus-visible, no keyboard/geometry simulation",observed}));
+ assert.deepEqual(observed,[
+  {label:"result",calls:reveal},{label:"review",calls:reveal},
+  ...["not-focus-visible","disabled","focus-left","stale-route"].map(label=>({label,calls:[]})),
+ ],"only current enabled pane controls are revealed, never activated or refocused");
+});

@@ -1,0 +1,208 @@
+import { test as base, expect, chromium } from "@playwright/test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { guardReadOnlyNetwork } from "./helpers/read-only-network.mjs";
+
+const directory = dirname(fileURLToPath(import.meta.url));
+const extensionPath = resolve(directory, "zoom-extension");
+const captureSessions = new WeakMap();
+
+export const test = base.extend({
+  geometry: [{ viewport: { width: 1280, height: 900 }, zoom: 1 }, { option: true }],
+  context: async ({ geometry, baseURL }, use, testInfo) => {
+    const profile = await mkdtemp(resolve(tmpdir(), "forma-a11y-"));
+    let context;
+    try {
+      context = await chromium.launchPersistentContext(profile, {
+        channel: "chromium",
+        headless: process.env.FORMA_A11Y_HEADED !== "1",
+        viewport: geometry.viewport,
+        baseURL,
+        locale: geometry.locale ?? "en-US",
+        serviceWorkers: "block",
+        acceptDownloads: false,
+        args: [
+          `--disable-extensions-except=${extensionPath}`,
+          `--load-extension=${extensionPath}`,
+          ...(geometry.window ? [`--window-size=${geometry.window.width},${geometry.window.height}`] : []),
+        ],
+      });
+      const network = await guardReadOnlyNetwork(context, baseURL);
+      await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+      try {
+        await use(context);
+      } finally {
+        // Trace every run: successful focus/zoom evidence is useful to review too.
+        const tracePath = testInfo.outputPath("trace.zip");
+        await context.tracing.stop({ path: tracePath });
+        await testInfo.attach("browser-trace", { path: tracePath, contentType: "application/zip" });
+        if (testInfo.status !== testInfo.expectedStatus) {
+          const page = context.pages()[0];
+          if (page && !page.isClosed()) {
+            await captureViewport(page, testInfo, "failure", { assertStable: false });
+          }
+        }
+        await context.close();
+        context = null;
+        await testInfo.attach("read-only-network", { body: JSON.stringify(network, null, 2), contentType: "application/json" });
+        expect(network.forbidden, "UI checks must not attempt writes or unreviewed external requests").toEqual([]);
+      }
+    } finally {
+      await context?.close();
+      await rm(profile, { recursive: true, force: true });
+    }
+  },
+  page: async ({ context }, use) => {
+    const page = context.pages()[0] ?? await context.newPage();
+    await use(page);
+  },
+});
+
+export { expect };
+
+export async function attachJSON(testInfo, name, value) {
+  await testInfo.attach(name, { body: JSON.stringify(value, null, 2), contentType: "application/json" });
+}
+
+export async function browserMetrics(page) {
+  return page.evaluate(() => ({
+    width: innerWidth, height: innerHeight,
+    outerWidth, outerHeight, dpr: devicePixelRatio,
+    visualScale: visualViewport?.scale ?? null,
+    visualWidth: visualViewport?.width ?? null,
+    documentWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+  }));
+}
+
+/** Capture the owned browser's whole physical viewport, without a CSS-pixel clip. */
+export async function captureViewport(page, testInfo, name, { assertStable = true } = {}) {
+  let session = captureSessions.get(page);
+  if (!session) {
+    session = await page.context().newCDPSession(page);
+    captureSessions.set(page, session);
+  }
+  const focused = await page.evaluateHandle(() => {
+    let element = document.activeElement;
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+    return element;
+  });
+  try {
+    const before = await browserMetrics(page);
+    // Playwright's CSS-pixel screenshot clip can crop a genuinely zoomed tab.
+    // No clip/emulation override, full-page scroll, focus, or viewport mutation.
+    const { data } = await session.send("Page.captureScreenshot", {
+      format: "png", fromSurface: true, captureBeyondViewport: false,
+    });
+    const body = Buffer.from(data, "base64");
+    const png = body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const dimensions = png && body.length >= 24
+      ? { width: body.readUInt32BE(16), height: body.readUInt32BE(20) } : null;
+    const after = await browserMetrics(page);
+    const focusUnchanged = await page.evaluate(previous => {
+      let element = document.activeElement;
+      while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+      return element === previous;
+    }, focused);
+    // innerWidth/Height round to CSS pixels; the physical surface can retain a
+    // fractional CSS edge. Permit only that single-pixel rounding per axis.
+    const tolerance = Math.ceil(before.dpr);
+    const completeViewport = Boolean(dimensions
+      && Math.abs(dimensions.width - before.width * before.dpr) <= tolerance
+      && Math.abs(dimensions.height - before.height * before.dpr) <= tolerance);
+    await attachJSON(testInfo, `${name}-capture`, {
+      mechanism: "owned-context CDP Page.captureScreenshot without clip",
+      before, after, dimensions, tolerance, completeViewport, focusUnchanged,
+    });
+    await testInfo.attach(`${name}-screenshot`, { body, contentType: "image/png" });
+    if (assertStable) {
+      expect(completeViewport, "Capture must include the complete physical browser viewport").toBe(true);
+      expect(after, "Capturing evidence must not change layout or browser zoom").toEqual(before);
+      expect(focusUnchanged, "Capturing evidence must leave native focus unchanged").toBe(true);
+    }
+    return { dimensions, completeViewport, focusUnchanged };
+  } finally {
+    await focused.dispose();
+  }
+}
+
+/** API read-back AND actual layout changes; never substitute pinch scale or CSS zoom. */
+export async function applyBrowserZoom(page, context, factor, testInfo) {
+  let worker = context.serviceWorkers().find(item => item.url().startsWith("chrome-extension://"));
+  worker ??= await context.waitForEvent("serviceworker", { predicate: item => item.url().startsWith("chrome-extension://"), timeout: 15_000 });
+  const command = async zoom => worker.evaluate(
+    async input => globalThis.formaTestBrowserZoom(input), { url: page.url(), factor: zoom });
+  const reset = await command(1);
+  await expect.poll(async () => (await browserMetrics(page)).visualScale).toBe(1);
+  const before = await browserMetrics(page);
+  const result = await command(factor);
+  await expect.poll(async () => (await browserMetrics(page)).dpr).toBeCloseTo(before.dpr * factor, 5);
+  const after = await browserMetrics(page);
+  await attachJSON(testInfo, `browser-zoom-${factor * 100}`, { mechanism: "chrome.tabs.setZoom", reset, result, before, after });
+  expect(reset.factor).toBe(1);
+  expect(result.factor).toBe(factor);
+  expect(result.settings).toMatchObject({ mode: "automatic", scope: "per-tab" });
+  expect(result.url).toBe(page.url());
+  expect(after.visualScale, "pinch/visual scaling is not desktop browser zoom").toBe(1);
+  expect(Math.abs(after.width * factor - before.width)).toBeLessThanOrEqual(factor);
+  expect(Math.abs(after.height * factor - before.height)).toBeLessThanOrEqual(factor);
+  expect(after.dpr / before.dpr).toBeCloseTo(factor, 5);
+  return { before, after, result };
+}
+
+export async function openForma(page, context, geometry, path, testInfo) {
+  const response = await page.goto(path, { waitUntil: "domcontentloaded" });
+  expect(response?.ok(), "Reuse a running, built Forma preview with its existing local account/data").toBe(true);
+  await expect(page.locator("forma-shell")).toBeAttached();
+  const language = geometry.locale ?? "en-US";
+  await expect(page.locator("html")).toHaveAttribute("lang", language);
+  await page.evaluate(() => document.fonts.ready);
+  const readTypeface = () => page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    const normalize = value => value.split(",").map(family => family.trim().replace(/^["']|["']$/g, "")).join(", ");
+    return {
+      language: document.documentElement.lang, direction: document.documentElement.dir,
+      bodyFont: normalize(getComputedStyle(document.body).fontFamily),
+      sansToken: normalize(root.getPropertyValue("--sans")),
+      fontFamilyToken: normalize(root.getPropertyValue("--forma-font-family")),
+      manropeLoaded: [...document.fonts].some(face => face.family.replace(/["']/g, "") === "Manrope" && face.status === "loaded"),
+    };
+  });
+  const arabic = language.split("-")[0] === "ar";
+  if (arabic) {
+    // The actual Arabic policy in styles.css deliberately uses system fonts.
+    // RTL alone or an empty FontFaceSet must never exempt another locale.
+    const systemStack = "ui-sans-serif, system-ui, sans-serif";
+    await expect.poll(readTypeface, {
+      message: "Arabic layout requires the real Arabic locale and its declared system-font policy",
+    }).toMatchObject({ language, direction: "rtl", bodyFont: systemStack, sansToken: systemStack, fontFamilyToken: systemStack });
+  } else {
+    await expect.poll(async () => {
+      const typeface = await readTypeface();
+      return typeface.manropeLoaded && typeface.bodyFont.split(",")[0] === "Manrope";
+    }, {
+      message: "Layout checks require the application's loaded and selected Manrope typeface, not a silent fallback",
+    }).toBe(true);
+  }
+  await attachJSON(testInfo, "application-typeface", {
+    policy: arabic ? "declared-arabic-system-font-stack" : "loaded-and-selected-manrope",
+    expectedLanguage: language, ...await readTypeface(),
+    limits: "Computed font policy is not platform glyph, contrast, or assistive-technology conformance.",
+  });
+  await applyBrowserZoom(page, context, geometry.zoom, testInfo);
+  if (geometry.viewport) {
+    const metrics = await browserMetrics(page);
+    expect(metrics.width).toBe(geometry.viewport.width);
+    expect(metrics.height).toBe(geometry.viewport.height);
+  }
+  await expect(page.locator(".consent-modal:modal"), "Complete normal local onboarding separately; this read-only suite does not accept terms").toHaveCount(0);
+  await attachJSON(testInfo, "application-assets", await page.evaluate(() => ({
+    url: location.href, language: document.documentElement.lang, direction: document.documentElement.dir,
+    scripts: [...document.scripts].map(script => script.src).filter(Boolean),
+    stylesheets: [...document.styleSheets].map(sheet => sheet.href).filter(Boolean),
+    bodyFont: getComputedStyle(document.body).fontFamily,
+    fonts: [...document.fonts].map(face => ({ family: face.family, weight: face.weight, status: face.status })),
+  })));
+}

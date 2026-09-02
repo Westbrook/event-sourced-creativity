@@ -151,3 +151,203 @@ test("D353 intake title reserves one logical Close slot and wraps without a typo
     "overflow-wrap": "anywhere",
   }, "reserve readable title content space; do not shrink type, truncate, clip, move Close or force a height");
 });
+
+// D388 source/declaration contracts only. Actual retained D358 browser evidence
+// showed one stretched native checkbox and a 40.75px label at confirmed 200%.
+// These cases preserve native markup/guards and check reusable declarations;
+// they do not measure geometry, activate a label, or certify keyboard/AT.
+const d388Choice = ":is(forma-projects .project-intake, forma-output-requirements .output-recipe-entry) label.ui-choice";
+const d388RecipeRenderers = async () => {
+  const result = [];
+  for (const [path, startMarker, endMarker] of [
+    ["src/components/forma-projects.ts", "  #recipePicker(){", "\n  #intakeCopy("],
+    ["src/components/forma-output-requirements.ts", "  #recipeEntry(snapshot: OutputRequirementsSnapshot | null) {", "\n  #retryRecipeSave("],
+  ]) {
+    const source = await read(path), start = source.indexOf(startMarker), end = source.indexOf(endMarker, start);
+    assert.ok(start >= 0 && end > start, "inspect the actual current recipe renderer: " + path);
+    result.push(source.slice(start, end));
+  }
+  return result;
+};
+
+test("D388 recipe choices retain native inputs, authored selection guards and the existing full-label primitive", async () => {
+  const [intake, output] = await d388RecipeRenderers();
+  for (const fragment of [
+    '<fieldset ?disabled=${!this.#intakeEditable()}><legend>${outcomeRecipeDraftMessage(this.i18n.locale,"choices")}</legend>',
+    'outcomeRecipeFileChoices(this.#intakeRecipeId).map(choice=>html`',
+    '<input type="checkbox" data-intake-recipe-file=${choice.key} .checked=${this.#intakeRecipeChoices.has(choice.key)} @change=${(event:Event)=>{',
+    'if(!this.#intakeEditable()||this.#intakeComposing)return;',
+    'if((event.target as HTMLInputElement).checked)this.#intakeRecipeChoices.add(choice.key);else this.#intakeRecipeChoices.delete(choice.key);this.requestUpdate();',
+    '${labels.choices[choice.key]}',
+    'outcomeRecipeDraftMessage(this.i18n.locale,"limitation")',
+  ]) assert.ok(intake.includes(fragment), "preserve actual intake recipe semantics: " + fragment);
+  for (const fragment of [
+    'if (this.blockId || this.surface !== "document" || this.inspectionOnly || !snapshot?.permissions.canAuthor && !retained) return nothing;',
+    'const blocked = !this.#recipeInputEditable();',
+    '<fieldset ?disabled=${blocked}><legend>${this.#recipeMessage("choices")}</legend>',
+    'outcomeRecipeFileChoices(this.#recipeId).map(choice => html`',
+    '<input type="checkbox" .checked=${this.#recipeChoices.has(choice.key)} @change=${(event: Event) => {',
+    'if (!this.#recipeInputEditable()) return;\n          this.#recipeEntryEdited();\n          if ((event.target as HTMLInputElement).checked) this.#recipeChoices.add(choice.key); else this.#recipeChoices.delete(choice.key); this.requestUpdate();',
+    '${outcomeRecipeDraftLabels(this.i18n.locale, "").choices[choice.key]}',
+  ]) assert.ok(output.includes(fragment), "preserve actual Document recipe semantics: " + fragment);
+  for (const renderer of [intake, output]) {
+    assert.equal((renderer.match(/<input type="checkbox"/gu) ?? []).length, 1);
+    assert.ok(!renderer.includes('role="checkbox"') && !renderer.includes("<forma-ui-checkbox"),
+      "keep the existing native input and enclosing label, not a replacement control or event API");
+  }
+  const primitive = unconditional(design, ".ui-choice"), input = unconditional(design, ".ui-choice > input");
+  assert.equal(primitive.display, "flex");
+  assert.equal(primitive["min-block-size"], "var(--forma-control-min-size,2.75rem)");
+  assert.equal(input["inline-size"], "1.125rem"); assert.equal(input["block-size"], "1.125rem");
+  assert.equal(input.flex, "0 0 auto");
+  assert.equal(unconditional(base, ".project-create-dialog label").display, "grid",
+    "the observed bare-label modal cascade is present before any desired alias assertion");
+  const outputCss = postcss.parse(await read("src/components/forma-output-requirements.css"));
+  assert.equal(unconditional(outputCss, "forma-output-requirements .output-recipe-entry fieldset label")["min-block-size"],
+    "var(--forma-control-min-size,2.75rem)", "Document's existing full-label floor must not be removed");
+  assert.equal(unconditional(outputCss, ".output-requirements input[type=\"checkbox\"]")["inline-size"], "1.2rem",
+    "cover the stronger inherited nonempty/retained Document checkbox rule as well as the empty entry");
+});
+
+test("D388 both recipe mappings use the shared native choice label with one wrapping text span", async () => {
+  const [intake, output] = await d388RecipeRenderers();
+  for (const [renderer, copy] of [
+    [intake, "${labels.choices[choice.key]}"],
+    [output, '${outcomeRecipeDraftLabels(this.i18n.locale, "").choices[choice.key]}'],
+  ]) {
+    assert.ok(renderer.includes('<label class="ui-choice"><input type="checkbox"'),
+      "the current native checkbox and text must share the existing full-label choice primitive");
+    assert.ok(renderer.includes("}}><span>" + copy + "</span></label>"),
+      "the unchanged authored/localized choice text has exactly one direct wrapping span after its native input");
+    assert.equal((renderer.match(/<label class="ui-choice">/gu) ?? []).length, 1);
+    assert.equal((renderer.match(/<span>/gu) ?? []).length, 1);
+    assert.equal((renderer.match(/<\/span>/gu) ?? []).length, 1);
+  }
+});
+
+test("D388 scoped choice aliases beat both inherited layouts without shrinking, clipping or detaching text", () => {
+  const sharedLabelRules = rules(design).filter(rule => rule.parent.type === "root" && rule.selectors.includes(".ui-choice"));
+  const sharedInputRules = rules(design).filter(rule => rule.parent.type === "root" && rule.selectors.includes(".ui-choice > input"));
+  assert.equal(sharedLabelRules.length, 1); assert.equal(sharedInputRules.length, 1);
+  assert.deepEqual(sharedLabelRules[0].selectors, [".ui-choice", d388Choice],
+    "reuse the original label declaration block through only the two D recipe contexts");
+  assert.deepEqual(sharedInputRules[0].selectors, [".ui-choice > input", d388Choice + " > input"],
+    "reuse the original finite native glyph declaration block; no global input or modal rule change");
+  const row = unconditional(design, d388Choice), input = unconditional(design, d388Choice + " > input");
+  const copy = unconditional(design, d388Choice + " > span");
+  assert.deepEqual(row, { ...unconditional(design, ".ui-choice"), "min-inline-size": "0", "flex-wrap": "nowrap" });
+  assert.deepEqual(input, unconditional(design, ".ui-choice > input"));
+  assert.deepEqual(copy, { "min-inline-size": "0", "white-space": "normal", "overflow-wrap": "anywhere" },
+    "keep the glyph beside text, while the sentence itself wraps at useful available width");
+  assert.equal(unconditional(design, ".ui-choice > span").display, "grid");
+  for (const [selector, expected] of [
+    [d388Choice, 2], [d388Choice + " > input", 1], [d388Choice + " > span", 1],
+  ]) assert.equal(rules(design).filter(rule => rule.selectors.includes(selector)).length, expected,
+    "do not add hidden media-specific or competing recipe declarations: " + selector);
+  for (const style of [row, copy]) {
+    for (const property of ["height", "block-size", "max-height", "max-block-size", "overflow", "overflow-x",
+      "overflow-y", "text-overflow", "line-clamp", "-webkit-line-clamp", "word-break", "position", "direction"])
+      assert.equal(style[property], undefined, "preserve natural height, direction and visible content: " + property);
+  }
+});
+
+// D428 R21: the retained narrow ordinary-PC screenshot shows the heading
+// crossing Close/focus paint. The browser Range helper was not reached there.
+// This additive source/declaration contract reuses D353; it is not geometry,
+// keyboard, locale, recovery-state, or full-dialog physical acceptance.
+test("D428 ordinary Project Contents heading reuses one logical Close slot without changing Copy or typography", async () => {
+  const contents = texts[paths[4]], start = contents.indexOf("  #ordinaryDocumentDialog(){");
+  const end = contents.indexOf("  #ordinaryDocumentRecovery(){", start);
+  assert.ok(start >= 0 && end > start, "inspect the actual current ordinary creation/recovery renderer");
+  const dialog = contents.slice(start, end);
+  for (const fragment of [
+    '<dialog class="modal project-document-dialog new-document-dialog"',
+    'closedby="any" aria-labelledby="new-document-title"',
+    '<form class="modal-card"',
+    '@submit=${this.#createDocument}',
+    '<button type="button" class="icon-button modal-close"',
+    'aria-label=${this.i18n.t("action.close")} @click=${()=>this.#closeNew()}',
+    '<label>Document name<input required maxlength="80"',
+  ]) assert.ok(dialog.includes(fragment), "preserve the owned native ordinary form: " + fragment);
+  assert.deepEqual(dialog.match(/<h2\b[^>]*>/gu) ?? [], ['<h2 id="new-document-title">'],
+    "localized chrome and its Close keep the same inherited UI direction; do not generalize to authored dir-auto titles");
+  assert.equal((dialog.match(/class="icon-button modal-close"/gu) ?? []).length, 1);
+  assert.equal(unconditional(base, ".modal-card").position, "relative");
+  assert.equal(unconditional(base, ".modal-card").overflow, "auto");
+  assert.equal(unconditional(base, ".modal-close").position, "absolute");
+  assert.equal(unconditional(design, ".icon-button")["min-width"], "2.75rem");
+  assert.equal(unconditional(design, ".icon-button")["min-height"], "2.75rem");
+  assert.equal(unconditional(design, ".modal-card h2")["font-size"], "clamp(1.65rem, 3vw, 2.75rem)");
+  assert.equal(unconditional(responsive, ".modal-close").right, "auto");
+  assert.equal(unconditional(responsive, ".modal-close")["inset-inline-end"], "1rem");
+  assert.equal(unconditional(responsive, ":root")["--forma-hit-target"], "var(--forma-control-min-size, 2.75rem)");
+  assert.equal(unconditional(responsive, ":root")["--forma-focus-clearance"], ".5rem");
+  assert.equal(unconditional(copy, ".document-copy-dialog .modal-card").overflow, "auto");
+
+  const intake = postcss.parse(await read("src/components/forma-project-intake.css"));
+  const existing = unconditional(intake, "forma-projects .project-intake > h2");
+  assert.deepEqual(existing, {
+    "min-inline-size": "0",
+    "padding-inline-end": "calc(var(--forma-hit-target) + var(--forma-focus-clearance))",
+    "white-space": "normal",
+    "overflow-wrap": "anywhere",
+  }, "the existing D353 one-control treatment is a healthy prerequisite, not a new style system");
+
+  const selector = ".project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > h2";
+  const heading = unconditional(base, selector);
+  const matches = rules(base).filter(rule => rule.selectors.includes(selector));
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].parent.type, "root");
+  assert.deepEqual(matches[0].selectors, [selector], "ordinary PC only; exclude the separately owned Copy dialog");
+  assert.deepEqual(heading, existing,
+    "reuse logical clearance and natural wrapping without font/height/Close/overflow/physical-side overrides");
+});
+
+// D428 R25: actual EN/FR 200% and AR 320 Library preview headings intersect
+// the native Close clearance. These are source/declaration assertions only;
+// the retained six-profile browser baseline remains the physical gate.
+test("D428 Library import heading reuses the existing logical Close clearance without broadening authored titles", () => {
+  const library = texts[paths[5]], start = library.indexOf('<dialog class="modal library-import-dialog"');
+  const end = library.indexOf("</dialog>", start);
+  assert.ok(start >= 0 && end > start, "inspect the actual owned Library archive preview");
+  const dialog = library.slice(start, end);
+  for (const fragment of [
+    'closedby="any" aria-labelledby="import-title"',
+    '<div class="modal-card">',
+    '<button class="icon-button modal-close"',
+    'aria-label=${this.i18n.t("projects.closePreview","Close preview")}',
+    '<div class="metric-grid">',
+    'this.#importRecovery(importOwner)',
+    '?disabled=${importOwner.pending||Boolean(importOwner.original)}',
+    'aria-busy=${String(importOwner.pending)}',
+    '@click=${()=>this.#forkImport(importOwner)}',
+  ]) assert.ok(dialog.includes(fragment), "preserve native preview ownership and controls: " + fragment);
+  assert.deepEqual(dialog.match(/<h2\b[^>]*>/gu) ?? [], ['<h2 id="import-title">'],
+    "localized chrome inherits the Close direction; do not generalize to authored dir-auto titles");
+  assert.equal((dialog.match(/class="icon-button modal-close"/gu) ?? []).length, 1);
+  assert.equal(unconditional(base, ".modal-card").position, "relative");
+  assert.equal(unconditional(base, ".modal-card").overflow, "auto");
+  assert.equal(unconditional(base, ".modal-close").position, "absolute");
+  assert.equal(unconditional(design, ".icon-button")["min-width"], "2.75rem");
+  assert.equal(unconditional(design, ".icon-button")["min-height"], "2.75rem");
+  assert.equal(unconditional(design, ".modal-card h2")["font-size"], "clamp(1.65rem, 3vw, 2.75rem)");
+  assert.equal(unconditional(responsive, ".modal-close").right, "auto");
+  assert.equal(unconditional(responsive, ".modal-close")["inset-inline-end"], "1rem");
+  const existing = unconditional(base, ".project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > h2");
+  assert.deepEqual(existing, {
+    "min-inline-size": "0",
+    "padding-inline-end": "calc(var(--forma-hit-target) + var(--forma-focus-clearance))",
+    "white-space": "normal",
+    "overflow-wrap": "anywhere",
+  }, "reuse the already-qualified one-control treatment before checking the missing Library rule");
+
+  const selector = "dialog.library-import-dialog > .modal-card > h2";
+  const heading = unconditional(base, selector);
+  const matches = rules(base).filter(rule => rule.selectors.includes(selector));
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].parent.type, "root");
+  assert.deepEqual(matches[0].selectors, [selector],
+    "only the native Library archive preview; retain the separate PC and authored-preview scopes");
+  assert.deepEqual(heading, existing,
+    "preserve fonts, natural height, copy, native Close, scrolling and logical direction");
+});

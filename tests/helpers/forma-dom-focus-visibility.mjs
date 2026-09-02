@@ -1,0 +1,298 @@
+/**
+ * Read-only browser geometry observer for native accessibility regression checks.
+ * Run only through a public Playwright Locator.evaluate call on the expected
+ * native control. This function observes; it never focuses, scrolls, dispatches,
+ * changes styles, or imports/reimplements Forma's placement routine.
+ *
+ * Reuses measureFormaD400PaneFocus / measureFormaLauncherFocus /
+ * measureFormaTaskCopy preserved in D428-reused-browser-measurement-helpers.txt.
+ * Body/outline rectangles, clipping intersections and finite hit samples are
+ * evidence, not a pixel renderer or an assistive-technology certification.
+ */
+export function measureFormaFocusVisibility(target, options = {}) {
+  const doc = target.ownerDocument, win = doc.defaultView;
+  const failures = [], unassessed = [];
+  const describe = element => element ? {
+    tag: element.tagName, id: element.id || null,
+    className: element.getAttribute("class"), role: element.getAttribute("role"),
+    ariaLabel: element.getAttribute("aria-label"),
+  } : null;
+  const rectangle = element => {
+    const r = element.getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+  };
+  const rectFromEdges = r => ({ ...r, width: r.right - r.left, height: r.bottom - r.top });
+  const positive = r => r.width > 0 && r.height > 0;
+  const overlap = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  const containsRect = (outer, inner) => inner.left >= outer.left && inner.right <= outer.right
+    && inner.top >= outer.top && inner.bottom <= outer.bottom;
+  const composedParent = element => element.assignedSlot || element.parentElement || element.getRootNode().host || null;
+  const containsNode = (ancestor, element) => {
+    for (let current = element; current; current = composedParent(current)) if (current === ancestor) return true;
+    return false;
+  };
+  const ancestry = element => {
+    const result = [];
+    for (let current = element; current; current = composedParent(current)) {
+      result.push(current);
+      // Top-layer elements escape the clipping/transform of their DOM ancestors.
+      // The boundary's own client area still clips its ordinary descendants.
+      if (current.matches(":modal, :popover-open")) break;
+    }
+    return result;
+  };
+  const layer = element => ancestry(element).find(node => node.matches(":modal, :popover-open")) || null;
+  const viewport = rectFromEdges({ left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight });
+  const transparent = color => color === "transparent"
+    || /^rgba\([^,]+,[^,]+,[^,]+,\s*0(?:\.0+)?\s*\)$/.test(color)
+    || /\/\s*0(?:\.0+)?%?\s*\)$/.test(color);
+  const clipPattern = /^(auto|scroll|hidden|clip|overlay)$/;
+
+  const geometry = (element, envelope = rectangle(element)) => {
+    const raw = rectangle(element), ownStyle = win.getComputedStyle(element);
+    const clip = { ...viewport }, ancestors = [], unknown = [];
+    const nodes = ancestry(element);
+    let opacity = 1;
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index], style = win.getComputedStyle(node);
+      opacity *= Number(style.opacity);
+      const unsupported = [];
+      if ([style.transform, style.translate, style.rotate, style.scale, style.perspective]
+        .some(value => value && value !== "none")) unsupported.push("transformed coordinate chain");
+      if (style.zoom && style.zoom !== "normal" && Number(style.zoom) !== 1) unsupported.push("CSS zoom coordinate chain");
+      if (style.clipPath && style.clipPath !== "none") unsupported.push("clip-path");
+      if (style.clip && style.clip !== "auto") unsupported.push("legacy clip");
+      if (style.maskImage && style.maskImage !== "none") unsupported.push("mask");
+      if (/(^|\s)(paint|strict|content)(\s|$)/.test(style.contain)) unsupported.push("paint containment");
+      if (style.filter && style.filter !== "none") unsupported.push("filter paint extent");
+      const x = index > 0 && clipPattern.test(style.overflowX);
+      const y = index > 0 && clipPattern.test(style.overflowY);
+      let client = null, clientBasis = "integer-client", roundedProof = null;
+      if (x || y) {
+        const r = rectangle(node);
+        client = rectFromEdges({ left: r.left + node.clientLeft, top: r.top + node.clientTop,
+          right: r.left + node.clientLeft + node.clientWidth, bottom: r.top + node.clientTop + node.clientHeight });
+        // client/offset dimensions are integers; a borderless, gutter-free
+        // single box retains its fractional padding edge in the native DOMRect.
+        const borderless = [style.borderLeftWidth, style.borderRightWidth, style.borderTopWidth, style.borderBottomWidth]
+          .every(value => Number.parseFloat(value) === 0);
+        if (borderless && node.getClientRects().length === 1 && node.clientLeft === 0 && node.clientTop === 0
+          && node.offsetWidth === node.clientWidth && node.offsetHeight === node.clientHeight
+          && style.scrollbarGutter === "auto") {
+          const scrollbar = win.getComputedStyle(node, "::-webkit-scrollbar");
+          const nativeScrollbar = ["auto", "thin"].includes(style.scrollbarWidth)
+            && scrollbar.width === "auto" && scrollbar.height === "auto";
+          if (style.scrollbarWidth === "none" || nativeScrollbar) {
+            client = r;
+            clientBasis = "fractional-borderless-padding-box";
+          } else if (r.width !== node.clientWidth || r.height !== node.clientHeight) {
+            unsupported.push("fractional client area with customized or unknown scrollbar");
+          }
+        }
+        if (x) { clip.left = Math.max(clip.left, client.left); clip.right = Math.min(clip.right, client.right); }
+        if (y) { clip.top = Math.max(clip.top, client.top); clip.bottom = Math.min(clip.bottom, client.bottom); }
+        if ((style.overflowX === "clip" || style.overflowY === "clip")
+          && style.overflowClipMargin && style.overflowClipMargin !== "0px") unsupported.push("nondefault overflow-clip-margin");
+        const radii = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius];
+        const cornerShapes = ["corner-top-left-shape", "corner-top-right-shape", "corner-bottom-left-shape", "corner-bottom-right-shape"]
+          .map(name => style.getPropertyValue(name));
+        const finitePx = value => /^(?:\d+(?:\.\d+)?|\.\d+)px$/.test(value) && Number.isFinite(Number.parseFloat(value));
+        const radiusParts = radii.flatMap(value => value.trim().split(/\s+/));
+        if (radii.some(value => /%|calc\(/.test(value))) unsupported.push("percentage/calculated rounded clipping");
+        else if (radii.some(value => value.trim().split(/\s+/).length > 2) || !radiusParts.every(finitePx)) {
+          unsupported.push("unsupported rounded clipping radius");
+        } else {
+          const radius = Math.max(0, ...radiusParts.map(Number.parseFloat));
+          if (radius > 0 && (envelope.left < client.left + radius || envelope.right > client.right - radius)
+            && (envelope.top < client.top + radius || envelope.bottom > client.bottom - radius)) {
+            roundedProof = { radii, cornerShapes, radius, client:null, integerInset:null, inside:false };
+            const borders = [style.borderLeftWidth, style.borderRightWidth, style.borderTopWidth, style.borderBottomWidth];
+            const scrollbar = win.getComputedStyle(node, "::-webkit-scrollbar");
+            const nativeScrollbar = style.scrollbarWidth === "none" || (["auto", "thin"].includes(style.scrollbarWidth)
+              && scrollbar.width === "auto" && scrollbar.height === "auto");
+            const ordinaryChromiumBox = /(?:Chrome|Chromium)\//.test(win.navigator.userAgent)
+              && node instanceof win.HTMLElement && node !== doc.documentElement && node !== doc.body
+              && !/table/.test(style.display) && node.getClientRects().length === 1;
+            if (x && y && ordinaryChromiumBox && cornerShapes.every(value => value === "round")
+              && borders.every(finitePx) && nativeScrollbar && !unsupported.length && !unknown.length) {
+              // Chromium's ordinary client* values round independently. Inset
+              // the integer box by one CSS px (never enlarge reported clips),
+              // then intersect the actual padding box to exclude any overshoot.
+              const integerInset = clientBasis === "integer-client" ? 1 : 0;
+              const [left, right, top, bottom] = borders.map(Number.parseFloat);
+              const proof = rectFromEdges({ left:Math.max(client.left + integerInset, r.left + left),
+                right:Math.min(client.right - integerInset, r.right - right),
+                top:Math.max(client.top + integerInset, r.top + top),
+                bottom:Math.min(client.bottom - integerInset, r.bottom - bottom) });
+              // Inner radii cannot exceed the largest computed outer radius.
+              // This uniform-R rounded rectangle is a conservative convex
+              // subset; all four envelope corners prove the ENTIRE envelope.
+              const inside = 2 * radius <= proof.width && 2 * radius <= proof.height && containsRect(proof, envelope)
+                && [[envelope.left,envelope.top],[envelope.right,envelope.top],
+                  [envelope.left,envelope.bottom],[envelope.right,envelope.bottom]].every(([px,py]) => {
+                  const dx = Math.max(proof.left + radius - px, 0, px - (proof.right - radius));
+                  const dy = Math.max(proof.top + radius - py, 0, py - (proof.bottom - radius));
+                  return dx * dx + dy * dy <= radius * radius;
+                });
+              roundedProof = { radii, cornerShapes, radius, client:proof, integerInset, inside };
+            }
+            if (!roundedProof.inside) unsupported.push("rounded clipping near envelope");
+          }
+        }
+      }
+      if (unsupported.length) unknown.push({ element: describe(node), reasons: unsupported });
+      if (x || y) ancestors.push({ element: describe(node), client, clientBasis, roundedProof, overflowX: style.overflowX, overflowY: style.overflowY,
+        scrollTop: node.scrollTop, scrollLeft: node.scrollLeft, scrollHeight: node.scrollHeight, scrollWidth: node.scrollWidth });
+    }
+    const intersection = rectFromEdges(clip);
+    const visible = rectFromEdges({ left: Math.max(raw.left, clip.left), top: Math.max(raw.top, clip.top),
+      right: Math.min(raw.right, clip.right), bottom: Math.min(raw.bottom, clip.bottom) });
+    return { element: describe(element), raw, visible, intersection, ancestors, unknown,
+      topLayer: describe(layer(element)),
+      paintedBox: element.isConnected && positive(raw) && positive(visible) && ownStyle.display !== "none"
+        && ownStyle.visibility === "visible" && opacity > 0,
+      opacity, visibility: ownStyle.visibility, pointerEvents: ownStyle.pointerEvents, boxShadow: ownStyle.boxShadow };
+  };
+
+  // Queries cross open shadow roots; assigned light DOM is deduplicated.
+  const roots = [doc];
+  for (let index = 0; index < roots.length; index += 1) {
+    for (const element of roots[index].querySelectorAll("*")) if (element.shadowRoot) roots.push(element.shadowRoot);
+  }
+  const queryAll = selectors => [...new Set(roots.flatMap(root => selectors.flatMap(selector => [...root.querySelectorAll(selector)])))];
+  const deepTopAt = (x, y) => {
+    let element = doc.elementFromPoint(x, y);
+    for (;;) {
+      const next = element?.shadowRoot?.elementFromPoint?.(x, y);
+      if (!next || next === element) return element;
+      element = next;
+    }
+  };
+  const samplePoints = r => {
+    const dx = Math.min(2, r.width / 4), dy = Math.min(2, r.height / 4);
+    const x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+    // Side midpoints avoid calling the empty corners of a native round/pill
+    // control an obstruction. Explicit overlay rectangles still cover corners.
+    return [[x, r.top + dy], [r.right - dx, y], [x, r.bottom - dy], [r.left + dx, y], [x, y]];
+  };
+  const sample = (element, r) => samplePoints(r).map(([x, y]) => {
+    const top = deepTopAt(x, y);
+    return { x, y, targetFirst: Boolean(top && containsNode(element, top)), top: describe(top),
+      stack: doc.elementsFromPoint(x, y).slice(0, 5).map(describe) };
+  });
+
+  // The only supported paint proxy is Forma's intentionally invisible native
+  // file input inside its unique direct label. Focus ALWAYS belongs to INPUT.
+  let paintTarget = target, paintProxy = null;
+  if (options.nativeFileLabel === true) {
+    const label = target.parentElement, inputStyle = win.getComputedStyle(target);
+    const valid = target instanceof win.HTMLInputElement && target.type === "file"
+      && target.isConnected && !target.matches(":disabled") && target.getClientRects().length === 1
+      && Number(inputStyle.opacity) === 0 && label instanceof win.HTMLLabelElement
+      && label.matches("label.file-button") && label.isConnected && label.control === target
+      && target.labels.length === 1 && target.labels[0] === label
+      && label.querySelectorAll("input,button,select,textarea,output,meter,progress").length === 1;
+    paintProxy = { kind:"native-file-direct-label", valid, nativeOwner:describe(target), nativeRaw:rectangle(target),
+      nativeOpacity:inputStyle.opacity, paintTarget:describe(label), paintTargetFocused:Boolean(label?.matches(":focus")) };
+    if (valid) paintTarget = label;
+    else failures.push({ code:"invalid-native-file-label-proxy", details:paintProxy });
+  }
+  const style = win.getComputedStyle(paintTarget), raw = rectangle(paintTarget);
+  const focusVisible = target.matches(":focus-visible");
+  const outlinePainted = !["none", "hidden"].includes(style.outlineStyle) && !transparent(style.outlineColor)
+    && Number.parseFloat(style.outlineWidth) > 0;
+  const extent = outlinePainted ? Math.max(0, Number.parseFloat(style.outlineWidth) + Number.parseFloat(style.outlineOffset)) : 0;
+  const envelope = rectFromEdges({ left: raw.left - extent, top: raw.top - extent, right: raw.right + extent, bottom: raw.bottom + extent });
+  const focusGeometry = geometry(paintTarget, envelope);
+  const active = target.getRootNode().activeElement === target && target.matches(":focus");
+  const hitSamples = positive(raw) ? sample(paintTarget, raw) : [];
+  if (!active) failures.push({ code: "wrong-active-element", expected: describe(target), actual: describe(target.getRootNode().activeElement) });
+  if (!focusGeometry.paintedBox) failures.push({ code: "target-not-painted" });
+  if (!containsRect(focusGeometry.intersection, envelope)) failures.push({ code: "focus-envelope-clipped", envelope, intersection: focusGeometry.intersection });
+  if (hitSamples.some(hit => !hit.targetFirst)) failures.push({ code: "target-hit-obstructed", samples: hitSamples.filter(hit => !hit.targetFirst) });
+  if ((options.requireFocusVisible || paintProxy) && !focusVisible) failures.push({ code: "focus-visible-not-active" });
+  if ((options.requireFocusVisible || paintProxy) && !outlinePainted && style.boxShadow === "none") unassessed.push({ code: "focus-paint-not-established", note: "Border/proxy/custom focus indicators require a separate measured owner." });
+  if (style.outlineStyle === "auto") unassessed.push({ code: "native-auto-outline-paint" });
+  if (style.boxShadow !== "none") unassessed.push({ code: "focus-shadow-paint", boxShadow: style.boxShadow });
+  if (paintTarget.getClientRects().length !== 1) unassessed.push({ code: "fragmented-target" });
+  if (win !== win.top) unassessed.push({ code: "cross-frame-outer-clipping" });
+  if (win.visualViewport && Math.abs(win.visualViewport.scale - 1) > 0.000001) unassessed.push({ code: "pinch-scaled-viewport" });
+  if (focusGeometry.unknown.length) unassessed.push({ code: "focus-complex-geometry", details: focusGeometry.unknown });
+
+  const overlaySelectors = options.overlaySelectors || [".forma-assistant-launcher", ":popover-open", ":modal"];
+  const overlayNodes = queryAll(overlaySelectors);
+  const overlays = overlayNodes.map(element => ({ node: element, measurement: geometry(element) }));
+  const collisions = (element, area) => overlays.flatMap(({ node, measurement }) => {
+    if (containsNode(node, element) || containsNode(element, node) || !measurement.paintedBox || !overlap(area, measurement.visible)) return [];
+    const elementLayer = layer(element), overlayLayer = layer(node);
+    if (elementLayer && !overlayLayer) return []; // Ordinary DOM cannot paint above the native top layer.
+    const intersection = rectFromEdges({ left: Math.max(area.left, measurement.visible.left), top: Math.max(area.top, measurement.visible.top),
+      right: Math.min(area.right, measurement.visible.right), bottom: Math.min(area.bottom, measurement.visible.bottom) });
+    const elementBox = rectangle(element);
+    const bodyIntersection = rectFromEdges({ left: Math.max(elementBox.left, intersection.left), top: Math.max(elementBox.top, intersection.top),
+      right: Math.min(elementBox.right, intersection.right), bottom: Math.min(elementBox.bottom, intersection.bottom) });
+    const probe = positive(bodyIntersection) ? bodyIntersection : intersection;
+    const top = deepTopAt((probe.left + probe.right) / 2, (probe.top + probe.bottom) / 2);
+    // An actual overlay hit inside the body proves that sampled obstruction.
+    // A ring-only collision, pointer-transparent overlay, or unknown paint order
+    // remains unassessed; a bounding rectangle alone never proves z-order.
+    return [{ overlay: measurement.element, intersection, geometryUnknown: measurement.unknown,
+      observedBodyObstruction: positive(bodyIntersection) && Boolean(top && containsNode(node, top)), topAtIntersection: describe(top) }];
+  });
+  const recordCollisions = (code, element, entries) => {
+    const observed = entries.filter(entry => entry.observedBodyObstruction);
+    const uncertain = entries.filter(entry => !entry.observedBodyObstruction);
+    if (observed.length) failures.push({ code, element: describe(element), collisions: observed });
+    if (uncertain.length) unassessed.push({ code: `${code}-paint-order`, element: describe(element), collisions: uncertain });
+  };
+  const focusCollisions = collisions(paintTarget, envelope);
+  recordCollisions("focus-overlay-collision", paintTarget, focusCollisions);
+
+  const regionSelectors = options.regionSelectors || [];
+  const regions = queryAll(regionSelectors).map(element => {
+    const result = geometry(element), regionCollisions = result.paintedBox ? collisions(element, result.visible) : [];
+    recordCollisions("visible-task-region-overlay-collision", element, regionCollisions);
+    if (result.paintedBox && result.unknown.length) unassessed.push({ code: "region-complex-geometry", region: result.element, details: result.unknown });
+    return { ...result, text: element.textContent.trim().slice(0, 400), collisions: regionCollisions };
+  });
+  const controls = options.checkVisibleControls ? queryAll(["a[href],button,input,textarea,select,summary,[role='button'],[contenteditable='true']"])
+    .filter(element => !ancestry(element).some(node => node.tagName === "FORMA-ASSISTANT-PANEL"))
+    .map(element => {
+      const result = geometry(element), controlCollisions = result.paintedBox ? collisions(element, result.visible) : [];
+      recordCollisions("visible-native-control-overlay-collision", element, controlCollisions);
+      // Other controls are checked for foreign-overlay obstruction, not their
+      // complete focus/paint conformance. Rounded clipping can only subtract
+      // from this conservative rectangle. With no overlay overlap, that one
+      // uncertainty cannot hide a collision; retain it visibly in the report.
+      // Do not extend this allowance to filters/transforms/unknown paint bounds.
+      const roundedClipOnly = result.unknown.length > 0 && result.unknown.every(item =>
+        item.reasons.every(reason => reason === "rounded clipping near envelope"));
+      const boundedNoOverlay = element !== target && roundedClipOnly && controlCollisions.length === 0
+        && overlays.every(({ measurement }) => measurement.unknown.length === 0);
+      if (result.paintedBox && result.unknown.length && !boundedNoOverlay) {
+        unassessed.push({ code: "control-complex-geometry", control: result.element, details: result.unknown });
+      }
+      return { ...result, collisions: controlCollisions,
+        overlayAssessment: boundedNoOverlay ? "no-foreign-overlay-overlap-with-conservative-box" : "ordinary-geometry-check" };
+    }).filter(result => result.paintedBox) : [];
+
+  return { schema: "forma-dom-focus-visibility-r1", stage: options.stage || null, checkedAt: new Date().toISOString(),
+    url: doc.location.href, lang: doc.documentElement.lang, dir: doc.documentElement.dir,
+    viewport: { ...viewport, dpr: win.devicePixelRatio, visual: win.visualViewport ? {
+      width: win.visualViewport.width, height: win.visualViewport.height, scale: win.visualViewport.scale,
+      offsetLeft: win.visualViewport.offsetLeft, offsetTop: win.visualViewport.offsetTop } : null },
+    focus: { ...focusGeometry, active, documentHasFocus: doc.hasFocus(), focusVisible, outline: style.outline, outlineOffset: style.outlineOffset,
+      outlineExtent: extent, envelope, hitSamples, collisions: focusCollisions, ...(paintProxy ? { paintProxy } : {}) },
+    coverage: { overlaySelectors, regionSelectors, checkVisibleControls: Boolean(options.checkVisibleControls),
+      otherControls: "Foreign-overlay obstruction only; rounded clipping disjoint from all overlays is retained but not a failure.",
+      openShadowRoots: roots.length - 1 },
+    overlays: overlays.map(({ measurement }) => measurement), regions, controls, failures, unassessed,
+    limits: ["Finite body hit samples plus explicit overlay rectangle checks; not exhaustive pixel paint order.",
+      "Decorative overlay shadows outside border boxes and pseudo-elements are not certified.",
+      "Focused-control/critical-region complex geometry and non-none target shadows cannot become an automatic pass.",
+      "Round-corner proofs use a conservative inner rectangle for ordinary Chromium boxes; unsupported shapes, axes and scrollbars remain unassessed.",
+      "Other controls' unresolved clipping-only rounded corners are not certified; disjoint conservative overlay boxes can be cleared.",
+      "Closed shadow trees, native select pickers, assistive technology and browser chrome need their own evidence.",
+      "Raw values, DOM/source ownership, side effects and keyboard event delivery remain caller assertions."],
+    pass: failures.length === 0 && unassessed.length === 0 };
+}

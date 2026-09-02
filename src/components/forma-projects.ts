@@ -173,10 +173,10 @@ export class FormaProjects extends FormaElement {
         if(!this.#intakeEditable()||this.#intakeComposing)return;
         this.#intakeRecipeId=outcomeRecipe((event.target as HTMLSelectElement).value)?.id??"";this.#intakeRecipeChoices.clear();this.requestUpdate();
       }}><option value="" ?selected=${this.#intakeRecipeId===""}>${catalog.noRecipe}</option>${OUTCOME_RECIPE_IDS.map(id=>html`<option value=${id} ?selected=${id===this.#intakeRecipeId}>${catalog.recipesById[id].title}</option>`)}</select></label>
-      ${this.#intakeRecipeId?html`<fieldset ?disabled=${!this.#intakeEditable()}><legend>${outcomeRecipeDraftMessage(this.i18n.locale,"choices")}</legend>${outcomeRecipeFileChoices(this.#intakeRecipeId).map(choice=>html`<label><input type="checkbox" data-intake-recipe-file=${choice.key} .checked=${this.#intakeRecipeChoices.has(choice.key)} @change=${(event:Event)=>{
+      ${this.#intakeRecipeId?html`<fieldset ?disabled=${!this.#intakeEditable()}><legend>${outcomeRecipeDraftMessage(this.i18n.locale,"choices")}</legend>${outcomeRecipeFileChoices(this.#intakeRecipeId).map(choice=>html`<label class="ui-choice"><input type="checkbox" data-intake-recipe-file=${choice.key} .checked=${this.#intakeRecipeChoices.has(choice.key)} @change=${(event:Event)=>{
         if(!this.#intakeEditable()||this.#intakeComposing)return;
         if((event.target as HTMLInputElement).checked)this.#intakeRecipeChoices.add(choice.key);else this.#intakeRecipeChoices.delete(choice.key);this.requestUpdate();
-      }}>${labels.choices[choice.key]}</label>`)}</fieldset><p>${outcomeRecipeDraftMessage(this.i18n.locale,"limitation")}</p>${!this.#intakeRecipeValid()?html`<p role="status">${this.#intakeCopy("chooseFiles")}</p>`:nothing}`:nothing}
+      }}><span>${labels.choices[choice.key]}</span></label>`)}</fieldset><p>${outcomeRecipeDraftMessage(this.i18n.locale,"limitation")}</p>${!this.#intakeRecipeValid()?html`<p role="status">${this.#intakeCopy("chooseFiles")}</p>`:nothing}`:nothing}
     </details>`;
   }
   #intakeCopy(key:ProjectIntakeMessage){return projectIntakeMessage(this.i18n.locale,key);}
@@ -191,22 +191,42 @@ export class FormaProjects extends FormaElement {
   #canReviewIntake(){return this.#intakeEditable()&&!this.#intakeComposing&&Boolean(this.#objective.trim())&&(!this.#source.trim()||this.#sourceRights)&&this.#intakeRecipeValid();}
   #reviewIntake(blank=false){
     if(!this.#intakeEditable()||this.#intakeComposing||!blank&&!this.#canReviewIntake())return;
-    this.#intakeChoice=blank?"blank":"brief";this.#intakePosture="review";this.requestUpdate();this.#focusIntake();
+    this.#intakeChoice=blank?"blank":"brief";this.#intakePosture="review";this.requestUpdate();this.#focusIntake(false);
   }
-  #backIntake(){if(!this.#intakeEditable()||this.#intakeComposing)return;this.#intakePosture="intent";this.requestUpdate();this.#focusIntake();}
+  #backIntake(){if(!this.#intakeEditable()||this.#intakeComposing)return;this.#intakePosture="intent";this.requestUpdate();this.#focusIntake(false);}
   #focusIntake(preventScroll=true){
     const opening=this.#intakeOpening,scope=this.#draftScopeKey(),source=this.store.captureSourceOwnership(),posture=this.#intakePosture;
     const current=()=>this.isConnected&&this.#creating&&opening!==null&&this.#intakeOpening===opening&&this.#intakePosture===posture
       &&Boolean(scope)&&this.#draftScope===scope&&this.#draftScopeKey()===scope&&this.store.sourceOwnershipActive(source);
     const focus=captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>{
       const dialog=this.querySelector<HTMLDialogElement>(".project-create-dialog");
-      return current()&&Boolean(dialog?.contains(element))&&(element.matches(".modal-close")||element.matches("[data-intake-outcome]"));
+      const form=dialog?.querySelector<HTMLFormElement>("form.project-intake");
+      return current()&&Boolean(dialog?.contains(element))&&(element.matches(".modal-close")||element.matches("[data-intake-outcome]")
+        ||element===form&&element.closest("dialog")===dialog&&element.closest("forma-projects")===this);
     }});
     void this.updateComplete.then(()=>{
       if(!current()||!focus.current())return;
       const target=this.querySelector<HTMLElement>(this.#intake?".modal-close":posture==="intent"?"[data-intake-outcome]":"[data-intake-name] input");
       if(target&&!target.matches(":disabled"))focus.run(target,()=>{target.focus({preventScroll});return true;});
     }).finally(()=>focus.dispose());
+  }
+  #revealIntakeFocus(event: FocusEvent) {
+    const path = event.composedPath(), target = path[0], form = event.currentTarget;
+    const dialog = this.querySelector<HTMLDialogElement>(".project-create-dialog");
+    if (!this.isConnected || !this.#creating || !this.#intakeOpening
+      || !this.#draftScope || this.#draftScope !== this.#draftScopeKey()
+      || !(form instanceof HTMLFormElement) || !(target instanceof HTMLElement)
+      || form.ownerDocument !== this.ownerDocument || target.ownerDocument !== this.ownerDocument
+      || !form.isConnected || !target.isConnected || !dialog?.isConnected || !dialog.matches(":modal")
+      || form !== dialog.querySelector("form.project-intake") || form.closest("forma-projects") !== this
+      || path.find(element => element instanceof HTMLFormElement) !== form
+      || path.find(element => element instanceof HTMLDialogElement) !== dialog
+      || !target.matches("button,input,select,textarea,summary")
+      || !target.matches(":focus-visible") || target.matches(":disabled")) return;
+    const root = target.getRootNode() as Document | ShadowRoot;
+    if (root.activeElement !== target) return;
+    // Keep the native focus destination; reveal its complete box and focus ring.
+    target.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   }
   #submitIntake(event:SubmitEvent){
     event.preventDefault();if(this.#intakeComposing)return;
@@ -468,7 +488,7 @@ export class FormaProjects extends FormaElement {
       <div class="project-card-summary"><span><strong>${project.documentCount}</strong><small>document${project.documentCount===1?"":"s"}</small></span><p><b>${project.blockCount}</b> creative decision${project.blockCount===1?"":"s"}, <b>${project.outputCount}</b> output${project.outputCount===1?"":"s"}${project.artifactCount?(project.artifactCount===1 ? " " + this.i18n.system("including {artifactCount} narrative, presentation, or motion result", { artifactCount: this.i18n.number(project.artifactCount) }) : " " + this.i18n.system("including {artifactCount} narrative, presentation, or motion results", { artifactCount: this.i18n.number(project.artifactCount) })):""}, and <b>${project.collectionCount}</b> collection${project.collectionCount===1?"":"s"}.</p></div>
     </article>`;})}${!p.projects.length?html`<forma-ui-empty-state .heading=${this.i18n.t("projects.emptyHeading","Give your next idea a home")} .detail=${this.i18n.t("projects.emptyDetail","A project keeps its documents, references, reusable decisions, and finished work together.")} .action=${this.#createLabel(this.i18n.t("projects.emptyAction","Create your first project"))} @forma-action=${this.#openCreate}></forma-ui-empty-state>`:""}</div>
     ${this.#creating?html`<dialog class="modal project-create-dialog" closedby="any" aria-labelledby="new-project-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}} @close=${()=>{if(this.#creating){this.#creating=false;this.requestUpdate();}}}>
-      <form class="modal-card wide project-intake" aria-busy=${String(this.#submitting)} @submit=${this.#submitIntake}
+      <form class="modal-card wide project-intake" aria-busy=${String(this.#submitting)} @submit=${this.#submitIntake} @focusin=${this.#revealIntakeFocus}
         @compositionstart=${()=>{this.#intakeComposing=true;}} @compositionend=${()=>{this.#intakeComposing=false;this.requestUpdate();}}>
         <button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("action.close","Close")} @click=${this.#close}>${icon("close")}</button>
         <span class="eyebrow">${this.i18n.t("projects.createEyebrow","New replayable workspace")}</span>

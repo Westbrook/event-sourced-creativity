@@ -9660,3 +9660,187 @@ test("C Projects other-project Canvas footer joins session after original Projec
     await join(); restore();
   }
 });
+
+// D428 ordinary preview dismissal reuses the original complete Library/Store/
+// RAM Worker fixture. Its existing native close port records a call and clears
+// open, but does NOT emulate the browser's remembered-invoker focus restoration.
+// Actual INPUT focus and visible LABEL paint remain the separate browser gate.
+test("D428 ordinary Library dismissal requests native close only for its current user gesture", fIntelligenceOptions, async t => {
+  const x = await cLibraryImportPage(t, "en"), { f, h, library } = x;
+  const closes = () => f.trace.filter(value => value === "close:modal library-import-dialog").length;
+  const vector = [], files = [];
+  const open = async name => {
+    const file = cLibraryImportFile(x.archives[name]); files.push(file);
+    await finishCommandPreparation(f, dLibraryImportChoose(x, file));
+    await cLibraryImportUnchanged(x);
+    const preview = dLibraryImportPreview(x, { blocked: false }); assert.ok(preview);
+    assert.deepEqual(preview.values, [String(x.archives[name].blocks), "0", "0"]);
+    assert.equal(dLibraryImportRecovery(x), null); assert.equal(file.reads, 1);
+    assert.equal(preview.dialog.port.closest("forma-library"), library);
+    assert.equal(library.querySelector(".library-import-dialog"), preview.dialog.port);
+    assert.equal(preview.dialog.port.contains(preview.close.port), true);
+    return preview;
+  };
+  let oldClose;
+  for (const kind of ["close", "cancel", "backdrop"]) {
+    const preview = await open("A");
+    if (!oldClose) oldClose = { handler: preview.dialog.handlers.close, dialog: preview.dialog.port };
+    f.native.emit(kind === "cancel" ? "keydown" : "pointerdown", preview.close.port);
+    f.native.focus(preview.close.port);
+    const count = closes(), focus = f.native.nativeFocus.length, scroll = f.native.nativeScroll.length;
+    if (kind === "close") await f.act(preview.close, "click", { button: 0 });
+    else if (kind === "cancel") await f.act(preview.dialog, "cancel", { key: "Escape", cancelable: true });
+    else await f.act(preview.dialog, "click", { button: 0, target: preview.dialog.port });
+    vector.push({ kind, nativeClose: closes() - count, nativeOpenAfter: preview.dialog.port.open });
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    assert.equal(f.native.nativeFocus.length, focus, "The finite close port must not manufacture UA return focus");
+    assert.equal(f.native.nativeScroll.length, scroll); await cLibraryImportUnchanged(x);
+  }
+  {
+    const preview = await open("A");
+    const newer = f.find("button", node => node.owner === f.host && fObjectClassed(node, "command-trigger"));
+    assert.equal(preview.dialog.port.contains(newer.port), false);
+    // Explicit newer native focus outside the modal is an interruption input,
+    // not a claim that inert background controls are physically Tab-reachable.
+    f.native.emit("pointerdown", newer.port); f.native.focus(newer.port);
+    const count = closes(), focus = f.native.nativeFocus.length;
+    await f.act(preview.close, "click", { button: 0 });
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    assert.ok(newer.port.isConnected); assert.equal(f.native.document.activeElement, newer.port);
+    assert.equal(f.native.nativeFocus.length, focus); await cLibraryImportUnchanged(x);
+    vector.push({ kind: "newer-focus", nativeClose: closes() - count });
+  }
+  {
+    const preview = await open("A"), route = h.store.route.get();
+    // A hash-only change keeps the import resource current but not the exact
+    // opening route. It must not authorize the native return-focus call.
+    h.store.setRoute(route + "#d428-import-return"); await f.settle();
+    const current = dLibraryImportPreview(x, { blocked: false });
+    assert.equal(current.dialog.port, preview.dialog.port);
+    f.native.focus(current.close.port);
+    const count = closes(), focus = f.native.nativeFocus.length;
+    await f.act(current.dialog, "cancel", { key: "Escape", cancelable: true });
+    assert.equal(h.store.route.get(), route + "#d428-import-return");
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(f.native.nativeFocus.length, focus);
+    vector.push({ kind: "changed-hash", nativeClose: closes() - count });
+    h.store.setRoute(route); await f.settle(); await cLibraryImportUnchanged(x);
+  }
+  {
+    const preview = await open("B"), count = closes(), focus = f.native.nativeFocus.length;
+    assert.equal(oldClose.dialog.isConnected, false);
+    // Deliver the exact old close binding after the new keyed preview exists.
+    // No forged native default or callback is substituted for that binding.
+    oldClose.handler.call(library, { type: "close", target: oldClose.dialog, currentTarget: oldClose.dialog });
+    await f.settle();
+    const current = dLibraryImportPreview(x, { blocked: false });
+    assert.equal(current.dialog.port, preview.dialog.port); assert.equal(current.dialog.port.open, true);
+    assert.deepEqual(current.values, ["2", "0", "0"]); assert.equal(dLibraryImportRecovery(x), null);
+    assert.equal(f.native.nativeFocus.length, focus); await cLibraryImportUnchanged(x);
+    vector.push({ kind: "old-close-after-B", nativeClose: closes() - count });
+    // The custody check settles the renderer; only the keyed dialog is retained.
+    const latest = dLibraryImportPreview(x, { blocked: false });
+    assert.equal(latest.dialog.port, current.dialog.port); assert.deepEqual(latest.values, ["2", "0", "0"]);
+    assert.equal(dLibraryImportRecovery(x), null);
+    assert.ok(latest.close.port.isConnected && f.renderer.nodes.includes(latest.close.port));
+    f.native.focus(latest.close.port); const finalCount = closes(), finalFocus = f.native.nativeFocus.length;
+    await f.act(latest.close, "click", { button: 0 });
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    assert.equal(f.native.nativeFocus.length, finalFocus); await cLibraryImportUnchanged(x);
+    vector.push({ kind: "current-B-close", nativeClose: closes() - finalCount, nativeOpenAfter: latest.dialog.port.open });
+  }
+  assert.ok(files.every(file => file.reads === 1)); assert.equal(x.receipts.records().length, 0);
+  t.diagnostic("D428_LIBRARY_NATIVE_CLOSE " + JSON.stringify({ vector, fileReads: files.map(file => file.reads),
+    sameOriginalHistoryAndFiscal: true, browserInvokerFocus: "not represented by the finite close port" }));
+  assert.deepEqual(vector, [
+    { kind: "close", nativeClose: 1, nativeOpenAfter: false },
+    { kind: "cancel", nativeClose: 1, nativeOpenAfter: false },
+    { kind: "backdrop", nativeClose: 1, nativeOpenAfter: false },
+    { kind: "newer-focus", nativeClose: 0 }, { kind: "changed-hash", nativeClose: 0 },
+    { kind: "old-close-after-B", nativeClose: 0 },
+    { kind: "current-B-close", nativeClose: 1, nativeOpenAfter: false },
+  ], "Only an exact current ordinary user dismissal calls native close before removing its modal");
+});
+
+for (const kind of ["resource-aba", "principal-signal-aba", "source-403"])
+test("D428 retired ordinary Library preview cannot request native return after " + kind, fIntelligenceOptions, async t => {
+  const x = await cLibraryImportPage(t, "en"), { f, h, library } = x, file = cLibraryImportFile(x.archives.A);
+  await finishCommandPreparation(f, dLibraryImportChoose(x, file)); await cLibraryImportUnchanged(x);
+  const preview = dLibraryImportPreview(x, { blocked: false }); assert.ok(preview);
+  const late = preview.dialog.handlers.close, lateCancel = preview.dialog.handlers.cancel;
+  const clientReceipts = dLibraryImportReceiptRows(h), route = h.store.route.get();
+  const closes = () => f.trace.filter(value => value === "close:modal library-import-dialog").length;
+  const count = closes(); let restorePolicy = () => {};
+  try {
+    if (kind === "resource-aba") {
+      h.store.setRoute(withProjectTaskDocumentInRoute("/library", h.otherA));
+      assert.notEqual(h.store.route.get(), route); h.store.setRoute(route);
+      assert.equal(h.store.route.get(), route);
+    } else if (kind === "principal-signal-aba") {
+      // Existing public session-signal input, not a second authenticated user.
+      const session = h.store.session.get();
+      h.store.session.set({ ...session, user: { ...session.user, userId: "d428-library-other-principal" } }); h.store.notify();
+      assert.equal(h.store.authorizationScopeActive(x.before.authorization), false);
+      h.store.session.set(session); h.store.notify();
+      assert.equal(h.store.authorizationScopeActive(x.before.authorization), true);
+    } else {
+      // Reuse the original retirement fixture's actual denied Worker read.
+      const env = h.worker.env, key = "FORMA_PILOT_COHORT_ID", had = Object.hasOwn(env, key), previous = env[key];
+      env[key] = "synthetic-missing-d428-library-cohort";
+      restorePolicy = () => { if (had) env[key] = previous; else delete env[key]; };
+      await assert.rejects(h.store.refreshEvents({ fromStart: true }), /Event stream returned 403/u);
+      assert.equal(h.store.sourceOwnershipActive(x.before.source), false);
+      assert.deepEqual(h.store.events.get(), []); assert.deepEqual(h.store.content.get(), {});
+    }
+    await f.settle(); assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    const focus = f.native.nativeFocus.length, scroll = f.native.nativeScroll.length, currentRoute = h.store.route.get();
+    late.call(library, { type: "close", target: preview.dialog.port, currentTarget: preview.dialog.port });
+    lateCancel.call(library, { type: "cancel", target: preview.dialog.port, currentTarget: preview.dialog.port, preventDefault() {} });
+    await f.settle();
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x), null);
+    assert.equal(h.store.route.get(), currentRoute); assert.equal(f.native.nativeFocus.length, focus);
+    assert.equal(f.native.nativeScroll.length, scroll); assert.equal(closes(), count);
+    await h.navigationResumeReads.settleOriginalRequests(); await h.worker.drainBackground();
+    assert.deepEqual(await h.history(), x.before.history); assert.deepEqual(h.counts(), x.before.counts);
+    assert.deepEqual(dLibraryImportReceiptRows(h), clientReceipts); assert.equal(x.receipts.records().length, 0);
+    assert.deepEqual(h.requests.slice(x.before.requests).filter(row => (row.init.method ?? "GET") !== "GET"
+      && !h.navigationResumeReads.isReadOnlyResume(row)), []);
+    assert.equal(file.reads, 1);
+    t.diagnostic("D428_LIBRARY_RETIRED_NATIVE_CLOSE " + JSON.stringify({ kind, nativeClose: closes() - count,
+      staleFocusOrScroll: false, originalHistoryAndFiscalUnchanged: true, principalSignalIsSynthetic: kind === "principal-signal-aba" }));
+  } finally { restorePolicy(); }
+});
+
+test("D428 pending original and its newer Library preview retain cleanup without native return-focus close", fIntelligenceOptions, async t => {
+  const x = await cLibraryImportPage(t, "fr"), { f } = x;
+  const a = cLibraryImportFile(x.archives.A), b = cLibraryImportFile(x.archives.B);
+  x.clientReceipts = dLibraryImportReceiptRows(x.h);
+  await finishCommandPreparation(f, dLibraryImportChoose(x, a));
+  const original = x.receipts.arm(x.archives.A.archive, true); x.original = original;
+  const pending = f.act(cLibraryImportPreview(x).submit, "click", { button: 0 });
+  const closes = () => f.trace.filter(value => value === "close:modal library-import-dialog").length;
+  const count = closes(), vector = [];
+  try {
+    await finishCommandPreparation(f, x.receipts.reached(original));
+    assert.equal(original.delivered, false); assert.equal(original.receipt.appended.length, 2);
+    assert.ok(x.receipts.isOriginal(original.request)); await cLibraryImportUnchanged(x, { held: true });
+    const preview = dLibraryImportPreview(x, { busy: true }); assert.ok(preview);
+    assert.equal(dLibraryImportStatus(x, "library.archive.originalPending").check, null);
+    await cBlankAct(x, preview.close); assert.equal(dLibraryImportPreview(x), null);
+    assert.equal(dLibraryImportStatus(x, "library.archive.originalPending").discard, null);
+    vector.push(closes() - count);
+    await finishCommandPreparation(f, dLibraryImportChoose(x, b));
+    const newer = dLibraryImportPreview(x); assert.deepEqual(newer.values, ["2", "0", "0"]);
+    const recovery = dLibraryImportStatus(x, "library.archive.originalPending");
+    assert.ok(recovery.discard); assert.equal(recovery.check, null); assert.equal(recovery.open, null);
+    dLibraryImportDisabledClick(x, newer.submit); await cBlankAct(x, recovery.discard);
+    assert.equal(dLibraryImportPreview(x), null); assert.equal(dLibraryImportRecovery(x).discard, null);
+    assert.equal(dLibraryImportStatus(x, "library.archive.originalPending").check, null);
+    vector.push(closes() - count);
+    original.gate.resolve(); await finishCommandPreparation(f, pending);
+    assert.equal(original.delivered, true); cLibraryImportCopiedA(x, original);
+    assert.equal(dLibraryImportRecovery(x), null); assert.equal(dLibraryImportPreview(x), null);
+    vector.push(closes() - count);
+    assert.equal(a.reads, 1); assert.equal(b.reads, 1); await dLibraryImportNoEffects(x);
+    assert.deepEqual(vector, [0, 0, 0], "Dismissal, newer-file discard and original receipt cleanup never inherit ordinary native focus return");
+  } finally { original.gate.resolve(); await Promise.allSettled([pending]); }
+});

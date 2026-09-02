@@ -89,6 +89,33 @@ forma-generation-actions,
   max-inline-size: 100%;
 }
 
+/* Output-pane controls wrap by their own available width. Keep the composer
+ * and expanded configuration/dialog rows on their existing contracts. */
+.document-result-generation .generation-actions.compact {
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-result-generation .generation-actions.compact > button {
+  flex: 0 1 auto;
+  align-self: stretch;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.document-result-generation .generation-actions.compact > .generation-details-trigger {
+  flex-wrap: wrap;
+}
+
+.document-result-generation .generation-actions.compact > .generation-details-trigger > :is(span, small, b) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .composer-dock {
   container: composer-dock / inline-size;
 }
@@ -1169,6 +1196,11 @@ html[data-document-focus] .studio-subpage-body {
   height: auto;
   overflow: visible;
   clip: auto;
+}
+
+.application-creative[data-nav-posture="compact"] :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar > .rail-toolbar-context > .rail-project-switch:focus-visible,
+.application-creative[data-nav-posture="compact"] :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
 }
 
 .project-rail .rail-content[popover] {
@@ -2622,6 +2654,18 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
   }
 
+  .application-creative > .topbar > .top-actions > .avatar:focus-visible,
+  .application-canvas > .topbar > .top-actions > .avatar:focus-visible {
+    outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+  }
+
+  @media (forced-colors: none) {
+    .application-creative > .topbar > .top-actions > .avatar:focus-visible,
+    .application-canvas > .topbar > .top-actions > .avatar:focus-visible {
+      outline-color: currentColor;
+    }
+  }
+
   .application-creative > .application-task-navigation[data-primary-navigation="true"] {
     position: fixed;
     z-index: 45;
@@ -2908,6 +2952,10 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scroll-padding-block: var(--forma-focus-clearance);
+}
+
+.workspace-page[data-workbench="document"]:has(> .composer-dock) .studio-grid > :is(.context-column, .output-column) {
   scroll-padding-block-end: calc(7rem + var(--forma-keyboard-offset));
 }
 
@@ -2962,6 +3010,10 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   flex: 0 0 auto;
   min-block-size: var(--forma-hit-target);
   white-space: nowrap;
+}
+
+.document-workbench-tasks > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
 }
 
 .document-workbench-tasks > button[aria-pressed="true"] {
@@ -3076,6 +3128,10 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   overflow-wrap: normal;
 }
 
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions > :is(.button, .icon-button):focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav,
 .application-creative[data-short-height="true"][data-layout-intent="workbench"] .studio-mode-nav {
   display: flex;
@@ -3137,6 +3193,14 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     width: var(--forma-hit-target);
   }
 
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail.collapsed > .rail-dock {
+    display: none;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail.collapsed > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+    outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+  }
+
   .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .project-rail.collapsed .rail-toolbar {
     justify-content: center;
     padding-inline: 0;
@@ -3156,6 +3220,30 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     align-items: center;
     gap: .25rem;
     padding-block: .125rem;
+  }
+
+  /* The short side-rail posture needs whole-group wrapping, not zero-basis
+     buttons competing with the title. Keep the separate compact strip intact. */
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
+    flex-wrap: wrap;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-copy {
+    flex: 1 1 min(100%, 16rem);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions {
+    inline-size: auto;
+    width: auto;
+    max-inline-size: 100%;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions > :is(.button, .icon-button) {
+    min-inline-size: var(--forma-hit-target);
+    max-inline-size: 100%;
+    flex: 0 1 auto;
   }
 }
 

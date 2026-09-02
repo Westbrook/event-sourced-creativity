@@ -719,6 +719,7 @@ details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min
 .page-header--hero { max-width: 1400px; margin: 0 auto 56px; }
 .page-header--library,.page-header--document { position: sticky; z-index: 35; top: 62px; min-height: 118px; align-items: center; gap: 28px; padding: 18px var(--page-gutter); background: rgba(251,250,246,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(16px); }
 .page-header--library .page-header-actions,.page-header--document .page-header-actions { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+forma-library .page-header--library > .page-header-actions > button { scroll-margin-block: var(--forma-focus-clearance); }
 .page-header--library h1,.page-header--document h1 { margin: 2px 0 8px; font-size: clamp(var(--type-title),4vw,var(--type-display)); }
 .page-header--library p { font-size: var(--type-body); }
 .file-button { position: relative; cursor: pointer; }
@@ -919,7 +920,7 @@ details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min
 @container (max-width: 480px) {
   .library-body { padding-inline: var(--page-gutter); }
   .page-header--library { padding-inline: var(--page-gutter); }
-  .page-header--library .page-header-actions > * { flex: 1; }
+  .page-header.page-header--library .page-header-actions > * { flex: 1 1 auto; }
   .library-output-actions { grid-template-columns: 1fr; }
   .document-card-actions { grid-template-columns: 1fr; }
   .document-card-actions .document-delete-trigger { width: 100%; }
@@ -1294,7 +1295,7 @@ details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min
   .page-header--library h1,.page-header--document h1 { font-size: var(--type-heading); }
   .document-title-editor { align-items: stretch; flex-wrap: wrap; }
   .document-title-editor input { width: min(100%,320px); flex-basis: 100%; }
-  .document-actions .labeled span { display: none; }
+  .document-actions .labeled span:not(.forma-icon) { display: none; }
   .studio-grid { display: block; }
   .output-card.primary .output-art, .empty-output { min-height: 350px; }
   .composer-dock { left: 0; padding: 6px 8px 9px; }
@@ -1423,6 +1424,18 @@ html[data-document-focus] .reality-editor { height: calc(100dvh - 70px); max-hei
 .project-card-summary p b { color: var(--ink); }
 .project-card footer { display: flex; gap: 7px; margin-top: 19px; }
 .project-create-dialog label,.project-document-dialog label { display: grid; gap: 6px; margin-top: 16px; color: var(--muted); font: var(--type-caption) var(--mono); text-transform: uppercase; }.project-create-dialog input,.project-document-dialog input { background: var(--panel); font: var(--type-body) var(--sans); text-transform: none; }.project-create-dialog footer,.project-document-dialog footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 20px; }
+.project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > h2 {
+  min-inline-size: 0;
+  padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+dialog.library-import-dialog > .modal-card > h2 {
+  min-inline-size: 0;
+  padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 /* Original-document recovery can add long, title-qualified peer actions.
  * Keep ordinary creation separate from the existing Duplicate footer. */
 .project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > footer { min-inline-size: 0; flex-wrap: wrap; align-items: stretch; gap: var(--forma-cluster-gap); }

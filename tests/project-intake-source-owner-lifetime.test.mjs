@@ -307,3 +307,232 @@ for (const [locale, posture, newer] of [
     await x.f.settle();
   }
 });
+
+// Keep the original23 unchanged. Reuse the same complete FR host and finite
+// native completion/focus seam. Actual modal opening has also been observed
+// to focus its scrollable FORM; declare that input, not browser/zoom behavior.
+// Starting this fixture in FR does not simulate the real EN-to-FR loader.
+for (const newer of ["none", "pointer", "key", "source", "focus"]) test("D retained intake opening after native FORM focus / fr / " + newer, options, async t => {
+  const x = await createProjectIntakeFixture(t, { locale: "fr", prepare: false }), native = x.native;
+  const raw = "  " + AUTHORED.objective + "  ";
+  assert.equal(x.f.i18n.locale, "fr"); assert.equal(x.owner.i18n, x.f.i18n);
+  await openCurrent(x, x.owner, false);
+  const outcome = x.objective(); native.emit("pointerdown", outcome.port); native.focus(outcome.port);
+  outcome.port.value = raw; await x.f.act(outcome, "input");
+  const next = x.f.find("button", node => node.owner === x.owner && node.text === dOpeningIntakeMessage("fr", "continue"));
+  assert.equal(Object.hasOwn(next.attributes, "disabled"), false);
+  native.emit("pointerdown", next.port); native.focus(next.port);
+  await x.f.act(x.form(), "submit", { submitter: next.port });
+  assert.equal(x.field(x.f.i18n.t("projects.projectName", "Project name")).port.value, "");
+  const back = x.f.find("button", node => node.owner === x.owner && node.text === dOpeningIntakeMessage("fr", "back"));
+  native.emit("pointerdown", back.port); native.focus(back.port); await x.f.act(back);
+  assert.equal(x.objective().port.value, raw);
+  const cancel = x.f.find("button", node => node.owner === x.owner && node.text === x.f.i18n.t("action.cancel", "Cancel"));
+  native.emit("pointerdown", cancel.port); native.focus(cancel.port); await x.f.act(cancel);
+  assert.equal(currentModal(x, x.owner).length, 0); assert.equal(eventPosts(x).length, 0);
+  const receipts = x.worker.sqlite.prepare("SELECT * FROM event_client_receipts WHERE stream_id=? ORDER BY rowid");
+  const before = { source: x.h.store.captureSourceOwnership(), authorization: x.h.store.captureAuthorizationScope(),
+    route: x.h.store.route.get(), session: x.h.store.session.get(), events: x.h.store.events.get(),
+    head: x.h.store.head.get(), content: x.h.store.content.get(), requests: x.h.requests.length,
+    append: x.h.store.appendBatchWithReceipt, canonical: await x.canonical(),
+    history: await dOpeningReadEvents(x.worker.env, x.worker.streamId), receipts: receipts.all(x.worker.streamId),
+    money: dOpeningFinancial(x.worker) };
+  const gate = dOpeningDeferred(), descriptor = Object.getOwnPropertyDescriptor(x.owner, "updateComplete");
+  assert.equal(descriptor, undefined, "The original owner completion seam remains unmodified");
+  let awaited = 0, restorePolicy = null;
+  Object.defineProperty(x.owner, "updateComplete", { configurable: true, get() { awaited++; return gate.promise; } });
+  try {
+    const opener = x.f.find("button", node => node.owner.tag === "forma-ui-button" && node.owner.parentElement === x.owner
+      && node.owner.label === x.f.i18n.t("projects.new", "New project"));
+    native.emit("pointerdown", opener.port); native.focus(opener.port);
+    await openCurrent(x, x.owner, false);
+    assert.equal(awaited, 1, "Exactly the fresh retained opening awaits completion");
+    const dialogs = currentModal(x, x.owner); assert.equal(dialogs.length, 1);
+    const dialog = dialogs[0].port, form = x.form().port, target = x.objective().port;
+    assert.equal(dialog.open, true); assert.equal(dialog.isConnected, true);
+    assert.equal(x.owner.querySelector(".project-create-dialog"), dialog);
+    assert.equal(dialog.querySelector("form.project-intake"), form);
+    assert.equal(form.tagName, "FORM"); assert.equal(form.isConnected, true);
+    assert.equal(form.closest("dialog"), dialog); assert.equal(form.closest("forma-projects"), x.owner);
+    assert.equal(form.ownerDocument, native.document); assert.equal(target.ownerDocument, native.document);
+    assert.equal(target.closest("form"), form); assert.equal(dialog.contains(form), true);
+    assert.equal(dialog.contains(target), true); assert.equal(target.matches(":disabled"), false);
+    assert.equal(target.value, raw);
+    // Declared native UA input only: the same actual rendered FORM receives
+    // focusin without a later pointer/key gesture. No activeElement is forged.
+    native.focus(form); assert.equal(native.document.activeElement, form);
+    let userTarget = null;
+    if (newer === "pointer" || newer === "focus") {
+      userTarget = x.f.find("button", node => node.owner === x.owner && node.text === x.f.i18n.t("action.cancel", "Cancel")).port;
+      assert.equal(userTarget.closest("form"), form);
+      if (newer === "pointer") native.emit("pointerdown", userTarget);
+      native.focus(userTarget);
+    }
+    if (newer === "key") {
+      native.emit("keydown", form); userTarget = target; native.focus(userTarget);
+    }
+    if (newer === "source") {
+      restorePolicy = await withdrawSource(x);
+      assert.equal(x.h.store.sourceOwnershipActive(before.source), false);
+      assert.equal(x.h.store.authorizationScopeActive(before.authorization), true);
+      assert.equal(currentModal(x, x.owner).length, 0); noPrivateProjects(x);
+    }
+    const mark = native.nativeFocus.length;
+    gate.resolve(true); await x.f.settle();
+    const late = native.nativeFocus.slice(mark);
+    // Original canonical/private/receipt/fiscal custody is checked before
+    // the intended missing useful-focus baseline assertion.
+    assert.deepEqual(await x.canonical(), before.canonical);
+    assert.deepEqual(await dOpeningReadEvents(x.worker.env, x.worker.streamId), before.history);
+    assert.deepEqual(receipts.all(x.worker.streamId), before.receipts);
+    assert.deepEqual(dOpeningFinancial(x.worker), before.money);
+    assert.equal(eventPosts(x).length, 0); assert.equal(x.dispatches.length, 0);
+    assert.equal(x.h.store.appendBatchWithReceipt, before.append);
+    assert.equal(x.h.store.route.get(), before.route); assert.equal(before.route, "/projects");
+    assert.equal(x.owner.isConnected, true); assert.equal(currentOwner(x), x.owner);
+    if (newer !== "source") {
+      assert.equal(x.h.requests.length, before.requests);
+      assert.equal(x.h.store.sourceOwnershipActive(before.source), true); assert.equal(x.h.store.authorizationScopeActive(before.authorization), true);
+      assert.equal(x.h.store.session.get(), before.session); assert.equal(x.h.store.events.get(), before.events);
+      assert.equal(x.h.store.head.get(), before.head); assert.equal(x.h.store.content.get(), before.content);
+      assert.equal(x.objective().port.value, raw); assert.equal(currentModal(x, x.owner).length, 1);
+    } else {
+      assert.equal(x.h.store.sourceOwnershipActive(before.source), false); noPrivateProjects(x);
+      assert.equal(x.h.requests.slice(before.requests).every(request => (request.init.method ?? "GET") === "GET"), true);
+    }
+    t.diagnostic(JSON.stringify({ locale: "fr", newer, awaited, lateFocus: late.map(row => ({
+      intended: row.node === target, previousWasNativeForm: row.previous === form, previousConnected: row.previousConnected })),
+      posts: eventPosts(x).length, evidence: "declared UA FORM focus in original host; not actual zoom, locale-loader or showModal timing" }));
+    if (newer === "none") {
+      assert.equal(late.length, 1, "The current retained opening reaches its outcome after native modal FORM focus");
+      assert.equal(late[0].node, target); assert.equal(late[0].previous, form); assert.equal(late[0].previousConnected, true);
+      assert.equal(native.document.activeElement, target);
+    } else {
+      assert.equal(late.length, 0, "Admitting the native form does not bypass newer user intent or retired Source");
+      if (userTarget) assert.equal(native.document.activeElement, userTarget);
+    }
+    if (newer === "source") {
+      const restoredFocus = native.nativeFocus.length;
+      await restoredSource(x, restorePolicy); restorePolicy = null;
+      assert.equal(currentModal(x, x.owner).length, 0); assert.equal(native.nativeFocus.length, restoredFocus);
+      assert.equal(eventPosts(x).length, 0); assert.deepEqual(await x.canonical(), before.canonical);
+      assert.deepEqual(await dOpeningReadEvents(x.worker.env, x.worker.streamId), before.history);
+      assert.deepEqual(receipts.all(x.worker.streamId), before.receipts); assert.deepEqual(dOpeningFinancial(x.worker), before.money);
+    }
+  } finally {
+    gate.resolve(true); restorePolicy?.();
+    if (descriptor) Object.defineProperty(x.owner, "updateComplete", descriptor); else delete x.owner.updateComplete;
+    await x.f.settle();
+  }
+});
+
+// Reuse the original complete host, bound disclosure/native controls and
+// owner-specific completion seam. The recorder observes actual focus args;
+// it does not provide scroll positions, CSS geometry or browser scheduling.
+test("D expanded intake Continue and Back request native focus reveal without changing its draft", options, async t => {
+  const x = await createProjectIntakeFixture(t, { locale: "en", prepare: false }), native = x.native;
+  const rawOutcome = "  Prepare a launch review deck from the existing Studio launch decisions.  ";
+  const rawSource = "  Studio launch should preserve the approved direction and existing decisions.  ";
+  const receipts = x.worker.sqlite.prepare("SELECT * FROM event_client_receipts WHERE stream_id=? ORDER BY rowid");
+  const before = { source: x.h.store.captureSourceOwnership(), authorization: x.h.store.captureAuthorizationScope(),
+    route: x.h.store.route.get(), session: x.h.store.session.get(), events: x.h.store.events.get(),
+    head: x.h.store.head.get(), content: x.h.store.content.get(), requests: x.h.requests.length,
+    append: x.h.store.appendBatchWithReceipt, canonical: await x.canonical(),
+    history: await dOpeningReadEvents(x.worker.env, x.worker.streamId), receipts: receipts.all(x.worker.streamId),
+    money: dOpeningFinancial(x.worker) };
+  await openCurrent(x, x.owner, false);
+  const outcome = x.objective(); native.emit("pointerdown", outcome.port); native.focus(outcome.port);
+  outcome.port.value = rawOutcome; await x.f.act(outcome, "input");
+  const sourceSummary = x.f.find("summary", node => node.owner === x.owner && node.text === dOpeningIntakeMessage("en", "addSource"));
+  native.emit("pointerdown", sourceSummary.port); native.focus(sourceSummary.port);
+  sourceSummary.parent.port.open = true; await x.f.act(sourceSummary.parent, "toggle");
+  const source = x.f.find("textarea", node => node.owner === x.owner && node.attributes.maxlength === "5000");
+  native.emit("pointerdown", source.port); native.focus(source.port);
+  source.port.value = rawSource; await x.f.act(source, "input");
+  assert.equal(Object.hasOwn(x.f.find("button", node => node.owner === x.owner
+    && node.text === dOpeningIntakeMessage("en", "continue")).attributes, "disabled"), true);
+  const rights = x.f.find("input", node => node.owner === x.owner && node.attributes.type === "checkbox");
+  native.emit("pointerdown", rights.port); native.focus(rights.port);
+  rights.port.checked = true; await x.f.act(rights, "change");
+  const recipeSummary = x.f.find("summary", node => node.owner === x.owner && node.text === dOpeningIntakeMessage("en", "recipe"));
+  native.emit("pointerdown", recipeSummary.port); native.focus(recipeSummary.port);
+  recipeSummary.parent.port.open = true; await x.f.act(recipeSummary.parent, "toggle");
+  const recipe = x.f.find("select", node => node.owner === x.owner && Object.hasOwn(node.attributes, "data-intake-recipe-choice"));
+  native.emit("pointerdown", recipe.port); native.focus(recipe.port);
+  recipe.port.value = "executive-deck"; await x.f.act(recipe, "change");
+  const slides = x.f.find("input", node => node.owner === x.owner && node.attributes["data-intake-recipe-file"] === "deck");
+  assert.equal(slides.port.checked, false, "The native file choice is not preselected");
+  native.emit("pointerdown", slides.port); native.focus(slides.port);
+  slides.port.checked = true; await x.f.act(slides, "change");
+  const observed = [];
+  for (const direction of ["continue", "back"]) {
+    const control = x.f.find("button", node => node.owner === x.owner && node.text === dOpeningIntakeMessage("en", direction));
+    assert.equal(Object.hasOwn(control.attributes, "disabled"), false);
+    native.emit("pointerdown", control.port); native.focus(control.port);
+    const gate = dOpeningDeferred(), descriptor = Object.getOwnPropertyDescriptor(x.owner, "updateComplete");
+    assert.equal(descriptor, undefined, "No earlier completion override is replaced");
+    let awaited = 0;
+    Object.defineProperty(x.owner, "updateComplete", { configurable: true, get() { awaited++; return gate.promise; } });
+    try {
+      if (direction === "continue") await x.f.act(x.form(), "submit", { submitter: control.port });
+      else await x.f.act(control);
+      assert.equal(awaited, 1, "Only this actual posture transition awaits native completion");
+      const dialogs = currentModal(x, x.owner); assert.equal(dialogs.length, 1);
+      const dialog = dialogs[0].port, form = x.form().port;
+      const target = direction === "continue" ? x.field(x.f.i18n.t("projects.projectName", "Project name")).port : x.objective().port;
+      assert.equal(dialog.open, true); assert.equal(dialog.isConnected, true);
+      assert.equal(x.owner.querySelector(".project-create-dialog"), dialog);
+      assert.equal(target.isConnected, true); assert.equal(target.ownerDocument, native.document);
+      assert.equal(target.closest("form"), form); assert.equal(target.closest("dialog"), dialog);
+      assert.equal(target.matches(":disabled"), false);
+      assert.equal(target.value, direction === "continue" ? "" : rawOutcome);
+      const mark = native.nativeFocus.length;
+      gate.resolve(true); await x.f.settle();
+      const late = native.nativeFocus.slice(mark);
+      assert.equal(late.length, 1, "The explicit current posture change reaches exactly its useful native field");
+      assert.equal(late[0].node, target); assert.equal(native.document.activeElement, target);
+      observed.push({ direction, args: late[0].args });
+      if (direction === "continue") {
+        const tree = x.f.tree(), outcomeReview = tree.visible("dd").find(node => node.owner === x.owner
+          && Object.hasOwn(node.attributes, "data-intake-outcome-review"));
+        assert.ok(outcomeReview); assert.equal(outcomeReview.children.join(""), rawOutcome);
+        const definitions = outcomeReview.parent.children.filter(node => typeof node !== "string" && node.tag === "dd");
+        assert.deepEqual(definitions.map(node => node.children.join("")), [rawOutcome, rawSource, dOpeningIntakeMessage("en", "rightsAsserted")]);
+        assert.equal(Object.hasOwn(x.submitButton().attributes, "disabled"), true, "Review with no name cannot create a project");
+      }
+    } finally {
+      gate.resolve(true);
+      if (descriptor) Object.defineProperty(x.owner, "updateComplete", descriptor); else delete x.owner.updateComplete;
+      await x.f.settle();
+    }
+  }
+  const returned = x.f.tree();
+  assert.equal(x.objective().port.value, rawOutcome);
+  assert.equal(x.f.find("textarea", node => node.owner === x.owner && node.attributes.maxlength === "5000").port.value, rawSource);
+  const inputs = returned.visible("input").filter(node => node.owner === x.owner && node.attributes.type === "checkbox");
+  assert.equal(inputs.length, 2); assert.equal(inputs.every(node => node.port.checked), true);
+  const returnedRecipe = returned.visible("select").find(node => node.owner === x.owner && Object.hasOwn(node.attributes, "data-intake-recipe-choice"));
+  assert.ok(returnedRecipe); assert.equal(returnedRecipe.properties.value, "executive-deck");
+  assert.deepEqual(returnedRecipe.children.filter(node => typeof node !== "string" && node.tag === "option"
+    && Object.hasOwn(node.attributes, "selected")).map(node => node.attributes.value), ["executive-deck"]);
+  for (const key of ["addSource", "recipe"]) {
+    const summary = returned.visible("summary").find(node => node.owner === x.owner && node.text === dOpeningIntakeMessage("en", key));
+    assert.ok(summary); assert.equal(summary.parent.port.open, true, "Back preserves the explicit expanded disclosure");
+  }
+  assert.equal(currentOwner(x), x.owner); assert.equal(x.owner.isConnected, true);
+  assert.equal(x.h.store.route.get(), before.route); assert.equal(before.route, "/projects");
+  assert.equal(x.h.store.sourceOwnershipActive(before.source), true); assert.equal(x.h.store.authorizationScopeActive(before.authorization), true);
+  assert.equal(x.h.store.session.get(), before.session); assert.equal(x.h.store.events.get(), before.events);
+  assert.equal(x.h.store.head.get(), before.head); assert.equal(x.h.store.content.get(), before.content);
+  assert.equal(x.h.requests.length, before.requests); assert.equal(eventPosts(x).length, 0); assert.equal(x.dispatches.length, 0);
+  assert.equal(x.h.store.appendBatchWithReceipt, before.append); assert.deepEqual(await x.canonical(), before.canonical);
+  assert.deepEqual(await dOpeningReadEvents(x.worker.env, x.worker.streamId), before.history);
+  assert.deepEqual(receipts.all(x.worker.streamId), before.receipts); assert.deepEqual(dOpeningFinancial(x.worker), before.money);
+  t.diagnostic(JSON.stringify({ observed, evidence: "actual native focus arguments; no simulated scroll or viewport geometry" }));
+  // Both real native handoffs and all custody/no-write checks are reached
+  // before the intentionally failing old preventScroll contract comparison.
+  assert.deepEqual(observed, [
+    { direction: "continue", args: [{ preventScroll: false }] },
+    { direction: "back", args: [{ preventScroll: false }] },
+  ], "Explicit Continue and Back allow the browser to reveal their focused field");
+});

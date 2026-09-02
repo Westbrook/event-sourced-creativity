@@ -31,7 +31,16 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
   padding-inline: 0;
 }
 
-forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > span {
+forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher {
+  box-shadow: none;
+}
+
+forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher:focus-visible {
+  outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, currentColor);
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > span:not(.forma-icon) {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;
@@ -353,7 +362,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 
 @media (max-height: 34rem) and (orientation: landscape) {
   forma-assistant-panel {
-    inset-block-end: max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px));
+    inset-block-end: calc(max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px));
   }
 
   .forma-assistant-panel {
@@ -369,6 +378,10 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   .forma-assistant-task,
   .forma-assistant-model select {
     border: 1px solid CanvasText;
+  }
+
+  forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher:focus-visible {
+    outline-color: Highlight;
   }
 }
 

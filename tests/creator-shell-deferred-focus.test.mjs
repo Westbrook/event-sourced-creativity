@@ -229,3 +229,56 @@ for (const newer of [false, true]) test("C Creator ordinary Projects route main 
   await f.settle(); assert.equal(f.routeEvents.length, 1);
   await unchanged(p, { route: "/projects", allowReads: true });
 });
+
+for (const newer of ["none", "pointer", "key"]) test("D428 Creator account beforetoggle microtask checkpoint / " + newer, options, async t => {
+  const p = await page(t), { f } = p, current = account(f), retainedCommand = command(f);
+  const nativeShow = current.panel.showPopover, queue = queuedToggle(current.panel);
+  assert.equal(typeof nativeShow, "function");
+  pressFocus(f, current.trigger);
+  const before = { type: "beforetoggle", target: current.panel, currentTarget: current.panel,
+    oldState: "closed", newState: "open", cancelable: true, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; }, stopPropagation() {} };
+  // Finite native lifecycle input: a browser callback can return through a
+  // microtask checkpoint before its UA caller updates popover state. Keep
+  // the existing actual EventPart, native state method and queued toggle;
+  // this is not a browser keyboard/event-task-priority certificate.
+  current.panel.handlers.beforetoggle.call(current.panel.owner, before);
+  await Promise.resolve();
+  assert.equal(before.defaultPrevented, false);
+  assert.equal(current.panel.matches(":popover-open"), false);
+  assert.equal(queue.pending, false);
+  assert.equal(f.native.document.activeElement, current.trigger);
+  assert.ok(current.panel.isConnected && current.trigger.isConnected);
+  nativeShow.call(current.panel);
+  assert.equal(current.panel.matches(":popover-open"), true);
+  assert.ok(queue.pending);
+  assert.equal(queue.delivered, 0);
+  if (newer === "pointer") pressFocus(f, retainedCommand);
+  if (newer === "key") key(f, current.trigger, "ArrowRight");
+  // The original state change has completed. Deliver its queued notification
+  // without a duration-based wait or changing the application focus guard.
+  const focusables = current.panel.querySelectorAll(focusableSelector);
+  assert.ok(focusables.length && focusables.every(node => current.panel.contains(node) && node.isConnected));
+  const mark = f.focusObserved.length;
+  queue.deliver();
+  const late = f.focusObserved.slice(mark);
+  t.diagnostic(JSON.stringify({ newer, late: late.map(row => ({ tag: row.target.tag,
+    current: row.current, command: row.command, account: row.account })),
+    nativeOpen: current.panel.matches(":popover-open"),
+    boundary: "declared beforetoggle callback checkpoint before original native state change; browser evidence is separate" }));
+  if (newer === "none") {
+    assert.equal(late.length, 1, "the original uninterrupted opening focuses its first current native control");
+    assert.equal(late[0].target, focusables[0]);
+    assert.equal(late[0].current, true);
+  } else {
+    assert.equal(late.length, 0, "a newer pointer or key must still retire the original focus handoff");
+    assert.equal(f.native.document.activeElement, newer === "pointer" ? retainedCommand : current.trigger);
+  }
+  assert.equal(queue.pending, false);
+  assert.equal(queue.delivered, 1);
+  assert.equal(f.store.ui.accountOpen, true, "a genuine native open still updates presentation state");
+  await f.settle();
+  assert.equal(account(f).panel.matches(":popover-open"), true);
+  assert.equal(command(f), retainedCommand);
+  await unchanged(p);
+});

@@ -121,8 +121,10 @@ export class FormaShell extends FormaElement {
       element=>!open&&element===trigger&&Boolean(trigger?.isConnected
         &&trigger===this.querySelector(".avatar")&&trigger.getAttribute("popovertarget")===panel.getAttribute("id")));
     const focus=this.#accountFocus={panel,open,owner};
-    // Opening beforetoggle is cancelable; canceled native transitions emit no toggle.
-    queueMicrotask(()=>{if(this.#accountFocus===focus&&panel.matches(":popover-open")!==open)this.#retireAccountFocus();});
+    // A native beforetoggle callback may reach a microtask checkpoint before
+    // the UA commits its new state. Check cancellation in the next task,
+    // retaining this exact opening's focus owner and interruption guards.
+    setTimeout(()=>{if(this.#accountFocus===focus&&panel.matches(":popover-open")!==open)this.#retireAccountFocus();},0);
   };
   #accountToggle = (event: ToggleEvent) => {
     const open = event.newState === "open",panel=event.currentTarget as HTMLElement|null;

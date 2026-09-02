@@ -315,7 +315,7 @@ export class FormaProjectContents extends FormaElement {
         <button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("action.close")} @click=${()=>this.#closeNew()}>${icon("close")}</button>
         <span class="eyebrow">Blank by default</span><h2 id="new-document-title">Create a document</h2>
         <p>Name it now. No direction or other context block will be inferred.</p>
-        <label>Document name<input required maxlength="80" placeholder="e.g. Packaging exploration" .value=${this.#title}
+        <label>Document name<input required maxlength="80" ?autofocus=${!original} placeholder="e.g. Packaging exploration" .value=${this.#title}
           @input=${(event:InputEvent)=>{if(owner.current()&&opening===this.#newDocumentRequest&&this.#newDocument&&!this.#duplicateSourceId
             &&event.currentTarget===this.querySelector(".new-document-dialog input")){this.#title=(event.currentTarget as HTMLInputElement).value;owner.revision++;this.requestUpdate();}}}></label>
         ${original?html`<p class="project-blank-original-notice" role="status">${this.#ordinaryDocumentNotice()}</p>

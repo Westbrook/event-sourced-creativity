@@ -265,3 +265,36 @@ test("C actual Open copied document preserves sibling Assistant raw until explic
     assert.equal(globalThis.fetch.mock.callCount(), 0);
   } finally { restore(); }
 });
+
+// R21 independently observed native Close retaining focus instead of the
+// intended name field. This is a source contract for the native declaration,
+// not simulated UA autofocus or a change to the original three full-host cases.
+import { readFile } from "node:fs/promises";
+
+test("D428 only an ordinary blank document declares native name autofocus", async () => {
+  const source = await readFile(new URL("../src/components/forma-project-contents.ts", import.meta.url), "utf8");
+  const section = (from, to) => {
+    const start = source.indexOf(from), end = source.indexOf(to, start);
+    assert.ok(start >= 0 && end > start, "inspect the actual current owner: " + from);
+    return source.slice(start, end);
+  };
+  const opening = section("  #beginNew(){", "  async #beginDuplicate(");
+  const dialog = section("  #ordinaryDocumentDialog(){", "  #ordinaryDocumentRecovery(){");
+  const copy = section("  #copyDialog(){", "  #openRoute(");
+  assert.ok(opening.includes("const focus=captureOutputNavigationFocus(this.ownerDocument);"));
+  assert.ok(opening.includes("owner.current()&&this.store.route.get()===route&&focus.current()"));
+  assert.ok(opening.includes("focus.run(target,()=>{target.focus();return true;})"));
+  assert.ok(dialog.includes("const owner=this.#ordinaryDocument;if(!owner?.current())return nothing;"));
+  assert.ok(dialog.includes("original=owner.original,document=this.#originalOrdinaryDocument()"));
+  assert.ok(dialog.includes("owner.current()&&opening===this.#newDocumentRequest&&this.#newDocument&&!this.#duplicateSourceId"));
+  assert.equal((dialog.match(/<input\b/gu) ?? []).length, 1);
+  const start = dialog.indexOf("<input "), end = dialog.indexOf("\n          @input=", start);
+  assert.ok(start >= 0 && end > start);
+  const input = dialog.slice(start, end);
+  assert.ok(input.includes('required maxlength="80"'));
+  assert.ok(input.includes('.value=${this.#title}'), "keep the owned raw name binding");
+  assert.doesNotMatch(copy, /\bautofocus\b/u, "the separate Duplicate renderer receives no new autofocus policy");
+  assert.ok(input.includes(' ?autofocus=${!original} '),
+    "native showModal may choose the name only while this ordinary opening has no original request");
+  assert.equal((dialog.match(/\bautofocus\b/gu) ?? []).length, 1);
+});

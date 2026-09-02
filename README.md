@@ -74,6 +74,11 @@ pnpm test
 pnpm cem:check
 ```
 
+Native keyboard, focus visibility, and genuine Chromium browser-zoom checks
+run with `pnpm test:a11y` against the existing local preview. See
+[the browser test guide](./tests/browser/README.md) for setup, read-only safety,
+coverage, and the remaining assistive-technology review boundaries.
+
 The UI uses documented browser-native custom elements: Lit powers reactive
 application composition, while dependency-free native `HTMLElement` components
 protect isolated public and guest boundaries when shared controls require it.

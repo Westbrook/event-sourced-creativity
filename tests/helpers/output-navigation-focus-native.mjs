@@ -189,7 +189,7 @@ export function installOutputNavigationFocusNative(t, f, ports) {
       if (!node.isConnected) return;
       const previous = documentPort.activeElement;
       documentPort.activeElement = node;
-      nativeFocus.push({ node, previous, previousConnected: Boolean(previous?.isConnected) });
+      nativeFocus.push({ node, previous, previousConnected: Boolean(previous?.isConnected), args });
       emit("focusin", node);
       return originalFocus?.(...args);
     };

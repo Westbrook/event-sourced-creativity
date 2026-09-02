@@ -153,7 +153,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     this.#editing = true; this.#status = ""; this.#errors.clear(); this.#interpretationReviewedAt = -1;
     this.requestUpdate(); await this.updateComplete;
     if (!current() || this.#activeKey !== key || !this.#editing) return false;
-    this.querySelector<HTMLElement>(`#${this.#fieldId("originalText")}`)?.focus({ preventScroll: true });
+    this.querySelector<HTMLElement>(`#${this.#fieldId("originalText")}`)?.focus({ preventScroll: false });
     return true;
   }
   /** Explicitly resend this session's original Save; never materialize or rebase newer edits. */
@@ -273,7 +273,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       } else this.#status = "newerDraftRetained";
     }
   }
-  #focus(key: string) { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#fieldId(key)}`)?.focus({ preventScroll: true })); }
+  #focus(key: string, preventScroll = true) { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#fieldId(key)}`)?.focus({ preventScroll })); }
   #focusSummary() { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#id}-heading`)?.focus({ preventScroll: true })); }
   #blankSpec(id: string, label: string, originalText: string): OutputRequirementSpec {
     return { schema_version: 1, id, label, original_text: originalText, deliverables: [], value_origins: {} };
@@ -362,16 +362,17 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   }
   #cancel() {
     if (!this.#session || this.#waiting || this.originalSaveId) return;
-    if (this.#session.dirty) { this.#cancelIntent = "cancel"; this.requestUpdate(); this.#focus("keepEditing"); return; }
+    if (this.#session.dirty) { this.#cancelIntent = "cancel"; this.requestUpdate(); this.#focus("keepEditing", false); return; }
     this.#close(false);
   }
   #close(discarded: boolean) {
     const intent = this.#intent();
+    const revealOpener = discarded && !this.snapshot && Boolean(this.newDraft);
     this.#cache.delete(this.#activeKey); this.#session = null; this.#editing = false;
     this.#cancelIntent = null; this.#parseProposal = null; this.#errors.clear(); this.#status = ""; this.#interpretationReviewedAt = -1; this.#conflictReviewedAt = "";
     if (intent) this.#emit<OutputRequirementCancelIntent>("forma-output-cancel", { ...intent, discarded });
     this.requestUpdate();
-    void this.updateComplete.then(() => { if (this.#opener?.isConnected) this.#opener.focus({ preventScroll: true }); else this.#focusSummary(); });
+    void this.updateComplete.then(() => { if (this.#opener?.isConnected) this.#opener.focus({ preventScroll: !revealOpener }); else this.#focusSummary(); });
   }
   #discard() {
     if (this.originalSaveId) return;
@@ -899,7 +900,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       <button aria-label=${this.#controlName(this.#t("addDeliverable"), "")} type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#addDeliverable}>${this.#t("addDeliverable")}</button>
       ${this.editorState.status === "invalid" && this.editorState.issues?.length ? html`<ul class="output-requirement-error">${this.editorState.issues.map((issue) => html`<li>${issue.message}</li>`)}</ul>` : nothing}
       <footer class="output-requirement-form-footer"><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save"), "")} id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button aria-label=${this.#controlName(this.#t("cancel"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
-      ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepEditing"), "")} id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText"); }}>${this.#t("keepEditing")}</button><button aria-label=${this.#controlName(this.#t("discard"), "")} type="button" ?disabled=${Boolean(this.originalSaveId)} @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
+      ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepEditing"), "")} id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText", false); }}>${this.#t("keepEditing")}</button><button aria-label=${this.#controlName(this.#t("discard"), "")} type="button" ?disabled=${Boolean(this.originalSaveId)} @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
     </form>`;
   }
   override render() {

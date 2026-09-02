@@ -730,6 +730,17 @@ forma-project-rail {
 .rail-links.rail-document-links > a,
 .rail-links.rail-library-links > a { min-height: 2.75rem; }
 
+.rail-document-links > a {
+  flex-wrap: wrap;
+  gap: var(--forma-cluster-gap);
+}
+
+.rail-document-links > a > small {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .rail-document-links > a > span {
   display: flex;
   min-width: 0;
@@ -4359,7 +4370,7 @@ forma-ui-button .button { max-width: 100%; }
 .document-artifact-launcher { display: contents; }
 .artifact-show-all { justify-self: start; }
 .skip-link { position: fixed; z-index: 100; top: .75rem; left: .75rem; padding: .75rem 1rem; color: var(--on-strong); background: var(--ink); border-radius: var(--radius-small); translate: 0 -150%; }
-.skip-link:focus { translate: 0 0; }
+.skip-link:focus { translate: none; }
 
 .design-lab-content { display: grid; max-width: var(--page-content-max); gap: clamp(3.5rem,8vw,7rem); padding: clamp(2.5rem,5vw,4.5rem) var(--page-gutter) var(--page-bottom-space); }
 .design-lab-section { display: grid; gap: clamp(1.25rem,3vw,2.25rem); }
@@ -4772,9 +4783,13 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .forma-video-reel-picker select { min-block-size: var(--forma-control-min-size,2.75rem); inline-size: min(100%,32rem); }
 .output-input-error { color: var(--forma-color-danger-text,var(--danger)); }
 .output-input-standalone > footer { display: flex; justify-content: flex-end; gap: var(--forma-space-3,var(--space-3)); margin-block-start: var(--forma-space-4,var(--space-4)); }
-.ui-choice { display: flex; min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; gap: var(--forma-space-3,var(--space-3)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
-.ui-choice > input { inline-size: 1.125rem; block-size: 1.125rem; flex: 0 0 auto; accent-color: var(--forma-color-accent,var(--accent)); }
+.ui-choice,
+:is(forma-projects .project-intake, forma-output-requirements .output-recipe-entry) label.ui-choice { display: flex; min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; gap: var(--forma-space-3,var(--space-3)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
+.ui-choice > input,
+:is(forma-projects .project-intake, forma-output-requirements .output-recipe-entry) label.ui-choice > input { inline-size: 1.125rem; block-size: 1.125rem; flex: 0 0 auto; accent-color: var(--forma-color-accent,var(--accent)); }
 .ui-choice > span { display: grid; gap: .125rem; }
+:is(forma-projects .project-intake, forma-output-requirements .output-recipe-entry) label.ui-choice { min-inline-size: 0; flex-wrap: nowrap; }
+:is(forma-projects .project-intake, forma-output-requirements .output-recipe-entry) label.ui-choice > span { min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; }
 .ui-switch > input { inline-size: 1.25rem; block-size: 1.25rem; }
 .ui-radio-group { display: grid; gap: var(--forma-space-1,var(--space-1)); margin: 0; padding: 0; border: 0; }
 .ui-radio-group > legend { margin-block-end: var(--forma-space-2,var(--space-2)); }

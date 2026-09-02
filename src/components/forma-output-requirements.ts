@@ -333,7 +333,7 @@ export class FormaOutputRequirements extends FormaElement {
         || this.#noticeKind !== "status" || this.#notice !== this.#recipeMessage("inputCleared")) return;
       const target = this.querySelector<HTMLElement>("[data-output-recipe-focus-return]")
         ?? this.querySelector<HTMLElement>("[data-output-plan-focus-return]");
-      if (target?.closest("forma-output-requirements") === this) focus.run(target, () => { target.focus({ preventScroll: true }); return true; });
+      if (target?.closest("forma-output-requirements") === this) focus.run(target, () => { target.focus({ preventScroll: false }); return true; });
     } finally { focus.dispose(); }
   }
   #recipeExistingWork() {
@@ -498,6 +498,24 @@ export class FormaOutputRequirements extends FormaElement {
         && this.#recipeText === originalText && JSON.stringify([...this.#recipeChoices]) === JSON.stringify(selectedChoices) });
     if (this.#viewCurrent(view) && result !== "opened") this.#announce(this.#recipeMessage(result === "existing-draft" ? "existing" : "stale"), true);
   }
+  #revealRecipeFocus(event: FocusEvent, view: OutputPrivateView, route: string) {
+    const path = event.composedPath(), target = path[0], entry = event.currentTarget;
+    if (!this.#viewCurrent(view) || this.store.route.get() !== route || !this.#recipeInputContextCurrent()
+      || !(entry instanceof HTMLElement) || !(target instanceof HTMLElement)
+      || entry.tagName !== "DETAILS" || !entry.isConnected || !target.isConnected
+      || entry.ownerDocument !== this.ownerDocument || target.ownerDocument !== this.ownerDocument
+      || !path.includes(entry) || entry.closest("forma-output-requirements") !== this
+      || target.closest("forma-output-requirements") !== this || target.closest(".output-recipe-entry") !== entry
+      || !entry.contains(target) || target.closest("[hidden], [inert], [aria-hidden='true']")
+      || !["BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"].includes(target.tagName)
+      || target.matches(":disabled") || !target.matches(":focus-visible")
+      || target.ownerDocument.activeElement !== target) return;
+    const entries = this.querySelectorAll<HTMLDetailsElement>(".output-recipe-entry");
+    if (entries.length !== 1 || entries[0] !== entry
+      || !(entry as HTMLDetailsElement).open && target !== entry.querySelector("summary")) return;
+    // Preserve native focus; reuse the owning pane's existing focus clearance.
+    target.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+  }
   #recipeEntry(snapshot: OutputRequirementsSnapshot | null) {
     const retained = Boolean((this.#recipeId || this.#recipeText || this.#recipeChoices.size) && this.#recipeInputContextCurrent());
     if (this.blockId || this.surface !== "document" || this.inspectionOnly || !snapshot?.permissions.canAuthor && !retained) return nothing;
@@ -505,7 +523,7 @@ export class FormaOutputRequirements extends FormaElement {
     const previewBlocked = blocked || !snapshot || !this.#recipeScopeReady(snapshot) || this.#recipeOpeningBlocked();
     const view = this.#captureView(), route = this.store.route.get(), clearBlocked = !this.#recipeInputClearable();
     const catalog = this.#recipeCatalog();
-    return html`<details class="output-recipe-entry" .open=${this.#recipeEntryOpen} @toggle=${(event: Event) => { this.#recipeEntryOpen = (event.currentTarget as HTMLDetailsElement).open; }}><summary data-output-recipe-focus-return aria-label=${this.#controlName(this.#recipeMessage("heading"))}>${this.#recipeMessage("heading")}</summary><p>${this.#recipeMessage("hint")}</p>
+    return html`<details class="output-recipe-entry" @focusin=${(event: FocusEvent) => this.#revealRecipeFocus(event, view, route)} .open=${this.#recipeEntryOpen} @toggle=${(event: Event) => { this.#recipeEntryOpen = (event.currentTarget as HTMLDetailsElement).open; }}><summary data-output-recipe-focus-return aria-label=${this.#controlName(this.#recipeMessage("heading"))}>${this.#recipeMessage("heading")}</summary><p>${this.#recipeMessage("hint")}</p>
       <form @submit=${this.#previewRecipe} @compositionstart=${() => { this.#recipeEntryEdited(); this.#recipeComposing = true; }} @compositionend=${() => { this.#recipeComposing = false; this.requestUpdate(); }}>
         <label>${catalog.recipes}<select ?disabled=${blocked} .value=${this.#recipeId} @change=${(event: Event) => {
           if (!this.#recipeInputEditable()) return;
@@ -514,11 +532,11 @@ export class FormaOutputRequirements extends FormaElement {
           this.#recipeId = outcomeRecipe(value)?.id ?? "";
           this.#recipeChoices = new Set<string>(); this.requestUpdate();
         }}><option value="">${catalog.noRecipe}</option>${OUTCOME_RECIPE_IDS.map(id => html`<option value=${id}>${catalog.recipesById[id].title}</option>`)}</select></label>
-        ${this.#recipeId ? html`<fieldset ?disabled=${blocked}><legend>${this.#recipeMessage("choices")}</legend>${outcomeRecipeFileChoices(this.#recipeId).map(choice => html`<label><input type="checkbox" .checked=${this.#recipeChoices.has(choice.key)} @change=${(event: Event) => {
+        ${this.#recipeId ? html`<fieldset ?disabled=${blocked}><legend>${this.#recipeMessage("choices")}</legend>${outcomeRecipeFileChoices(this.#recipeId).map(choice => html`<label class="ui-choice"><input type="checkbox" .checked=${this.#recipeChoices.has(choice.key)} @change=${(event: Event) => {
           if (!this.#recipeInputEditable()) return;
           this.#recipeEntryEdited();
           if ((event.target as HTMLInputElement).checked) this.#recipeChoices.add(choice.key); else this.#recipeChoices.delete(choice.key); this.requestUpdate();
-        }}>${outcomeRecipeDraftLabels(this.i18n.locale, "").choices[choice.key]}</label>`)}</fieldset>` : nothing}
+        }}><span>${outcomeRecipeDraftLabels(this.i18n.locale, "").choices[choice.key]}</span></label>`)}</fieldset>` : nothing}
         <label>${this.#recipeMessage("outcome")}<textarea rows="3" maxlength="12000" ?disabled=${blocked} .value=${this.#recipeComposing ? noChange : this.#recipeText} @input=${(event: InputEvent) => { if (this.#recipeInputEditable()) { this.#recipeEntryEdited(); this.#recipeText = (event.target as HTMLTextAreaElement).value; if (!this.#recipeComposing) this.requestUpdate(); } }}></textarea></label>
         <p>${this.#recipeMessage("limitation")}</p><button type="submit" class="button secondary" ?disabled=${previewBlocked || this.#recipeComposing || !this.#recipeId || !this.#recipeChoices.size || !this.#recipeText.trim()}>${this.#recipeMessage("preview")}</button>
         <p>${this.#recipeMessage("clearInputHint")}</p><button type="button" class="button ghost" ?disabled=${clearBlocked} @click=${() => this.#clearRecipeInput(view, route)}>${this.#recipeMessage("clearInput")}</button>

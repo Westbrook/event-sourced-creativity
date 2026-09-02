@@ -212,11 +212,15 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     super.connectedCallback();
     window.addEventListener("resize", this.#schedulePosition, { passive: true });
     window.addEventListener("scroll", this.#schedulePosition, { capture: true, passive: true });
+    window.addEventListener("focusin", this.#schedulePosition, { passive: true });
+    window.addEventListener("transitionend", this.#schedulePosition, { passive: true });
   }
 
   override disconnectedCallback() {
     window.removeEventListener("resize", this.#schedulePosition);
     window.removeEventListener("scroll", this.#schedulePosition, true);
+    window.removeEventListener("focusin", this.#schedulePosition);
+    window.removeEventListener("transitionend", this.#schedulePosition);
     if (this.#positionFrame) cancelAnimationFrame(this.#positionFrame);
     this.#positionFrame = 0;
     super.disconnectedCallback();
@@ -246,6 +250,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if (this.open) {
       this.style.removeProperty("--forma-assistant-obstacle-offset");
       delete this.dataset.compactLauncher;
+      delete this.dataset.tightLauncher;
     } else this.#schedulePosition();
   }
 
@@ -262,21 +267,80 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
 
   #positionLauncher() {
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
-    if (!launcher || this.open || launcher.matches(":hover") || launcher.contains(document.activeElement)) return;
+    const focused = document.activeElement;
+    if (!launcher || this.open || launcher.contains(focused)) return;
+    const hovered = launcher.matches(":hover");
 
-    delete this.dataset.compactLauncher;
-    this.style.setProperty("--forma-assistant-obstacle-offset", "0px");
-    const controls = [...document.querySelectorAll<HTMLElement>("a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true']")]
+    let exactFocusPaint = !focused?.shadowRoot?.activeElement;
+    const unboundedFocusPaint = (style: CSSStyleDeclaration) =>
+      [style.transform, style.translate, style.rotate, style.scale, style.perspective, style.filter]
+        .some((value) => value && value !== "none")
+      || Boolean(style.zoom && !["normal", "1", "100%"].includes(style.zoom));
+    const controls = [...document.querySelectorAll<HTMLElement>("a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true'], .output-requirement-warning, .output-recipe-entry, forma-ui-notice")]
       .filter((control) => !this.contains(control)
-        && !("disabled" in control && Boolean(control.disabled))
         && !control.closest("[hidden], [inert], [aria-hidden='true']"))
-      .map((control) => ({ element: control, box: control.getBoundingClientRect() }))
-      .filter(({ element, box }) => box.width > 0 && box.height > 0 && box.bottom > 0
+      .map((control) => {
+        const file = control.tagName === "INPUT" && (control as HTMLInputElement).type === "file"
+          && control instanceof HTMLInputElement ? control : null;
+        const label = file?.parentElement;
+        // The native input owns focus; its unique direct file label owns visible paint.
+        const paint = file?.isConnected && label instanceof HTMLLabelElement && label.isConnected
+          && label.matches("label.button.file-button") && Number(getComputedStyle(file).opacity) === 0
+          && file.labels?.length === 1 && file.labels[0] === label && label.control === file
+          && label.querySelectorAll("input,button,select,textarea,output,meter,progress").length === 1
+          ? label : control;
+        const box = paint.getBoundingClientRect();
+        let { left, top, right, bottom } = box;
+        const ownStyle = getComputedStyle(paint);
+        const outline = control === focused && !["none", "hidden"].includes(ownStyle.outlineStyle)
+          ? Math.max(0, (Number.parseFloat(ownStyle.outlineWidth) || 0) + (Number.parseFloat(ownStyle.outlineOffset) || 0)) : 0;
+        if (control === focused && (ownStyle.outlineStyle === "auto"
+          || ownStyle.boxShadow && ownStyle.boxShadow !== "none"
+          || unboundedFocusPaint(ownStyle))) exactFocusPaint = false;
+        left -= outline; top -= outline; right += outline; bottom += outline;
+        const topLayer = paint.closest(":modal, :popover-open");
+        for (let ancestor = paint === topLayer ? null : paint.parentElement; ancestor;
+          ancestor = ancestor === topLayer ? null : ancestor.parentElement) {
+          const style = getComputedStyle(ancestor);
+          if (control === focused && unboundedFocusPaint(style)) exactFocusPaint = false;
+          // Native client sizes are untransformed; retain prior bounds for transformed chains.
+          if ([style.transform, style.translate, style.rotate, style.scale, style.perspective]
+            .some((value) => value && value !== "none")) {
+            if (control === focused) exactFocusPaint = false;
+            return { element: control, paint, box };
+          }
+          const clipsX = /^(auto|scroll|hidden|clip)$/.test(style.overflowX);
+          const clipsY = /^(auto|scroll|hidden|clip)$/.test(style.overflowY);
+          if (!clipsX && !clipsY) continue;
+          const bounds = ancestor.getBoundingClientRect();
+          if (clipsX) {
+            const start = bounds.left + ancestor.clientLeft;
+            left = Math.max(left, start); right = Math.min(right, start + ancestor.clientWidth);
+          }
+          if (clipsY) {
+            const start = bounds.top + ancestor.clientTop;
+            top = Math.max(top, start); bottom = Math.min(bottom, start + ancestor.clientHeight);
+          }
+        }
+        return { element: control, paint, box: { left, top, right, bottom, width: right - left, height: bottom - top } };
+      })
+      .filter(({ paint, box }) => box.width > 0 && box.height > 0 && box.bottom > 0
         && box.top < innerHeight && box.right > 0 && box.left < innerWidth
-        && getComputedStyle(element).visibility !== "hidden"
-        && getComputedStyle(element).pointerEvents !== "none");
-    const intersections = (box: DOMRect) => controls.filter(({ box: control }) =>
+        && getComputedStyle(paint).visibility !== "hidden"
+        && getComputedStyle(paint).pointerEvents !== "none");
+    if (focused && focused !== document.body && focused !== document.documentElement
+      && !controls.some(({ element }) => element === focused)) exactFocusPaint = false;
+    const intersections = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom">) => controls.filter(({ box: control }) =>
       box.left < control.right && box.right > control.left && box.top < control.bottom && box.bottom > control.top);
+
+    // Hover stays stationary unless the launcher obstructs exactly measured
+    // current page focus. This includes a compact fallback retained after a
+    // popover closes; a settled position does not keep moving.
+    if (hovered && (!exactFocusPaint || !intersections(launcher.getBoundingClientRect())
+      .some(({ element }) => element === focused))) return;
+    delete this.dataset.compactLauncher;
+    delete this.dataset.tightLauncher;
+    this.style.setProperty("--forma-assistant-obstacle-offset", "0px");
 
     let offset = 0;
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -285,7 +349,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       const obstacles = intersections(box);
       if (!obstacles.length) return;
       const next = offset + box.bottom - Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top)) + 8;
-      if (next > 96 || box.top - (next - offset) < 8) break;
+      if (box.top - (next - offset) < 8) break;
       offset = next;
     }
 
@@ -297,9 +361,28 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       const box = launcher.getBoundingClientRect();
       const obstacles = intersections(box);
       if (!obstacles.length) return;
-      const next = box.bottom - Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top)) + 8
-        + Number.parseFloat(this.style.getPropertyValue("--forma-assistant-obstacle-offset") || "0");
-      if (next > 128 || box.top < 8) return;
+      const offset = Number.parseFloat(this.style.getPropertyValue("--forma-assistant-obstacle-offset") || "0");
+      const next = box.bottom - Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top)) + 8 + offset;
+      const preferred = { left: box.left, right: box.right, top: box.top - (next - offset), bottom: box.bottom - (next - offset) };
+      if (exactFocusPaint && (preferred.top < 8 || intersections(preferred).length)) {
+        // Reuse the compact lane and finite pass. Never trade a control, task
+        // region, or current focus outline for the preferred eight-pixel gap.
+        const ceiling = Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top));
+        const floor = Math.max(8, ...controls.filter(({ box: obstacle }) =>
+          box.left < obstacle.right && box.right > obstacle.left && obstacle.bottom <= ceiling)
+          .map(({ box: obstacle }) => obstacle.bottom));
+        const top = floor + (ceiling - floor - box.height) / 2;
+        const candidate = { left: box.left, right: box.right, top, bottom: top + box.height };
+        if (ceiling - floor >= box.height && candidate.top >= 8
+          && candidate.bottom <= innerHeight - 8 && !intersections(candidate).length) {
+          // The existing named 44px launcher keeps its focus ring inside this
+          // tight footprint, including when its own focus freezes positioning.
+          this.dataset.tightLauncher = "true";
+          this.style.setProperty("--forma-assistant-obstacle-offset", `${offset + box.top - top}px`);
+          return;
+        }
+      }
+      if (box.top - (next - offset) < 8) return;
       this.style.setProperty("--forma-assistant-obstacle-offset", `${next}px`);
     }
   }

@@ -411,3 +411,332 @@ for (const [locale, expected] of D_MISSING_BASIS_COPY)
       assert.equal(paragraphs[1].text, expected,
         "a genuinely unsaved recipe is unreviewed, not an older saved requirement");
     });
+
+// D396: the existing full host records real focus arguments, not CSS,
+// scroll position, native label activation, or browser visibility. Reuse the
+// original Clear helper's pre-redraw current-target checks unchanged.
+test("D inline recipe Review and Clear request native reveal through an unchanged unsaved Discard journey",
+  { concurrency: false, timeout: 45000 }, async t => {
+    const x = await outcomeRecipeSaveFixture(t), native = x.native;
+    const raw = "  Prepare a launch review deck from the existing Studio launch decisions.  ";
+    const source = x.h.store.captureSourceOwnership(), authorization = x.h.store.captureAuthorizationScope();
+    const route = x.h.store.route.get(), session = x.h.store.session.get(), original = recipeInputEffects(x);
+    const unchanged = () => {
+      assert.ok(x.controller.isConnected && x.f.components().includes(x.controller));
+      assert.equal(x.controller.store, x.h.store); assert.equal(x.controller.documentId, x.h.worker.documentId);
+      assert.equal(x.h.store.route.get(), route); assert.equal(x.h.store.session.get(), session);
+      assert.equal(x.h.store.sourceOwnershipActive(source), true);
+      assert.equal(x.h.store.authorizationScopeActive(authorization), true);
+      assert.equal(x.saves.length, 0); assert.deepEqual(recipeInputEffects(x), original,
+        "the native recipe journey sends no request and changes no canonical/private/fiscal row or receipt");
+    };
+    const entry = x.f.find("details", node => node.owner === x.controller && node.attributes.class === "output-recipe-entry");
+    entry.port.open = true; await x.f.act(entry, "toggle");
+    const recipe = recipeInputOne(x, "select");
+    assert.ok(recipe.children.some(node => node.tag === "option" && node.attributes.value === "executive-deck"));
+    recipe.port.value = "executive-deck"; await x.f.act(recipe, "change");
+    const wording = recipeInputOne(x, "textarea"); wording.port.value = raw; await x.f.act(wording, "input");
+    const slides = recipeInputOne(x, "input", node => node.attributes.type === "checkbox" && node.parent?.text === "Slides");
+    assert.equal(slides.port.checked, false, "the one file choice is still explicit");
+    assert.equal(Object.hasOwn(recipeInputOne(x, "button", node => node.attributes.type === "submit").attributes, "disabled"), true);
+    slides.port.checked = true; await x.f.act(slides, "change");
+    const preview = recipeInputOne(x, "button", node => node.attributes.type === "submit");
+    assert.ok(preview.port.isConnected && !preview.hiddenBy); assert.equal(preview.port.matches(":disabled"), false);
+    native.emit("pointerdown", preview.port); native.focus(preview.port);
+    const reviewStart = native.nativeFocus.length;
+    await x.f.act(recipeInputOne(x, "form"), "submit", { submitter: preview.port });
+    const card = x.card(), ActualCard = x.f.renderer.registry["forma-output-requirement-card"];
+    assert.ok(card instanceof ActualCard && card.isConnected && card.parentElement === x.controller);
+    assert.equal(card.store, x.h.store); assert.equal(card.snapshot, null); assert.equal(card.hasOpenDraft, true);
+    assert.equal(card.resourceState, "ready"); assert.equal(card.originalSaveId, "");
+    const draft = card.newDraft; assert.ok(draft);
+    assert.deepEqual(draft.scope, { projectId: x.snapshot().projectId, documentId: x.h.worker.documentId, authorizationScopeKey: authorization.key });
+    assert.equal(draft.originalText, raw); assert.equal(draft.spec.original_text, raw);
+    assert.equal(draft.spec.value_origins.recipe_template.text, "forma-recipe:executive-deck@1");
+    assert.deepEqual(draft.spec.deliverables.map(value => [value.id, value.media_kind]), [[draft.requirementId + ":deck", "slides"]]);
+    assert.equal(outputRequirementInterpretationNeedsReview(draft.spec), true);
+    const reviewCalls = native.nativeFocus.slice(reviewStart);
+    assert.equal(reviewCalls.length, 1, "only the actual newly opened card focuses its original request");
+    assert.equal(reviewCalls[0].node.owner, card); assert.equal(reviewCalls[0].node.tag, "textarea");
+    assert.equal(reviewCalls[0].node.attributes.name, "originalText"); assert.equal(reviewCalls[0].node.value, raw);
+    assert.equal(reviewCalls[0].node.ownerDocument, native.document);
+    // f.act's ordinary settle can redraw literal fields. The recorded call is
+    // not a claim that its old port remains connected after those later draws.
+    const originals = x.nodes().filter(node => !node.hiddenBy && node.tag === "textarea" && node.attributes.name === "originalText");
+    assert.equal(originals.length, 1); assert.equal(originals[0].port.isConnected, true);
+    assert.equal(originals[0].attributes.id, reviewCalls[0].node.attributes.id); assert.equal(originals[0].port.value, raw);
+    unchanged();
+    assert.equal(recipeInputOne(x, "select").port.value, "executive-deck");
+    assert.equal(recipeInputOne(x, "textarea").port.value, raw);
+    assert.equal(recipeInputOne(x, "input", node => node.attributes.type === "checkbox").port.matches(":disabled"), true);
+    assert.equal(x.controller.navigationBlocked, true); assert.equal(x.controller.commandDepartureBlocked, true);
+
+    await x.f.act(x.f.find("button", node => node.owner === card && node.text === "Cancel"));
+    assert.equal(x.card(), card); assert.equal(card.hasOpenDraft, true); assert.equal(card.newDraft.requirementId, draft.requirementId);
+    const keep = x.f.find("button", node => node.owner === card && node.text === "Keep editing");
+    const discard = x.f.find("button", node => node.owner === card && node.text === "Discard changes");
+    assert.equal(keep.port.matches(":disabled"), false); assert.equal(discard.port.matches(":disabled"), false);
+    unchanged();
+    // This unchanged renderer does not retain the submit button across the
+    // card's draws. Do not invent connectedness or redirect the stored opener.
+    // Discard focus is covered separately by source scope and real D396 UI.
+    const originalInlineOpenerConnected = preview.port.isConnected;
+    await x.f.act(discard);
+    assert.equal(x.card(), undefined); unchanged();
+    assert.equal(recipeInputOne(x, "select").port.value, "executive-deck");
+    assert.equal(recipeInputOne(x, "textarea").port.value, raw);
+    const retainedSlides = recipeInputOne(x, "input", node => node.attributes.type === "checkbox" && node.parent?.text === "Slides");
+    assert.equal(retainedSlides.port.checked, true); assert.equal(retainedSlides.port.matches(":disabled"), false);
+    assert.equal(x.controller.navigationBlocked, true); assert.equal(x.controller.commandDepartureBlocked, true);
+
+    const clear = recipeInputOne(x, "button", node => node.text === "Clear recipe input"), clearStart = native.nativeFocus.length;
+    await clearAuthoredRecipeInput(x, clear);
+    const clearCalls = native.nativeFocus.slice(clearStart);
+    assert.equal(clearCalls.length, 2, "the original Clear helper focuses its invoker, then the actual entry summary");
+    assert.equal(clearCalls[0].node, clear.port); assert.deepEqual(clearCalls[0].args, []);
+    assert.equal(clearCalls[1].node.owner, x.controller); assert.equal(clearCalls[1].node.tag, "summary");
+    assert.equal(Object.hasOwn(clearCalls[1].node.attributes, "data-output-recipe-focus-return"), true);
+    assert.equal(recipeInputOne(x, "select").port.value, ""); assert.equal(recipeInputOne(x, "textarea").port.value, "");
+    assert.equal(recipeInputNodes(x, "input").filter(node => node.attributes.type === "checkbox").length, 0);
+    assert.equal(x.f.find("details", node => node.owner === x.controller && node.attributes.class === "output-recipe-entry").port.open, true);
+    assert.equal(x.card(), undefined); assert.equal(x.controller.navigationBlocked, false); assert.equal(x.controller.commandDepartureBlocked, false);
+    unchanged();
+    const observed = [{ direction: "review", args: reviewCalls[0].args }, { direction: "clear", args: clearCalls[1].args }];
+    t.diagnostic(JSON.stringify({ observed, originalInlineOpenerConnected,
+      evidence: "native focus arguments only; no Discard focus, scroll geometry, keyboard or browser visibility claim" }));
+    assert.deepEqual(observed, [
+      { direction: "review", args: [{ preventScroll: false }] },
+      { direction: "clear", args: [{ preventScroll: false }] },
+    ], "both explicit local handoffs allow the browser to reveal the focused control");
+  });
+
+// The actual browser retains the inline Review opener; this full-page finite
+// fixture does not. This is deliberately a source-scoping contract, not a
+// substitute dynamic Discard-focus result or a simulated browser measurement.
+test("D recipe Discard captures reveal scope before cleanup without changing ordinary saved-card close", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/components/forma-output-requirement-card.ts", import.meta.url), "utf8");
+  const start = source.indexOf("  #close(discarded: boolean) {"), end = source.indexOf("\n  #discard() {", start);
+  assert.ok(start >= 0 && end > start); const close = source.slice(start, end);
+  assert.ok(close.includes("const intent = this.#intent();"));
+  assert.ok(close.includes('this.#emit<OutputRequirementCancelIntent>("forma-output-cancel", { ...intent, discarded })'));
+  assert.ok(close.includes("if (this.#opener?.isConnected)") && close.includes("else this.#focusSummary();"));
+  assert.ok(source.includes('if (!this.#session || this.#waiting || this.originalSaveId) return;'));
+  assert.ok(source.slice(end).includes("if (this.originalSaveId) return;"));
+  const capture = close.indexOf("const revealOpener = discarded && !this.snapshot && Boolean(this.newDraft);");
+  assert.ok(capture >= 0 && capture < close.indexOf("this.#session = null")
+    && capture < close.indexOf("this.#emit<OutputRequirementCancelIntent>"),
+    "only an explicitly discarded unsaved newDraft captures reveal before cleanup and the host's cancel event");
+  assert.ok(close.includes("this.#opener.focus({ preventScroll: !revealOpener })"),
+    "ordinary saved-card close retains preventScroll:true; recipe Discard reuses its original opener with reveal");
+});
+
+// D406: actual Cancel and Keep editing focus arguments only. This reuses the
+// native current-control recorder; no viewport, scrolling or UA proof is made.
+test("D dirty recipe Cancel and Keep editing reveal their retained current controls without saving",
+  { concurrency: false, timeout: 45000 }, async t => {
+    const x = await outcomeRecipeSaveFixture(t), native = x.native;
+    const source = x.h.store.captureSourceOwnership(), authorization = x.h.store.captureAuthorizationScope();
+    const route = x.h.store.route.get(), session = x.h.store.session.get(), original = recipeInputEffects(x);
+    const unchanged = () => {
+      assert.ok(x.controller.isConnected && x.f.components().includes(x.controller));
+      assert.equal(x.controller.store, x.h.store); assert.equal(x.controller.documentId, x.h.worker.documentId);
+      assert.equal(x.h.store.route.get(), route); assert.equal(x.h.store.session.get(), session);
+      assert.equal(x.h.store.sourceOwnershipActive(source), true);
+      assert.equal(x.h.store.authorizationScopeActive(authorization), true);
+      assert.equal(x.saves.length, 0); assert.deepEqual(recipeInputEffects(x), original,
+        "Cancel/Keep editing changes no request, canonical/private/fiscal row or receipt");
+    };
+    await authorRecipeInput(x); const id = await previewAuthoredRecipe(x), card = x.card();
+    const ActualCard = x.f.renderer.registry["forma-output-requirement-card"];
+    assert.ok(card instanceof ActualCard && card.isConnected && card.parentElement === x.controller);
+    assert.equal(card.store, x.h.store); assert.equal(card.snapshot, null);
+    assert.equal(card.resourceState, "ready"); assert.equal(card.originalSaveId, "");
+    const retained = () => {
+      assert.equal(x.card(), card); assert.equal(card.hasOpenDraft, true);
+      assert.equal(card.newDraft.requirementId, id); assert.equal(card.newDraft.originalText, RECIPE_INPUT_RAW);
+      assert.equal(recipeInputOne(x, "select").port.value, "campaign");
+      assert.equal(recipeInputOne(x, "textarea").port.value, RECIPE_INPUT_RAW);
+      assert.deepEqual(recipeInputNodes(x, "input").filter(node => node.port.checked).map(node => node.parent.text), ["Campaign images"]);
+      assert.equal(x.controller.navigationBlocked, true); assert.equal(x.controller.commandDepartureBlocked, true);
+      unchanged();
+    };
+    retained();
+    const cancel = x.f.find("button", node => node.owner === card && node.text === "Cancel");
+    assert.ok(cancel.port.isConnected && !cancel.hiddenBy);
+    assert.equal(cancel.port.matches(":disabled"), false);
+    native.emit("pointerdown", cancel.port); native.focus(cancel.port);
+    const cancelStart = native.nativeFocus.length;
+    await x.f.act(cancel);
+    const cancelCalls = native.nativeFocus.slice(cancelStart);
+    assert.equal(cancelCalls.length, 1, "dirty Cancel focuses only its current Keep editing control");
+    const keep = x.f.find("button", node => node.owner === card && node.text === "Keep editing");
+    const discard = x.f.find("button", node => node.owner === card && node.text === "Discard changes");
+    assert.ok(keep.port.isConnected && !keep.hiddenBy);
+    assert.equal(keep.port.matches(":disabled"), false); assert.equal(discard.port.matches(":disabled"), false);
+    assert.equal(cancelCalls[0].node.owner, card); assert.equal(cancelCalls[0].node.tag, "button");
+    assert.equal(cancelCalls[0].node.ownerDocument, native.document);
+    assert.equal(cancelCalls[0].node.attributes.id, keep.attributes.id);
+    retained();
+    native.emit("pointerdown", keep.port); native.focus(keep.port);
+    const keepStart = native.nativeFocus.length;
+    await x.f.act(keep);
+    const keepCalls = native.nativeFocus.slice(keepStart);
+    assert.equal(keepCalls.length, 1, "Keep editing focuses only its retained original request");
+    assert.equal(keepCalls[0].node.owner, card); assert.equal(keepCalls[0].node.tag, "textarea");
+    assert.equal(keepCalls[0].node.ownerDocument, native.document);
+    assert.equal(keepCalls[0].node.attributes.name, "originalText"); assert.equal(keepCalls[0].node.value, RECIPE_INPUT_RAW);
+    // Ordinary settling may redraw literal fields: verify current membership
+    // and stable field ID, never revive the earlier recorded native port.
+    const fields = x.nodes().filter(node => !node.hiddenBy && node.tag === "textarea" && node.attributes.name === "originalText");
+    assert.equal(fields.length, 1); assert.equal(fields[0].port.isConnected, true);
+    assert.equal(fields[0].attributes.id, keepCalls[0].node.attributes.id); assert.equal(fields[0].port.value, RECIPE_INPUT_RAW);
+    assert.equal(x.nodes().some(node => !node.hiddenBy && node.tag === "button" && node.text === "Keep editing"), false);
+    retained();
+    await discardAuthoredRecipe(x); unchanged();
+    assert.equal(recipeInputOne(x, "textarea").port.value, RECIPE_INPUT_RAW);
+    assert.equal(recipeInputOne(x, "select").port.value, "campaign");
+    assert.deepEqual(recipeInputNodes(x, "input").filter(node => node.port.checked).map(node => node.parent.text), ["Campaign images"]);
+    await clearAuthoredRecipeInput(x, recipeInputOne(x, "button", node => node.text === "Clear recipe input"));
+    assert.equal(x.card(), undefined); assert.equal(recipeInputOne(x, "textarea").port.value, "");
+    assert.equal(recipeInputOne(x, "select").port.value, ""); assert.equal(recipeInputNodes(x, "input").filter(node => node.port.checked).length, 0);
+    assert.equal(x.controller.navigationBlocked, false); assert.equal(x.controller.commandDepartureBlocked, false);
+    unchanged();
+    const observed = [
+      { direction: "cancel", args: cancelCalls[0].args },
+      { direction: "keep-editing", args: keepCalls[0].args },
+    ];
+    t.diagnostic(JSON.stringify({ observed, evidence: "native focus arguments, not scroll geometry or keyboard/UA certification" }));
+    assert.deepEqual(observed, [
+      { direction: "cancel", args: [{ preventScroll: false }] },
+      { direction: "keep-editing", args: [{ preventScroll: false }] },
+    ], "the two explicit dirty-cancel handoffs allow native reveal without changing retained work");
+  });
+
+// D428 R7 proved actual native Tab could leave this field below its scrollport.
+// Reuse the existing full controller/Worker fixture to check the synchronous
+// EventPart and guards. Only :focus-visible is a declared native-state input:
+// no browser scrolling, layout, key dispatch, or automatic bubbling is simulated.
+test("D recipe entry reveals only its current native focus without acquiring or mutating work",
+  { concurrency: false, timeout: 45000 }, async t => {
+    const x = await outcomeRecipeSaveFixture(t), native = x.native;
+    const source = x.h.store.captureSourceOwnership(), authorization = x.h.store.captureAuthorizationScope();
+    const route = x.h.store.route.get(), original = recipeInputEffects(x);
+    await authorRecipeInput(x);
+    const entry = x.f.find("details", node => node.owner === x.controller && node.attributes.class === "output-recipe-entry");
+    const field = recipeInputOne(x, "textarea"), summary = recipeInputOne(x, "summary");
+    const form = recipeInputOne(x, "form"), select = recipeInputOne(x, "select");
+    assert.equal(entry.port.tagName, "DETAILS"); assert.equal(entry.port.open, true);
+    assert.equal(field.port.ownerDocument, native.document);
+    assert.equal(field.port.closest(".output-recipe-entry"), entry.port);
+    assert.equal(field.port.closest("forma-output-requirements"), x.controller);
+    assert.equal(field.attributes.rows, "3"); assert.equal(field.port.matches(":disabled"), false);
+    assert.equal(field.port.value, RECIPE_INPUT_RAW);
+    assert.equal(select.port.ownerDocument, native.document);
+    assert.equal(select.port.closest(".output-recipe-entry"), entry.port);
+    assert.equal(recipeInputOne(x, "select").port, select.port);
+    assert.equal(select.port.value, "campaign");
+    assert.equal(x.card(), undefined); assert.equal(x.saves.length, 0);
+    assert.deepEqual(recipeInputEffects(x), original, "ordinary native entry authorship is local");
+    const handler = entry.handlers.focusin;
+    assert.equal(typeof handler, "function", "the current entry must own its actual focusin EventPart");
+    const pathFor = node => {
+      const path = [];
+      for (let row = node; row; row = row.parent) {
+        const port = row.port ?? row.component;
+        if (port && path[path.length - 1] !== port) path.push(port);
+      }
+      if (!path.includes(native.document)) path.push(native.document);
+      return path;
+    };
+    const path = pathFor(field);
+    assert.equal(path[0], field.port); assert.ok(path.includes(entry.port));
+    assert.ok(entry.port.contains(field.port));
+    const originalMatches = field.port.matches, observations = [];
+    let focusVisible = true;
+    field.port.matches = function(selector) {
+      return selector === ":focus-visible" ? focusVisible : originalMatches.call(this, selector);
+    };
+    t.after(() => { field.port.matches = originalMatches; });
+    const deliver = (label, { currentTarget = entry.port, nativePath = path } = {}) => {
+      const focusCount = native.nativeFocus.length, scrollCount = native.nativeScroll.length;
+      const active = native.document.activeElement, currentRoute = x.h.store.route.get(), wasOpen = entry.port.open;
+      const result = handler.call(x.controller, {
+        type: "focusin", target: field.port, currentTarget, composedPath: () => nativePath,
+        preventDefault() { assert.fail("native focus is not canceled"); },
+        stopPropagation() { assert.fail("native focus is not intercepted"); },
+      });
+      assert.equal(result, undefined, "reveal has no deferred focus owner");
+      assert.equal(native.document.activeElement, active);
+      assert.equal(x.h.store.route.get(), currentRoute, "reveal never changes the current route");
+      assert.equal(entry.port.open, wasOpen, "reveal never changes the disclosure's native open state");
+      assert.equal(native.nativeFocus.length, focusCount, "reveal never assigns focus");
+      const calls = native.nativeScroll.slice(scrollCount);
+      observations.push({ label, calls: calls.map(call => ({ sameField: call.node === field.port, args: call.args })) });
+      assert.equal(field.port.value, RECIPE_INPUT_RAW);
+      // Custody belongs to the proven original native port. A closed disclosure
+      // has no visible select; a stale route makes no current-UI identity claim.
+      assert.equal(select.port.value, "campaign");
+      if (currentRoute === route) {
+        if (wasOpen) assert.equal(recipeInputOne(x, "select").port, select.port);
+        else assert.equal(recipeInputNodes(x, "select").length, 0, "closed descendants are not visible");
+      }
+      assert.equal(x.card(), undefined); assert.equal(x.saves.length, 0);
+      assert.deepEqual(recipeInputEffects(x), original, "reveal does not write, request, reserve, or settle");
+    };
+    native.focus(field.port);
+    deliver("current");
+    focusVisible = false; deliver("not-focus-visible"); focusVisible = true;
+    native.focus(summary.port); deliver("late-after-focus-left");
+    native.focus(field.port);
+    deliver("wrong-current-entry", { currentTarget: form.port });
+    deliver("foreign-event-path", { nativePath: [field.port, form.port, native.document] });
+    field.port.disabled = true; deliver("disabled"); field.port.disabled = false;
+    entry.port.open = false; deliver("closed-descendant"); entry.port.open = true;
+    assert.equal(recipeInputOne(x, "select").port, select.port, "reopening exposes the same original select");
+    assert.equal(x.h.store.sourceOwnershipActive(source), true);
+    assert.equal(x.h.store.authorizationScopeActive(authorization), true);
+    const nextRoute = "/library?document=" + encodeURIComponent(x.h.worker.documentId);
+    x.h.store.route.set(nextRoute); deliver("stale-route");
+    assert.equal(x.h.store.route.get(), nextRoute, "a stale callback does not navigate back");
+    const reveal = [{ sameField: true, args: [{ block: "nearest", inline: "nearest", behavior: "instant" }] }];
+    assert.deepEqual(observations, [
+      { label: "current", calls: reveal },
+      ...["not-focus-visible", "late-after-focus-left", "wrong-current-entry", "foreign-event-path",
+        "disabled", "closed-descendant", "stale-route"].map(label => ({ label, calls: [] })),
+    ], "only the current exact native target requests complete-box reveal");
+  });
+
+// Source guards supplement the real EventPart case. Actual Tab, current
+// CSS/outline geometry and absence of occlusion remain the Playwright gate.
+test("D recipe native reveal reuses existing scope and pane clearance without global focus machinery", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [source, foundation, projects] = await Promise.all([
+    readFile(new URL("../src/components/forma-output-requirements.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/responsive-foundation.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-projects.ts", import.meta.url), "utf8"),
+  ]);
+  assert.ok(foundation.includes("scroll-padding-block: var(--forma-focus-clearance);"));
+  assert.ok(projects.includes('target.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });'));
+  assert.ok(source.includes('rows="3" maxlength="12000"'));
+  assert.ok(source.includes("this.#recipeText = (event.target as HTMLTextAreaElement).value;"));
+  const start = source.indexOf("  #revealRecipeFocus("), end = source.indexOf("\n  #recipeEntry(", start);
+  assert.ok(start >= 0 && end > start, "one owned recipe-entry reveal method");
+  const body = source.slice(start, end);
+  for (const guard of [
+    "!this.#viewCurrent(view)", "this.store.route.get() !== route", "!this.#recipeInputContextCurrent()",
+    "entry.ownerDocument !== this.ownerDocument", "target.ownerDocument !== this.ownerDocument",
+    "!entry.isConnected", "!target.isConnected", "!path.includes(entry)",
+    'entry.closest("forma-output-requirements") !== this', 'target.closest("forma-output-requirements") !== this',
+    'target.closest(".output-recipe-entry") !== entry', "!entry.contains(target)",
+    'target.matches(":disabled")', '!target.matches(":focus-visible")',
+    "target.ownerDocument.activeElement !== target", "entries.length !== 1", "entries[0] !== entry",
+    '!(entry as HTMLDetailsElement).open && target !== entry.querySelector("summary")',
+  ]) assert.ok(body.includes(guard), "retain exact native/caller ownership: " + guard);
+  assert.ok(source.includes('@focusin=' + '$' + '{(event: FocusEvent) => this.#revealRecipeFocus(event, view, route)}'));
+  assert.ok(body.includes('target.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });'));
+  for (const forbidden of [".focus(", "requestUpdate(", "setTimeout(", "requestAnimationFrame(", "queueMicrotask(",
+    "addEventListener(", "preventDefault(", "stopPropagation(", "ResizeObserver", "MutationObserver",
+    "fetch(", "guardedFetch(", "captureOutputNavigationFocus(", "this.#recipeText =", "this.#recipeChoices.", ".scrollTop ="])
+    assert.equal(body.includes(forbidden), false, "no new focus/scroll owner or authored effect: " + forbidden);
+});

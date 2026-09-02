@@ -33,7 +33,7 @@ export async function outcomeRecipeSaveFixture(t, { locale = "en", shared = fals
   h.store.route.set("/document/" + h.worker.documentId + "/recipe-fixture");
   // Register actual conditional Output descendants before synchronous native tree queries.
   await registerCalmFullPageComponents(f, ["forma-output-requirements"]);
-  installOutputNavigationFocusNative(t, f, calmFullPageNativePorts);
+  const native = installOutputNavigationFocusNative(t, f, calmFullPageNativePorts);
   await f.settle();
   assert.equal(h.store.events.get().some(event => event.eventId.startsWith("synthetic-study-")), false);
   assert.equal(h.store.sourceOwnershipActive(h.store.captureSourceOwnership()), true);
@@ -131,6 +131,6 @@ export async function outcomeRecipeSaveFixture(t, { locale = "en", shared = fals
     const response = await h.worker.request("/api/output-requirements?documentId=" + encodeURIComponent(h.worker.documentId));
     assert.equal(response.status, 200); return response.json();
   };
-  return { f, h, controller, snapshot, card, nodes, proposal, open, acceptInterpretation, save, saves, fresh,
+  return { f, h, native, controller, snapshot, card, nodes, proposal, open, acceptInterpretation, save, saves, fresh,
     afterSave(callback) { afterSave = callback; }, resetAfterSave() { afterSave = null; } };
 }

@@ -158,3 +158,98 @@ test("specialized assistants preserve exact scope, truthful readiness, reviewed 
   assert.match(worker,/error:"canvas_context_required"/u);
   assert.match(worker,/error:"project_context_required"/u);
 });
+
+// E compact-launcher source contracts only. A decorative icon is emitted as
+// a span too; these checks preserve its existing native-button/name contract.
+// They do not measure a browser compact state or collision/settling latency.
+const eCompactLauncher = 'forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher';
+
+test("E compact assistant retains its named native launcher, shared spark span and existing label-hiding declarations", async () => {
+  const [panel, icons, styles] = await Promise.all([
+    read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/icons.ts"),
+    read("src/components/design-system/assistant-panel.css"),
+  ]);
+  for (const fragment of [
+    'if (!this.open) return html`<button type="button" class="forma-assistant-launcher"',
+    'aria-haspopup="dialog" aria-label=${this.i18n.t("assistant.open")} title=${this.i18n.t("assistant.open")}',
+    '@click=${() => { this.#toggle(true); }}>',
+    '${icon("spark")}<span>${this.i18n.t("assistant.open")}</span></button>',
+  ]) assert.ok(panel.includes(fragment), "preserve the existing native closed launcher: " + fragment);
+  assert.ok(icons.includes("spark: sparkSvg,"));
+  assert.ok(icons.includes('return html`<span class="forma-icon" aria-hidden="true">${unsafeHTML(source)}</span>`;'),
+    "the actual reused icon helper produces a decorative direct span, not a new icon or control");
+  assert.match(styles, /\.forma-assistant-launcher \{[^}]*min-block-size: 2\.75rem;/u);
+  const rowStart = styles.indexOf(eCompactLauncher + " {"), rowEnd = styles.indexOf("\n}", rowStart);
+  assert.ok(rowStart >= 0 && rowEnd > rowStart);
+  const row = styles.slice(rowStart, rowEnd);
+  for (const declaration of [
+    "inline-size: var(--forma-control-min-size, 2.75rem);",
+    "min-inline-size: var(--forma-control-min-size, 2.75rem);",
+    "justify-content: center;", "padding-inline: 0;",
+  ]) assert.ok(row.includes(declaration), "retain the existing compact native target: " + declaration);
+  const hiddenStart = styles.indexOf(eCompactLauncher + " > span");
+  const bodyStart = styles.indexOf("{", hiddenStart), bodyEnd = styles.indexOf("\n}", bodyStart);
+  assert.ok(hiddenStart >= 0 && bodyStart > hiddenStart && bodyEnd > bodyStart,
+    "the existing compact label-hiding block must be present before the desired selector assertion");
+  assert.deepEqual(styles.slice(bodyStart + 1, bodyEnd).trim().split("\n").map(line => line.trim()), [
+    "position: absolute;", "inline-size: 1px;", "block-size: 1px;", "overflow: hidden;",
+    "clip: rect(0, 0, 0, 0);", "clip-path: inset(50%);", "white-space: nowrap;",
+  ], "keep the existing text-only visually-hidden treatment; do not change size, offsets, names or behavior");
+});
+
+test("E compact assistant hides only its label span and leaves the existing spark icon eligible to paint", async () => {
+  const styles = await read("src/components/design-system/assistant-panel.css");
+  const labelOnly = eCompactLauncher + " > span:not(.forma-icon) {";
+  assert.equal(styles.split(labelOnly).length - 1, 1,
+    "the compact label-hiding selector must explicitly exclude the reused decorative icon span");
+  assert.equal(styles.includes(eCompactLauncher + " > span {"), false,
+    "the old broad selector must not also hide both direct children");
+});
+
+
+test("D411 short-landscape assistant placement retains the same solver-owned offset as other postures", async () => {
+  const styles = await read("src/components/design-system/assistant-panel.css");
+  const media = "@media (max-height: 34rem) and (orientation: landscape) {";
+  const start = styles.indexOf(media), host = styles.indexOf("  forma-assistant-panel {", start);
+  const end = styles.indexOf("\n  }", host);
+  assert.ok(start >= 0 && host > start && end > host, "the existing short-landscape host override must be present");
+  assert.ok(styles.includes("max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-keyboard-offset, 0px) + var(--forma-assistant-obstacle-offset, 0px)"),
+    "the ordinary desktop inset already honors the same solver-owned offset");
+  assert.ok(styles.includes("max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px)"),
+    "the existing narrow inset retains its real navigation/keyboard/safe-area owners");
+  const declarations = styles.slice(host + "  forma-assistant-panel {".length, end).trim().split("\n").map(line => line.trim());
+  assert.deepEqual(declarations, [
+    "inset-block-end: calc(max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px));",
+  ], "short landscape must consume the existing finite solver offset without changing its base/safe/keyboard inset or adding another position system");
+});
+
+test("D428 tight launcher uses existing native inset-focus tokens and the same bounded focus-triggered placement", async () => {
+  const [panel, styles] = await Promise.all([
+    read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/design-system/assistant-panel.css"),
+  ]);
+  const tight = 'forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher';
+  const block = (selector, start = 0) => {
+    const at = styles.indexOf(selector + " {", start), end = styles.indexOf("\n}", at);
+    assert.ok(at >= start && end > at, "one explicit current tight-launcher source rule: " + selector);
+    return styles.slice(at, end + 2);
+  };
+  assert.ok(styles.includes("min-inline-size: var(--forma-control-min-size, 2.75rem);"));
+  assert.ok(styles.includes("min-block-size: 2.75rem;"));
+  assert.ok(panel.includes("if (!launcher || this.open || launcher.contains(focused)) return;"));
+  assert.ok(panel.includes("for (let attempt = 0; attempt < 8; attempt += 1)"));
+  assert.ok(panel.includes("for (let attempt = 0; attempt < 4; attempt += 1)"));
+  assert.ok(block(tight).includes("box-shadow: none;"), "tight placement must not paint a decorative shadow across neighboring focus");
+  const focus = block(tight + ":focus-visible");
+  assert.ok(focus.includes("outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, currentColor);"));
+  assert.ok(focus.includes("outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));"),
+    "the complete visible native ring stays within the existing 44px footprint");
+  const forced = styles.indexOf("@media (forced-colors: active)");
+  assert.ok(forced >= 0);
+  assert.ok(block(tight + ":focus-visible", forced).includes("outline-color: Highlight;"));
+  assert.ok(panel.includes('window.addEventListener("focusin", this.#schedulePosition, { passive: true });'));
+  assert.ok(panel.includes('window.removeEventListener("focusin", this.#schedulePosition);'));
+  // The original finite Window port does not dispatch focusin. This source
+  // contract is not a claim of real event delivery or rendered focus paint.
+});
