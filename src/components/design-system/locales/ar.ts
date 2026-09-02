@@ -584,6 +584,8 @@ const messages: Record<string, string> = {
   "shell.command": "ابحث أو نفذ أمرًا",
   "shell.loading": "جارٍ فتح مساحة {application}",
   "shell.loadingDetail": "تتم الآن استعادة مشروعاتك وأعمالك الإبداعية المحفوظة.",
+  "shell.documentUnavailable": "هذا المستند غير متاح.",
+  "shell.documentUnavailableDetail": "تم الاحتفاظ بالعنوان المطلوب. أعد المحاولة للتحقق؛ لم يتم إنشاء مستند جديد.",
   "shell.error": "تعذر تحميل عملك.",
   "shell.busy": "جارٍ التنفيذ: {operation}",
   "shell.running": "هناك عملية تخص المستند قيد التنفيذ على الخادم",
@@ -1257,6 +1259,9 @@ const messages: Record<string, string> = {
   "audio.subtype.voice": "الصوت البشري",
   "audio.subtype.silence": "الصمت",
   "audio.player.label": "تشغيل {name}",
+  "audio.duration.measured": "مدة الصوت المقاسة: {seconds} ث",
+  "audio.duration.recorded": "مدة الصوت المسجلة: {seconds} ث",
+  "audio.duration.estimate": "مدة الصوت المقدرة: {seconds} ث",
   "audio.reference.private": "مرجع صوتي خاص",
   "audio.reference.authored": "ملاحظات استماع مكتوبة",
   "audio.reference.description": "صف ما تسمعه",
@@ -2552,4 +2557,31 @@ Object.assign(messages, {
 
 messages["projects.originalConfirmedUnavailable"]="تم تأكيد الإنشاء. لا يمكن فتح المستند الأصلي حاليًا. تحقّق من توفره؛ لن يتم إنشاء مشروع جديد.";
 messages["projects.checkOriginalAvailability"]="التحقّق من توفر المستند الأصلي";
+Object.assign(messages, {
+  "system.auto.ipxnvl.15": "المستند المصدر",
+  "system.auto.11od8g.106": "يجب أن يكون الجمهور والنبرة نصًا، وألا يتجاوز كل منهما 120 وحدة UTF-16 بعد إزالة المسافات الطرفية.",
+  "system.auto.1fd4spz.31": "تحتاج إعدادات الطلب إلى مراجعة",
+  "system.auto.7pctir.171": "يجب أن يكون الجمهور والنبرة نصًا، وألا يتجاوز كل منهما 120 وحدة UTF-16 بعد إزالة المسافات الطرفية. هذا خطأ في التحقق داخل التطبيق، وليس فشلًا لدى المزود.",
+  "system.auto.1kxo3x2.108": "إعدادات الطلب الأصلي غير متاحة. افحص مدخلاته المحفوظة قبل إعداد طلب جديد.",
+  "system.auto.3so7kj.55": "{field} طويل جدًا. احذف {excess} وحدة UTF-16.",
+  "system.auto.1uy6f6w.35": "{count}/{maximum} وحدة UTF-16",
+  "system.auto.oy0qs.24": "إعدادات الطلب الحالية",
+  "system.auto.ywculg.48": "جارٍ تحميل إعدادات المحاولة المحددة…",
+  "system.auto.yjthbo.41": "استُعيدت الإعدادات من الطلب {request}.",
+  "system.auto.193a0ww.177": "هذا طلب مدفوع جديد يستخدم مصدر المستند الحالي المصرح به. لا يستأنف الطلب السابق ولا يسوّي حالته. تبقى الرسوم والحجوزات السابقة دون تغيير.",
+  "system.auto.10vq36.86": "يتطلب الإرسال إلى المزود تأكيدًا جديدًا؛ لم يُنسخ الإذن السابق.",
+  "system.auto.1e1epmo.84": "يسمح كل حقل بما يصل إلى {maximum} وحدة UTF-16 بعد إزالة المسافات الطرفية.",
+  "system.auto.p0i25a.15": "الأمانة للمصدر",
+  "system.auto.1kvfvoc.18": "نمط العرض التقديمي",
+});
+
+Object.assign(messages, {
+  "system.auto.1t7mxre.35": "التحقق من الإيصال المحفوظ · بدون توليد",
+  "system.auto.1p3c3wc.23": "جارٍ التحقق من الإيصال المحفوظ…",
+  "system.auto.hvq2xk.88": "يتحقق من الأدلة المحفوظة فقط؛ ولا يستعيد عرضًا تقديميًا أو يبدأ طلبًا مدفوعًا جديدًا.",
+  "system.auto.1097rb5.109": "تم التحقق من الإيصال المحفوظ. لم يبدأ أي توليد جديد. تتطلب الاستعادة أو إرسال طلب مدفوع جديد إجراءً منفصلًا.",
+  "system.auto.1o4thm6.138": "تلزم مراجعة يدوية. لم يبدأ أي توليد جديد. يظل الطلب الأصلي دون تغيير ويبقى أي حجز أصلي من الميزانية قائمًا.",
+  "system.auto.1o9k7vt.139": "تعذر التحقق من الإيصال المحفوظ. لم يبدأ أي توليد جديد. تحقّق من الطلب الأصلي مرة أخرى؛ حالة فوترته غير مؤكدة."
+});
+
 export default messages;

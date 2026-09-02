@@ -6115,4 +6115,29 @@ Object.assign(messages, {
   "system.auto.13cst8w.95": "Panel-only navigation. The existing Output controller still owns exact focus and all decisions.",
 });
 
+Object.assign(messages, {
+  "system.auto.ipxnvl.15": "Source document",
+  "system.auto.11od8g.106": "Audience and Tone must be text, each no longer than 120 UTF-16 code units after trimming outer whitespace.",
+  "system.auto.1fd4spz.31": "Request settings need attention",
+  "system.auto.7pctir.171": "Audience and Tone must be text, each no longer than 120 UTF-16 code units after trimming outer whitespace. This is an application validation error, not a provider failure.",
+  "system.auto.1kxo3x2.108": "The original request settings are unavailable. Inspect its retained inputs before configuring a new request.",
+  "system.auto.3so7kj.55": "{field} is too long. Remove {excess} UTF-16 code units.",
+  "system.auto.1uy6f6w.35": "{count}/{maximum} UTF-16 code units",
+  "system.auto.oy0qs.24": "Current request settings",
+  "system.auto.ywculg.48": "Loading the selected attempt’s request settings…",
+  "system.auto.yjthbo.41": "Settings restored from request {request}.",
+  "system.auto.193a0ww.177": "This is a new paid request using the current authorized document source. It does not resume or reconcile the previous request. Earlier charges and reservations remain unchanged.",
+  "system.auto.10vq36.86": "Provider transfer requires fresh confirmation; the previous permission was not copied.",
+  "system.auto.1e1epmo.84": "Each field allows up to {maximum} UTF-16 code units after trimming outer whitespace.",
+});
+
+Object.assign(messages, {
+  "system.auto.1t7mxre.35": "Check saved receipt · no generation",
+  "system.auto.1p3c3wc.23": "Checking saved receipt…",
+  "system.auto.hvq2xk.88": "Checks retained evidence only; does not recover a slideshow or start a new paid request.",
+  "system.auto.1097rb5.109": "Saved receipt checked. No new generation was started. Recovery or a new paid request needs a separate action.",
+  "system.auto.1o4thm6.138": "Manual review is required. No new generation was started. The original request is unchanged and any original budget hold remains retained.",
+  "system.auto.1o9k7vt.139": "The saved receipt could not be verified. No new generation was started. Check the original request again; its billing state is unconfirmed."
+});
+
 export default messages;

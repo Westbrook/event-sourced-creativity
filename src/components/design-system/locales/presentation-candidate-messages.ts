@@ -105,7 +105,7 @@ const en = {
   "presentation.draft.dialogLabel": "Actor-private rejected presentation drafts",
   "presentation.draft.privateStatus": "Private draft · not approved",
   "presentation.draft.dialogTitle": "Review generated presentation drafts",
-  "presentation.draft.privacyNotice": "Only you can see this material. It cannot be shared, exported, or promoted from this review.",
+  "presentation.draft.privacyNotice": "Original responses stay private. A separately validated copy can become a new unapproved document draft; this does not approve release.",
   "presentation.draft.alternativesLabel": "Generated provider alternatives",
   "presentation.draft.modeLabel": "Draft comparison mode",
   "presentation.draft.attemptButton": "{stage} · attempt {attempt} · page {page}",
@@ -115,6 +115,14 @@ const en = {
   "presentation.draft.compareAccepted": "Accepted presentation",
   "presentation.draft.loading": "Loading your actor-private presentation evidence…",
   "presentation.draft.expired": "No unexpired, authorized provider drafts remain for this generation.",
+  "presentation.draft.revisionEditor": "Edit a private copy",
+  "presentation.draft.revisionNotice": "This creates a separate unapproved draft in this document after full source validation. It makes no provider request and does not change the original failed job or its charges. Source assignments, quotes, numerical precision, slide count and layout stay fixed.",
+  "presentation.draft.revisionSave": "Validate and create new draft",
+  "presentation.draft.revisionSaving": "Validating and saving…",
+  "presentation.draft.revisionCancel": "Cancel edits",
+  "presentation.draft.revisionSaved": "New unapproved draft saved. The original failure and charges are unchanged.",
+  "presentation.draft.revisionFailed": "The new draft could not be safely saved. Your edits remain private.",
+  "presentation.draft.revisionIssues": "This copy still needs correction. No new draft was created.",
 };
 
 const fr: Record<keyof typeof en, string> = {
@@ -224,7 +232,7 @@ const fr: Record<keyof typeof en, string> = {
   "presentation.draft.dialogLabel": "Brouillons de présentation refusés et réservés à leur auteur",
   "presentation.draft.privateStatus": "Brouillon privé · non approuvé",
   "presentation.draft.dialogTitle": "Consulter les brouillons de présentation générés",
-  "presentation.draft.privacyNotice": "Vous seul pouvez consulter ce contenu. Il ne peut être ni partagé, ni exporté, ni promu depuis cette revue.",
+  "presentation.draft.privacyNotice": "Les réponses originales restent privées. Une copie validée séparément peut devenir une nouvelle ébauche de document non approuvée ; sa diffusion n’est pas autorisée pour autant.",
   "presentation.draft.alternativesLabel": "Autres réponses générées par le fournisseur",
   "presentation.draft.modeLabel": "Mode de comparaison des brouillons",
   "presentation.draft.attemptButton": "{stage} · tentative {attempt} · page {page}",
@@ -234,6 +242,14 @@ const fr: Record<keyof typeof en, string> = {
   "presentation.draft.compareAccepted": "Présentation acceptée",
   "presentation.draft.loading": "Chargement de vos preuves de présentation privées…",
   "presentation.draft.expired": "Aucun brouillon fournisseur autorisé et non expiré ne subsiste pour cette génération.",
+  "presentation.draft.revisionEditor": "Modifier une copie privée",
+  "presentation.draft.revisionNotice": "Une nouvelle ébauche non approuvée sera créée dans ce document après validation complète des sources. Aucune requête au fournisseur ne sera envoyée ; la tâche échouée et ses frais restent inchangés. Les sources affectées, citations, valeurs précises, le nombre de diapositives et la mise en page sont conservés.",
+  "presentation.draft.revisionSave": "Valider et créer une nouvelle ébauche",
+  "presentation.draft.revisionSaving": "Validation et enregistrement…",
+  "presentation.draft.revisionCancel": "Annuler les modifications",
+  "presentation.draft.revisionSaved": "Nouvelle ébauche non approuvée enregistrée. L’échec initial et les frais restent inchangés.",
+  "presentation.draft.revisionFailed": "La nouvelle ébauche n’a pas pu être enregistrée en toute sécurité. Vos modifications restent privées.",
+  "presentation.draft.revisionIssues": "Cette copie doit encore être corrigée. Aucune nouvelle ébauche n’a été créée.",
 };
 
 const ar: Record<keyof typeof en, string> = {
@@ -343,7 +359,7 @@ const ar: Record<keyof typeof en, string> = {
   "presentation.draft.dialogLabel": "مسودات عروض مرفوضة خاصة بصاحبها",
   "presentation.draft.privateStatus": "مسودة خاصة · غير معتمدة",
   "presentation.draft.dialogTitle": "مراجعة مسودات العروض المنشأة",
-  "presentation.draft.privacyNotice": "يمكنك وحدك رؤية هذه المواد. لا يمكن مشاركتها أو تصديرها أو اعتمادها من هذه المراجعة.",
+  "presentation.draft.privacyNotice": "تبقى الاستجابات الأصلية خاصة. يمكن أن تصبح نسخة خضعت للتحقق بشكل منفصل مسودة مستند جديدة غير معتمدة؛ ولا يُعد ذلك موافقة على النشر.",
   "presentation.draft.alternativesLabel": "البدائل التي أنشأها المزود",
   "presentation.draft.modeLabel": "وضع مقارنة المسودات",
   "presentation.draft.attemptButton": "{stage} · المحاولة {attempt} · الصفحة {page}",
@@ -353,6 +369,14 @@ const ar: Record<keyof typeof en, string> = {
   "presentation.draft.compareAccepted": "العرض المقبول",
   "presentation.draft.loading": "جارٍ تحميل أدلة العرض الخاصة بصاحبها…",
   "presentation.draft.expired": "لا توجد مسودات مزود مصرح بها وغير منتهية لهذه العملية.",
+  "presentation.draft.revisionEditor": "تعديل نسخة خاصة",
+  "presentation.draft.revisionNotice": "ينشئ هذا الإجراء مسودة منفصلة غير معتمدة في هذا المستند بعد التحقق الكامل من المصادر. لا يرسل أي طلب إلى المزود ولا يغيّر المهمة الأصلية الفاشلة أو رسومها. تبقى تخصيصات المصادر والاقتباسات والدقة العددية وعدد الشرائح والتخطيط ثابتة.",
+  "presentation.draft.revisionSave": "التحقق وإنشاء مسودة جديدة",
+  "presentation.draft.revisionSaving": "جارٍ التحقق والحفظ…",
+  "presentation.draft.revisionCancel": "إلغاء التعديلات",
+  "presentation.draft.revisionSaved": "حُفظت مسودة جديدة غير معتمدة. لم يتغير الفشل الأصلي أو الرسوم.",
+  "presentation.draft.revisionFailed": "تعذّر حفظ المسودة الجديدة بأمان. تبقى تعديلاتك خاصة.",
+  "presentation.draft.revisionIssues": "ما زالت هذه النسخة بحاجة إلى تصحيح. لم تُنشأ مسودة جديدة.",
 };
 
 const ja: Record<keyof typeof en, string> = {
@@ -462,7 +486,7 @@ const ja: Record<keyof typeof en, string> = {
   "presentation.draft.dialogLabel": "作成者のみが閲覧できる未承認プレゼンテーションの下書き",
   "presentation.draft.privateStatus": "非公開の下書き · 未承認",
   "presentation.draft.dialogTitle": "生成されたプレゼンテーションの下書きを確認",
-  "presentation.draft.privacyNotice": "この資料を閲覧できるのはあなただけです。この画面から共有、書き出し、採用することはできません。",
+  "presentation.draft.privacyNotice": "元の応答は非公開のままです。別途検証したコピーは、新しい未承認のドキュメントドラフトにできますが、公開の承認にはなりません。",
   "presentation.draft.alternativesLabel": "プロバイダーが生成した代替案",
   "presentation.draft.modeLabel": "下書きの比較モード",
   "presentation.draft.attemptButton": "{stage} · 試行 {attempt} · ページ {page}",
@@ -472,6 +496,14 @@ const ja: Record<keyof typeof en, string> = {
   "presentation.draft.compareAccepted": "承認済みのプレゼンテーション",
   "presentation.draft.loading": "作成者のみが閲覧できるプレゼンテーションの証跡を読み込んでいます…",
   "presentation.draft.expired": "この生成に利用できる有効かつ許可済みのプロバイダー下書きはありません。",
+  "presentation.draft.revisionEditor": "非公開のコピーを編集",
+  "presentation.draft.revisionNotice": "ソースをすべて検証した後、このドキュメントに別の未承認ドラフトを作成します。プロバイダーへのリクエストは行わず、元の失敗したジョブや料金は変更しません。ソースの割り当て、引用、数値の精度、スライド数、レイアウトは固定です。",
+  "presentation.draft.revisionSave": "検証して新しいドラフトを作成",
+  "presentation.draft.revisionSaving": "検証・保存中…",
+  "presentation.draft.revisionCancel": "編集をキャンセル",
+  "presentation.draft.revisionSaved": "新しい未承認ドラフトを保存しました。元の失敗と料金は変更されていません。",
+  "presentation.draft.revisionFailed": "新しいドラフトを安全に保存できませんでした。編集内容は非公開のままです。",
+  "presentation.draft.revisionIssues": "このコピーにはまだ修正が必要です。新しいドラフトは作成されていません。",
 };
 
 export const PRESENTATION_CANDIDATE_MESSAGES = { en, fr, ar, ja };

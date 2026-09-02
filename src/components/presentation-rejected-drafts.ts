@@ -2,7 +2,7 @@ import { html, nothing } from "lit";
 import type { DocumentJob } from "../model/document-jobs";
 import type { CapturedSourceOwnership } from "../state/store";
 import { parseDocumentArtifactContent, type DocumentArtifactDraftItem } from "../model/document-artifacts";
-import type { PresentationCandidateDetail, PresentationCandidateSummary } from "../model/presentation-candidates";
+import type { PresentationCandidateValidationIssue, PresentationCandidateDetail, PresentationCandidateSummary } from "../model/presentation-candidates";
 import { FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import "./presentation-slide";
@@ -29,6 +29,11 @@ export class PresentationRejectedDrafts extends FormaElement {
   #referenceRevision=0;
   #jobDocumentId="";
   #referenceSource:CapturedSourceOwnership|null=null;
+  #editingResponse="";
+  #editValues=new Map<string,string>();
+  #editIssues:PresentationCandidateValidationIssue[]=[];
+  #revisionKey="";
+  #revisionBusy=false;
 
   #rememberJob(jobId:string,documentId:string,source:CapturedSourceOwnership|null){
     if(!jobId||!documentId||!source||!this.store.sourceOwnershipScopeActive(source))return;
@@ -50,6 +55,7 @@ export class PresentationRejectedDrafts extends FormaElement {
     this.#open = false;
     this.#busy = false;
     this.#preserving = "";
+    this.#editingResponse="";this.#editValues.clear();this.#editIssues=[];this.#revisionKey="";this.#revisionBusy=false;
     this.#candidates = [];
     this.#details.clear();
     this.#selected = [];
@@ -185,6 +191,66 @@ export class PresentationRejectedDrafts extends FormaElement {
     }
   }
 
+  #editCandidate(detail:PresentationCandidateDetail){
+    if(!detail.revision||this.#revisionBusy||!this.store.sourceOwnershipActive(this.#referenceSource))return;
+    this.#editingResponse=detail.responseId;
+    this.#editValues=new Map(detail.revision.fields.map(field=>[field.path,field.value]));
+    this.#editIssues=[];this.#revisionKey=crypto.randomUUID();this.requestUpdate();
+  }
+
+  #cancelRevision(){
+    if(this.#revisionBusy)return;
+    this.#editingResponse="";this.#editValues.clear();this.#editIssues=[];this.#revisionKey="";this.requestUpdate();
+  }
+
+  async #saveRevision(detail:PresentationCandidateDetail){
+    if(!detail.revision||this.#revisionBusy||this.#editingResponse!==detail.responseId)return;
+    const source=this.store.captureSourceOwnership(),revision=this.#privateRevision,jobId=this.#jobId,documentId=this.documentId;
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&revision===this.#privateRevision
+      &&this.#jobId===jobId&&this.documentId===documentId&&this.#editingResponse===detail.responseId;
+    if(!current())return;
+    const edits=detail.revision.fields.filter(field=>this.#editValues.get(field.path)!==field.value)
+      .map(field=>({path:field.path,value:this.#editValues.get(field.path)??field.value}));
+    this.#revisionBusy=true;this.#editIssues=[];this.requestUpdate();
+    try{
+      const outcome=await this.store.revisePresentationCandidate(jobId,detail.responseId,{
+        revisionToken:detail.revision.token,idempotencyKey:this.#revisionKey,confirmed:true,edits,
+      },documentId);
+      if(!current())return;
+      if("issues"in outcome){this.#editIssues=outcome.issues;return;}
+      this.#revisionBusy=false;this.#cancelRevision();
+      this.store.toast(this.i18n.t("presentation.draft.revisionSaved", "New unapproved draft saved. The original failure and charges are unchanged."));
+      // A refresh failure cannot undo or relabel an acknowledged atomic save.
+      try{await this.store.refreshEvents();}catch{/* Ordinary document refresh can retry without creating another revision. */}
+    }catch(error){
+      if(current())this.store.toast(error instanceof Error?error.message:this.i18n.t("presentation.draft.revisionFailed", "The new draft could not be safely saved. Your edits remain private."));
+    }finally{
+      if(current()){this.#revisionBusy=false;this.requestUpdate();}
+    }
+  }
+
+  #revisionEditor(detail:PresentationCandidateDetail){
+    if(this.#editingResponse!==detail.responseId||!detail.revision||!this.store.sourceOwnershipActive(this.#referenceSource))return nothing;
+    return html`<section class="presentation-candidate-revision" aria-label=${this.i18n.t("presentation.draft.revisionEditor", "Edit a private copy")}>
+      <h4>${this.i18n.t("presentation.draft.revisionEditor", "Edit a private copy")}</h4>
+      <p>${this.i18n.t("presentation.draft.revisionNotice", "This creates a separate unapproved draft in this document after full source validation. It makes no provider request and does not change the original failed job or its charges. Source assignments, quotes, numerical precision, slide count and layout stay fixed.")}</p>
+      <div class="presentation-candidate-revision-fields">${detail.slides.map((_slide,index)=>html`<details>
+        <summary>${this.i18n.t("presentation.draft.slideHeading", "Slide {slide}: {title}", {slide:this.i18n.number(index+1),title:detail.slides[index]!.title})}</summary>
+        ${detail.revision!.fields.filter(field=>field.path.startsWith(`items.${index}.`)).map(field=>html`<label>
+          <span>${field.path.slice(`items.${index}.`.length)}</span>
+          <textarea dir="auto" rows=${field.path.endsWith(".body")?4:2} maxlength="8000" autocomplete="off" ?disabled=${this.#revisionBusy}
+            .value=${this.#editValues.get(field.path)??field.value}
+            @input=${(event:Event)=>{if(this.#editingResponse===detail.responseId&&this.store.sourceOwnershipActive(this.#referenceSource)&&!this.#revisionBusy)this.#editValues.set(field.path,(event.target as HTMLTextAreaElement).value);}}></textarea>
+        </label>`)}
+      </details>`)}</div>
+      ${this.#editIssues.length?html`<section class="presentation-rejected-draft-issues" role="alert"><h5>${this.i18n.t("presentation.draft.revisionIssues", "This copy still needs correction. No new draft was created.")}</h5><ol>${this.#editIssues.map(issue=>html`<li><b>${issue.path}</b><span>${issue.message}</span></li>`)}</ol></section>`:nothing}
+      <div class="presentation-rejected-draft-jobs">
+        <button class="button button-primary" ?disabled=${this.#revisionBusy} @click=${()=>void this.#saveRevision(detail)}>${this.#revisionBusy?this.i18n.t("presentation.draft.revisionSaving", "Validating and saving…"):this.i18n.t("presentation.draft.revisionSave", "Validate and create new draft")}</button>
+        <button class="button button-subtle" ?disabled=${this.#revisionBusy} @click=${()=>this.#cancelRevision()}>${this.i18n.t("presentation.draft.revisionCancel", "Cancel edits")}</button>
+      </div>
+    </section>`;
+  }
+
   #slide(item: DocumentArtifactDraftItem, presentation: PresentationCandidateDetail["presentation"], index: number, total: number) {
     return html`<forma-presentation-slide .item=${item} .presentation=${presentation} .index=${index} .total=${total} .compact=${true} .showFooterLabel=${false}></forma-presentation-slide>`;
   }
@@ -253,6 +319,8 @@ export class PresentationRejectedDrafts extends FormaElement {
       <header><div><span class="eyebrow">${detail.stage === "repair" ? this.i18n.t("presentation.draft.boundedRepair", "Bounded repair") : this.i18n.t("presentation.draft.initialResponse", "Initial response")}</span><h3>${detail.title || this.i18n.t("presentation.draft.rejectedTitle", "Rejected presentation draft")}</h3><p>${detail.summary || this.i18n.t("presentation.draft.incompleteSummary", "The response did not contain a complete presentation.")}</p></div>
         <button type="button" class="button secondary compact" ?disabled=${detail.retentionClass === "governed-evidence" || Boolean(this.#preserving)} @click=${() => void this.#preserveCandidate(detail.responseId)}>${detail.retentionClass === "governed-evidence" ? this.i18n.t("presentation.draft.preserved", "Preserved privately") : this.#preserving === detail.responseId ? this.i18n.t("presentation.draft.preserving", "Preserving…") : this.i18n.t("presentation.draft.preserve", "Preserve privately")}</button>
       </header>
+      ${detail.revision?html`<button class="button button-subtle" ?disabled=${this.#revisionBusy} @click=${()=>this.#editCandidate(detail)}>${this.i18n.t("presentation.draft.revisionEditor", "Edit a private copy")}</button>`:nothing}
+      ${this.#revisionEditor(detail)}
       ${detail.reviewOnlyReason === "historical-validation-rejection" ? html`<p class="presentation-rejected-draft-warning">${this.i18n.t("presentation.draft.historicalRejection", "This response was rejected under an earlier validation contract. Current checks are for private review only and cannot approve or recover it. The original receipt is unchanged.")}</p>` : nothing}
       ${detail.reviewOnlyReason === "validation-provenance-unavailable" ? html`<p class="presentation-rejected-draft-warning">${this.i18n.t("presentation.draft.provenanceUnavailable", "The original validation decision could not be verified. This saved draft remains private and review-only; current checks cannot approve or promote it.")}</p>` : nothing}
       <section class="generation-receipt-summary"><dl>
@@ -308,7 +376,7 @@ export class PresentationRejectedDrafts extends FormaElement {
     if (!jobs.length) return nothing;
     return html`<section class="presentation-rejected-drafts" aria-label=${this.i18n.t("presentation.draft.regionLabel", "Private rejected presentation drafts")}><header><div><span class="eyebrow">${this.i18n.t("presentation.draft.eyebrow", "Rejected drafts · private")}</span><p>${this.i18n.t("presentation.draft.description", "Inspect paid provider responses without generating, sharing, or exporting.")}</p></div><span>${this.i18n.number(jobs.length)}</span></header><div class="presentation-rejected-draft-jobs">${jobs.map((job) => html`<button type="button" class="button secondary compact" @click=${() => void this.#openDrafts(job.jobId)}>${this.i18n.t("presentation.draft.review", "Review generated drafts")}${job.dismissedAt ? ` · ${this.i18n.t("presentation.draft.dismissed", "dismissed issue")}` : ""}</button>`)}</div></section>
       ${this.#open ? html`<dialog class="document-artifact-view presentation-rejected-drafts-dialog" aria-label=${this.i18n.t("presentation.draft.dialogLabel", "Actor-private rejected presentation drafts")} @close=${this.#clearPrivateDrafts} @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#clearPrivateDrafts(); }}>
-        <section class="presentation-rejected-drafts-reader"><header><div><span class="eyebrow">${this.i18n.t("presentation.draft.privateStatus", "Private draft · not approved")}</span><h2>${this.i18n.t("presentation.draft.dialogTitle", "Review generated presentation drafts")}</h2><p>${this.i18n.t("presentation.draft.privacyNotice", "Only you can see this material. It cannot be shared, exported, or promoted from this review.")}</p></div><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close", "Close")} @click=${this.#clearPrivateDrafts}>${icon("close")}</button></header>
+        <section class="presentation-rejected-drafts-reader"><header><div><span class="eyebrow">${this.i18n.t("presentation.draft.privateStatus", "Private draft · not approved")}</span><h2>${this.i18n.t("presentation.draft.dialogTitle", "Review generated presentation drafts")}</h2><p>${this.i18n.t("presentation.draft.privacyNotice", "Original responses stay private. A separately validated copy can become a new unapproved document draft; this does not approve release.")}</p></div><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close", "Close")} @click=${this.#clearPrivateDrafts}>${icon("close")}</button></header>
           <nav class="presentation-rejected-draft-attempts" aria-label=${this.i18n.t("presentation.draft.alternativesLabel", "Generated provider alternatives")}>${this.#candidates.map((candidate) => html`<button type="button" class=${`button ${this.#selected.includes(candidate.responseId) ? "primary" : "secondary"} compact`} @click=${() => void this.#selectCandidate(candidate.responseId)}>${this.i18n.t("presentation.draft.attemptButton", "{stage} · attempt {attempt} · page {page}", { stage: candidate.stage === "repair" ? this.i18n.t("presentation.draft.repair", "Repair") : this.i18n.t("presentation.draft.initial", "Initial"), attempt: this.i18n.number(candidate.providerAttempt), page: this.i18n.number(candidate.pageIndex + 1) })}</button>`)}</nav>
           <nav class="presentation-rejected-draft-modes" aria-label=${this.i18n.t("presentation.draft.modeLabel", "Draft comparison mode")}>${([ ["alternatives", this.i18n.t("presentation.draft.compareAlternatives", "Compare alternatives")], ["requested", this.i18n.t("presentation.draft.compareRequested", "Requested output")], ["source", this.i18n.t("presentation.draft.compareSource", "Source material")], ["accepted", this.i18n.t("presentation.draft.compareAccepted", "Accepted presentation")] ] as const).map(([mode, label]) => html`<button type="button" class=${`button ${this.#comparison === mode ? "primary" : "ghost"} compact`} @click=${() => { this.#comparison = mode; this.requestUpdate(); }}>${label}</button>`)}</nav>
           ${this.#busy ? html`<p role="status">${this.i18n.t("presentation.draft.loading", "Loading your actor-private presentation evidence…")}</p>` : nothing}

@@ -584,6 +584,8 @@ const messages: Record<string, string> = {
   "shell.command": "Rechercher ou lancer une commande",
   "shell.loading": "Ouverture de votre espace {application}",
   "shell.loadingDetail": "Vos projets et créations enregistrés sont en cours de restauration.",
+  "shell.documentUnavailable": "Ce document est indisponible.",
+  "shell.documentUnavailableDetail": "L’adresse demandée a été conservée. Réessayez pour vérifier ; aucun nouveau document n’a été créé.",
   "shell.error": "Votre travail n’a pas pu être chargé.",
   "shell.busy": "En cours : {operation}",
   "shell.running": "Une opération sur le document est en cours sur le serveur",
@@ -1249,6 +1251,9 @@ const messages: Record<string, string> = {
   "audio.subtype.voice": "Voix",
   "audio.subtype.silence": "Silence",
   "audio.player.label": "Lire {name}",
+  "audio.duration.measured": "Audio mesuré : {seconds} s",
+  "audio.duration.recorded": "Durée audio enregistrée : {seconds} s",
+  "audio.duration.estimate": "Durée audio estimée : {seconds} s",
   "audio.reference.private": "Référence audio privée",
   "audio.reference.authored": "Notes d’écoute rédigées",
   "audio.reference.description": "Décrivez ce que vous entendez",
@@ -2513,4 +2518,31 @@ Object.assign(messages, {
 
 messages["projects.originalConfirmedUnavailable"]="Création confirmée. Le document d’origine ne peut pas être ouvert pour le moment. Vérifiez sa disponibilité ; aucun nouveau projet ne sera créé.";
 messages["projects.checkOriginalAvailability"]="Vérifier la disponibilité de l’original";
+Object.assign(messages, {
+  "system.auto.ipxnvl.15": "Document source",
+  "system.auto.11od8g.106": "L’audience et le ton doivent être du texte, avec au plus 120 unités UTF-16 chacun après suppression des espaces au début et à la fin.",
+  "system.auto.1fd4spz.31": "Les paramètres de la demande doivent être corrigés",
+  "system.auto.7pctir.171": "L’audience et le ton doivent être du texte, avec au plus 120 unités UTF-16 chacun après suppression des espaces au début et à la fin. Il s’agit d’une erreur de validation dans l’application, pas d’une défaillance du fournisseur.",
+  "system.auto.1kxo3x2.108": "Les paramètres de la demande initiale sont indisponibles. Consultez les données conservées avant de configurer une nouvelle demande.",
+  "system.auto.3so7kj.55": "{field} est trop long. Supprimez {excess} unités UTF-16.",
+  "system.auto.1uy6f6w.35": "{count}/{maximum} unités UTF-16",
+  "system.auto.oy0qs.24": "Paramètres actuels de la demande",
+  "system.auto.ywculg.48": "Chargement des paramètres de la tentative sélectionnée…",
+  "system.auto.yjthbo.41": "Paramètres restaurés depuis la demande {request}.",
+  "system.auto.193a0ww.177": "Il s’agit d’une nouvelle demande payante utilisant la source autorisée actuelle du document. Elle ne reprend ni ne régularise la demande précédente. Les frais et réservations antérieurs restent inchangés.",
+  "system.auto.10vq36.86": "Le transfert au fournisseur exige une nouvelle confirmation ; l’autorisation précédente n’a pas été copiée.",
+  "system.auto.1e1epmo.84": "Chaque champ accepte au plus {maximum} unités UTF-16 après suppression des espaces au début et à la fin.",
+  "system.auto.p0i25a.15": "Fidélité à la source",
+  "system.auto.1kvfvoc.18": "Style de présentation",
+});
+
+Object.assign(messages, {
+  "system.auto.1t7mxre.35": "Vérifier le reçu enregistré · sans génération",
+  "system.auto.1p3c3wc.23": "Vérification du reçu enregistré…",
+  "system.auto.hvq2xk.88": "Vérifie uniquement les éléments conservés ; ne récupère pas de diaporama et ne lance aucune nouvelle demande payante.",
+  "system.auto.1097rb5.109": "Reçu enregistré vérifié. Aucune nouvelle génération n’a été lancée. La récupération ou une nouvelle demande payante nécessite une action distincte.",
+  "system.auto.1o4thm6.138": "Un examen manuel est nécessaire. Aucune nouvelle génération n’a été lancée. La demande initiale est inchangée et toute réservation budgétaire initiale reste maintenue.",
+  "system.auto.1o9k7vt.139": "Le reçu enregistré n’a pas pu être vérifié. Aucune nouvelle génération n’a été lancée. Vérifiez à nouveau la demande initiale ; sa facturation n’est pas confirmée."
+});
+
 export default messages;

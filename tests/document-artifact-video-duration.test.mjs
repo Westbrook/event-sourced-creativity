@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { audioDurationMetadata, audioPlaybackTiming } from "../src/model/audio.ts";
 import { foldEvents } from "../src/model/events.ts";
 
 const source = await readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8");
@@ -17,7 +18,8 @@ function exportedPlaybackHelper() {
     if (source[cursor] === "}") depth -= 1;
     if (depth === 0) {
       const body = source.slice(opening + 1, cursor).replace(/\((\w+)\)\s*:\s*\1\s+is\s+number\s*=>/gu, "($1)=>");
-      return new Function("artifact", body);
+      const run=new Function("artifact", "audioPlaybackTiming", body);
+      return artifact=>run(artifact,audioPlaybackTiming);
     }
   }
   assert.fail("the exported playback helper must have a complete function body");
@@ -56,8 +58,8 @@ function completedVideo({ settings = {}, items = [{}], latencyMs = 43_000, kind 
       summary: "A completed audience-visible motion study.",
       item_count: items.length,
       items: items.map((item, index) => ({ id: `scene-${index + 1}`, title: `Scene ${index + 1}`, ...item })),
-      media_url: kind === "video" ? "/api/media/owner%2Ffinished-feedback.mp4" : null,
-      media_type: kind === "video" ? "video/mp4" : null,
+      media_url: kind === "video" ? "/api/media/owner%2Ffinished-feedback.mp4" : kind === "audio" ? "/api/media/owner%2Ffinished-podcast.mp3" : null,
+      media_type: kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : null,
       latency_ms: latencyMs,
       settings,
     }),
@@ -113,7 +115,7 @@ test("missing, partial, zero, negative, nonfinite, or overflowing scene timing n
 });
 
 test("other output forms keep generation latency rather than acquiring fake video playback time", () => {
-  for (const kind of ["slides", "storyboard", "audio", "short_story", "scene"]) {
+  for (const kind of ["slides", "storyboard", "short_story", "scene"]) {
     const artifact = completedVideo({ kind, settings: { video_seconds: 4 }, items: [{ duration_seconds: 9 }], latencyMs: 43_000 });
     assert.equal(documentArtifactPlaybackSeconds(artifact), null, kind);
     assert.equal(Math.round(artifact.latency / 1_000), 43, kind);
@@ -143,9 +145,12 @@ test("runtime calculation accesses only audience-safe timing and never private p
   assert.ok(!accessed.some((field) => /latency|provider|cost|owner|input|receipt|document|media/i.test(field)));
 });
 
-test("the actual audience-facing footer uses real localized video duration, omits unknown duration, and preserves non-video latency", () => {
+test("the audience-facing footer separates audio playback and estimates from generation latency", () => {
   assert.match(source, /playbackSeconds\s*=\s*documentArtifactPlaybackSeconds\(artifact\)/u);
-  assert.match(source, /viewerDuration\s*=\s*artifact\.kind\s*===\s*"video"\s*\?\s*\(?playbackSeconds\s*===\s*null\s*\?\s*""/u);
+  assert.match(source, /viewerDuration\s*=\s*artifact\.kind\s*===\s*"audio"/u);
+  assert.match(source, /audioTiming=artifact\.kind==="audio"\?audioPlaybackTiming\(artifact\.settings,artifact\.mediaUrl\)/u);
+  assert.match(source, /audio\.duration\.\$\{audioTiming\.basis\}/u);
+  assert.match(source, /:artifact\.kind==="video"\?\(playbackSeconds===null\?""/u);
   assert.match(source, /this\.i18n\.number\(playbackSeconds\)/u);
   assert.match(source, /Math\.round\(artifact\.latency\s*\/\s*1000\)/u);
 
@@ -169,4 +174,30 @@ test("settled slideshow, audio, storyboard, and video costs remain visible only 
   }
   assert.match(source, /generationCost\s*\?\s*html`<p class="artifact-generation-cost">/u);
   assert.match(source, /productionOwner\s*\?\s*html`<p class="artifact-viewer-provider">/u);
+});
+
+
+test("a measured 123.56-second podcast never displays its 56-second generation latency", () => {
+  const media={url:"/api/media/owner%2Ffinished-podcast.mp3",contentHash:"a".repeat(64),durationSeconds:123.56};
+  const artifact=completedVideo({kind:"audio",latencyMs:56_000,settings:{source_media_sha256:media.contentHash,...audioDurationMetadata(media,90)}});
+  assert.equal(documentArtifactPlaybackSeconds(artifact),123.56);
+  assert.deepEqual(audioPlaybackTiming(artifact.settings,artifact.mediaUrl),{seconds:123.56,basis:"measured"});
+  assert.equal(artifact.settings.estimated_duration_seconds,null);
+  const legacy=completedVideo({kind:"audio",latencyMs:56_000,settings:{duration_seconds:123.56}});
+  assert.equal(documentArtifactPlaybackSeconds(legacy),123.56);
+  assert.equal(audioPlaybackTiming(legacy.settings,legacy.mediaUrl).basis,"recorded","Legacy metadata is not newly certified as measured");
+});
+
+test("audio estimates and stale or invalid media metadata never masquerade as measured playback", () => {
+  const media={url:"/api/media/owner%2Ffinished-podcast.mp3",contentHash:"a".repeat(64),durationSeconds:null};
+  const artifact=completedVideo({kind:"audio",settings:{source_media_sha256:media.contentHash,...audioDurationMetadata(media,90)}});
+  assert.equal(documentArtifactPlaybackSeconds(artifact),null);
+  assert.deepEqual(audioPlaybackTiming(artifact.settings,artifact.mediaUrl),{seconds:90,basis:"estimate"});
+  for(const duration of [undefined,null,"123.56",0,-1,NaN,Infinity]){
+    const unknown=completedVideo({kind:"audio",latencyMs:56_000,settings:{duration_seconds:duration}});
+    assert.equal(documentArtifactPlaybackSeconds(unknown),null);
+  }
+  const measured={...artifact,settings:{source_media_sha256:media.contentHash,...audioDurationMetadata({...media,durationSeconds:123.56})}};
+  assert.equal(documentArtifactPlaybackSeconds({...measured,mediaUrl:"/api/media/owner%2Freplaced.mp3"}),null);
+  assert.equal(documentArtifactPlaybackSeconds({...measured,settings:{...measured.settings,source_media_sha256:"b".repeat(64)}}),null);
 });

@@ -159,6 +159,7 @@ export class RouteStoreHarness {
   projectRequested;
   workspaceRequested;
   #loadRevision = 0;
+  ${actualStoreSourceField("#cachedHistoryRevalidation")}
   #historyProfile = "full";
   #projectHistory;
   #workspaceHistory;

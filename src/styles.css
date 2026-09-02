@@ -2015,6 +2015,10 @@ forma-document-artifacts { display: block; min-width: 0; }
 .presentation-rejected-drafts-reader summary:focus-visible { outline-offset: 3px; }
 @media (forced-colors: active) { .presentation-rejected-drafts-reader summary:focus-visible { outline: 2px solid Highlight; outline-offset: 3px; } }
 .presentation-rejected-drafts-reader > header h2,.presentation-rejected-draft-card > header h3,.presentation-rejected-draft-reference h3 { margin: .25rem 0 0; }
+.presentation-candidate-revision { display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; }
+.presentation-candidate-revision h4,.presentation-candidate-revision h5 { margin: 0; }
+.presentation-candidate-revision-fields label { display: grid; gap: .35rem; margin-block: .65rem; }
+.presentation-candidate-revision-fields textarea { box-sizing: border-box; inline-size: 100%; min-block-size: 3rem; resize: vertical; }
 .presentation-rejected-draft-comparison { display: grid; gap: 1rem; align-items: start; }
 .presentation-rejected-draft-comparison--split { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .presentation-rejected-draft-card,.presentation-rejected-draft-reference { display: grid; gap: 1rem; min-inline-size: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
@@ -2114,6 +2118,13 @@ forma-document-artifacts { display: block; min-width: 0; }
 .artifact-options label { display: grid; align-content: start; gap: .45rem; font-weight: 600; }
 .artifact-options label span { color: var(--muted); font-size: var(--type-caption); font-weight: 400; }
 .artifact-options :is(input,select) { width: 100%; min-width: 0; }
+.artifact-options input[aria-invalid="true"] { border-color: var(--danger); }
+.artifact-options label > small { font-size: var(--type-caption); font-weight: 400; color: var(--muted); overflow-wrap: anywhere; }
+.artifact-options label > small[role="alert"] { color: var(--danger); }
+.artifact-request-summary { margin: 0 var(--page-gutter) 1.5rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius-medium); }
+.artifact-request-summary dl { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,2fr); gap: .35rem 1rem; }
+.artifact-request-summary :is(dd,p) { margin-inline: 0; overflow-wrap: anywhere; }
+.artifact-request-summary :is(dt,small) { color: var(--muted); }
 .artifact-audio-goals,.artifact-audio-settings,.artifact-audio-model-details { grid-column: 1 / -1; min-inline-size: 0; }
 .artifact-audio-goals { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,13rem),1fr)); gap: .75rem; margin: 0; padding: 0; border: 0; }
 .artifact-audio-goals > legend { grid-column: 1 / -1; inline-size: 100%; margin-block-end: .45rem; font-weight: 650; }

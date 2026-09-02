@@ -29,7 +29,7 @@ test("presentation documents default to Slides and their complete authored outli
 
   const opening = authoringSource.slice(authoringSource.indexOf("  #openCreate="), authoringSource.indexOf("  async #revealWorkbenchPane()"));
   const inference = opening.indexOf("inferDocumentArtifactKind(projection.blocks,projection.documentTitle)");
-  const slideCount = opening.indexOf('if(this.#kind==="slides")this.#resetPresentationCount()');
+  const slideCount = opening.indexOf('if(this.#kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount()');
   const dialog = opening.indexOf("this.#createOpen=true");
 
   assert.ok(inference >= 0, "generic output creation reads this document's actual authored intent");
@@ -43,8 +43,8 @@ test("explicit output overrides, recovery, and structured production stages keep
   assert.match(authoringSource, /if\(kind\)this\.#selectArtifactKind\(kind\)/u);
   assert.match(authoringSource, /return this\.#openCreate\(!kind,current\)/u, "explicit openRender(kind) preserves its format and exact target guard");
   assert.match(authoringSource, /this\.#selectArtifactKind\(stage\.format\);\s*await this\.#openCreate\(\)/u, "structured workflow stages retain their selected format");
-  assert.match(authoringSource, /await this\.openRender\(kind,this\.#targetDocumentId\(\)\)/u, "retry retains the original failed output medium");
-  assert.match(authoringSource, /@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\);if\(kind==="slides"\)this\.#resetPresentationCount\(\)/u, "the author can always change the suggested medium");
+  assert.match(authoringSource, /restoreDocumentRenderSettings\(detail,content\)/u, "retry reads the selected attempt’s frozen request instead of reopening current settings");
+  assert.match(authoringSource, /@change=\$\{\(\)=>\{this\.#retireRequestReview\(\);this\.#selectArtifactKind\(kind\);if\(kind==="slides"&&!this\.#requestDrafts\.has\("slides"\)\)this\.#resetPresentationCount\(\)/u, "the author can always change the suggested medium");
   assert.match(authoringSource, /this\.#workflowTarget=inferDocumentArtifactKind\(projection\.blocks,projection\.documentTitle\)\?\?"video"/u);
 });
 

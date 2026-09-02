@@ -598,7 +598,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("cached dialog templates loc
   assert.ok(create.renderer.markup.includes("<h2 id=\"document-artifact-create-title\">" + expectedTitle + "</h2>"));
   const closeLabel = locale === "en" ? "Close" : localeCatalogs[locale]["action.close"];
   assert.ok(create.renderer.ownNodes(create.host, "button").some(node => node.attributes["aria-label"] === closeLabel));
-  const audience = () => create.renderer.ownNodes(create.host, "input").find(node => node.handlers.input?.toString().includes("#audience"));
+  const audience = () => create.renderer.ownNodes(create.host, "input").find(node => node.attributes.name === "audience");
   const authored = "Copy prompt — keep this exact unfinished wording.";
   audience().handlers.input.call(create.host, { target: { value: authored } }); create.draw();
   await create.createClose();
@@ -1128,4 +1128,83 @@ test("finite Library import dialog identity belongs only to its current keyed cl
   }
   assert.strictEqual(native.document.activeElement, original, "Retirement never transfers focus to a same-looking replacement");
   assert.equal(original.isConnected, false); assert.equal(native.nativeFocus.length, 1); assert.equal(native.nativeScroll.length, 0);
+});
+
+
+const requestField=(f,name)=>f.renderer.ownNodes(f.host,"input").find(node=>node.attributes.name===name);
+const setRequestField=(f,name,value)=>{requestField(f,name).handlers.input.call(f.host,{target:{value}});f.draw();};
+const requestPrimary=f=>f.renderer.ownNodes(f.host,"button").find(node=>node.attributes.type!=="button"&&String(node.attributes.class).includes("primary"));
+function retainedRequestFixture(f,id,tone){
+  const job={jobId:id,documentId:"A",kind:"render_document",status:"failed",sourceSurface:"document",stage:"planning",requestKey:id,requestedAt:"2026-09-02T12:00:00Z",dismissedAt:null,
+    result:{artifactKind:"slides",generationReceipt:{input_ref:id+"-input",provider_request_status:"not_submitted",source_transmission_status:"not_transmitted",settled_cost_microusd:0}},
+    error:"document_render_guidance_too_long",errorDetail:{code:"document_render_guidance_too_long",category:"provider",scope:"request",action:"edit_request",message:"Invalid guidance",retryable:false,httpStatus:400,retryAfterMs:null,requestId:null}};
+  f.state.content[id+"-input"]=JSON.stringify({job_id:id,document_id:"A",artifact_kind:"slides",request:{audience:"Saved slideshow audience",tone,production_mode:"manual",requested_slide_count:6,presentation_style:"field-notes",presentation_fidelity:"faithful"}});
+  return job;
+}
+const reviewControls=f=>f.renderer.ownNodes(f.host,"button").filter(node=>node.handlers.click?.toString().includes("#prepareRetry("));
+
+test("request drafts isolate guidance and production settings across formats without forgetting same-format work",async()=>{
+  const f=fixture();await f.open("audio");const mode=value=>f.renderer.ownNodes(f.host,"input").find(node=>node.attributes.name==="artifact-production-mode"&&node.attributes.value===value);mode("managed").handlers.change.call(f.host,{});f.draw();setRequestField(f,"audience","Podcast audience");setRequestField(f,"tone","Podcast tone");await f.createClose();
+  await f.open("slides");assert.equal(mode("manual").checked,true);const slideCount=()=>f.renderer.ownNodes(f.host,"select").find(node=>node.handlers.change?.toString().includes("#itemCount"));slideCount().handlers.change.call(f.host,{target:{value:"5"}});f.draw();assert.equal(requestField(f,"audience").value,"");assert.equal(requestField(f,"tone").value,"");setRequestField(f,"tone","Slideshow tone");await f.createClose();
+  await f.open("audio");assert.equal(mode("managed").checked,true);assert.equal(requestField(f,"tone").value,"Podcast tone");await f.createClose();
+  await f.open("slides");assert.equal(slideCount().value,"5");assert.equal(mode("manual").checked,true);assert.equal(requestField(f,"tone").value,"Slideshow tone");assert.equal(f.state.requests.length,0);
+});
+
+test("programmatic overlong input is blocked by actual submit handlers with field counters and errors",async()=>{
+  const f=fixture();await f.open("slides");
+  for(const [value,length] of [["x".repeat(121),121],["🎵".repeat(61),122]]){
+    setRequestField(f,"tone",value);assert.equal(requestField(f,"tone").attributes["aria-invalid"],"true");assert.ok(f.renderer.markup.includes(length+"/120"));assert.ok(Object.hasOwn(requestPrimary(f).attributes,"disabled"));
+    await f.renderer.handler(f.host,"form",node=>node.attributes.class==="document-artifact-dialog","submit")();assert.equal(f.state.requests.length,0);
+  }
+  setRequestField(f,"tone","  "+"🎵".repeat(60)+"  ");assert.equal(requestField(f,"tone").attributes["aria-invalid"],"false");assert.equal(Object.hasOwn(requestPrimary(f).attributes,"disabled"),false);
+  await f.renderer.handler(f.host,"form",node=>node.attributes.class==="document-artifact-dialog","submit")();assert.equal(f.state.requests.length,1);assert.equal(f.state.requests[0][1].tone,"🎵".repeat(60));
+});
+
+test("failed slideshow review loads that attempt's frozen settings and discloses new paid/current-source submission",async()=>{
+  const f=fixture();await f.open("audio");setRequestField(f,"tone","Podcast tone");await f.createClose();
+  const job=retainedRequestFixture(f,"selected-slides","Frozen slideshow tone"),reads=[];f.store.documentJobs.set([job]);f.store.loadDocumentJobDetail=async id=>{reads.push(id);return job;};f.host.launcherOnly=false;f.draw();
+  assert.equal(reviewControls(f).length,1);await reviewControls(f)[0].handlers.click.call(f.host,{});f.draw();
+  assert.deepEqual(reads,[job.jobId]);assert.equal(requestField(f,"tone").value,"Frozen slideshow tone");assert.equal(requestField(f,"audience").value,"Saved slideshow audience");assert.ok(f.renderer.markup.includes("This is a new paid request using the current authorized document source."));assert.ok(f.renderer.markup.includes(job.jobId));assert.equal(f.state.requests.length,0);
+});
+
+test("late failed-attempt receipt cannot replace a newer attempt or a close-and-reopen ABA",async()=>{
+  const f=fixture(),a=retainedRequestFixture(f,"attempt-a","A tone"),b=retainedRequestFixture(f,"attempt-b","B tone"),pending=new Map();
+  f.store.documentJobs.set([a,b]);f.store.loadDocumentJobDetail=id=>new Promise(resolve=>pending.set(id,resolve));f.host.launcherOnly=false;f.draw();
+  const first=reviewControls(f)[0].handlers.click.call(f.host,{});f.draw();const second=reviewControls(f)[1].handlers.click.call(f.host,{});
+  pending.get(b.jobId)(b);await second;f.draw();assert.equal(requestField(f,"tone").value,"B tone");pending.get(a.jobId)(a);await first;f.draw();assert.equal(requestField(f,"tone").value,"B tone");
+  const late=reviewControls(f)[0].handlers.click.call(f.host,{});await f.createClose();await f.open("slides");setRequestField(f,"tone","New local edit");pending.get(a.jobId)(a);await late;f.draw();assert.equal(requestField(f,"tone").value,"New local edit");assert.equal(f.state.requests.length,0);
+});
+
+test("missing or mismatched private request receipts never substitute another output's settings",async()=>{
+  const f=fixture(),job=retainedRequestFixture(f,"not-retained","Saved tone");delete f.state.content[job.jobId+"-input"];
+  f.store.documentJobs.set([job]);f.store.loadDocumentJobDetail=async()=>job;f.host.launcherOnly=false;f.draw();await reviewControls(f)[0].handlers.click.call(f.host,{});f.draw();
+  assert.equal(f.renderer.ownNodes(f.host,"dialog").some(node=>node.open),false);assert.ok(f.trace.some(value=>value.includes("original request settings are unavailable")));assert.equal(f.state.requests.length,0);
+});
+
+
+const savedReceiptControl=f=>f.renderer.ownNodes(f.host,"button").find(node=>node.handlers.click?.toString().includes("#checkSavedPresentationReceipt("));
+for(const locale of["en","fr","ar","ja"])test("legacy failed Slides shows a separate localized no-generation receipt check "+locale,async()=>{
+  const f=fixture("create",{locale}),job=retainedRequestFixture(f,"receipt-check-slides","Retained tone");f.store.documentJobs.set([job]);f.host.launcherOnly=false;
+  let resolve,checks=0;const pending=new Promise(done=>{resolve=done;});
+  f.store.checkSavedPresentationReceipt=async(id,options)=>{assert.equal(id,job.jobId);assert.equal(options.current(),true);checks++;return pending;};
+  f.draw();const button=savedReceiptControl(f);assert.ok(button);assert.match(f.renderer.markup,new RegExp(f.i18n.system("Check saved receipt · no generation")));
+  assert.ok(reviewControls(f).length,"changing the request remains a separate action");
+  button.handlers.click.call(f.host);f.draw();assert.equal(checks,1);assert.equal(Object.hasOwn(savedReceiptControl(f).attributes,"disabled"),true);
+  assert.ok(f.renderer.markup.includes(f.i18n.system("Checking saved receipt…")));
+  resolve("operator_required");await f.flush();
+  assert.ok(f.renderer.markup.includes(f.i18n.system("Manual review is required. No new generation was started. The original request is unchanged and any original budget hold remains retained.")));
+  assert.equal(f.state.requests.length,0);assert.equal(f.store.documentJobs.get()[0],job);assert.equal(f.renderer.ownNodes(f.host,"dialog").filter(node=>node.open).length,0);
+});
+
+test("receipt check UI hides Output-bound and impersonated actions and retires late results across document ABA",async()=>{
+  const f=fixture(),job=retainedRequestFixture(f,"receipt-aba","Tone");f.store.documentJobs.set([job]);f.host.launcherOnly=false;
+  const session=f.store.session.get();let impersonating=false;f.store.session.get=()=>({...session,...(impersonating?{impersonation:{active:true}}:{})});
+  f.store.documentJobs.set([{...job,sourceSurface:"outputs"}]);f.draw();assert.equal(savedReceiptControl(f),undefined);
+  f.store.documentJobs.set([job]);impersonating=true;f.draw();assert.equal(savedReceiptControl(f),undefined);
+  impersonating=false;let resolve,current;f.store.checkSavedPresentationReceipt=async(id,options)=>{current=options.current;return new Promise(done=>{resolve=done;});};
+  f.draw();savedReceiptControl(f).handlers.click.call(f.host);f.draw();assert.equal(current(),true);
+  f.changeDocument("B");f.draw();f.changeDocument("A");f.draw();assert.equal(current(),false);
+  resolve("operator_required");await f.flush();
+  assert.ok(!f.renderer.markup.includes(f.i18n.system("Manual review is required. No new generation was started. The original request is unchanged and any original budget hold remains retained.")));
+  assert.equal(Object.hasOwn(savedReceiptControl(f).attributes,"disabled"),false);assert.equal(f.state.requests.length,0);
 });

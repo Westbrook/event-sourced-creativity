@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sceneDeferred,untilScene,withDocumentInRoute,matrix,pause,eventRequest,financial,view,isRetired,result,settled,sourceFixture,accountCachePort,snapshotIdentity } from "./helpers/event-source-retirement-fixture.mjs";
+import { createSceneCostFixture,createSceneStoreHost,appendAuditEvent,sceneDeferred,untilScene,withDocumentInRoute,matrix,pause,eventRequest,financial,view,isRetired,result,settled,sourceFixture,accountCachePort,snapshotIdentity } from "./helpers/event-source-retirement-fixture.mjs";
 
 
 test("actual shared-reader membership denial retires the warm source", async t => {
@@ -246,3 +246,65 @@ test("a pending original snapshot write cannot recreate the denied scope cache a
 
 
 test.after(() => console.log("SOURCE_DENIAL_MATRIX " + JSON.stringify(matrix)));
+
+
+async function cachedDocumentAddressFixture(t,{exists=true}={}){
+  t.mock.method(globalThis,"fetch",async()=>assert.fail("No external HTTP or provider call in deep-link recovery"));
+  const worker=await createSceneCostFixture(1,"visual"),h=await createSceneStoreHost({workerFixture:worker});
+  const previous=globalThis.history;
+  globalThis.history={pushState(_state,_title,route){const url=new URL(route,"http://localhost");Object.assign(h.location,{pathname:url.pathname,search:url.search,hash:url.hash,href:url.href});},replaceState(...args){this.pushState(...args);}};
+  let before;
+  t.after(async()=>{try{if(before){assert.deepEqual(financial(worker),before);assert.equal(h.requests.filter(request=>(request.init.method??"GET")==="POST").length,0,"Address resolution never creates, opens a substitute, or submits work");}}finally{globalThis.history=previous;await h.close();}});
+  accountCachePort(t);const cache=h.modules.get("src/state/account-cache.ts"),identity=snapshotIdentity(h.store.session.get());
+  await cache.writeAccountSnapshot(identity,h.store.events.get(),h.store.head.get(),"full");
+  const documentId="deep-link-created-after-device-cache";
+  if(exists)await appendAuditEvent(worker.env,worker.streamId,"user","DocumentCreated",{project_id:worker.projectId,document_id:documentId,title:"The exact new document"});
+  before=financial(worker);const {FormaStore}=h.modules.get("src/state/store.ts");
+  h.store=new FormaStore();h.requested=withDocumentInRoute("/",documentId,"The exact new document");h.documentId=documentId;
+  h.store.route.set(h.requested);globalThis.history.replaceState({},"",h.requested);
+  return h;
+}
+
+test("explicit new-document address stays pending until cached history is revalidated",async t=>{
+  const h=await cachedDocumentAddressFixture(t),gate=sceneDeferred(),entered=sceneDeferred();let held=false;
+  h.intercept=async request=>{if(!held&&eventRequest(request)){held=true;const response=await h.worker.request(request.url,request.init);assert.equal(response.status,200);entered.resolve();await gate.promise;return response;}};
+  try{
+    await h.store.load();await entered.promise;
+    assert.equal(h.store.loading.get(),false,"The existing cache publication remains fast");
+    assert.equal(h.store.documentRouteState(),"pending");assert.equal(h.store.projection.get().documentId,"");
+    assert.equal(h.store.projection.get().blocks.length,0,"Unrelated cached document content is never shown at the requested identity");
+    let synchronized=false;const sync=h.store.syncDocumentFromRoute().then(()=>{synchronized=true;});await pause();
+    assert.equal(synchronized,false);assert.equal(h.store.route.get(),h.requested);
+    gate.resolve();await sync;await pause();
+    assert.equal(h.store.route.get(),h.requested);assert.equal(h.store.projection.get().documentId,h.documentId);
+    assert.equal(h.store.documentRouteState(),"ready");
+  }finally{gate.resolve();}
+});
+
+test("late cache revalidation cannot reopen an address the user already left",async t=>{
+  const h=await cachedDocumentAddressFixture(t),gate=sceneDeferred(),entered=sceneDeferred();let held=false;
+  h.intercept=async request=>{if(!held&&eventRequest(request)){held=true;const response=await h.worker.request(request.url,request.init);entered.resolve();await gate.promise;return response;}};
+  try{
+    await h.store.load();await entered.promise;const old=h.store.syncDocumentFromRoute();
+    h.store.setRoute("/projects");gate.resolve();await old;await pause();
+    assert.equal(h.store.route.get(),"/projects");
+  }finally{gate.resolve();}
+});
+
+test("failed revalidation preserves the exact new-document address for a read-only retry",async t=>{
+  const h=await cachedDocumentAddressFixture(t);let fail=true;
+  t.mock.method(console,"warn",()=>{});
+  h.intercept=async request=>{if(fail&&eventRequest(request))return new Response("Temporarily unavailable",{status:503});};
+  await h.store.load();await pause();await pause();await h.store.syncDocumentFromRoute();
+  assert.equal(h.store.route.get(),h.requested);assert.equal(h.store.documentRouteState(),"unavailable");
+  assert.equal(h.store.projection.get().documentId,"");
+  fail=false;await h.store.load();await untilScene(()=>h.store.projection.get().documentId===h.documentId);await h.store.syncDocumentFromRoute();
+  assert.equal(h.store.route.get(),h.requested);assert.equal(h.store.documentRouteState(),"ready");
+});
+
+test("an authoritatively absent document keeps its address instead of selecting or creating a substitute",async t=>{
+  const h=await cachedDocumentAddressFixture(t,{exists:false});
+  await h.store.load();await pause();await pause();await h.store.syncDocumentFromRoute();
+  assert.equal(h.store.route.get(),h.requested);assert.equal(h.store.documentRouteState(),"unavailable");
+  assert.equal(h.store.projection.get().documentId,"");
+});

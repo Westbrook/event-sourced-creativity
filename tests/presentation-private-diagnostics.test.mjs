@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
-import { historicalPresentationValidationRejection, safePresentationCandidateIssues, sanitizePresentationCitationChecks } from "../src/model/presentation-candidates.ts";
+import { presentationCandidateEditableFields, applyPresentationCandidateEdits, historicalPresentationValidationRejection, safePresentationCandidateIssues, sanitizePresentationCitationChecks } from "../src/model/presentation-candidates.ts";
 import { publicEventPayload } from "../worker/event-privacy.ts";
 
 const current = "test-current-adapter";
@@ -19,6 +19,9 @@ const nothing = Symbol("nothing");
 const html = (strings, ...values) => ({strings:[...strings],values});
 export class PrivateViewer {
   #preserving = "";
+  #revisionBusy=false;
+  #revisionEditor(){return nothing;}
+  #editCandidate(){throw new Error("No implicit revision");}
   i18n = { number:(value,options={})=>new Intl.NumberFormat("en",options).format(value), date:()=>"fixture retention", t:(_key,fallback,values={})=>fallback.replace(/\\{(\\w+)\\}/g,(_match,key)=>String(values[key]??"")) };
   #slide() { return nothing; }
   #preserveCandidate() { throw new Error("test must not preserve a rejected draft"); }
@@ -117,4 +120,89 @@ test("the real restricted viewer separates citation assignment, quotation text, 
   }));
   assert.match(flexible, /5–15 \/ 8 slides/u, "the actual viewer shows the accepted range separately from the attempt aim");
   assert.match(visibleText(new PrivateViewer().render({ ...detail, requestedSlideCount: null })), /— \/ 14 slides/u, "unknown exact counts never masquerade as zero");
+});
+
+
+test("visible-field revision patches cannot change evidence, layout, numerical precision, array shape or private identifiers",()=>{
+  const raw=JSON.stringify({title:"Synthetic frozen provider response",content_markdown:"Old readable text",items:[{
+    title:"Exact authored headline",body:"A retained source claim",notes:"Private unchanged notes",image_prompt:"Private provider directions",context_group_ids:["context_group_1"],
+    slide:{layout:"comparison",kicker:"Introduction",bullets:["A visible bullet"],quote:{text:"Protected quote",source_id:"blk_1"},source_ids:["blk_1"],citations:[{source_id:"blk_1",excerpt:"Frozen citation"}],
+      visual:{kind:"comparison",label:"Two claims",value:"",exact_value:"61.125",display_value:"61.13",data:[{label:"First",value:"First",source_ids:["blk_1"],weight:1}]}}
+  }]});
+  const fields=presentationCandidateEditableFields(raw);
+  assert.ok(fields.some(field=>field.path==="items.0.slide.visual.data.0.value"));
+  assert.ok(fields.every(field=>!/(?:source_|citation|quote|notes|image_prompt|layout|exact_value|display_value|weight|context_group)/u.test(field.path)));
+  const edited=applyPresentationCandidateEdits(raw,[{path:"items.0.slide.visual.data.0.value",value:"Distinct visible evidence"}]);
+  assert.ok(edited);assert.deepEqual(edited.changedPaths,["items.0.slide.visual.data.0.value"]);
+  const before=JSON.parse(raw),after=JSON.parse(edited.raw);after.items[0].slide.visual.data[0].value=before.items[0].slide.visual.data[0].value;
+  assert.deepEqual(after,before,"only the selected existing visible leaf can change");
+  for(const edit of [
+    {path:"items.0.slide.source_ids.0",value:"blk_2"}, {path:"items.0.slide.layout",value:"closing"},
+    {path:"items.0.slide.visual.exact_value",value:"100"}, {path:"items.0.slide.bullets.1",value:"An inserted bullet"},
+    {path:"items.0.__proto__.body",value:"forged"}, {path:"items.0.body",value:"Leaked blk_007"},
+    {path:"items.0.body",value:"Leaked PRIVATE_SOURCE_881"}, {path:"items.0.body",value:{forged:true}},
+  ])assert.equal(applyPresentationCandidateEdits(raw,[edit],["PRIVATE_SOURCE_881"]),null);
+  assert.equal(applyPresentationCandidateEdits(raw,[{path:"items.0.body",value:"One"},{path:"items.0.body",value:"Two"}]),null);
+  assert.equal(applyPresentationCandidateEdits(raw,[{path:"items.0.body",value:"x".repeat(8_001)}]),null);
+  assert.equal(JSON.parse(raw).items[0].slide.visual.data[0].value,"First","the retained original stays immutable");
+});
+
+const revisionMember = (name) => {
+  const member = viewerClass.members.find(entry => entry.name?.getText(syntax) === name);
+  assert.ok(member, `the actual private revision member ${name} is tested`);
+  return member.getText(syntax);
+};
+const revisionHarness=ts.transpileModule(`
+const nothing=Symbol("nothing"),html=(strings,...values)=>({strings:[...strings],values});
+export class PrivateRevisionViewer {
+  documentId="authorized-document";isConnected=true;
+  #jobId="revision-job";#jobDocumentId="authorized-document";#privateRevision=0;
+  #referenceSource={id:"authorized-source"};#open=true;#busy=false;#preserving="";
+  #candidates=[];#details=new Map();#selected=[];#comparison="alternatives";
+  ${["#editingResponse","#editValues","#editIssues","#revisionKey","#revisionBusy"].map(revisionMember).join("\n")}
+  sourceActive=true;requests=[];messages=[];refreshes=0;response=null;
+  i18n={number:value=>String(value),t:(_key,fallback)=>fallback};
+  store={captureSourceOwnership:()=>this.#referenceSource,sourceOwnershipActive:()=>this.sourceActive,
+    revisePresentationCandidate:async(...args)=>{this.requests.push(args);return await this.response;},
+    toast:message=>this.messages.push(message),refreshEvents:async()=>{this.refreshes++;}};
+  #rememberJob(){}querySelector(){return null;}requestUpdate(){}
+  ${revisionMember("#clearPrivateDrafts")}
+  ${["#editCandidate","#cancelRevision","#saveRevision","#revisionEditor"].map(actualMethod).join("\n")}
+  begin(detail){this.#editCandidate(detail);}save(detail){return this.#saveRevision(detail);}
+  render(detail){return this.#revisionEditor(detail);}
+  change(path,value){this.#editValues.set(path,value);}retire(){this.sourceActive=false;this.#clearPrivateDrafts();}
+  get state(){return {response:this.#editingResponse,fields:[...this.#editValues],issues:this.#editIssues,key:this.#revisionKey,busy:this.#revisionBusy};}
+}`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}});
+const {PrivateRevisionViewer}=await import(`data:text/javascript,${encodeURIComponent(revisionHarness.outputText)}`);
+const revisionDetail={jobId:"revision-job",documentId:"authorized-document",responseId:"response-2",slides:[{title:"Synthetic authorized slide"}],
+  revision:{token:"a".repeat(64),fields:[{path:"items.0.body",value:"Original private claim"}]}};
+
+test("private editor requires explicit validation action and keeps failed edits out of shared state",async()=>{
+  const viewer=new PrivateRevisionViewer();viewer.begin(revisionDetail);
+  assert.equal(viewer.requests.length,0,"opening a private editor is neither generation nor promotion");
+  assert.match(visibleText(viewer.render(revisionDetail)),/separate unapproved draft/u);
+  assert.match(visibleText(viewer.render(revisionDetail)),/no provider request/u);
+  viewer.change("items.0.body","A revised private claim");
+  viewer.response={issues:[{path:"items.0.body",message:"Still missing source evidence"}]};
+  await viewer.save(revisionDetail);
+  assert.equal(viewer.requests.length,1);assert.equal(viewer.requests[0][2].confirmed,true);
+  assert.deepEqual(viewer.requests[0][2].edits,[{path:"items.0.body",value:"A revised private claim"}]);
+  assert.deepEqual(viewer.state.fields,[["items.0.body","A revised private claim"]]);
+  assert.equal(viewer.state.issues.length,1);assert.equal(viewer.state.busy,false);assert.equal(viewer.refreshes,0);assert.deepEqual(viewer.messages,[]);
+});
+
+test("source retirement clears private edit text and ignores a late successful revision response",async()=>{
+  const viewer=new PrivateRevisionViewer();viewer.begin(revisionDetail);viewer.change("items.0.body","PRIVATE unsaved text");
+  let resolve;viewer.response=new Promise(done=>{resolve=done;});const save=viewer.save(revisionDetail);
+  viewer.retire();resolve({revision:{artifactId:"some-original-scope-artifact",approval:"unapproved"}});await save;
+  assert.deepEqual(viewer.state,{response:"",fields:[],issues:[],key:"",busy:false});
+  assert.deepEqual(viewer.messages,[]);assert.equal(viewer.refreshes,0);assert.equal(visibleText(viewer.render(revisionDetail)),"");
+});
+
+test("successful private revision clears the editor and refreshes the ordinary document without modifying the rejected detail",async()=>{
+  const viewer=new PrivateRevisionViewer(),original=structuredClone(revisionDetail);viewer.begin(revisionDetail);
+  viewer.response={revision:{artifactId:"new-unapproved-artifact",approval:"unapproved"}};await viewer.save(revisionDetail);
+  assert.equal(viewer.requests.length,1);assert.deepEqual(viewer.requests[0][2].edits,[],"explicit reuse is still a new validated human draft");
+  assert.equal(viewer.refreshes,1);assert.match(viewer.messages[0],/original failure and charges are unchanged/u);
+  assert.deepEqual(viewer.state,{response:"",fields:[],issues:[],key:"",busy:false});assert.deepEqual(revisionDetail,original);
 });
