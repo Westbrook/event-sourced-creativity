@@ -1343,9 +1343,24 @@ html:not([data-document-focus]) .application-creative[data-nav-posture="compact"
     overflow-wrap: anywhere;
   }
 
+  /* Keep a usable pane when the native rail and complete header need rows.
+   * Native focus can scroll this ancestor as well as the existing pane. */
   .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main {
     grid-column: 1;
     grid-row: 2;
+    grid-template-rows: auto auto minmax(16rem, 1fr);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main > .studio-header-stack {
+    position: static;
+    top: auto;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]):has(> .composer-dock) > .studio-main {
+    scroll-padding-block-end: calc(7rem + var(--forma-keyboard-offset));
   }
 
   .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main > .studio-header-stack > .page-header--document > .page-header-copy {
