@@ -799,6 +799,15 @@ html[data-document-focus] .studio-subpage-body {
   inset-inline-end: 1rem;
 }
 
+/* Reserve the native Close target and focus clearance without shortening titles. */
+.collection-dialog > .collection-form > h2,
+.project-settings-dialog > .project-settings-form > h2 {
+  min-inline-size: 0;
+  padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .context-set-picker-panel > header {
   padding-right: 0;
   padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
@@ -1034,6 +1043,88 @@ html[data-document-focus] .studio-subpage-body {
   flex: 0 0 var(--forma-hit-target);
 }
 
+/* Match the ordinary topbar to Shell's measured compact posture. Focused
+ * Document retains its separate actor and locale policy below. */
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar {
+  gap: .375rem;
+  padding-inline-start: max(.5rem, var(--forma-safe-inline-start));
+  padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .brand {
+  flex: 0 0 var(--forma-hit-target);
+  justify-content: center;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .brand > span:last-child,
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .top-actions > .button.secondary {
+  display: none;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .top-actions {
+  margin-inline-start: 0;
+  gap: .25rem;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .top-actions > .locale-picker-form {
+  flex: 0 0 auto;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher {
+  gap: .375rem;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher > select {
+  inline-size: max-content;
+  min-inline-size: var(--forma-hit-target);
+  max-inline-size: none;
+  flex: 0 0 auto;
+  padding-inline: .3rem;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .command-trigger.forma-global-search {
+  display: inline-flex;
+  inline-size: var(--forma-hit-target);
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  flex: 0 0 var(--forma-hit-target);
+  justify-content: center;
+  padding: 0;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .command-trigger.forma-global-search > .command-label,
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .command-trigger.forma-global-search > kbd {
+  display: none;
+}
+
+/* The existing viewport policy also makes Search compact in rail posture.
+ * Reserve the native language name and picker icon instead of letting the
+ * capped SELECT paint into the adjacent Search button. */
+@media (max-width: 1050px) {
+  html:not([data-document-focus]) .application-creative > .topbar > .top-actions > .locale-picker-form {
+    flex: 0 0 auto;
+  }
+
+  html:not([data-document-focus]) .application-creative > .topbar > .top-actions .locale-switcher > select {
+    inline-size: max-content;
+    min-inline-size: var(--forma-hit-target);
+    max-inline-size: none;
+    flex: 0 0 auto;
+  }
+}
+
 .application-task-navigation[data-primary-navigation="true"] .ui-audience-navigation a {
   position: relative;
   gap: .5rem;
@@ -1201,6 +1292,65 @@ html[data-document-focus] .studio-subpage-body {
 .application-creative[data-nav-posture="compact"] :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar > .rail-toolbar-context > .rail-project-switch:focus-visible,
 .application-creative[data-nav-posture="compact"] :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
   outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* The tall rail has the same bounded toolbar as the compact rail. */
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* A translated native-popover invoker owns a row in the short rail posture.
+ * The existing wide inline rail keeps its separate floating control policy. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail {
+    position: relative;
+    inset: auto;
+    grid-column: 1;
+    grid-row: 1;
+    inline-size: 100%;
+    width: 100%;
+    block-size: auto;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail > .project-rail {
+    inline-size: 100%;
+    width: 100%;
+    block-size: auto;
+    height: auto;
+    max-block-size: none;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail > .project-rail > .rail-toolbar {
+    height: auto;
+    min-block-size: var(--forma-hit-target);
+    flex-wrap: wrap;
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-row-inset-inline);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle {
+    flex: 0 1 auto;
+    inline-size: auto;
+    width: auto;
+    max-inline-size: 100%;
+    padding-inline: var(--forma-control-inset-inline);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main > .studio-header-stack > .page-header--document > .page-header-copy {
+    padding-inline-start: 0;
+  }
 }
 
 .project-rail .rail-content[popover] {
@@ -2655,7 +2805,9 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   }
 
   .application-creative > .topbar > .top-actions > .avatar:focus-visible,
-  .application-canvas > .topbar > .top-actions > .avatar:focus-visible {
+  .application-canvas > .topbar > .top-actions > .avatar:focus-visible,
+  .application-creative > .topbar > .top-actions > .forma-global-search:focus-visible,
+  .application-creative > .topbar > .top-actions .locale-switcher > select:focus-visible {
     outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
   }
 
@@ -4546,6 +4698,244 @@ forma-presentation-deck {
     overflow: visible;
     overflow-wrap: anywhere;
     white-space: normal;
+  }
+}
+
+/* Sessions and Memory reuse their viewport stacking policy at page width. */
+.sessions-page,
+.memory-page {
+  container: forma-intelligence-page / inline-size;
+}
+
+@container forma-intelligence-page (max-width: 1050px) {
+  .sessions-page > .session-grid,
+  .memory-page > .memory-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :is(.sessions-page > .session-grid, .memory-page > .memory-layout) > aside {
+    padding: 0;
+    border: 0;
+  }
+}
+
+/* The existing narrow Sessions reading layout follows its own page width,
+ * including when the page sits inside a narrow area of a wide window. */
+@container forma-intelligence-page (max-width: 760px) {
+  .sessions-page .brief-block {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .sessions-page .brief-actions {
+    grid-column: 2;
+  }
+
+  .sessions-page .brief-card > footer {
+    align-items: flex-start;
+    gap: 10px;
+    flex-direction: column-reverse;
+  }
+
+  .sessions-page .brief-empty {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .sessions-page .brief-empty .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .sessions-page .blank-document-form {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+
+/* Memory's existing narrow reading and authoring layouts follow page width.
+ * Preserve every current field, action and its existing owner. */
+@container forma-intelligence-page (max-width: 760px) {
+  .memory-page > .page-header--hero {
+    display: block;
+    margin-bottom: 25px;
+  }
+
+  .memory-page > .page-header--hero > .page-header-actions {
+    width: 100%;
+    margin-top: 18px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .memory-page > .page-header--hero > .page-header-actions > .button {
+    flex: 0 1 auto;
+    max-inline-size: 100%;
+  }
+
+  .memory-page .belief-list,
+  .memory-page .preference-author {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-page .condition-author {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .memory-page .condition-author > .condition-copy {
+    grid-column: 1 / -1;
+  }
+}
+
+@container forma-intelligence-page (max-width: 480px) {
+  .memory-page .condition-author {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Residual native controls use the same target floor as the shared A family.
+ * These selectors match current forms, not decorative badges or artboards. */
+.sessions-page .scout-gate > button,
+.sessions-page .blank-document-form input,
+:is(.collection-form, .project-settings-form) :is(input, select),
+.output-critique .taste-signal > button,
+.output-critique .taste-value > input {
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+.sessions-page .scout-gate > button {
+  min-inline-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+  padding-inline: var(--forma-control-inset-inline);
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  line-height: var(--forma-body-line-height, 1.6);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Native popover scrolling must retain the shared six-pixel focus outline. */
+.tree-menu[popover] {
+  padding: var(--forma-space-4, var(--space-4));
+  scroll-padding-block: var(--forma-focus-clearance);
+}
+
+/* Native form scrolling must reveal each focused control's paint. */
+.memory-page .belief-actions > .button,
+.sessions-page .blank-document-form > input,
+.sessions-page .blank-document-form > div > .button,
+.upload-rights-modal > .reference-upload-card > footer > .button,
+.output-critique > footer > .button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+/* Wrap peer actions before shrinking two independent labels into narrow
+ * columns. Native controls retain their own existing handlers and order. */
+.memory-page .belief-actions,
+.sessions-page .blank-document-form > div,
+.collection-form > footer,
+.project-settings-form > footer,
+.upload-rights-modal > .reference-upload-card > footer,
+.output-critique > footer {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-cluster-gap);
+}
+
+:is(.memory-page .belief-actions, .sessions-page .blank-document-form > div, .collection-form > footer, .project-settings-form > footer, .upload-rights-modal > .reference-upload-card > footer, .output-critique > footer) > .button {
+  flex: 0 1 auto;
+  max-inline-size: 100%;
+  align-self: stretch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Resume and Not now are native peers. Keep their row intrinsic within the
+ * brief grid so stretching peers does not stretch them to the summary height. */
+.sessions-page .brief-actions {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex-wrap: wrap;
+  align-items: stretch;
+  align-self: center;
+  gap: var(--forma-cluster-gap);
+}
+
+.sessions-page .brief-actions > .button {
+  flex: 0 1 auto;
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  min-inline-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+  align-self: stretch;
+  padding-block: var(--forma-space-2, var(--space-2));
+  padding-inline: var(--forma-control-inset-inline);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Settings cards can be narrow inside a wide viewport. Reuse Library's
+ * existing copy/action row policy, including nested current member rows. */
+.workspace-settings-card > .workspace-settings-list > li,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li {
+  flex-wrap: wrap;
+}
+
+.workspace-settings-card > .workspace-settings-list > li > div,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li > div {
+  flex: 1 1 min(100%, 16rem);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-settings-card > .workspace-settings-list > li > .button,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li > .button {
+  flex: 0 1 auto;
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+.workspace-settings-project-list > li > header > .button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+/* Equalize actual same-line button peers. A member's sole Revoke does not
+ * become as tall as the adjacent role and permission-control column. */
+.workspace-settings-card > .workspace-settings-list > li:has(> .button ~ .button),
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li:has(> .button ~ .button) {
+  align-items: stretch;
+}
+
+.workspace-settings-card > .workspace-settings-list > li:has(> .button ~ .button) > .button,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li:has(> .button ~ .button) > .button {
+  align-self: stretch;
+}
+
+/* These E6 native controls keep the existing coarse target floor when
+ * natural wrapping leaves their labels short enough for a single line. */
+@media (pointer: coarse) {
+  .memory-page .belief-actions > .button,
+  .sessions-page .brief-actions > .button,
+  .sessions-page .blank-document-form > div > .button,
+  .sessions-page .blank-document-form input,
+  .sessions-page .scout-gate > button,
+  .tree-menu[popover] > button,
+  :is(.collection-form, .project-settings-form) :is(input, select),
+  .collection-form > footer > .button,
+  .project-settings-form > footer > .button,
+  .upload-rights-modal > .reference-upload-card > footer > .button,
+  .output-critique .taste-signal > button,
+  .output-critique .taste-value > input,
+  .output-critique > footer > .button,
+  .workspace-settings-card > .workspace-settings-list > li > .button,
+  .workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li > .button,
+  .workspace-settings-project-list > li > header > .button {
+    min-height: var(--forma-hit-target-coarse);
+    min-block-size: var(--forma-hit-target-coarse);
+    min-inline-size: var(--forma-hit-target-coarse);
   }
 }
 

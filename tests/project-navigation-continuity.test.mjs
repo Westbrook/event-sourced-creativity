@@ -14,6 +14,8 @@ import { isOutputFixtureReadOnlyResume } from "./helpers/output-reachability-fix
 import { commandDiscoveryCopy } from "../src/components/design-system/locales/command-discovery-messages.ts";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition } from "../src/model/document-artifacts.ts";
 
+const PREPARATION_FORMAT_CHOICES = ["image", "short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"];
+
 test("unavailable task href fallback preserves exact ordered values and never overrides explicit destinations or selections", () => {
   const values = ["", " unknown\u00a0", "known", "known"], source = new URL("/deliver", "https://fixture.invalid");
   for (const value of values) source.searchParams.append("document", value);
@@ -611,7 +613,7 @@ for(const locale of ["en","fr","ar","ja"]){
     assert.equal(h.store.route.get(),route);assert.equal(h.store.projection.get().documentId,h.ad);
     assert.equal(h.requests.some(row=>row.init.method==="POST"&&row.url.startsWith("/api/document-jobs")),false);
   });
-  test("command discovery / "+locale+" / generic preparation opens the existing seven-format chooser without dispatch",async t=>{
+  test("command discovery / "+locale+" / generic preparation opens the existing eight-format chooser without dispatch",async t=>{
     const f=await navigationPage(t,locale,{nativePreparation:true}),h=f.navigationHost,copy=commandDiscoveryCopy(locale),events=await h.history();
     await openDiscoverySearch(f,copy.prepare);
     await f.act(f.find("button",node=>node.attributes.role==="option"&&node.text.includes(copy.prepare)));
@@ -621,7 +623,8 @@ for(const locale of ["en","fr","ar","ja"]){
     assert.ok(dialog,"the actual Workspace chooser is mounted");
     const inDialog=node=>{for(let current=node;current;current=current.parent)if(current===dialog)return true;return false;};
     const kinds=tree.nodes.filter(node=>node.tag==="forma-ui-choice-card"&&node.component?.isConnected&&!node.hiddenBy&&inDialog(node));
-    assert.equal(kinds.length,7);
+    assert.deepEqual(kinds.map(node=>node.properties.value),PREPARATION_FORMAT_CHOICES,
+      "The chooser contains each of the eight exact format identities once");
     assert.deepEqual(await h.history(),events,"preparation does not author source or approve a job");
     assert.equal(h.requests.some(row=>row.init.method==="POST"&&row.url.startsWith("/api/document-jobs")),false);
   });
@@ -962,8 +965,9 @@ function cChatCommandArrived(x, beforeRoute) {
   assert.equal(dialogs.length, 1);
   const chooser = dialogs[0]; assert.ok(fObjectClassed(chooser, "next-format-dialog"));
   assert.equal(chooser.owner.tag, "forma-workspace"); assert.ok(chooser.owner.isConnected && chooser.owner.store === h.store);
-  assert.equal(tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
-    && !node.hiddenBy && c19NamingWithin(node, chooser)).length, 7);
+  assert.deepEqual(tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
+    && !node.hiddenBy && c19NamingWithin(node, chooser)).map(node => node.properties.value), PREPARATION_FORMAT_CHOICES,
+  "The arrived chooser contains each of the eight exact format identities once");
 }
 // E3 keeps Chat in the current native View disclosure. This test-file-only
 // prerequisite opens that control; callers still perform the original link gesture.
@@ -1351,7 +1355,7 @@ for (const locale of ["en", "ja"]) for (const collision of [false, true]) {
 }
 
 
-// Missing explicit-command interruption coverage. The original seven-format
+// Missing explicit-command interruption coverage. The eight-format
 // and four-locale chooser cases above remain the main healthy opening baseline.
 async function finishCommandPreparation(f, pending) {
   let done=false,value,error;
@@ -3785,7 +3789,8 @@ async function cBlankCommandDeparture(t, x, state, raw, blocked) {
     assert.equal(chooser.owner.tag, "forma-workspace"); assert.equal(chooser.owner.store, h.store);
     assert.ok(chooser.owner.isConnected && chooser.port.open);
     const inside = node => { for (let at = node; at; at = at.parent) if (at === chooser) return true; return false; };
-    assert.equal(tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected && !node.hiddenBy && inside(node)).length, 7);
+    assert.deepEqual(tree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected && !node.hiddenBy && inside(node)).map(node => node.properties.value), PREPARATION_FORMAT_CHOICES,
+      "The healthy blank-document command reaches each exact format identity once");
   }
 }
 
@@ -6876,8 +6881,9 @@ for (const nextVersion of [false, true]) for (const changed of [false, true]) te
         assert.equal(chooser.owner.tag, "forma-workspace"); assert.equal(chooser.owner.store, h.store);
         assert.ok(chooser.owner.isConnected && chooser.port?.open);
         const inside = node => { for (let at = node; at; at = at.parent) if (at === chooser) return true; return false; };
-        assert.equal(afterTree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
-          && !node.hiddenBy && inside(node)).length, 7, "The healthy command reaches its genuine seven-format chooser");
+        assert.deepEqual(afterTree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
+          && !node.hiddenBy && inside(node)).map(node => node.properties.value), PREPARATION_FORMAT_CHOICES,
+        "The healthy command reaches each of the eight exact format identities once");
       }
     } finally {
       await h.navigationResumeReads.settleOriginalRequests(); await f.settle();
@@ -7029,8 +7035,9 @@ for (const [state, locale] of [["pristine", "en"], ["raw", "ja"], ["cleared", "j
         assert.equal(chooser.owner.tag, "forma-workspace"); assert.equal(chooser.owner.store, h.store);
         assert.ok(chooser.owner.isConnected && chooser.port?.open);
         const inside = node => { for (let at = node; at; at = at.parent) if (at === chooser) return true; return false; };
-        assert.equal(afterTree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
-          && !node.hiddenBy && inside(node)).length, 7, "The healthy command arrives at all seven actual format choices");
+        assert.deepEqual(afterTree.nodes.filter(node => node.tag === "forma-ui-choice-card" && node.component?.isConnected
+          && !node.hiddenBy && inside(node)).map(node => node.properties.value), PREPARATION_FORMAT_CHOICES,
+        "The healthy command arrives at each of the eight exact format identities once");
       }
     } finally {
       await h.navigationResumeReads.settleOriginalRequests(); await f.settle();

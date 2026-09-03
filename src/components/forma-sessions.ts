@@ -213,8 +213,22 @@ export class FormaSessions extends FormaElement {
     const focus = captureOutputNavigationFocus(this.ownerDocument);
     this.#blankDraft = draft; this.#blankName = "Untitled study"; const revision = ++this.#blankRevision; this.requestUpdate();
     void this.updateComplete.then(() => {
-      if (current() && focus.current() && this.#blankDraft === draft && this.#blankRevision === revision && this.#blankName !== null)
-        this.querySelector<HTMLInputElement>(".blank-document-form input")?.select();
+      const selectionCurrent = () => current() && focus.current() && this.#blankDraft === draft
+        && this.#blankRevision === revision && this.#blankName !== null;
+      if (!selectionCurrent()) return;
+      const input = this.querySelector<HTMLInputElement>(".blank-document-form input");
+      if (!input) return;
+      const inputCurrent = () => selectionCurrent() && input.isConnected
+        && this.querySelector<HTMLInputElement>(".blank-document-form input") === input;
+      focus.run(input, () => {
+        if (!inputCurrent()) return false;
+        input.focus();
+        if (!inputCurrent() || this.ownerDocument.activeElement !== input) return false;
+        input.select();
+        if (!inputCurrent() || this.ownerDocument.activeElement !== input) return false;
+        input.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+        return inputCurrent() && this.ownerDocument.activeElement === input;
+      });
     }).finally(() => focus.dispose());
   }
 
