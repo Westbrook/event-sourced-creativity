@@ -7,6 +7,7 @@
  * component-specific rules are retired incrementally.
  */
 
+/* forma-public:start globals */
 ::selection {
   color: var(--on-accent);
   background: var(--orange);
@@ -41,6 +42,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
   outline: 3px solid color-mix(in srgb, var(--orange) 78%, var(--panel));
   outline-offset: 3px;
 }
+/* forma-public:end globals */
 
 .eyebrow {
   margin-bottom: .35rem;
@@ -52,6 +54,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
 
 /* Controls */
 
+/* forma-public:start buttons */
 .button {
   min-height: 2.75rem;
   min-inline-size: var(--forma-control-min-size, 2.75rem);
@@ -66,6 +69,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
 }
 
 .button.compact { min-height: 2.75rem; }
+/* forma-public:end buttons */
 
 /* Local Platform form peers wrap and share a growing row height. */
 .platform-form-actions {
@@ -84,6 +88,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
   overflow-wrap: anywhere;
 }
 
+/* forma-public:start button-variants */
 .button.primary {
   color: var(--on-strong);
   background: var(--ink);
@@ -113,6 +118,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
   color: light-dark(#fff, #250806);
   background: var(--danger);
 }
+/* forma-public:end button-variants */
 
 .text-button,
 .asset-card-actions button,
@@ -131,6 +137,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
   border-radius: 6px;
 }
 
+/* forma-public:start fields */
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), textarea, select) {
   min-height: 2.75rem;
   padding: var(--forma-space-2, var(--space-2)) var(--forma-control-inset-inline, var(--forma-space-3, var(--space-3)));
@@ -147,6 +154,7 @@ h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
   outline: 3px solid var(--orange-soft);
   outline-offset: 0;
 }
+/* forma-public:end fields */
 
 @supports (appearance: base-select) and selector(::picker(select)) {
   :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"]) {
@@ -982,6 +990,7 @@ forma-project-rail {
 }
 .output-next-step { max-width: 48rem; margin: .55rem 0 0; color: var(--muted); font-size: var(--type-caption); line-height: 1.45; }
 
+/* forma-public:start motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
@@ -990,6 +999,7 @@ forma-project-rail {
     animation-iteration-count: 1 !important;
   }
 }
+/* forma-public:end motion */
 
 /* Library: artwork and reusable context before system machinery */
 
@@ -3043,6 +3053,7 @@ forma-replay-app-runner { display: block; min-width: 0; }
 .area-navigation--administrative a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
 .area-navigation--administrative a.active { color: var(--on-accent); background: var(--orange); }
 
+/* forma-public:start input-colors */
 :where(
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
   textarea,
@@ -3054,6 +3065,7 @@ forma-replay-app-runner { display: block; min-width: 0; }
 }
 
 :where(input, textarea)::placeholder { color: var(--muted); opacity: .82; }
+/* forma-public:end input-colors */
 
 :is(
   .command-trigger,
@@ -3563,6 +3575,7 @@ forma-shell,
 .studio-subpage-body,
 .shared-view { width: 100%; }
 
+/* forma-public:start reflow */
 :where(fieldset, form, label, input, textarea, select, table, pre, code) { min-width: 0; max-width: 100%; }
 :where(h1, h2, h3, h4, p, dd, code, pre, small, strong) { overflow-wrap: anywhere; }
 pre { white-space: pre-wrap; }
@@ -3571,6 +3584,7 @@ img, video, canvas { max-width: 100%; }
 .button,
 .text-button { max-width: 100%; overflow-wrap: anywhere; }
 
+/* forma-public:end reflow */
 .topbar { max-width: 100%; }
 .brand { flex: none; }
 .global-nav {
@@ -4332,6 +4346,7 @@ dialog.command-dialog .command-row > small { flex: 1 1 24ch; }
 }
 
 /* Shared, store-independent interface foundations and living component lab. */
+/* forma-public:start primitives */
 forma-ui-button,forma-ui-badge,forma-ui-field,forma-ui-metric,forma-ui-empty-state,forma-artifact-summary { display: block; min-width: 0; }
 forma-ui-button .button { max-width: 100%; }
 .ui-badge { display: inline-flex; min-height: 1.75rem; align-items: center; padding: .25rem .625rem; color: var(--forma-color-text-muted,var(--muted)); background: var(--forma-color-surface-subtle,var(--panel-2)); border-radius: var(--forma-radius-small,var(--radius-small)); font-size: var(--forma-font-size-supporting,var(--type-small)); font-weight: 600; }
@@ -4344,6 +4359,7 @@ forma-ui-button .button { max-width: 100%; }
 .ui-field > small { color: var(--forma-color-text-muted,var(--muted)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
 .ui-field > .ui-field-error { color: var(--forma-color-danger-text,var(--danger)); }
 .ui-field--invalid > :is(input,textarea,select) { border-color: var(--forma-color-danger,var(--danger)); }
+/* forma-public:end primitives */
 .ui-metric { display: grid; gap: .4rem; margin: 0; color: var(--forma-color-text,var(--ink)); }
 .ui-metric dt { color: var(--forma-color-text-muted,var(--muted)); font-size: var(--type-small); }
 .ui-metric dd { display: grid; gap: var(--forma-space-2,var(--space-2)); margin: 0; font-size: clamp(1.6rem,3.5vw,2.6rem); font-weight: 650; letter-spacing: var(--forma-script-letter-spacing,-.055em); line-height: var(--forma-script-heading-line-height,1); }
@@ -4445,6 +4461,7 @@ forma-ui-button .button { max-width: 100%; }
   .role-evidence > ol > li { align-items: start; flex-direction: column; }
 }
 
+/* forma-public:start forced-colors */
 @media (forced-colors: active) {
   .button,.ui-badge,.ui-field input,.design-swatch,.application-switcher a,.ui-workspace-switcher-trigger,.segmented button { border: 1px solid CanvasText; }
   :focus-visible { outline: 3px solid Highlight; }
@@ -4452,6 +4469,7 @@ forma-ui-button .button { max-width: 100%; }
   .ui-audience-navigation a { color: CanvasText; border-block-end-color: transparent; }
   .ui-audience-navigation a[aria-current="page"] { color: CanvasText; background: Canvas; border-block-end-color: Highlight; forced-color-adjust: none; }
 }
+/* forma-public:end forced-colors */
 
 @media (prefers-reduced-transparency: reduce) {
   .topbar,.document-bar,.studio-mode-nav { background: var(--panel); backdrop-filter: none; }
@@ -4578,10 +4596,12 @@ forma-ui-button .button { max-width: 100%; }
 .context-provenance .compile-bridge{margin-top:var(--space-3)}
 .canvas-render-guidance{margin:0 0 var(--space-5)}
 
+/* forma-public:start contrast */
 @media (prefers-contrast: more) {
   :root { --muted: light-dark(#464641,#d2d2cb); --line: light-dark(#73736c,#909089); --line-strong: light-dark(#565650,#aaa9a2); }
   .button,.searchbox,:where(input,textarea,select) { border-color: var(--line-strong); }
 }
+/* forma-public:end contrast */
 
 /* Composable, store-independent component families share inherited theme tokens.
  * Shadow-backed composition elements consume the same tokens in one adopted sheet. */
@@ -4613,6 +4633,7 @@ forma-ui-theme[density="spacious"] { --forma-space-3: 1rem; --forma-space-4: 1.3
 forma-ui-theme[radius="soft"] { --forma-radius-small: .65rem; --forma-radius-medium: 1rem; }
 forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-medium: .25rem; }
 
+/* forma-public:start control-focus */
 :where(forma-ui-button,forma-ui-icon-button,forma-ui-choice-card,forma-ui-chip,forma-ui-segmented-control,
   forma-ui-tabs,forma-ui-pagination,forma-ui-toolbar,forma-ui-disclosure,forma-ui-workspace-switcher,
   forma-ui-popover,forma-ui-dialog,forma-ui-copy-button,forma-ui-card,forma-ui-list-item)
@@ -4632,6 +4653,7 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
   outline: var(--forma-focus-ring-width,.1875rem) solid var(--forma-focus-ring-color,var(--forma-color-accent,var(--accent)));
   outline-offset: .1875rem;
 }
+/* forma-public:end control-focus */
 :where(forma-ui-card,forma-ui-page-header,forma-ui-list-item,forma-ui-notice,forma-ui-disclosure)
   > :not([slot]) a,
 :where(forma-ui-card,forma-ui-page-header,forma-ui-list-item,forma-ui-notice,forma-ui-disclosure)
@@ -4641,8 +4663,10 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
   text-underline-offset: .2em;
 }
 
+/* forma-public:start icons */
 .forma-icon { display: inline-grid; inline-size: var(--forma-icon-size,1.25rem); block-size: var(--forma-icon-size,1.25rem); flex: none; place-items: center; line-height: 1; vertical-align: middle; }
 .forma-icon > svg { display: block; inline-size: 100%; block-size: 100%; }
+/* forma-public:end icons */
 .ui-icon { display: inline-grid; inline-size: var(--forma-icon-size,1.25rem); block-size: var(--forma-icon-size,1.25rem); place-items: center; line-height: 1; }
 .ui-icon--small { --forma-icon-size: 1rem; }
 .ui-icon--medium { --forma-icon-size: 1.25rem; }
@@ -4725,8 +4749,10 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-status--warning { color: var(--forma-color-warning-text,var(--warning)); }
 .ui-status--danger { color: var(--forma-color-danger-text,var(--danger)); }
 .ui-spinner { display: inline-grid; min-inline-size: 2rem; min-block-size: 2rem; place-items: center; }
+/* forma-public:start spinner */
 .ui-spinner-mark { inline-size: 1rem; block-size: 1rem; border: .1875rem solid color-mix(in srgb,var(--forma-color-accent,var(--accent)) 24%,transparent); border-top-color: var(--forma-color-accent,var(--accent)); border-radius: 50%; animation: forma-ui-spin 900ms linear infinite; }
 @keyframes forma-ui-spin { to { rotate: 1turn; } }
+/* forma-public:end spinner */
 .ui-progress { display: grid; gap: var(--forma-space-2,var(--space-2)); }
 .ui-progress > span { display: flex; justify-content: space-between; gap: var(--forma-space-3,var(--space-3)); font-size: var(--forma-font-size-supporting,var(--type-small)); font-weight: 600; }
 .ui-progress progress { inline-size: 100%; block-size: .625rem; background-color: var(--forma-color-surface-subtle,var(--panel-2)); accent-color: var(--forma-color-accent,var(--accent)); }
@@ -4741,7 +4767,9 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-skeleton--rounded > span { border-radius: 999px; }
 
 .ui-search { display: grid; min-inline-size: 0; gap: var(--forma-space-2,var(--space-2)); }
+/* forma-public:start field-label */
 .ui-search > label,.ui-field > span,.ui-radio-group > legend { color: var(--forma-color-text,var(--ink)); font-size: var(--forma-font-size-supporting,var(--type-small)); font-weight: 600; }
+/* forma-public:end field-label */
 .ui-search > small,.ui-choice small,.ui-radio-group > small { color: var(--forma-color-text-muted,var(--muted)); font-size: var(--forma-font-size-supporting,var(--type-small)); }
 .ui-search-control { display: grid; min-inline-size: 0; min-block-size: var(--forma-control-min-size,2.75rem); grid-template-columns: 2.75rem minmax(0,1fr) 2.75rem; align-items: center; background: var(--forma-color-surface,var(--panel)); border: 1px solid var(--forma-color-border-strong,var(--line-strong)); border-radius: var(--forma-radius-small,var(--radius-small)); }
 .ui-search-control > span { display: grid; place-items: center; color: var(--forma-color-text-muted,var(--muted)); }
@@ -4749,7 +4777,9 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-search-control > input::-webkit-search-cancel-button { display: none; }
 .ui-search-control > button { min-inline-size: var(--forma-control-min-size,2.75rem); min-block-size: var(--forma-control-min-size,2.75rem); }
 .ui-search-clear-empty { opacity: 0; }
+/* forma-public:start field-border */
 .ui-field > :is(input,textarea,select) { min-block-size: var(--forma-control-min-size,2.75rem); border-color: var(--forma-color-border-strong,var(--line-strong)); border-radius: var(--forma-radius-small,var(--radius-small)); }
+/* forma-public:end field-border */
 .ui-textarea > textarea { min-block-size: 6.5rem; resize: vertical; }
 @supports (field-sizing: content) { .ui-textarea > textarea { field-sizing: content; } }
 .ui-rich-text { display: grid; min-inline-size: 0; gap: var(--forma-space-2,var(--space-2)); }
@@ -4861,7 +4891,9 @@ forma-ui-surface { display: block; min-inline-size: 0; color: var(--forma-color-
 forma-ui-surface[bordered] { border: 1px solid var(--forma-color-border,var(--line)); }
 forma-ui-surface[padded] { padding: var(--forma-space-5,var(--space-5)); }
 .library-toolbar > forma-ui-search.searchbox { min-inline-size: min(18rem,100%); padding: 0; background: none; border: 0; }
+/* forma-public:start button-radius */
 forma-ui-button .button { border-radius: var(--forma-radius-small,var(--radius-small)); }
+/* forma-public:end button-radius */
 .tree-menu button { min-block-size: var(--forma-control-min-size,2.75rem); }
 .library-toolbar > forma-ui-search.searchbox > .ui-search > label { font-size: var(--forma-font-size-supporting,var(--type-small)); }
 .library-toolbar > forma-ui-segmented-control.segmented { align-self: end; padding: 0; background: none; border: 0; }
@@ -4872,6 +4904,7 @@ forma-ui-button .button { border-radius: var(--forma-radius-small,var(--radius-s
   .tree-more { opacity: 1; visibility: visible; }
   .context-block .reorder-buttons { opacity: 1; visibility: visible; }
 }
+/* forma-public:start spinner-accessibility */
 @media (prefers-reduced-motion: reduce) {
   .ui-spinner-mark { animation: none; }
 }
@@ -4882,3 +4915,4 @@ forma-ui-button .button { border-radius: var(--forma-radius-small,var(--radius-s
   .ui-chip.is-selected,.ui-segmented > button[aria-pressed="true"] { color: HighlightText; background: Highlight; forced-color-adjust: none; }
   .ui-spinner-mark { border-color: CanvasText; border-top-color: Highlight; }
 }
+/* forma-public:end spinner-accessibility */

@@ -1,6 +1,5 @@
 import { html, render } from "lit";
-import "../styles.css";
-import "../design-system.css";
+import "forma:public-controls.css";
 import "./style.css";
 import "./view.ts";
 import type { FormaExperienceSurface } from "./view.ts";
