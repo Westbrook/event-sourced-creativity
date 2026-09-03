@@ -122,7 +122,9 @@ export class ProjectRail extends FormaElement {
       if(trigger)positionNativePopover(trigger,panel);
       this.requestUpdate();
     }else if(this.#nativeOpen){
-      this.#nativeOpen=false;this.#presentation+=1;this.#stopPosition?.();this.#stopPosition=undefined;this.requestUpdate();
+      // Keep the focused subtree mounted until native dismissal restores focus.
+      // The current closed toggle retires it; scope withdrawal still closes immediately.
+      this.#presentation+=1;this.#stopPosition?.();this.#stopPosition=undefined;
     }
   }
 
