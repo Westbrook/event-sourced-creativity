@@ -116,6 +116,12 @@ forma-generation-actions,
   overflow-wrap: anywhere;
 }
 
+/* Ordinary project-header peers reuse Cluster's content-led action widths.
+ * Keep the separate Document workbench strips and all shared metrics intact. */
+forma-project-contents .studio-main > .page-header--document > .page-header-actions > .button {
+  flex: 0 1 auto;
+}
+
 .composer-dock {
   container: composer-dock / inline-size;
 }
