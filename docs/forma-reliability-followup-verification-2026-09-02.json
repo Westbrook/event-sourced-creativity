@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-09-03T00:54:17.186Z",
+  "recorded_at": "2026-09-03T01:01:01.672Z",
   "deployed": {
     "version": 179,
     "source_commit": "7eb914d5c5d8ad7d237db92566edcb3cf6e870bb",
@@ -9,7 +9,19 @@
   "local": {
     "ui_followup_commit": "f8b5df0",
     "base_commit": "7eb914d5c5d8ad7d237db92566edcb3cf6e870bb",
-    "comparison_commit": "f3aafce83325c2d1df7d74bc2ccc1e1ee1d65255"
+    "comparison_commit": "f3aafce83325c2d1df7d74bc2ccc1e1ee1d65255",
+    "settled_slides_classifier": {
+      "base_before_change": "49d1725",
+      "files": [
+        "src/model/workspace-intelligence.ts",
+        "tests/workspace-lifecycle-next-actions.test.mjs"
+      ],
+      "sha256": {
+        "src/model/workspace-intelligence.ts": "7f07fc2067f804140296635984d146ffe8d94f20d3a8de79c3689d820db1ba36",
+        "tests/workspace-lifecycle-next-actions.test.mjs": "29f36984a87af27a46ea0e7e353a596c52a5d24c4531e67d6de399a9f975c554"
+      },
+      "production_verified": false
+    }
   },
   "verification": {
     "ui_tests": {
@@ -37,7 +49,75 @@
       "pass": 18,
       "fail": 0
     },
-    "independent_paid_receipt_audit": "pass; all four own-usage identities, costs, durability order and caps checked"
+    "independent_paid_receipt_audit": "pass; all four own-usage identities, costs, durability order and caps checked",
+    "settled_slides_lifecycle_and_guidance_tests": {
+      "pass": 54,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "related_continuation_tests": {
+      "pass": 215,
+      "fail": 25,
+      "total": 240,
+      "baseline_pass": 209,
+      "baseline_fail": 25,
+      "baseline_total": 234,
+      "baseline": "Pre-classifier archive with same earlier UI followup; deployed-model bytes match 7eb914d. Identical failure names.",
+      "baseline_failure_names": [
+        "D closed recipe-only Projects draft blocks the current lifecycle action until deliberately cleared",
+        "F ordinary /activity reaches exact video settings in two native choices",
+        "F ordinary /activity retired route chooser cannot open old video settings",
+        "F ordinary /library reaches exact short_story settings in two native choices",
+        "F ordinary /library retired reader chooser cannot open old short_story settings",
+        "F ordinary /projects reaches exact image settings in two native choices",
+        "F ordinary /projects retired source chooser cannot open old image settings",
+        "actual source deadlines invalidate all three artifact fixture leases without changing their authorization",
+        "real artifact configuration opens unchanged A only, through its updated auto-open path",
+        "real artifact configuration rejects authority change at create-dialog update before any modal opens",
+        "real artifact configuration rejects authority change at initial child update before any modal opens",
+        "real artifact configuration rejects authority change at workspace reveal before any modal opens",
+        "real artifact configuration rejects caller change at create-dialog update before any modal opens",
+        "real artifact configuration rejects caller change at initial child update before any modal opens",
+        "real artifact configuration rejects caller change at workspace reveal before any modal opens",
+        "real artifact configuration rejects document change at create-dialog update before any modal opens",
+        "real artifact configuration rejects document change at initial child update before any modal opens",
+        "real artifact configuration rejects document change at workspace reveal before any modal opens",
+        "real artifact configuration rejects source change at create-dialog update before any modal opens",
+        "real artifact configuration rejects source change at initial child update before any modal opens",
+        "real artifact configuration rejects source change at workspace reveal before any modal opens",
+        "real artifact configuration remains usable after a same-document settings edit without authorizing work",
+        "real artifact updated closes and does not reopen an already-visible configuration after authority changes",
+        "real artifact updated closes and does not reopen an already-visible configuration after caller changes",
+        "real artifact updated closes and does not reopen an already-visible configuration after document changes"
+      ],
+      "pristine_deployed_baseline": {
+        "commit": "7eb914d5c5d8ad7d237db92566edcb3cf6e870bb",
+        "files": [
+          "tests/creative-next-action-consumers.test.mjs",
+          "tests/exact-next-action-host.test.mjs"
+        ],
+        "tests": 70,
+        "pass": 45,
+        "fail": 25,
+        "cancelled": 0,
+        "skipped": 0,
+        "identical_failure_names": 25,
+        "failure_summary": {
+          "creative-next-action-consumers.test.mjs": {
+            "count": 7,
+            "cause": "Fixture expects seven formats; deployed source offers model3d as eighth format."
+          },
+          "exact-next-action-host.test.mjs": {
+            "count": 18,
+            "cause": "Fixture host lacks _retireRequestReview used by deployed source."
+          }
+        }
+      }
+    },
+    "classifier_build": "pass",
+    "classifier_typecheck": "pass",
+    "classifier_changed_file_lint": "pass"
   },
   "live_inspection": {
     "fresh_tab_required": true,
@@ -54,7 +134,13 @@
       "current_issue_codes": [
         "duplicate_slide_copy"
       ],
-      "current_issue_slide": 5
+      "current_issue_slide": 5,
+      "next_action_label": {
+        "observed": "incorrectly described as unresolved accounting",
+        "root_cause": "submitted denotes provider contact without artifact completion, not unsettled spending",
+        "local_fix": "fully explicit settled Slides evidence classifies as inspect; submitted with missing/conflicting evidence remains unknown",
+        "deployed": false
+      }
     },
     "source": {
       "document_id": "bfd43f77-b57b-49a7-9291-705dec323ed5",
@@ -74,7 +160,6 @@
       "reserved_microusd": 2000000,
       "exposure_microusd": 11405443,
       "original_task_total_microusd": 30000000,
-      "task_remaining_microusd": 18594557,
       "read_only": true,
       "comparison_cost_separately_microusd": 425080,
       "measured_exposure_including_direct_comparison_microusd": 11830523,
@@ -115,5 +200,10 @@
       "reconciliation_invoked": false,
       "reservations_changed": false
     }
+  },
+  "release": {
+    "approval": "pending; earlier request covers f8b5df0/f3aafce and reports only; classifier needs explicit inclusion",
+    "production_changed": false,
+    "native_revision_approval": "pending"
   }
 }

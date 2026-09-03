@@ -41,6 +41,14 @@ The fresh projections report one known call, one unresolved call, `provider_subm
 
 The old export's missing private input is therefore an export/view limitation, not evidence that the original source was erased and later restored. Keep the older files unchanged as historical evidence; use the fresh authorized receipt and exact IDs when escalating. Do not infer completion, refund, zero usage, or permission to resend from improved visibility.
 
+## Settled rejection is not unresolved spending
+
+A fresh version 179 document view incorrectly places the fully settled rejected job `01a06354-3e5c-7f38-9046-ad08c98cab43` among unresolved-accounting next actions. The classifier interprets `provider_request_status: submitted` as a settlement verdict. The worker intentionally retains that status after provider contact when no artifact completion event exists, including a fully paid validation rejection.
+
+The local follow-up changes only next-action classification: a submitted document Slides job with explicit settled status, a safe nonnegative measured cost, a safe positive call count, zero unresolved calls, false uncertainty and a complete breakdown becomes ordinary inspection. Missing, redacted or conflicting evidence stays unknown. Explicit submission uncertainty and active/unknown holds remain unresolved. The original reservation amount may remain in a settled receipt as admission history; it is not evidence of an active hold. This does not rewrite receipts, release reservations, retry work or create recovery permission.
+
+Focused lifecycle/guidance verification passes 54/54, with build/typecheck/lint passing. A broader related run has 25 fixture failures; the same 25 reproduce in the two affected suites on a pristine `7eb914d` archive (seven stale format-count expectations and eighteen missing fixture `_retireRequestReview` methods). These are recorded separately, not represented as a green full suite. The classifier follow-up is not yet deployed and requires separate release inclusion approval.
+
 ## Safe inspection and escalation
 
 1. Under the original current actor/project authority, select the exact job in Activity. Review its private retained candidates and Inspect inputs. Preserve the original receipts and failures; do not select retry or new generation.

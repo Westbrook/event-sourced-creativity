@@ -76,6 +76,92 @@ for (const state of [
   assert.deepEqual(calls.map(row => row.kind), ["job"]); assert.equal(calls[0].target.jobId, "original");
 });
 
+// Accounting shape of the retained six-slide validation failure. "submitted"
+// records provider contact, and the admission amount survives final settlement.
+// This fixture contains no private source or provider response and settles nothing.
+const settledSlidesReceipt = () => ({ provider_request_status: "submitted", reservation_status: "settled",
+  settled_cost_microusd: 130952, actual_provider_call_count: 2, unresolved_provider_call_count: 0,
+  provider_submission_uncertain: false, provider_call_breakdown_complete: true, reservation_microusd: 1_000_000,
+  failure_stage: "application", failure_code: "provider_returned_incomplete_document_artifact" });
+const failedSlides = receipt => job("original-slides", { result: { artifactKind: "slides", generationReceipt: receipt } });
+
+test("fully settled submitted Slides failures become inspection and do not outrank saved output", async () => {
+  for (const cost of [130952, 0]) {
+    const original = failedSlides({ ...settledSlidesReceipt(), settled_cost_microusd: cost });
+    const current = facts({ jobs: [original], artifacts: [artifact()] }), before = structuredClone(current), calls = [];
+    const actions = creativeNextActions(freeze(current)), action = actions.find(row => row.target.kind === "job");
+    assert.equal(creativeOriginalJobContinuation(original), "inspect");
+    assert.equal(actions[0].target.artifactId, "artifact");
+    assert.equal(action.id, "inspect-job"); assert.equal(action.target.continuation, "inspect");
+    assert.doesNotMatch(action.reason, /unresolved/iu);
+    assert.equal(await followCreativeNextTarget(action.target, () => current, ports(calls)), true);
+    assert.deepEqual(calls.map(row => row.kind), ["job"]); assert.equal(calls[0].target.jobId, "original-slides");
+    assert.deepEqual(current, before, "classification does not mutate the failure, original admission or charges");
+  }
+});
+
+test("submitted Slides failures need every explicit settlement field, including unredacted cost and call counts", () => {
+  const required = ["reservation_status", "settled_cost_microusd", "actual_provider_call_count",
+    "unresolved_provider_call_count", "provider_submission_uncertain", "provider_call_breakdown_complete"];
+  for (const key of required) {
+    for (const redaction of [undefined, null, "[redacted]"]) {
+      const receipt = settledSlidesReceipt();
+      if (redaction === undefined) delete receipt[key]; else receipt[key] = redaction;
+      const current = facts({ jobs: [failedSlides(receipt)], artifacts: [artifact()] }), action = creativeNextActions(current)[0];
+      assert.equal(action.id, "check-original-job", key + " must remain unresolved when missing or redacted");
+      assert.equal(action.target.continuation, "unknown"); assert.match(action.reason, /unresolved/iu);
+    }
+  }
+});
+
+test("conflicting Slides settlement values stay unresolved without numeric or boolean coercion", () => {
+  const conflicts = {
+    reservation_status: ["released", "executing", "active", "reserved", "retained", "unknown"],
+    settled_cost_microusd: [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY, "130952", false],
+    actual_provider_call_count: [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY, "2", true],
+    unresolved_provider_call_count: [1, -1, 0.5, Number.NaN, "0", false],
+    provider_submission_uncertain: [true, 0, "false"],
+    provider_call_breakdown_complete: [false, 1, "true"],
+  };
+  for (const [key, values] of Object.entries(conflicts)) for (const value of values) {
+    const original = failedSlides({ ...settledSlidesReceipt(), [key]: value });
+    assert.equal(creativeOriginalJobContinuation(original), "unknown", key + "=" + String(value));
+  }
+});
+
+test("submission uncertainty and active or unknown holds remain unconditional despite otherwise settled Slides evidence", () => {
+  assert.equal(creativeOriginalJobContinuation(failedSlides({ ...settledSlidesReceipt(), provider_request_status: "submission_unknown" })), "unknown");
+  for (const reservation_status of ["active", "executing", "reserved", "retained", "unknown"]) {
+    // Omit submitted so that the hold itself, not the submitted fallback, must win.
+    const receipt = { ...settledSlidesReceipt(), reservation_status }; delete receipt.provider_request_status;
+    assert.equal(creativeOriginalJobContinuation(failedSlides(receipt)), "unknown", reservation_status);
+  }
+});
+
+test("the submitted settlement exception applies only to document Slides, not other media or jobs", () => {
+  for (const artifactKind of [undefined, "image", "video", "audio", "storyboard", "short_story", "model3d"]) {
+    assert.equal(creativeOriginalJobContinuation(job("other-medium", { result: { artifactKind, generationReceipt: settledSlidesReceipt() } })), "unknown");
+  }
+  for (const kind of ["generate", "preview", "structure_adaptive"]) {
+    assert.equal(creativeOriginalJobContinuation({ ...failedSlides(settledSlidesReceipt()), kind }), "unknown");
+  }
+});
+
+test("a captured unknown Slides target is invalidated after verified settlement and replaced by inspection only", async () => {
+  const unsettled = failedSlides({ ...settledSlidesReceipt(), reservation_status: "executing", unresolved_provider_call_count: 1,
+    provider_submission_uncertain: true, provider_call_breakdown_complete: false });
+  let current = facts({ jobs: [unsettled], artifacts: [artifact()] });
+  const captured = creativeNextActions(current)[0].target, calls = [];
+  assert.equal(captured.continuation, "unknown"); assert.equal(creativeNextTargetAvailable(captured, current), true);
+  current = { ...current, jobs: [failedSlides(settledSlidesReceipt())] };
+  assert.equal(creativeNextTargetAvailable(captured, current), false);
+  assert.equal(await followCreativeNextTarget(captured, () => current, ports(calls)), false); assert.deepEqual(calls, []);
+  const fresh = creativeNextActions(current).find(row => row.target.kind === "job").target;
+  assert.equal(fresh.continuation, "inspect"); assert.equal(creativeNextTargetAvailable(fresh, current), true);
+  assert.equal(await followCreativeNextTarget(fresh, () => current, ports(calls)), true);
+  assert.deepEqual(calls.map(row => row.kind), ["job"]); assert.equal(calls[0].target.jobId, captured.jobId);
+});
+
 for (const kind of ["slides", "video", "audio", "storyboard"]) test("nonretryable safety " + kind + " never becomes recovery", () => {
   const refused = job("refused", { result: { artifactKind: kind, recoverablePresentationCandidate: true,
     providerJobId: "accepted-original", storyboardProviderSubmission: "confirmed",

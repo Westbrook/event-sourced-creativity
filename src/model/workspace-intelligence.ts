@@ -133,10 +133,18 @@ const object = (value: unknown): Record<string, unknown> | null =>
 const originalJobUnresolved = (job: DocumentJob): boolean => {
   const receipt = object(job.result?.generationReceipt);
   const originalPlanning = job.kind === "structure_adaptive" && job.planningExecutionId === job.jobId;
+  // A rejected Slides response can remain "submitted" after all provider calls
+  // settle. Its original admission amount is not a current hold or retry permission.
+  const settledSubmittedSlides = job.kind === "render_document" && job.result?.artifactKind === "slides"
+    && receipt?.reservation_status === "settled"
+    && typeof receipt.settled_cost_microusd === "number" && Number.isSafeInteger(receipt.settled_cost_microusd) && receipt.settled_cost_microusd >= 0
+    && typeof receipt.actual_provider_call_count === "number" && Number.isSafeInteger(receipt.actual_provider_call_count) && receipt.actual_provider_call_count > 0
+    && receipt.unresolved_provider_call_count === 0 && receipt.provider_submission_uncertain === false
+    && receipt.provider_call_breakdown_complete === true;
   return originalPlanning && !documentJobHasNoBudgetHold(planningStopBudget(job.result))
     || receipt?.provider_request_status === "submission_unknown"
-    || receipt?.provider_request_status === "submitted"
-    || ["executing", "reserved", "retained", "unknown"].includes(String(receipt?.reservation_status ?? ""));
+    || receipt?.provider_request_status === "submitted" && !settledSubmittedSlides
+    || ["active", "executing", "reserved", "retained", "unknown"].includes(String(receipt?.reservation_status ?? ""));
 };
 
 /** Presentation classification of an existing job, not retry permission or a billing verdict. */
