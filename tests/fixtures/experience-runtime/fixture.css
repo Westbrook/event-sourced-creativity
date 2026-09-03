@@ -1,0 +1,5 @@
+body { margin: 0; min-inline-size: 320px; background: var(--forma-color-canvas); }
+.fixture-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; padding: 16px max(16px,calc((100vw - 1040px)/2)); border-block-end: 1px solid var(--forma-color-border); font-size: .8rem; }
+.fixture-toolbar label { display: grid; gap: 6px; min-inline-size: 0; flex: 1 1 130px; }
+.fixture-toolbar select { min-block-size: 44px; inline-size: 100%; min-inline-size: 0; font-size: 16px; color: var(--forma-color-text); background: var(--forma-color-surface); border: 1px solid var(--forma-color-border-strong); border-radius: 8px; padding: 8px; }
+.fixture-toolbar > span { flex: 1 1 180px; padding-block: 12px; color: var(--forma-color-text-muted); }

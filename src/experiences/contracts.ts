@@ -1,0 +1,90 @@
+export type OutputKind = "image" | "short_story" | "scene" | "slides" | "storyboard" | "video" | "audio" | "model3d";
+export type InteractionKind = "source" | "spatial" | "relationship" | "order" | "profile" | "treatment" | "proportion";
+export type ExperienceValue = string | Record<string, string | number> | Array<{ id: string; text: string }>;
+export type Issue = Readonly<{ code: string; path: string }>;
+export type Decision = Readonly<{ id: string; interactionRef: string; bindingSlot: string; labelKey: string }>;
+export type Definition = Readonly<{
+  schemaVersion: 1;
+  id: string;
+  revision: number;
+  outputContractRef: string;
+  bindingPackRef: string;
+  essentialInteractionRef: string;
+  layout: "stage-and-controls" | "stacked-stage";
+  decisions: readonly Decision[];
+  viewerRef: string;
+  mobileProfileRef: "touch.standard@1";
+  copySetRef: "functional.en@1";
+}>;
+export type Interaction = Readonly<{
+  id: string;
+  version: 1;
+  kind: InteractionKind;
+  renderer: string;
+  feedback: string;
+  options?: readonly Readonly<{ value: string; label: string }>[];
+  fields?: readonly Readonly<{ id: string; label: string }>[];
+  required: boolean;
+  maxLength: number;
+  minimum?: number;
+  maximum?: number;
+  defaultValue: ExperienceValue;
+}>;
+export type Binding = Readonly<{ slot: string; decisionId: string; interactionRef: string; role: "subject" | "direction" | "evidence" | "constraint"; target: OutputKind }>;
+export type OutputContract = Readonly<{
+  id: string;
+  version: 1;
+  output: OutputKind;
+  label: string;
+  result: string;
+  bindingPackRef: string;
+  essentialInteractionRef: string;
+  viewerRef: string;
+  bindings: readonly Binding[];
+}>;
+export type Catalog = Readonly<{
+  version: "forma-experience-fixture@1";
+  qualification: "fixture";
+  interactions: Readonly<Record<string, Interaction>>;
+  outputs: Readonly<Record<string, OutputContract>>;
+  copy: Readonly<Record<string, string>>;
+}>;
+export type CompiledRelease = Readonly<{
+  schemaVersion: 1;
+  qualification: "fixture";
+  definition: Definition;
+  output: OutputContract;
+  interactions: Readonly<Record<string, Interaction>>;
+  copy: Readonly<Record<string, string>>;
+  definitionHash: string;
+  releaseHash: string;
+  dependencies: Readonly<Record<string, string>>;
+}>;
+export type CompileResult = { ok: true; release: CompiledRelease } | { ok: false; issues: readonly Issue[] };
+export type DecisionValue = Readonly<{ value: ExperienceValue; provenance: "default" | "authored" }>;
+export type Draft = Readonly<{ id: string; revision: number; releaseHash: string; values: Readonly<Record<string, DecisionValue>> }>;
+export type BoundContext = Readonly<{
+  id: string;
+  bindingSlot: string;
+  role: Binding["role"];
+  scope: "document";
+  target: OutputKind;
+  value: ExperienceValue;
+  provenance: DecisionValue["provenance"];
+}>;
+export type FixtureReceipt = Readonly<{
+  mode: "fixture";
+  draftId: string;
+  revision: number;
+  releaseHash: string;
+  contextHash: string;
+  intentId: string;
+}>;
+export type FixtureResult = Readonly<{ mode: "fixture"; jobId: string; receipt: FixtureReceipt; output: OutputKind; context: readonly BoundContext[] }>;
+export type RuntimeState = Readonly<{
+  phase: "setup" | "preparing" | "review" | "submitting" | "complete" | "uncertain" | "blocked";
+  draft: Draft;
+  issues: readonly Issue[];
+  receipt?: FixtureReceipt;
+  result?: FixtureResult;
+}>;
