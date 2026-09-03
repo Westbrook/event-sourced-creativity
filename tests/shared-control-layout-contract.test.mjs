@@ -575,3 +575,56 @@ test("Sessions original blank form reuses wrapping peer controls and the shared 
     assert.notEqual(value.overflow, "hidden"); assert.notEqual(value["white-space"], "nowrap");
   }
 });
+
+// E6 follow-up after the original six-contract STOP/runtime/replay. This is a
+// source/declaration contract, not evidence of native layout or label fit.
+test("E6 Project Contents header reuses content-led native peers without replacing shared layout", async () => {
+  const pc = await read("src/components/forma-project-contents.ts");
+  const marker = '<div class="studio-main"><header class="page-header page-header--document">';
+  const start = pc.indexOf(marker), end = pc.indexOf("</header>", start);
+  assert.ok(start >= 0 && end > start, "Inspect the actual ordinary Project Contents header");
+  assert.equal(pc.indexOf(marker, start + marker.length), -1);
+  const header = pc.slice(start, end + "</header>".length);
+  assert.ok(header.includes('<div class="page-header-copy">') && header.includes('<div class="page-header-actions">'));
+  assert.equal((header.match(/<a\b/gu) ?? []).length, 2);
+  assert.equal((header.match(/<button\b/gu) ?? []).length, 1);
+  for (const binding of ["canAccessCanvas?", "canAuthor?", 'href="/canvas"',
+    'this.#followLink(event,"/canvas")', "libraryBlockEditorRoute()", "this.#followLink(event,libraryBlockEditorRoute())",
+    'class="button primary"', "this.#beginNew", "New reusable block", "New document"])
+    assert.ok(header.includes(binding), "Current authority, native labels and exact existing action remain: " + binding);
+  assert.ok(pc.includes('<section class="workspace-page studio-subpage">'));
+  assert.ok(!header.includes("data-workbench"), "Do not adopt the separate Document action-strip policy");
+
+  const clusterPeers = "forma-ui-cluster > :is(button,a,forma-ui-button,forma-ui-icon-button,forma-ui-link)";
+  assert.equal(unconditional(design, clusterPeers).flex, "0 1 auto", "Reuse the established intrinsic peer policy");
+  assert.equal(unconditional(design, ".page-header-actions")["flex-wrap"], "wrap");
+  assert.equal(unconditional(base, ".page-header-actions").gap, "8px");
+  const nativePeers = ":is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions) > :is(.button,.icon-button,forma-ui-button,forma-ui-icon-button,forma-ui-link)";
+  assert.equal(unconditional(design, nativePeers)["align-self"], "stretch");
+  const button = unconditional(design, ".button");
+  assert.equal(button["min-height"], "2.75rem");
+  assert.equal(button["min-inline-size"], "var(--forma-control-min-size, 2.75rem)");
+  assert.equal(button["font-size"], "var(--forma-font-size-supporting, var(--type-small))");
+  assert.equal(button["line-height"], "var(--forma-body-line-height, 1.6)");
+  assert.equal(button["max-width"], "100%");
+  assert.equal(button["overflow-wrap"], "anywhere");
+  assert.equal(unconditional(design, ".page-header--document").padding, "1.15rem var(--page-gutter)");
+  assert.equal(unconditional(responsive, ".studio-subpage-body:not(.studio-subpage-body--chat)")["padding-inline"], "var(--page-gutter)");
+
+  const narrow = rules(design).filter(rule => rule.selectors.includes(".page-header-actions .button")
+    && rule.parent.type === "atrule" && rule.parent.name === "media" && rule.parent.params === "(max-width: 520px)");
+  assert.equal(narrow.length, 1); assert.equal(declarations(narrow[0]).flex, "1",
+    "The existing global zero-basis rule stays intact for unrelated consumers");
+  const column = rules(base).filter(rule => rule.selectors.includes(".page-header--document")
+    && rule.parent.type === "atrule" && rule.parent.name === "media" && rule.parent.params === "(max-width: 940px)");
+  assert.equal(column.length, 1); assert.equal(declarations(column[0])["flex-direction"], "column");
+  const strip = '.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions';
+  assert.equal(unconditional(responsive, strip)["flex-wrap"], "nowrap");
+  assert.equal(unconditional(responsive, strip)["overflow-x"], "auto");
+
+  // Desired policy comes last, after the actual native host and existing
+  // healthy shared metrics/gutters/Document exception have been reached.
+  const selector = "forma-project-contents .studio-main > .page-header--document > .page-header-actions > .button";
+  assert.deepEqual(unconditional(responsive, selector), { flex: "0 1 auto" },
+    "One scoped basis correction; no new font, size, order, gutter, clipping or nowrap policy");
+});
