@@ -1,4 +1,5 @@
-import { test, expect, attachJSON, openForma } from "./fixtures.mjs";
+import { test, expect, attachJSON, captureViewport, openForma } from "./fixtures.mjs";
+import { measureOrdinaryCopy } from "./helpers/ordinary-copy-layout.mjs";
 import { verifyFocus, pressTo, tabTo } from "./helpers/keyboard-journey.mjs";
 import { measureModalLayout } from "./helpers/modal-layout.mjs";
 
@@ -128,6 +129,74 @@ test("E6 Project Contents header actions keep complete short labels in content-l
   const originalControls = await signatures();
   expect(originalControls.map(control => control.tag)).toEqual(["A", "A", "BUTTON"]);
 
+
+  // This extends the existing three native stages; no new journey or action.
+  const ordinaryExpected = {
+    en: { ask: "Ask Forma", heading: "Project contents", description: "See and manage the documents, canvases, and reusable blocks that inherit this project’s access and authored folders." },
+    fr: { ask: "Demander à Forma", heading: "Contenus du projet", description: "Consultez et gérez les documents, les canevas et les blocs réutilisables qui héritent des accès et des dossiers créés pour ce projet." },
+    ar: { ask: "اسأل Forma", heading: "محتويات المشروع", description: "اطّلع على المستندات ومساحات العمل والكتل القابلة لإعادة الاستخدام التي ترث أذونات الوصول إلى هذا المشروع ومجلداته المُنشأة، وأدِرها." },
+  }[locale.split("-")[0]];
+  const headingSelector = ".studio-main > .page-header--document > .page-header-copy > h1";
+  const descriptionSelector = ".studio-main > .page-header--document > .page-header-copy > p";
+  await expect(header).toHaveCount(1);
+  await expect(owner.locator(headingSelector)).toHaveCount(1);
+  await expect(owner.locator(descriptionSelector)).toHaveCount(1);
+  await expect(owner.locator(headingSelector)).toHaveJSProperty("textContent", ordinaryExpected.heading);
+  await expect(owner.locator(descriptionSelector)).toHaveJSProperty("textContent", ordinaryExpected.description);
+  const readCopyState = () => header.evaluate(element => {
+    const doc = element.ownerDocument, win = doc.defaultView;
+    const media = "(max-height: 37.5rem) and (orientation: landscape)";
+    const policySelector = ".page-header--document .page-header-copy > p";
+    const heading = [...element.querySelectorAll(":scope > .page-header-copy > h1")];
+    const description = [...element.querySelectorAll(":scope > .page-header-copy > p")];
+    const raw = nodes => nodes.map(node => ({ tag: node.tagName, text: node.textContent,
+      hidden: node.hasAttribute("hidden"), inert: node.hasAttribute("inert"), ariaHidden: node.getAttribute("aria-hidden") }));
+    const policyWitnesses = [], unreadableStylesheets = [];
+    const walk = (rules, mediaChain, source) => {
+      for (const rule of rules) {
+        const chain = rule.type === win.CSSRule.MEDIA_RULE ? [...mediaChain, rule.conditionText] : mediaChain;
+        if (rule.type === win.CSSRule.STYLE_RULE && chain.length === 1 && chain[0] === media
+          && rule.selectorText.split(",").map(value => value.trim()).includes(policySelector)
+          && rule.style.length === 1 && rule.style.getPropertyValue("display") === "none"
+          && rule.style.getPropertyPriority("display") === "") {
+          policyWitnesses.push({ source, media: chain[0], selector: rule.selectorText, declaration: rule.style.cssText });
+        }
+        if (rule.cssRules) walk(rule.cssRules, chain, source);
+      }
+    };
+    for (const sheet of doc.styleSheets) {
+      const source = sheet.href ?? sheet.ownerNode?.getAttribute("data-vite-dev-id") ?? "inline stylesheet";
+      try { walk(sheet.cssRules, [], source); } catch { unreadableStylesheets.push(source); }
+    }
+    const p = description.length === 1 ? description[0] : null;
+    const ownStyle = p ? win.getComputedStyle(p) : null;
+    const ancestors = [];
+    for (let node = p?.parentElement; node; node = node.parentElement) {
+      const style = win.getComputedStyle(node);
+      ancestors.push({ tag: node.tagName, className: node.getAttribute("class"), display: style.display,
+        visibility: style.visibility, opacity: style.opacity,
+        hidden: node.matches("[hidden],[inert],[aria-hidden='true']") });
+    }
+    const descriptionStyle = ownStyle ? { display: ownStyle.display, visibility: ownStyle.visibility,
+      opacity: ownStyle.opacity, color: ownStyle.color, fontFamily: ownStyle.fontFamily,
+      fontSize: ownStyle.fontSize, lineHeight: ownStyle.lineHeight, clientRects: p.getClientRects().length } : null;
+    const mediaMatches = win.matchMedia(media).matches;
+    const exactSuppression = Boolean(p && mediaMatches && policyWitnesses.length === 1
+      && ownStyle.display === "none" && ownStyle.visibility === "visible" && Number(ownStyle.opacity) === 1
+      && p.getClientRects().length === 0 && !p.matches("[hidden],[inert],[aria-hidden='true']")
+      && ancestors.every(item => item.display !== "none" && item.visibility === "visible"
+        && Number(item.opacity) === 1 && !item.hidden));
+    return { currentOwner: element.matches("forma-project-contents .studio-main > .page-header--document") && element.isConnected,
+      custody: { heading: raw(heading), description: raw(description) },
+      descriptionPolicy: { media, mediaMatches, policySelector, policyWitnesses, unreadableStylesheets,
+        descriptionStyle, ancestors, exactSuppression,
+        disposition: exactSuppression ? "UNOBSERVED: exact retained short-height display:none description policy; no copy clearance claimed"
+          : "INCLUDED IN STRICT COPY MEASUREMENT: unexpected hiding, clipping and opacity remain failures" } };
+  });
+  const originalCopy = await readCopyState();
+  await attachJSON(testInfo, "e6-pc-copy-before", originalCopy);
+  const copyMeasurements = [];
+
   const readHeader = () => header.evaluate(element => {
     const doc = element.ownerDocument, win = doc.defaultView;
     const actions = element.querySelector(":scope > .page-header-actions");
@@ -177,6 +246,37 @@ test("E6 Project Contents header actions keep complete short labels in content-l
     const metrics = await readHeader();
     await attachJSON(testInfo, stage + "-layout", metrics);
     measurements.push({ stage, metrics });
+    const launcher = page.locator(".application-creative > forma-creative-assistant > forma-assistant-panel > button.forma-assistant-launcher");
+    await expect(launcher).toHaveCount(1);
+    await expect(launcher).toHaveAccessibleName(ordinaryExpected.ask);
+    await expect(launcher).toBeEnabled();
+    let nativeHandle, launcherHandle, primaryError;
+    const samples = [], states = [];
+    try {
+      nativeHandle = await native.elementHandle();
+      launcherHandle = await launcher.elementHandle();
+      for (let sample = 0; sample < 2; sample += 1) {
+        if (sample) await page.waitForTimeout(250); // Existing bounded observation interval, not a placement repair.
+        const state = await readCopyState();
+        states.push(state);
+        const selectors = state.descriptionPolicy.exactSuppression ? [headingSelector] : [headingSelector, descriptionSelector];
+        const result = await owner.evaluate(measureOrdinaryCopy, { ownerSelector: "forma-project-contents", selectors,
+          primarySelector: headingSelector, focus: nativeHandle, launcher: launcherHandle });
+        samples.push(result);
+        await attachJSON(testInfo, stage + "-copy-state-" + sample, state);
+        await attachJSON(testInfo, stage + "-copy-ranges-" + sample, result);
+        await captureViewport(page, testInfo, stage + "-copy-ranges-" + sample);
+      }
+      await verifyFocus(page, native, testInfo, stage + "-copy-native-after");
+      copyMeasurements.push({ stage, samples, states });
+    } catch (error) { primaryError = error; }
+    const cleanupErrors = [];
+    for (const handle of [nativeHandle, launcherHandle]) {
+      try { await handle?.dispose(); } catch (error) { cleanupErrors.push(error); }
+    }
+    const errors = [...(primaryError ? [primaryError] : []), ...cleanupErrors];
+    if (errors.length > 1) throw new AggregateError(errors, "PC copy observation and native handle cleanup failed");
+    if (errors.length === 1) throw errors[0];
   }
   // Preserve native authority/custody before reporting the intended word-fit
   // failure. The existing original test owns creation entry/Close/Escape.
@@ -221,4 +321,29 @@ test("E6 Project Contents header actions keep complete short labels in content-l
   }
   await attachJSON(testInfo, "e6-pc-header-desired-layout", { violations });
   expect(violations).toEqual([]);
+  // The complete existing native/card/action/route/word-fit tails precede this new copy verdict.
+  const finalCopy = await readCopyState();
+  await attachJSON(testInfo, "e6-pc-copy-after", finalCopy);
+  expect(finalCopy.currentOwner).toBe(true);
+  expect(finalCopy.custody).toEqual(originalCopy.custody);
+  expect(finalCopy.descriptionPolicy).toEqual(originalCopy.descriptionPolicy);
+  for (const { stage, samples, states } of copyMeasurements) {
+    for (const state of states) {
+      expect(state.currentOwner, stage + ": original copy remains in the actual owner").toBe(true);
+      expect(state.custody, stage + ": complete raw heading and description custody").toEqual(originalCopy.custody);
+      expect(state.descriptionPolicy, stage + ": preserve the exact observed short-height description policy").toEqual(originalCopy.descriptionPolicy);
+      if (state.descriptionPolicy.exactSuppression) testInfo.annotations.push({ type: "PC ordinary-copy coverage",
+        description: stage + ": " + state.descriptionPolicy.disposition });
+    }
+    for (const result of samples) {
+      expect(result.issues, stage + ": owned, current and visible ordinary-copy prerequisites").toEqual([]);
+      expect(result.observedObstructions, stage + ": opaque Assistant cannot intercept visible text fragments").toEqual([]);
+      expect(result.unassessed, stage + ": unsupported clipping/paint cannot pass").toEqual([]);
+      expect(result.rawIntersections, stage + ": raw text/Assistant overlap cannot silently pass").toEqual([]);
+    }
+    const shape = result => ({ viewport: result.viewport, launcher: result.launcher.raw,
+      compact: result.launcher.dataset.compactLauncher ?? null, tight: result.launcher.dataset.tightLauncher ?? null,
+      copy: result.copy.map(item => ({ element: item.element, raw: item.raw, fragments: item.fragments.map(fragment => fragment.raw) })) });
+    expect(shape(samples[1]), stage + ": exact stable native geometry, without epsilon").toEqual(shape(samples[0]));
+  }
 });

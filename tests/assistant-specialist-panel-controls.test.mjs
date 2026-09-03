@@ -1415,7 +1415,13 @@ function e3StudioSlot(t, { rtl = false, coarse = false, short = false } = {}) {
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
   main.getAttribute = name => { assert.equal(name, "aria-busy"); return String(state.busy); };
   main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
+  // Ordinary-copy owners are a separate explicit port when a reserved-slot
+  // counterexample falls back to floating placement; native queries stay strict.
+  x.copyOwnerQueries = [];
   main.querySelectorAll = selector => {
+    if (["forma-workspace-settings", "forma-library", "forma-project-contents", "forma-workspace"].includes(selector)) {
+      x.copyOwnerQueries.push(selector); return [];
+    }
     assert.equal(selector, "forma-studio-mode-nav");
     return state.connected ? state.duplicate ? [host, otherHost] : [host] : [];
   };
@@ -1586,4 +1592,363 @@ test("E3 an unsupported rounded or unknown clipping corner releases the cell wit
     assert.deepEqual(observed.coordinates, [false, false, false]); assert.equal(observed.offset, false);
     assert.deepEqual(observed.queries, []); assert.deepEqual(observed.writes, []);
   }
+});
+
+
+// E6 uses the existing real Panel -> updated -> finite RAF placement fixture.
+// Only these copy-owner/CSSOM/Range ports are new. Native control queries and
+// every D411/D420/D428/Studio assertion above remain unchanged. Numbers marked
+// measured come from copy69-baseline-r1; these cases are not a DOM renderer,
+// complete-page reconstruction, native zoom, paint order or acceptance replay.
+const e6CopyFamilies = ["forma-workspace-settings", "forma-library", "forma-project-contents", "forma-workspace"];
+const e6SettingsCopySelectors = [
+  ".page-header-copy > :is(.eyebrow,h1,p)",
+  'section[aria-labelledby="workspace-invitations-heading"] > :is(h2,p)',
+  'section[aria-labelledby="workspace-organizations-heading"] > :is(h2,p)',
+  'section[aria-labelledby="workspace-projects-heading"] > :is(h2,p)',
+  'section[aria-labelledby="workspace-organizations-heading"] > form.workspace-settings-form > label:has(> input[name="name"])',
+];
+const e6HelpCopySelector = '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> textarea[name="originalText"]) > small:not(.output-requirement-error)';
+const e6DocumentCopyPrefix = '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form';
+const e6DocumentCopySelectors = [
+  e6DocumentCopyPrefix + ' > p.output-requirement-note:first-child',
+  e6DocumentCopyPrefix + ' > p.output-requirement-note:first-child + p:not([class])',
+  e6DocumentCopyPrefix + ' > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
+];
+const e6DocumentFieldSelector = ':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]';
+function e6CopyPlacement(t, { family = "forma-workspace-settings", viewport = { width: 320, height: 800 }, right = 310, top = 680, normalWidth = 137.1875 } = {}) {
+  const x = d411Placement(t, [], viewport), full = d411Rect(0, 0, viewport.width, viewport.height);
+  const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
+  const surface = x.ancestor(full, { parentElement: main, isConnected: true });
+  const selected = new Map(), familyQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
+  shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
+  shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
+  main.getAttribute = name => { assert.equal(name, "aria-busy"); return "false"; };
+  main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
+  main.querySelectorAll = selector => {
+    assert.ok(e6CopyFamilies.includes(selector), "only separately declared copy-owner families are queried");
+    familyQueries.push(selector); return selector === family ? [surface] : [];
+  };
+  surface.closest = selector => {
+    if (selector === "#main-content") return main;
+    assert.equal(selector, ".application-creative"); return shell;
+  };
+  surface.querySelectorAll = selector => {
+    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors] : e6SettingsCopySelectors).includes(selector),
+      "copy selection remains restricted to the actual declared owner family");
+    copyQueries.push(selector);
+    // Retain the old exact help query for a meaningful pre-runtime baseline;
+    // the new union selects that same original node, not a duplicate fixture.
+    return selector === e6DocumentCopySelectors[2]
+      ? [...(selected.get(e6HelpCopySelector) ?? []), ...(selected.get(selector) ?? [])] : selected.get(selector) ?? [];
+  };
+  x.f.panel.parentElement = { matches: selector => selector === "forma-creative-assistant",
+    closest: selector => { assert.equal(selector, ".application-creative"); return shell; } };
+  x.f.panel.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
+  const baseStyle = getComputedStyle;
+  globalThis.getComputedStyle = element => ({ ...baseStyle(element), display: element.display ?? "block",
+    clipPath: element.clipPath ?? "none", maskImage: element.maskImage ?? "none" });
+  const previousFilter = Object.getOwnPropertyDescriptor(globalThis, "NodeFilter");
+  Object.defineProperty(globalThis, "NodeFilter", { configurable: true, value: { SHOW_TEXT: 4 } });
+  t.after(() => { if (previousFilter) Object.defineProperty(globalThis, "NodeFilter", previousFilter); else delete globalThis.NodeFilter; });
+  x.f.document.createTreeWalker = (element, kind) => {
+    assert.equal(kind, 4); let index = 0;
+    return { nextNode: () => element.textNodes[index++] ?? null };
+  };
+  x.f.document.createRange = () => {
+    let current;
+    return { selectNodeContents(node) { current = node; rangeReads.push(node); },
+      getClientRects() { assert.ok(current); return current.fragments; }, detach() { detached.push(current); } };
+  };
+  x.copy = (selector, raw, fragments, properties = {}) => {
+    const element = x.control(raw, { tagName: "P", textContent: "Existing authored copy", isConnected: true, parentElement: surface,
+      closest(query) {
+        if (query === family) return surface;
+        assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
+          ":modal, :popover-open"].includes(query));
+        return query.startsWith("[hidden]") && this.hiddenAncestor ? {} : null;
+      }, ...properties });
+    element.getBoundingClientRect = () => { copyBoxReads.push(element); return raw; };
+    element.textNodes = [{ textContent: element.textContent, parentElement: element, fragments }];
+    selected.set(selector, [...(selected.get(selector) ?? []), element]); return element;
+  };
+  x.replaceOriginalHelpForTest = node => {
+    selected.set(e6HelpCopySelector, [node]);
+    selected.set(e6DocumentCopySelectors[2], (selected.get(e6DocumentCopySelectors[2]) ?? []).filter(item => item !== node));
+  };
+  x.launcher.getBoundingClientRect = () => {
+    const offset = Number.parseFloat(x.values.get("--forma-assistant-obstacle-offset") || "0");
+    const width = x.f.panel.dataset.compactLauncher === "true" ? 44 : normalWidth;
+    const box = d411Rect(right - width, top - offset, width, 44);
+    x.boxes.push({ ...box, offset, compact: x.f.panel.dataset.compactLauncher === "true" }); return box;
+  };
+  return Object.assign(x, { familyQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+}
+function e6MeasuredSettings(x) {
+  // Exact narrow320 Create body and two ordinary text fragments from
+  // copy-settings-02-ranges-0. Other page controls are not reconstructed here.
+  const focused = x.control(d411Rect(33, 585.84375, 144.15625, 44), { tagName: "BUTTON",
+    outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px" });
+  x.controls.push(focused); x.f.document.activeElement = focused;
+  const heading = d411Rect(33, 680.84375, 215.984375, 27);
+  const firstLine = d411Rect(33, 723.234375, 253.84375, 22);
+  const h2 = x.copy(e6SettingsCopySelectors[3], d411Rect(33, 683.84375, 254, 22.390625), [heading],
+    { tagName: "H2", textContent: "Projects shared with you" });
+  x.copy(e6SettingsCopySelectors[3], d411Rect(33, 722.234375, 254, 51.1875), [firstLine],
+    { textContent: "No projects have been shared with you." });
+  return { focused, h2, fragments: [heading, firstLine], ring: d411Rect(27, 579.84375, 156.15625, 56) };
+}
+test("E6 actual Settings fragments and current Create ring get a feasible finite lane without changing guidance", { concurrency: false }, t => {
+  const x = e6CopyPlacement(t), { focused, fragments, ring } = e6MeasuredSettings(x);
+  x.f.panel.draftForTest = "  Keep this unsent guidance.  ";
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages };
+  const box = x.run();
+  assert.equal(x.overlap(box, [...fragments, ring]).length, 0, "clear the measured ordinary text and native ring together");
+  assert.ok(box.top >= 8 && box.bottom <= 792); assert.ok(x.boxes.length <= 14);
+  assert.equal(x.f.document.activeElement, focused); assert.equal(x.f.panel.draftForTest, "  Keep this unsent guidance.  ");
+  assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages); assert.deepEqual(x.f.emitted, []);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
+  assert.equal(x.rangeReads.length, 2); assert.deepEqual(x.detached, x.rangeReads);
+});
+test("E6 ordinary-copy whitespace and pointer transparency do not substitute a parent box or erase text", { concurrency: false }, t => {
+  const x = e6CopyPlacement(t), raw = d411Rect(16, 680, 288, 40);
+  // Declared short text leaves whitespace under the launcher; a parent-box
+  // collector would unnecessarily move it. Then an explicit pointer-none text
+  // fragment enters that lane and must still count as paint.
+  const text = x.copy(e6SettingsCopySelectors[3], raw, [d411Rect(16, 684, 90, 24)]);
+  assert.equal(x.run().top, 680, "empty heading width is not a text obstacle");
+  text.pointerEvents = "none";
+  text.textNodes[0].fragments = [d411Rect(180, 684, 100, 24)];
+  const box = x.run();
+  assert.equal(x.overlap(box, text.textNodes[0].fragments).length, 0, "pointer-events:none does not erase visible ordinary text");
+  assert.equal(box.bottom, 676); assert.deepEqual(x.f.emitted, []);
+});
+test("E6 copy-only overlap cannot override current native hover refusal or become focus authority", { concurrency: false }, t => {
+  const x = e6CopyPlacement(t), { focused, h2, fragments } = e6MeasuredSettings(x);
+  x.hovered = true;
+  const box = x.run();
+  assert.ok(x.overlap(box, fragments).length > 0, "this explicit hovered copy collision remains unresolved");
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.familyQueries, []); assert.deepEqual(x.rangeReads, []);
+  assert.equal(x.f.document.activeElement, focused);
+  // Explicit synthetic nonnative-focus stress: selecting copy must not grant
+  // the exactly measured native-control authority used by hovered recovery.
+  x.f.document.activeElement = h2;
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.familyQueries, []);
+  assert.equal(x.f.document.activeElement, h2); assert.deepEqual(x.f.emitted, []);
+});
+test("E6 an impossible ordinary-copy lane stays finite and visibly unresolved", { concurrency: false }, t => {
+  const x = e6CopyPlacement(t), full = d411Rect(0, 0, 320, 800);
+  x.copy(e6SettingsCopySelectors[3], full, [full]);
+  const box = x.run();
+  assert.ok(box.top >= 8 && box.bottom <= 792); assert.ok(x.boxes.length <= 14);
+  assert.equal(x.overlap(box, [full]).length, 1, "bounded fallback is not a false clearance claim");
+  assert.deepEqual(x.f.emitted, []); assert.equal(x.f.document.activeElement, null);
+});
+function e6DocumentHelpPlacement(t, foreign = false) {
+  const x = e6CopyPlacement(t, { family: "forma-workspace", viewport: { width: 419, height: 398 }, right: 409, top: 346.5 });
+  class NativeLabel {}
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "HTMLLabelElement");
+  Object.defineProperty(globalThis, "HTMLLabelElement", { configurable: true, value: NativeLabel });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, "HTMLLabelElement", previous); else delete globalThis.HTMLLabelElement; });
+  // Field body/outline and visible help extent are from actual03-original-help
+  // at200%. The one-fragment Range port is explicitly declared inside that
+  // measured extent; it is not claimed as a captured glyph/line rectangle.
+  const field = x.control(d411Rect(101, 200.984375, 281.5, 138), { id: "original-field", isConnected: true,
+    outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
+    getAttribute(name) { assert.equal(name, "aria-describedby"); return "original-field-help"; } });
+  const label = Object.assign(new NativeLabel(), x.ancestor(d411Rect(101, 176, 281.5, 222), { parentElement: x.surface }),
+    { control: foreign ? {} : field, htmlFor: field.id,
+      querySelector(selector) {
+        assert.ok([':scope > textarea[name="originalText"]', e6DocumentFieldSelector].includes(selector)); return field;
+      } });
+  field.parentElement = label; x.controls.push(field); x.f.document.activeElement = field;
+  const fragment = d411Rect(101, 346.984375, 281.5, 50.515625);
+  const help = x.copy(e6HelpCopySelector, fragment, [fragment], { tagName: "SMALL", id: "original-field-help", parentElement: label });
+  return { x, NativeLabel, field, label, fragment, help };
+}
+for (const foreign of [false, true]) test("E6 associated Document help keeps native field ownership / " + (foreign ? "foreign label refused" : "current label"), { concurrency: false }, t => {
+  const { x, field, label, fragment, help } = e6DocumentHelpPlacement(t, foreign);
+  const box = x.run();
+  assert.equal(x.f.document.activeElement, field); assert.equal(label.htmlFor, field.id); assert.equal(help.id, "original-field-help");
+  assert.equal(x.overlap(box, [fragment]).length, foreign ? 1 : 0,
+    foreign ? "do not borrow a foreign label's help" : "protect the associated visible help without transferring focus");
+  assert.equal(x.rangeReads.length + x.copyBoxReads.length, foreign ? 0 : 1); assert.deepEqual(x.detached, x.rangeReads);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.f.emitted, []); assert.ok(x.boxes.length <= 14);
+});
+
+// These adjacent text Range inputs are explicitly declared counterexamples:
+// copy69-ask-candidate-r1 captured the native03 field/ring/help/client bounds,
+// but did not measure packageLabel help, intro paragraphs or label glyphs.
+for (const foreign of [false, true]) test("E6 package label help stays separate from original request focus / " + (foreign ? "foreign label refused" : "both associated helps"), { concurrency: false }, t => {
+  const { x, NativeLabel, field, label, fragment } = e6DocumentHelpPlacement(t);
+  const context = x.ancestor(d411Rect(72, 142.5, 340, 255), { parentElement: x.surface, overflowX: "auto", overflowY: "auto", scrollTop: 2377.5 });
+  label.parentElement = context;
+  const packageField = x.control(d411Rect(101, 92, 281.5, 44), { tagName: "INPUT", name: "packageLabel", id: "package-field", value: "Executive deck",
+    getAttribute(name) { assert.equal(name, "aria-describedby"); return "package-field-help"; } });
+  const packageLabel = Object.assign(new NativeLabel(), x.ancestor(d411Rect(101, 66, 281.5, 105), { parentElement: context }),
+    { control: foreign ? {} : packageField, htmlFor: packageField.id,
+      querySelector(selector) { assert.equal(selector, e6DocumentFieldSelector); return packageField; } });
+  packageField.parentElement = packageLabel; x.controls.push(packageField);
+  const packageFragment = d411Rect(101, 147, 281.5, 24);
+  const packageHelp = x.copy(e6DocumentCopySelectors[2], packageFragment, [packageFragment],
+    { tagName: "SMALL", id: "package-field-help", parentElement: packageLabel, textContent: "Original wording is preserved separately." });
+  x.f.panel.draftForTest = "  Keep independent unsent guidance.  ";
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, scroll: context.scrollTop };
+  const box = x.run(), ring = d411Rect(95, 194.984375, 293.5, 150);
+  assert.equal(x.overlap(box, [fragment, ring]).length, 0, "retain original request body/ring/help protection together");
+  assert.equal(x.overlap(box, [packageFragment]).length, foreign ? 1 : 0,
+    foreign ? "a foreign label cannot supply this help" : "clear the newly covered package-label help too");
+  assert.equal(x.copyBoxReads.includes(packageHelp) || x.rangeReads.includes(packageHelp.textNodes[0]), !foreign);
+  assert.equal(x.f.document.activeElement, field); assert.equal(packageField.value, "Executive deck");
+  assert.equal(x.f.panel.draftForTest, "  Keep independent unsent guidance.  ");
+  assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages); assert.equal(context.scrollTop, before.scroll);
+  assert.deepEqual(x.detached, x.rangeReads); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.f.emitted, []); assert.ok(box.top >= 8 && box.bottom <= 390); assert.ok(x.boxes.length <= 14);
+});
+test("E6 current Document intro and field label fragments remain ordinary copy beside the focused original field", { concurrency: false }, t => {
+  const { x, field, label, fragment } = e6DocumentHelpPlacement(t);
+  const texts = [
+    x.copy(e6DocumentCopySelectors[0], d411Rect(101, 90, 281.5, 24), [d411Rect(101, 90, 281.5, 24)], { textContent: "This local interpretation is a proposal." }),
+    x.copy(e6DocumentCopySelectors[1], d411Rect(101, 118, 281.5, 24), [d411Rect(101, 118, 281.5, 24)], { textContent: "Changes are not saved." }),
+    x.copy(e6DocumentCopySelectors[2], d411Rect(101, 170, 281.5, 22), [d411Rect(101, 170, 281.5, 22)],
+      { tagName: "SPAN", parentElement: label, textContent: "Original request" }),
+  ];
+  const box = x.run();
+  assert.equal(x.overlap(box, [fragment, d411Rect(95, 194.984375, 293.5, 150), ...texts.flatMap(node => node.textNodes[0].fragments)]).length, 0);
+  assert.ok(texts.every(node => x.copyBoxReads.includes(node) || x.rangeReads.includes(node.textNodes[0])),
+    "both direct paragraphs and the associated span participate in the admitted current editor regions");
+  assert.equal(x.f.document.activeElement, field); assert.deepEqual(x.detached, x.rangeReads);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.f.emitted, []); assert.ok(x.boxes.length <= 14);
+});
+for (const foreign of [false, true]) test("E6 implicit Settings label is copy beside its native input / " + (foreign ? "foreign form refused" : "current form"), { concurrency: false }, t => {
+  // This finite port declares integer innerHeight398. Its normal/compact reset
+  // starts at height -8 -44; the recorded CSS layout height398.5 is distinct.
+  const viewport = { width: 419, height: 398 };
+  const x = e6CopyPlacement(t, { viewport, right: 409, top: viewport.height - 8 - 44, normalWidth: 199.171875 });
+  class NativeLabel {}
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "HTMLLabelElement");
+  Object.defineProperty(globalThis, "HTMLLabelElement", { configurable: true, value: NativeLabel });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, "HTMLLabelElement", previous); else delete globalThis.HTMLLabelElement; });
+  // Exact FR200 candidate ranges-1 native bodies, label parent box and selected
+  // H2/P fragments. The label's text-only Range is declared within its measured
+  // 74.390625px body; parent whitespace/input area is never substituted for it.
+  const form = x.ancestor(d411Rect(105.7578125, 146.7109375, 279.484375, 130.390625), { parentElement: x.surface });
+  const name = x.control(d411Rect(105.7578125, 177.1015625, 279.484375, 44), { tagName: "INPUT", name: "name", value: "", form: foreign ? {} : form });
+  const create = x.control(d411Rect(105.7578125, 233.1015625, 195.125, 44), { tagName: "BUTTON", outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px", parentElement: form });
+  const textRange = d411Rect(105.7578125, 148, 265, 22);
+  const label = x.copy(e6SettingsCopySelectors[4], d411Rect(105.7578125, 146.7109375, 279.484375, 74.390625), [textRange],
+    { tagName: "LABEL", parentElement: form, control: name, textContent: "Nom de la nouvelle organisation",
+      querySelector(selector) { assert.equal(selector, ':scope > input[name="name"]'); return name; } });
+  Object.setPrototypeOf(label, NativeLabel.prototype); name.parentElement = label;
+  x.controls.push(name, create); x.f.document.activeElement = create;
+  const copyInputs = [
+    [2, "H2", d411Rect(105.7578125, 41.125, 279.484375, 22.3984375), [d411Rect(105.7578125, 38.125, 156.1875, 27.5)]],
+    [2, "P", d411Rect(105.7578125, 79.5234375, 279.484375, 51.1875), [d411Rect(105.7578125, 81.0234375, 261.8515625, 22), d411Rect(105.7578125, 106.6171875, 96.9765625, 22)]],
+    [3, "H2", d411Rect(105.7578125, 331.1015625, 279.484375, 22.3984375), [d411Rect(105.7578125, 328.1015625, 236.1875, 27.5)]],
+    [3, "P", d411Rect(105.7578125, 369.5, 279.484375, 51.1875), [d411Rect(105.7578125, 371, 246.625, 22), d411Rect(105.7578125, 396.59375, 39.234375, 22)]],
+  ];
+  for (const [index, tagName, raw, fragments] of copyInputs) x.copy(e6SettingsCopySelectors[index], raw, fragments, { tagName });
+  const box = x.run();
+  assert.equal(x.overlap(box, [name.getBoundingClientRect(), d411Rect(99.7578125, 227.1015625, 207.125, 56), ...copyInputs.flatMap(input => input[3])]).length, 0);
+  assert.equal(x.overlap(box, [textRange]).length, foreign ? 1 : 0, "implicit label text contributes only under its actual native control/form association");
+  assert.equal(x.rangeReads.includes(label.textNodes[0]), !foreign);
+  assert.equal(x.f.document.activeElement, create); assert.equal(name.value, "");
+  assert.deepEqual(x.detached, x.rangeReads); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.f.emitted, []); assert.ok(box.top >= 8 && box.bottom <= 390); assert.ok(x.boxes.length <= 14);
+});
+
+test("E6 measured Document200 editor boxes use the existing clipped compact header lane", { concurrency: false }, t => {
+  const { x, NativeLabel, field, label } = e6DocumentHelpPlacement(t);
+  // Exact body/client inputs from copy69-adjacent-candidate-r1 Document03.
+  // Clip ports below represent the recorded native client rectangles. They do
+  // not substitute the raw, partly clipped Change view button for its paint.
+  Object.assign(x.shell, x.ancestor(d411Rect(0, 0, 419, 398.5), { overflowX: "clip", overflowY: "clip" }));
+  Object.assign(x.main, x.ancestor(d411Rect(0, 48, 419, 350.5), { parentElement: x.shell, overflowX: "clip", overflowY: "clip" }));
+  const workspace = x.ancestor(d411Rect(72, 48, 347, 350.5), { parentElement: x.surface, overflowX: "clip", overflowY: "clip" });
+  const studio = x.ancestor(d411Rect(72, 109, 347, 289.5), { parentElement: workspace, overflowX: "auto", overflowY: "auto", scrollTop: 117.5 });
+  const nav = x.ancestor(d411Rect(72, 88.5, 287, 52), { parentElement: studio, overflowX: "auto", overflowY: "auto" });
+  const grid = x.ancestor(d411Rect(72, 142.5, 347, 256), { parentElement: studio, overflowX: "clip", overflowY: "clip" });
+  const context = x.ancestor(d411Rect(72, 142.5, 340, 255), { parentElement: grid, overflowX: "auto", overflowY: "auto", scrollTop: 2377.5 });
+  const switcher = x.ancestor(d411Rect(59, -1.5, 173, 50), { parentElement: x.shell, overflowX: "auto", overflowY: "auto" });
+  const audience = x.ancestor(d411Rect(0, 48, 71, 350.5), { parentElement: x.shell, overflowX: "auto", overflowY: "auto" });
+  label.parentElement = context;
+  const clips = { shell: x.shell, workspace, nav, context, switcher, audience };
+  const recordedControls = [
+    ["BUTTON", [8, 1.5, 44, 44], [8, 1.5, 44, 44], "shell"],
+    ["A", [62, 1.5, 153.875, 44], [62, 1.5, 153.875, 44], "switcher"],
+    ["A", [217.875, 1.5, 72.6640625, 44], [217.875, 1.5, 14.125, 44], "switcher"],
+    ["SELECT", [239.3828125, 1.5, 75.6171875, 44], [239.3828125, 1.5, 75.6171875, 44], "shell"],
+    ["BUTTON", [319, 1.5, 44, 44], [319, 1.5, 44, 44], "shell"],
+    ["BUTTON", [367, 1.5, 44, 44], [367, 1.5, 44, 44], "shell"],
+    ["A", [4, 48, 63, 68.5], [4, 48, 63, 68.5], "audience"],
+    ["A", [4, 118.5, 63, 68.5], [4, 118.5, 63, 68.5], "audience"],
+    ["A", [4, 189, 63, 68.5], [4, 189, 63, 68.5], "audience"],
+    ["A", [4, 259.5, 63, 68.5], [4, 259.5, 63, 68.5], "audience"],
+    ["A", [4, 330, 63, 68.5], [4, 330, 63, 68], "audience"],
+    ["BUTTON", [156.734375, 56, 177.5234375, 44], [156.734375, 56, 177.5234375, 44], "workspace"],
+    ["A", [78, 92.5, 51.5546875, 44], [78, 109, 51.5546875, 27.5], "nav"],
+    ["A", [131.5546875, 92.5, 56.5234375, 44], [131.5546875, 109, 56.5234375, 27.5], "nav"],
+    ["A", [190.078125, 92.5, 65.40625, 44], [190.078125, 109, 65.40625, 27.5], "nav"],
+    ["BUTTON", [264.484375, 92.5, 195.2109375, 44], [264.484375, 109, 94.515625, 27.5], "nav"],
+    ["TEXTAREA", [101, 200.984375, 281.5, 138], [101, 200.984375, 281.5, 138], "context"],
+  ];
+  const visibleControls = recordedControls.map(([, , visible]) => d411Rect(...visible));
+  let view;
+  for (const [index, [tagName, raw, , clip]] of recordedControls.entries()) {
+    if (tagName === "TEXTAREA") continue; // The same measured, focused field already exists.
+    const control = x.control(d411Rect(...raw), { tagName, parentElement: clips[clip] });
+    x.controls.push(control); if (index === 15) view = control;
+  }
+  // Only the label association is supplied for the wholly clipped package
+  // input; no unmeasured package-input rectangle is invented or admitted.
+  const packageField = { id: "package-field", value: "Executive deck",
+    getAttribute(name) { assert.equal(name, "aria-describedby"); return "package-field-help"; } };
+  const packageLabel = Object.assign(new NativeLabel(), x.ancestor(d411Rect(0, 0, 0, 0), { parentElement: context }),
+    { control: packageField, htmlFor: packageField.id,
+      querySelector(selector) { assert.equal(selector, e6DocumentFieldSelector); return packageField; } });
+  const recordedRegions = [
+    ["originalHelp", 2, "SMALL", [101, 346.984375, 281.5, 63], "This local interpretation is a proposal. Inspect and edit it before confirming; no provider is contacted."],
+    ["proposal", 0, "P", [101, -127.390625, 281.5, 77.1875], "Proposed requirements \u2014 not yet saved"],
+    ["dirty", 1, "P", [101, -34.203125, 281.5, 51.1875], "Local edits do not change saved completion or approval."],
+    ["packageLabel", 2, "SPAN", [101, 32.984375, 281.5, 21], "Purpose or package name"],
+    ["packageHelp", 2, "SMALL", [101, 113.984375, 281.5, 42], "Names can contain up to 240 characters. Original wording is preserved separately."],
+    ["originalLabel", 2, "SPAN", [101, 171.984375, 281.5, 21], "Original request"],
+  ];
+  // Replace the existing help port with its full measured63px body. The narrow
+  // text Ranges below are declared counterexamples, not captured glyph metrics:
+  // the protected box contract must hold even when its right edge is whitespace.
+  const existingHelp = x.copyBoxReads; assert.deepEqual(existingHelp, []);
+  const regionNodes = recordedRegions.map(([key, selectorIndex, tagName, raw, textContent]) => {
+    const bounds = d411Rect(...raw), parentElement = key.startsWith("package") ? packageLabel : key.startsWith("original") ? label : context;
+    const properties = { tagName, parentElement, textContent };
+    if (key === "originalHelp") properties.id = field.id + "-help";
+    if (key === "packageHelp") properties.id = packageField.id + "-help";
+    return x.copy(e6DocumentCopySelectors[selectorIndex], bounds, [d411Rect(bounds.left, bounds.top, 190, bounds.height)], properties);
+  });
+  // The generic setup's original help remains a distinct associated node only
+  // in its old exact selector. Remove that one source alias for this measured
+  // six-node editor so neither baseline nor candidate gets a duplicate region.
+  x.replaceOriginalHelpForTest(regionNodes[0]);
+  const rawGuidance = "  Preserve this independent Document question.  ";
+  x.f.panel.draftForTest = rawGuidance;
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, context: context.scrollTop, studio: studio.scrollTop };
+  const box = x.run(), ring = d411Rect(95, 194.984375, 293.5, 150);
+  const visibleRegions = recordedRegions.map(([, , , raw]) => {
+    const r = d411Rect(...raw), top = Math.max(r.top, 142.5), bottom = Math.min(r.bottom, 397.5);
+    return d411Rect(r.left, top, r.width, bottom - top);
+  }).filter(r => r.height > 0);
+  assert.equal(x.controls.length, 17); assert.equal(recordedRegions.length, 6); assert.equal(visibleRegions.length, 3);
+  assert.equal(x.overlap(box, [...visibleControls, ...visibleRegions, ring]).length, 0,
+    "the current native field, all17 recorded visible controls and all6 admitted editor boxes share one clear bounded placement");
+  assert.equal(box.left, 365); assert.equal(box.width, 44); assert.equal(box.height, 44);
+  assert.ok(box.top >= 8 && box.bottom <= 390); assert.ok(x.boxes.length <= 14);
+  assert.equal(x.overlap(box, [view.getBoundingClientRect()]).length, 1, "the raw Change view box really crosses this lane");
+  assert.equal(x.overlap(box, [visibleControls[15]]).length, 0, "its recorded client-clipped paint ends at359");
+  assert.ok(regionNodes.every(node => x.copyBoxReads.includes(node)), "all6 owned boxes are read, including the3 fully clipped regions");
+  assert.equal(x.rangeReads.length, 0, "only Document's existing box contract changes; no glyph proxy is used here");
+  assert.equal(x.f.document.activeElement, field); assert.equal(packageField.value, "Executive deck");
+  assert.equal(x.f.panel.draftForTest, rawGuidance); assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+  assert.equal(context.scrollTop, before.context); assert.equal(studio.scrollTop, before.studio);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.f.emitted, []);
 });

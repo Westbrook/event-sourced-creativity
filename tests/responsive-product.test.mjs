@@ -1617,3 +1617,69 @@ test("E6 short native-rail Document keeps a usable pane behind scrollable header
     assert.equal(winning(baseStage, "overflow-y", viewport), undefined);
   }
 });
+
+test("E6 short shared chrome removes only the application title already represented by the native current workspace", async () => {
+  // Source/selector policy, not native :has(), text geometry or identity paint.
+  // Keep the original whole-file membership and all earlier focus contracts.
+  const navigationSource = await read("../src/components/design-system/navigation.ts");
+  const switcherStart = navigationSource.indexOf("export class FormaUiWorkspaceSwitcher");
+  const switcherEnd = navigationSource.indexOf("export class ", switcherStart + 1);
+  assert.ok(switcherStart >= 0);
+  const switcher = navigationSource.slice(switcherStart, switcherEnd < 0 ? undefined : switcherEnd);
+  assert.ok(switcher.includes("const destinations = this.destinations.filter((destination) => !destination.disabled);"));
+  assert.ok(switcher.includes("if (destinations.length < 2) return nothing;"),
+    "zero/one available workspace has no emitted current link, so the title fallback must remain");
+  assert.ok(switcher.includes("const current = destinations.find((destination) => destination.value === this.value) ?? destinations[0];"));
+  assert.ok(switcher.includes('aria-current=' + '$' + '{destination.value === this.value ? "page" : nothing}'),
+    "the proposed presence guard requires the real current application, not the fallback first option");
+  assert.ok(switcher.includes('<span dir="auto">' + '$' + '{current.label}</span>'));
+  assert.ok(switcher.includes("if (destinations.length === 2) return html"));
+  assert.ok(switcher.includes('<nav class="ui-workspace-switcher application-switcher"'));
+  assert.ok(switcher.includes('<div class="ui-workspace-switcher platform-switcher ui-popover">'),
+    "the same current-link criterion serves both native two-link and popover presentations");
+  assert.ok(shell.includes('label:this.i18n.t("shell."+candidate.id,candidate.label)'));
+  assert.ok(shell.includes('.value=' + '$' + '{applicationId} .destinations=' + '$' + '{workspaceDestinations}'));
+  assert.ok(shell.includes('<div class="application-context"><b>' + '$' + '{this.i18n.t("shell."+applicationId,application.label)}</b>'),
+    "both current application labels use the same localized identity key; no English-text predicate");
+  const actorStart = shell.indexOf('<span class="document-focus-actor"');
+  const actorEnd = shell.indexOf('</span><button', actorStart);
+  assert.ok(actorStart >= 0 && actorEnd > actorStart);
+  const actor = shell.slice(actorStart, actorEnd);
+  for (const identity of ["session.user.displayName", "focusedOrganization.name", "focusedMembership.role", "workspace.admin.role."])
+    assert.ok(actor.includes(identity), "retain the distinct current actor/organization/role source: " + identity);
+  assert.ok(shell.includes('class="button ghost compact document-focus-activity"'));
+  assert.ok(shell.includes('this.#route(withProjectTaskDocumentInRoute("/activity",projection.documentId, this.store.route.get()))'));
+  const shallow = { name: "retained shallow header", width: 844, height: 390, pointer: "fine" };
+  assert.equal(winning(".application-context", "display", shallow)?.value, "flex");
+  assert.equal(winning(".application-context", "flex", shallow)?.value, "1");
+  assert.equal(winning(".application-context b", "flex", shallow)?.value, "none",
+    "the current duplicate is nonshrinking while its context column may collapse");
+  assert.equal(winning(".application-context span", "overflow", shallow)?.value, "hidden",
+    "the distinct application description already owns its bounded text policy");
+  assert.equal(winning(".document-focus-actor", "display", shallow)?.value, "grid");
+  assert.equal(winning('.application-creative > .topbar', "block-size", shallow)?.value, "var(--forma-short-topbar-height)");
+  assert.equal(winning('.application-canvas > .topbar', "block-size", shallow)?.value, "var(--forma-short-topbar-height)");
+  assert.equal(winning(".ui-workspace-switcher-trigger", "min-block-size", shallow)?.value,
+    "var(--forma-control-min-size, 2.75rem)");
+  assert.equal(winning(".topbar > .top-actions > .avatar", "inline-size", shallow)?.value, "var(--forma-hit-target)");
+  const compactHide = 'html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] > .topbar > forma-ui-workspace-switcher';
+  assert.equal(winning(compactHide, "display", shallow)?.value, "none",
+    "the existing measured-compact policy can hide the switcher; do not use its unpainted link as an identity replacement");
+
+  const selector = ':is(.application-creative, .application-canvas):not([data-nav-posture="compact"]) > .topbar:has(> forma-ui-workspace-switcher > .ui-workspace-switcher a[aria-current="page"]) > .application-context > b';
+  const root = sheets.find(sheet => sheet.name === "responsive-foundation.css").root;
+  const rules = [];
+  root.walkRules(rule => { if (rule.selectors?.includes(selector)) rules.push(rule); });
+  assert.equal(rules.length, 1, "desired source policy: deduplicate only when the same native current identity is present");
+  assert.deepEqual(rules[0].selectors, [selector]);
+  assert.equal(rules[0].parent.type, "atrule");
+  assert.equal(rules[0].parent.name, "media");
+  assert.equal(rules[0].parent.params, "(max-height: 37.5rem) and (orientation: landscape)");
+  assert.equal(rules[0].parent.parent.type, "root");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { display: "none" }, "only the duplicate B, not its description, actor, role, Activity or any native control");
+  for (const viewport of viewports) {
+    const shortLandscape = viewport.height <= 600 && viewport.width > viewport.height;
+    assert.equal(ruleActive(rules[0], viewport), shortLandscape, viewport.name + ": retain the existing short-chrome media scope");
+  }
+});

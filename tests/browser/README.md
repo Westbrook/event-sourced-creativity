@@ -270,6 +270,81 @@ same calibrated observer and whole physical viewport mechanism. This is real
 Chromium rendering under emulated coarse-pointer media, not physical-device,
 touch-tap, coarse 200%-zoom, all Assistant states, AT, or production coverage.
 
+## Ordinary Library and Settings copy clearance
+
+This additive baseline uses two new cases in each of the existing wide,
+EN320, shallow, true EN200, AR320 and true FR200 profiles: twelve added
+memberships. It preserves all preceding cases, helpers and eleven calibrations.
+Recount the actual full matrix at integration, including any Project Contents
+header, E7 or E4 additions; twelve is a delta, not a fixed final suite total.
+Run the whole current suite and retain every prerequisite failure.
+
+At the 2026-09-03 current-context preparation, committed E6a plus the pending
+Project Contents header baseline contains 57 default memberships: eleven
+calibrations and 46 application cases. This ordinary-copy packet yields 69:
+eleven calibrations and 58 application cases. The four main profiles each
+contain ten cases and the Arabic/French recovery profiles each contain seven;
+the two navigation and two coarse Assistant cases remain unchanged. These
+are source-derived memberships, not a test-list or passing-run receipt.
+The optional isolated E5 and E6 projects remain opt-in and outside this count.
+Earlier 49/51/55 totals below describe their retained packet preimages.
+
+Settings follows the existing native name → unactivated Create → name path.
+Library reuses the same independently pinned private archive, genuine local
+preview, unactivated Import, Close → exact native file input → one native Tab
+to unactivated Export. Neither Create, Import, Export nor Ask is activated.
+The actual authenticated session/workspaces reads and public current controls
+establish scope; no account, organization, field value or application state is
+seeded. Normal server GET housekeeping remains outside a zero-DB-write claim.
+
+That genuine-account premise and the earlier ordinary network description
+apply only when finite synthetic transport is disabled. With the separately
+qualified `FORMA_A11Y_SYNTHETIC_NETWORK=1` transport on the exclusive source
+preview, the real application consumes explicit immutable personal-author
+declarations. Its marked session response and fixture attachments establish
+synthetic renderer/native-behavior evidence, not authentication, permission,
+live account, Delivery-source or organization-task evidence. No API response
+forwards to a server; public fonts/static source remain separately guarded.
+The independently pinned retained archive is still required and remains
+genuine; this mode does not authorize creating or exporting a replacement.
+The transport and Project Contents qualification must precede this baseline.
+
+The read-only copy observer measures only current ordinary page-header
+eyebrows/headings/direct introductions, Settings landing card headings/direct
+empty paragraphs, visible Library section-heading copy, and the current
+Library lifecycle section's direct scope and conditional status paragraphs. It keeps native
+text-node Range fragments, ancestor clips, current fixed Ask bounds, computed
+fill and finite native hit order separate. A Range box is not a glyph-ink mask.
+Opaque Ask with an observed top hit inside a visible fragment is sampled
+obstruction evidence; uncertain paint order or unsupported geometry cannot pass.
+Raw overlap without that proof also cannot silently pass. Current native
+controls/critical regions are retained as a separate diagnostic inventory,
+not reassigned as ordinary text or certified by this new collector.
+
+Only the previously calibrated fractional borderless/native-no-layout-gutter
+clip branch is recognized here. Border/gutter precision outside that branch,
+rounded clips, transforms, filters and other unsupported paint remain explicit
+UNASSESSED; there is no new epsilon, clipping relaxation or replacement of the
+existing strict native-focus observer. Two observations 250ms apart and whole
+physical viewport captures retain actual focus/geometry without repair.
+Four originally affected profiles and wide require a visible primary target.
+The shallow control may record a naturally offscreen primary as UNOBSERVED;
+it still checks all actually visible ordinary fragments and never credits the
+offscreen heading/paragraph as clear. Empty/style-hidden copy and ancestor
+clipping cannot borrow that control-only disposition.
+Library lifecycle presence and per-sample visible-fragment counts are recorded
+separately. An absent or nonvisible paragraph remains UNOBSERVED, not a scope,
+permission, glyph-ink or whole-paragraph clearance claim; all original copy
+verdicts and complete native/custody tails remain required. These observations
+are at the existing Export stage, not earlier Import-focus frames.
+
+Field values, article content and copy custody are compared in browser memory.
+Original native/label focus, 44px floors and return checks complete before the
+copy verdict. Existing typography, zoom, privacy and conservative network guards
+remain unchanged. Screenshots support review, not standalone certification.
+This baseline is not a runtime repair, glyph/contrast/AT certification,
+submitted-import recovery, organization-task pass, or whole-surface acceptance.
+
 ## Optional isolated E5 presentation-renderer probes
 
 These four separately named fixture cases are **not genuine account or
