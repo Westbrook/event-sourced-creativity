@@ -9,7 +9,7 @@ const failure=(intake:ProjectIntake,error="project_intake_unconfirmed",status=40
   response({status:"unknown",projectId:intake.projectId,documentId:intake.documentId,error},status);
 
 /** Reuse captured /api/events authority; no principal-only substitution for personas. */
-function authority(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake):BudgetReservationGuard{
+export function projectIntakeAuthority(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:Pick<ProjectIntake,"projectId"|"documentId">):BudgetReservationGuard{
   const user=auth.user,principal=auth.impersonation?.actor??user;
   // Preserve requireUser's creator minimum for both intake and exact receipt reads.
   if(principal.role!=="creator"&&principal.role!=="admin")return{sql:"0",bindings:[]};
@@ -36,9 +36,14 @@ function authority(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectI
 }
 
 type ReceiptState={authorized:boolean;seen:boolean;complete:boolean;events:EventRow[];head:number};
+type AtomicIntakeOptions={receiptPrefix:string;clientId:string;correlationPrefix:string;guard:BudgetReservationGuard};
+const intakeGuard=(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,options?:AtomicIntakeOptions)=>{
+  const original=projectIntakeAuthority(env,auth,intake);
+  return options?{sql:`(${original.sql}) AND (${options.guard.sql})`,bindings:[...original.bindings,...options.guard.bindings]}:original;
+};
 /** Last await for every private response: authority and exact retained bytes in one read. */
-async function readOriginal(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake):Promise<ReceiptState>{
-  const guard=authority(env,auth,intake),stream=auth.user.streamId,prefix=projectIntakeReceiptPrefix(intake.projectId);
+async function readOriginal(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,options?:AtomicIntakeOptions):Promise<ReceiptState>{
+  const guard=intakeGuard(env,auth,intake,options),stream=auth.user.streamId,prefix=options?.receiptPrefix??projectIntakeReceiptPrefix(intake.projectId);
   const expected=JSON.stringify(intake.events.map(event=>String(event.payload.client_event_id)));
   const result=await env.DB.prepare(`SELECT expected.value AS requested_key,receipt.client_event_id AS receipt_key,
       event.*,secret.private_json,
@@ -80,11 +85,17 @@ export async function handleProjectIntake(env:WorkerEnv,auth:ProjectIntakeAuthor
   if(!intake||body.action!=="project_intake"||(body.intakeAction!=="commit"&&body.intakeAction!=="check")
     ||Object.keys(body).some(key=>!["action","intakeAction","events"].includes(key)))
     return response({status:"invalid",error:"invalid_project_intake"},400);
-  const before=await readOriginal(env,auth,intake);
-  if(!before.authorized||before.seen||body.intakeAction==="check")return reply(intake,before);
-  const stream=auth.user.streamId,owner=auth.user.userId,guard=authority(env,auth,intake);
-  const events=intake.events.map(input=>makeEvent(stream,0,"user","web:project-intake",
-    "project-intake:"+intake.projectId,input.type,input.payload));
+  return commitAtomicIntake(env,auth,intake,body.intakeAction);
+}
+
+/** Internal only: callers must build and validate their own closed event grammar.
+ * No route passes caller-supplied options or unvalidated events to this core. */
+export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,action:"commit"|"check",options?:AtomicIntakeOptions){
+  const before=await readOriginal(env,auth,intake,options);
+  if(!before.authorized||before.seen||action==="check")return reply(intake,before);
+  const stream=auth.user.streamId,owner=auth.user.userId,guard=intakeGuard(env,auth,intake,options);
+  const events=intake.events.map(input=>makeEvent(stream,0,"user",options?.clientId??"web:project-intake",
+    (options?.correlationPrefix??"project-intake:")+intake.projectId,input.type,input.payload));
   const root=events[0]!,rootKey=String(root.payload.client_event_id),now=new Date().toISOString();
   try{
     await appendEvents(env,events,{retries:1,prepareSidecars:assigned=>{
@@ -122,5 +133,5 @@ export async function handleProjectIntake(env:WorkerEnv,auth:ProjectIntakeAuthor
     // This may be a unique-root winner, authorization/head change, or lost DB
     // acknowledgment. Only the actual original receipt read may resolve it.
   }
-  return reply(intake,await readOriginal(env,auth,intake));
+  return reply(intake,await readOriginal(env,auth,intake,options));
 }
