@@ -1444,14 +1444,15 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
 
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview";
+type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "experience-draft";
 
 export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
   return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
 export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}) {
-  if(identity&&(kind!=="authoring-preview"||(!/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)&&!/^canvas-arrangement-preview-[a-f0-9]{64}$/u.test(identity.contentId))))throw new Error("private_content_identity_invalid");
+  if(identity&&!((kind==="authoring-preview"&&(/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)||/^canvas-arrangement-preview-[a-f0-9]{64}$/u.test(identity.contentId)))
+    ||(kind==="experience-draft"&&!projectScope&&/^experience-draft-[a-f0-9]{64}$/u.test(identity.contentId))))throw new Error("private_content_identity_invalid");
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
   assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
   const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
@@ -1536,7 +1537,7 @@ export function privateContentScopeGuard(ownerId:string,projectScope?:ProjectExe
 export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all", projectScope?: ProjectExecutionScope) {
   const now = new Date().toISOString(),guard=privateContentScopeGuard(ownerId,projectScope);
   const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
-  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview')${restricted} AND ${guard.sql}`).bind(ownerId,now,...guard.bindings).all<{content_id:string;content:string}>();
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview','experience-draft')${restricted} AND ${guard.sql}`).bind(ownerId,now,...guard.bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 

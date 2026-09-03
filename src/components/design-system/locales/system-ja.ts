@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.sqbs0m.33": "エクスペリエンスのアプリケーションインターフェース。",
+  "system.auto.14o3myu.88": "プロパティのみで駆動する表示。コントローラーが判断と結果を伴うすべての操作意図を管理します。",
   "system.auto.1i2qq03.94": "明示的な表示のみです。現在のコンテキストに属するかどうかの確認はホスト側が担い、架空の保存済みレコードは渡しません。",
   "system.auto.tqfa8e.80": "レシピのホストが保持する、まだ結果が確定していない元の操作のIDのみです。リクエスト本文、受領記録、再試行の許可は含みません。",
   "system.auto.1w05nuc.88": "このセッションの元の保存リクエストを明示的に再送します。より新しい編集内容を実体化したり、新しい基準リビジョンに載せ替えたりすることはありません。",

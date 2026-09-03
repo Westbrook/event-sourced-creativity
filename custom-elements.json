@@ -16174,6 +16174,56 @@
           }
         }
       ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/experiences/view.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaExperienceSurface",
+          "tagName": "forma-experience",
+          "customElement": true,
+          "summary": "Experience application interface.",
+          "description": "Property-only presentation. The controller owns decisions and all consequential intents.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "runtime",
+              "type": {
+                "text": "ExperienceSurface | undefined"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-experience",
+          "declaration": {
+            "name": "FormaExperienceSurface",
+            "module": "src/experiences/view.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaExperienceSurface",
+          "declaration": {
+            "name": "FormaExperienceSurface",
+            "module": "src/experiences/view.ts"
+          }
+        }
+      ]
     }
   ]
 }

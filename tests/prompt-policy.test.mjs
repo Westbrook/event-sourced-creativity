@@ -12,6 +12,13 @@ const marketResearchQuote = "An asynchronous job without a global, actionable in
 const productOwnerScreenQuote = "Every extra inch of screen should reveal a useful relationship, not another column of product chrome.";
 const leadDesignerScreenQuote = "A smaller screen is not a smaller product; it is a stricter argument about what deserves the next square inch.";
 
+test("experience context retains semantic instructions without private recipe metadata", () => {
+  const properties = { text: "Secret known by: Participant A", experience_origin: "default", experience_release: "private-release-hash", experience_binding: "knowledge", experience_value: "a" };
+  const result = providerFacingRenderingContext({ facts: [{ block_id: "private-block", type: "direction", properties }] });
+  assert.equal(result.facts[0].properties.text, properties.text);
+  assert.doesNotMatch(JSON.stringify(result), /experience_|private-release-hash|private-block/);
+});
+
 test("authored text-only audio direction remains usable while private or opted-out references stay local", () => {
   const authored = { block_id: "authored-audio", type: "audio", properties: { text: "Warm piano beneath distant waves.", label: "Soundtrack", subtype: "direction", weight: 1, spatial_scope: { kind: "document" } } };
   assert.equal(promptFactIsActive(authored), true);
