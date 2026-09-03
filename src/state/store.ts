@@ -153,8 +153,11 @@ function outputSnapshotRenderable(value: unknown): value is OutputRequirementsSn
   const fields = (entry: Record<string, unknown>, names: readonly string[], accepts: (item: unknown) => boolean) => names.every(name => accepts(entry[name]));
   const values = (entry: unknown, accepts: (item: unknown) => boolean) => record(entry) && Object.values(entry).every(accepts);
   // Absence preserves legacy plans; a present null/unknown format is not absence.
-  const artifactFormat = (entry: Record<string, unknown>) => !Object.hasOwn(entry, "artifact_format")
-    || readOutputArtifactFormat(entry.artifact_format, entry.media_kind) !== null;
+  const artifactFormat = (entry: Record<string, unknown>) => {
+    if (!Object.hasOwn(entry, "artifact_format")) return true;
+    const format = Object.getOwnPropertyDescriptor(entry, "artifact_format");
+    return Boolean(format?.enumerable && "value" in format && readOutputArtifactFormat(format.value, entry.media_kind) !== null);
+  };
   const issue = (entry: unknown) => record(entry) && fields(entry, ["code", "path", "message"], text);
   const quantity = (entry: unknown) => record(entry) && text(entry.unit) && (entry.kind === "unknown" && optional(entry.reason, text)
     || entry.kind === "exact" && number(entry.value) || entry.kind === "range" && fields(entry, ["min", "max"], number));

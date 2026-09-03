@@ -85,6 +85,22 @@ test("actual retained shape guard accepts explicit format without changing input
 });
 
 for (const location of ["groups", "obligations", "targets"]) {
+  test(`actual retained shape guard rejects non-data or hidden ${location} format without invoking accessors`, () => {
+    const value = snapshot(), entry = value.confirmedPlan.plan[location][0];
+    let calls = 0;
+    const get = () => { calls++; return { kind: "short_story", version: 1 }; };
+    Object.defineProperty(entry, "artifact_format", { enumerable: true, configurable: true, get });
+    // Do not clone, freeze via Object.values, or serialize this accessor fixture.
+    assert.equal(accepts(value), false);
+    assert.equal(calls, 0);
+    assert.equal(Object.getOwnPropertyDescriptor(entry, "artifact_format").get, get);
+
+    const hidden = snapshot(), hiddenEntry = hidden.confirmedPlan.plan[location][0];
+    Object.defineProperty(hiddenEntry, "artifact_format", { enumerable: false, configurable: true, value: { kind: "short_story", version: 1 } });
+    assert.equal(accepts(hidden), false);
+    assert.equal(Object.getOwnPropertyDescriptor(hiddenEntry, "artifact_format").enumerable, false);
+  });
+
   test(`actual retained shape guard rejects every present-invalid ${location} format independently`, () => {
     for (const format of [undefined, null, "short_story", [], {}, { kind: "short_story" }, { version: 1 },
       { kind: "short_story", version: "1" }, { kind: "short_story", version: 2 }, { kind: "scene", version: 1 },
