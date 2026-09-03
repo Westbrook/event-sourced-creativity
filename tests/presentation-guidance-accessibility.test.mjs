@@ -234,7 +234,7 @@ function sourceFixture({ research = true, manuscript = false } = {}) {
   ];
 }
 
-function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), details = [], sourceText = "" } = {}) {
+function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), details = [], sourceText = "", jobs, preservedJobs = [] } = {}) {
   const state = { authorization: "scope-A", canRead: true, canRequest: true, documentId: "A", events: [], requests: [], loads: [] };
   const f = { state, locale, trace: [], clipboard: [], listeners: new Map(), changed: new Map(), steps: 0, requested: false };
   const messages = { ...FORMA_DEFAULT_MESSAGES, ...localeCatalogs[locale] };
@@ -279,7 +279,7 @@ function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), de
     documentRenderJobs: () => [], toast: message => f.trace.push("toast:" + message),
     ensurePrivateContent: async () => assert.fail("No extra private-content request is allowed"),
     renderDocumentArtifact: async (...args) => { state.requests.push(args); return true; },
-    loadPreservedPresentationCandidateJobs: async () => ({ documentId: "A", jobs: [] }),
+    loadPreservedPresentationCandidateJobs: async () => ({ documentId: "A", jobs: preservedJobs }),
     loadPresentationCandidates: async (jobId, documentId) => {
       state.loads.push(["list", jobId, documentId]);
       return { jobId, documentId, candidates: details.map(detail => ({ ...detail })) };
@@ -297,7 +297,7 @@ function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), de
   activeFixture = f;
   f.host = viewer ? new PresentationRejectedDrafts() : new DocumentArtifacts();
   f.host.documentId = "A";
-  if (viewer) f.host.jobs = [{ jobId: "job-private", documentId: "A", dismissedAt: null }];
+  if (viewer) f.host.jobs = jobs ?? [{ jobId: "job-private", documentId: "A", dismissedAt: null }];
   else f.host.launcherOnly = true;
   f.host.isConnected = true; f.host.connectedCallback();
   f.draw = () => { activeFixture = f; return f.renderer.draw(f.host); };
@@ -313,6 +313,7 @@ function fixture(t, { locale = "en", viewer = false, facts = sourceFixture(), de
   f.buttons = () => [...f.renderer.markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gu)].map(([, raw, content]) => ({
     ...f.renderer.attrs(raw), text: decodeText(content.replace(/<[^>]+>/gu, "")).trim(),
   }));
+  f.reviewButtons = () => f.buttons().filter(button => button.text.startsWith(f.i18n.t("presentation.draft.review") + " · "));
   f.click = async text => {
     const button = f.buttons().find(item => item.text === text); assert.ok(button, "actual rendered button " + text);
     await button.handlers.click.call(f.host, { preventDefault() {}, stopPropagation() {}, currentTarget: {} }); await f.flush();
@@ -350,7 +351,7 @@ function candidate(attempt = 1, overrides = {}) {
 
 async function inspect(t, locale, details) {
   const f = fixture(t, { locale, viewer: true, details });
-  await f.click(f.i18n.t("presentation.draft.review"));
+  await f.click(f.reviewButtons()[0].text);
   for (const detail of details) await f.click(f.i18n.t("presentation.draft.attemptButton", "", {
     stage: f.i18n.t(detail.stage === "repair" ? "presentation.draft.repair" : "presentation.draft.initial"),
     attempt: f.i18n.number(detail.providerAttempt), page: f.i18n.number(detail.pageIndex + 1),
@@ -359,6 +360,44 @@ async function inspect(t, locale, details) {
 }
 
 for (const locale of ["en", "fr", "ar", "ja"]) {
+  test("presentation guidance " + locale + ": generation review names identify the run without exposing private identifiers", async t => {
+    const requestedAt = "2026-09-02T18:14:20.508Z";
+    const jobs = [
+      { jobId: "PRIVATE_MANAGED_JOB", documentId: "A", productionMode: "managed", requestedAt, attemptCount: 2, dismissedAt: null },
+      { jobId: "PRIVATE_MANUAL_JOB", documentId: "A", productionMode: "manual", requestedAt, attemptCount: 1, dismissedAt: null },
+      { jobId: "PRIVATE_LEGACY_JOB", documentId: "A", productionMode: "PRIVATE_UNKNOWN_MODE", requestedAt: "PRIVATE_INVALID_DATE", attemptCount: Number.NaN, dismissedAt: null },
+    ], before = structuredClone(jobs);
+    const f = fixture(t, { locale, viewer: true, jobs, preservedJobs: [{ jobId: "PRIVATE_PRESERVED_JOB", documentId: "A" }] });
+    await f.flush();
+    const buttons = f.reviewButtons(), names = buttons.map(button => button.attributes["aria-label"] ?? button.text);
+    assert.equal(names.length, 4); assert.equal(new Set(names).size, 4, "same-time and retained-only runs remain distinguishable");
+    assert.ok(names[0].includes(f.i18n.t("presentation.draft.managedMode")));
+    assert.ok(names[1].includes(f.i18n.t("presentation.draft.manualMode")));
+    assert.ok(names[1].includes(f.i18n.t("presentation.draft.requestedAt", "", { date: f.i18n.date(new Date(requestedAt), { dateStyle: "medium", timeStyle: "short" }) })));
+    assert.ok(names[0].includes(f.i18n.t("presentation.draft.jobAttempt", "", { attempt: f.i18n.number(2) })));
+    assert.ok(names[3].includes(f.i18n.t("presentation.draft.generation", "", { number: f.i18n.number(4) })));
+    assert.doesNotMatch(names.join(" "), /PRIVATE|undefined|NaN|Invalid Date/u);
+    assert.equal(f.state.loads.length, 0, "labels use existing metadata without private detail requests");
+    await f.click(buttons[1].text);
+    assert.deepEqual(f.state.loads, [["list", "PRIVATE_MANUAL_JOB", "A"]]);
+    const selectedLabel = buttons[1].text.slice(f.i18n.t("presentation.draft.review").length + 3);
+    assert.equal(f.visible().split(selectedLabel).length - 1, 2, "the dialog repeats the exact selected run label");
+    assert.deepEqual(jobs, before, "labels do not rewrite job records");
+    assert.equal(f.state.requests.length, 0); assert.equal(f.clipboard.length, 0);
+  });
+
+  test("presentation guidance " + locale + ": only a server-offered revision explains the separate unapproved copy", async t => {
+    for (const eligible of [false, true]) {
+      const detail = candidate(1, eligible ? { revision: { token: "PRIVATE_REVISION_TOKEN", fields: [] } } : {});
+      const before = structuredClone(detail), f = await inspect(t, locale, [detail]);
+      assert.equal(f.visible().includes(f.i18n.t("presentation.draft.historicalRejectionEditable")), eligible);
+      assert.equal(f.visible().includes(f.i18n.t("presentation.draft.historicalRejection")), !eligible);
+      assert.equal(f.buttons().some(button => button.text === f.i18n.t("presentation.draft.revisionEditor")), eligible);
+      assert.doesNotMatch(f.visible(), /PRIVATE_REVISION_TOKEN/u);
+      assert.deepEqual(detail, before); assert.equal(f.state.requests.length, 0); assert.equal(f.clipboard.length, 0);
+    }
+  });
+
   test("presentation guidance " + locale + ": full private viewer gives all six citation disclosures unique nonprivate names", async t => {
     const details = [candidate(1), candidate(2)], before = structuredClone(details), f = await inspect(t, locale, details);
     const names = f.summaries();
@@ -530,7 +569,7 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
     assert.doesNotMatch(f.visible(), /Customer \{title\}|Original frozen customer research|Exact customer wording/u);
     const pending = fixture(t, { locale, viewer: true, details: [candidate(1)] }), gate = Promise.withResolvers();
     pending.store.loadPresentationCandidate = async () => gate.promise;
-    await pending.click(pending.i18n.t("presentation.draft.review"));
+    await pending.click(pending.reviewButtons()[0].text);
     pending.withdraw(); gate.resolve(candidate(1)); await pending.flush();
     assert.doesNotMatch(pending.visible(), /Customer \{title\}|Original frozen customer research|Exact customer wording/u);
     assert.equal(pending.state.requests.length, 0);

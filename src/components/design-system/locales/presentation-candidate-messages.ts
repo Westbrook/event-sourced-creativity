@@ -123,6 +123,12 @@ const en = {
   "presentation.draft.revisionSaved": "New unapproved draft saved. The original failure and charges are unchanged.",
   "presentation.draft.revisionFailed": "The new draft could not be safely saved. Your edits remain private.",
   "presentation.draft.revisionIssues": "This copy still needs correction. No new draft was created.",
+  "presentation.draft.generation": "Generation {number}",
+  "presentation.draft.manualMode": "Manual",
+  "presentation.draft.managedMode": "Structured workflow",
+  "presentation.draft.requestedAt": "Requested {date}",
+  "presentation.draft.jobAttempt": "Job attempt {attempt}",
+  "presentation.draft.historicalRejectionEditable": "This original response was rejected under an earlier validation contract and remains private and rejected. A separately edited copy must pass full source validation before it can be saved as a new unapproved document draft. The original receipt and charges remain unchanged.",
 };
 
 const fr: Record<keyof typeof en, string> = {
@@ -250,6 +256,12 @@ const fr: Record<keyof typeof en, string> = {
   "presentation.draft.revisionSaved": "Nouvelle ébauche non approuvée enregistrée. L’échec initial et les frais restent inchangés.",
   "presentation.draft.revisionFailed": "La nouvelle ébauche n’a pas pu être enregistrée en toute sécurité. Vos modifications restent privées.",
   "presentation.draft.revisionIssues": "Cette copie doit encore être corrigée. Aucune nouvelle ébauche n’a été créée.",
+  "presentation.draft.generation": "Génération {number}",
+  "presentation.draft.manualMode": "Manuelle",
+  "presentation.draft.managedMode": "Processus structuré",
+  "presentation.draft.requestedAt": "Demandée le {date}",
+  "presentation.draft.jobAttempt": "Tentative de la tâche {attempt}",
+  "presentation.draft.historicalRejectionEditable": "Cette réponse originale a été refusée selon des règles de validation antérieures et reste privée et refusée. Une copie modifiée séparément doit réussir la validation complète des sources avant de pouvoir être enregistrée comme nouveau brouillon non approuvé dans le document. Le reçu original et les frais restent inchangés.",
 };
 
 const ar: Record<keyof typeof en, string> = {
@@ -377,6 +389,12 @@ const ar: Record<keyof typeof en, string> = {
   "presentation.draft.revisionSaved": "حُفظت مسودة جديدة غير معتمدة. لم يتغير الفشل الأصلي أو الرسوم.",
   "presentation.draft.revisionFailed": "تعذّر حفظ المسودة الجديدة بأمان. تبقى تعديلاتك خاصة.",
   "presentation.draft.revisionIssues": "ما زالت هذه النسخة بحاجة إلى تصحيح. لم تُنشأ مسودة جديدة.",
+  "presentation.draft.generation": "عملية الإنشاء {number}",
+  "presentation.draft.manualMode": "يدوية",
+  "presentation.draft.managedMode": "سير عمل منظّم",
+  "presentation.draft.requestedAt": "طُلبت في {date}",
+  "presentation.draft.jobAttempt": "محاولة المهمة {attempt}",
+  "presentation.draft.historicalRejectionEditable": "رُفضت هذه الاستجابة الأصلية وفق قواعد تحقق سابقة وتبقى خاصة ومرفوضة. يجب أن تجتاز نسخة معدّلة بشكل منفصل التحقق الكامل من المصادر قبل حفظها كمسودة جديدة غير معتمدة في المستند. يبقى الإيصال الأصلي والرسوم دون تغيير.",
 };
 
 const ja: Record<keyof typeof en, string> = {
@@ -504,6 +522,12 @@ const ja: Record<keyof typeof en, string> = {
   "presentation.draft.revisionSaved": "新しい未承認ドラフトを保存しました。元の失敗と料金は変更されていません。",
   "presentation.draft.revisionFailed": "新しいドラフトを安全に保存できませんでした。編集内容は非公開のままです。",
   "presentation.draft.revisionIssues": "このコピーにはまだ修正が必要です。新しいドラフトは作成されていません。",
+  "presentation.draft.generation": "生成 {number}",
+  "presentation.draft.manualMode": "手動",
+  "presentation.draft.managedMode": "構造化ワークフロー",
+  "presentation.draft.requestedAt": "リクエスト日時：{date}",
+  "presentation.draft.jobAttempt": "ジョブの試行 {attempt}",
+  "presentation.draft.historicalRejectionEditable": "この元の応答は以前の検証ルールで却下されており、非公開かつ却下済みのままです。別途編集したコピーは、ソースの完全な検証に合格した場合にのみ、このドキュメントの新しい未承認ドラフトとして保存できます。元の記録と料金は変更されません。",
 };
 
 export const PRESENTATION_CANDIDATE_MESSAGES = { en, fr, ar, ja };
