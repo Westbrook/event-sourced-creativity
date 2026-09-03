@@ -50,10 +50,66 @@ duplicate existing data that prevents its creation causes a failure.
 The supported migration shapes are additive `CREATE TABLE`, `CREATE INDEX`,
 `CREATE TRIGGER`, `ALTER TABLE … ADD COLUMN`, and `PRAGMA optimize`. Optimization
 pragmas are skipped as advisory maintenance rather than schema changes. The SQL is
-parsed and rehearsed in memory first. Unsupported data migrations or destructive
-SQL require an explicit implementation and tests; their errors are not swallowed.
+parsed and rehearsed in memory first. Apart from the exact 3D migration described
+below, data migrations and destructive SQL require an explicit implementation
+and tests; their errors are not swallowed.
 Statements follow Drizzle's statement breakpoints, so trigger bodies are kept
 intact.
+
+### Reviewed 3D schema upgrade
+
+The runner has a dedicated handler for `0022_output_model3d`, with journal
+timestamp `1788192000000` and exact SQL SHA-256
+`393bf222f1aa1210d679af3d588ffdf0e989cc6b9bd4db02eeef78cfb9907206`.
+A renamed copy, changed SQL, changed
+timestamp, or a different destructive migration is rejected.
+
+This handler adds `model3d` to two Output media-kind checks and raises the
+storage-write size limit from 24,000,000 to 67,108,864 bytes. It recognizes a
+coherent legacy schema or a fully upgraded schema. Mixed states, an old schema
+behind an upgrade receipt, and leftover staging objects are rejected. A fully
+upgraded database without a local receipt is verified without replaying the
+rebuild. New receipts record all 33 statements as executed or all 33 as skipped.
+
+The earlier unpublished 19-statement source had SHA-256
+`e857a9750002d068c76651768835d5cc4b93ec484a657fc0bc58fe52e69dd291`.
+An existing local receipt for that exact hash, timestamp and complete 19-statement
+disposition is accepted only when the current guarded schema passes validation.
+The runner reports `verified-legacy-source` with both hashes and preserves the
+original receipt's date, rowid, hash and counts. This is verification of the
+existing schema, not a claim that the new SQL was applied. Mixed counts, an old
+schema behind a receipt, or any other source identity fail unchanged.
+
+The raw migration and Worker bootstrap share the same generated SQL. Both the
+upgrade and already-current paths use a fresh, main-qualified NOT NULL proof
+table, exact known declarations and indexes, a complete inbound foreign-key
+catalog and full foreign-key checks. Unexpected columns, triggers, dependencies,
+TEMP objects or reserved staging names require review before the rebuild. Each
+copy compares rowids, SQLite value types and values in both directions before
+the original table is dropped. Run the whole array in one transaction; local
+SQLite qualification alone does not establish the hosted executor's atomicity.
+
+The same statement array is exercised against the pinned local workerd D1
+binding. Fixed catalog rows use `VALUES` to stay within D1's five-term compound
+SELECT limit. Foreign-key inspection visits every table declaration containing
+the mandatory `REFERENCES` keyword, without excluding any table-name prefix.
+This avoids inspecting protected engine tables that cannot declare an inbound
+key. D1's authorizer prohibits `writable_schema` reads and writes; the local
+SQLite runner separately requires that flag to be off.
+
+The rebuild stays inside the same transaction as all other migrations and
+receipt writes. Foreign keys and CHECK constraints must remain enabled; schema
+writing, legacy rename behavior, and pre-existing deferral must be off. Before
+any DROP, the runner checks table contracts, attached objects, every inbound
+foreign key, and the reserved assertion token. Unknown dependencies and foreign
+key delete actions are rejected. It verifies original rowids and typed values
+in each temporary copy before dropping its source, verifies the retained Output
+graph afterward, and checks all foreign keys before clearing deferral.
+
+Later unrelated additive migrations retain the usual behavior. Later changes
+to these tables, their guarded dependencies, or their attached objects need a
+separately reviewed handler. Unknown triggers and indexes are never discarded
+as part of an otherwise successful upgrade.
 
 Generated columns, double-quoted defaults, `ON CONFLICT`, and foreign-key
 `DEFERRABLE`/`INITIALLY` schema clauses are outside the supported comparison
@@ -95,8 +151,9 @@ rows, rowids, and previously committed receipts remain intact. A previously
 missing file created by `--apply` can remain as an empty database after failure.
 
 Correct the reported incompatibility or data issue, then run the same command
-again. The runner does not rebuild tables, delete duplicate records, catch every
-error as success, or manufacture successful receipts after a failed run.
+again. Outside the exact reviewed 3D upgrade, the runner does not rebuild tables.
+It never deletes duplicate records, treats arbitrary errors as success, or
+manufactures successful receipts after a failed run.
 
 ## Sites deployment
 

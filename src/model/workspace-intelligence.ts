@@ -1,6 +1,6 @@
 import type { CreativeBlock, CreativeEvent, CreativeOutput } from "./events.ts";
 import type { DocumentArtifact } from "./document-artifacts.ts";
-import { DOCUMENT_ARTIFACT_KINDS, documentArtifactRevision, type DocumentArtifactKind } from "./document-artifacts.ts";
+import { DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition, documentArtifactRevision, type DocumentArtifactKind } from "./document-artifacts.ts";
 import { documentGenerationRevision, documentJobCanRecoverPresentation, documentJobCanRecoverProviderRender,
   documentJobFailure, documentJobHasNoBudgetHold, planningStopBudget, type DocumentJob } from "./document-jobs.ts";
 import type { ArtifactDeliveryAction, ArtifactDeliveryIntent } from "./artifact-delivery.ts";
@@ -75,7 +75,7 @@ export type CreativeWorkspaceFacts = {
 };
 export type ProposedCreativeChange = { type: string; payload: Record<string, unknown> };
 
-const readableLabel = (value: unknown) => String(value ?? "creative decision")
+const readableLabel = (value: unknown) => value === "model3d" ? documentArtifactDefinition(value).label : String(value ?? "creative decision")
   .replace(/[_-]+/g, " ")
   .replace(/([a-z])([A-Z])/g, "$1 $2")
   .trim()
@@ -105,6 +105,7 @@ export function describeCreativeProposal(changes: readonly ProposedCreativeChang
 }
 
 const medium=(value:unknown):CreativeMedium|null=>value==="image"||DOCUMENT_ARTIFACT_KINDS.includes(value as DocumentArtifactKind)?value as CreativeMedium:null;
+const mediumTitle=(value:CreativeMedium|null)=>value==="model3d"?documentArtifactDefinition(value).label:value??"";
 const sourceBlocks=(facts:CreativeWorkspaceFacts)=>facts.blocks.filter((block)=>block.projectId===facts.projectId&&block.documentId===facts.documentId&&!block.removed);
 const scopedOutputs=(facts:CreativeWorkspaceFacts)=>facts.outputs.filter((output)=>output.documentId===facts.documentId&&!output.discarded&&output.provider!=="simulation"&&Boolean(output.mediaUrl)&&(!facts.canvasId||!output.canvasId||output.canvasId===facts.canvasId));
 const scopedArtifacts=(facts:CreativeWorkspaceFacts)=>facts.artifacts.filter((artifact)=>artifact.documentId===facts.documentId);
@@ -192,7 +193,7 @@ export function creativeNextActions(facts: CreativeWorkspaceFacts): CreativeNext
     if(comparable.length>=2)actions.push({id:"compare-images",label:"Compare these images",reason:"Inspect these two saved alternatives side by side.",title:"",priority:75,evidence:2,target:{...scope,kind:"compare",outputIds:[comparable[0]!.id,comparable[1]!.id]}});
     const failed=jobs.filter((job)=>["failed","partial"].includes(job.status)).sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt))[0];
     if(failed)actions.push({id:"inspect-job",label:"Inspect the previous attempt",reason:"Review retained evidence and partial work. Independent outputs can continue.",title:failed.jobId,priority:result||running?40:70,evidence:1,target:{...scope,kind:"job",jobId:failed.jobId}});
-    if(active.length&&facts.canConfigure)actions.push({id:"configure-output",label:"Prepare an output",reason:"Choose and review this document’s output settings. Nothing is generated yet.",title:requested??"",priority:60,evidence:active.length,target:{...scope,kind:"configure",medium:requested,sourceRevision}});
+    if(active.length&&facts.canConfigure)actions.push({id:"configure-output",label:"Prepare an output",reason:"Choose and review this document’s output settings. Nothing is generated yet.",title:mediumTitle(requested),priority:60,evidence:active.length,target:{...scope,kind:"configure",medium:requested,sourceRevision}});
     return actions.sort((a,b)=>b.priority-a.priority).slice(0,3);
   }
   if (!facts.canRead || !facts.authorityKey || !facts.projectId || !facts.documentId) return [];
@@ -270,7 +271,7 @@ export function creativeNextActions(facts: CreativeWorkspaceFacts): CreativeNext
     reason: "Add a deliberate creative decision to this document.", title: "", priority: 60, evidence: 0,
     target: { ...scope, kind: "context", sourceRevision } });
   if (active.length && facts.canConfigure) actions.push({ id: "configure-output", label: "Prepare an output",
-    reason: "Choose and review this document’s output settings. Nothing is generated yet.", title: requested ?? "",
+    reason: "Choose and review this document’s output settings. Nothing is generated yet.", title: mediumTitle(requested),
     priority: 50, evidence: active.length, target: { ...scope, kind: "configure", medium: requested, sourceRevision } });
   const comparable = outputs.filter(output => !output.promptFanId || output.standalone).sort((a, b) => b.sequence - a.sequence);
   if (comparable.length >= 2) actions.push({ id: "compare-images", label: "Compare these images",

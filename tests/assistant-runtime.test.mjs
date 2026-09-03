@@ -1864,7 +1864,7 @@ test("privileged guidance answers the actual question from isolated activity and
 
     const audio = await ask("/operations/providers", operations, "Is audio supported today?");
     assert.equal(audio.turn.reply.key, "assistant.platform.answer.audio");
-    assert.deepEqual(audio.context.availableOutputKinds, ["image", "short_story", "scene", "slides", "storyboard", "video", "audio"]);
+    assert.deepEqual(audio.context.availableOutputKinds, ["image", "short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"]);
     assert.equal(audio.turn.proposal, null);
 
     for (const [locale, message, expected] of [

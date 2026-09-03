@@ -5,7 +5,8 @@ import { buildPresentationSourceContract } from "../src/model/presentation-sourc
 import { readSlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import { readProjectSourceEvents } from "./project-access.ts";
 import { readEvents } from "./runtime.ts";
-import { readGeneratedImageReference } from "./media-api.ts";
+import { readGeneratedImageReference, readOwnedModel3dReference } from "./media-api.ts";
+import { outputAssetSha256 } from "../src/model/output-asset-inspection.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import { OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 
@@ -31,10 +32,10 @@ export async function resolveOutputNativeResult(input:OutputBridgeTargetInput&{n
   return {bytes:image.bytes,name:`image-${String(completed.payload.generation_id)}.${image.mimeType==="image/jpeg"?"jpg":image.mimeType==="image/webp"?"webp":"png"}`,
    origin:{kind:"forma_native",createdByUserId:String(job.owner_id),editedByUserIds:[],jobId:input.nativeJobId,slotId:job.slot_id,completionEventId:completed.eventId,resultId:String(completed.payload.generation_id),sourceDigest:input.sourceDigest,targetContractDigest:job.target_contract_digest},assertions};
  }
- if(target.media_kind!=="slides"||completed.payload.artifact_kind!=="slides")throw new OutputConflictError("native_output_medium_unsupported",422);
+ if(!["slides","model3d"].includes(target.media_kind)||completed.payload.artifact_kind!==target.media_kind)throw new OutputConflictError("native_output_medium_unsupported",422);
  const artifactId=String(completed.payload.artifact_id??"");
  const projection=foldEvents(events,Number.POSITIVE_INFINITY,scope.documentId,scope.projectId);
- const artifact=projection.artifacts.find(artifact=>artifact.id===artifactId&&artifact.documentId===scope.documentId&&artifact.kind==="slides");
+ const artifact=projection.artifacts.find(artifact=>artifact.id===artifactId&&artifact.documentId===scope.documentId&&artifact.kind===target.media_kind);
  if(!artifact?.contentRef)throw new OutputConflictError("native_output_content_unavailable",410);
  const scopePredicate=scope.kind==="project"?` AND EXISTS(SELECT 1 FROM project_resource_scopes artifact_scope JOIN project_resource_scopes content_scope
    ON content_scope.project_access_id=artifact_scope.project_access_id AND content_scope.organization_id=artifact_scope.organization_id AND content_scope.project_id=artifact_scope.project_id AND content_scope.owner_user_id=artifact_scope.owner_user_id
@@ -47,12 +48,27 @@ export async function resolveOutputNativeResult(input:OutputBridgeTargetInput&{n
   .bind(artifact.contentRef,scope.ownerUserId,...scopeBindings).first<{content:string}>();
  if(!content)throw new OutputConflictError("native_output_content_unavailable",410);
  const parsed=parseDocumentArtifactContent(content.content);
- if(!parsed?.presentation)throw new OutputConflictError("native_output_content_invalid");
- const policy=readSlideCountPolicy(target.count_policy);
- const contract=buildPresentationSourceContract(input.context.snapshot,{itemCount:parsed.items.length,slideCountPolicy:policy,...(policy.kind==="exact"?{requestedSlideCount:policy.value}:{})});
- const issues=documentArtifactValidationIssues("slides",parsed,{itemCount:parsed.items.length,slideCountPolicy:policy,sourceContract:contract,requireSourceGrounding:true,requireAllProtectedContent:true});
- if(issues.length||contract.sourceIssues?.length)throw new OutputConflictError("native_output_needs_source_revalidation");
- const bytes=createPowerPointDocument(parsed.items,parsed.presentation,{title:parsed.title,includePresenterNotes:false});
+ if(!parsed)throw new OutputConflictError("native_output_content_invalid");
+ let bytes:Uint8Array,name:string;
+ let model3dFiles:unknown;
+ if(target.media_kind==="model3d"){
+  if(!artifact.mediaUrl||artifact.mediaUrl!==completed.payload.media_url)throw new OutputConflictError("native_output_content_invalid");
+  const model=await readOwnedModel3dReference(env,scope.ownerUserId,artifact.mediaUrl,{...(scope.kind==="project"?{projectAccessId:scope.projectAccessId!}:{})});
+  if(!model)throw new OutputConflictError("native_output_bytes_unavailable",410);
+  const sha256=await outputAssetSha256(model.bytes);
+  if(model.metadata.sha256!==sha256)throw new OutputConflictError("native_output_content_invalid");
+  model3dFiles=completed.payload.settings&&typeof completed.payload.settings==="object"?(completed.payload.settings as Record<string,unknown>).model3d_files:undefined;
+  const primary=Array.isArray(model3dFiles)?model3dFiles.find((file)=>file&&typeof file==="object"&&(file as Record<string,unknown>).url===artifact.mediaUrl):null;
+  if(!primary||primary.sha256!==sha256||primary.format!=="glb"||primary.role!=="mesh")throw new OutputConflictError("native_output_content_invalid");
+  bytes=model.bytes;name=`model-${artifactId}.glb`;
+ }else{
+  if(!parsed.presentation)throw new OutputConflictError("native_output_content_invalid");
+  const policy=readSlideCountPolicy(target.count_policy);
+  const contract=buildPresentationSourceContract(input.context.snapshot,{itemCount:parsed.items.length,slideCountPolicy:policy,...(policy.kind==="exact"?{requestedSlideCount:policy.value}:{})});
+  const issues=documentArtifactValidationIssues("slides",parsed,{itemCount:parsed.items.length,slideCountPolicy:policy,sourceContract:contract,requireSourceGrounding:true,requireAllProtectedContent:true});
+  if(issues.length||contract.sourceIssues?.length)throw new OutputConflictError("native_output_needs_source_revalidation");
+  bytes=createPowerPointDocument(parsed.items,parsed.presentation,{title:parsed.title,includePresenterNotes:false});name=`presentation-${artifactId}.pptx`;
+ }
  // Reused by the storage claim, publication check and atomic result commit.
  // Every boundary checks live retention and the same exact source custody.
  assertions.push({sql:`EXISTS(SELECT 1 FROM private_content WHERE ${retainedContentPredicate} AND content=?)`,bindings:[artifact.contentRef,scope.ownerUserId,...scopeBindings,content.content]});
@@ -66,5 +82,5 @@ export async function resolveOutputNativeResult(input:OutputBridgeTargetInput&{n
   editedByUserIds.push(author.actor_user_id);
  }
 
- return {bytes,name:`presentation-${artifactId}.pptx`,origin:{kind:"forma_native",createdByUserId:String(job.owner_id),editedByUserIds:[...new Set(editedByUserIds)],jobId:input.nativeJobId,slotId:job.slot_id,completionEventId:completed.eventId,resultId:artifactId,artifactRevision:revisionEvents.length,artifactRevisionEventId:revisionEvents.at(-1)?.eventId??completed.eventId,sourceDigest:input.sourceDigest,targetContractDigest:job.target_contract_digest},assertions};
+ return {bytes,name,origin:{kind:"forma_native",createdByUserId:String(job.owner_id),editedByUserIds:[...new Set(editedByUserIds)],jobId:input.nativeJobId,slotId:job.slot_id,completionEventId:completed.eventId,resultId:artifactId,artifactRevision:revisionEvents.length,artifactRevisionEventId:revisionEvents.at(-1)?.eventId??completed.eventId,sourceDigest:input.sourceDigest,targetContractDigest:job.target_contract_digest,...(model3dFiles?{model3dFiles}:{})},assertions};
 }

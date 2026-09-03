@@ -10,7 +10,7 @@ export function outputMissingNativeResults(snapshot: OutputRequirementsSnapshot,
   const plan = snapshot.confirmedPlan;
   if (!plan || snapshot.sourceRevision !== plan.sourceDigest || snapshot.requirementRevision !== plan.requirementsDigest
     || !plan.targetContractDigests?.[target.id] || !plan.plan.targets.some((entry) => entry.id === target.id)
-    || !["image", "slides"].includes(target.media_kind)) return [];
+    || !["image", "slides", "model3d"].includes(target.media_kind)) return [];
   const seen = new Set<string>();
   return snapshot.grants.flatMap((grant) => grant.planRevisionId !== plan.revisionId || grant.actorUserId !== snapshot.scope.actorUserId ? [] : grant.operations.flatMap((operation) => {
     if (operation.targetId !== target.id || operation.status !== "succeeded" || operation.pendingCalls !== 0 || operation.exposedMicrousd !== 0
@@ -46,7 +46,7 @@ export function outputCompletedNativeChoices(snapshot: OutputRequirementsSnapsho
       const job = present ?? (inspected?.jobId === operation.jobId ? inspected : undefined);
       if (!job || job.documentId !== snapshot.documentId || job.status !== "completed") continue;
       const matchingKind = target.media_kind === "image" ? job.kind === "generate"
-        : target.media_kind === "slides" ? job.kind === "render_document" && job.result?.artifactKind === "slides" : false;
+        : ["slides", "model3d"].includes(target.media_kind) ? job.kind === "render_document" && job.result?.artifactKind === target.media_kind : false;
       if (!matchingKind) continue;
       seen.add(operation.jobId);
       choices.push({ grant, operation, job });

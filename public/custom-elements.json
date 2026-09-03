@@ -10774,7 +10774,7 @@
                 {
                   "name": "kind",
                   "type": {
-                    "text": "\"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
+                    "text": "\"audio\" | \"model3d\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
                   }
                 },
                 {
@@ -13863,6 +13863,256 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/model3d-settings-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "Model3dSettingsEditor",
+          "tagName": "forma-model3d-settings-editor",
+          "customElement": true,
+          "summary": "Model3d settings editor application interface.",
+          "description": "Exact provider settings; the owning generation form manages references and submission.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "prompt",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "prompt"
+            },
+            {
+              "kind": "field",
+              "name": "referenceCount",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "reference-count"
+            },
+            {
+              "kind": "field",
+              "name": "settings",
+              "type": {
+                "text": "Model3dSettings"
+              },
+              "default": "normalizeModel3dSettings()"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "prompt",
+              "fieldName": "prompt",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "reference-count",
+              "fieldName": "referenceCount",
+              "type": {
+                "text": "number"
+              },
+              "default": "0"
+            }
+          ],
+          "events": [
+            {
+              "name": "model3d-settings-change",
+              "type": {
+                "text": "CustomEvent<Model3dSettingsChange>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-model3d-settings-editor",
+          "declaration": {
+            "name": "Model3dSettingsEditor",
+            "module": "src/components/model3d-settings-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "Model3dSettingsEditor",
+          "declaration": {
+            "name": "Model3dSettingsEditor",
+            "module": "src/components/model3d-settings-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/model3d-viewer.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaModel3dViewer",
+          "tagName": "forma-model3d-viewer",
+          "customElement": true,
+          "summary": "Model3d viewer application interface.",
+          "description": "Local orbit/capture control. Its parent owns media permission and durable saves.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "src",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "src"
+            },
+            {
+              "kind": "field",
+              "name": "view",
+              "type": {
+                "text": "Model3dView | null"
+              },
+              "default": "null"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "readonly",
+              "fieldName": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "src",
+              "fieldName": "src",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            }
+          ],
+          "events": [
+            {
+              "name": "model3d-capture",
+              "type": {
+                "text": "CustomEvent<{ blob: Blob; view: Model3dView; src: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-model3d-viewer",
+          "declaration": {
+            "name": "FormaModel3dViewer",
+            "module": "src/components/model3d-viewer.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaModel3dViewer",
+          "declaration": {
+            "name": "FormaModel3dViewer",
+            "module": "src/components/model3d-viewer.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/output-card.ts",
       "declarations": [
         {
@@ -14911,6 +15161,212 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/reference-composition-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "ReferenceCompositionEditor",
+          "tagName": "forma-reference-composition-editor",
+          "customElement": true,
+          "summary": "Reference composition editor application interface.",
+          "description": "Reopens a retained scene without replacing its block identity or losing source provenance.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "block",
+              "type": {
+                "text": "CreativeBlock | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
+              "name": "surface",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"document\"",
+              "attribute": "surface"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "name": "surface",
+              "fieldName": "surface",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"document\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-reference-composition-editor",
+          "declaration": {
+            "name": "ReferenceCompositionEditor",
+            "module": "src/components/reference-composition-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ReferenceCompositionEditor",
+          "declaration": {
+            "name": "ReferenceCompositionEditor",
+            "module": "src/components/reference-composition-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/reference-compositor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "ReferenceCompositor",
+          "tagName": "forma-reference-compositor",
+          "customElement": true,
+          "summary": "Reference compositor application interface.",
+          "description": "Store-independent reference compositor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "closeForOwner",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "recipe",
+              "type": {
+                "text": "ReferenceCompositionRecipe | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "sources",
+              "type": {
+                "text": "readonly ReferenceCompositionSource[]"
+              },
+              "default": "[]"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            }
+          ],
+          "events": [
+            {
+              "name": "composition-capture",
+              "type": {
+                "text": "CustomEvent<{ blob: Blob; recipe: ReferenceCompositionRecipe; label: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-reference-compositor",
+          "declaration": {
+            "name": "ReferenceCompositor",
+            "module": "src/components/reference-compositor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ReferenceCompositor",
+          "declaration": {
+            "name": "ReferenceCompositor",
+            "module": "src/components/reference-compositor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/reference-findings.ts",
       "declarations": [
         {
@@ -15338,6 +15794,26 @@
             },
             {
               "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
               "name": "surface",
               "type": {
                 "text": "string"
@@ -15355,6 +15831,24 @@
               },
               "default": "false",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
             },
             {
               "name": "surface",
