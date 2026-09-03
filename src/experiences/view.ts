@@ -121,9 +121,9 @@ export class FormaExperienceSurface extends FormaPresentationalElement {
   }
   #summary() {
     const runtime = this.runtime!;
-    return html`<dl class="experience-summary">${runtime.release.definition.decisions.map(decision => html`<div><dt>${runtime.release.copy[decision.labelKey]}</dt><dd>${this.#describe(this.#value(decision.id))}</dd></div>`)}</dl>`;
+    return html`<dl class="experience-summary">${runtime.release.definition.decisions.map(decision => html`<div><dt>${runtime.release.copy[decision.labelKey]}</dt><dd>${this.#describe(this.#value(decision.id), runtime.release.interactions[decision.id])}</dd></div>`)}</dl>`;
   }
-  #describe(value: ExperienceValue) { return typeof value === "string" ? value.replaceAll("-", " ") : Array.isArray(value) ? value.map(item => item.text).join(" → ") : Object.entries(value).map(([key, value]) => `${key}: ${value}`).join(" · "); }
+  #describe(value: ExperienceValue, interaction: Interaction) { return typeof value === "string" ? interaction.options?.find(option => option.value === value)?.label ?? value : Array.isArray(value) ? value.map(item => item.text).join(" → ") : interaction.fields!.map(field => `${field.label}: ${value[field.id]}`).join(" · "); }
   override render() {
     const runtime = this.runtime;
     if (!runtime) return html`<p role="status">Experience unavailable</p>`;

@@ -278,3 +278,44 @@ for (const fault of ["eventId", "uuid", "actor", "stream", "sequence", "compensa
   });
   await runtime.prepare(); await runtime.submit(); assert.equal(runtime.state.phase, "uncertain"); assert.equal(runtime.documentRoute, undefined); runtime.dispose();
 });
+
+// The complete production view emits real Lit templates. Reuse the established
+// finite template/native ports, without mounting an app or exercising held jobs.
+// This proves summary text/escaping, not browser layout or assistive technology.
+async function renderedSummary(runtime) {
+  const { calmFullPageNativePorts: ports } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { FormaExperienceSurface } = await ports.loadActual("src/experiences/view.ts");
+  const host = new FormaExperienceSurface(); host.runtime = runtime;
+  const markup = new ports.RendererPort({}, {}).value(host.render(), host, "experience-summary-test");
+  const summaries = [...markup.matchAll(/<dl class="experience-summary">([\s\S]*?)<\/dl>/gu)];
+  assert.equal(summaries.length, 1, "one actual review/completed summary, not the repeating direction stage");
+  const decode = value => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  return [...summaries[0][1].matchAll(/<div><dt>([\s\S]*?)<\/dt><dd>([\s\S]*?)<\/dd><\/div>/gu)].map(([, label, value]) => [decode(label), decode(value)]);
+}
+for (const id of experienceIds) test(`${id}: actual review, completion and restored summaries preserve authored text and registered labels/order`, options, async t => {
+  const x = await fixture(t), release = await registeredExperience(id), values = {};
+  const source = '  X-ray / ISO-9001 / 2026-09-02\nsoft-light → <reference> & "quoted"  ';
+  for (const decision of release.definition.decisions) {
+    const interaction = release.interactions[decision.id];
+    values[decision.id] = interaction.kind === "source" ? source
+      : interaction.options ? (interaction.options.find(option => option.value.includes("-")) ?? interaction.options.at(-1)).value
+      : interaction.kind === "order" ? [3, 1, 2].map(index => ({ id: `e${index}`, text: `${index}: ${source}` }))
+      : Object.fromEntries([...interaction.fields].reverse().map((field, index) => [field.id, interaction.kind === "relationship" ? `${field.id}: ${source}` : interaction.minimum + index]));
+  }
+  const expected = release.definition.decisions.map(decision => {
+    const interaction = release.interactions[decision.id], value = values[decision.id];
+    return [release.copy[decision.labelKey], interaction.kind === "source" ? source
+      : interaction.options ? interaction.options.find(option => option.value === value).label
+      : interaction.kind === "order" ? [3, 1, 2].map(index => `${index}: ${source}`).join(" → ")
+      : interaction.fields.map(field => `${field.label}: ${value[field.id]}`).join(" · ")];
+  });
+  const runtime = new ExperienceIntakeRuntime(release, (path, init) => x.request(path, init)); t.after(() => runtime.dispose());
+  for (const [decision, value] of Object.entries(values)) assert.equal(runtime.change(decision, value), true);
+  await runtime.prepare(); assert.equal(runtime.state.phase, "review");
+  assert.deepEqual(await renderedSummary(runtime), expected);
+  await runtime.submit(); assert.equal(runtime.state.phase, "complete");
+  assert.deepEqual(await renderedSummary(runtime), expected);
+  const restored = new ExperienceIntakeRuntime(release, (path, init) => x.request(path, init)); t.after(() => restored.dispose());
+  await restored.resume(runtime.draftId); assert.equal(restored.state.phase, "complete");
+  assert.deepEqual(await renderedSummary(restored), expected, "canonical JSON key order cannot reorder registered fields");
+});

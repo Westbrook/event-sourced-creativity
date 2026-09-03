@@ -69,7 +69,7 @@ The locale controller moved to `src/components/design-system/locale-controller.t
 
 The built `experiences.html` static dependency closure contains the entry, modulepreload polyfill, presentational element, locale controller, Lit repeat/directive helpers, icons, design primitives and route helpers. It does not load the full localization facade, Store, output viewers or provider clients.
 
-Measured from the final Vite manifest, following static imports and counting each asset once:
+Measured from the reviewed `560cdee` Vite manifest, following static imports and counting each asset once:
 
 | Asset | Raw bytes | gzip bytes |
 | --- | ---: | ---: |
@@ -96,6 +96,16 @@ These are implementation directions and automated contract checks, **not physica
 - **627 tests passed, 0 failures/skips**, on the original version-179 baseline: `tests/project-intake*.test.mjs`, `experience-intake`, `locale-controller`, `component-library`, `prompt-policy`, `private-content-identity-admission*`, `responsive-product`, `surface-load-focus-host`, `presentation-guidance-accessibility`, `presentation-accessibility` and the fixture runtime suite. This is a selected regression result, not a claim that the entire repository suite passes.
 - After replay onto **version 180**, build, root/fixture TypeScript and targeted lint pass again; **106 tests pass** across experience intake, locale controller, fixture runtime, prompt policy and the post-build component library. `git range-diff` confirmed the three source patches were unchanged. The earlier held-control suites were not rerun following the release owner's scope restriction.
 - No live provider, hosted authentication, deployed integration, physical-device or end-to-end browser acceptance is claimed.
+
+### Review correction: summary fidelity
+
+A separate follow-up preserves authored source text exactly in both review and completed summaries, resolves choice labels only through the relevant interaction, and renders relationship/profile fields in registered order with registered labels. This also prevents canonical JSON key ordering from changing restored summaries. The stray blank EOF in the extracted locale controller is removed; the entire change range is checked, not only uncommitted changes.
+
+Eight actual full-view render tests cover review, completion and restored drafts for all outputs, including hyphens, dates, newlines, markup escaping, reordered evidence, shuffled record keys and numeric zero. The focused intake/locale/fixture run passes 89 tests; build, root/fixture TypeScript and targeted lint pass. These finite template/native ports do not qualify browser layout or assistive technology.
+
+Locale review evidence remains limited: concurrent locale switching uses a warm cache, and reconnect checks controller state rather than rendered updates. Cold-load switching and rendered reconnect behavior are not certified here.
+
+Original `/tmp` build/test logs have been copied without alteration to the sibling `forma-experience-runtime-verification/frozen-560cdee` directory with a SHA-256 manifest. Follow-up verification receipts are retained separately; they do not overwrite the frozen handoff evidence.
 
 ## Remaining delivery work
 

@@ -157,4 +157,3 @@ export class FormaLocaleController implements ReactiveController {
     return Array.from(value)[0] || "";
   }
 }
-
