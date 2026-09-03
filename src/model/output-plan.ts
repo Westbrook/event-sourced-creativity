@@ -1,4 +1,4 @@
-import { deriveOutputRequirementId, inspectOutputRequirement, isOutputRequirementId, outputRequirementInterpretationBasis, outputRequirementInterpretationNeedsReview, validateOutputCountPolicy, OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT, type OutputAspectRatio, type OutputCountPolicy, type OutputCoverage, type OutputDeliverable, type OutputIssue, type OutputMediaKind, type OutputQuantity, type OutputRequirementSpec, type OutputSourceScope } from "./output-requirements.ts";
+import { deriveOutputRequirementId, inspectOutputRequirement, readOutputArtifactFormat, isOutputRequirementId, outputRequirementInterpretationBasis, outputRequirementInterpretationNeedsReview, validateOutputCountPolicy, OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT, type OutputArtifactFormat, type OutputAspectRatio, type OutputCountPolicy, type OutputCoverage, type OutputDeliverable, type OutputIssue, type OutputMediaKind, type OutputQuantity, type OutputRequirementSpec, type OutputSourceScope } from "./output-requirements.ts";
 
 export type OutputPlanOptions = {
   document_id: string;
@@ -12,17 +12,20 @@ export type OutputPlanOptions = {
 };
 export type OutputPlanGroup = {
   id: string; requirement_id: string; label: string; media_kind: OutputMediaKind; required: boolean;
+  artifact_format?: OutputArtifactFormat;
   obligation_ids: string[];
 };
 export type OutputPlanObligation = {
   id: string; requirement_id: string; deliverable_id: string; variant_id: string | null; member_id: string | null;
   label: string; media_kind: OutputMediaKind; required: boolean; selected: boolean; quantity: OutputQuantity;
+  artifact_format?: OutputArtifactFormat;
   quantity_policy: OutputCountPolicy | null;
   target_ids: string[]; resolution: "resolved" | "unresolved";
 };
 export type OutputPlanTarget = {
   id: string; requirement_id: string; deliverable_id: string; obligation_id: string;
   variant_id: string | null; member_id: string | null; label: string; media_kind: OutputMediaKind;
+  artifact_format?: OutputArtifactFormat;
   required: boolean; selected: boolean; ordinal: number;
   quantity: { kind: "exact"; unit: OutputQuantity["unit"]; value: 1 };
   aspect_ratio: OutputAspectRatio | null;
@@ -86,6 +89,14 @@ export type OutputPlanSummary = {
 const issue = (code: string, path: string, message: string): OutputIssue => ({ code, path, message });
 const validIdentity = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const copy = <T>(value: T): T => structuredClone(value);
+/** Only already-inspected deliverables reach compilation. Preserve absence exactly;
+ * each compiled record gets its own validated format value, never an execution grant. */
+function artifactFormatFields(entry: OutputDeliverable): { artifact_format?: OutputArtifactFormat } {
+  if (!Object.hasOwn(entry, "artifact_format")) return {};
+  const format = readOutputArtifactFormat(entry.artifact_format, entry.media_kind);
+  if (!format) throw new Error("invalid_artifact_format");
+  return { artifact_format: format };
+}
 const allIds = (spec: OutputRequirementSpec) => [spec.id, ...spec.deliverables.flatMap((entry) => [entry.id, ...(entry.format_variants ?? []).map((item) => item.id), ...(entry.series?.members ?? []).map((item) => item.id)])];
 
 function policyFor(options: OutputPlanOptions, subjectId: string, deliverableId: string, unit: OutputQuantity["unit"]): OutputCountPolicy | null {
@@ -146,7 +157,7 @@ export function compileOutputPlan(specs: readonly OutputRequirementSpec[], optio
     const optionalIncluded = !required && [spec.id, entry.id, row.id].some((id) => selectedOptional.has(id));
     const selected = required || optionalIncluded;
     const quantityPolicy = policyFor(options, row.id, entry.id, row.quantity.unit);
-    const obligation: OutputPlanObligation = { id: row.id, requirement_id: spec.id, deliverable_id: entry.id, variant_id: row.variant_id ?? null, member_id: row.member_id ?? null, label: row.label, media_kind: entry.media_kind, required, selected, quantity: copy(row.quantity), quantity_policy: copy(quantityPolicy ?? (row.quantity.kind === "exact" ? { kind: "exact", unit: row.quantity.unit, value: row.quantity.value } : null)), target_ids: [], resolution: "unresolved" };
+    const obligation: OutputPlanObligation = { id: row.id, requirement_id: spec.id, deliverable_id: entry.id, variant_id: row.variant_id ?? null, member_id: row.member_id ?? null, label: row.label, media_kind: entry.media_kind, ...artifactFormatFields(entry), required, selected, quantity: copy(row.quantity), quantity_policy: copy(quantityPolicy ?? (row.quantity.kind === "exact" ? { kind: "exact", unit: row.quantity.unit, value: row.quantity.value } : null)), target_ids: [], resolution: "unresolved" };
     plan.obligations.push(obligation);
     plan.groups.find((group) => group.id === entry.id)!.obligation_ids.push(row.id);
     const quantityResolution = finiteCount(row.quantity, quantityPolicy, `${row.id}.quantity`);
@@ -177,7 +188,7 @@ export function compileOutputPlan(specs: readonly OutputRequirementSpec[], optio
         const chosenByTarget = selectedTargets?.has(targetId) ?? false;
         const targetSelected = selectedTargets === null ? selected : chosenByTarget;
         if (!required && chosenByTarget) obligation.selected = true;
-        const target: OutputPlanTarget = { id: targetId, requirement_id: spec.id, deliverable_id: entry.id, obligation_id: row.id, variant_id: row.variant_id ?? null, member_id: row.member_id ?? null, label: count === 1 ? row.label : `${row.label} ${ordinal}`, media_kind: entry.media_kind, required, selected: targetSelected, ordinal, quantity: { kind: "exact", unit: row.quantity.unit, value: 1 }, aspect_ratio: copy(row.aspect_ratio ?? null), source_scope: copy(source), coverage: copy(coverage), content_quantity: copy(contentQuantity), count_policy: copy(contentPolicy), suggested_count: validSuggestion ? suggestion : null, instruction_text: row.instruction_text, source_revision: options.source_revision, requirement_revision: options.requirement_revision, blocking_issues: copy(blocking) };
+        const target: OutputPlanTarget = { id: targetId, requirement_id: spec.id, deliverable_id: entry.id, obligation_id: row.id, variant_id: row.variant_id ?? null, member_id: row.member_id ?? null, label: count === 1 ? row.label : `${row.label} ${ordinal}`, media_kind: entry.media_kind, ...artifactFormatFields(entry), required, selected: targetSelected, ordinal, quantity: { kind: "exact", unit: row.quantity.unit, value: 1 }, aspect_ratio: copy(row.aspect_ratio ?? null), source_scope: copy(source), coverage: copy(coverage), content_quantity: copy(contentQuantity), count_policy: copy(contentPolicy), suggested_count: validSuggestion ? suggestion : null, instruction_text: row.instruction_text, source_revision: options.source_revision, requirement_revision: options.requirement_revision, blocking_issues: copy(blocking) };
         plan.targets.push(target);
         obligation.target_ids.push(targetId);
       }
@@ -202,7 +213,7 @@ export function compileOutputPlan(specs: readonly OutputRequirementSpec[], optio
       continue;
     }
     for (const entry of spec.deliverables) {
-      plan.groups.push({ id: entry.id, requirement_id: spec.id, label: entry.label, media_kind: entry.media_kind, required: entry.required, obligation_ids: [] });
+      plan.groups.push({ id: entry.id, requirement_id: spec.id, label: entry.label, media_kind: entry.media_kind, ...artifactFormatFields(entry), required: entry.required, obligation_ids: [] });
       if (entry.series && entry.series.state === "unresolved") {
         compileObligation(spec, entry, { id: deriveOutputRequirementId(entry.id, "membership"), label: entry.label, required: true, quantity: { kind: "unknown", unit: entry.quantity.unit, reason: entry.series.description }, instruction_text: entry.original_text, extra_issues: [issue("series_membership_unresolved", `${entry.id}.series`, entry.series.description)] });
       } else if (entry.series) {

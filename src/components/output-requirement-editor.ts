@@ -1,4 +1,4 @@
-import type { OutputCountPolicy, OutputMediaKind, OutputQuantity, OutputQuantityUnit, OutputRequirementSpec } from "../model/output-requirements.ts";
+import { readOutputArtifactFormat, type OutputCountPolicy, type OutputDeliverable, type OutputMediaKind, type OutputQuantity, type OutputQuantityUnit, type OutputRequirementSpec } from "../model/output-requirements.ts";
 
 /** Transient text is deliberately separate from the canonical numeric contract. */
 export type OutputQuantityDraft = {
@@ -83,6 +83,40 @@ export function outputMediaQuantityUnit(kind: OutputMediaKind): OutputQuantityUn
   return "member";
 }
 
+export type OutputArtifactFormatLabelKey = "artifactFormat.short_story" | "artifactFormat.unsupported";
+
+/** Absence is not a malformed present qualifier. No format is inferred from wording. */
+export function outputArtifactFormatLabelKey(value: { media_kind: unknown; artifact_format?: unknown }): OutputArtifactFormatLabelKey | null {
+  if (!Object.hasOwn(value, "artifact_format")) return null;
+  return readOutputArtifactFormat(value.artifact_format, value.media_kind) ? "artifactFormat.short_story" : "artifactFormat.unsupported";
+}
+
+/** Record removed fields as authored decisions as well as surviving changed fields. */
+export function markOutputDraftEdited<T extends { value_origins: OutputRequirementSpec["value_origins"] }>(before: T, after: T): T {
+  const value_origins = { ...after.value_origins };
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)] as Array<keyof T & string>);
+  for (const key of keys) {
+    if (["id", "original_text", "value_origins"].includes(key)) continue;
+    // Materialization may add optional undefined values; those are not authored
+    // decisions. Explicit deletion still records removal, including its provenance.
+    if (Object.hasOwn(before, key) && !Object.hasOwn(after, key) || JSON.stringify(before[key]) !== JSON.stringify(after[key])) value_origins[key] = { kind: "authored" };
+  }
+  return { ...after, value_origins };
+}
+
+/** The card calls this only after its existing medium-change confirmation, except for an unqualified unknown medium. */
+export function outputDeliverableWithChangedMedium(current: OutputDeliverable, media_kind: OutputMediaKind): OutputDeliverable {
+  if (current.media_kind === media_kind) return current;
+  const next: OutputDeliverable = {
+    ...current, media_kind, quantity: { kind: "unknown", unit: outputMediaQuantityUnit(media_kind) },
+    content_quantity: media_kind === "slides" ? { kind: "unknown", unit: "slide" } : media_kind === "audio" || media_kind === "video" ? { kind: "unknown", unit: "second" } : undefined,
+    series: media_kind === "video" ? current.series : undefined,
+    format_variants: media_kind === "image" || media_kind === "video" ? current.format_variants?.map((variant) => ({ ...variant, quantity: { kind: "unknown", unit: outputMediaQuantityUnit(media_kind) } })) : undefined,
+  };
+  delete next.artifact_format;
+  return next;
+}
+
 export function outputDraftLines(value: string): string[] {
   return value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
 }
@@ -106,7 +140,7 @@ export type OutputInterpretationPlanning = {
   countPolicies: Record<string, OutputCountPolicy>;
   suggestedCounts: Record<string, number>;
 };
-export type OutputInterpretationField = "group" | "identity" | "label" | "medium" | "required" | "quantity" | "contentQuantity" | "source" | "coverage" | "instructions" | "formats" | "ratio" | "placements" | "series" | "members" | "countPolicy" | "suggestedCount" | "draftText";
+export type OutputInterpretationField = "group" | "identity" | "label" | "medium" | "artifactFormat" | "required" | "quantity" | "contentQuantity" | "source" | "coverage" | "instructions" | "formats" | "ratio" | "placements" | "series" | "members" | "countPolicy" | "suggestedCount" | "draftText";
 export type OutputInterpretationDecision = {
   key: string; ownerId: string; label: string; field: OutputInterpretationField; value: unknown;
 };
@@ -132,6 +166,7 @@ export function outputInterpretationDecisions(spec: OutputRequirementSpec, plann
     add(group.id, group.label, "identity", group.id);
     add(group.id, group.label, "label", group.label);
     add(group.id, group.label, "medium", group.media_kind);
+    if (Object.hasOwn(group, "artifact_format")) add(group.id, group.label, "artifactFormat", { media_kind: group.media_kind, artifact_format: group.artifact_format });
     add(group.id, group.label, "required", group.required);
     add(group.id, group.label, "quantity", group.quantity);
     add(group.id, group.label, "contentQuantity", group.content_quantity ?? null);

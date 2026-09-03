@@ -10,7 +10,7 @@ import { copyOutputRequirementCreationEvents } from "../model/output-requirement
 import { OutputRequirementsClient } from "./output-requirements-client";
 import type { OutputCommandResponse, OutputRequirementCommand, OutputRequirementsSnapshot } from "../model/output-delivery-contract";
 import { isOutputContextBlock } from "../model/output-source-policy";
-import { outputRequirementEditableDraft } from "../model/output-requirements";
+import { outputRequirementEditableDraft, readOutputArtifactFormat } from "../model/output-requirements";
 import { normalizeOutputRequirementCreation } from "../model/output-requirement-creation.ts";
 import { resolvePresentationCountRequest, type SlideCountPolicy } from "../model/presentation-count-policy";
 import { Signal } from "signal-polyfill";
@@ -152,6 +152,9 @@ function outputSnapshotRenderable(value: unknown): value is OutputRequirementsSn
   const optional = (entry: unknown, accepts: (item: unknown) => boolean) => entry === undefined || entry === null || accepts(entry);
   const fields = (entry: Record<string, unknown>, names: readonly string[], accepts: (item: unknown) => boolean) => names.every(name => accepts(entry[name]));
   const values = (entry: unknown, accepts: (item: unknown) => boolean) => record(entry) && Object.values(entry).every(accepts);
+  // Absence preserves legacy plans; a present null/unknown format is not absence.
+  const artifactFormat = (entry: Record<string, unknown>) => !Object.hasOwn(entry, "artifact_format")
+    || readOutputArtifactFormat(entry.artifact_format, entry.media_kind) !== null;
   const issue = (entry: unknown) => record(entry) && fields(entry, ["code", "path", "message"], text);
   const quantity = (entry: unknown) => record(entry) && text(entry.unit) && (entry.kind === "unknown" && optional(entry.reason, text)
     || entry.kind === "exact" && number(entry.value) || entry.kind === "range" && fields(entry, ["min", "max"], number));
@@ -171,14 +174,16 @@ function outputSnapshotRenderable(value: unknown): value is OutputRequirementsSn
     && list(entry.issues, issue) && optional(entry.planSuggestions, options);
   const target = (entry: unknown) => record(entry)
     && fields(entry, ["id", "requirement_id", "deliverable_id", "obligation_id", "label", "media_kind", "instruction_text", "source_revision", "requirement_revision"], text)
+    && artifactFormat(entry)
     && fields(entry, ["required", "selected"], boolean) && number(entry.ordinal)
     && fields(entry, ["variant_id", "member_id"], item => optional(item, text)) && quantity(entry.quantity)
     && optional(entry.aspect_ratio, item => record(item) && fields(item, ["width", "height"], number))
     && source(entry.source_scope) && coverage(entry.coverage) && optional(entry.content_quantity, quantity)
     && optional(entry.count_policy, policy) && optional(entry.suggested_count, number) && list(entry.blocking_issues, issue);
   const plan = (entry: unknown) => record(entry) && entry.schema_version === 1 && fields(entry, ["document_id", "source_revision", "requirement_revision"], text)
-    && list(entry.groups, item => record(item) && fields(item, ["id", "requirement_id", "label", "media_kind"], text) && boolean(item.required) && texts(item.obligation_ids))
+    && list(entry.groups, item => record(item) && fields(item, ["id", "requirement_id", "label", "media_kind"], text) && artifactFormat(item) && boolean(item.required) && texts(item.obligation_ids))
     && list(entry.obligations, item => record(item) && fields(item, ["id", "requirement_id", "deliverable_id", "label", "media_kind", "resolution"], text)
+      && artifactFormat(item)
       && fields(item, ["variant_id", "member_id"], child => optional(child, text)) && fields(item, ["required", "selected"], boolean)
       && quantity(item.quantity) && optional(item.quantity_policy, policy) && texts(item.target_ids))
     && list(entry.targets, target)

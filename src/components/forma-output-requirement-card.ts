@@ -17,7 +17,7 @@ import {
   moveOutputDraftRow, outputDraftLines, outputMediaQuantityUnit, outputQuantityToDraft, outputSaveReplyCanCloseDraft,
   readOutputCountPolicyDraft, readOutputQuantityDraft, type OutputCountPolicyDraft, type OutputQuantityDraft,
   compareOutputInterpretations, outputInterpretationDecisions, retainOutputInterpretationPlanning,
-  outputReinterpretationNeedsConfirmation,
+  outputReinterpretationNeedsConfirmation, outputArtifactFormatLabelKey, markOutputDraftEdited, outputDeliverableWithChangedMedium,
   type OutputInterpretationChange, type OutputInterpretationDecision,
 } from "./output-requirement-editor.ts";
 import "./forma-output-requirement-card.css";
@@ -396,12 +396,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     this.#touch();
   }
   #markEdited<T extends { value_origins: OutputRequirementSpec["value_origins"] }>(before: T, after: T): T {
-    const value_origins = { ...after.value_origins };
-    for (const key of Object.keys(after) as Array<keyof T & string>) {
-      if (["id", "original_text", "value_origins"].includes(key)) continue;
-      if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) value_origins[key] = { kind: "authored" };
-    }
-    return { ...after, value_origins };
+    return markOutputDraftEdited(before, after);
   }
   #updateMember(deliverableId: string, memberId: string, update: (value: OutputSeriesMember) => OutputSeriesMember) {
     this.#updateDeliverable(deliverableId, (value) => value.series ? {
@@ -412,12 +407,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     this.#updateDeliverable(deliverableId, (value) => ({ ...value, format_variants: value.format_variants?.map((variant) => variant.id === variantId ? this.#markEdited(variant, update(variant)) : variant) }));
   }
   #changeMedium(id: string, media_kind: OutputMediaKind) {
-    this.#updateDeliverable(id, (current) => ({
-      ...current, media_kind, quantity: { kind: "unknown", unit: outputMediaQuantityUnit(media_kind) },
-      content_quantity: media_kind === "slides" ? { kind: "unknown", unit: "slide" } : media_kind === "audio" || media_kind === "video" ? { kind: "unknown", unit: "second" } : undefined,
-      series: media_kind === "video" ? current.series : undefined,
-      format_variants: media_kind === "image" || media_kind === "video" ? current.format_variants?.map((variant) => ({ ...variant, quantity: { kind: "unknown", unit: outputMediaQuantityUnit(media_kind) } })) : undefined,
-    }));
+    this.#updateDeliverable(id, (current) => outputDeliverableWithChangedMedium(current, media_kind));
     this.#session?.quantities.delete(`${id}:quantity`); this.#session?.quantities.delete(`${id}:content`);
     for (const variant of this.#session?.spec.deliverables.find((value) => value.id === id)?.format_variants ?? []) this.#session?.quantities.delete(`${variant.id}:quantity`);
     this.#mediumChange = null; this.requestUpdate();
@@ -758,19 +748,25 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       <div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("addVideo"), deliverable.id)} type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#addMember(deliverable)}>${this.#t("addVideo")}</button><button aria-label=${this.#controlName(this.#t("confirmSeries"), deliverable.id)} type="button" ?disabled=${this.#fieldsDisabled() || series.state === "resolved"} @click=${() => this.#confirmSeries(deliverable)}>${this.#t("confirmSeries")}</button></div>
     </section>`;
   }
+  #artifactFormat(value: { media_kind: unknown; artifact_format?: unknown }) {
+    const label = outputArtifactFormatLabelKey(value);
+    return label ? html`<p><b>${this.#t("artifactFormat")}</b> · ${this.#t(label)}</p>` : nothing;
+  }
   #deliverable(value: OutputDeliverable) {
     const name = value.label || this.#t("untitledGroup");
+    const formatLabel = outputArtifactFormatLabelKey(value);
     return html`<li class="output-requirement-group" data-output-deliverable=${value.id} aria-labelledby=${this.#fieldId(`${value.id}:heading`)}>
       <header><h4 id=${this.#fieldId(`${value.id}:heading`)} aria-label=${this.#controlName(this.#isolate(name), value.id)} dir="auto">${name}</h4><span>${this.#t(value.required ? "required" : "optional")}</span></header>
       <div class="output-requirement-fields">
         ${this.#textField(`${value.id}:label`, this.#t("label"), value.label, (label) => this.#updateDeliverable(value.id, (current) => ({ ...current, label })), { ownerId: value.id, sectionLabel: "" })}
         ${this.#select(`${value.id}:medium`, this.#t("medium"), value.media_kind, MEDIA.map((kind) => ({ value: kind, label: this.#t(`media.${kind}`) })), (next) => {
           if (next === value.media_kind) return;
-          if (value.media_kind === "unknown") this.#changeMedium(value.id, next as OutputMediaKind);
+          if (value.media_kind === "unknown" && !Object.hasOwn(value, "artifact_format")) this.#changeMedium(value.id, next as OutputMediaKind);
           else { this.#mediumChange = { deliverableId: value.id, kind: next as OutputMediaKind }; this.requestUpdate(); }
         }, value.id, "")}
       </div>
-      ${this.#mediumChange?.deliverableId === value.id ? html`<div class="output-requirement-warning"><h5>${this.#t("mediumChangeTitle")}</h5><p>${this.#t("mediumChangeDetail")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepProposal"), value.id)} type="button" @click=${() => { this.#mediumChange = null; this.requestUpdate(); }}>${this.#t("keepProposal")}</button><button aria-label=${this.#controlName(this.#t("changeMedium"), value.id)} type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => { if (this.#mediumChange) this.#changeMedium(value.id, this.#mediumChange.kind); }}>${this.#t("changeMedium")}</button></div></div>` : nothing}
+      ${this.#artifactFormat(value)}
+      ${this.#mediumChange?.deliverableId === value.id ? html`<div class="output-requirement-warning"><h5>${this.#t("mediumChangeTitle")}</h5><p>${this.#t("mediumChangeDetail")}</p>${formatLabel ? html`<p>${this.#t("artifactFormatRemoval")} · ${this.#t(formatLabel)}</p>` : nothing}<div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepProposal"), value.id)} type="button" @click=${() => { this.#mediumChange = null; this.requestUpdate(); }}>${this.#t("keepProposal")}</button><button aria-label=${this.#controlName(this.#t("changeMedium"), value.id)} type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => { if (this.#mediumChange) this.#changeMedium(value.id, this.#mediumChange.kind); }}>${this.#t("changeMedium")}</button></div></div>` : nothing}
       ${this.#checkbox(`${value.id}:required`, this.#t("required"), value.required, (required) => this.#updateDeliverable(value.id, (current) => ({ ...current, required })), this.#t("requiredHelp"), value.id, "")}
       ${this.#quantity(`${value.id}:quantity`, this.#t("quantity"), value.quantity, value.id)}
       ${value.content_quantity ? this.#quantity(`${value.id}:content`, this.#t(value.content_quantity.unit === "slide" ? "slidesCount" : "duration"), value.content_quantity, value.id) : nothing}
@@ -788,6 +784,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     const editable = outputRequirementEditableDraft(spec);
     if (!editable) return nothing;
     return html`<ul class="output-requirement-summary-groups">${repeat(editable.deliverables, (value) => value.id, (value) => html`<li><div><b dir="auto">${value.label || this.#t("untitledGroup")}</b><span>${this.#t(`media.${value.media_kind}`)} · ${this.#t(value.required ? "required" : "optional")}</span></div><p>${this.#quantityLabel(value.quantity)}${value.content_quantity ? html` · ${this.#quantityLabel(value.content_quantity)}` : nothing}</p>
+      ${this.#artifactFormat(value)}
       ${value.series ? html`<small>${this.#t(value.series.state === "resolved" ? "seriesResolved" : "seriesUnresolved")}</small>` : nothing}
       ${value.format_variants?.length ? html`<ul>${value.format_variants.map((variant) => html`<li><bdi dir="auto">${variant.label || this.#t("unnamedFormat")}</bdi> · <bdi dir="ltr">${variant.aspect_ratio ? formatOutputAspectRatio(variant.aspect_ratio) : this.#t("ratioUnknown")}</bdi> · ${this.#t(variant.required ? "required" : "optional")} · ${this.#quantityLabel(variant.quantity)}</li>`)}</ul>` : nothing}
     </li>`)}</ul>`;
@@ -796,6 +793,10 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     if (value === undefined || value === null || value === "") return this.#t("comparisonAbsent");
     if (field === "required" && typeof value === "boolean") return this.#t(value ? "required" : "optional");
     if (field === "medium" && typeof value === "string" && MEDIA.includes(value as OutputMediaKind)) return this.#t(`media.${value as OutputMediaKind}`);
+    if (field === "artifactFormat" && value && typeof value === "object") {
+      const label = outputArtifactFormatLabelKey(value as { media_kind: unknown; artifact_format?: unknown });
+      return this.#t(label ?? "artifactFormat.unsupported");
+    }
     if (field === "identity") return html`<code dir="ltr">${String(value)}</code>`;
     if (Array.isArray(value)) return value.length ? html`<ol>${value.map((entry) => html`<li>${entry && typeof entry === "object" && "label" in entry ? html`<bdi dir="auto">${String(entry.label)}</bdi> <code dir="ltr">${String(entry.id)}</code>` : html`<bdi dir="auto">${String(entry)}</bdi>`}</li>`)}</ol>` : this.#t("comparisonAbsent");
     if (value && typeof value === "object") {

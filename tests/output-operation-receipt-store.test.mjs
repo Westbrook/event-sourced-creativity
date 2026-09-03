@@ -2,7 +2,7 @@ import test from "node:test";
 import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import assert from "node:assert/strict";
 import { OutputRequirementsClient } from "../src/state/output-requirements-client.ts";
-import { outputRequirementEditableDraft } from "../src/model/output-requirements.ts";
+import { outputRequirementEditableDraft, readOutputArtifactFormat } from "../src/model/output-requirements.ts";
 import { compileOutputPlan, summarizeOutputPlan } from "../src/model/output-plan.ts";
 import { snapshot as outputSnapshot } from "./output-ui-source-harness.mjs";
 import { readFile } from "node:fs/promises";
@@ -27,7 +27,7 @@ const sourceProjectMembers = ["#sourceRetired", "#retiredSourceProjectId", "#out
   assert.ok(node, "actual source identity member " + name); return node.getText(parsed);
 }).join("\n");
 const compiled = ts.transpileModule(`${snapshotGuard.getText(parsed)}\nclass ReceiptStore { #jobDetails = new Map(); ${sourceProjectMembers} ${clientField.getText(parsed)} ${method.getText(parsed)} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const ReceiptStore = new Function("OutputRequirementsClient", "outputRequirementEditableDraft", `${compiled}; return ReceiptStore;`)(OutputRequirementsClient, outputRequirementEditableDraft);
+const ReceiptStore = new Function("OutputRequirementsClient", "outputRequirementEditableDraft", "readOutputArtifactFormat", `${compiled}; return ReceiptStore;`)(OutputRequirementsClient, outputRequirementEditableDraft, readOutputArtifactFormat);
 const deferred = () => { let resolvePromise; const promise = new Promise((resolveValue) => { resolvePromise = resolveValue; }); return { promise, resolve: resolvePromise }; };
 
 const job = () => ({ jobId: "job", documentId: "doc", kind: "render_document", status: "failed", result: { artifactKind: "slides" } });

@@ -4,6 +4,7 @@ import {
   moveOutputDraftRow, outputDraftLines, outputMediaQuantityUnit, outputQuantityToDraft,
   parseOutputDraftInteger, readOutputCountPolicyDraft, readOutputQuantityDraft, outputSaveReplyCanCloseDraft,
   compareOutputInterpretations, outputInterpretationDecisions, retainOutputInterpretationPlanning, outputReinterpretationNeedsConfirmation,
+  outputArtifactFormatLabelKey, markOutputDraftEdited, outputDeliverableWithChangedMedium,
 } from "../src/components/output-requirement-editor.ts";
 import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "../src/components/design-system/locales/output-requirement-messages.ts";
 import {
@@ -236,4 +237,80 @@ test("comparison ignores object key order but preserves ordered series decisions
   const reversed = structuredClone(spec);
   reversed.deliverables.find((value) => value.series).series.members.reverse();
   assert.ok(compareOutputInterpretations(spec, reversed, planning, planning).some((row) => row.field === "members"));
+});
+
+
+function structuredShortStory() {
+  return {
+    schema_version: 1, id: "story-requirement", label: "Narrative", original_text: "A short story.", value_origins: {},
+    deliverables: [{ id: "story-deliverable", label: "The map", media_kind: "document", artifact_format: { kind: "short_story", version: 1 },
+      required: true, quantity: { kind: "exact", unit: "document", value: 1 }, source_scope: { kind: "document" },
+      coverage: { kind: "document_context" }, original_text: "A short story.", value_origins: { artifact_format: { kind: "confirmed" }, coverage: { kind: "authored" } } }],
+  };
+}
+
+test("artifact-format labels require an explicit valid qualifier rather than a story label or present invalid value", () => {
+  const group = structuredShortStory().deliverables[0];
+  assert.equal(outputArtifactFormatLabelKey(group), "artifactFormat.short_story");
+  assert.equal(outputArtifactFormatLabelKey({ media_kind: "document", label: "Short story" }), null);
+  for (const value of [null, undefined, { kind: "short_story", version: 2 }, { kind: "scene", version: 1 }, { kind: "short_story", version: 1, extra: true }]) {
+    assert.equal(outputArtifactFormatLabelKey({ media_kind: "document", artifact_format: value }), "artifactFormat.unsupported");
+  }
+  assert.equal(outputArtifactFormatLabelKey({ ...group, media_kind: "image" }), "artifactFormat.unsupported");
+  for (const locale of ["en", "fr", "ar", "ja"]) {
+    for (const suffix of ["artifactFormat", "artifactFormat.short_story", "artifactFormat.unsupported", "artifactFormatRemoval", "changeField.artifactFormat"]) {
+      assert.ok(FORMA_OUTPUT_REQUIREMENT_MESSAGES[locale][`output.requirement.${suffix}`]?.trim(), `${locale}/${suffix}`);
+    }
+  }
+});
+
+test("artifact-format decisions distinguish omission from present null or undefined and expose removals", () => {
+  const before = structuredShortStory(), planning = { countPolicies: {}, suggestedCounts: {} };
+  const absent = structuredClone(before); delete absent.deliverables[0].artifact_format;
+  const removed = compareOutputInterpretations(before, absent, planning, planning).find(row => row.field === "artifactFormat");
+  assert.equal(removed.kind, "removed");
+  assert.deepEqual(removed.before, { media_kind: "document", artifact_format: { kind: "short_story", version: 1 } });
+  assert.equal(removed.after, undefined);
+  for (const invalid of [null, undefined]) {
+    const present = structuredClone(absent); present.deliverables[0].artifact_format = invalid;
+    const change = compareOutputInterpretations(absent, present, planning, planning).find(row => row.field === "artifactFormat");
+    assert.equal(change.kind, "added");
+    assert.equal(Object.hasOwn(change.after, "artifact_format"), true);
+    assert.equal(outputArtifactFormatLabelKey(change.after), "artifactFormat.unsupported");
+  }
+  assert.deepEqual(before.deliverables[0].artifact_format, { kind: "short_story", version: 1 });
+});
+
+test("short-story reparse discloses format removal while wording-only confirmation retains it", () => {
+  const before = structuredShortStory(), untouched = structuredClone(before), planning = { countPolicies: {}, suggestedCounts: {} };
+  assert.equal(inspectOutputRequirement(before).status, "valid");
+  const updated = outputRequirementWithWording(before, "A short story. Revised wording.");
+  assert.deepEqual(updated.deliverables, before.deliverables);
+  assert.deepEqual(confirmOutputRequirementInterpretation(updated).deliverables, before.deliverables);
+  const proposed = parseOutputRequirement({ id: before.id, Type: "Output", Subtype: before.label, Content: updated.original_text }, before).spec;
+  assert.ok(proposed);
+  assert.equal(outputReinterpretationNeedsConfirmation(before, false), true);
+  const changes = compareOutputInterpretations(before, proposed, planning, retainOutputInterpretationPlanning(before, proposed, planning));
+  assert.ok(changes.some(row => row.field === "artifactFormat" && row.kind === "removed" && row.ownerId === "story-deliverable"));
+  assert.equal(proposed.deliverables.some(group => Object.hasOwn(group, "artifact_format")), false);
+  assert.deepEqual(before, untouched);
+});
+
+test("confirmed medium transformation removes the qualifier with authored removal provenance without mutating the retained group", () => {
+  const before = structuredShortStory().deliverables[0], untouched = structuredClone(before);
+  assert.equal(outputDeliverableWithChangedMedium(before, "document"), before);
+  const after = markOutputDraftEdited(before, outputDeliverableWithChangedMedium(before, "image"));
+  assert.equal(Object.hasOwn(after, "artifact_format"), false);
+  assert.deepEqual(after.value_origins.artifact_format, { kind: "authored" });
+  assert.deepEqual(after.value_origins.media_kind, { kind: "authored" });
+  assert.deepEqual(after.value_origins.coverage, before.value_origins.coverage);
+  assert.deepEqual(after.quantity, { kind: "unknown", unit: "image" });
+  assert.deepEqual(before, untouched);
+  const renamed = markOutputDraftEdited(before, { ...before, label: "Revised title" });
+  assert.deepEqual(renamed.artifact_format, before.artifact_format);
+  assert.deepEqual(renamed.value_origins.artifact_format, before.value_origins.artifact_format);
+  const materialized = markOutputDraftEdited(before, { ...before, format_variants: undefined, series: undefined });
+  assert.deepEqual(materialized.value_origins, before.value_origins, "optional undefined fields do not invent authored decisions on ordinary Save");
+  const legacy = structuredClone(before); delete legacy.artifact_format; delete legacy.value_origins.artifact_format;
+  assert.deepEqual(markOutputDraftEdited(legacy, { ...legacy, format_variants: undefined }).value_origins, legacy.value_origins);
 });

@@ -9,6 +9,8 @@ export const OUTPUT_PLAN_TARGET_LABEL_MAX_LENGTH = OUTPUT_REQUIREMENT_LABEL_MAX_
 /** Match portable scope capacity without deleting any row from an oversized saved assignment. */
 export const OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT = 1024;
 export type OutputMediaKind = "image" | "slides" | "audio" | "video" | "document" | "model3d" | "unknown";
+/** An explicit authored artifact format, not a provider route or execution qualification. */
+export type OutputArtifactFormat = { kind: "short_story"; version: 1 };
 export type OutputQuantityUnit = "presentation" | "slide" | "episode" | "video" | "image" | "second" | "document" | "model" | "member";
 export type OutputQuantity =
   | { kind: "unknown"; unit: OutputQuantityUnit; reason?: string }
@@ -43,6 +45,7 @@ export type OutputDeliverable = {
   id: string;
   label: string;
   media_kind: OutputMediaKind;
+  artifact_format?: OutputArtifactFormat;
   required: boolean;
   quantity: OutputQuantity;
   content_quantity?: OutputQuantity;
@@ -79,6 +82,18 @@ const issue = (code: string, path: string, message: string): OutputIssue => ({ c
 const authored = (text?: string): OutputValueOrigin => ({ kind: "authored", ...(text === undefined ? {} : { text }) });
 const interpreted = (text?: string): OutputValueOrigin => ({ kind: "interpreted", ...(text === undefined ? {} : { text }) });
 const unknownQuantity = (unit: OutputQuantityUnit, reason: string): OutputQuantity => ({ kind: "unknown", unit, reason });
+
+/** Read only an explicit current format. Callers distinguish absent from present-invalid
+ * with Object.hasOwn; null/undefined are not defaults. No prose or label inference. */
+export function readOutputArtifactFormat(value: unknown, mediaKind: unknown): OutputArtifactFormat | null {
+  if (mediaKind !== "document" || !object(value)) return null;
+  const descriptors = Object.getOwnPropertyDescriptors(value), names = Reflect.ownKeys(descriptors);
+  if (names.length !== 2 || !names.includes("kind") || !names.includes("version")) return null;
+  const kind = descriptors.kind, version = descriptors.version;
+  if (!kind?.enumerable || !version?.enumerable || !("value" in kind) || !("value" in version)
+    || kind.value !== "short_story" || version.value !== 1) return null;
+  return { kind: "short_story", version: 1 };
+}
 
 export function isOutputRequirementId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,147}$/.test(value); }
 export function isOutputRequirementLabel(value: unknown): boolean {
@@ -205,10 +220,15 @@ function member(value: unknown, path: string, issues: OutputIssue[], ids: Set<st
 
 function deliverable(value: unknown, path: string, issues: OutputIssue[], ids: Set<string>) {
   if (!object(value)) { issues.push(issue("invalid_deliverable", path, "Expected a deliverable.")); return; }
-  keys(value, ["id", "label", "media_kind", "required", "quantity", "content_quantity", "source_scope", "coverage", "format_variants", "series", "original_text", "value_origins"], path, issues);
+  keys(value, ["id", "label", "media_kind", "artifact_format", "required", "quantity", "content_quantity", "source_scope", "coverage", "format_variants", "series", "original_text", "value_origins"], path, issues);
   identity(value.id, `${path}.id`, issues, ids);
   label(value.label, `${path}.label`, issues);
   if (!mediaKinds.has(value.media_kind as OutputMediaKind)) issues.push(issue("invalid_media_kind", `${path}.media_kind`, "This media kind is not supported."));
+  if (Object.hasOwn(value, "artifact_format")) {
+    const format = Object.getOwnPropertyDescriptor(value, "artifact_format");
+    if (!format?.enumerable || !("value" in format) || !readOutputArtifactFormat(format.value, value.media_kind))
+      issues.push(issue("invalid_artifact_format", `${path}.artifact_format`, "Format unavailable."));
+  }
   if (typeof value.required !== "boolean") issues.push(issue("invalid_requiredness", `${path}.required`, "Requiredness must be explicit."));
   quantity(value.quantity, `${path}.quantity`, issues);
   if (value.content_quantity !== undefined) quantity(value.content_quantity, `${path}.content_quantity`, issues);
@@ -385,7 +405,9 @@ function mediaClause(content: string, expression: RegExp): string {
   return content.split(/\s*,\s*(?=(?:one|\d+|a series|and (?:one|\d+|a series))\b)/i).find((part) => expression.test(part))?.trim() ?? content;
 }
 
-/** A deterministic proposal for common intake. The retained prose remains the author's source of intent. */
+/** A deterministic replacement proposal for common intake. The retained prose remains
+ * the author's source of intent. Explicit artifact formats are never inferred from
+ * wording or carried onto a replacement; the editor must disclose their removal. */
 export function parseOutputRequirement(input: OutputRequirementInput, previous?: OutputRequirementSpec): OutputParseResult {
   const issues: OutputIssue[] = [];
   const type = inputValue(input, "type", issues);
@@ -423,7 +445,7 @@ export function parseOutputRequirement(input: OutputRequirementInput, previous?:
     const kind = imageRequest ? "image" : "video", entry = make(kind, kind, imageRequest ? "Social media images" : "Social media videos", content);
     entry.coverage = { kind: "document_context" };
     entry.value_origins.coverage = interpreted("Use the authorized Document's creative context. This does not assert exhaustive topic coverage.");
-    const matches = Array.from(content.matchAll(/(?<![\d.\-])\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/g));
+    const matches = Array.from(content.matchAll(/(?<![\d.-])\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?/g));
     const previousEntry = prior?.deliverables.find((item) => item.id === entry.id);
     entry.format_variants = matches.map((match, index): OutputFormatVariant => {
       const aspect = parseOutputAspectRatio(match[0]);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { confirmOutputRequirementInterpretation, copyOutputRequirement, outputRequirementWithWording, parseOutputRequirement, OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT } from "../src/model/output-requirements.ts";
+import { confirmOutputRequirementInterpretation, copyOutputRequirement, outputRequirementWithWording, parseOutputRequirement, readOutputArtifactFormat, OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT } from "../src/model/output-requirements.ts";
 import { compileOutputPlan, initialOutputTargetState, summarizeOutputPlan } from "../src/model/output-plan.ts";
 
 const options = { document_id: "document", source_revision: "source-1", requirement_revision: "requirements-1" };
@@ -381,4 +381,54 @@ test("portable inventory capacity blocks confirmation without truncating any dec
   assert.deepEqual(boundaryPlan.issues, []);
   assert.equal(boundaryPlan.obligations.length, 1024);
   assert.equal(boundaryPlan.unresolved_groups.length, 1024);
+});
+
+
+function explicitDocumentPlanRequirement() {
+  return { schema_version: 1, id: "document-output", label: "Document", original_text: "One document.",
+    deliverables: [{ id: "document-deliverable", label: "Document", media_kind: "document", required: true,
+      quantity: { kind: "exact", unit: "document", value: 1 }, source_scope: { kind: "document" },
+      coverage: { kind: "document_context" }, original_text: "One document.", value_origins: {} }],
+    value_origins: { interpretation_basis: { kind: "confirmed", text: "One document." } } };
+}
+
+test("explicit artifact format is independently retained on groups, obligations, and every finite target", () => {
+  const spec = explicitDocumentPlanRequirement();
+  spec.deliverables[0].artifact_format = { kind: "short_story", version: 1 };
+  spec.deliverables[0].quantity.value = 2;
+  const before = structuredClone(spec), plan = compileOutputPlan([spec], options);
+  assert.deepEqual(plan.issues, []); assert.equal(plan.targets.length, 2);
+  const records = [...plan.groups, ...plan.obligations, ...plan.targets];
+  for (const record of records) {
+    assert.deepEqual(record.artifact_format, { kind: "short_story", version: 1 });
+    assert.deepEqual(readOutputArtifactFormat(record.artifact_format, record.media_kind), record.artifact_format);
+    assert.notEqual(record.artifact_format, spec.deliverables[0].artifact_format);
+  }
+  assert.equal(new Set(records.map(record => record.artifact_format)).size, records.length);
+  plan.targets[0].artifact_format.kind = "changed";
+  for (const record of records.filter(record => record !== plan.targets[0])) assert.equal(record.artifact_format.kind, "short_story");
+  assert.deepEqual(spec, before);
+  const states = plan.targets.map(target => initialOutputTargetState(target));
+  assert.ok(states.every(state => state.capability === "unknown" && state.execution === "not_started"));
+  assert.equal(summarizeOutputPlan(plan, states).delivery_ready, false);
+});
+
+test("unqualified legacy document records retain exact serialization without artifact format defaults", () => {
+  const plan = compileOutputPlan([explicitDocumentPlanRequirement()], options);
+  assert.equal(JSON.stringify(plan.groups[0]), JSON.stringify({ id: "document-deliverable", requirement_id: "document-output", label: "Document", media_kind: "document", required: true, obligation_ids: ["document-deliverable"] }));
+  assert.equal(JSON.stringify(plan.obligations[0]), JSON.stringify({ id: "document-deliverable", requirement_id: "document-output", deliverable_id: "document-deliverable", variant_id: null, member_id: null, label: "Document", media_kind: "document", required: true, selected: true, quantity: { kind: "exact", unit: "document", value: 1 }, quantity_policy: { kind: "exact", unit: "document", value: 1 }, target_ids: ["document-deliverable:target:1"], resolution: "resolved" }));
+  assert.equal(JSON.stringify(plan.targets[0]), JSON.stringify({ id: "document-deliverable:target:1", requirement_id: "document-output", deliverable_id: "document-deliverable", obligation_id: "document-deliverable", variant_id: null, member_id: null, label: "Document", media_kind: "document", required: true, selected: true, ordinal: 1, quantity: { kind: "exact", unit: "document", value: 1 }, aspect_ratio: null, source_scope: { kind: "document" }, coverage: { kind: "document_context" }, content_quantity: null, count_policy: null, suggested_count: null, instruction_text: "One document.", source_revision: "source-1", requirement_revision: "requirements-1", blocking_issues: [] }));
+  assert.ok([...plan.groups, ...plan.obligations, ...plan.targets].every(record => !Object.hasOwn(record, "artifact_format")));
+});
+
+test("present-invalid or incompatible artifact formats never compile as an unqualified target", () => {
+  for (const format of [undefined, null, {}, { kind: "short_story", version: 0 }, { kind: "short_story", version: 2 }, { kind: "scene", version: 1 }, { kind: "short_story", version: 1, route: "caller" }]) {
+    const spec = explicitDocumentPlanRequirement(); spec.deliverables[0].artifact_format = format;
+    const plan = compileOutputPlan([spec], options);
+    assert.ok(plan.issues.some(issue => issue.code === "invalid_artifact_format"));
+    assert.equal(plan.targets.length, 0); assert.equal(summarizeOutputPlan(plan).scope_known, false);
+  }
+  const incompatible = images(); incompatible.deliverables[0].artifact_format = { kind: "short_story", version: 1 };
+  const plan = compileOutputPlan([incompatible], options);
+  assert.ok(plan.issues.some(issue => issue.code === "invalid_artifact_format")); assert.equal(plan.targets.length, 0);
 });

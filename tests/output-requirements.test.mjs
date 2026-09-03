@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   copyOutputRequirement, formatOutputAspectRatio, inspectOutputRequirement, isOutputContextType,
   outputCountSatisfies, parseOutputAspectRatio, parseOutputQuantityInput, parseOutputRequirement, isOutputRequirementId,
-  partitionOutputContext, validateOutputCountPolicy,
+  partitionOutputContext, validateOutputCountPolicy, readOutputArtifactFormat,
   confirmOutputRequirementInterpretation, outputRequirementInterpretationBasis,
   outputRequirementInterpretationNeedsReview, outputRequirementWithWording,
   deriveOutputRequirementId, isOutputRequirementLabel, outputRequirementEditableDraft,
@@ -388,4 +388,91 @@ test("derived planning identifiers stay bounded without altering persisted paren
   assert.equal(deriveOutputRequirementId("short", "membership"), "short:membership");
   assert.equal(parent.length, 148);
   assert.throws(() => deriveOutputRequirementId("invalid/id", "membership"), /opaque/);
+});
+
+
+function explicitShortStoryRequirement() {
+  return {
+    schema_version: 1, id: "story-output", label: "Story", original_text: "One short story.",
+    deliverables: [{ id: "story-deliverable", label: "Story", media_kind: "document",
+      artifact_format: { kind: "short_story", version: 1 }, required: true,
+      quantity: { kind: "exact", unit: "document", value: 1 }, source_scope: { kind: "document" },
+      coverage: { kind: "document_context" }, original_text: "One short story.",
+      value_origins: { artifact_format: { kind: "authored" } } }],
+    value_origins: { interpretation_basis: { kind: "confirmed", text: "One short story." } },
+  };
+}
+
+test("explicit artifact format reader is closed, document-only, detached, and getter-free", () => {
+  const authored = { kind: "short_story", version: 1 }, decoded = readOutputArtifactFormat(authored, "document");
+  assert.deepEqual(decoded, authored); assert.notEqual(decoded, authored);
+  decoded.kind = "changed"; assert.equal(authored.kind, "short_story");
+  assert.deepEqual(readOutputArtifactFormat(Object.assign(Object.create(null), authored), "document"), authored);
+  for (const value of [undefined, null, "short_story", [], {}, { kind: "short_story" }, { version: 1 },
+    { kind: "short_story", version: "1" }, { kind: "short_story", version: 2 }, { kind: "scene", version: 1 },
+    { kind: "short_story", version: 1, approved: true }, { ...authored, constructor: "caller" },
+    { ...authored, prototype: "caller" }, JSON.parse('{"kind":"short_story","version":1,"__proto__":{}}'), Object.create(authored),
+    { ...authored, [Symbol("authority")]: true }, Object.defineProperty({ kind: "short_story" }, "version", { value: 1 })]) {
+    assert.equal(readOutputArtifactFormat(value, "document"), null);
+  }
+  for (const medium of [undefined, null, "image", "slides", "audio", "video", "model3d", "unknown", ["document"]])
+    assert.equal(readOutputArtifactFormat(authored, medium), null);
+  let accessed = false;
+  for (const accessor of [{ get kind() { accessed = true; return "short_story"; }, version: 1 },
+    { kind: "short_story", get version() { accessed = true; return 1; } }]) {
+    assert.equal(readOutputArtifactFormat(accessor, "document"), null); assert.equal(accessed, false);
+  }
+});
+
+test("requirement validation distinguishes absent artifact format from every present-invalid value", () => {
+  const explicit = explicitShortStoryRequirement();
+  assert.equal(inspectOutputRequirement(explicit).status, "valid");
+  assert.deepEqual(inspectOutputRequirement(JSON.parse(JSON.stringify(explicit))).spec, explicit);
+  const absent = structuredClone(explicit); delete absent.deliverables[0].artifact_format;
+  const legacyBytes = JSON.stringify(absent);
+  assert.equal(inspectOutputRequirement(absent).status, "valid");
+  assert.equal(JSON.stringify(inspectOutputRequirement(absent).spec), legacyBytes);
+  assert.equal(Object.hasOwn(outputRequirementEditableDraft(absent).deliverables[0], "artifact_format"), false);
+  for (const value of [undefined, null, {}, { kind: "short_story", version: 2 }, { kind: "short_story", version: 1, provider: "caller" }]) {
+    const invalid = structuredClone(explicit); invalid.deliverables[0].artifact_format = value;
+    const inspected = inspectOutputRequirement(invalid);
+    assert.equal(inspected.status, "invalid"); assert.equal(inspected.spec, null);
+    assert.ok(inspected.issues.some(row => row.code === "invalid_artifact_format"));
+    assert.equal(Object.hasOwn(inspected.preserved.deliverables[0], "artifact_format"), true);
+    assert.equal(outputRequirementEditableDraft(invalid), null);
+  }
+  const incompatible = imageSpec(); incompatible.deliverables[0].artifact_format = explicit.deliverables[0].artifact_format;
+  assert.ok(inspectOutputRequirement(incompatible).issues.some(row => row.code === "invalid_artifact_format"));
+  let accessed = false;
+  const accessor = structuredClone(explicit);
+  Object.defineProperty(accessor.deliverables[0], "artifact_format", { enumerable: true, get() { accessed = true; return { kind: "short_story", version: 1 }; } });
+  assert.equal(inspectOutputRequirement(accessor).status, "invalid"); assert.equal(accessed, false);
+});
+
+test("explicit format survives editable recovery, independent copy, wording edit and interpretation confirmation", () => {
+  const original = explicitShortStoryRequirement(), before = structuredClone(original);
+  const editable = outputRequirementEditableDraft(original), copied = copyOutputRequirement(original, "story-copy").spec;
+  const wording = outputRequirementWithWording(original, "Revised authored wording.");
+  const confirmed = confirmOutputRequirementInterpretation(wording);
+  const oversized = structuredClone(original); oversized.deliverables[0].label = "L".repeat(241);
+  const recoverable = outputRequirementEditableDraft(oversized);
+  for (const next of [editable, copied, wording, confirmed, recoverable]) {
+    assert.deepEqual(next.deliverables[0].artifact_format, { kind: "short_story", version: 1 });
+    assert.notEqual(next.deliverables[0].artifact_format, original.deliverables[0].artifact_format);
+  }
+  assert.equal(outputRequirementInterpretationNeedsReview(wording), true);
+  assert.equal(outputRequirementInterpretationNeedsReview(confirmed), false);
+  assert.deepEqual(original, before);
+});
+
+test("prose never infers an artifact format and explicit reinterpretation remains a replacement proposal", () => {
+  const previous = explicitShortStoryRequirement(), before = structuredClone(previous);
+  const input = { id: previous.id, Type: "Output", Subtype: "Short story", Content: "Create one short story." };
+  for (const parsed of [parseOutputRequirement(input), parseOutputRequirement(input, previous)]) {
+    assert.equal(parsed.needs_confirmation, true);
+    assert.equal(parsed.recognized, false);
+    assert.equal(parsed.spec.deliverables[0].media_kind, "unknown");
+    assert.equal(Object.hasOwn(parsed.spec.deliverables[0], "artifact_format"), false);
+  }
+  assert.deepEqual(previous, before, "the saved format remains in the original for explicit before/after review");
 });
