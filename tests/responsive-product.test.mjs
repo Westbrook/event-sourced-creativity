@@ -1568,3 +1568,52 @@ test("D428 Library native header buttons reserve existing focus clearance when s
   assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
     { "scroll-margin-block": "var(--forma-focus-clearance)" });
 });
+
+// The native 200% journey reached a 94px pane containing a 94.78px textarea.
+// These are source-policy cases; physical focus/body visibility remains a
+// whole native-suite gate with the unchanged strict observer.
+test("E6 short native-rail Document keeps a usable pane behind scrollable header rows", () => {
+  const page = '.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget])';
+  const stage = page + " > .studio-main";
+  const baseStage = '.workspace-page[data-workbench="document"] > .studio-main';
+  const dockStage = page + ':has(> .composer-dock) > .studio-main';
+  const pane = '.workspace-page[data-workbench="document"] .studio-grid > :is(.context-column, .output-column)';
+  for (const viewport of [
+    { name: "observed true-200 native owner", width: 419, height: 398, pointer: "fine" },
+    { name: "same native coarse owner", width: 419, height: 398, pointer: "coarse" },
+    { name: "short native media branch", width: 700, height: 390, pointer: "fine" },
+    { name: "native owner above existing 760px static-header seam", width: 767, height: 390, pointer: "fine" },
+    { name: "existing short-height boundary", width: 700, height: 600, pointer: "fine" },
+  ]) {
+    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto auto minmax(16rem, 1fr)",
+      viewport.name + ": header rows cannot consume the complete editing pane");
+    assert.equal(winning(stage, "overflow-y", viewport)?.value, "auto", "native scrollIntoView can reveal the pane through this ancestor");
+    assert.equal(winning(stage, "overscroll-behavior", viewport)?.value, "contain");
+    assert.equal(winning([".studio-header-stack", stage + " > .studio-header-stack"], "position", viewport)?.value, "static",
+      "the complete header scrolls out of the way even above the old 760px seam");
+    assert.equal(winning(stage + " > .studio-header-stack", "top", viewport)?.value, "auto");
+    assert.equal(winning(stage, "scroll-padding-block", viewport)?.value, "var(--forma-focus-clearance)");
+    assert.equal(winning(stage, "scroll-padding-block-end", viewport), undefined, "an undocked stage has no phantom composer reserve");
+    assert.equal(winning(dockStage, "scroll-padding-block-end", viewport)?.value, "calc(7rem + var(--forma-keyboard-offset))",
+      "a real direct composer remains clear of the newly scrollable ancestor");
+    assert.equal(winning(pane, "overflow-y", viewport)?.value, "auto", "the existing native pane stays independently scrollable");
+    assert.equal(winning(pane, "scroll-padding-block", viewport)?.value, "var(--forma-focus-clearance)");
+    assert.equal(winning(stage, "grid-row", viewport)?.value, "2", "the native invoker keeps its preceding full row");
+    for (const property of ["font-size", "line-height", "height", "block-size", "max-height", "max-block-size", "display"])
+      assert.equal(winning(stage, property, viewport), undefined, "do not shrink copy, cap the scroll owner, or hide content: " + property);
+  }
+  for (const viewport of [
+    { name: "immediately taller native owner", width: 700, height: 601, pointer: "fine" },
+    { name: "compact portrait owner", width: 390, height: 844, pointer: "coarse" },
+    { name: "square seam", width: 600, height: 600, pointer: "fine" },
+  ]) {
+    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto auto minmax(0, 1fr)");
+    assert.equal(winning(stage, "overflow-y", viewport), undefined, viewport.name + ": preserve the ordinary bounded stage");
+  }
+  // Existing fixture matching lists only actual owners: an inline rail has no
+  // popovertarget and therefore does not match the new native-stage selector.
+  for (const viewport of [viewports[2], viewports[8]]) {
+    assert.equal(winning(baseStage, "grid-template-rows", viewport)?.value, "auto auto minmax(0, 1fr)");
+    assert.equal(winning(baseStage, "overflow-y", viewport), undefined);
+  }
+});
