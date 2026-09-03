@@ -1,4 +1,4 @@
-import type { FormaLocaleController } from "./localization";
+import type { FormaLocaleController } from "./locale-controller";
 
 type LocalizedTemplate = {
   readonly _$litType$: unknown;

@@ -196,9 +196,10 @@ test("one published choice card unifies context creation across document, canvas
 });
 
 test("scoped locale contracts separate translated authored content from invariant machine identifiers", async () => {
-  const [localeSource, languageOptionsSource] = await Promise.all([
+  const [localeSource, languageOptionsSource, controllerSource] = await Promise.all([
     read("../src/components/design-system/localization.ts"),
     read("../src/components/design-system/language-options.ts"),
+    read("../src/components/design-system/locale-controller.ts"),
   ]);
   const locale = declarationByTag.get("forma-ui-locale");
   assert.equal(locale["x-forma"].category, "foundation");
@@ -227,8 +228,8 @@ test("scoped locale contracts separate translated authored content from invarian
   assert.match(languageOptionsSource, /\{ locale: "ja", label: "日本語", direction: "ltr" \}/);
   assert.match(localeSource, /export \{ FORMA_SUPPORTED_LOCALES \} from "\.\/language-options\.ts"/);
   assert.match(localeSource, /context-request/);
-  assert.match(localeSource, /Intl\.PluralRules/);
-  assert.match(localeSource, /Intl\.Segmenter/);
+  assert.match(controllerSource, /Intl\.PluralRules/);
+  assert.match(controllerSource, /Intl\.Segmenter/);
   for (const entry of componentCatalog) {
     for (const messages of [frenchMessages, arabicMessages, japaneseMessages]) {
       assert.ok(messages[`component.${entry.tag}.title`], `${entry.tag} has a translated title`);
