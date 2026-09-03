@@ -1,6 +1,6 @@
 # Bounded slideshow comparison harness
 
-Implemented on the production179 / `7eb914d` base and locally verified on 2026-09-02. The CLI only prepares offline requests; paid execution requires a separately supplied one-shot transport, current authority checks and an explicit stage approval. Stage A has user approval up to $1.50; B–D remain separately gated. This implementation does not authorize a deployment or production-default change.
+Implemented on the production179 / `7eb914d` base and locally verified on 2026-09-02. The CLI only prepares offline requests; paid execution requires a separately supplied one-shot transport, current authority checks and an explicit stage approval. Stage A's one-use approval up to $1.50 has been consumed by the four-call run documented below; it must not be reused. B–D remain separately gated. This implementation does not authorize a deployment or production-default change.
 
 ## Files and scope
 
@@ -18,7 +18,7 @@ C: real managed E page 0 (slides 1–8 of 12) and M page 2 (slides 17–23 of 23
 
 D: complete test-authored E/M candidates derived from the existing `faithfulSlides` recipe with full source quotations, attributions, notes, theme and citations. Both baseline candidates have zero local source/structure issues. Only `items.3.slide.visual.value` changes, duplicating its existing body at global slide 4/20. Exactly one genuine raw within-slide duplicate is detected; the source/count contract remains valid. The editor uses the real `validation-repair` phase, not a falsely labeled editorial-rewrite phase. The complete candidate is transmitted unchanged; if the adapter would redact/change it, preparation refuses it. Both medium and high prepared requests fit 64,000.
 
-B: same four model/effort arms but requires a complete source-matching retained native candidate, preferably the existing retained one, otherwise the predeclared complete Terra-medium A result. No empty/truncated candidate, easiest-arm selection, synthetic substitution or extra prerequisite generation. The native source and candidate were not read by this subtask. B remains unavailable until root supplies and validates that binding.
+B: same four model/effort arms but requires a complete source-matching retained native candidate, preferably the existing retained one, otherwise the predeclared complete Terra-medium A result. No empty/truncated candidate, easiest-arm selection, synthetic substitution or extra prerequisite generation. The harness implementation subtask did not read the native source/candidate. After Stage A, the authorized operator prepared B offline from its predeclared complete Terra-medium result; all four exact wires fit the existing bounds. B has made zero paid calls and remains unapproved.
 
 All four stages are separate approvals; maximum 16 calls / $6.20 rounded total only if each is independently admitted. C/D require a common-effort selection receipt from the corresponding earlier native sweep; this is external operator evidence, not automatic model judgment. No automatic retries, nested repair, paid judge or fallback model.
 
@@ -81,3 +81,7 @@ New run and canonical-ledger directory entries have their parent directories syn
 - Root integration verified 114/114 comparison/provider/fidelity/source/cost tests, plus full build/typecheck and changed-file lint. Independent review passed 18/18 tests after native-binding and directory-durability hardening.
 
 One sample per arm is exploratory evidence, not p95, stable model superiority or authority to change production defaults. Native viewer/export inspection and actual paid cost results remain separate work.
+
+## Executed Stage A
+
+The four approved calls cost $0.425080 in total. Terra medium passed local normalization/source validation but had raw duplicate copy; Terra high and Sol medium retained validation issues. Sol high exhausted its 6,500-token output cap and returned incomplete JSON. The run stopped without retry, with all four financial receipts retained. See `forma-slideshow-stage-a-results-2026-09-02.md` and its source-free JSON companion. No evaluation candidate is a native Forma artifact, and no production routing change follows from this result.
