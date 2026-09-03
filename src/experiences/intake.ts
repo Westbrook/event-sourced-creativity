@@ -47,6 +47,7 @@ async function stableId(draftId: string, slot: string) {
   const hash = (await digest({ draftId, slot })).slice(7);
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
+export { stableId as experienceResourceId };
 // These are text-only musical instructions, not Audio reference assets. The native
 // Audio reference/transfer gate stays unchanged and cannot be opted into here.
 const kinds: Record<string, BlockKind> = { subject: "subject", character: "subject", object: "subject", claim: "message", evidence: "message", conflict: "action", causality: "action", event: "action", reveal: "message", revealFrame: "composition", composition: "composition", lighting: "lighting", anchor: "composition", camera: "camera", motion: "motion", moment: "direction", energy: "emotion", instrument: "direction", proportions: "scale", surface: "material", knowledge: "direction", tension: "emotion", ending: "direction" };
