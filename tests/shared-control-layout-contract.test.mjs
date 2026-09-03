@@ -362,6 +362,157 @@ test("B3 exact target identities keep bidi markup and unrestricted long-token wr
   assert.equal(unconditional(design, ".ui-dialog-card > footer")["align-items"], "stretch");
 });
 
+// E residuals: existing PostCSS + actual host-source contracts only. No DOM,
+// application methods, providers, measured geometry or AT are exercised here.
+const eNoncanvasHosts = Object.fromEntries(await Promise.all([
+  "forma-sessions", "forma-memory", "collection-tree", "forma-workspace", "forma-workspace-settings", "output-card",
+].map(async name => [name, await read("src/components/" + name + ".ts")])));
+const eNoncanvasGroups = [
+  ".memory-page .belief-actions", ".sessions-page .blank-document-form > div", ".collection-form > footer",
+  ".project-settings-form > footer", ".upload-rights-modal > .reference-upload-card > footer", ".output-critique > footer",
+];
+function eNoncanvasFragment(name, start, end) {
+  const source = eNoncanvasHosts[name], offset = source.indexOf(start);
+  assert.ok(offset >= 0, name + ": actual native host opening exists");
+  assert.equal(source.indexOf(start, offset + start.length), -1, name + ": inspect one exact host fragment");
+  const finish = source.indexOf(end, offset + start.length);
+  assert.ok(finish >= 0, name + ": the complete fragment has its closing tag");
+  return source.slice(offset, finish + end.length);
+}
+function eNoncanvasFloor(selector) {
+  const rule = unconditional(responsive, selector);
+  assert.equal(rule["min-height"], "var(--forma-hit-target)", selector);
+  assert.equal(rule["min-block-size"], rule["min-height"], selector);
+  for (const property of ["height", "block-size", "max-height", "max-block-size"])
+    assert.equal(rule[property], undefined, selector + ": a floor is not a content ceiling");
+  return rule;
+}
+
+test("E noncanvas: Sessions native Scout and blank-name controls use the shared growing floor", () => {
+  const scout = eNoncanvasFragment("forma-sessions", '<section class="scout-gate">', "</section>");
+  assert.match(scout, /<button \?disabled=\$\{phase6Decision!=="advance"\}/u);
+  assert.ok(scout.includes('@click=${()=>void navigateInApp(this,navigation=>navigation.route("/scout"))}'), "the same Scout destination retains its guarded ordinary-navigation callback");
+  const blank = eNoncanvasFragment("forma-sessions", '<form class="blank-document-form"', "</form>");
+  assert.ok(blank.includes('<label for="blank-document-name">') && blank.includes('<input id="blank-document-name"'));
+  assert.equal((blank.match(/<input\b/gu) ?? []).length, 1, "one current named text input, not a synthetic second field");
+  assert.ok(blank.includes('@submit=${this.#startBlank}'));
+  assert.ok(blank.includes('<div>${name !== null ? html`<button type="button" class="button ghost blank-document-discard"')
+    && blank.includes('@click=${this.#discardBlank}'));
+  const gate = eNoncanvasFloor(".sessions-page .scout-gate > button");
+  eNoncanvasFloor(".sessions-page .blank-document-form input");
+  assert.equal(gate["min-inline-size"], "var(--forma-hit-target)");
+  assert.equal(gate["padding-inline"], "var(--forma-control-inset-inline)");
+  assert.equal(gate["line-height"], "var(--forma-body-line-height, 1.6)");
+  assert.equal(gate["font-size"], "var(--forma-font-size-supporting, var(--type-small))");
+  assert.equal(gate["white-space"], "normal"); assert.equal(gate["overflow-wrap"], "anywhere");
+});
+
+test("E noncanvas: Collection and Project Settings keep their current native form bindings with a common floor", () => {
+  const collection = eNoncanvasFragment("collection-tree", '<form class="modal-card collection-form"', "</form>");
+  const project = eNoncanvasFragment("forma-workspace", '<form class="modal-card project-settings-form"', "</form>");
+  assert.ok(collection.includes("@submit=${this.#save}") && collection.includes(".value=${this.#handle}"));
+  assert.ok(collection.includes('<label>Collection name<input') && collection.includes('required placeholder='));
+  assert.ok(project.includes("@submit=${this.#saveProject}") && project.includes(".value=${this.#projectName}"));
+  assert.ok(project.includes('<label>Project state<select .value=${this.#projectState}'));
+  for (const state of ["active", "archived", "paused"]) assert.ok(project.includes('<option value="' + state + '">'));
+  for (const form of [collection, project]) assert.ok(form.includes('<footer><button type="button" class="button ghost"'));
+  eNoncanvasFloor(":is(.collection-form, .project-settings-form) :is(input, select)");
+});
+
+test("E noncanvas: Taste Signal and value controls retain selectedness/input bindings with the shared floor", () => {
+  const form = eNoncanvasFragment("output-card", '<form class="output-critique"', "</form>");
+  assert.ok(form.includes("@submit=${this.#saveCritique}"));
+  const signal = form.slice(form.indexOf('<div class="taste-signal">'), form.indexOf('</div></fieldset>', form.indexOf('<div class="taste-signal">')));
+  assert.equal((signal.match(/<button type="button"/gu) ?? []).length, 2);
+  for (const polarity of ["positive", "negative"]) assert.ok(signal.includes('aria-pressed=${this.#polarity==="' + polarity + '"}'));
+  assert.ok(form.includes('<label class="taste-value">') && form.includes('.value=${this.#value}'));
+  assert.ok(form.includes('?disabled=${!this.#value.trim()||this.store.busy.get()==="critique-object"}'));
+  eNoncanvasFloor(".output-critique .taste-signal > button");
+  eNoncanvasFloor(".output-critique .taste-value > input");
+});
+
+test("E noncanvas: current Memory, blank, collection, settings, upload and taste peers declare wrapping without clipping rules", () => {
+  const memory = eNoncanvasFragment("forma-memory", '<div class="belief-actions">', "</div>");
+  assert.equal((memory.match(/<button\b/gu) ?? []).length, 2);
+  assert.ok(memory.includes("this.#promote(belief)") && memory.includes('type: "FactRetracted"'));
+  const upload = eNoncanvasFragment("forma-workspace", '<form class="modal-card reference-upload-card"', "</form>");
+  assert.ok(upload.includes('if(this.#rightsConfirmed&&!this.#uploading)void this.#confirmUpload()'));
+  assert.ok(upload.includes('<footer><button type="button" class="button ghost" ?disabled=${this.#uploading}'));
+  assert.ok(upload.includes('<button type="submit" class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading}'));
+  for (const selector of eNoncanvasGroups) {
+    const group = unconditional(responsive, selector);
+    assert.equal(group["min-inline-size"], "0", selector);
+    assert.equal(group["flex-wrap"], "wrap", selector);
+    assert.equal(group["align-items"], "stretch", selector);
+    assert.equal(group.gap, "var(--forma-cluster-gap)", selector);
+  }
+  const peers = unconditional(responsive, ":is(" + eNoncanvasGroups.join(", ") + ") > .button");
+  assert.equal(peers.flex, "0 1 auto"); assert.equal(peers["max-inline-size"], "100%");
+  assert.equal(peers["align-self"], "stretch"); assert.equal(peers["white-space"], "normal");
+  assert.equal(peers["overflow-wrap"], "anywhere");
+  for (const property of ["height", "block-size", "max-height", "max-block-size", "overflow", "text-overflow", "line-clamp"])
+    assert.equal(peers[property], undefined, "wrapping must not be implemented by hiding or fixing the label");
+});
+
+test("E noncanvas: current Workspace card rows have an unconditional copy basis and unchanged list/action bindings", () => {
+  const settings = eNoncanvasHosts["forma-workspace-settings"];
+  for (const heading of ["workspace-assigned-review-heading", "workspace-context-package-heading", "workspace-invitations-heading", "workspace-organizations-heading", "workspace-projects-heading"])
+    assert.ok(settings.includes('class="workspace-settings-card" aria-labelledby="' + heading + '"'));
+  assert.ok(settings.includes('<ul class="workspace-settings-list">'));
+  assert.ok(settings.includes('<li><div><b dir="auto">'));
+  for (const binding of ["navigateInApp(this,navigation=>navigation.openAssignedReview(task))", "this.#accept(invitation)", "this.#navigate(href,event)", "this.#openProject(project)"])
+    assert.ok(settings.includes(binding), "preserve the current exact executor source binding: " + binding);
+  const row = ".workspace-settings-card > .workspace-settings-list > li";
+  assert.equal(unconditional(responsive, row)["flex-wrap"], "wrap", "unconditional rule, not just the 680px viewport branch");
+  const copy = unconditional(responsive, row + " > div"), action = unconditional(responsive, row + " > .button");
+  assert.equal(copy.flex, "1 1 min(100%, 16rem)"); assert.equal(copy["min-inline-size"], "0");
+  assert.equal(copy["overflow-wrap"], "anywhere"); assert.equal(copy["white-space"], undefined, "do not override authored preformatted whitespace");
+  assert.equal(action.flex, "0 1 auto"); assert.equal(action["max-inline-size"], "100%");
+  assert.equal(action["white-space"], "normal"); assert.equal(action["overflow-wrap"], "anywhere");
+  // The nested member list is inside a project row, not a direct card child.
+  const nested = ".workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li";
+  assert.ok(settings.includes('<ul class="workspace-settings-project-list">'));
+  const marker = '${projectMembers?html`<ul class="workspace-settings-list">';
+  const start = settings.indexOf(marker); assert.ok(start >= 0);
+  const memberRow = settings.slice(start, settings.indexOf("</ul>", start));
+  assert.ok(memberRow.includes('<b dir="auto">${memberName}</b>'));
+  assert.ok(memberRow.includes('data-project-access-id=${project.project_access_id}') && memberRow.includes('data-membership-id=${member.membership_id}'));
+  assert.ok(memberRow.includes("this.#revokeProject(event,project.project_access_id,member)"));
+  assert.equal((memberRow.match(/<button\b/gu) ?? []).length, 1, "a member has one direct native Revoke, not an invented action group");
+  assert.ok(settings.includes("<b><bdi>${names.get(snapshot.snapshot_id)!.label}</bdi></b>"));
+  assert.ok(settings.includes("<bdi>${names.get(credential.id)!.label}</bdi>"));
+  assert.ok(settings.includes('<option value=${member.user_id}>${names.get(member.membership_id)!.label}</option>'));
+  for (const binding of ['this.#confirmRecovery(event,"restore",snapshot)', 'this.#confirmRecovery(event,"cleanup",snapshot)', "this.#revokeCredential(event,credential)"])
+    assert.ok(settings.includes(binding), "preserve the current qualified target and its executor: " + binding);
+  for (const current of [row, nested]) {
+    const line = unconditional(responsive, current), text = unconditional(responsive, current + " > div");
+    const button = eNoncanvasFloor(current + " > .button");
+    assert.equal(line["flex-wrap"], "wrap", current + ": width of the card, not the viewport, decides reflow");
+    assert.equal(text.flex, "1 1 min(100%, 16rem)", "preferred readable text basis before action wrapping");
+    assert.equal(text["min-inline-size"], "0"); assert.equal(text["overflow-wrap"], "anywhere");
+    assert.equal(button.flex, "0 1 auto"); assert.equal(button["max-inline-size"], "100%");
+    assert.equal(button["white-space"], "normal"); assert.equal(button["overflow-wrap"], "anywhere");
+    for (const property of ["inline-size", "width", "max-block-size", "max-height", "overflow", "text-overflow", "line-clamp", "-webkit-line-clamp"])
+      assert.equal(text[property], undefined, "no new copy width/clipping ceiling");
+    assert.equal(unconditional(responsive, current + ":has(> .button ~ .button)")["align-items"], "stretch");
+    assert.equal(unconditional(responsive, current + ":has(> .button ~ .button) > .button")["align-self"], "stretch");
+    assert.equal(button["align-self"], undefined, "a sole Revoke is not forced to match the whole permission column");
+  }
+});
+
+test("E noncanvas healthy: existing axis, artboard, checkbox and shared-button policies are not replaced", () => {
+  const axis = unconditional(responsive, ".output-critique .taste-axis-grid button");
+  assert.equal(axis["min-block-size"], "var(--forma-hit-target)");
+  assert.equal(axis["padding-inline"], "var(--forma-focus-clearance)");
+  const artboard = unconditional(base, "forma-presentation-slide > .presentation-slide[data-presentation-artboard]");
+  assert.equal(artboard.width, "960px"); assert.equal(artboard.height, "540px"); assert.equal(artboard["aspect-ratio"], "16 / 9");
+  assert.equal(unconditional(design, ".shared-presentation-viewport>forma-presentation-slide")["aspect-ratio"], "16/9");
+  assert.equal(unconditional(base, ".rights-check")["grid-template-columns"], "20px 1fr");
+  assert.equal(unconditional(base, ".rights-check input")["min-height"], undefined, "checkbox glyphs are not enlarged by this cut");
+  assert.equal(unconditional(design, ".button")["min-height"], "2.75rem");
+  assert.equal(unconditional(responsive, ":root")["--forma-hit-target"], "var(--forma-control-min-size, 2.75rem)");
+});
+
 test("Sessions original blank form keeps actions before a full-span current status", async () => {
   const sessions = await read("src/components/forma-sessions.ts");
   const start = sessions.indexOf("  #blankForm() {"), end = sessions.indexOf("\n  #brief()", start);

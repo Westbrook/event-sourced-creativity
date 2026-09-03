@@ -1253,32 +1253,72 @@ test("D428 the floating short-landscape Document rail keeps only its Expand cont
     assert.equal(winning([...oldDocks, dock], "display", viewport)?.value, "grid", "true tall side rails keep their shortcut dock");
 });
 
-// D428 R6 measured a 44px floating Expand body inside a 44px-wide clip:
-// its outward 3px outline plus 3px offset was clipped despite a healthy target.
-// This existing CSS fixture checks policy, not native paint or keyboard delivery.
-test("D428 the floating collapsed Document rail reuses inset focus without resizing its native invoker", () => {
+// D428 R6's wide inline rail keeps its 44px floating invoker. E6 reached a
+// translated native-popover invoker whose body needs its own intrinsic row.
+// This fixture checks the two source policies, not native paint or keyboard delivery.
+test("D428 Document rail retains inset focus across floating inline and intrinsic native-popover owners", () => {
   const posture = '.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"]';
   const page = posture + ' .workspace-page[data-workbench="document"]';
   const collapsed = page + ':has(> forma-project-rail > .project-rail.collapsed)';
   const host = page + ' > forma-project-rail:has(> .project-rail.collapsed)';
+  const nativePage = page + ':has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget])';
+  const nativeHost = nativePage + ' > forma-project-rail';
+  const nativeRail = nativeHost + ' > .project-rail';
+  const nativeToolbar = nativeRail + ' > .rail-toolbar';
+  const nativeToggle = nativeToolbar + ' > .rail-collapse-toggle';
   const selector = page + ' > forma-project-rail > .project-rail.collapsed > .rail-toolbar > .rail-collapse-toggle:focus-visible';
   const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
   const short = [
-    { name: "observed shallow rail", width: 844, height: 390, pointer: "fine" },
-    { name: "same shallow coarse rail", width: 844, height: 390, pointer: "coarse" },
-    { name: "observed true-200 CSS dimensions", width: 419, height: 398, pointer: "fine" },
-    { name: "wide shallow rail", width: 1280, height: 390, pointer: "fine" },
+    { name: "observed shallow inline rail", width: 844, height: 390, pointer: "fine", nativePanel: false },
+    { name: "same shallow coarse inline rail", width: 844, height: 390, pointer: "coarse", nativePanel: false },
+    { name: "first wide inline seam", width: 768, height: 390, pointer: "fine", nativePanel: false },
+    { name: "observed true-200 native owner", width: 419, height: 398, pointer: "fine", nativePanel: true },
+    { name: "same short native coarse owner", width: 419, height: 398, pointer: "coarse", nativePanel: true },
+    { name: "existing short native media branch", width: 700, height: 390, pointer: "fine", nativePanel: true },
+    { name: "wide shallow inline rail", width: 1280, height: 390, pointer: "fine", nativePanel: false },
   ];
   assert.ok(projectRail.includes('<button type="button" class="rail-collapse-toggle"'));
   assert.ok(projectRail.includes('"projects.railExpand"') && projectRail.includes('"projects.railCollapse"'));
+  assert.ok(projectRail.includes('popovertarget=${this.#nativePanel?this.#contentId:nothing}'));
+  assert.ok(projectRail.includes('popover=${this.#nativePanel?"auto":nothing}'));
+  assert.ok(projectRail.includes('matchMedia("(max-width: 47.99rem)")'),
+    "the runtime native-owner decision is unchanged; the CSS condition follows its actual trigger");
   assert.ok(projectRail.includes('if(!this.#nativePanel)this.#setCollapsed(!collapsed);'),
     "retain the same named native control and inline expansion path");
   assert.equal(winning(".ui-audience-navigation a:focus-visible", "outline-offset", short[0])?.value, inset,
     "reuse the established inset focus treatment");
   for (const viewport of short) {
-    assert.equal(winning(host, "position", viewport)?.value, "absolute");
-    assert.equal(winning(host, "inline-size", viewport)?.value, "var(--forma-hit-target)");
-    assert.equal(winning(collapsed, "grid-template-columns", viewport)?.value, "minmax(0, 1fr)");
+    // As elsewhere in this fixture, list only selectors matching this declared
+    // actual owner. Native host tests and the browser verify the owner itself.
+    const hosts = [host, ...(viewport.nativePanel ? [nativeHost] : [])];
+    const pages = [collapsed, ...(viewport.nativePanel ? [nativePage] : [])];
+    assert.equal(winning(hosts, "position", viewport)?.value, viewport.nativePanel ? "relative" : "absolute");
+    assert.equal(winning(hosts, "inline-size", viewport)?.value, viewport.nativePanel ? "100%" : "var(--forma-hit-target)");
+    assert.equal(winning(pages, "grid-template-columns", viewport)?.value, "minmax(0, 1fr)");
+    if (viewport.nativePanel) {
+      assert.equal(winning(pages, "grid-template-rows", viewport)?.value, "auto minmax(0, 1fr)",
+        "reserve the full native trigger row instead of putting translated content over the document header");
+      assert.equal(winning(nativeHost, "grid-row", viewport)?.value, "1");
+      assert.equal(winning(nativePage + " > .studio-main", "grid-row", viewport)?.value, "2");
+      assert.equal(winning(nativeHost, "inset", viewport)?.value, "auto");
+      const oldRail = page + " > forma-project-rail > .project-rail.collapsed";
+      assert.equal(winning([oldRail, nativeRail], "inline-size", viewport)?.value, "100%");
+      assert.equal(winning(nativeRail, "height", viewport)?.value, "auto");
+      const oldToolbar = posture + " .project-rail.collapsed .rail-toolbar";
+      assert.equal(winning([".rail-toolbar", oldToolbar, nativeToolbar], "height", viewport)?.value, "auto");
+      assert.equal(winning(nativeToolbar, "padding-block", viewport)?.value, "var(--forma-focus-clearance)");
+      assert.equal(winning(nativeToolbar, "flex-wrap", viewport)?.value, "wrap");
+      assert.equal(winning([".project-rail.collapsed .rail-collapse-toggle", nativeToggle], "width", viewport)?.value, "auto");
+      assert.equal(winning(nativeToggle, "max-inline-size", viewport)?.value, "100%");
+      assert.equal(winning(nativeToggle, "white-space", viewport)?.value, "normal");
+      assert.equal(winning(nativeToggle, "overflow-wrap", viewport)?.value, "anywhere");
+      const label = ".project-rail.collapsed .rail-collapse-toggle b";
+      for (const [property, value] of [["position", "static"], ["width", "auto"], ["height", "auto"], ["overflow", "visible"], ["clip", "auto"]])
+        assert.equal(winning(label, property, viewport)?.value, value, "retain the visible native invoker wording");
+      const copy = nativePage + " > .studio-main > .studio-header-stack > .page-header--document > .page-header-copy";
+      assert.equal(winning([posture + " .page-header-copy", copy], "padding-inline-start", viewport)?.value, "0",
+        "the reserved row consumes no obsolete floating-invoker gap inside document copy");
+    }
     assert.equal(winning(".rail-collapse-toggle", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
     assert.equal(winning(".rail-collapse-toggle", "min-block-size", viewport)?.value,
       viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)",
@@ -1286,7 +1326,7 @@ test("D428 the floating collapsed Document rail reuses inset focus without resiz
   }
   for (const viewport of short)
     assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset,
-      viewport.name + ": do not paint the ring outside the unchanged floating rail clip");
+      viewport.name + ": retain the established inward ring for either short rail owner");
   const rules = [];
   sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
     if (rule.selectors?.includes(selector)) rules.push(rule);
@@ -1302,7 +1342,36 @@ test("D428 the floating collapsed Document rail reuses inset focus without resiz
   assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/);
   for (const viewport of [viewports[0], viewports[1], viewports[5], viewports[6]])
     assert.equal(winning(selector, "outline-offset", viewport), undefined,
-      "leave ordinary tall and portrait rail focus policy unchanged");
+      "the original floating-rail selector remains short-landscape only");
+});
+
+// E6 JA768 reached a healthy 44px native body whose outward ring crossed the
+// same fixed toolbar edge already handled in the compact rail. No geometry or
+// focus-event change is needed for this separate measured tall-rail condition.
+test("E6 tall Document rail reuses inset focus for its actual toolbar toggle", () => {
+  const selector = '.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible';
+  const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
+  for (const viewport of [
+    { name: "observed JA tall rail", width: 768, height: 900, pointer: "fine" },
+    { name: "same tall coarse rail", width: 768, height: 900, pointer: "coarse" },
+    { name: "existing tall rail owner", width: 934, height: 882, pointer: "fine" },
+  ]) {
+    assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset, viewport.name);
+    assert.equal(winning(".rail-toolbar", "height", viewport)?.value, "52px");
+    assert.equal(winning(".rail-collapse-toggle", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".rail-collapse-toggle", "min-block-size", viewport)?.value,
+      viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)");
+  }
+  const rules = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    if (rule.selectors?.includes(selector)) rules.push(rule);
+  });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(rules[0].selectors, [selector], "only the actual tall rail toggle, not its popover descendants or other postures");
+  assert.equal(rules[0].parent.type, "root");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "outline-offset": inset }, "retain body size, clipping, text and existing focus ownership");
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/);
 });
 
 // D428 R9 reached the compact rail's project link with a clear 44px body,

@@ -35,5 +35,9 @@ export default defineConfig({
       { name: "isolated-e5-presentation", testMatch: "**/isolated-presentation-owners.spec.mjs",
         use: { baseURL: localTestOrigin(process.env.FORMA_E5_SOURCE_BASE_URL ?? "http://127.0.0.1:4180") } },
     ] : []),
+    ...(process.env.FORMA_A11Y_ISOLATED_E6 === "1" ? [
+      { name: "isolated-e6-noncanvas", testMatch: "**/isolated-e6-noncanvas.spec.mjs",
+        use: { baseURL: localTestOrigin("http://127.0.0.1:4186") } },
+    ] : []),
   ],
 });
