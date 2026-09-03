@@ -90,6 +90,45 @@ test("native outside dismissal and peer auto-popover opening close the rail with
  assert.equal(String(f.toggle().attributes["aria-expanded"]),"false");
 });
 
+test("ordinary native closing preserves its focused contents through an intervening render until actual closed toggle",async t=>{
+ const f=await fixture(t);await f.open();
+ const before={events:f.store.events.get(),requests:f.storeHost.requests.length,route:f.store.route.get()};
+ const retained=()=>({text:f.panel().text,links:f.dom.visible("a").filter(node=>node.owner===f.rail).map(node=>({text:node.text,href:node.attributes.href,current:node.attributes["aria-current"]}))});
+ const copy=retained(),panel=f.panel(),current=f.dom.visible("a").find(node=>node.owner===f.rail&&node.attributes["aria-current"]==="page"&&hasClass("rail-document-links")(node.parent));
+ assert.ok(current);assert.equal(f.active(),current.port);
+ await panel.handlers.beforetoggle.call(f.rail,{currentTarget:panel.port,newState:"closed",oldState:"open"});
+ f.draw();await f.settle();
+ assert.equal(f.renderer.openPopovers.has(f.panel().attributes.id),true,"the native hide operation has not yet retired the panel");
+ assert.deepEqual(retained(),copy,"an unrelated render during native beforetoggle must preserve the exact focused navigation subtree");
+ assert.ok(f.components().some(component=>component.tag==="forma-collection-tree"),"the actual nested owner stays mounted during native dismissal");
+ assert.equal(f.active(),f.currentNode(current.port),"the renderer has not removed the native focused descendant before the browser can restore focus");
+ const closing=f.panel();f.renderer.openPopovers.delete(closing.attributes.id);
+ await closing.handlers.toggle.call(f.rail,{currentTarget:closing.port,newState:"closed",oldState:"open"});
+ await f.settle();
+ assert.equal(String(f.toggle().attributes["aria-expanded"]),"false");
+ assert.equal(f.components().some(component=>component.tag==="forma-collection-tree"),false,"actual closed toggle retires the lazy subtree");
+ assert.equal(f.store.events.get(),before.events);assert.equal(f.storeHost.requests.length,before.requests);assert.equal(f.store.route.get(),before.route);assert.deepEqual(f.scrolls,[]);
+ // This ordering regression never simulates invoker restoration; the real-browser Escape journey owns that assertion.
+});
+
+test("native close and reopen before a coalesced toggle preserves the newer presentation and outside focus",async t=>{
+ const f=await fixture(t);await f.open();const panel=f.panel();
+ const before={events:f.store.events.get(),requests:f.storeHost.requests.length,route:f.store.route.get()};
+ await panel.handlers.beforetoggle.call(f.rail,{currentTarget:panel.port,newState:"closed",oldState:"open"});
+ f.renderer.openPopovers.delete(panel.attributes.id);
+ await panel.handlers.beforetoggle.call(f.rail,{currentTarget:panel.port,newState:"open",oldState:"closed",preventDefault(){assert.fail("current native reopen must remain allowed");}});
+ f.renderer.openPopovers.add(panel.attributes.id);f.draw();
+ const outside=f.dom.visible("button").find(node=>node.owner.tag==="forma-shell"&&hasClass("command-trigger")(node));
+ assert.ok(outside);outside.port.focus();const focused=f.trace.filter(item=>item.startsWith("focus:")).length;
+ const reopened=f.panel();await reopened.handlers.toggle.call(f.rail,{currentTarget:reopened.port,newState:"closed",oldState:"open"});
+ await f.settle();
+ assert.equal(f.renderer.openPopovers.has(f.panel().attributes.id),true,"actual reopened state wins over coalesced closed event text");
+ assert.equal(String(f.toggle().attributes["aria-expanded"]),"true");
+ assert.ok(f.components().some(component=>component.tag==="forma-collection-tree"));
+ assert.equal(f.active(),f.currentNode(outside.port));assert.equal(f.trace.filter(item=>item.startsWith("focus:")).length,focused,"coalesced native lifecycle cannot steal a newer outside focus");
+ assert.equal(f.store.events.get(),before.events);assert.equal(f.storeHost.requests.length,before.requests);assert.equal(f.store.route.get(),before.route);assert.deepEqual(f.scrolls,[]);
+});
+
 test("real native coalesced and old queued toggle events cannot close a newer open presentation",async t=>{
  const f=await fixture(t);await f.open();const old=f.panel();
  await f.dismiss("outside");await f.open();const current=f.panel();
@@ -154,7 +193,50 @@ test("desktop inline rail preserves preference and Escape focus without borrowin
 test("same synthetic full hierarchy at934/847 exposes real Results contributors;790/718 remains a separate narrow posture",async t=>{
  const f=await fixture(t,{width:790,height:882,studioWidth:718}),narrow=f.dom;
  const results=narrow.nodes.find(node=>node.attributes.id==="document-results-panel");assert.equal(results.hiddenBy,"document-results-panel");
- const before=narrow.controls();assert.deepEqual(before,{button:22,select:1});
+ // E3 replaced the direct view links with one actual native View trigger.
+ // Pin its identity and retained destinations before reconciling the count.
+ const viewMenus=narrow.nodes.filter(node=>node.tag==="forma-ui-popover"&&hasClass("studio-view-menu")(node));
+ assert.equal(viewMenus.length,1);const viewMenu=viewMenus[0];
+ assert.equal(viewMenu.owner.tag,"forma-studio-mode-nav");assert.ok(viewMenu.component?.isConnected);
+ const viewTriggers=narrow.visible("button").filter(node=>node.owner===viewMenu.component&&hasClass("ui-popover-trigger")(node));
+ assert.equal(viewTriggers.length,1);const viewTrigger=viewTriggers[0];
+ assert.equal(viewTrigger.text,"Change view · Document");assert.equal(viewTrigger.attributes.type,"button");assert.ok(viewTrigger.port?.isConnected);
+ const viewPanel=narrow.nodes.find(node=>node.owner===viewMenu.component&&node.attributes.id===viewTrigger.attributes.popovertarget);
+ assert.ok(viewPanel?.port?.isConnected);assert.equal(viewPanel.attributes.popover,"auto");
+ assert.equal(viewTrigger.attributes["aria-controls"],viewPanel.attributes.id);assert.equal(String(viewTrigger.attributes["aria-expanded"]),"false");
+ assert.equal(f.renderer.openPopovers.has(viewPanel.attributes.id),false);
+ const viewKinds=["document","board","guided","layers","adaptive","editor","chat"];
+ const documentHref="/document/scene-reuse-document/one-current-authored-direction";
+ const viewLinks=narrow.nodes.filter(node=>node.owner===viewMenu.component&&node.attributes["data-studio-view"]);
+ assert.deepEqual(viewLinks.map(node=>[node.attributes["data-studio-view"],node.attributes.href,node.attributes["aria-current"]??null,node.hiddenBy]),
+   viewKinds.map(kind=>[kind,kind==="document"?documentHref:documentHref+"/view/"+kind,kind==="document"?"page":null,viewPanel.attributes.id+"[closed-popover]"]));
+ assert.deepEqual(narrow.visible("button").map(node=>[node.owner.tag,node.attributes["aria-label"]??node.text]),[
+   ["forma-shell","Open all Forma projects"],
+   ["forma-ui-workspace-switcher","Switch workspace. Current workspace: Creator Workspace"],
+   ["forma-shell","Search or run a command"],
+   ["forma-shell","Share"],
+   ["forma-shell","Account and settings"],
+   ["forma-project-rail","Expand project navigation"],
+   ["forma-workspace","Rename One current authored direction"],
+   ["forma-workspace","Undo"],
+   ["forma-workspace","Redo"],
+   ["forma-workspace","Compare"],
+   ["forma-workspace","Remove"],
+   ["forma-ui-popover","Change view · Document"],
+   ["forma-studio-mode-nav","Add context"],
+   ["forma-studio-mode-nav","Enter focused document view"],
+   ["forma-workspace","Write"],
+   ["forma-workspace","Creative results"],
+   ["forma-workspace","Assigned review"],
+   ["forma-workspace","Improve · Attach grounding evidenceAdd a licensed source document, pasted excerpt, or image when evidence is important."],
+   ["forma-ui-choice-card","Prepare an outputChoose and review this document’s output settings. Nothing is generated yet."],
+   ["forma-workspace","Add context"],
+   ["forma-workspace","See spatially"],
+   ["forma-workspace","Quick edit"],
+   ["forma-workspace","Ask Forma"],
+ ],"Every actual narrow native control retains its owner and identity; the View trigger is not a duplicate or substitute");
+ assert.deepEqual(narrow.visible("select").map(node=>node.owner.tag),["forma-ui-language-picker"]);
+ const before=narrow.controls();assert.deepEqual(before,{button:23,select:1});
  f.measure({width:934,shellWidth:934,studioWidth:847});await f.settle();const wider=f.dom;
  assert.equal(f.shell.getAttribute("data-nav-posture"),"rail");
  assert.equal(wider.nodes.find(node=>node.attributes.id==="document-results-panel").hiddenBy,null,"actual Workspace width ownership removes hidden attribute");
