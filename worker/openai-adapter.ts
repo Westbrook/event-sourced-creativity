@@ -952,9 +952,53 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
   return{output,issues,sourceContract,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution.receipt};
 }
 
-export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
+export type PreparedPresentationRequest = {
+  requestBody:string;
+  requestDigest:string;
+  comparisonDigest:string;
+  maximumInputTokens:number;
+  maximumOutputTokens:number;
+  route:PresentationModelRoute;
+  phase:"composition"|"validation-repair";
+  candidateDigest:string|null;
+  candidateIssues:DocumentArtifactValidationIssue[];
+};
+type PresentationRequestPreparation = {
+  candidateRaw?:string;
+  candidateIssues:DocumentArtifactValidationIssue[];
+  capture:(request:Omit<PreparedPresentationRequest,"candidateDigest"|"candidateIssues">)=>never;
+};
+
+/** Offline-only evaluation seam. No API key, submission receipt, HTTP, or automatic repair call. */
+export async function preparePresentationComparisonRequest(
+  env:WorkerEnv,userId:string,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},
+  candidateRaw?:string,
+):Promise<PreparedPresentationRequest>{
+  // Callback-bearing runtime options cannot enter the preparation-only path.
+  const frozen=structuredClone(input);
+  if(frozen.options?.productionPage?.repairIssues?.length)throw new RangeError("comparison_editor_requires_explicit_candidate");
+  const candidateIssues:DocumentArtifactValidationIssue[]=[];
+  if(candidateRaw!==undefined){
+    if(typeof candidateRaw!=="string"||!candidateRaw.trim()||new TextEncoder().encode(candidateRaw).byteLength>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES)throw new RangeError("comparison_candidate_incomplete");
+    const assessed=assessStoredPresentationCandidate(candidateRaw,frozen.snapshot,frozen.options);
+    if(!assessed.output||assessed.sourceContract.sourceIssues?.length)throw new RangeError("comparison_candidate_source_invalid");
+    candidateIssues.push(...assessed.issues,...locallyRepairedSlideIssues(candidateRaw,assessed.output));
+    // Editor comparisons repair prose, not a wrong-source/count/schema candidate.
+    if(candidateIssues.some(issue=>!['duplicate_slide_copy','generic_visual_label','duplicate_deck_copy'].includes(issue.code)))throw new RangeError("comparison_candidate_source_invalid");
+    if(!candidateIssues.length)throw new RangeError("comparison_candidate_has_no_editorial_issue");
+  }
+  let prepared:Omit<PreparedPresentationRequest,"candidateDigest"|"candidateIssues">|undefined;
+  const stop=new Error("presentation_request_prepared_offline");
+  try{
+    await generateDocumentArtifact(env,userId,"slides",frozen,{candidateRaw,candidateIssues,capture:request=>{prepared=request;throw stop;}});
+  }catch(error){if(error!==stop)throw error;}
+  if(!prepared)throw new Error("presentation_request_preparation_failed");
+  return {...prepared,candidateDigest:candidateRaw===undefined?null:await sha256Bytes(new TextEncoder().encode(candidateRaw)),candidateIssues};
+}
+
+export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation) {
   if(kind==="model3d")throw new Error("model3d_dedicated_adapter_required");
-  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  if(!preparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   if(kind==="slides"&&input.options?.productionPage&&input.options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
   const countRequest=kind==="slides"&&!input.options?.productionPage?resolvePresentationCountRequest(input.options??{}):undefined;
@@ -1089,6 +1133,13 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       const callModel=route?.model??model;
       const reasoningEffort=route?.reasoningEffort??"low";
       const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy)}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
+      if(preparation){
+        if(kind!=="slides"||!route||phase!=="composition"&&phase!=="validation-repair")throw new Error("invalid_presentation_preparation_phase");
+        const comparable=JSON.parse(requestBody) as Record<string,unknown>;
+        delete comparable.model;
+        delete (comparable.reasoning as Record<string,unknown>).effort;
+        preparation.capture({requestBody,requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody)),comparisonDigest:await sha256Bytes(new TextEncoder().encode(JSON.stringify(comparable))),maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,route,phase});
+      }
       const clientRequestId=`forma-${kind}-${crypto.randomUUID()}`;
       // A managed whole-work rewrite is a distinct authorized call, not a replay
       // of the initial page. Client request IDs provide tracing, not idempotency.
@@ -1189,14 +1240,14 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     return{output,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution?.receipt??null,issues};
   };
 
-  const first=await run(instructions,providerInput,`document_${kind}`);
-  let body=first.body;
-  let raw=first.raw??"";
+  const first=preparation?.candidateRaw!==undefined?null:await run(instructions,providerInput,`document_${kind}`);
+  let body:OpenAIResponse=first?.body??{};
+  let raw=preparation?.candidateRaw??first?.raw??"";
   let assessment=assess(parseDocumentArtifactContent(raw));
   let output=assessment.output;
   const initialResolution=assessment.groupResolution;
   const initialSourceResolution=assessment.sourceResolution;
-  const initialIssues=assessment.issues;
+  const initialIssues=preparation?.candidateRaw!==undefined?preparation.candidateIssues:assessment.issues;
   const checkpointValidation=async(call:PaidProviderSubmission,issues:DocumentArtifactValidationIssue[])=>{
     if(kind!=="slides")return;
     const validated={...call,validationStatus:issues.length?"invalid" as const:"valid" as const,validationIssueCount:issues.length};
@@ -1204,7 +1255,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     if(at>=0)paidCalls[at]=validated;
     await input.options?.onProviderSubmission?.(validated);
   };
-  await checkpointValidation(first.call,initialIssues);
+  if(first)await checkpointValidation(first.call,initialIssues);
   const locallyRepairedIssues=kind==="slides"?locallyRepairedSlideIssues(raw,output):[];
   let repairIssues:DocumentArtifactValidationIssue[]=[];
   let repairAttempted=false;
