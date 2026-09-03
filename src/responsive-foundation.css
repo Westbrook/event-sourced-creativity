@@ -2825,6 +2825,12 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
   }
 
+  /* The native current-workspace link already carries this same application
+     identity. Keep the description and distinct actor/organization/role. */
+  :is(.application-creative, .application-canvas):not([data-nav-posture="compact"]) > .topbar:has(> forma-ui-workspace-switcher > .ui-workspace-switcher a[aria-current="page"]) > .application-context > b {
+    display: none;
+  }
+
   .application-creative > .topbar > .top-actions > .avatar:focus-visible,
   .application-canvas > .topbar > .top-actions > .avatar:focus-visible,
   .application-creative > .topbar > .top-actions > .forma-global-search:focus-visible,

@@ -347,6 +347,118 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     return true;
   }
 
+  #ordinaryCopyObstacles() {
+    const obstacles: Array<{ element: HTMLElement; box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height"> }> = [];
+    const owner = this.parentElement;
+    const shell = owner?.closest<HTMLElement>(".application-creative");
+    if (!this.isConnected || !owner?.matches("forma-creative-assistant") || !shell) return obstacles;
+    const panels = [...shell.querySelectorAll("forma-assistant-panel")]
+      .filter(panel => panel.closest(".application-creative") === shell);
+    const main = shell.querySelector<HTMLElement>("#main-content");
+    if (panels.length !== 1 || panels[0] !== this || !main
+      || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return obstacles;
+    // Only current, owned copy families participate. Text is not native focus
+    // authority, and a header's intentional whitespace is not an obstacle.
+    const families = [
+      ["forma-workspace-settings", [
+        ".page-header-copy > :is(.eyebrow,h1,p)",
+        'section[aria-labelledby="workspace-invitations-heading"] > :is(h2,p)',
+        'section[aria-labelledby="workspace-organizations-heading"] > :is(h2,p)',
+        'section[aria-labelledby="workspace-projects-heading"] > :is(h2,p)',
+        'section[aria-labelledby="workspace-organizations-heading"] > form.workspace-settings-form > label:has(> input[name="name"])',
+      ]],
+      ["forma-library", [
+        ".library-main > .page-header--library > .page-header-copy > :is(.eyebrow,h1,p)",
+        ".library-body .section-heading > div > :is(.eyebrow,h2,p.section-note)",
+        ".library-main > .library-body > section.lifecycle-next-actions > p.lifecycle-next-scope",
+        '.library-main > .library-body > section.lifecycle-next-actions > p.muted[role="status"]',
+      ]],
+      ["forma-project-contents", [".studio-main > .page-header--document > .page-header-copy > :is(.eyebrow,h1,p)"]],
+      ["forma-workspace", [
+        '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child',
+        '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
+        '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
+      ]],
+    ] as const;
+    for (const [ownerSelector, selectors] of families) {
+      const surfaces = [...main.querySelectorAll<HTMLElement>(ownerSelector)]
+        .filter(surface => surface.isConnected && surface.closest("#main-content") === main
+          && surface.closest(".application-creative") === shell);
+      if (surfaces.length !== 1) continue;
+      const surface = surfaces[0]!;
+      const elements = new Set(selectors.flatMap(selector => [...surface.querySelectorAll<HTMLElement>(selector)]));
+      for (const element of elements) {
+        if (!element.isConnected || element.closest(ownerSelector) !== surface
+          || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
+        if (ownerSelector === "forma-workspace-settings" && element.tagName === "LABEL") {
+          const field = element.querySelector<HTMLInputElement>(':scope > input[name="name"]');
+          if (!(element instanceof HTMLLabelElement) || !field || element.control !== field
+            || field.form !== element.parentElement) continue;
+        }
+        if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)) {
+          const label = element.parentElement;
+          const field = label?.querySelector<HTMLInputElement | HTMLTextAreaElement>(':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]');
+          if (!(label instanceof HTMLLabelElement) || !field?.id || label.control !== field
+            || label.htmlFor !== field.id) continue;
+          if (element.tagName === "SMALL" && (element.id !== `${field.id}-help`
+            || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
+        }
+        // These six Document editor regions already carry a box-level critical
+        // copy contract. Other admitted page copy keeps separate text fragments.
+        const wholeRegion = ownerSelector === "forma-workspace";
+        const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
+          const parent = wholeRegion ? element : text.parentElement;
+          if (!text.textContent?.trim() || !parent
+            || parent.closest("[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon")
+            || ["hidden", "collapse"].includes(getComputedStyle(parent).visibility)) continue;
+          let fragments: DOMRect[];
+          if (wholeRegion) fragments = [element.getBoundingClientRect()];
+          else {
+            const range = document.createRange();
+            range.selectNodeContents(text);
+            fragments = [...range.getClientRects()];
+            range.detach();
+          }
+          for (const fragment of fragments) {
+            let { left, top, right, bottom } = fragment;
+            let displayed = true, bounded = true;
+            const topLayer = parent.closest(":modal, :popover-open");
+            for (let ancestor: HTMLElement | null = parent; ancestor;
+              ancestor = ancestor === topLayer ? null : ancestor.parentElement) {
+              const style = getComputedStyle(ancestor);
+              if (style.display === "none" || Number(style.opacity) === 0) displayed = false;
+              // Native client sizes are untransformed. Keep the original measured
+              // rectangle for an unknown chain, never a larger ancestor box.
+              if ([style.transform, style.translate, style.rotate, style.scale, style.perspective, style.filter,
+                style.clipPath, style.maskImage].some(value => value && value !== "none")
+                || Boolean(style.zoom && !["normal", "1", "100%"].includes(style.zoom))) bounded = false;
+              const clipsX = /^(auto|scroll|hidden|clip)$/.test(style.overflowX);
+              const clipsY = /^(auto|scroll|hidden|clip)$/.test(style.overflowY);
+              if (!clipsX && !clipsY) continue;
+              const bounds = ancestor.getBoundingClientRect();
+              if (clipsX) {
+                const start = bounds.left + ancestor.clientLeft;
+                left = Math.max(left, start); right = Math.min(right, start + ancestor.clientWidth);
+              }
+              if (clipsY) {
+                const start = bounds.top + ancestor.clientTop;
+                top = Math.max(top, start); bottom = Math.min(bottom, start + ancestor.clientHeight);
+              }
+            }
+            if (!bounded) ({ left, top, right, bottom } = fragment);
+            // Pointer-events does not determine whether ordinary text paints.
+            if (displayed && right > left && bottom > top && bottom > 0 && top < innerHeight
+              && right > 0 && left < innerWidth) {
+              obstacles.push({ element, box: { left, top, right, bottom, width: right - left, height: bottom - top } });
+            }
+          }
+        }
+      }
+    }
+    return obstacles;
+  }
+
   #positionLauncher() {
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
     this.#clearStudioLauncher();
@@ -424,6 +536,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     // popover closes; a settled position does not keep moving.
     if (hovered && (!exactFocusPaint || !intersections(launcher.getBoundingClientRect())
       .some(({ element }) => element === focused))) return;
+    // Placement uses both lists; only native controls above authorize a
+    // hovered move or establish exact current-focus paint.
+    const placementObstacles = [...controls, ...this.#ordinaryCopyObstacles()];
+    const placementIntersections = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom">) =>
+      placementObstacles.filter(({ box: obstacle }) => box.left < obstacle.right && box.right > obstacle.left
+        && box.top < obstacle.bottom && box.bottom > obstacle.top);
     delete this.dataset.compactLauncher;
     delete this.dataset.tightLauncher;
     this.style.setProperty("--forma-assistant-obstacle-offset", "0px");
@@ -432,7 +550,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       this.style.setProperty("--forma-assistant-obstacle-offset", `${offset}px`);
       const box = launcher.getBoundingClientRect();
-      const obstacles = intersections(box);
+      const obstacles = placementIntersections(box);
       if (!obstacles.length) return;
       const next = offset + box.bottom - Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top)) + 8;
       if (box.top - (next - offset) < 8) break;
@@ -441,26 +559,26 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
 
     this.style.setProperty("--forma-assistant-obstacle-offset", "0px");
     this.dataset.compactLauncher = "true";
-    if (!intersections(launcher.getBoundingClientRect()).length) return;
+    if (!placementIntersections(launcher.getBoundingClientRect()).length) return;
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const box = launcher.getBoundingClientRect();
-      const obstacles = intersections(box);
+      const obstacles = placementIntersections(box);
       if (!obstacles.length) return;
       const offset = Number.parseFloat(this.style.getPropertyValue("--forma-assistant-obstacle-offset") || "0");
       const next = box.bottom - Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top)) + 8 + offset;
       const preferred = { left: box.left, right: box.right, top: box.top - (next - offset), bottom: box.bottom - (next - offset) };
-      if (exactFocusPaint && (preferred.top < 8 || intersections(preferred).length)) {
+      if (exactFocusPaint && (preferred.top < 8 || placementIntersections(preferred).length)) {
         // Reuse the compact lane and finite pass. Never trade a control, task
         // region, or current focus outline for the preferred eight-pixel gap.
         const ceiling = Math.min(...obstacles.map(({ box: obstacle }) => obstacle.top));
-        const floor = Math.max(8, ...controls.filter(({ box: obstacle }) =>
+        const floor = Math.max(8, ...placementObstacles.filter(({ box: obstacle }) =>
           box.left < obstacle.right && box.right > obstacle.left && obstacle.bottom <= ceiling)
           .map(({ box: obstacle }) => obstacle.bottom));
         const top = floor + (ceiling - floor - box.height) / 2;
         const candidate = { left: box.left, right: box.right, top, bottom: top + box.height };
         if (ceiling - floor >= box.height && candidate.top >= 8
-          && candidate.bottom <= innerHeight - 8 && !intersections(candidate).length) {
+          && candidate.bottom <= innerHeight - 8 && !placementIntersections(candidate).length) {
           // The existing named 44px launcher keeps its focus ring inside this
           // tight footprint, including when its own focus freezes positioning.
           this.dataset.tightLauncher = "true";
