@@ -1,7 +1,8 @@
 import { html, svg, nothing, type PropertyValues } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { FormaPresentationalElement } from "../components/presentational-element";
-import "../components/design-primitives";
+import { FormaUiField } from "../components/design-primitives";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "../components/output-navigation-focus";
 import type { CompiledRelease, Decision, ExperienceValue, Interaction } from "./contracts.ts";
 import type { DecisionValue, Issue } from "./contracts.ts";
 export interface ExperienceSurface {
@@ -33,6 +34,8 @@ export class FormaExperienceSurface extends FormaPresentationalElement {
   #composing = false;
   #compositionPresentation?: CompiledRelease;
   #phase = "";
+  #validationId = `experience-validation-${crypto.randomUUID()}`;
+  #validationFocus?: OutputNavigationFocusLease;
   override connectedCallback() {
     super.connectedCallback();
     this.#unsubscribe?.();
@@ -40,11 +43,11 @@ export class FormaExperienceSurface extends FormaPresentationalElement {
     this.addEventListener("compositionstart", this.#compositionStart);
     this.addEventListener("compositionend", this.#compositionEnd);
   }
-  override disconnectedCallback() { this.#unsubscribe?.(); this.removeEventListener("compositionstart", this.#compositionStart); this.removeEventListener("compositionend", this.#compositionEnd); super.disconnectedCallback(); }
-  #compositionStart = () => { this.#composing = true; this.#compositionPresentation = this.runtime?.presentation; };
+  override disconnectedCallback() { this.#retireValidationFocus(); this.#unsubscribe?.(); this.removeEventListener("compositionstart", this.#compositionStart); this.removeEventListener("compositionend", this.#compositionEnd); super.disconnectedCallback(); }
+  #compositionStart = () => { this.#retireValidationFocus(); this.#composing = true; this.#compositionPresentation = this.runtime?.presentation; };
   #compositionEnd = () => { this.#composing = false; this.#compositionPresentation = undefined; this.requestUpdate(); };
   protected override willUpdate(changed: PropertyValues) {
-    if (changed.has("runtime")) { this.#unsubscribe?.(); this.#unsubscribe = this.runtime?.subscribe(() => this.requestUpdate()); this.#composing = false; this.#compositionPresentation = undefined; }
+    if (changed.has("runtime")) { this.#retireValidationFocus(); this.#unsubscribe?.(); this.#unsubscribe = this.runtime?.subscribe(() => this.requestUpdate()); this.#composing = false; this.#compositionPresentation = undefined; }
     const active = document.activeElement;
     this.#focused = active instanceof HTMLElement && this.contains(active) ? active : undefined;
     this.#selection = active instanceof HTMLInputElement && ["text", "search", "url", "tel", "password"].includes(active.type) ? [active.selectionStart, active.selectionEnd] : undefined;
@@ -59,11 +62,43 @@ export class FormaExperienceSurface extends FormaPresentationalElement {
     if (phase === "complete" && this.#phase !== phase && (active === document.body || active === this || (active && this.contains(active)))) this.querySelector<HTMLElement>(".experience-result h2")?.focus({ preventScroll: true });
     this.#phase = phase;
   }
-  #change(id: string, value: ExperienceValue) { this.runtime?.change(id, value); }
+  #retireValidationFocus() { this.#validationFocus?.dispose(); this.#validationFocus = undefined; }
+  async #review() {
+    this.#retireValidationFocus();
+    const runtime = this.runtime;
+    if (!runtime || this.#composing || runtime.state.phase !== "setup") return;
+    const draft = runtime.state.draft, presentation = runtime.presentation, lease = captureOutputNavigationFocus(this.ownerDocument);
+    this.#validationFocus = lease;
+    try {
+      await runtime.prepare();
+      const issues = runtime.state.issues;
+      const current = () => this.isConnected && this.runtime === runtime && runtime.presentation === presentation && runtime.state.draft === draft && runtime.state.issues === issues && runtime.state.phase === "setup" && issues.length > 0 && !this.#composing && this.#validationFocus === lease && lease.current();
+      if (!current()) return;
+      await this.updateComplete;
+      if (!current()) return;
+      // DOM order includes approved presentation order and stable evidence moves.
+      const invalid = this.querySelector<HTMLElement>("[data-experience-invalid]");
+      let target = invalid;
+      if (invalid instanceof FormaUiField) { await invalid.updateComplete; if (!current()) return; target = invalid.querySelector<HTMLInputElement>("input"); }
+      if (current() && target?.isConnected && !target.matches(":disabled")) lease.run(target, () => { target.focus(); return this.ownerDocument.activeElement === target; });
+    } finally { lease.dispose(); if (this.#validationFocus === lease) this.#validationFocus = undefined; }
+  }
+  #change(id: string, value: ExperienceValue) { this.#retireValidationFocus(); this.runtime?.change(id, value); }
   #value(id: string): ExperienceValue { return this.runtime!.state.draft.values[id]?.value ?? ""; }
   #text(id: string) { const value = this.#value(id); return typeof value === "string" ? value : ""; }
-  #field(id: string, label: string, value: string, maxLength: number, change: (value: string) => void, error = "") {
-    return html`<forma-ui-field .label=${label} .value=${value} .name=${id} .maxLength=${maxLength} .error=${error} .disabled=${this.runtime!.mode === "intake" && this.runtime!.state.phase !== "setup"} autocomplete="off" @forma-input=${(event: CustomEvent<{ value: string }>) => change(event.detail.value)}></forma-ui-field>`;
+  #error(path: string) { const issue = this.runtime!.state.issues.find(issue => issue.path === path); return issue ? issueLabel[issue.code] ?? "Invalid value" : ""; }
+  #issueDescription(issue: Issue) {
+    const [id, member] = issue.path.split("."), decision = this.runtime!.release.definition.decisions.find(decision => decision.id === id);
+    const message = issueLabel[issue.code] ?? "Check decisions";
+    if (!decision) return message;
+    const interaction = this.runtime!.release.interactions[id];
+    const field = interaction.fields?.find(field => field.id === member)?.label;
+    const evidence = interaction.kind === "order" && member ? `Evidence ${(this.#value(id) as Array<{ id: string }>).findIndex(item => item.id === member) + 1}` : "";
+    return `${this.runtime!.release.copy[decision.labelKey]}${field || evidence ? ` · ${field || evidence}` : ""} · ${message}`;
+  }
+  #field(id: string, label: string, value: string, interaction: Interaction, change: (value: string) => void) {
+    const error = this.#error(id);
+    return html`<forma-ui-field .label=${label} .value=${value} .name=${id} .maxLength=${interaction.maxLength} .required=${interaction.kind === "source" ? interaction.required : true} .error=${error} ?data-experience-invalid=${Boolean(error)} .disabled=${this.runtime!.mode === "intake" && this.runtime!.state.phase !== "setup"} autocomplete="off" @forma-input=${(event: CustomEvent<{ value: string }>) => change(event.detail.value)}></forma-ui-field>`;
   }
   #choices(decision: Decision, interaction: Interaction) {
     return html`<div class="experience-choices" role="group" aria-label=${this.runtime!.release.copy[decision.labelKey]}>${interaction.options?.map(option => html`<forma-ui-button .label=${option.label} .pressed=${this.#text(decision.id) === option.value} .variant=${this.#text(decision.id) === option.value ? "primary" : "secondary"} @forma-press=${() => this.#change(decision.id, option.value)}></forma-ui-button>`)}</div>`;
@@ -79,14 +114,16 @@ export class FormaExperienceSurface extends FormaPresentationalElement {
     const interaction = this.runtime!.release.interactions[decision.id];
     const label = this.runtime!.release.copy[decision.labelKey];
     const value = this.#value(decision.id);
-    const issue = this.runtime!.state.issues.find(issue => issue.path === decision.id);
-    const error = issue ? issueLabel[issue.code] ?? "Invalid value" : "";
-    if (interaction.kind === "source") return this.#field(decision.id, label, value as string, interaction.maxLength, next => this.#change(decision.id, next), error);
-    return html`<fieldset class="experience-decision" ?disabled=${this.runtime!.mode === "intake" && this.runtime!.state.phase !== "setup"}><legend>${label}</legend>
-      ${interaction.options ? this.#choices(decision, interaction) : interaction.kind === "relationship" ? html`<div class="experience-relationship-fields">${repeat(interaction.fields!, field => field.id, field => this.#field(`${decision.id}-${field.id}`, field.label, strings(value)[field.id], interaction.maxLength, next => this.#change(decision.id, { ...strings(value), [field.id]: next })))}</div>`
-      : interaction.kind === "order" ? html`<ol class="experience-evidence">${repeat(value as Array<{ id: string; text: string }>, item => item.id, (item, index) => html`<li>${this.#field(`${decision.id}-${item.id}`, `Evidence ${index + 1}`, item.text, interaction.maxLength, next => this.#change(decision.id, (value as Array<{ id: string; text: string }>).map(source => source.id === item.id ? { ...source, text: next } : source)))}<div class="experience-choices"><forma-ui-button label="Move up" .disabled=${index === 0} @forma-press=${() => this.#move(decision.id, item.id, -1)}></forma-ui-button><forma-ui-button label="Move down" .disabled=${index === 2} @forma-press=${() => this.#move(decision.id, item.id, 1)}></forma-ui-button></div></li>`)}</ol>`
-      : html`<div class="experience-profile-fields">${interaction.fields?.map(field => html`<fieldset><legend>${field.label} <output>${numbers(value)[field.id]}</output></legend><input type="range" aria-label=${field.label} min=${interaction.minimum!} max=${interaction.maximum!} step="1" .value=${String(numbers(value)[field.id])} @input=${(event: Event) => this.#change(decision.id, { ...numbers(value), [field.id]: Number((event.target as HTMLInputElement).value) })}><div class="experience-step-actions"><forma-ui-button .label=${`Decrease ${field.label.toLowerCase()}`} .disabled=${numbers(value)[field.id] <= interaction.minimum!} @forma-press=${() => this.#change(decision.id, { ...numbers(value), [field.id]: numbers(value)[field.id] - 1 })}></forma-ui-button><forma-ui-button .label=${`Increase ${field.label.toLowerCase()}`} .disabled=${numbers(value)[field.id] >= interaction.maximum!} @forma-press=${() => this.#change(decision.id, { ...numbers(value), [field.id]: numbers(value)[field.id] + 1 })}></forma-ui-button></div></fieldset>`)}</div>`}
-      ${error ? html`<small class="experience-error">${error}</small>` : nothing}
+    const error = this.#error(decision.id), errorId = `${this.#validationId}-${decision.id}`;
+    if (interaction.kind === "source") return this.#field(decision.id, label, value as string, interaction, next => this.#change(decision.id, next));
+    return html`<fieldset class="experience-decision" ?disabled=${this.runtime!.mode === "intake" && this.runtime!.state.phase !== "setup"} ?data-experience-invalid=${Boolean(error)} tabindex=${error ? "-1" : nothing} aria-describedby=${error ? errorId : nothing}><legend>${label}</legend>
+      ${interaction.options ? this.#choices(decision, interaction) : interaction.kind === "relationship" ? html`<div class="experience-relationship-fields">${repeat(interaction.fields!, field => field.id, field => this.#field(`${decision.id}.${field.id}`, field.label, strings(value)[field.id], interaction, next => this.#change(decision.id, { ...strings(value), [field.id]: next })))}</div>`
+      : interaction.kind === "order" ? html`<ol class="experience-evidence">${repeat(value as Array<{ id: string; text: string }>, item => item.id, (item, index) => html`<li>${this.#field(`${decision.id}.${item.id}.text`, `Evidence ${index + 1}`, item.text, interaction, next => this.#change(decision.id, (value as Array<{ id: string; text: string }>).map(source => source.id === item.id ? { ...source, text: next } : source)))}<div class="experience-choices"><forma-ui-button label="Move up" .disabled=${index === 0} @forma-press=${() => this.#move(decision.id, item.id, -1)}></forma-ui-button><forma-ui-button label="Move down" .disabled=${index === 2} @forma-press=${() => this.#move(decision.id, item.id, 1)}></forma-ui-button></div></li>`)}</ol>`
+      : html`<div class="experience-profile-fields">${interaction.fields?.map(field => {
+        const path = `${decision.id}.${field.id}`, fieldError = this.#error(path), fieldErrorId = `${errorId}-${field.id}`;
+        return html`<fieldset><legend>${field.label} <output>${numbers(value)[field.id]}</output></legend><input type="range" name=${path} aria-label=${field.label} min=${interaction.minimum!} max=${interaction.maximum!} step="1" .value=${String(numbers(value)[field.id])} aria-invalid=${fieldError ? "true" : "false"} aria-describedby=${fieldError ? fieldErrorId : nothing} aria-errormessage=${fieldError ? fieldErrorId : nothing} ?data-experience-invalid=${Boolean(fieldError)} @input=${(event: Event) => this.#change(decision.id, { ...numbers(value), [field.id]: Number((event.target as HTMLInputElement).value) })}><div class="experience-step-actions"><forma-ui-button .label=${`Decrease ${field.label.toLowerCase()}`} .disabled=${numbers(value)[field.id] <= interaction.minimum!} @forma-press=${() => this.#change(decision.id, { ...numbers(value), [field.id]: numbers(value)[field.id] - 1 })}></forma-ui-button><forma-ui-button .label=${`Increase ${field.label.toLowerCase()}`} .disabled=${numbers(value)[field.id] >= interaction.maximum!} @forma-press=${() => this.#change(decision.id, { ...numbers(value), [field.id]: numbers(value)[field.id] + 1 })}></forma-ui-button></div>${fieldError ? html`<small id=${fieldErrorId} class="experience-error">${fieldError}</small>` : nothing}</fieldset>`;
+      })}</div>`}
+      ${error ? html`<small id=${errorId} class="experience-error">${error}</small>` : nothing}
     </fieldset>`;
   }
   #stage() {
@@ -137,8 +174,8 @@ export class FormaExperienceSurface extends FormaPresentationalElement {
       : html`<div class="experience-workspace"><section class="experience-stage" aria-label="Direction preview"><div class="experience-stage-heading"><span>Direction preview</span><span>Illustrative</span></div>${this.#stage()}</section><section class="experience-controls" aria-label=${setup ? "Decisions" : "Review"}>
         ${setup ? html`<div class="experience-decision-list">${repeat(presentation.definition.decisions, decision => decision.id, decision => this.#decision(decision))}</div>` : html`<h2>${phase === "review" ? "Review" : phase === "uncertain" ? "Result status" : intake ? "Saving Document" : "Running fixture"}</h2>${this.#summary()}`}
       </section></div>`}
-      <footer class="experience-footer"><span role="status" aria-live="polite">${issues.length ? issueLabel[issues[0].code] ?? "Check decisions" : phase === "complete" ? intake ? "Document saved" : "Fixture complete" : phase === "review" ? intake ? "Saved draft" : "Ready · Fixture" : phase === "submitting" ? intake ? "Saving Document" : "Running fixture" : phase === "preparing" ? "Checking decisions" : "Draft"}</span><div class="experience-actions">
-        ${setup ? html`<forma-ui-button label="Review" variant="primary" .disabled=${phase === "blocked" || phase === "preparing"} @forma-press=${() => void runtime.prepare()}></forma-ui-button>` : phase === "review" ? html`<forma-ui-button label="Back" @forma-press=${() => runtime.back()}></forma-ui-button><forma-ui-button .label=${intake ? "Save to Forma" : "Run fixture"} variant="primary" @forma-press=${() => void runtime.submit()}></forma-ui-button>` : phase === "uncertain" ? html`<forma-ui-button label="Check result" @forma-press=${() => void runtime.recover()}></forma-ui-button>${intake && runtime.canRetry !== false ? html`<forma-ui-button label="Retry original" @forma-press=${() => void runtime.submit()}></forma-ui-button>` : nothing}` : nothing}
+      <footer class="experience-footer"><span role="status" aria-live="polite">${issues.length ? this.#issueDescription(issues[0]) : phase === "complete" ? intake ? "Document saved" : "Fixture complete" : phase === "review" ? intake ? "Saved draft" : "Ready · Fixture" : phase === "submitting" ? intake ? "Saving Document" : "Running fixture" : phase === "preparing" ? "Checking decisions" : "Draft"}</span><div class="experience-actions">
+        ${setup ? html`<forma-ui-button label="Review" variant="primary" .disabled=${phase === "blocked" || phase === "preparing"} @forma-press=${() => void this.#review()}></forma-ui-button>` : phase === "review" ? html`<forma-ui-button label="Back" @forma-press=${() => runtime.back()}></forma-ui-button><forma-ui-button .label=${intake ? "Save to Forma" : "Run fixture"} variant="primary" @forma-press=${() => void runtime.submit()}></forma-ui-button>` : phase === "uncertain" ? html`<forma-ui-button label="Check result" @forma-press=${() => void runtime.recover()}></forma-ui-button>${intake && runtime.canRetry !== false ? html`<forma-ui-button label="Retry original" @forma-press=${() => void runtime.submit()}></forma-ui-button>` : nothing}` : nothing}
       </div></footer>
     </main>`;
   }

@@ -107,6 +107,18 @@ Locale review evidence remains limited: concurrent locale switching uses a warm 
 
 Original `/tmp` build/test logs have been copied without alteration to the sibling `forma-experience-runtime-verification/frozen-560cdee` directory with a SHA-256 manifest. Follow-up verification receipts are retained separately; they do not overwrite the frozen handoff evidence.
 
+### Review correction: actionable validation
+
+A second separate follow-up keeps existing admission bounds but reports all invalid leaves: scalar decision IDs, `conflict.goalA`, `energy.peak`, and stable evidence paths such as `evidence.e2.text`. Malformed containers retain group errors. The actual shared field primitive now receives required state and its exact leaf error; valid siblings remain valid. Group and range errors have explicit description targets, and the status names the affected field.
+
+Review captures the existing DOM-focus lease, runtime, draft, issue set and presentation. For local validation failure only, it waits for the host and field updates, finds the first invalid target in rendered order, and focuses the actual enabled input. New input, pointer/keyboard/focus activity, composition, runtime replacement, disconnect, another Review or presentation changes retire the pending handoff. This adds no Store singleton or paid-operation authority.
+
+Twenty assembled tests run the actual host, shared button/field handlers and native focus ports. They cover all eight outputs, required/error/ARIA associations, sibling isolation, a tap reorder with stable evidence identities, defensive group/range error states, and stale-focus retirement through a child update. Summary tests additionally assert raw escaped markup before decoding it for text comparison. These are component/DOM-contract checks, not real-browser node lifetime, IME, device or assistive-technology certification.
+
+The final selected run passes **135 tests**: 63 intake/presentation, 45 fixture/compiler, 2 locale, 9 prompt-policy and 16 post-build component-library tests. Build, root/fixture TypeScript, targeted lint and whole-range diff checking pass. The fixture TypeScript include now carries the repository's existing Cloudflare ambient declarations for the reused focus helper's type graph; the initial missing-declaration failure is preserved alongside the passing rerun, not hidden.
+
+The new static entry closure is **10 JS chunks, 77,499 raw bytes / 28,417 gzip**; CSS remains **585,764 / 96,705 bytes**. The additional chunk is the existing focus lease. Public stylesheet, translation and browser/device gates remain open. Final logs and the exact build-closure receipt are retained in the sibling `forma-experience-runtime-verification/validation-correction` directory with byte counts and SHA-256 hashes.
+
 ## Remaining delivery work
 
 1. Integrate the three commits after canonical-publisher review: shared locale extraction, atomic intake-core extraction, additive experience integration.

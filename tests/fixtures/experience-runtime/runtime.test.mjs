@@ -270,6 +270,20 @@ test("profiles, proportions and evidence order enforce their exact local bounds"
   assert.throws(() => createDraft(release, "real-document"), /fixture_identity_required/);
 });
 
+test("validation retains group shape errors and reports every invalid stable leaf", () => {
+  assert.deepEqual(valueIssues({ opening: -1, peak: 6, ending: 2 }, fixtureCatalog.interactions["energy@1"], "energy", true), [
+    { code: "range_limit", path: "energy.opening" }, { code: "range_limit", path: "energy.peak" },
+  ]);
+  assert.deepEqual(valueIssues({ goal: "", obstacle: " ", decision: "Retained" }, fixtureCatalog.interactions["causality@1"], "causality", true), [
+    { code: "required", path: "causality.goal" }, { code: "required", path: "causality.obstacle" },
+  ]);
+  assert.deepEqual(valueIssues([{ id: "e3", text: "" }, { id: "e1", text: "Retained" }, { id: "e2", text: "" }], fixtureCatalog.interactions["evidence@1"], "evidence", true), [
+    { code: "required", path: "evidence.e3.text" }, { code: "required", path: "evidence.e2.text" },
+  ]);
+  assert.deepEqual(valueIssues({ goal: "Retained" }, fixtureCatalog.interactions["causality@1"], "causality", true), [{ code: "field_shape", path: "causality" }]);
+  assert.deepEqual(valueIssues([{ id: "e1", text: "" }, { id: "e1", text: "" }, { id: "e3", text: "" }], fixtureCatalog.interactions["evidence@1"], "evidence", true), [{ code: "order_shape", path: "evidence" }]);
+});
+
 test("new canonical outputs require explicit fixture registration and renderer qualification", async () => {
   assert.deepEqual(Object.values(fixtureCatalog.outputs).map(item => item.output).sort(), ["image", ...DOCUMENT_ARTIFACT_KINDS].sort());
   for (const mutate of [

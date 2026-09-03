@@ -126,22 +126,22 @@ export function valueIssues(value: unknown, interaction: Interaction, path: stri
     if (!Array.isArray(value) || value.length !== 3) return fail("order_shape");
     const ids = new Set<string>();
     for (const item of value) {
-      if (!record(item) || !exactKeys(item, ["id", "text"]) || typeof item.id !== "string" || !["e1", "e2", "e3"].includes(item.id) || ids.has(item.id) || typeof item.text !== "string" || item.text.length > interaction.maxLength) return fail("order_shape");
+      if (!record(item) || !exactKeys(item, ["id", "text"]) || typeof item.id !== "string" || !["e1", "e2", "e3"].includes(item.id) || ids.has(item.id)) return fail("order_shape");
       ids.add(item.id);
-      if (complete && !item.text.trim()) return fail("required");
     }
-    return [];
+    return value.flatMap(item => typeof item.text !== "string" || item.text.length > interaction.maxLength ? [{ code: "text_limit", path: `${path}.${item.id}.text` }]
+      : complete && !item.text.trim() ? [{ code: "required", path: `${path}.${item.id}.text` }] : []);
   }
   const fieldIds = interaction.fields?.map(field => field.id) ?? [];
   if (!record(value) || !exactKeys(value, fieldIds)) return fail("field_shape");
-  for (const id of fieldIds) {
+  return fieldIds.flatMap(id => {
     const item = value[id];
     if (interaction.kind === "relationship") {
-      if (typeof item !== "string" || item.length > interaction.maxLength) return fail("text_limit");
-      if (complete && !item.trim()) return fail("required");
-    } else if (typeof item !== "number" || !Number.isSafeInteger(item) || item < interaction.minimum! || item > interaction.maximum!) return fail("range_limit");
-  }
-  return [];
+      if (typeof item !== "string" || item.length > interaction.maxLength) return [{ code: "text_limit", path: `${path}.${id}` }];
+      if (complete && !item.trim()) return [{ code: "required", path: `${path}.${id}` }];
+    } else if (typeof item !== "number" || !Number.isSafeInteger(item) || item < interaction.minimum! || item > interaction.maximum!) return [{ code: "range_limit", path: `${path}.${id}` }];
+    return [];
+  });
 }
 
 export function sameRelease(a: CompiledRelease, b: CompiledRelease) { return a.releaseHash === b.releaseHash; }

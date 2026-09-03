@@ -289,6 +289,8 @@ async function renderedSummary(runtime) {
   const markup = new ports.RendererPort({}, {}).value(host.render(), host, "experience-summary-test");
   const summaries = [...markup.matchAll(/<dl class="experience-summary">([\s\S]*?)<\/dl>/gu)];
   assert.equal(summaries.length, 1, "one actual review/completed summary, not the repeating direction stage");
+  assert.match(summaries[0][1], /&lt;reference&gt; &amp; "quoted"/u, "authored markup is escaped before decoding for text comparison");
+  assert.doesNotMatch(summaries[0][1], /<reference>/u);
   const decode = value => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
   return [...summaries[0][1].matchAll(/<div><dt>([\s\S]*?)<\/dt><dd>([\s\S]*?)<\/dd><\/div>/gu)].map(([, label, value]) => [decode(label), decode(value)]);
 }
@@ -318,4 +320,134 @@ for (const id of experienceIds) test(`${id}: actual review, completion and resto
   const restored = new ExperienceIntakeRuntime(release, (path, init) => x.request(path, init)); t.after(() => restored.dispose());
   await restored.resume(runtime.draftId); assert.equal(restored.state.phase, "complete");
   assert.deepEqual(await renderedSummary(restored), expected, "canonical JSON key order cannot reorder registered fields");
+});
+
+async function validationHost(t, id = "scene") {
+  const { calmFullPageNativePorts: ports, fullPageTree } = await import("./helpers/calm-full-page-fixture.mjs");
+  const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
+  const { FormaExperienceSurface } = await ports.loadActual("src/experiences/view.ts");
+  const { FormaUiField, FormaUiButton } = await ports.loadActual("src/components/design-primitives.ts");
+  const release = await registeredExperience(id), f = { trace: [], listeners: new Map(), changed: new Map(), requested: false, requests: 0, waits: [], hold: false };
+  f.runtime = new ExperienceIntakeRuntime(release, async () => { f.requests++; assert.fail("Invalid Review cannot save, commit or call a provider"); });
+  const inputDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLInputElement");
+  Object.defineProperty(globalThis, "HTMLInputElement", { configurable: true, value: class { static [Symbol.hasInstance](node) { return node instanceof ports.ElementPort && node.tag === "input"; } } });
+  ports.bindFixture(f);
+  f.host = new FormaExperienceSurface(); f.host.tag = "forma-experience"; f.host.runtime = f.runtime; f.host.attributes = {}; f.host.isConnected = true;
+  f.renderer = new ports.RendererPort(f, { "forma-ui-field": FormaUiField, "forma-ui-button": FormaUiButton });
+  f.tree = () => fullPageTree(f);
+  f.native = installOutputNavigationFocusNative(t, f, ports);
+  const query = f.renderer.query.bind(f.renderer);
+  f.renderer.query = (owner, selector) => {
+    const found = query(owner, selector);
+    if (f.renderer.updatingOwner || !selector.includes("[")) return found;
+    // Native attribute queries return custom element instances in DOM order,
+    // not the renderer's extra literal wrapper ports or collection order.
+    const selected = new Set(found);
+    return f.tree().nodes.filter(row => selected.has(row.port) || selected.has(row.component)).map(row => row.component ?? row.port);
+  };
+  f.draw = () => {
+    ports.bindFixture(f); if (!f.host.isConnected) return;
+    f.requested = false; f.renderer.draw(f.host);
+    for (const row of f.tree().nodes) if (row.component) row.component.attributes = { ...row.attributes };
+  };
+  f.tick = async owner => { await Promise.resolve(); f.draw(); if (f.hold && (!f.holdOnly || f.holdOnly === owner.tag)) await new Promise(resolve => f.waits.push(resolve)); return true; };
+  f.flush = async () => { for (let i = 0; i < 8; i++) { await Promise.resolve(); if (f.requested) f.draw(); } await new Promise(setImmediate); if (f.requested) f.draw(); };
+  f.inputs = () => f.tree().visible("input").map(row => row.port);
+  f.act = async button => { f.native.emit("pointerdown", button); f.native.focus(button); button.click(); await f.flush(); };
+  f.review = () => f.act(f.tree().visible("button").find(row => row.text === "Review").port);
+  f.release = async () => { f.hold = false; for (const resolve of f.waits.splice(0)) resolve(); await f.flush(); };
+  f.host.connectedCallback(); f.draw();
+  t.after(async () => {
+    f.host.isConnected = false; f.host.disconnectedCallback(); await f.release();
+    f.runtime.dispose(); assert.equal(f.requests, 0);
+    assert.equal(f.native.listeners("pointerdown"), 0); assert.equal(f.native.listeners("keydown"), 0); assert.equal(f.native.listeners("focusin"), 0);
+    if (inputDescriptor) Object.defineProperty(globalThis, "HTMLInputElement", inputDescriptor); else delete globalThis.HTMLInputElement;
+  });
+  return f;
+}
+for (const id of experienceIds) test(`${id}: assembled Review marks required fields, associates each error and focuses the first invalid input`, options, async t => {
+  const f = await validationHost(t, id);
+  for (const input of f.inputs()) if (input.attributes.type !== "range") assert.ok(Object.hasOwn(input.attributes, "required"));
+  await f.review(); assert.equal(f.runtime.state.phase, "setup");
+  const inputs = f.inputs(), invalid = inputs.filter(input => input.attributes["aria-invalid"] === "true");
+  assert.ok(invalid.length > 0); assert.deepEqual(invalid.map(input => input.attributes.name), f.runtime.state.issues.map(issue => issue.path));
+  for (const input of invalid) {
+    const reference = input.attributes["aria-errormessage"];
+    assert.equal(input.attributes["aria-describedby"], reference);
+    const errors = f.tree().visible("small").filter(row => row.attributes.id === reference);
+    assert.equal(errors.length, 1); assert.equal(errors[0].text, "Required"); assert.equal(errors[0].owner, input.owner);
+    assert.ok(f.tree().visible("label").some(row => row.attributes.for === input.attributes.id && row.owner === input.owner));
+  }
+  assert.equal(f.native.document.activeElement, invalid[0]);
+  assert.ok(f.tree().visible("span").some(row => row.attributes.role === "status" && row.text.includes(" · Required")));
+});
+test("assembled relationship errors leave valid siblings valid", options, async t => {
+  const f = await validationHost(t);
+  f.runtime.change("conflict", { ...f.runtime.state.draft.values.conflict.value, a: "Participant A" }); f.draw();
+  await f.review();
+  const valid = f.inputs().find(input => input.attributes.name === "conflict.a");
+  assert.equal(valid.attributes["aria-invalid"], "false"); assert.equal(valid.attributes["aria-errormessage"], undefined);
+  assert.equal(f.native.document.activeElement.attributes.name, "conflict.goalA");
+});
+test("assembled evidence errors follow stable IDs through an actual tap reorder", options, async t => {
+  const f = await validationHost(t, "slides"); f.runtime.change("claim", "Claim");
+  f.runtime.change("evidence", [{ id: "e3", text: "" }, { id: "e1", text: "Evidence" }, { id: "e2", text: "" }]); f.draw();
+  await f.review(); assert.equal(f.native.document.activeElement.attributes.name, "evidence.e3.text");
+  await f.act(f.tree().visible("button").filter(row => row.text === "Move down")[0].port);
+  await f.review();
+  assert.deepEqual(f.inputs().filter(input => input.attributes.name.startsWith("evidence.")).map(input => input.attributes.name), ["evidence.e1.text", "evidence.e3.text", "evidence.e2.text"]);
+  assert.equal(f.native.document.activeElement.attributes.name, "evidence.e3.text");
+  const focused = f.native.document.activeElement;
+  assert.ok(f.tree().visible("label").find(row => row.attributes.for === focused.attributes.id).text.startsWith("Evidence 2"));
+});
+test("assembled defensive error state associates group and range descriptions", options, async t => {
+  const f = await validationHost(t, "audio"), original = f.runtime;
+  // A declared error-state input to the production presentation interface, not
+  // a successful intake or a mutation of the real controller's private state.
+  const state = { ...original.state, issues: [{ code: "field_shape", path: "energy" }, { code: "range_limit", path: "energy.peak" }] };
+  f.host.runtime = { mode: "intake", release: original.release, presentation: original.presentation, state,
+    subscribe: () => () => {}, change: () => false, prepare: async () => {}, back() {}, submit: async () => {}, recover: async () => {} };
+  f.changed = new Map([["runtime", original]]); f.draw();
+  const group = f.tree().visible("fieldset").find(row => row.attributes["data-experience-invalid"] !== undefined);
+  assert.equal(group.attributes.tabindex, "-1");
+  assert.ok(f.tree().visible("small").some(row => row.attributes.id === group.attributes["aria-describedby"] && row.text === "Invalid value"));
+  const peak = f.inputs().find(input => input.attributes.name === "energy.peak");
+  assert.equal(peak.attributes["aria-invalid"], "true"); assert.equal(peak.attributes["aria-describedby"], peak.attributes["aria-errormessage"]);
+  assert.ok(f.tree().visible("small").some(row => row.attributes.id === peak.attributes["aria-errormessage"] && row.text === "Range limit"));
+  assert.equal(f.inputs().find(input => input.attributes.name === "energy.opening").attributes["aria-invalid"], "false");
+});
+for (const interruption of ["pointer", "keyboard", "focus", "input", "composition", "replacement", "disconnect"]) test(`assembled invalid-focus handoff retires on newer ${interruption}`, options, async t => {
+  const f = await validationHost(t); f.hold = true; await f.review(); assert.ok(f.waits.length > 0);
+  const count = f.native.nativeFocus.length;
+  if (interruption === "pointer") f.native.emit("pointerdown", f.inputs().at(-1));
+  else if (interruption === "keyboard") f.native.emit("keydown");
+  else if (interruption === "focus") f.native.focus(f.inputs().at(-1));
+  else if (interruption === "input") { const input = f.inputs()[0]; input.value = "New text"; input.handlers.input.call(input.owner, { target: input }); }
+  else if (interruption === "composition") f.host.listeners.compositionstart();
+  else if (interruption === "replacement") { f.host.runtime = new ExperienceIntakeRuntime(f.runtime.release, async () => assert.fail("No request")); t.after(() => f.host.runtime.dispose()); f.changed = new Map([["runtime", f.runtime]]); f.draw(); }
+  else { f.host.isConnected = false; f.host.disconnectedCallback(); }
+  const after = f.native.nativeFocus.length;
+  await f.release(); assert.equal(f.native.nativeFocus.length, after); assert.equal(after, count + (interruption === "focus" ? 1 : 0));
+});
+test("assembled invalid-focus handoff pins presentation through the actual child update", options, async t => {
+  const f = await validationHost(t, "short-story");
+  const { ExperienceRuntime } = await import("./fixtures/experience-runtime/runtime.ts");
+  const { proposePatch } = await import("../src/experiences/patches.ts");
+  const { fixtureCatalog } = await import("../src/experiences/catalog.ts");
+  const original = f.runtime; f.runtime = new ExperienceRuntime(original.release); original.dispose();
+  f.host.runtime = f.runtime; f.changed = new Map([["runtime", original]]); f.draw();
+  f.hold = true; f.holdOnly = "forma-ui-field"; await f.review(); assert.ok(f.waits.length > 0);
+  const before = f.native.nativeFocus.length, draft = f.runtime.state.draft, issues = f.runtime.state.issues;
+  const oldFirst = f.renderer.component("forma-ui-field");
+  const proposal = await proposePatch(f.runtime.release, { schemaVersion: 1, baseReleaseHash: f.runtime.release.releaseHash,
+    operations: [{ kind: "reorder-decisions", ids: f.runtime.release.definition.decisions.map(decision => decision.id).reverse() }] }, fixtureCatalog);
+  assert.equal(proposal.ok, true); assert.equal(f.runtime.previewPresentation(proposal.candidate), true);
+  assert.equal(f.runtime.state.draft, draft); assert.equal(f.runtime.state.issues, issues); f.draw(); assert.ok(oldFirst.isConnected);
+  assert.equal(f.inputs().filter(input => input.attributes["aria-invalid"] === "true")[0].attributes.name, "causality.goal");
+  await f.release(); assert.equal(f.native.nativeFocus.length, before);
+});
+test("assembled repeated Review leaves only the latest invalid-focus handoff active", options, async t => {
+  const f = await validationHost(t); f.hold = true; await f.review(); await f.review();
+  const before = f.native.nativeFocus.length; await f.release();
+  assert.equal(f.native.nativeFocus.length, before + 1); assert.equal(f.native.document.activeElement.attributes.name, "conflict.a");
 });
