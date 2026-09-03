@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { localTestOrigin } from "./read-only-network.mjs";
+import { SYNTHETIC_NETWORK_MARKER, syntheticNetworkEnabled } from "./synthetic-network.mjs";
 
 const requireEvidence = (condition, message) => {
   if (!condition) throw new Error("Initial session observation: " + message);
@@ -81,8 +82,10 @@ export function observeInitialSession(page, expectedPath) {
       const html = await response.text();
       requireEvidence(current(), "main document was superseded while reading its body");
       const bootstrap = embeddedSession(html);
-      let session, transport, sessionStatus = null;
+      let session, transport, sessionStatus = null, transportSynthetic = false;
+      const synthetic = syntheticNetworkEnabled(url.origin);
       if (bootstrap) {
+        requireEvidence(!synthetic, "synthetic transport must observe its declared GET, never a real bootstrap");
         requireEvidence(privateNoStore, "authenticated HTML bootstrap must be private and no-store");
         session = bootstrap.session; transport = "main-document-bootstrap";
       } else {
@@ -98,16 +101,23 @@ export function observeInitialSession(page, expectedPath) {
         requireEvidence(/^application\/json(?:;|$)/i.test(reply.headers()["content-type"] ?? ""), "session GET is not JSON");
         session = readJSON(await reply.text(), "observed session GET");
         requireEvidence(validSession(session), "session GET lacks the real Creative session shape");
+        const marker = reply.headers()["x-forma-synthetic-network"];
+        requireEvidence(synthetic ? marker === SYNTHETIC_NETWORK_MARKER : marker === undefined,
+          "session response synthetic marker does not match the explicitly selected mode");
+        transportSynthetic = synthetic;
         sessionStatus = reply.status(); transport = "observed-session-get";
       }
       requireEvidence(current(), "initial session no longer belongs to the current main document");
       return { session, evidence: {
         transport, documentPath: url.pathname, documentStatus: response.status(),
         mainFrameRequestBound: true, privateNoStore, bootstrapServerMs: bootstrap?.serverMs ?? null,
-        observedSessionGetStatus: sessionStatus, authenticatedUserPresent: true,
+        observedSessionGetStatus: sessionStatus, authenticatedUserPresent: !transportSynthetic,
+        ...(transportSynthetic ? { transportSynthetic: true, authority: "explicit synthetic personal-author declaration" } : {}),
         sharedProjectContext: Boolean(session.projectContext),
         permissionCount: (session.projectContext?.permissions ?? session.capabilities ?? []).length,
-        limits: "Original response provenance and session shape only; payload stays in memory. Not fabricated authentication or an organization-task pass.",
+        limits: transportSynthetic
+          ? "Actual browser response binding and synthetic session shape only; not authentication, live permission or organization-task evidence. Disposable browser cache may contain these declarations."
+          : "Original response provenance and session shape only; payload stays in memory. Not fabricated authentication or an organization-task pass.",
       } };
     },
     dispose() {
