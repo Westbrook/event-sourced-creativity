@@ -42,6 +42,7 @@ test("3D cost approval dispatches exactly the reviewed prompt and supported sett
   const settings={...structuredClone(DEFAULT_MODEL3D_SETTINGS),geometry_file_format:"obj",seed:42};
   change(f,prompt,settings);
   assert.match(f.renderer.markup,/Approve cost and generate 3D model/);
+  assert.doesNotMatch(f.renderer.markup,/artifact-request-summary|Let the document decide|Each field allows up to/);
   await submit(f);await f.flush();
   assert.equal(f.state.requests.length,1);
   const [kind,request]=f.state.requests[0];

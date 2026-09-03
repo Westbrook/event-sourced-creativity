@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
+import { resolvePresentationModelRoutes } from "../worker/presentation-model-routing.ts";
 
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
 import { assessStoredPresentationCandidate, generateDocumentArtifact } from "../worker/openai-adapter.ts";
@@ -215,7 +217,7 @@ async function withProviderResponses(outputs, callback) {
     assert.ok(output, "a mocked provider output must exist for every submitted request");
     return Response.json({
       id: `presentation-provider-response-${requests.length}`,
-      model: "gpt-presentation-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify(output),
       usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 },
     });
@@ -311,9 +313,9 @@ test("immutable oversized scripts and required direction never consume a plannin
   });
 });
 
-function generateExecutivePresentation(options = {}, snapshot = executiveSourceSnapshot()) {
+function generateExecutivePresentation(options = {}, snapshot = executiveSourceSnapshot(), env = { OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-5.6-terra" }) {
   return generateDocumentArtifact(
-    { OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-presentation-test" },
+    env,
     "authorized-executive-actor",
     "slides",
     {
@@ -405,7 +407,7 @@ test("the strict slideshow schema preserves complete attributed quotes, editable
 test("faithfully renders twelve independently authored blocks with exact quotations, numerical evidence, and Field Notes styling in one provider request",async()=>{
   const snapshot=independentSlideSnapshot();
   await withProviderResponses([independentSlideOutput(snapshot)],async(requests)=>{
-    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-executive-actor","slides",{
       documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
       options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
     });
@@ -429,7 +431,7 @@ test("repairs a repeated slide title and empty hero from that slide's exact auth
   output.items[3].title=output.items[2].slide.visual.value;
   output.items[3].slide.visual.value=output.items[3].title;
   await withProviderResponses([output],async(requests)=>{
-    const generated=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{documentTitle:"Independent approved presentation",snapshot,options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"}});
+    const generated=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-executive-actor","slides",{documentTitle:"Independent approved presentation",snapshot,options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"}});
     assert.equal(requests.length,1,"source-grounded local title and visual repairs must not initiate another provider request");
     assert.equal(generated.output.items[3].title,"DOCUMENT AUTHORSHIP");
     assert.equal(generated.output.items[3].body,"");
@@ -450,7 +452,7 @@ test("classifies paid output exhaustion, provider refusals, and empty presentati
   ];
   for(const variant of variants){
     const previous=globalThis.fetch;const receipts=[];let calls=0;
-    globalThis.fetch=async()=>{calls+=1;return Response.json({id:`paid-${calls}`,model:"gpt-presentation-test",usage:{input_tokens:40,output_tokens:20,total_tokens:60},...variant.envelope});};
+    globalThis.fetch=async()=>{calls+=1;return Response.json({id:`paid-${calls}`,model:"gpt-5.6-terra",usage:{input_tokens:40,output_tokens:20,total_tokens:60},...variant.envelope});};
     try{
       await assert.rejects(()=>generateExecutivePresentation({onProviderResponse:(receipt)=>receipts.push(receipt)}),(error)=>error.detail?.code===variant.code&&error.providerCallCount===1,variant.name);
       assert.equal(calls,1,`${variant.name} must stop after the already-paid response`);
@@ -470,7 +472,7 @@ test("locally repairs category-only proposal rows without submitting a second pa
   output.items[5].slide.visual={kind:"matrix",label:"Proposal ingredients",value:"",exact_value:null,display_value:null,unit:null,data:categories.map((label)=>({label,value:label,weight:.8,exact_value:null,display_value:null,source_ids:["blk_006"]}))};
 
   await withProviderResponses([output],async(requests)=>{
-    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-executive-actor","slides",{
       documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
       options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
     });
@@ -501,7 +503,7 @@ test("preserves source-authored recurring legacy formats on slide five without a
   const output={title:"Pitch context feedback",summary:"An independently source-grounded end-user assessment.",content_markdown:`# Pitch context feedback\n${authored.join("\n\n")}`,presentation:presentation("field-notes"),items:titles.map((title,index)=>({title,body:"",notes:"Retain the exact independently authored evidence.",image_prompt:"Editable source-grounded visual.",context_group_ids:[],slide:{layout:index===4?"timeline":index===0?"cover":"statement",kicker:`Evidence ${index+1}`,bullets:[],source_ids:["blk_001"],source_order:index+1,visual:index===4?{kind:"timeline",label:"Creative delivery sequence",value:"",data:[{label:"Fragmented handoffs",value:rowValue,weight:1,source_ids:["blk_001"]},{label:"Unified Forma context",value:"one unified creative context",weight:.8,source_ids:["blk_001"]}]}:{kind:"hero-type",label:"Authored emphasis",value:heroValues[index],data:[]}}}))};
 
   await withProviderResponses([output],async(requests)=>{
-    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-end-user","slides",{documentTitle:"Pitch context feedback",snapshot,options:{itemCount:6,requestedSlideCount:6,presentationStyle:"field-notes",presentationFidelity:"faithful"}});
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-end-user","slides",{documentTitle:"Pitch context feedback",snapshot,options:{itemCount:6,requestedSlideCount:6,presentationStyle:"field-notes",presentationFidelity:"faithful"}});
     assert.equal(requests.length,1,"independently authored recurring visual evidence must never trigger a second paid response");
     assert.equal(result.inputReceipt.validation.repair_attempted,false);
     assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
@@ -525,7 +527,7 @@ test("preserves an exact authored opening-to-closing promise without a paid pres
   const output={title:"Pitch context",summary:"One exact opening promise returns in its authored closing.",content_markdown:`# Pitch context\n${authored.join("\n\n")}`,presentation:presentation("editorial"),items:heroValues.map((value,index)=>({title:index===0?promise:index===8?"Confident delivery":`Authored chapter ${index+1}`,body:index===8?promise:"",notes:"Keep the exact approved source-authored promise.",image_prompt:"Source-grounded editable creative direction.",context_group_ids:[],slide:{layout:index===0?"cover":index===8?"closing":"statement",kicker:`Decision ${index+1}`,bullets:[],source_ids:["blk_001"],source_order:index+1,visual:{kind:"hero-type",label:"Independent emphasis",value,data:[]}}}))};
 
   await withProviderResponses([output],async(requests)=>{
-    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-end-user","slides",{documentTitle:"Pitch context",snapshot,options:{itemCount:9,requestedSlideCount:9,presentationStyle:"editorial",presentationFidelity:"faithful"}});
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-end-user","slides",{documentTitle:"Pitch context",snapshot,options:{itemCount:9,requestedSlideCount:9,presentationStyle:"editorial",presentationFidelity:"faithful"}});
     assert.equal(requests.length,1,"the source-authored opening and closing promise must not submit a second paid request");
     assert.equal(result.inputReceipt.validation.repair_attempted,false);
     assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
@@ -551,7 +553,7 @@ test("repairs redundant title-and-question visuals before a second paid slidesho
     };
 
     await withProviderResponses([output],async(requests)=>{
-      const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+      const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-executive-actor","slides",{
         documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
         options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
       });
@@ -609,7 +611,7 @@ test("retains authored body categories, editable visual labels, and zero-valued 
   ]};
 
   await withProviderResponses([output],async(requests)=>{
-    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-executive-actor","slides",{
       documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
       options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
     });
@@ -841,7 +843,7 @@ for(const kind of ["short_story","scene","storyboard","video","audio"]){
     await withProviderResponses([invalid,repaired],async(requests)=>{
       const preflights=[];
       const result=await generateDocumentArtifact(
-        {OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},
+        {OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},
         "authorized-executive-actor",
         kind,
         {documentTitle:"Scoped authored work",snapshot:executiveSourceSnapshot(),options:{itemCount:1,onBeforeProviderAttempt:(attempt)=>preflights.push(attempt)}},
@@ -877,7 +879,7 @@ test("an unresolved non-slide validation failure stops after exactly one bounded
 
   await withProviderResponses([invalid,invalid],async(requests)=>{
     await assert.rejects(
-      generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","scene",{documentTitle:"Scoped authored scene",snapshot:executiveSourceSnapshot(),options:{itemCount:1}}),
+      generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"authorized-executive-actor","scene",{documentTitle:"Scoped authored scene",snapshot:executiveSourceSnapshot(),options:{itemCount:1}}),
       (error)=>{
         assert.equal(error.providerCallCount,2);
         assert.deepEqual(error.providerResponseIds,["presentation-provider-response-1","presentation-provider-response-2"]);
@@ -1058,7 +1060,7 @@ test("preflights a unique provider-support trace before each paid slideshow subm
     const output=submittedIds.length===1?invalid:executivePresentation();
     return Response.json({
       id:`presentation-provider-response-${submittedIds.length}`,
-      model:"gpt-presentation-test",
+      model:"gpt-5.6-terra",
       output_text:JSON.stringify(output),
       usage:{input_tokens:120,output_tokens:80,total_tokens:200},
     });
@@ -1079,7 +1081,7 @@ test("preflights a unique provider-support trace before each paid slideshow subm
 test("preflights each paid slideshow request and preserves truthful accounting when its repair exceeds the ceiling",async()=>{
   await withProviderResponses([executivePresentation()],async(requests)=>{
     await assert.rejects(generateExecutivePresentation({onBeforeProviderAttempt:(attempt)=>{
-      assert.equal(attempt.model,"gpt-presentation-test");
+      assert.equal(attempt.model,"gpt-5.6-terra");
       assert.ok(attempt.maximumInputTokens>4096);
       assert.ok(attempt.maximumOutputTokens>=6500);
       throw new Error("application_spending_ceiling_reached");
@@ -1160,4 +1162,133 @@ test("managed assigned scenes expose only resolvable source aliases and retain c
     assert.deepEqual(result.output.items.map((item) => item.slide.sourceIds), [[PRIVATE_BLOCK_ID], [PRIVATE_BLOCK_ID]]);
     assert.deepEqual(result.output.items.map((item) => item.context_group_ids), [[PRIVATE_GROUP_ID], [PRIVATE_GROUP_ID]]);
   });
+});
+
+
+test("mixed slideshow repair retains exact per-call evidence and frozen routes before the next paid request",async context=>{
+  const invalid=executivePresentation();invalid.items[0].slide.source_ids=["blk_999"];
+  const raw=[JSON.stringify(invalid,null,2)+"\n",JSON.stringify(executivePresentation(),null,2)+"\n"];
+  const usage=[
+    {input_tokens:200,output_tokens:120,total_tokens:320,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:80}},
+    {input_tokens:400,output_tokens:160,total_tokens:560,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:100}},
+  ];
+  const env={OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra",OPENAI_SLIDES_COMPOSITION_MODEL:"gpt-5.6-terra",OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT:"medium",OPENAI_SLIDES_REPAIR_MODEL:"gpt-5.6-sol",OPENAI_SLIDES_REPAIR_REASONING_EFFORT:"high"};
+  const frozen=resolvePresentationModelRoutes(env),guards=[],requests=[],retained=[],observed=new Map(),trace=[];
+  // An accepted server-owned route, not a later environment value, is used for both calls.
+  env.OPENAI_SLIDES_COMPOSITION_MODEL="gpt-5.6-sol";env.OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT="low";
+  context.mock.method(globalThis,"fetch",async(url,init)=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    const index=requests.length,request=JSON.parse(init.body),guard=guards[index];
+    assert.ok(index<2,"the comparison permits exactly the existing initial and repair calls");
+    assert.equal(guard.requestDigest,createHash("sha256").update(init.body).digest("hex"));
+    assert.equal(new Headers(init.headers).get("X-Client-Request-Id"),guard.clientRequestId);
+    assert.deepEqual(request.prompt_cache_options,{mode:"explicit"});assert.equal(request.service_tier,"default");
+    assert.equal(request.max_output_tokens,6_500);assertRequestContainsNoPrivateSourceIdentifiers(request);
+    requests.push(request);trace.push(`fetch:${index}`);
+    if(index===0){env.OPENAI_MODEL="unsupported-after-admission";env.OPENAI_SLIDES_REPAIR_MODEL="gpt-5.6-terra";env.OPENAI_SLIDES_REPAIR_REASONING_EFFORT="none";}
+    return Response.json({id:`mixed-response-${index}`,model:request.model,service_tier:"default",status:"completed",output_text:raw[index],usage:usage[index]},{headers:{"x-request-id":`mixed-http-${index}`}});
+  });
+  const result=await generateExecutivePresentation({presentationModelRoutes:frozen,
+    onBeforeProviderAttempt:async attempt=>{
+      if(guards.length===1){
+        assert.equal(retained.length,1,"raw paid output must be durably acknowledged before another preflight");
+        const prior=observed.get(guards[0].clientRequestId);assert.equal(prior.status,"completed");
+        assert.equal(prior.responseRef,"retained-mixed-0");assert.equal(prior.costMicrousd,1_840);
+        assert.equal(prior.validationStatus,"invalid");
+      }
+      guards.push(structuredClone(attempt));trace.push(`preflight:${guards.length-1}`);
+    },
+    onProviderResponse:async receipt=>{
+      const index=retained.length;assert.equal(receipt.candidateRaw,raw[index]);
+      assert.equal(receipt.candidateBytes,Buffer.byteLength(raw[index]));assert.equal(receipt.candidateTruncated,false);
+      assert.equal(receipt.call.inputTokens,usage[index].input_tokens);assert.equal(receipt.call.outputTokens,usage[index].output_tokens);
+      assert.equal(receipt.call.totalTokens,usage[index].total_tokens,"a per-call receipt must not contain aggregate usage");
+      assert.equal(receipt.call.reasoningTokens,usage[index].output_tokens_details.reasoning_tokens);
+      assert.equal(receipt.call.requestDigest,guards[index].requestDigest);
+      assert.equal(receipt.call.providerRequestId,`mixed-response-${index}`);assert.equal(receipt.call.httpRequestId,`mixed-http-${index}`);
+      assert.equal(receipt.call.effectiveModel,guards[index].model);
+      assert.equal(receipt.call.pricingReceipt.model,guards[index].model);assert.equal(receipt.call.pricingReceipt.usage.inputTokens,usage[index].input_tokens);
+      assert.equal(receipt.call.pricingReceipt.requestPolicy.cachePolicy,"disabled-explicit");
+      assert.deepEqual(receipt.call.pricingReceipt.derivedUsageFields,[]);
+      await Promise.resolve();retained.push(structuredClone(receipt));trace.push(`retained:${index}`);
+      return{responseRef:`retained-mixed-${index}`};
+    },
+    onProviderSubmission:async receipt=>{await Promise.resolve();observed.set(receipt.clientRequestId,structuredClone(receipt));},
+  },executiveSourceSnapshot(),env);
+  assert.deepEqual(requests.map(request=>[request.model,request.reasoning.effort]),[["gpt-5.6-terra","medium"],["gpt-5.6-sol","high"]]);
+  assert.deepEqual(guards.map(guard=>guard.presentationRoute),[frozen.composition,frozen.repair]);
+  assert.deepEqual(guards.map(guard=>guard.logicalCallKey),["planning:0:initial","planning:0:repair"]);
+  assert.equal(new Set(guards.map(guard=>guard.clientRequestId)).size,2);
+  assert.deepEqual(trace,["preflight:0","fetch:0","retained:0","preflight:1","fetch:1","retained:1"]);
+  const calls=result.inputReceipt.provider_calls;
+  assert.deepEqual(calls.map(call=>[call.model,call.routingPhase,call.validationStatus,call.costMicrousd]),[["gpt-5.6-terra","composition","invalid",1_840],["gpt-5.6-sol","validation-repair","valid",4_800]]);
+  assert.equal(calls.reduce((sum,call)=>sum+call.costMicrousd,0),6_640,"Terra tokens must not be repriced at the final Sol rate");
+  assert.deepEqual(result.usage,{inputTokens:600,outputTokens:280,totalTokens:880});
+  assert.deepEqual(retained.map(receipt=>receipt.usage.totalTokens),[320,880],"legacy aggregate progress is distinct from each call's own evidence");
+  assert.deepEqual(result.inputReceipt.presentation_model_routes,frozen);
+});
+
+test("an undisclosed response model is not invented from the frozen requested model",async context=>{
+  let requests=0;const retained=[];
+  context.mock.method(globalThis,"fetch",async()=>{
+    requests++;
+    return Response.json({id:"undisclosed-model-response",service_tier:"default",status:"completed",output_text:JSON.stringify(executivePresentation()),usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
+  });
+  const result=await generateExecutivePresentation({onProviderResponse:receipt=>{retained.push(structuredClone(receipt));}});
+  assert.equal(requests,1);
+  assert.equal(retained[0].call.effectiveModel,undefined);
+  const call=result.inputReceipt.provider_calls[0];
+  assert.equal(call.effectiveModel,undefined);
+  assert.equal(call.model,"gpt-5.6-terra");
+  assert.equal(call.pricingReceipt.model,"gpt-5.6-terra","pricing stays bound to the requested tariff, not a fabricated returned model");
+});
+
+test("unpriced slideshow evidence stops before repair even without a submission observer",async context=>{
+  const invalid=executivePresentation();invalid.items[0].slide.source_ids=["blk_999"];
+  const raw=JSON.stringify(invalid);
+  const validUsage={input_tokens:200,output_tokens:120,total_tokens:320,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:80}};
+  const variants=[
+    {name:"missing usage",envelope:{usage:undefined}},
+    {name:"missing total",envelope:{usage:{...validUsage,total_tokens:undefined}}},
+    {name:"cache policy conflict",envelope:{usage:{...validUsage,input_tokens_details:{cached_tokens:0,cache_write_tokens:1}}}},
+    {name:"malformed cache details",envelope:{usage:{...validUsage,input_tokens_details:{cached_tokens:"0",cache_write_tokens:0}}}},
+    {name:"unpriced actual tier",envelope:{service_tier:"flex"}},
+    {name:"changed actual model",envelope:{model:"gpt-5.6-sol"}},
+  ];
+  for(const variant of variants)for(const observe of[false,true])await context.test(`${variant.name}; observer=${observe}`,async sub=>{
+    let requests=0,preflights=0;const retained=[],submissions=[];
+    sub.mock.method(globalThis,"fetch",async(url)=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");requests++;
+      return Response.json({id:"unpriced-response",model:"gpt-5.6-terra",service_tier:"default",status:"completed",output_text:raw,usage:validUsage,...variant.envelope});
+    });
+    await assert.rejects(generateExecutivePresentation({onBeforeProviderAttempt:()=>{preflights++;},onProviderResponse:receipt=>{retained.push(structuredClone(receipt));},...(observe?{onProviderSubmission:receipt=>{submissions.push(structuredClone(receipt));}}:{})}),error=>error.detail?.code==="provider_usage_receipt_missing"&&error.providerCallCount===1);
+    assert.equal(requests,1);assert.equal(preflights,1,"unknown cost cannot authorize a repair preflight");
+    assert.equal(retained.length,1);assert.equal(retained[0].candidateRaw,raw);
+    assert.equal(retained[0].call.status,"completed");assert.equal(retained[0].call.costMicrousd,undefined,"unknown usage is not zero-cost evidence");
+    if(observe){const completed=submissions.filter(receipt=>receipt.status==="completed");assert.equal(completed.length,1);assert.equal(completed[0].costMicrousd,undefined);}
+  });
+});
+
+test("managed editorial rewrite and its validation repair use the editorial route and distinct logical call keys",async context=>{
+  const snapshot=executiveSourceSnapshot(),plan=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:2});
+  const invalid=executivePresentation();invalid.items[0].slide.source_ids=["blk_999"];
+  const outputs=[executivePresentation(),invalid,executivePresentation()],guards=[],requests=[];
+  const frozen=resolvePresentationModelRoutes({OPENAI_SLIDES_COMPOSITION_MODEL:"gpt-5.6-terra",OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT:"medium",OPENAI_SLIDES_REPAIR_MODEL:"gpt-5.6-sol",OPENAI_SLIDES_REPAIR_REASONING_EFFORT:"high"});
+  const page={pageIndex:0,pageCount:1,globalStartIndex:0,totalItems:2,phase:"complete",priorSummary:"",priorEnding:"",priorVisibleCopy:[]};
+  context.mock.method(globalThis,"fetch",async(url,init)=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");const request=JSON.parse(init.body),index=requests.length;assert.ok(index<3);requests.push(request);
+    return Response.json({id:`editorial-response-${index}`,model:request.model,service_tier:"default",status:"completed",output_text:JSON.stringify(outputs[index]),usage:{input_tokens:200,output_tokens:120,total_tokens:320,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:80}}});
+  });
+  const options={productionMode:"managed",productionPlan:plan,productionScenes:plan.scenes,presentationModelRoutes:frozen,onBeforeProviderAttempt:attempt=>{guards.push(structuredClone(attempt));}};
+  const original=await generateExecutivePresentation({...options,productionPage:page},snapshot);
+  const rewritten=await generateExecutivePresentation({...options,productionPage:{...page,repairIssues:["Remove the repeated visible opening without losing protected evidence."]}},snapshot);
+  assert.deepEqual(guards.map(guard=>guard.logicalCallKey),["planning:0:initial","planning:0:editorial-initial","planning:0:editorial-repair"]);
+  assert.deepEqual(guards.map(guard=>guard.presentationRoute.workflow),["slides.composition","slides.editorial_repair","slides.editorial_repair"]);
+  assert.deepEqual(requests.map(request=>[request.model,request.reasoning.effort]),[["gpt-5.6-terra","medium"],["gpt-5.6-sol","high"],["gpt-5.6-sol","high"]]);
+  const calls=[...original.inputReceipt.provider_calls,...rewritten.inputReceipt.provider_calls];
+  assert.deepEqual(calls.map(call=>call.routingPhase),["composition","editorial-rewrite","editorial-validation-repair"]);
+  assert.deepEqual(calls.map(call=>call.unitId),guards.map(guard=>guard.logicalCallKey));
+  assert.equal(new Set(calls.map(call=>call.unitId)).size,3,"a whole-work rewrite must not collide with the first page submission");
+  assert.equal(new Set(calls.map(call=>call.clientRequestId)).size,3);
+  assert.deepEqual(calls.map(call=>call.validationStatus),["valid","invalid","valid"]);
 });

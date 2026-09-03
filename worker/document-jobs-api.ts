@@ -1,13 +1,16 @@
+import { captureDocumentRenderSettings } from "../src/model/document-render-request.ts";
+import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
+import { PresentationModelConfigurationError, readFrozenPresentationModelRoutes, resolvePresentationModelRoutes } from "./presentation-model-routing.ts";
 import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
-import { ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
+import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, readSlideCountPolicy, resolvePresentationCountRequest, sameSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import { approvedAudioVideoReference, handleEvents } from "./events-api";
 import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, settleDocumentGenerationBudgets, storePrivateContent, preparePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
-import { hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
+import { prepareProjectResourceScopeStatement, hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
 import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import { adaptiveRequestKey, adaptiveRequestLocale } from "../src/model/adaptive-request";
@@ -46,7 +49,7 @@ import { productionSystemFor, productionUnitsForPlan } from "../src/model/produc
 import { buildPresentationSourceContract, inferPresentationSourceOutline, presentationCitationEvidenceChecks } from "../src/model/presentation-source";
 import { documentArtifactValidationIssues, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactDraft } from "../src/model/document-artifacts";
 import { combinedContextGroups } from "../src/model/combined-context";
-import { historicalPresentationValidationRejection, presentationCandidateAccounting, presentationCandidateOriginalValidation, safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, sanitizePresentationCitationChecks, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
+import { applyPresentationCandidateEdits, presentationCandidateEditableFields, presentationCandidateRevisionMarkdown, type PresentationCandidateEdit, type PresentationCandidateRevisionResult, historicalPresentationValidationRejection, presentationCandidateAccounting, presentationCandidateOriginalValidation, safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, sanitizePresentationCitationChecks, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
 import { authoritativeCreativeContext, authoritativePresentationRecoveryContext, ContextIntegrityError } from "./context-authority";
@@ -60,10 +63,11 @@ import { standingConstraints } from "../src/model/taste";
 import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from "../src/model/production-workflow";
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration";
 import { falImageProviderReceipt } from "./fal-image-adapter";
-import { definitiveProviderRejection, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, mergeProviderSubmissions, providerSubmissions, unresolvedProviderSubmissionSql, unsettledProviderSubmissionSql } from "../src/model/provider-submission";
+import { PAID_PROVIDER_FINANCIAL_FIELDS, definitiveProviderRejection, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, invalidProviderSubmissionSql, mergeProviderSubmissions, providerSubmissions, unresolvedProviderSubmissionSql, unsettledProviderSubmissionSql } from "../src/model/provider-submission";
 import { generationExecutionSummary } from "../src/model/generation-execution-evidence.ts";
 import { originalSourceAudioRecoveryRequested, recoverOriginalSourceAudio } from "./document-audio-recovery";
 import { privateContentScopeGuard } from "./pilot-policy";
+import { settleLegacyPresentationReservations } from "./pilot-policy";
 import { claimConsequentialExecution, consentHash, executionAdmissionGuard, executionAuthorityCurrent, executionContentCustodyGuard, failConsequentialExecution, reconcileConsequentialUsage, type ConsequentialBinding } from "./consequential-consent";
 import { adaptiveExecutionResponse, adaptivePlanningAdmissionGuard, adaptivePlanningReviewAvailable, adaptivePriorExecutionResponse, executeApprovedAdaptivePlanning, handleAdaptivePlanning, readAdaptivePlanningJobResult, type AdaptivePlanningPorts, type AdaptivePlanningPrepared } from "./adaptive-planning";
 import type { BudgetReservationGuard } from "./pilot-policy";
@@ -107,8 +111,34 @@ const UNCERTAIN_PRESENTATION_TOMBSTONE_SQL=`json_patch(json_object('presentation
 const UNCERTAIN_AUDIO_TOMBSTONE_SQL=`json_patch(json_object('audioProviderSubmission','pending','reservationId',json_extract(result_json,'$.reservationId'),'costReservationId',json_extract(result_json,'$.costReservationId'),'generationReceipt',json_patch(${UNCERTAIN_PRESENTATION_RECEIPT_SQL},json_object('artifact_kind','audio','provider','fal','model',COALESCE(json_extract(result_json,'$.providerModel'),json_extract(result_json,'$.generationReceipt.model'))))),json_object('providerModel',json_extract(result_json,'$.providerModel'),'audioEstimatedCostMicrousd',json_extract(result_json,'$.audioEstimatedCostMicrousd'),'plannerModel',json_extract(result_json,'$.plannerModel'),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerResponseIds',json(json_extract(result_json,'$.plannerResponseIds')),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),'costReservationPeriod',json_extract(result_json,'$.costReservationPeriod'),'costReservationMicrousd',json_extract(result_json,'$.costReservationMicrousd')))`;
 const UNCERTAIN_STORYBOARD_RECEIPT_SQL="json_object('artifact_kind','storyboard','provider',CASE WHEN COALESCE(json_extract(result_json,'$.providerJobId'),'')<>'' THEN 'fal' ELSE COALESCE(json_extract(result_json,'$.generationReceipt.provider'),'openai') END,'model',COALESCE(json_extract(result_json,'$.providerModel'),json_extract(result_json,'$.generationReceipt.model')),'provider_request_status',CASE WHEN json_extract(result_json,'$.storyboardProviderSubmission')='confirmed' AND COALESCE(json_extract(result_json,'$.providerJobId'),'')<>'' THEN 'submitted' ELSE 'submission_unknown' END,'source_transmission_status',CASE WHEN json_extract(result_json,'$.storyboardProviderSubmission')='confirmed' AND COALESCE(json_extract(result_json,'$.providerJobId'),'')<>'' THEN 'transmitted' ELSE 'unknown' END,'settled_cost_microusd',CASE WHEN COALESCE(CAST(json_extract(result_json,'$.generationReceipt.settled_cost_microusd') AS INTEGER),0)>0 THEN json_extract(result_json,'$.generationReceipt.settled_cost_microusd') ELSE NULL END,'reservation_status','executing')";
 const UNCERTAIN_STORYBOARD_TOMBSTONE_SQL=`json_patch(json_object('storyboardProviderSubmission',json_extract(result_json,'$.storyboardProviderSubmission'),'reservationId',json_extract(result_json,'$.reservationId'),'costReservationId',json_extract(result_json,'$.costReservationId'),'generationReceipt',${UNCERTAIN_STORYBOARD_RECEIPT_SQL}),json_object('artifactId',json_extract(result_json,'$.artifactId'),'providerJobId',json_extract(result_json,'$.providerJobId'),'providerRequestId',json_extract(result_json,'$.providerRequestId'),'providerModel',json_extract(result_json,'$.providerModel'),'providerStatusUrl',json_extract(result_json,'$.providerStatusUrl'),'providerResponseUrl',json_extract(result_json,'$.providerResponseUrl'),'providerCancelUrl',json_extract(result_json,'$.providerCancelUrl'),'storyboardProviderRequestedAt',json_extract(result_json,'$.storyboardProviderRequestedAt'),'storyboardProviderAcceptedAt',json_extract(result_json,'$.storyboardProviderAcceptedAt'),'plannerModel',json_extract(result_json,'$.plannerModel'),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerResponseIds',json(json_extract(result_json,'$.plannerResponseIds')),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),'costReservationPeriod',json_extract(result_json,'$.costReservationPeriod'),'costReservationMicrousd',json_extract(result_json,'$.costReservationMicrousd')))`;
-const PAID_SUBMISSION_HOLD_SQL=unsettledProviderSubmissionSql();
-const PAID_SUBMISSION_TOMBSTONE_SQL=`json_patch(json_object('providerSubmissionProtocol',1,'providerSubmissionLegacyUncertain',json(CASE WHEN ${unresolvedProviderSubmissionSql()} THEN 'true' ELSE 'false' END),'providerSubmissions',json((SELECT json_group_object(paid.key,json(json_patch('{}',json_object('clientRequestId',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.clientRequestId'),'provider',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.provider'),'operation',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.operation'),'model',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.model'),'unitId',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.unitId'),'status',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.status'),'providerRequestId',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.providerRequestId'),'costMicrousd',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.costMicrousd'),'inputTokens',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.inputTokens'),'outputTokens',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.outputTokens'),'totalTokens',json_extract(CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END,'$.totalTokens'))))) FROM json_each(CASE WHEN json_type(result_json,'$.providerSubmissions')='object' THEN json_extract(result_json,'$.providerSubmissions') ELSE '{}' END) paid)),'reservationId',json_extract(result_json,'$.reservationId'),'costReservationId',json_extract(result_json,'$.costReservationId'),'costReservationPeriod',json_extract(result_json,'$.costReservationPeriod'),'costReservationMicrousd',json_extract(result_json,'$.costReservationMicrousd')),json_object('plannerModel',json_extract(result_json,'$.plannerModel'),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),'generationReceipt',json_patch(${UNCERTAIN_PRESENTATION_RECEIPT_SQL},json_object('artifact_kind',json_extract(request_json,'$.artifactKind'),'provider',json_extract(result_json,'$.generationReceipt.provider'),'model',json_extract(result_json,'$.generationReceipt.model'),'provider_request_status',CASE WHEN ${unresolvedProviderSubmissionSql()} THEN 'submission_unknown' ELSE 'submitted' END,'source_transmission_status',CASE WHEN ${unresolvedProviderSubmissionSql()} AND COALESCE(json_extract(result_json,'$.generationReceipt.source_transmission_status'),'')!='transmitted' THEN 'unknown' ELSE 'transmitted' END))))`;
+// Receipt completion and financial settlement are different durable transitions.
+// A crash between them must not make retention erase the only exact tariff evidence.
+const PAID_SUBMISSION_HOLD_SQL=`(${unsettledProviderSubmissionSql()} OR
+  COALESCE(json_extract(result_json,'$.providerSubmissionProtocol'),0)=1 AND EXISTS(
+    SELECT 1 FROM json_each(CASE WHEN json_type(result_json,'$.providerSubmissions')='object' THEN json_extract(result_json,'$.providerSubmissions') ELSE '{}' END))
+  AND (EXISTS(SELECT 1 FROM cost_budget_reservations held WHERE held.reservation_id=json_extract(result_json,'$.costReservationId')
+      AND held.stream_id=document_jobs.stream_id AND held.correlation_id=document_jobs.correlation_id AND held.status IN('active','executing'))
+    OR EXISTS(SELECT 1 FROM budget_reservations held WHERE held.reservation_id=json_extract(result_json,'$.reservationId')
+      AND held.stream_id=document_jobs.stream_id AND held.correlation_id=document_jobs.correlation_id AND held.status='active')))`;
+// Preserve the allowlisted subtree directly: JSON Merge Patch would erase
+// meaningful nested nulls in immutable pricing receipts.
+const PAID_SUBMISSION_VALUE_SQL="CASE WHEN paid.type='object' THEN paid.value ELSE '{}' END";
+const PAID_SUBMISSION_FINANCIAL_SQL=`(SELECT json_group_object(kept.value,json_extract(${PAID_SUBMISSION_VALUE_SQL},'$.'||kept.value))
+  FROM json_each('${JSON.stringify(PAID_PROVIDER_FINANCIAL_FIELDS)}') kept
+  WHERE json_type(${PAID_SUBMISSION_VALUE_SQL},'$.'||kept.value) IS NOT NULL AND json_type(${PAID_SUBMISSION_VALUE_SQL},'$.'||kept.value)!='null')`;
+const PAID_SUBMISSION_LEGACY_UNKNOWN_SQL=`(${invalidProviderSubmissionSql()} OR COALESCE(json_extract(result_json,'$.providerSubmissionLegacyUncertain'),0)=1
+  OR json_extract(result_json,'$.presentationProviderSubmission')='pending' AND NOT EXISTS(
+    SELECT 1 FROM json_each(CASE WHEN json_type(result_json,'$.providerSubmissions')='object' THEN json_extract(result_json,'$.providerSubmissions') ELSE '{}' END) current_call
+    WHERE current_call.key=json_extract(result_json,'$.presentationProviderClientRequestId') AND current_call.type='object'
+      AND json_extract(current_call.value,'$.clientRequestId')=current_call.key AND json_extract(current_call.value,'$.operation')='planning'))`;
+const PAID_SUBMISSION_TOMBSTONE_SQL=`json_patch(json_object('providerSubmissionProtocol',1,'providerSubmissionLegacyUncertain',json(CASE WHEN ${PAID_SUBMISSION_LEGACY_UNKNOWN_SQL} THEN 'true' ELSE 'false' END),
+  'providerSubmissions',json((SELECT json_group_object(paid.key,json(${PAID_SUBMISSION_FINANCIAL_SQL})) FROM json_each(CASE WHEN json_type(result_json,'$.providerSubmissions')='object' THEN json_extract(result_json,'$.providerSubmissions') ELSE '{}' END) paid)),
+  'reservationId',json_extract(result_json,'$.reservationId'),'costReservationId',json_extract(result_json,'$.costReservationId'),'costReservationPeriod',json_extract(result_json,'$.costReservationPeriod'),'costReservationMicrousd',json_extract(result_json,'$.costReservationMicrousd')),
+  json_object('presentationProviderSubmission',json_extract(result_json,'$.presentationProviderSubmission'),'presentationProviderClientRequestId',json_extract(result_json,'$.presentationProviderClientRequestId'),
+    'plannerModel',json_extract(result_json,'$.plannerModel'),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerResponseIds',json(json_extract(result_json,'$.plannerResponseIds')),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),
+    'generationReceipt',json_patch(${UNCERTAIN_PRESENTATION_RECEIPT_SQL},json_object('artifact_kind',json_extract(request_json,'$.artifactKind'),'provider',json_extract(result_json,'$.generationReceipt.provider'),'model',json_extract(result_json,'$.generationReceipt.model'),
+      'provider_request_status',CASE WHEN ${unresolvedProviderSubmissionSql()} THEN 'submission_unknown' ELSE 'submitted' END,
+      'source_transmission_status',CASE WHEN ${unresolvedProviderSubmissionSql()} AND COALESCE(json_extract(result_json,'$.generationReceipt.source_transmission_status'),'')!='transmitted' THEN 'unknown' ELSE 'transmitted' END))))`;
 export const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END,result_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN ${PAID_SUBMISSION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN ${UNCERTAIN_AUDIO_TOMBSTONE_SQL} WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN ${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL} ELSE NULL END`;
 const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(request_json!='{}' OR result_json IS NOT NULL) AND NOT (${PAID_SUBMISSION_HOLD_SQL} AND request_json=json_object('artifactKind',json_extract(request_json,'$.artifactKind')) AND result_json=${PAID_SUBMISSION_TOMBSTONE_SQL} OR ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} AND request_json=json_object('artifactKind','slides') AND result_json=${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} OR ${UNCERTAIN_AUDIO_SUBMISSION_SQL} AND request_json=json_object('artifactKind','audio') AND result_json=${UNCERTAIN_AUDIO_TOMBSTONE_SQL} OR ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} AND request_json=json_object('artifactKind','storyboard') AND result_json=${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL})`;
 
@@ -715,6 +745,16 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     candidate.summary={...candidate.summary,settledCostMicrousd:accounting.settled_cost_microusd,
       providerCalls:Math.max(candidate.summary.providerAttempt,accounting.actual_provider_call_count??0,accounting.attempted_provider_call_count??0)};
     candidate.detail={...candidate.detail,...candidate.summary,accounting};
+    if(responseId&&presentationCandidateRevisionEligible(job,candidate)&&(!user.projectExecution||hasCapability(user,"project.author",{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId}))){
+      const request=parseRequest(job),receipt=JSON.parse(candidate.row.source_content) as Record<string,unknown>;
+      const snapshot={...(receipt.document_snapshot as Record<string,unknown>),document:{id:job.document_id,title:String(candidate.envelope.document_title??"Presentation")}};
+      const assessed=assessStoredPresentationCandidate(String(candidate.envelope.output_text??""),snapshot,{itemCount:candidate.summary.plannedSlideCount,
+        requestedSlideCount:candidate.summary.plannedSlideCount,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful"});
+      const references=assessed.sourceContract.sources.flatMap(source=>[source.alias,source.sourceId,source.blockId??"",...source.contextGroupIds]);
+      references.push(...combinedContextGroups(snapshot).map(group=>group.id));
+      const fields=presentationCandidateEditableFields(String(candidate.envelope.output_text??""),references);
+      if(fields.length)candidate.detail.revision={token:await presentationCandidateRevisionToken(user,job,projectContextId,candidate),fields};
+    }
   }
   return verified.sort((left,right)=>left.summary.providerAttempt-right.summary.providerAttempt
     ||left.summary.pageIndex-right.summary.pageIndex
@@ -811,6 +851,226 @@ async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:Do
   if(results.slice(0,-1).some((result)=>Number(result.meta.changes??0)!==1))return null;
   await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"PresentationCandidatePreserved",{job_id:job.job_id,document_id:job.document_id,provider_response_id:candidate.summary.responseId,retention_class:"governed-evidence",expires_at:expiresAt},job.job_id);
   return await certifyPresentationCandidateDisclosures(env,user,[{job:savedJob,contextId:projectContextId,candidates:[savedCandidate]}])?savedCandidate.summary:null;
+}
+
+
+/** Explicit human revision is separate from paid-response recovery; historical recovery guards are unchanged. */
+function presentationCandidateRevisionEligible(job:DocumentJobRow,candidate:VerifiedPresentationCandidate){
+  const request=parseRequest(job),summary=candidate.summary,accounting=candidate.detail.accounting;
+  return request.artifactKind==="slides"&&String(request.productionMode??"manual")==="manual"
+    &&request.workflowId===undefined&&request.workflowStageId===undefined&&request.workflowSources===undefined
+    &&summary.pageCount===1&&summary.pageIndex===0&&summary.globalStartIndex===0&&summary.providerBatchCount===1
+    &&summary.requestedSlideCount===summary.plannedSlideCount&&summary.generatedSlideCount===summary.plannedSlideCount
+    &&summary.plannedSlideCount>=1&&summary.plannedSlideCount<=MAX_MANUAL_PRESENTATION_SLIDES
+    &&["accepted","rejected"].includes(String(candidate.originalValidation.outcome))
+    &&accounting?.settled_cost_complete===true&&accounting.reservation_status==="settled"
+    &&accounting.reservation_microusd===0&&accounting.unresolved_provider_call_count===0
+    &&accounting.provider_submission_uncertain===false&&accounting.actual_provider_call_count===accounting.attempted_provider_call_count;
+}
+
+async function presentationCandidateRevisionToken(user:PilotUser,job:DocumentJobRow,contextId:string,candidate:VerifiedPresentationCandidate){
+  return retainedPresentationContentSha256(JSON.stringify({schema:1,adapter:PRESENTATION_ADAPTER_VERSION,
+    actor:user.userId,stream:user.streamId,contextId,jobId:job.job_id,responseId:candidate.summary.responseId,
+    candidate:candidate.row.content,source:candidate.row.source_content,request:job.request_json,
+    checkpoint:job.result_json,accounting:candidate.accountingEvidence}));
+}
+
+function presentationCandidateRevisionProof(user:PilotUser,job:DocumentJobRow,contextId:string,candidate:VerifiedPresentationCandidate){
+  const proof=presentationCandidateDisclosureQuery(user,job,contextId,candidate.summary.responseId,candidate.accountingEvidence);
+  if(!proof)return null;
+  const row=candidate.row;
+  return{...proof,where:`${proof.where} AND (candidate_custody.content_id,candidate_custody.content,candidate_custody.expires_at,
+    candidate_custody.created_at,candidate_custody.classification,candidate_custody.policy_version,
+    candidate_custody.source_content_id,candidate_custody.source_content,candidate_custody.source_expires_at)=(?,?,?,?,?,?,?,?,?)`,
+    bindings:[...proof.bindings,row.content_id,row.content,row.expires_at,row.created_at,row.classification,row.policy_version,
+      row.source_content_id,row.source_content,row.source_expires_at]};
+}
+
+
+/** Source events can lose private bodies without advancing the immutable event head. Bind those exact reads too. */
+async function presentationRevisionSourceProofs(env:WorkerEnv,scope:OutputScope,events:EventRow[]):Promise<OutputSqlAssertion[]>{
+  const expected=new Map(events.map(event=>[event.eventId,event])),absent:string[]=[];
+  for(let offset=0;offset<events.length;offset+=1500){
+    const ids=events.slice(offset,offset+1500).map(event=>event.eventId);
+    const rows=await env.DB.prepare(`SELECT event.event_id,event.payload,secret.private_json,secret.owner_id,
+      secret.project_id,secret.document_id,secret.redacted_at FROM events event
+      LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      WHERE event.stream_id=? AND event.event_id IN(SELECT value FROM json_each(?))`)
+      .bind(`creative:${scope.ownerUserId}`,JSON.stringify(ids)).all<{event_id:string;payload:string;private_json:string|null;owner_id:string|null;project_id:string|null;document_id:string|null;redacted_at:string|null}>();
+    if(rows.results.length!==ids.length)throw new OutputConflictError("presentation_revision_source_changed");
+    for(const row of rows.results){
+      const live=row.private_json!==null&&row.redacted_at===null,raw=live?row.private_json!:row.payload;
+      if(JSON.stringify(JSON.parse(raw))!==JSON.stringify(expected.get(row.event_id)?.payload))throw new OutputConflictError("presentation_revision_source_changed");
+      if(live){
+        if(row.owner_id!==scope.ownerUserId)throw new OutputConflictError("presentation_revision_source_changed");
+        rememberOutputPrivateBody(scope,row.event_id,raw,{projectId:row.project_id,documentId:row.document_id});
+      }else absent.push(row.event_id);
+    }
+  }
+  const proofs=retainedOutputBodyAssertions(scope);
+  for(let offset=0;offset<absent.length;offset+=1500)proofs.push({sql:"NOT EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id IN(SELECT value FROM json_each(?)) AND redacted_at IS NULL)",bindings:[JSON.stringify(absent.slice(offset,offset+1500))]});
+  return proofs;
+}
+
+type PresentationCandidateRevisionOutcome={revision:PresentationCandidateRevisionResult}|{error:string;status:number;issues?:ReturnType<typeof safePresentationCandidateIssues>};
+
+async function reviseRetainedPresentationCandidate(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,contextId:string,candidate:VerifiedPresentationCandidate,input:unknown):Promise<PresentationCandidateRevisionOutcome>{
+  const fail=(error="presentation_revision_unavailable",status=409)=>({error,status});
+  const body=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
+  if(Object.keys(body).some(key=>!["revisionToken","idempotencyKey","confirmed","edits"].includes(key))
+    ||body.confirmed!==true||typeof body.revisionToken!=="string"||!/^[a-f0-9]{64}$/u.test(body.revisionToken)
+    ||typeof body.idempotencyKey!=="string"||!/^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$/u.test(body.idempotencyKey))return fail("presentation_revision_request_invalid",400);
+  if(!presentationCandidateRevisionEligible(job,candidate))return fail();
+  if(body.revisionToken!==await presentationCandidateRevisionToken(user,job,contextId,candidate))return fail("presentation_revision_stale");
+  const request=parseRequest(job),checkpoint=parseResult(job),envelope=candidate.envelope;
+  const reservationId=String(checkpoint.costReservationId??""),reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
+  const plannerResponseId=String(checkpoint.plannerResponseId??"");
+  if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides"||!plannerResponseId)return fail("presentation_revision_settlement_required");
+  if(!await env.DB.prepare("SELECT 1 AS present FROM events WHERE stream_id=? AND actor='worker:policy' AND type='GenerationUsageRecorded' AND json_extract(payload,'$.planner_response_id')=? AND json_extract(payload,'$.document_id')=? AND json_extract(payload,'$.cost_reservation_id')=? LIMIT 1")
+    .bind(user.streamId,plannerResponseId,job.document_id,reservationId).first())return fail("presentation_revision_settlement_required");
+
+  const originalHead=await streamHead(env,user.streamId);
+  const events=user.projectExecution?await readProjectSourceEvents(env,user.projectExecution):await readWorkspaceEvents(env,user.streamId);
+  if(await streamHead(env,user.streamId)!==originalHead)return fail("presentation_revision_source_changed");
+  const document=foldEvents(events,Number.POSITIVE_INFINITY,job.document_id,user.projectExecution?.projectId??"").documents.find(value=>value.id===job.document_id);
+  if(!document||user.projectExecution&&document.projectId!==user.projectExecution.projectId)return fail();
+  const projectScope=user.projectExecution;
+  const revisionScope:OutputScope={kind:projectScope?"project":"personal",key:job.job_id,actorUserId:user.userId,
+    ownerUserId:projectScope?.ownerUserId??user.userId,projectId:document.projectId,documentId:document.id,
+    organizationId:projectScope?.organizationId??null,projectAccessId:projectScope?.projectAccessId??null,contextId:contextId||null};
+  let sourceProofs:OutputSqlAssertion[];
+  try{sourceProofs=await presentationRevisionSourceProofs(env,revisionScope,events);}
+  catch(error){if(error instanceof OutputConflictError)return fail(error.code,error.status);throw error;}
+  let trusted:Awaited<ReturnType<typeof authoritativePresentationRecoveryContext>>;
+  try{
+    trusted=await authoritativePresentationRecoveryContext(events,{documentId:job.document_id,projectId:document.projectId,
+      canvasId:typeof request.canvasId==="string"?request.canvasId:undefined,contextSetId:typeof request.contextSetId==="string"?request.contextSetId:undefined,
+      snapshot:request.snapshot&&typeof request.snapshot==="object"&&!Array.isArray(request.snapshot)?request.snapshot as Record<string,unknown>:undefined,
+      sourceBlockVersions:Array.isArray(request.sourceBlockVersions)?request.sourceBlockVersions as Array<Record<string,unknown>>:undefined,
+      documentRevision:String(request.documentRevision??"")},String(envelope.source_snapshot_sha256??""));
+  }catch(error){if(error instanceof ContextIntegrityError)return fail("presentation_revision_source_changed");throw error;}
+  const authored=standingConstraints(events).map(item=>({preference_id:item.preferenceId,axis:item.axis,value:item.value,polarity:item.polarity,authority:"authored",source_event_refs:item.evidenceRefs,source_claim_ref:item.sourceClaimRef??null}));
+  const trustedSnapshot=trusted.snapshot as Record<string,unknown>;
+  const supplied=Array.isArray(trustedSnapshot.standing_constraints)?trustedSnapshot.standing_constraints.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==="object"&&!Array.isArray(value)):[];
+  const constraints=[...new Map([...supplied,...authored].map(value=>[String(value.preference_id??`${value.polarity}:${value.axis}:${value.value}`),value])).values()];
+  const snapshot={...trusted.snapshot,document:{id:document.id,title:document.title},...(constraints.length?{standing_constraints:constraints}:{})};
+  if(envelope.compiled_snapshot_sha256!==await sourceSnapshotSha256(snapshot)||envelope.document_revision!==trusted.documentRevision)return fail("presentation_revision_source_changed");
+  let count:ReturnType<typeof resolvePresentationCountRequest>;
+  try{count=resolvePresentationCountRequest(request);}catch{return fail();}
+  if(count.slideCountPolicy?.kind==="flexible"||count.itemCount!==candidate.summary.plannedSlideCount
+    ||!sameSlideCountPolicy(count.slideCountPolicy,envelope.slide_count_policy))return fail();
+  const options={itemCount:count.itemCount,...(count.slideCountPolicy?{slideCountPolicy:count.slideCountPolicy}:{requestedSlideCount:count.itemCount}),
+    presentationStyle:typeof request.presentationStyle==="string"&&isSlideStylePresetId(request.presentationStyle)?request.presentationStyle:undefined,
+    presentationFidelity:request.presentationFidelity==="creative"?"creative" as const:"faithful" as const};
+  const raw=String(envelope.output_text??""),original=assessStoredPresentationCandidate(raw,snapshot,options);
+  const privateReferences=original.sourceContract.sources.flatMap(source=>[source.alias,source.sourceId,source.blockId??"",...source.contextGroupIds]);
+  privateReferences.push(...combinedContextGroups(snapshot).map(group=>group.id));
+  const edited=applyPresentationCandidateEdits(raw,body.edits,privateReferences);
+  if(!edited)return fail("presentation_revision_edits_invalid",400);
+  const provisional=parseDocumentArtifactContent(edited.raw);
+  if(!provisional)return fail("presentation_revision_edits_invalid",400);
+  const editedObject=JSON.parse(edited.raw) as Record<string,unknown>;
+  editedObject.content_markdown=presentationCandidateRevisionMarkdown(provisional);
+  let assessment=assessStoredPresentationCandidate(JSON.stringify(editedObject),snapshot,options);
+  if(assessment.output){
+    editedObject.content_markdown=presentationCandidateRevisionMarkdown(assessment.output);
+    assessment=assessStoredPresentationCandidate(JSON.stringify(editedObject),snapshot,options);
+  }
+  if(!assessment.output||assessment.issues.length)return{error:"presentation_revision_validation_failed",status:422,
+    issues:safePresentationCandidateIssues(assessment.issues,{pageIndex:0,pageCount:1,globalStartIndex:0,providerAttempt:candidate.summary.providerAttempt,stage:candidate.summary.stage})};
+  const plan=assessment.output;
+  if(plan.content_markdown!==presentationCandidateRevisionMarkdown(plan))return fail("presentation_revision_validation_failed",422);
+  const serialized=JSON.stringify(plan);
+  if(new TextEncoder().encode(serialized).byteLength>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES)return fail("presentation_revision_too_large",413);
+  const scope=user.projectExecution,storageOwnerId=scope?.ownerUserId??user.userId;
+  const artifactId=`presentation-revision-${await retainedPresentationContentSha256(JSON.stringify({actor:user.userId,stream:user.streamId,
+    project:scope?.projectAccessId??null,job:job.job_id,response:candidate.summary.responseId,key:body.idempotencyKey}))}`;
+  const intentHash=await retainedPresentationContentSha256(JSON.stringify({schema:1,token:body.revisionToken,
+    edits:(body.edits as PresentationCandidateEdit[]).map(edit=>({path:edit.path,value:edit.value})).sort((a,b)=>a.path.localeCompare(b.path))}));
+  const proof=presentationCandidateRevisionProof(user,job,contextId,candidate);
+  if(!proof)return fail();
+  const readExisting=async()=>env.DB.prepare(`${proof.ctes},
+    revision_current AS MATERIALIZED(SELECT 1 FROM ${proof.from} WHERE ${proof.where})
+    SELECT existing.payload FROM revision_current
+    JOIN events existing ON existing.stream_id=? AND existing.type='DocumentRenderCompleted' AND existing.actor=?
+      AND json_extract(existing.payload,'$.artifact_id')=?
+    JOIN private_content saved ON saved.content_id=json_extract(existing.payload,'$.content_ref') AND saved.owner_id=?
+      AND saved.kind='document-artifact' AND saved.redacted_at IS NULL AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+    .bind(...proof.bindings,user.streamId,`user:${user.userId}`,artifactId,storageOwnerId).first<{payload:string}>();
+  const result=(reused:boolean):PresentationCandidateRevisionOutcome=>({revision:{jobId:job.job_id,documentId:job.document_id,
+    responseId:candidate.summary.responseId,artifactId,providerCalls:0,incrementalCostMicrousd:0,approval:"unapproved",reused}});
+  const existingResult=(existing:{payload:string}|null):PresentationCandidateRevisionOutcome|null=>{
+    if(!existing)return null;
+    const payload=JSON.parse(existing.payload) as {request_digest?:string};
+    return payload.request_digest===intentHash?result(true):fail("presentation_revision_idempotency_conflict");
+  };
+  const existing=existingResult(await readExisting());if(existing)return existing;
+  const now=new Date().toISOString(),canonicalHash=await retainedPresentationContentSha256(serialized);
+  const lineage={schema_version:1,source_job_id:job.job_id,source_response_id:candidate.summary.responseId,
+    actor_user_id:user.userId,original_content_sha256:envelope.content_sha256,source_snapshot_sha256:envelope.source_snapshot_sha256,
+    source_receipt_sha256:await retainedPresentationContentSha256(candidate.row.source_content),
+    edited_content_sha256:await retainedPresentationContentSha256(edited.raw),content_sha256:canonicalHash,
+    original_validation:candidate.originalValidation,validation_adapter:PRESENTATION_ADAPTER_VERSION,changed_paths:edited.changedPaths,intent_sha256:intentHash};
+  const receipt={schema_version:1,artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,
+    captured_at:now,document_snapshot:trusted.snapshot,source_block_versions:trusted.sourceBlockVersions,
+    source:{snapshot_sha256:envelope.source_snapshot_sha256,document_revision:trusted.documentRevision},
+    request:{item_count:count.itemCount,requested_slide_count:count.itemCount,...(count.slideCountPolicy?{slide_count_policy:count.slideCountPolicy}:{}),production_mode:"manual",source_surface:job.source_surface},
+    planner:{provider:"local",model:"human-revision",provider_call_count:0},
+    accounting:{settled_cost_microusd:0,incremental_cost_microusd:0,source_generation_settled_cost_microusd:candidate.detail.accounting!.settled_cost_microusd},
+    presentation_revision:lineage};
+  const stored=await preparePrivateContent(env,storageOwnerId,"document-artifact",serialized);
+  const inputStored=await preparePrivateContent(env,user.userId,"document-artifact-input",JSON.stringify(receipt),scope);
+  const completed=makeEvent(user.streamId,originalHead+1,`user:${user.userId}`,"server:presentation-candidate-revision",artifactId,"DocumentRenderCompleted",{
+    artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,
+    request_digest:intentHash,content_sha256:canonicalHash,changed_fields:edited.changedPaths,
+    source_block_versions:trusted.sourceBlockVersions,requested_by_user_id:user.userId,title:plan.title,summary:plan.summary,
+    content_ref:stored.contentId,content_expires_at:stored.expiresAt,input_ref:inputStored.contentId,input_expires_at:inputStored.expiresAt,
+    item_count:plan.items.length,items:plan.items.map((item,index)=>({id:`${artifactId}-item-${index+1}`,title:item.title,slide:item.slide??null,
+      context_group_ids:item.context_group_ids??[],media_url:null,media_type:null,width:null,height:null})),presentation:plan.presentation??null,
+    media_url:null,media_type:null,provider:"local",provider_job_id:null,model_id:"human-revision",planner_model_id:null,planner_response_id:null,
+    reference_inputs:[],used_reference_pixels:false,latency_ms:0,
+    settings:{item_count:count.itemCount,requested_slide_count:count.itemCount,predicted_slide_count:count.itemCount,production_mode:"manual",
+      presentation_style:options.presentationStyle??null,presentation_fidelity:options.presentationFidelity,
+      reserved_cost_microusd:0,settled_cost_microusd:0,incremental_cost_microusd:0,
+      presentation_revision:{schema_version:1,intent_sha256:intentHash,content_sha256:canonicalHash,validation_adapter:PRESENTATION_ADAPTER_VERSION,
+        source_job_id:job.job_id,source_response_id:candidate.summary.responseId,changed_paths:edited.changedPaths,provider_calls:0,approval:"unapproved"}},
+    source_surface:job.source_surface},{causationId:null});
+  const completedBindings=eventWriteBindings(completed);
+  const authority=outputScopeAuthority({kind:scope?"project":"personal",key:artifactId,actorUserId:user.userId,ownerUserId:storageOwnerId,
+    projectId:document.projectId,documentId:document.id,organizationId:scope?.organizationId??null,projectAccessId:scope?.projectAccessId??null,contextId:contextId||null},"author");
+  const statements=[...outputAssertionStatements(env,authority),...sourceProofs.flatMap(proof=>outputAssertionStatements(env,proof)),
+    ...outputAssertionStatements(env,{sql:`EXISTS(${proof.ctes} SELECT 1 FROM ${proof.from} WHERE ${proof.where})`,bindings:proof.bindings}),
+    ...outputAssertionStatements(env,{sql:`(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+      AND NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND type='DocumentRenderCompleted' AND json_extract(payload,'$.artifact_id')=?)`,
+      bindings:[user.streamId,originalHead,user.streamId,artifactId]}),
+    // Only this revision's inserts: do not run preparePrivateContent's unrelated expiry cleanup.
+    ...stored.statements.slice(0,stored.requiredInserts),...inputStored.statements.slice(0,inputStored.requiredInserts),
+    env.DB.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...completedBindings)];
+  if(scope){
+    const projectHead=await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?")
+      .bind(scope.projectAccessId,scope.organizationId).first<{head:number}>();
+    statements.push(...outputAssertionStatements(env,{sql:"(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?",bindings:[scope.projectAccessId,scope.organizationId,projectHead?.head??0]}));
+    statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .bind(completed.eventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,user.streamId,completed.sequence,(projectHead?.head??0)+1,user.userId,now));
+    for(const[kind,id]of[["artifact",artifactId],["content",stored.contentId]])statements.push(prepareProjectResourceScopeStatement(env,scope,{kind:kind!,id:id!,visibility:"collaborative_output",sourceEventId:completed.eventId,actorUserId:user.userId},now,true));
+    statements.push(env.DB.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE resource_kind='content' AND resource_id=? AND project_access_id=? AND organization_id=? AND actor_user_id=? AND visibility='actor_private'")
+      .bind(completed.eventId,inputStored.contentId,scope.projectAccessId,scope.organizationId,user.userId));
+    statements.push(...outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id=? AND project_access_id=?)
+      AND (SELECT COUNT(*) FROM project_resource_scopes WHERE source_event_id=? AND project_access_id=? AND actor_user_id=?
+        AND ((resource_kind='artifact' AND resource_id=? AND visibility='collaborative_output') OR(resource_kind='content' AND resource_id=? AND visibility='collaborative_output') OR(resource_kind='content' AND resource_id=? AND visibility='actor_private')))=3
+      AND EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=? AND project_access_id=? AND actor_user_id=? AND classification='governed-evidence')`,
+      bindings:[completed.eventId,scope.projectAccessId,completed.eventId,scope.projectAccessId,user.userId,artifactId,stored.contentId,inputStored.contentId,inputStored.contentId,scope.projectAccessId,user.userId]}));
+  }
+  statements.push(...outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND payload=?)
+    AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND content=? AND redacted_at IS NULL)
+    AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact-input' AND content=? AND redacted_at IS NULL)
+    AND EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND private_json=? AND redacted_at IS NULL)`,
+    bindings:[completed.eventId,user.streamId,completedBindings[12]!,stored.contentId,storageOwnerId,serialized,inputStored.contentId,user.userId,JSON.stringify(receipt),completed.eventId,storageOwnerId,JSON.stringify(completed.payload)]}));
+  try{await env.DB.batch(statements);}catch{
+    // A concurrent replay may have won. This read repeats private custody and principal authority before disclosure.
+    return existingResult(await readExisting())??fail("presentation_revision_conflict");
+  }
+  return result(false);
 }
 
 type PresentationRecoveryResult={job:DocumentJobRow;recovered:true}|{error:string;status:number;reason?:string};
@@ -1055,7 +1315,8 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   const maximumProviderCallCount=isModel3d?1:production?.maximumProviderCallCount??2;
   const capturedAt=new Date().toISOString();
   const plannerProvider="openai";
-  const plannerModel=String(env.OPENAI_MODEL??"gpt-5.6-terra");
+  const modelRoutes=isSlides?resolvePresentationModelRoutes(env):null;
+  const plannerModel=modelRoutes?.composition.model??String(env.OPENAI_MODEL??"gpt-5.6-terra");
   const provider=artifactKind==="audio"||isModel3d?"fal":"openai";
   const model=model3d?.model??(artifactKind==="audio"?String(payload.audioProviderModel??env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro"):plannerModel);
   const audioProfile=artifactKind==="audio"?normalizeAudioRequestProfile(payload.audioProfile,snapshot):null;
@@ -1074,7 +1335,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     production_mode:payload.productionMode==="managed"?"managed":"manual",
     presentation_style:typeof payload.presentationStyle==="string"?payload.presentationStyle:null,
     presentation_fidelity:typeof payload.presentationFidelity==="string"?payload.presentationFidelity:null,
-    ...(isSlides?{presentation_adapter_version:PRESENTATION_ADAPTER_VERSION}:{}),
+    ...(isSlides?{presentation_adapter_version:PRESENTATION_ADAPTER_VERSION,presentation_model_routes:modelRoutes}:{}),
     batch_count:batchCount,planned_provider_call_count:plannedProviderCallCount,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,
     ...(audioProfile?{audio_goal:audioProfile.goal,audio_role:audioProfile.role,audio_destination:audioProfile.destination,...(audioProfile.durationSeconds?{audio_duration_seconds:audioProfile.durationSeconds}:{}),...(audioProfile.speakerCount?{audio_speaker_count:audioProfile.speakerCount}:{}),audio_provider_model:model,audio_provider_estimated_cost_microusd:Number(payload.audioEstimatedCostMicrousd??0)}:{}),
@@ -1086,7 +1347,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     schema_version:1,job_id:jobId,artifact_kind:artifactKind,document_id:documentId,captured_at:capturedAt,
     ...(sceneConfiguration?{scene_request_id:payload.sceneRequestId,scene_cost_binding_hash:(payload.sceneCostConsent as Record<string,unknown>|undefined)?.bindingHash}:{}),
     ...(sceneConfiguration?{scene_medium:sceneConfiguration.medium,scene_configuration:sceneConfiguration,context_continuity:sceneContext}:{}),
-    request:{...requestSettings,...(audioProfile?{audio_profile:audioProfile,audio_video_artifact_id:typeof payload.audioVideoArtifactId==="string"?payload.audioVideoArtifactId:null,audio_video_provider_transfer:payload.sendAudioVideoToProvider===true}:{}),...(model3d?{model3d_prompt:payload.model3dPrompt,model3d_reference_block_ids:payload.model3dReferenceBlockIds}:{})},document_snapshot:snapshot,...(effectiveSnapshot?{production_workflow_snapshot:effectiveSnapshot}:{}),
+    request:{...requestSettings,editable_settings:captureDocumentRenderSettings(payload),...(audioProfile?{audio_profile:audioProfile,audio_video_artifact_id:typeof payload.audioVideoArtifactId==="string"?payload.audioVideoArtifactId:null,audio_video_provider_transfer:payload.sendAudioVideoToProvider===true}:{}),...(model3d?{model3d_prompt:payload.model3dPrompt,model3d_reference_block_ids:payload.model3dReferenceBlockIds}:{})},document_snapshot:snapshot,...(effectiveSnapshot?{production_workflow_snapshot:effectiveSnapshot}:{}),
     source_block_versions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions:[],
     planner:isModel3d?{provider:null,model:null,request_status:"not_applicable"}:{provider:plannerProvider,model:plannerModel,request_status:"not_submitted"},
     source:{scope:isModel3d?"authored_prompt_and_selected_reference_views":"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
@@ -1268,7 +1529,10 @@ async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:Documen
   const submissions=providerSubmissions(checkpoint).filter(entry=>entry.clientRequestId!==stopEvidence?.stoppedRequestId);
   const provenSceneUnused=stopEvidence?.unused===true&&!completed&&plannerResponses.length===0&&!checkpoint.plannerResponseId
     &&!checkpoint.providerJobId&&recordedPlannerCalls===0&&Number(plannerUsage.totalTokens??0)===0&&usage.length===0;
-  const providerResponseReceived=Boolean(checkpoint.presentationProviderSubmission==="pending"&&failure?.httpStatus&&definitiveProviderRejection(failure.httpStatus));
+  // An application HTTP failure, or an earlier response, cannot acknowledge a
+  // later pending repair. Generic per-call evidence always wins over this legacy marker.
+  const providerResponseReceived=Boolean(checkpoint.presentationProviderSubmission==="pending"&&!hasUnresolvedProviderSubmission(checkpoint)
+    &&failure?.scope==="provider"&&failure.code!=="provider_submission_uncertain"&&failure.httpStatus&&definitiveProviderRejection(failure.httpStatus));
   const failedMediaPayload=payloads.find((event)=>event.type==="DocumentRenderFailed")?.payload;
   const unconfirmedMediaSubmission=(previous.artifact_kind==="audio"||previous.artifact_kind==="video"||previous.artifact_kind==="storyboard"||previous.artifact_kind==="model3d")&&Boolean(!checkpoint.providerJobId&&!completed&&(checkpoint.audioProviderSubmission==="pending"||checkpoint.model3dProviderSubmission==="pending"||checkpoint.storyboardProviderSubmission==="pending"||failedMediaPayload?.provider_charge_status==="unconfirmed"));
   const confirmedProviderRequest=Boolean(submissions.some((entry)=>entry.status!=="pending")||completed||checkpoint.plannerResponseId||plannerResponses.length||Number(plannerUsage.totalTokens??0)>0||checkpoint.providerJobId||usage.some((event)=>Boolean(event.planner_response_id)||Number(event.total_tokens??0)>0)||checkpoint.providerSubmissionProtocol!==1&&failure?.requestId&&failure.code!=="provider_submission_uncertain"||!provenSceneUnused&&(previous.provider_request_status==="submitted"||previous.provider_request_status==="completed")||providerResponseReceived);
@@ -1310,8 +1574,8 @@ async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:Documen
   const result={...checkpoint,...(providerResponseReceived?{presentationProviderSubmission:"confirmed"}:{}),generationReceipt:certifiedReceipt,...(scenePolicyStopSummary?{scenePolicyStopSummary}:{})};
 
   if(!persist)return {...latest,result_json:JSON.stringify(result),updated_at:updatedAt};
-  const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=?"+(stopEvidence?" AND result_json=? AND ("+stopEvidence.guard.sql+")":""))
-    .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status,...(stopEvidence?[latest.result_json,...stopEvidence.guard.bindings]:[])).run();
+  const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=? AND result_json IS ?"+(stopEvidence?" AND ("+stopEvidence.guard.sql+")":""))
+    .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status,latest.result_json,...(stopEvidence?stopEvidence.guard.bindings:[])).run();
   return Number(updated.meta.changes??0)===1?{...latest,result_json:JSON.stringify(result),updated_at:updatedAt}:await readJob(env,user.userId,row.job_id)??latest;
 }
 
@@ -1386,7 +1650,18 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
   await verify();
   let progressQueue=Promise.resolve();
   const serializedProgress=(stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true})=>{
-    const next=progressQueue.then(async()=>{if(commitStarted)return;if(row.output_slot_id){const previous=parseResult(row);if(!patch||!Object.entries(patch).some(([key,value])=>JSON.stringify(previous[key])!==JSON.stringify(value)))return;}await verify();await updateJobProgress(env,row,stage,message,patch,!(row.output_slot_id&&options?.financialReceiptPersisted));});progressQueue=next.catch(()=>undefined);return next;
+    const next=progressQueue.then(async()=>{
+      if(commitStarted)return;
+      const previous=parseResult(row);
+      const changed=Boolean(patch&&Object.entries(patch).some(([key,value])=>JSON.stringify(previous[key])!==JSON.stringify(value)));
+      if(row.output_slot_id&&!changed)return;
+      await verify();
+      // A legacy presentation's atomic response publication and the following
+      // candidate checkpoint already cover an identical financial observation.
+      // Do not drop changed validation metadata, a new call, or any authority check.
+      if(isPresentationJob(row)&&options?.financialReceiptPersisted&&!changed)return;
+      await updateJobProgress(env,row,stage,message,patch,!(row.output_slot_id&&options?.financialReceiptPersisted));
+    });progressQueue=next.catch(()=>undefined);return next;
   };
   const execution = operation({ signal: controller.signal, beginCommit: async () => { await progressQueue;if (commitStarted) return;await verify();if(requiresForegroundDocumentExecution(row))await beginJobCommit(env,row,"Saving the provider result and its durable receipt.");else{await updateJobProgress(env,row,"saving","Saving the provider result and its durable receipt.");await beginJobCommit(env,row);}commitStarted=true; }, progress: serializedProgress }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
   while (!settled) {
@@ -1835,7 +2110,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     delete payload.expectedSequence; delete payload.jobInputRef;
     if(requiresForegroundDocumentExecution(row)){
-      const checkpoint=parseResult(row);for(const key of ["providerSubmissionProtocol","providerSubmissionLegacyUncertain","providerSubmissions","artifactId","providerJobId","providerRequestId","provider","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","storyboardProviderRequestedAt","storyboardProviderAcceptedAt","storyboardSafeRecovery","storyboardRejectedProviderReceipt","artifactPlan","plannerModel","plannerResponseId","plannerResponseIds","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt","audioInputReceipt","audioEstimatedCostMicrousd","model3dInputReceipt","model3dProviderFiles","model3dProviderSubmission","model3dSettings","model3dEstimatedCostMicrousd","productionPlan","productionSceneReceipts","productionFrameReceipts","productionPrepaidSceneIds","productionPrepaidAnchor","prepaidProviderCostMicrousd","productionAnchor","costReservationMicrousd","costReservationId","costReservationPeriod","presentationProviderSubmission","storyboardProviderSubmission"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if((checkpoint.providerJobId||checkpoint.productionSceneReceipts||checkpoint.productionFrameReceipts||checkpoint.productionAnchor||hasSavedPaidPresentation||trustedStoryboardSafeRecovery(checkpoint))&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
+      const checkpoint=parseResult(row);for(const key of ["providerSubmissionProtocol","providerSubmissionLegacyUncertain","providerSubmissions","artifactId","providerJobId","providerRequestId","provider","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","storyboardProviderRequestedAt","storyboardProviderAcceptedAt","storyboardSafeRecovery","storyboardRejectedProviderReceipt","artifactPlan","plannerModel","plannerResponseId","plannerResponseIds","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt","audioInputReceipt","audioEstimatedCostMicrousd","model3dInputReceipt","model3dProviderFiles","model3dProviderSubmission","model3dSettings","model3dEstimatedCostMicrousd","productionPlan","productionSceneReceipts","productionFrameReceipts","productionPrepaidSceneIds","productionPrepaidAnchor","prepaidProviderCostMicrousd","productionAnchor","costReservationMicrousd","costReservationId","costReservationPeriod","presentationProviderSubmission","presentationProviderClientRequestId","presentationCandidates","storyboardProviderSubmission"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if((checkpoint.providerJobId||checkpoint.productionSceneReceipts||checkpoint.productionFrameReceipts||checkpoint.productionAnchor||hasSavedPaidPresentation||trustedStoryboardSafeRecovery(checkpoint))&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
+    }
+    if(row.kind==="render_document"&&payload.artifactKind==="slides"){
+      const receipt=parseResult(row).generationReceipt as Record<string,unknown>|undefined;
+      const settings=receipt?.settings as Record<string,unknown>|undefined;
+      if(settings?.presentation_model_routes)payload.presentationModelRoutes=readFrozenPresentationModelRoutes(settings.presentation_model_routes);
     }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
@@ -2199,6 +2479,28 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       candidates:(await verifiedPresentationCandidates(env,user,row,project?.contextId??"")).filter((candidate)=>candidate.summary.retentionClass==="governed-evidence")})));
     if(!await certifyPresentationCandidateDisclosures(env,user,verified))return Response.json({error:"presentation_candidate_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
     return Response.json({documentId,jobs:verified.filter(listing=>listing.candidates.length).map(listing=>({jobId:listing.job.job_id,documentId:listing.job.document_id,candidates:listing.candidates.map(candidate=>candidate.summary)}))},{headers:{"cache-control":"private, no-store"}});
+  }
+  const revisionRoute=path.match(/^([^/]+)\/presentation-candidates\/([^/]+)\/revisions$/u);
+  if(revisionRoute){
+    const headers={"cache-control":"private, no-store"};
+    if(request.method!=="POST")return new Response("Method not allowed",{status:405,headers});
+    const consent=requireConsent(principal);if(consent)return consent;
+    if(project&&!hasCapability(principal,"project.author",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}))return Response.json({error:"project_read_only"},{status:403,headers});
+    const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)return Response.json({error:"same_origin_required"},{status:403,headers});
+    const jobId=decodeURIComponent(revisionRoute[1]!),responseId=decodeURIComponent(revisionRoute[2]!);
+    const row=await readJob(env,user.userId,jobId);
+    if(!row||row.owner_id!==user.userId||row.stream_id!==user.streamId)return Response.json({error:"presentation_candidate_not_found"},{status:404,headers});
+    const candidates=await verifiedPresentationCandidates(env,user,row,project?.contextId??"",responseId);
+    if(candidates.length!==1)return Response.json({error:"presentation_candidate_not_found"},{status:404,headers});
+    let input:unknown;
+    try{const raw=await request.text();if(new TextEncoder().encode(raw).byteLength>70*1024)return Response.json({error:"presentation_revision_too_large"},{status:413,headers});input=JSON.parse(raw);}
+    catch{return Response.json({error:"presentation_revision_request_invalid"},{status:400,headers});}
+    const outcome=await reviseRetainedPresentationCandidate(env,user,row,project?.contextId??"",candidates[0]!,input);
+    if("error"in outcome){
+      if(outcome.issues&&!await certifyPresentationCandidateDisclosures(env,user,[{job:row,contextId:project?.contextId??"",candidates:[candidates[0]!]}]))return Response.json({error:"presentation_candidate_not_found"},{status:404,headers});
+      return Response.json({error:outcome.error,...(outcome.issues?{issues:outcome.issues}:{})},{status:outcome.status,headers});
+    }
+    return Response.json(outcome.revision,{status:outcome.revision.reused?200:201,headers});
   }
   const candidateRoute=path.match(/^([^/]+)\/presentation-candidates(?:\/([^/]+)(\/preserve)?)?$/u);
   if(candidateRoute){
@@ -2564,11 +2866,103 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if(path.endsWith("/reconcile-provider")&&request.method==="POST"){
     const consent=requireConsent(user);if(consent)return consent;
-    if(auth.impersonation||project&&project.ownerUserId!==principal.userId)return Response.json({error:"provider_reconciliation_owner_required"},{status:403,headers:{"cache-control":"private, no-store"}});
+    if(auth.impersonation)return Response.json({error:"provider_reconciliation_owner_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     const jobId=decodeURIComponent(path.slice(0,-19).replace(/\/$/,""));
     const target=await readJob(env,user.userId,jobId);
     if(!target||target.owner_id!==user.userId||target.stream_id!==user.streamId)return Response.json({error:"job_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
     const original=parseResult(target);const requestPayload=parseRequest(target);
+    if(isPresentationJob(target)){
+      const headers={"cache-control":"private, no-store"};
+      if(target.output_slot_id)return Response.json({error:"output_receipt_reconciliation_required"},{status:409,headers});
+      if(!documentJobTerminal(target))return Response.json({error:"presentation_reconciliation_terminal_required"},{status:409,headers});
+      const projectAuthority=documentJobProjectAuthority(user,target.document_id,target.job_id);
+      const assertions:OutputSqlAssertion[]=[projectAuthority??{
+        sql:`EXISTS(SELECT 1 FROM users WHERE user_id=? AND consent_version=? AND role IN('admin','creator'))
+          AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?)`,
+        bindings:[user.userId,POLICY_VERSION,target.job_id],
+      },...(project?[{sql:`EXISTS(SELECT 1 FROM project_context_sessions WHERE context_id=? AND principal_user_id=? AND organization_id=? AND project_access_id=?
+        AND revoked_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,bindings:[project.contextId,user.userId,project.organizationId,project.projectAccessId]}]:[])];
+      const authorizedRead=async()=>{
+        const rows=await env.DB.batch([...assertions.flatMap(assertion=>outputAssertionStatements(env,assertion)),
+          env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND correlation_id=?")
+            .bind(target.job_id,user.userId,user.streamId,target.document_id,target.correlation_id)]);
+        return rows.at(-1)?.results[0] as DocumentJobRow|undefined;
+      };
+      try{
+        await authorizedRead();
+        const outcome=await settleLegacyPresentationReservations(env,user,target,{reason:"legacy_presentation_saved_receipt_check",assertions});
+        const calls=providerSubmissions(original);
+        if(outcome.status==="known"){
+          const fingerprint=calls.map(call=>Object.fromEntries(PAID_PROVIDER_FINANCIAL_FIELDS.filter(key=>call[key]!==undefined).map(key=>[key,call[key]])))
+            .sort((left,right)=>String(left.clientRequestId).localeCompare(String(right.clientRequestId)));
+          const evidenceHash=await retainedPresentationContentSha256(JSON.stringify([target.job_id,target.correlation_id,original.costReservationId,fingerprint,outcome.usedMicrousd,outcome.usedTokens]));
+          const priorReconciliation=original.presentationReceiptReconciliation as Record<string,unknown>|undefined;
+          if(priorReconciliation?.evidenceSha256!==evidenceHash){
+            const previousReceipt=original.generationReceipt&&typeof original.generationReceipt==="object"?original.generationReceipt as Record<string,unknown>:{};
+            const previousFailure=errorDetailFromResult(original);
+            const resolvedFailure=previousFailure?.code==="provider_submission_uncertain"?{
+              ...previousFailure,code:"execution_interrupted",category:"server",scope:"request",action:"contact_support",retryable:false,retryAfterMs:null,httpStatus:null,
+              message:"The saved provider receipts and their charges are now verified. This attempt did not finish saving an output; review its retained drafts before authorizing any new generation.",
+            }:previousFailure;
+            const receipt={...previousReceipt,provider_request_status:target.status==="completed"?"completed":"submitted",source_transmission_status:"transmitted",provider_submission_uncertain:false,
+              actual_provider_call_count:calls.length,actual_planner_call_count:calls.length,actual_media_call_count:0,unresolved_provider_call_count:0,provider_call_breakdown_complete:true,
+              settled_cost_microusd:outcome.usedMicrousd,reservation_status:outcome.receipt.status,reservation_microusd:outcome.receipt.reserved_microusd,
+              ...(previousFailure?.code==="provider_submission_uncertain"?{failure_code:resolvedFailure!.code,failure_category:resolvedFailure!.category,failure_stage:"application"}:{})};
+            const reconciled={...original,presentationProviderSubmission:"confirmed",generationReceipt:receipt,
+              ...(resolvedFailure?{errorDetail:resolvedFailure}:{}),presentationReceiptReconciliation:{version:1,evidenceSha256:evidenceHash,
+                previousFailureCode:previousFailure?.code??null,providerRequestsSubmitted:0,checkedAt:now}};
+            const event=makeEvent(user.streamId,0,`user:${user.userId}`,"server:presentation-receipt-check",target.correlation_id,"PresentationProviderReceiptsReconciled",{
+              job_id:target.job_id,document_id:target.document_id,evidence_sha256:evidenceHash,provider_requests_submitted:0,provider_call_count:calls.length,
+              used_tokens:outcome.usedTokens,used_microusd:outcome.usedMicrousd,previous_failure_code:previousFailure?.code??null,
+            });
+            event.eventId=`presentation-reconciliation-${evidenceHash}`;
+            const bindings=eventWriteBindings(event);
+            try{
+              await env.DB.batch([...assertions.flatMap(assertion=>outputAssertionStatements(env,assertion)),
+                env.DB.prepare(`UPDATE document_jobs SET result_json=?,error_message=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=?
+                  AND correlation_id=? AND status=? AND request_json IS ? AND result_json IS ?`)
+                  .bind(JSON.stringify(reconciled),resolvedFailure?.message??target.error_message,now,target.job_id,user.userId,user.streamId,target.correlation_id,target.status,target.request_json,target.result_json),
+                ...outputAssertionStatements(env,{sql:"changes()=1"}),
+                env.DB.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS}) SELECT ?,?,COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)+1,${Array(14).fill("?").join(",")}`)
+                  .bind(...bindings.slice(0,2),user.streamId,...bindings.slice(3)),...outputAssertionStatements(env,{sql:"changes()=1"})]);
+            }catch{
+              const latest=await authorizedRead();
+              if(!latest||(parseResult(latest).presentationReceiptReconciliation as Record<string,unknown>|undefined)?.evidenceSha256!==evidenceHash
+                ||!await env.DB.prepare("SELECT 1 AS present FROM events WHERE event_id=? AND stream_id=? AND correlation_id=?").bind(event.eventId,user.streamId,target.correlation_id).first())
+                return Response.json({error:"presentation_reconciliation_conflict"},{status:409,headers});
+            }
+          }
+        }
+        const final=await authorizedRead();
+        if(!final)return Response.json({error:"job_not_found"},{status:404,headers});
+        const checkpoint=parseResult(final),detail=errorDetailFromResult(checkpoint),summary=generationExecutionSummary(checkpoint,detail);
+        const monetaryKeys=new Set(["artifact_kind","provider","model","actual_provider_call_count","actual_planner_call_count","actual_media_call_count","unresolved_provider_call_count","provider_submission_uncertain","provider_call_breakdown_complete","execution_evidence_version","reservation_microusd","settled_cost_microusd","reservation_status","source_transmission_status","provider_request_status","failure_code","failure_category","failure_stage"]);
+        const safeReceipt=Object.fromEntries(Object.entries(summary).filter(([key])=>monetaryKeys.has(key)));
+        const safeDetail=detail?{code:detail.code,category:detail.category,scope:detail.scope,action:detail.action,retryable:false,retryAfterMs:null,
+          requestId:detail.requestId,httpStatus:detail.httpStatus,
+          message:outcome.status==="known"?"The saved request receipts and charges are verified. Review the retained draft before any new generation.":"The exact paid request evidence is incomplete. The original reservation remains held; ask support to inspect the original provider request records.",
+          ...(detail.validationIssues?{validationIssues:detail.validationIssues.flatMap(issue=>safePresentationCandidateIssues([issue],{
+            pageIndex:Number.isSafeInteger(issue.pageIndex)?issue.pageIndex:0,pageCount:Number.isSafeInteger(issue.pageCount)&&issue.pageCount>0?issue.pageCount:1,
+            globalStartIndex:0,providerAttempt:Number.isSafeInteger(issue.providerAttempt)&&issue.providerAttempt>0?issue.providerAttempt:1,stage:issue.stage==="repair"?"repair":"initial",
+          }))}:{})}:null;
+        const presentation=outcome.status==="known"?(await freshlyRecoverablePresentationRows(env,user,[final],project?.contextId??""))[0]!:final;
+        const visible=serializeJob(presentation);
+        await authorizedRead();
+        const reconciliation=outcome.status==="known"?{status:"known",settled:outcome.settled,auditRepaired:outcome.auditRepaired,usedTokens:outcome.usedTokens,usedMicrousd:outcome.usedMicrousd}
+          :{status:"operator_required",reason:outcome.reason,reservationRetained:true,
+            operatorAction:"Inspect the original provider request and billing records using the attempt and client trace IDs. A retained initial response does not verify a later repair, and a client trace ID is not guaranteed provider idempotency. Do not resubmit an unknown request.",
+            attemptCorrelationId:target.correlation_id,currentClientRequestId:typeof original.presentationProviderClientRequestId==="string"?original.presentationProviderClientRequestId:null,
+            requests:calls.map(call=>({clientRequestId:call.clientRequestId,unitId:call.unitId??null,model:call.model,status:call.status,submittedAt:call.submittedAt??null,providerResponseId:call.providerRequestId??null,httpRequestId:call.httpRequestId??null}))};
+        return Response.json({job:{...visible,members:[],moderationPromptRef:null,progressMessage:safeDetail?.message??"Saved provider receipt check complete.",
+          result:{artifactKind:"slides",generationReceipt:safeReceipt,stage:final.status,
+            recoverablePresentationCandidate:outcome.status==="known"&&visible.result?.recoverablePresentationCandidate===true},errorDetail:safeDetail,error:safeDetail?.code??null},
+          reconciliation:{...reconciliation,jobId:target.job_id,documentId:target.document_id,providerRequestsSubmitted:0}},{headers});
+      }catch(error){
+        if(String(error).includes("constraint failed"))return Response.json({error:"presentation_reconciliation_authority_changed"},{status:403,headers});
+        throw error;
+      }
+    }
+    if(project&&project.ownerUserId!==principal.userId)return Response.json({error:"provider_reconciliation_owner_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     const requestedAt=typeof original.storyboardProviderRequestedAt==="string"?Date.parse(original.storyboardProviderRequestedAt):NaN;
     const tokenReservationId=String(original.reservationId??"");const costReservationId=String(original.costReservationId??"");
     if(target.kind!=="render_document"||target.status!=="failed"||requestPayload.artifactKind!=="storyboard"||requestPayload.productionMode!=="manual"||requestPayload.paidMediaConfirmed!==true||original.storyboardProviderSubmission!=="pending"||original.providerJobId||!original.artifactPlan||!Number.isFinite(requestedAt)||!tokenReservationId||!costReservationId)return Response.json({error:"provider_reconciliation_unavailable",message:"Only an unresolved owner-approved storyboard frame with its original private provider checkpoint can be reconciled."},{status:409,headers:{"cache-control":"private, no-store"}});
@@ -2852,6 +3246,13 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const input = submittedInput??await request.json() as DocumentJobAdmission;
   if (!KINDS.has(input.kind as DocumentJobKind)) return Response.json({ error: "unsupported_document_job" }, { status: 400 });
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
+  if(kind==="render_document"){
+    const guidanceProblem=documentRenderGuidanceProblem({audience:payload.audience,tone:payload.tone});
+    if(guidanceProblem)return Response.json(guidanceProblem,{status:400});
+    const guidance=documentRenderGuidance({audience:payload.audience,tone:payload.tone});
+    if(payload.audience!==undefined)payload.audience=guidance.audience;
+    if(payload.tone!==undefined)payload.tone=guidance.tone;
+  }
   if(!outputPreparation && ["outputExecution","outputTargetInstructions","outputImageFormat"].some((key)=>Object.hasOwn(payload,key)))
     return Response.json({error:"output_execution_server_owned"},{status:400});
   if(outputPreparation && (kind!=="generate"&&kind!=="render_document" || kind==="render_document"&&payload.artifactKind!=="slides"&&payload.artifactKind!=="model3d" || payload.productionMode==="managed"))
@@ -2894,6 +3295,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) return Response.json({ error: "document_job_payload_too_large" }, { status: 413 });
   if(kind==="render_document"&&payload.artifactKind==="slides"){
     if(presentationServerOwnedCheckpointField(payload))return Response.json({error:"presentation_recovery_state_server_owned",message:"Presentation recovery, provider receipts, and budget reservations can only come from an existing server-owned job checkpoint."},{status:400});
+    try{resolvePresentationModelRoutes(env);}catch(error){if(error instanceof PresentationModelConfigurationError)return Response.json({error:error.code,field:error.field,message:error.message},{status:503});throw error;}
     const maximum=payload.productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:MAX_MANUAL_PRESENTATION_SLIDES;
     try{
       const count=resolvePresentationCountRequest(payload);

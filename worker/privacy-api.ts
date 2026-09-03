@@ -56,6 +56,21 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
   const platformAssistant = await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
     .first<{ available: number }>();
   const outputErasure=await personalOutputErasureStatements(env,actor.userId,now,EXPIRED_DOCUMENT_JOB_REDACTION_SQL);
+  // Legacy paid slide attempts have no Output grant to revoke. Erase their
+  // personal source fields in this same batch, keeping only unsettled financial
+  // evidence; stop active execution so erased input cannot be republished.
+  const legacyPresentationErasure=env.DB.prepare(`UPDATE document_jobs SET ${EXPIRED_DOCUMENT_JOB_REDACTION_SQL},
+    status=CASE WHEN status IN('queued','running','committing') THEN 'canceled' ELSE status END,
+    completed_at=CASE WHEN status IN('queued','running','committing') THEN COALESCE(completed_at,?) ELSE completed_at END,
+    lease_expires_at=NULL,error_message=NULL,updated_at=?
+    WHERE owner_id=? AND stream_id=? AND kind='render_document' AND json_extract(request_json,'$.artifactKind')='slides'
+      AND COALESCE(json_extract(result_json,'$.providerSubmissionProtocol'),0)=1
+      AND json_type(result_json,'$.providerSubmissions')='object' AND EXISTS(SELECT 1 FROM json_each(result_json,'$.providerSubmissions'))
+      ${outputErasure.length?"AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id)":""}
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE
+        custody.resource_kind='job' AND custody.resource_id=document_jobs.job_id
+        OR custody.resource_kind='document' AND custody.resource_id=document_jobs.document_id)`)
+    .bind(now,now,actor.userId,`creative:${actor.userId}`);
   const result = await env.DB.batch([
     env.DB.prepare(`UPDATE event_private_payloads SET private_json='',redacted_at=?
       WHERE owner_id=? AND redacted_at IS NULL
@@ -72,7 +87,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     env.DB.prepare("DELETE FROM external_content WHERE owner_id=?").bind(actor.userId),
     ...(platformAssistant ? [env.DB.prepare("UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE actor_user_id=? AND redacted_at IS NULL")
       .bind(now, actor.userId)] : []),
-    ...outputErasure,
+    ...outputErasure,legacyPresentationErasure,
   ]);
   let outputReservationReconciliationPending=false;
   if(outputErasure.length)try{const remaining=await releaseUndispatchedOutputReservations(env,{ownerUserId:actor.userId,personalOnly:true,limit:1});outputReservationReconciliationPending=remaining.pending>0;}catch{outputReservationReconciliationPending=true;}
@@ -86,7 +101,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
   const outputResultOffset=platformAssistant?4:3;
   return Response.json({ erasedAuthoredEventBodies: Number(result[0]?.meta.changes ?? 0), erasedTemporaryContent: Number(result[1]?.meta.changes ?? 0),
     erasedPlatformConversations: platformAssistant?Number(result[3]?.meta.changes ?? 0):0, clearedDerivedContent: Number(result[2]?.meta.changes ?? 0),
-    revokedOutputGrantCount: Number(result[outputResultOffset]?.meta.changes??0), uncertainProviderAccountingRetained: true, outputReservationReconciliationPending,
+    erasedLegacyPresentationJobs:Number(result.at(-1)?.meta.changes??0),
+    revokedOutputGrantCount: outputErasure.length?Number(result[outputResultOffset]?.meta.changes??0):0, uncertainProviderAccountingRetained: true, outputReservationReconciliationPending,
     outputProviderReconciliationPending:outputProgress.providerReconciliationPending, outputStorageCleanupPending:outputProgress.storageCleanupPending, outputReconciliationCheckFailed,
     finishedOutputsRetained: true, sharedOrganizationContextRetained: true, uploadedFilesRetained: true, otherDevicesAndBackupsPurged: false });
 }

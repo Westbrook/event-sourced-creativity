@@ -1,11 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PAID_PROVIDER_FINANCIAL_FIELDS } from "../src/model/provider-submission.ts";
 
 import { buildManagedProductionPlan, productionSceneSnapshot } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract, providerFacingPresentationSourceContract } from "../src/model/presentation-source.ts";
 import { assessStoredPresentationCandidate, buildDocumentPresentationSourceContract, PRESENTATION_ADAPTER_VERSION } from "../worker/openai-adapter.ts";
 import { documentArtifactValidationIssues } from "../src/model/document-artifacts.ts";
 import { bindPresentationPageAnchors, combinedSceneSnapshot, generateManagedArtifactDraft } from "../worker/managed-production.ts";
+
+// Paid response and validation completion are snapshots of one immutable charge.
+function completedProviderCalls(submissions) {
+  const calls = new Map();
+  const financial = (receipt) => Object.fromEntries(PAID_PROVIDER_FINANCIAL_FIELDS.filter((key) => Object.hasOwn(receipt, key)).map((key) => [key, receipt[key]]));
+  for (const receipt of submissions.filter((entry) => entry.status === "completed")) {
+    const previous = calls.get(receipt.clientRequestId);
+    if (previous) assert.deepEqual(financial(receipt), financial(previous), "validation progress cannot rewrite an already observed charge");
+    calls.set(receipt.clientRequestId, receipt);
+  }
+  return [...calls.values()];
+}
 
 const studies = [
   { key: "orchard", title: "Orchard irrigation", requirement: "Explain orchard irrigation and rainwater reservoirs.", evidence: "Orchard irrigation fills rainwater reservoirs during wet weather so fruit trees can survive dry spells.", emphasis: "Stored rainfall" },
@@ -220,10 +233,10 @@ test("real managed contract and adapter paths accept two bounded mocked pages wi
         visual: { kind: "hero-type", label: "", value: study.emphasis, data: [] },
       } };
     });
-    return Response.json({ id: `mock-outline-page-${requests.length}`, model: "gpt-managed-outline-test", output_text: JSON.stringify({ title: "Field studies", summary: "Independent research observations.", content_markdown: items.map((item) => item.body).join("\n\n"), presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
+    return Response.json({ id: `mock-outline-page-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify({ title: "Field studies", summary: "Independent research observations.", content_markdown: items.map((item) => item.body).join("\n\n"), presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
   });
 
-  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-managed-outline-test" }, "isolated-test-actor", "slides", { documentTitle: "Isolated managed outline fixture", snapshot, production, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful" });
+  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "isolated-test-actor", "slides", { documentTitle: "Isolated managed outline fixture", snapshot, production, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful" });
   assert.equal(requests.length, 2);
   assert.deepEqual(requests.map((provider) => provider.presentation_source.outline.map((slide) => slide.number)), [[1, 2, 3, 4, 5, 6, 7, 8], [9]]);
   assert.equal(result.output.items.length, 9);
@@ -284,7 +297,7 @@ function managedAnchorFixture(t, { alter = () => {}, configure = () => {} } = {}
 
 test("page anchors R2: nine valid anchored slides use two real adapter calls and retain truthful page-local raw evidence", async (t) => {
   const f = managedAnchorFixture(t), result = await f.run();
-  assert.equal(PRESENTATION_ADAPTER_VERSION, "2026-08-27-output-outline-evidence-v6");
+  assert.equal(PRESENTATION_ADAPTER_VERSION, "2026-09-02-durable-calls-source-bookends-v7");
   assert.equal(f.requests.length, 2); assert.equal(result.output.items.length, 9);
   const canonical = buildDocumentPresentationSourceContract(f.snapshot, { itemCount: 9, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful" });
   const expected = studies.map((study) => canonical.passages.find((passage) => passage.content === study.evidence).id);
@@ -310,8 +323,8 @@ test("page anchors R2: nine valid anchored slides use two real adapter calls and
   assert.equal(result.inputReceipt.provider_request_count, 2); assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, 0);
   assert.deepEqual(f.receipts, f.receiptCopies); assert.deepEqual(f.receipts.map((receipt) => receipt.candidateRaw), f.rawResponses.map((response) => response.raw));
   assert.deepEqual(f.snapshot, f.originalSnapshot); assert.deepEqual(f.production, f.originalProduction);
-  assert.equal(f.submissions.filter((submission) => submission.status === "completed").length, 2);
-  assert.deepEqual(f.submissions.filter((submission) => submission.status === "completed").map((submission) => submission.costMicrousd), [800, 800]);
+  assert.equal(completedProviderCalls(f.submissions).length, 2);
+  assert.deepEqual(completedProviderCalls(f.submissions).map((submission) => submission.costMicrousd), [800, 800]);
 });
 
 for (const repair of ["adapter", "whole-work"]) test("page anchors R2: " + repair + " repair reuses exact page identities without changing paid history", async (t) => {
@@ -334,7 +347,7 @@ for (const repair of ["adapter", "whole-work"]) test("page anchors R2: " + repai
   assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300, 450]);
   assert.deepEqual(f.receipts, f.receiptCopies); assert.deepEqual(f.receipts.map((receipt) => receipt.candidateRaw), f.rawResponses.map((response) => response.raw));
   assert.deepEqual(f.snapshot, f.originalSnapshot); assert.deepEqual(f.production, f.originalProduction);
-  assert.equal(f.submissions.filter((submission) => submission.status === "completed").length, 3);
+  assert.equal(completedProviderCalls(f.submissions).length, 3);
 });
 
 for (const anchor of ["passage_002", "passage_009", "passage_999", "passage_bogus", "PASSAGE_001", "legacy_passage_bad"]) {
@@ -349,7 +362,7 @@ for (const anchor of ["passage_002", "passage_009", "passage_999", "passage_bogu
     assert.deepEqual(f.requests[1].provider.presentation_source, f.requests[2].provider.presentation_source);
     assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300, 450]);
     assert.deepEqual(f.receipts, f.receiptCopies); assert.deepEqual(f.receipts.map((receipt) => receipt.candidateRaw), f.rawResponses.map((response) => response.raw));
-    assert.equal(f.submissions.filter((submission) => submission.status === "completed").length, 3);
+    assert.equal(completedProviderCalls(f.submissions).length, 3);
     const options = f.sourceOptions(1), assessment = assessStoredPresentationCandidate(f.rawResponses[1].raw, combinedSceneSnapshot(f.snapshot, options.productionScenes), options);
     assert.ok(assessment.issues.some((issue) => issue.code === "incorrect_citation_anchor"), "private raw assessment retains the original anchor failure");
   });

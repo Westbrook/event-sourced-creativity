@@ -392,3 +392,25 @@ test("keeps completed inspection truthful after provider settlement",()=>{
   assert.equal(inspection.receipt.generation_receipt.actual_provider_call_count,1);
   assert.equal(inspection.receipt.generation_receipt.actual_slide_count,12);
 });
+
+
+test("restored requests use only the selected attempt's authorized frozen settings",async()=>{
+  const {restoreDocumentRenderSettings,captureDocumentRenderSettings}=await import("../src/model/document-render-request.ts");
+  const job={jobId:"restore-selected",documentId:"source",kind:"render_document",result:{artifactKind:"slides",generationReceipt:{input_ref:"restore-input"}}};
+  const request={audience:"Selected slide audience",tone:"x".repeat(121),production_mode:"managed",requested_slide_count:6,presentation_style:"field-notes",presentation_fidelity:"faithful"};
+  const retained={job_id:job.jobId,document_id:job.documentId,artifact_kind:"slides",request};
+  const content={"restore-input":JSON.stringify(retained),"other-input":JSON.stringify({...retained,job_id:"other",request:{...request,tone:"Podcast"}})};
+  const result=restoreDocumentRenderSettings(job,content);
+  assert.equal(result.tone.length,121,"historical invalid values remain editable instead of silently clipped");assert.equal(result.audience,request.audience);assert.equal(result.itemCount,6);assert.equal(result.productionMode,"managed");assert.equal(result.presentationStyle,"field-notes");
+  for(const patch of [{job_id:"other"},{document_id:"other"},{artifact_kind:"audio"}])assert.equal(restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,...patch})}),null);
+  assert.equal(restoreDocumentRenderSettings(job,{}),null);assert.equal(restoreDocumentRenderSettings(job,{"restore-input":"{}"}),null);
+  assert.equal(restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,request:{...request,tone:{}}})}),null);
+  const captured=captureDocumentRenderSettings({artifactKind:"slides",productionMode:"manual",itemCount:6,audience:"Audience",tone:"Tone",presentationStyle:"editorial",presentationFidelity:"creative",providerJobId:"DO_NOT_COPY",snapshot:{private:"DO_NOT_COPY"},paidRetryConfirmed:true,costReservationId:"DO_NOT_COPY"});
+  assert.doesNotMatch(JSON.stringify(captured),/DO_NOT_COPY|paidRetryConfirmed/);
+  const current=restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,request:{editable_settings:captured}})});
+  assert.equal(current.tone,"Tone");assert.equal(current.presentationFidelity,"creative");
+  const model3dJob={...job,result:{...job.result,artifactKind:"model3d"}};
+  const model3dCaptured=captureDocumentRenderSettings({artifactKind:"model3d",itemCount:1,productionMode:"manual",model3dPrompt:"  Exact private prompt  ",model3dSettings:{seed:42},model3dReferenceBlockIds:["view-b","view-a"]});
+  const model3dInput={...retained,artifact_kind:"model3d",request:{editable_settings:model3dCaptured}};
+  assert.equal(restoreDocumentRenderSettings(model3dJob,{"restore-input":JSON.stringify(model3dInput)}),null,"unsupported 3D restoration must not substitute current settings for missing frozen controls");
+});

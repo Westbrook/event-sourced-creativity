@@ -16,6 +16,7 @@ import {
   settleBudget,
   settleCostBudget,
   settleInterruptedDocumentJobReservations,
+  settleLegacyPresentationReservations,
 } from "../worker/pilot-policy.ts";
 import { appendAuditEvent, ensureSchema } from "../worker/runtime.ts";
 
@@ -741,4 +742,126 @@ test("the bundled worker resumes a submitted scene without a duplicate provider 
     assert.equal((await readBudgets(environment,owner)).user.used,16_781);
     assert.equal((await readCostBudgets(environment,owner)).user.usedMicrousd,92_092+scene.durationSeconds*302_400+500_000);
   }finally{globalThis.fetch=originalFetch;}
+});
+
+async function legacySlidesSettlementFixture(){
+  const {sqlite,env}=reconciliationDatabase();await ensureSchema(env);
+  const user={userId:"slides-owner",streamId:"creative:slides-owner"},jobId="paid-slides",correlation=jobId+":attempt:1",operation="document-render:slides",now=new Date().toISOString();
+  const token=await reserveBudget(env,user.userId,1000,{streamId:user.streamId,correlationId:correlation,operation});assert.equal(token.ok,true);
+  const cost=await reserveCostBudget(env,user.userId,1000,{reservationId:"slides-cost",maximumMicrousd:1000,allowUserOverage:false,streamId:user.streamId,correlationId:correlation,operation,period:token.period});assert.equal(cost.ok,true);
+  assert.equal(await claimCostBudgetReservation(env,user.userId,cost.reservationId),true);
+  const call=(id,model,input,output,costMicrousd)=>({clientRequestId:id,provider:"openai",operation:"planning",model,unitId:"planning:0:"+id,status:"completed",providerRequestId:"response-"+id,inputTokens:input,outputTokens:output,totalTokens:input+output,costMicrousd});
+  const checkpoint={artifactKind:"slides",reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:token.period,
+    providerSubmissionProtocol:1,providerSubmissions:{initial:call("initial","gpt-5.6-terra",100,40,990),repair:call("repair","gpt-5.6-sol",70,30,1234)},
+    presentationProviderSubmission:"confirmed",presentationProviderClientRequestId:"repair",plannerModel:"gpt-5.6-terra",plannerResponseId:"response-repair",plannerResponseIds:["response-initial","response-repair"],
+    generationReceipt:{version:1,provider_request_status:"submitted",actual_provider_call_count:2}};
+  sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(jobId,user.userId,user.streamId,"slides-document","render_document","failed","studio",correlation,1,JSON.stringify({artifactKind:"slides",itemCount:6}),JSON.stringify(checkpoint),"execution_interrupted",1,now,now,now,null,null,new Date(Date.now()+86400000).toISOString(),now);
+  await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReserved",{operation,reservation_id:token.reservationId,cost_reservation_id:cost.reservationId,reserved_tokens:1000,reserved_microusd:1000,period:token.period},correlation);
+  const job=()=>sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(jobId);
+  const save=(value)=>sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(value),jobId);
+  const usages=()=>sqlite.prepare("SELECT payload FROM events WHERE type='GenerationUsageRecorded' ORDER BY sequence").all().map(row=>JSON.parse(row.payload));
+  const snapshot=()=>JSON.stringify({tokens:sqlite.prepare("SELECT * FROM budget_reservations").all(),cost:sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),tokenCounters:sqlite.prepare("SELECT * FROM budget_counters ORDER BY scope,scope_id").all(),costCounters:sqlite.prepare("SELECT * FROM cost_budget_counters ORDER BY scope,scope_id").all(),events:sqlite.prepare("SELECT * FROM events ORDER BY sequence").all()});
+  return{sqlite,env,user,token,cost,checkpoint,correlation,job,save,usages,snapshot};
+}
+
+test("legacy slide reconciliation settles immutable per-call prices without clipping or repricing",async()=>{
+  const f=await legacySlidesSettlementFixture();
+  const result=await settleLegacyPresentationReservations(f.env,f.user,f.job());
+  assert.equal(result.status,"known");assert.equal(result.settled,true);assert.equal(result.usedTokens,240);assert.equal(result.usedMicrousd,2224,"actual paid cost may exceed the original hold");
+  for(const scope of ["user","workspace"]){
+    assert.deepEqual({...f.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=?").get(scope)},{used_tokens:240,reserved_tokens:0});
+    assert.deepEqual({...f.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=?").get(scope)},{used_microusd:2224,reserved_microusd:0});
+  }
+  const usage=f.usages();assert.equal(usage.length,1);assert.equal(usage[0].input_tokens,170);assert.equal(usage[0].output_tokens,70);assert.equal(usage[0].cost_microusd,2224);
+  const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).settled,false);assert.equal(f.snapshot(),before);
+});
+
+for(const paidInitial of [true,false])test("legacy slide reconciliation accepts exact definitive rejection with "+(paidInitial?"paid initial work":"no paid work"),async()=>{
+  const f=await legacySlidesSettlementFixture(),rejected={clientRequestId:"repair",provider:"openai",operation:"planning",model:"gpt-5.6-sol",unitId:"planning:0:repair",status:"rejected",costMicrousd:0};
+  f.checkpoint.providerSubmissions=paidInitial?{initial:f.checkpoint.providerSubmissions.initial,repair:rejected}:{repair:rejected};
+  f.checkpoint.plannerResponseId=paidInitial?"response-initial":null;f.checkpoint.plannerResponseIds=paidInitial?["response-initial"]:[];f.checkpoint.generationReceipt.actual_provider_call_count=paidInitial?2:1;f.save(f.checkpoint);
+  const result=await settleLegacyPresentationReservations(f.env,f.user,f.job());assert.equal(result.status,"known");assert.equal(result.usedTokens,paidInitial?140:0);assert.equal(result.usedMicrousd,paidInitial?990:0);
+  assert.equal((await readCostBudgets(f.env,f.user.userId)).user.reservedMicrousd,0);assert.equal(f.usages().length,paidInitial?1:0);
+});
+
+for(const previousCost of [0,1000])test("legacy slide reconciliation repairs an already-settled audit gap of "+(2224-previousCost)+" microusd without touching counters",async()=>{
+  const f=await legacySlidesSettlementFixture();
+  await settleBudget(f.env,f.user.userId,f.token.reservationId,240);await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224);
+  if(previousCost)await appendAuditEvent(f.env,f.user.streamId,"worker:policy","GenerationUsageRecorded",{document_id:"slides-document",reservation_id:f.token.reservationId,cost_reservation_id:f.cost.reservationId,total_tokens:240,cost_microusd:previousCost},f.correlation);
+  const ledger=()=>JSON.stringify({tokens:f.sqlite.prepare("SELECT * FROM budget_reservations").all(),cost:f.sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),tokenCounters:f.sqlite.prepare("SELECT * FROM budget_counters").all(),costCounters:f.sqlite.prepare("SELECT * FROM cost_budget_counters").all()});
+  const before=ledger(),result=await settleLegacyPresentationReservations(f.env,f.user,f.job());
+  assert.equal(result.status,"known");assert.equal(result.settled,false);assert.equal(result.auditRepaired,true);assert.equal(ledger(),before);
+  assert.equal(f.usages().reduce((sum,value)=>sum+value.total_tokens,0),240);assert.equal(f.usages().reduce((sum,value)=>sum+value.cost_microusd,0),2224);
+  const after=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).auditRepaired,false);assert.equal(f.snapshot(),after);
+});
+
+for(const tokenFirst of [true,false])test("legacy slide reconciliation finishes the other ledger after "+(tokenFirst?"tokens":"dollars")+" settled first",async()=>{
+  const f=await legacySlidesSettlementFixture();
+  if(tokenFirst)await settleBudget(f.env,f.user.userId,f.token.reservationId,240);else await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224);
+  const result=await settleLegacyPresentationReservations(f.env,f.user,f.job());assert.equal(result.status,"known");assert.equal(result.settled,true);
+  assert.equal((await readBudgets(f.env,f.user.userId)).user.used,240);assert.equal((await readCostBudgets(f.env,f.user.userId)).user.usedMicrousd,2224);
+  assert.equal(f.usages().length,1);assert.equal(f.usages()[0].total_tokens,240);assert.equal(f.usages()[0].cost_microusd,2224);
+});
+
+test("legacy slide reconciliation leaves unresolved, mismatched and invalid call evidence untouched",async()=>{
+  const cases=[
+    ["pending repair",c=>{c.providerSubmissions.repair.status="pending";}],
+    ["legacy pending repair",c=>{delete c.providerSubmissions.repair;c.presentationProviderSubmission="pending";}],
+    ["different current client",c=>{c.presentationProviderClientRequestId="unrecorded-repair";}],
+    ["unidentified legacy uncertainty",c=>{delete c.presentationProviderClientRequestId;c.generationReceipt.provider_request_status="submission_unknown";}],
+    ["legacy uncertain flag",c=>{c.providerSubmissionLegacyUncertain=true;}],
+    ["invalid generic map",c=>{c.providerSubmissions=[];}],
+    ["missing cost",c=>{delete c.providerSubmissions.repair.costMicrousd;}],
+    ["inconsistent tokens",c=>{c.providerSubmissions.repair.totalTokens=99;}],
+    ["fractional cost",c=>{c.providerSubmissions.repair.costMicrousd=0.5;}],
+    ["duplicate response",c=>{c.providerSubmissions.repair.providerRequestId="response-initial";}],
+    ["other operation",c=>{c.providerSubmissions.repair.operation="image";}],
+    ["aggregate records another response",c=>{c.plannerUsage={inputTokens:180,outputTokens:70,totalTokens:250};}],
+    ["request count records another call",c=>{c.plannerInput={provider_request_count:3};}],
+  ];
+  for(const [name,change] of cases){const f=await legacySlidesSettlementFixture();change(f.checkpoint);f.save(f.checkpoint);const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"uncertain",name);assert.equal(f.snapshot(),before,name);}
+});
+
+test("legacy slide reconciliation does not consume another attempt, scope or operation",async()=>{
+  for(const [field,value] of [["correlation_id","paid-slides:attempt:2"],["operation","document-render:audio"],["stream_id","creative:another-owner"],["period","1900-01"]]){
+    const f=await legacySlidesSettlementFixture();f.sqlite.prepare("UPDATE cost_budget_reservations SET "+field+"=?").run(value);const before=f.snapshot();
+    assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"conflict");assert.equal(f.snapshot(),before);
+  }
+  const f=await legacySlidesSettlementFixture(),before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job(),{assertions:[{sql:"0"}]})).status,"conflict");assert.equal(f.snapshot(),before);
+});
+
+test("legacy slide reconciliation does not recharge when positive audit usage conflicts with an active ledger",async()=>{
+  const f=await legacySlidesSettlementFixture();await appendAuditEvent(f.env,f.user.streamId,"worker:policy","GenerationUsageRecorded",{document_id:"slides-document",reservation_id:f.token.reservationId,cost_reservation_id:f.cost.reservationId,total_tokens:240,cost_microusd:2224},f.correlation);
+  const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"conflict");assert.equal(f.snapshot(),before);
+});
+
+test("legacy slide reconciliation rolls back silent audit or counter no-ops",async()=>{
+  for(const trigger of ["CREATE TRIGGER reject_reconciliation BEFORE INSERT ON events WHEN NEW.type='GenerationUsageRecorded' BEGIN SELECT RAISE(IGNORE); END", "CREATE TRIGGER reject_reconciliation BEFORE UPDATE ON cost_budget_counters WHEN NEW.scope='user' BEGIN SELECT RAISE(IGNORE); END"]){
+    const f=await legacySlidesSettlementFixture();f.sqlite.exec(trigger);const before=f.snapshot();
+    assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"conflict");assert.equal(f.snapshot(),before,"the entire settlement must roll back");
+    f.sqlite.exec("DROP TRIGGER reject_reconciliation");assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"known");assert.equal(f.usages().length,1);
+  }
+});
+
+for(const auditOnly of [false,true])test("concurrent legacy slide reconciliation "+(auditOnly?"repairs settled audit gaps":"settles and audits")+" exactly once",async()=>{
+  const f=await legacySlidesSettlementFixture(),row=f.job();
+  if(auditOnly){await settleBudget(f.env,f.user.userId,f.token.reservationId,240);await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224);}
+  const results=await Promise.all([settleLegacyPresentationReservations(f.env,f.user,row),settleLegacyPresentationReservations(f.env,f.user,row)]);
+  assert.deepEqual(results.map(value=>value.status),["known","known"]);assert.equal(results.filter(value=>auditOnly?value.auditRepaired:value.settled).length,1);assert.equal(f.usages().length,1);
+  assert.equal((await readBudgets(f.env,f.user.userId)).user.used,240);assert.equal((await readCostBudgets(f.env,f.user.userId)).user.usedMicrousd,2224);
+});
+
+test("legacy slide reconciliation recognizes a committed transaction after losing its acknowledgement",async()=>{
+  const f=await legacySlidesSettlementFixture(),batch=f.env.DB.batch.bind(f.env.DB);let lost=false;
+  f.env.DB.batch=async(statements)=>{const result=await batch(statements);if(!lost&&statements.some(statement=>statement.sql.startsWith("INSERT INTO output_atomic_assertions"))){lost=true;throw new Error("lost_settlement_ack");}return result;};
+  assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"known");assert.equal(lost,true);assert.equal(f.usages().length,1);
+  const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).settled,false);assert.equal(f.snapshot(),before);
+});
+
+test("legacy slide reconciliation cannot settle over a concurrently persisted pending repair",async()=>{
+  const f=await legacySlidesSettlementFixture(),batch=f.env.DB.batch.bind(f.env.DB),row=f.job(),before=f.snapshot();let raced=false;
+  f.env.DB.batch=async(statements)=>{if(!raced&&statements.some(statement=>statement.sql.startsWith("INSERT INTO output_atomic_assertions"))){raced=true;f.checkpoint.presentationProviderSubmission="pending";f.checkpoint.presentationProviderClientRequestId="later-repair";f.save(f.checkpoint);}return batch(statements);};
+  assert.equal((await settleLegacyPresentationReservations(f.env,f.user,row)).status,"conflict");assert.equal(raced,true);assert.equal(f.snapshot(),before);
+  assert.equal(JSON.parse(f.job().result_json).presentationProviderClientRequestId,"later-repair");
 });

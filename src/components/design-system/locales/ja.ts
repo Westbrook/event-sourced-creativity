@@ -590,6 +590,8 @@ const messages: Record<string, string> = {
   "shell.command": "検索またはコマンドを実行",
   "shell.loading": "{application} のワークスペースを開いています",
   "shell.loadingDetail": "保存済みのプロジェクトと制作物を復元しています。",
+  "shell.documentUnavailable": "このドキュメントは利用できません。",
+  "shell.documentUnavailableDetail": "指定されたアドレスを保持しています。再試行して確認してください。新しいドキュメントは作成していません。",
   "shell.error": "作業内容を読み込めませんでした。",
   "shell.busy": "実行中: {operation}",
   "shell.running": "サーバーでドキュメント操作を実行しています",
@@ -1259,6 +1261,9 @@ const messages: Record<string, string> = {
   "audio.subtype.voice": "声",
   "audio.subtype.silence": "静けさ",
   "audio.player.label": "{name}を再生",
+  "audio.duration.measured": "測定した音声の長さ：{seconds}秒",
+  "audio.duration.recorded": "記録された音声の長さ：{seconds}秒",
+  "audio.duration.estimate": "音声の推定時間：{seconds}秒",
   "audio.reference.private": "非公開の音声素材",
   "audio.reference.authored": "作成した試聴メモ",
   "audio.reference.description": "聞こえる内容を説明",
@@ -2398,4 +2403,31 @@ Object.assign(messages, {
 
 messages["projects.originalConfirmedUnavailable"]="作成は確認済みです。現在、元のドキュメントを開けません。利用可能か確認してください。新しいプロジェクトは作成されません。";
 messages["projects.checkOriginalAvailability"]="元のドキュメントの利用可否を確認";
+Object.assign(messages, {
+  "system.auto.ipxnvl.15": "ソースドキュメント",
+  "system.auto.11od8g.106": "対象者とトーンはテキストで入力し、前後の空白を除いてそれぞれ120 UTF-16コード単位以内にしてください。",
+  "system.auto.1fd4spz.31": "リクエスト設定の確認が必要です",
+  "system.auto.7pctir.171": "対象者とトーンはテキストで入力し、前後の空白を除いてそれぞれ120 UTF-16コード単位以内にしてください。これはアプリの入力検証エラーであり、プロバイダーの障害ではありません。",
+  "system.auto.1kxo3x2.108": "元のリクエスト設定を利用できません。新しいリクエストを設定する前に、保持された入力を確認してください。",
+  "system.auto.3so7kj.55": "{field}が長すぎます。{excess} UTF-16コード単位削除してください。",
+  "system.auto.1uy6f6w.35": "{count}/{maximum} UTF-16コード単位",
+  "system.auto.oy0qs.24": "現在のリクエスト設定",
+  "system.auto.ywculg.48": "選択した試行のリクエスト設定を読み込み中…",
+  "system.auto.yjthbo.41": "リクエスト{request}から設定を復元しました。",
+  "system.auto.193a0ww.177": "これは現在の承認済みドキュメントソースを使用する新しい有料リクエストです。以前のリクエストの再開や照合は行いません。以前の料金と予約額は変更されません。",
+  "system.auto.10vq36.86": "プロバイダーへの送信には新たな確認が必要です。以前の許可はコピーされていません。",
+  "system.auto.1e1epmo.84": "各項目は前後の空白を除いて{maximum} UTF-16コード単位まで入力できます。",
+  "system.auto.p0i25a.15": "ソースへの忠実性",
+  "system.auto.1kvfvoc.18": "プレゼンテーションスタイル",
+});
+
+Object.assign(messages, {
+  "system.auto.1t7mxre.35": "保存済み利用記録を確認 · 生成なし",
+  "system.auto.1p3c3wc.23": "保存済み利用記録を確認中…",
+  "system.auto.hvq2xk.88": "保存済みの記録のみを確認します。スライドの復元や新たな有料リクエストは行いません。",
+  "system.auto.1097rb5.109": "保存済み利用記録を確認しました。新たな生成は開始していません。復元や新たな有料リクエストには、別の操作が必要です。",
+  "system.auto.1o4thm6.138": "手動での確認が必要です。新たな生成は開始していません。元のリクエストは変更されず、元の予算の確保額がある場合は引き続き保持されます。",
+  "system.auto.1o9k7vt.139": "保存済み利用記録を確認できませんでした。新たな生成は開始していません。元のリクエストを再確認してください。請求状況は未確認です。"
+});
+
 export default messages;

@@ -1,3 +1,5 @@
+import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, savedPresentationReceiptCheckResponse, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
+import { documentRenderGuidance, documentRenderGuidanceProblem } from "../model/document-render-guidance.ts";
 import { validateModel3dRequest, estimateModel3dCostMicrousd, type Model3dSettings } from "../model/model3d";
 import { validateModel3dAsset, MAX_MODEL3D_UPLOAD_BYTES } from "../model/model3d-assets";
 import type { Model3dView } from "../model/model3d-view";
@@ -59,7 +61,7 @@ import { routeCapabilities } from "./route-capabilities";
 import type { FormaCapability } from "../platform/capabilities";
 import { applicationIdFromRoute, type ApplicationId } from "../platform/applications";
 import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
-import type { PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
+import type { PresentationCandidateRevisionRequest, PresentationCandidateRevisionResult, PresentationCandidateValidationIssue, PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
 
 // State-only cleanup may preserve focus; this never bypasses action/current guards.
 type WorkspaceNavigationOptions = { replace?:boolean; preserveFocus?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string; onOriginHandoff?:()=>boolean; onDestinationSource?:(source:CapturedSourceOwnership)=>boolean };
@@ -295,8 +297,11 @@ export class FormaStore {
   readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: window.matchMedia?.("(max-width: 75rem), (max-height: 37.5rem)")?.matches ?? false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, impersonationConfirmOpen:false, impersonationAction:"", selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => {
     const route = this.route.get(), taskDocumentId = projectTaskDocumentIdFromRoute(route);
+    const addressedDocumentId=isDocumentViewRoute(route)?documentIdFromRoute(route):null;
     const canvasId = canvasIdFromRoute(route) ?? "", events = this.eventView.get();
     const projection = foldEvents(events, this.asOf.get(), isDocumentViewRoute(route) ? documentIdFromRoute(route) ?? "" : taskDocumentId ?? "", canvasId ? canvasProjectId(events, canvasId) : "");
+    if(addressedDocumentId&&projection.documentId!==addressedDocumentId)
+      return {...foldEvents([]),projects:projection.projects};
     if (isProjectTaskRoute(route)) {
       const session = this.session.get(), context = session?.projectContext;
       const readable = Boolean(session && (!context || context.projectId === projection.projectId && context.permissions.includes("project.read") && Date.parse(context.expiresAt) > Date.now()));
@@ -342,6 +347,7 @@ export class FormaStore {
       current:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&owner.focus.current()};
   }
   #loadRevision=0;
+  #cachedHistoryRevalidation:Promise<void>|undefined;
   #sessionRevision=0;
   #focalInFlight = new Set<string>();
   #focalAppendQueue: Promise<void> = Promise.resolve();
@@ -1102,6 +1108,28 @@ export class FormaStore {
     this.#assertPresentationCandidatePayload(body);
     return body.candidate;
   }
+  /** Submit visible patches only; never cache a rejected body or rewrite the original job. */
+  async revisePresentationCandidate(jobId:string,responseId:string,input:PresentationCandidateRevisionRequest,documentId?:string):Promise<{revision:PresentationCandidateRevisionResult}|{issues:PresentationCandidateValidationIssue[]}>{
+    const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
+    const authorization=this.#activeAuthorizationScope();
+    const current=this.documentJobs.get().find(job=>job.jobId===jobId),authorizedDocument=current?.documentId??documentId;
+    if(!authorizedDocument||!responseId||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation draft does not belong to this authorized document.");
+    let dispatched=false;
+    const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates/${encodeURIComponent(responseId)}/revisions`,{
+      method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input),
+    },"validate and create a separate unapproved presentation draft without a provider call",{
+      current:()=>dispatched||this.sourceOwnershipActive(sourceOwner),onDispatch:()=>{dispatched=true;},
+    });
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+    const body=await response.json() as Partial<PresentationCandidateRevisionResult>&{error?:string;issues?:PresentationCandidateValidationIssue[]};
+    this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+    this.#assertPresentationCandidatePayload(body);
+    if(response.status===422&&body.error==="presentation_revision_validation_failed"&&Array.isArray(body.issues))return{issues:body.issues};
+    if(!response.ok||body.jobId!==jobId||body.documentId!==authorizedDocument||body.responseId!==responseId
+      ||typeof body.artifactId!=="string"||!/^presentation-revision-[a-f0-9]{64}$/u.test(body.artifactId)
+      ||body.providerCalls!==0||body.incrementalCostMicrousd!==0||body.approval!=="unapproved"||typeof body.reused!=="boolean")throw new Error(body.error??"The revised presentation could not be safely saved.");
+    return{revision:body as PresentationCandidateRevisionResult};
+  }
   #assertPresentationCandidatePayload(value:unknown){
     if(Array.isArray(value)){for(const entry of value)this.#assertPresentationCandidatePayload(entry);return;}
     if(!value||typeof value!=="object")return;
@@ -1124,6 +1152,41 @@ export class FormaStore {
       this.toast(!this.sourceOwnershipActive(sourceOwner)?this.#systemNotice("The server acknowledged the original change. Its private view is unavailable."):this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");
       this.notify();return true;
     }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}
+  }
+  #savedPresentationReceiptSequence=0;
+  /** Reconcile retained evidence for one legacy slideshow. Never starts provider work or resumes the job. */
+  async checkSavedPresentationReceipt(jobId:string,options:{current?:()=>boolean}={}):Promise<PresentationReceiptCheckStatus|null>{
+    const sequence=++this.#savedPresentationReceiptSequence,sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const original=this.documentJobs.get().find(job=>job.jobId===jobId),route=this.route.get(),projectId=this.projection.get().projectId;
+    const navigation=this.#workspaceTransition,cookieGeneration=this.#projectContextCookieGeneration,sessionRevision=this.#sessionRevision;
+    const access=()=>JSON.stringify({context:this.session.get()?.projectContext??null,capabilities:this.session.get()?.capabilities??[],impersonating:Boolean(this.session.get()?.impersonation)}),accessKey=access();
+    const version=(job:DocumentJob|undefined)=>job?JSON.stringify([job.jobId,job.documentId,job.kind,job.status,job.sourceSurface,job.requestKey,job.requestedAt,job.documentRevision,job.updatedAt,job.attemptCount]):"";
+    const originalVersion=version(original);
+    const current=()=>sequence===this.#savedPresentationReceiptSequence&&this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)
+      &&navigation===this.#workspaceTransition&&sessionRevision===this.#sessionRevision&&cookieGeneration===this.#projectContextCookieGeneration&&cookieGeneration===this.#projectContextSessionGeneration
+      &&this.route.get()===route&&this.projection.get().projectId===projectId&&this.projection.get().documentId===original?.documentId
+      &&access()===accessKey&&version(this.documentJobs.get().find(job=>job.jobId===jobId))===originalVersion&&(!options.current||options.current());
+    try{
+      if(!current())return null;
+      if(!original||!this.session.get()||this.session.get()?.impersonation||!documentJobCanCheckSavedPresentationReceipt(original))throw new Error("saved_receipt_unavailable");
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/reconcile-provider`,{method:"POST"},"check this saved slideshow receipt without new generation",{current});
+      if(!current())return null;
+      const body:unknown=await response.json();
+      if(!current())return null;
+      const checked=savedPresentationReceiptCheckResponse(original,body);
+      if(!response.ok||!checked)throw new Error("saved_receipt_unavailable");
+      // An inconclusive reply cannot rewrite the job, private detail cache, or any budget display.
+      if(checked.status==="known"){
+        const updated=this.#sourceOwnedJobResponse(sourceOwner,jobId,checked.job,original);
+        if(updated)this.documentJobs.set(this.documentJobs.get().map(job=>job.jobId===jobId?updated:job));
+      }
+      this.toast(this.#systemNotice(savedPresentationReceiptCheckMessage(checked.status)));this.notify();
+      return checked.status;
+    }catch{
+      if(!current())return null;
+      this.toast(this.#systemNotice(savedPresentationReceiptCheckMessage("unavailable")));
+      return "unavailable";
+    }
   }
   async reconcileDocumentProviderReceipt(jobId:string){
     const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
@@ -1477,6 +1540,12 @@ export class FormaStore {
 
   #profileForRoute(path:string):AccountSnapshotProfile{
     return routeCapabilities(path).profile;
+  }
+
+  documentRouteState(path=this.route.get()):"ready"|"pending"|"unavailable"{
+    const addressed=isDocumentViewRoute(path)?documentIdFromRoute(path):null;
+    if(!addressed||this.projection.get().documentId===addressed)return "ready";
+    return this.loading.get()||this.#cachedHistoryRevalidation?"pending":"unavailable";
   }
 
   routeDataReady(path=this.route.get()){
@@ -2585,6 +2654,13 @@ async syncDocumentJobs(){
 
   async syncDocumentFromRoute(path = this.route.get()) {
     if (path !== this.route.get() || this.loading.get() || !this.routeDataReady(path) || !this.events.get().length) return;
+    const pending=this.#cachedHistoryRevalidation;
+    if(pending){
+      const authorization=this.captureAuthorizationScope(),revision=this.#workspaceTransition,loadRevision=this.#loadRevision;
+      try{await pending;}catch{return;}
+      if(path!==this.route.get()||this.loading.get()||this.#workspaceTransition!==revision||this.#loadRevision!==loadRevision
+        ||!this.authorizationScopeActive(authorization)||!this.routeDataReady(path))return;
+    }
     const taskDocumentId = projectTaskDocumentIdFromRoute(path);
     if (isProjectTaskRoute(path)) {
       this.#scheduleProjectTaskExpiry();
@@ -2605,14 +2681,12 @@ async syncDocumentJobs(){
       return;
     }
     const requestedDocument = projection.documents.find((document) => document.id === requestedDocumentId);
-    if (!requestedDocument) {
-      this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
-      this.toast("That document is unavailable; the current document was opened instead.");
-      return;
-    }
+    // Absence is not permission to replace an explicit identity. The shell offers
+    // Retry at the original address; it does not create or open a substitute.
+    if (!requestedDocument) return;
     if (requestedDocumentId !== projection.documentId) {
       const opened = await this.openDocument(requestedDocumentId, path, "shared-document-url", { current });
-      if (!opened && current()) this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
+      if (!opened || !current()) return;
     } else {
       const canonicalRoute = withDocumentInRoute(path, projection.documentId, projection.documentTitle);
       if (canonicalRoute !== path) this.setRoute(canonicalRoute, { replace: true });
@@ -2626,6 +2700,7 @@ async syncDocumentJobs(){
 
   async load(options:{routeHandoff?:Promise<void>}={}) {
     const loadRevision=++this.#loadRevision;let loadAuthorization="",loadRead:EventSourceRead|undefined;
+    this.#cachedHistoryRevalidation=undefined;
     const ownsLoad=()=>loadRevision===this.#loadRevision&&(!loadAuthorization||this.#scopeStillActive(loadAuthorization))&&(!loadRead||this.#sourceReadOwned(loadRead));
     const path=this.route.get(),profile=this.#profileForRoute(path),started=performance.now();
     beginRoutePopulation(path);recordRouteHistoryProfile(profile);
@@ -2662,7 +2737,7 @@ async syncDocumentJobs(){
         // A cache is a provisional view, never a certificate that supersedes another read.
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
-        void live.then(async current=>{
+        const revalidation=live.then(async current=>{
           if(!ownsLoad())throw new Error("The source load was superseded.");
           if(current.head<cached.head)current=await this.#readEventStream(0,read.profile,false,read);
           if(!ownsLoad())throw new Error("The source load was superseded.");
@@ -2676,7 +2751,11 @@ async syncDocumentJobs(){
           });
           if(changed){this.#publishAppended(current.events,current.read);this.notify();}
           void writeAccountSnapshot(read.identity,this.events.get(),this.head.get(),this.#historyProfile,this.#sourceCacheGuard(read,true));
-        }).catch(error=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
+        });
+        this.#cachedHistoryRevalidation=revalidation;
+        void revalidation.catch(error=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"}))).finally(()=>{
+          if(this.#cachedHistoryRevalidation===revalidation){this.#cachedHistoryRevalidation=undefined;this.notify();}
+        });
       }else{
         const body=await live;if(!ownsLoad())throw new Error("The source load was superseded.");
         this.#publishSourceRead(body,()=>{
@@ -2708,6 +2787,7 @@ async syncDocumentJobs(){
       this.#sourceGeneration+=1;this.#sourceRetired=false;this.#retiredSourceProjectId=null;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
     }
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
+      this.#cachedHistoryRevalidation=undefined;
       this.documentCopyReviews.set({});this.#documentCopyRequest+=1;
       this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
       this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
@@ -4344,6 +4424,10 @@ async syncDocumentJobs(){
         return true;
       }catch(error){if(current())this.toast(error instanceof Error?error.message:"The 3D model could not be started.");return false;}
     }
+    const guidanceProblem=documentRenderGuidanceProblem(options);
+    if(guidanceProblem){this.toast(this.#systemNotice(guidanceProblem.message));return false;}
+    const guidance=documentRenderGuidance(options);
+    options={...options,audience:guidance.audience||undefined,tone:guidance.tone||undefined};
     if(kind==="scene"){
       const documentId=options.documentId??this.projection.get().documentId,session=this.session.get(),authorization=this.#activeAuthorizationScope();
       const request:SceneCostRequest={documentId,requestId:options.sceneRequestId??"",sceneMedium:isSceneMedium(options.sceneMedium)?options.sceneMedium:"visual",

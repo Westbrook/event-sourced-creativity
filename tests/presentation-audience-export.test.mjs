@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
-import { defaultSlidePresentation } from "../src/model/document-artifacts.ts";
+import { defaultSlidePresentation, documentArtifactValidationIssues, normalizeSlideDeckItems, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
+import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
 import { createPowerPointDocument } from "../src/model/office-documents.ts";
 import { createPresentationPdf } from "../src/model/presentation-pdf.ts";
 
@@ -121,6 +123,25 @@ test("default PDF and PowerPoint exports hide v2 passage anchors while preservin
     assert.match(text, /Public technical report/u, `${surface} does not drop the source when its private anchor is removed`);
   }
   assert.deepEqual(item, before, "exports must not mutate canonical evidence or conceal an incorrect anchor from later validation");
+});
+
+test("the frozen unnumbered source keeps both exact bookends in audience-safe PDF and editable PowerPoint", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/presentation-forma-benefits-source.json", import.meta.url), "utf8"));
+  const contract = buildPresentationSourceContract(fixture.sourceSnapshot, fixture.request);
+  const candidate = parseDocumentArtifactContent(JSON.stringify(fixture.syntheticOutput));
+  const items = normalizeSlideDeckItems(candidate.items, { sourceContract: contract });
+  items[5].notes = privatePresenterNote;
+  const before = structuredClone(items);
+  assert.deepEqual(documentArtifactValidationIssues("slides", { ...candidate, items }, { itemCount: 6, sourceContract: contract, requireSourceGrounding: true, requireAllProtectedContent: true }), []);
+  const pdf = createPresentationPdf(items, candidate.presentation, { title: candidate.title });
+  const parts = storedZipEntries(createPowerPointDocument(items, candidate.presentation));
+  assert.equal(pdf.pageCount, 6);
+  for (const position of [1, 6]) assert.match(parts.get(`ppt/slides/slide${position}.xml`), /One source\. Many outputs\./u, "each bookend remains editable visible slide copy");
+  assert.match(pdfText(pdf.bytes), /One source\. Many outputs\./u);
+  for (const [surface, contents] of [["PDF", pdfText(pdf.bytes)], ["PowerPoint", [...parts.values()].join("\n")]]) {
+    assert.doesNotMatch(contents, /forma-benefits-source-\d+|PRIVATE PRESENTER NOTES/u, surface);
+  }
+  assert.deepEqual(items, before, "export projections never mutate the canonical source or private notes");
 });
 
 test("audience PDFs retain exact closing copy without publishing adapter labels, excerpts, or presenter notes", () => {

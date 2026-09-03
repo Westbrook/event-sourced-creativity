@@ -6,6 +6,7 @@ import { outputGraphTables, seedValidGraph } from "./helpers/output-schema-graph
 import {
   OUTPUT_REQUIREMENTS_SCHEMA,
   OUTPUT_MODEL3D_SCHEMA_MIGRATION,
+  OUTPUT_MODEL3D_SCHEMA_STATE_SQL,
   upgradeOutputRequirementsSchema,
 } from "../worker/output-requirements-schema.ts";
 import { renderOutputModel3dMigration } from "../worker/output-model3d-migration.ts";
@@ -337,3 +338,31 @@ for (const path of ["runtime", "raw"]) {
     });
   }
 }
+
+for (const current of [false, true]) test(`model3d migration: batched bootstrap hint selects the guarded path without another read; current=${current}`, async t => {
+  const state = database(t, { current }), before = graphRows(state.sqlite);
+  const hint = state.sqlite.prepare(OUTPUT_MODEL3D_SCHEMA_STATE_SQL).get().current;
+  const prepare = state.DB.prepare.bind(state.DB);
+  state.DB.prepare = sql => {
+    assert.notEqual(sql, OUTPUT_MODEL3D_SCHEMA_STATE_SQL, "bootstrap already read the routing hint");
+    return prepare(sql);
+  };
+  await upgradeOutputRequirementsSchema(state.DB, hint);
+  assert.equal(state.batches, 1);
+  assert.deepEqual(graphRows(state.sqlite), before);
+  assert.equal(state.attempted.some(parentDrop), !current);
+  assert.ok(state.attempted.some(sql => sql.startsWith('INSERT INTO main."__output_model3d_migration_guard"')));
+  assert.deepEqual(state.sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+  connectionReady(state.sqlite);
+});
+
+test("model3d migration: a bootstrap hint cannot bypass schema changes before guarded validation", async t => {
+  const state = database(t, { current: true });
+  const hint = state.sqlite.prepare(OUTPUT_MODEL3D_SCHEMA_STATE_SQL).get().current;
+  state.sqlite.exec("CREATE TRIGGER local_asset_trigger AFTER INSERT ON output_assets BEGIN SELECT 1; END");
+  const before = snapshot(state.sqlite);
+  await assert.rejects(upgradeOutputRequirementsSchema(state.DB, hint), /NOT NULL constraint failed/u);
+  assert.deepEqual(state.attempted.filter(parentDrop), []);
+  assert.deepEqual(snapshot(state.sqlite), before);
+  connectionReady(state.sqlite);
+});

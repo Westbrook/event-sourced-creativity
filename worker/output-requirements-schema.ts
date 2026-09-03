@@ -129,17 +129,19 @@ export const OUTPUT_REQUIREMENTS_SCHEMA = [
 const model3dMigration = createOutputModel3dMigration(OUTPUT_REQUIREMENTS_SCHEMA);
 export const OUTPUT_MODEL3D_SCHEMA_MIGRATION: readonly string[] = model3dMigration.migrationStatements;
 export const OUTPUT_MODEL3D_SCHEMA_VALIDATION: readonly string[] = model3dMigration.validationStatements;
+/** Routing hint only; both upgrade paths revalidate every guard transactionally. */
+export const OUTPUT_MODEL3D_SCHEMA_STATE_SQL: string = model3dMigration.currentStateSql;
 
 const model3dUpgrades = new WeakMap<object, Promise<void>>();
 /** Call after ordinary bootstrap and before marking the schema ready. */
-export async function upgradeOutputRequirementsSchema(db: D1Database): Promise<void> {
+export async function upgradeOutputRequirementsSchema(db: D1Database, currentStateHint?: number): Promise<void> {
   const existing = model3dUpgrades.get(db);
   if (existing) return existing;
   const upgrade = (async () => {
     // This inspection only chooses a path; neither path trusts its result as
     // authority. The chosen batch rechecks the schema before any parent DROP.
-    const { results } = await db.prepare(model3dMigration.currentStateSql).all<{ current: number }>();
-    const statements = results[0]?.current === 1 ? OUTPUT_MODEL3D_SCHEMA_VALIDATION : OUTPUT_MODEL3D_SCHEMA_MIGRATION;
+    const current = currentStateHint ?? (await db.prepare(OUTPUT_MODEL3D_SCHEMA_STATE_SQL).all<{ current: number }>()).results[0]?.current;
+    const statements = current === 1 ? OUTPUT_MODEL3D_SCHEMA_VALIDATION : OUTPUT_MODEL3D_SCHEMA_MIGRATION;
     await db.batch(statements.map(sql => db.prepare(sql)));
   })();
   model3dUpgrades.set(db, upgrade);

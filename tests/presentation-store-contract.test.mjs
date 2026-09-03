@@ -26,6 +26,7 @@ function actualSourceMember(name) {
 const sourceOwnershipMembers=["#projectContextCookieGeneration","#projectContextSessionGeneration","#sourceGeneration","#sourceRetired","#sourceOwners","#sourcePausedJobs","captureAuthorizationScope","authorizationScopeActive","captureSourceOwnership","sourceOwnershipScopeActive","#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive","#assertSourceOwnership"].map(actualSourceMember).join("\n");
 
 const harnessSource = `
+import { documentRenderGuidance, documentRenderGuidanceProblem } from ${JSON.stringify(new URL("../src/model/document-render-guidance.ts", import.meta.url).href)};
 import { resolvePresentationCountRequest } from ${JSON.stringify(new URL("../src/model/presentation-count-policy.ts", import.meta.url).href)};
 import { isDocumentArtifactKind } from ${JSON.stringify(new URL("../src/model/document-artifacts.ts", import.meta.url).href)};
 const MAX_MANAGED_PRESENTATION_SLIDES = 100;
@@ -126,6 +127,7 @@ export class PresentationStoreHarness {
   ${actualMethod("loadPresentationCandidates")}
   ${actualMethod("loadPresentationCandidate")}
   ${actualMethod("preservePresentationCandidate")}
+  ${actualMethod("revisePresentationCandidate")}
   ${actualMethod("#assertPresentationCandidatePayload")}
   ${actualMethod("renderDocumentArtifact")}
 }
@@ -530,4 +532,35 @@ for(const operation of["list","detail"])for(const stage of["headers","body"])for
   assert.deepEqual(calls,["/api/document-jobs/private-job/presentation-candidates"+(operation==="detail"?"/private-response":"")]);
   assert.deepEqual(harness.jobs,[listed]);assert.deepEqual(harness.contentValues,{});assert.deepEqual(harness.hydrations,[]);
   assert.deepEqual(harness.requests,[]);assert.deepEqual(harness.budgetChecks,[]);
+});
+
+
+test("visible candidate revision sends only explicit edits and never replaces the failed job or caches its private body",async()=>{
+  const harness=new PresentationStoreHarness();
+  harness.jobs=[{jobId:"revision-job",documentId:"authorized-document",status:"failed",result:{retained:true}}];
+  const before=structuredClone(harness.jobs),payload={revisionToken:"a".repeat(64),idempotencyKey:"revision-key-123456",confirmed:true,edits:[{path:"items.4.slide.visual.data.0.value",value:"Distinct source claim"}]};
+  harness.guardedFetch=async(input,init)=>{
+    harness.requests.push({input,body:JSON.parse(init.body)});
+    return Response.json({jobId:"revision-job",documentId:"authorized-document",responseId:"response-2",artifactId:"presentation-revision-"+"b".repeat(64),providerCalls:0,incrementalCostMicrousd:0,approval:"unapproved",reused:false},{status:201});
+  };
+  const outcome=await harness.revisePresentationCandidate("revision-job","response-2",payload,"authorized-document");
+  assert.equal(outcome.revision.approval,"unapproved");
+  assert.equal(harness.requests[0].input,"/api/document-jobs/revision-job/presentation-candidates/response-2/revisions");
+  assert.deepEqual(harness.requests[0].body,payload);assert.deepEqual(harness.jobs,before);
+  assert.deepEqual(harness.hydrations,[]);assert.deepEqual(harness.contentValues,{});assert.deepEqual(harness.budgetChecks,[]);
+});
+
+for(const responseKind of ["wrong-document","cost","body","source-retired"])test(`candidate revision store rejects ${responseKind} acknowledgments`,async()=>{
+  const harness=new PresentationStoreHarness();harness.jobs=[{jobId:"revision-job",documentId:"authorized-document",status:"failed"}];
+  const payload={revisionToken:"a".repeat(64),idempotencyKey:"revision-key-123456",confirmed:true,edits:[]};
+  harness.guardedFetch=async()=>{
+    const body={jobId:"revision-job",documentId:"authorized-document",responseId:"response-2",artifactId:"presentation-revision-"+"b".repeat(64),providerCalls:0,incrementalCostMicrousd:0,approval:"unapproved",reused:false};
+    if(responseKind==="wrong-document")body.documentId="another-document";
+    if(responseKind==="cost")body.incrementalCostMicrousd=1;
+    if(responseKind==="body")body.output_text="PRIVATE retained provider response";
+    if(responseKind==="source-retired")harness.activeScope="another-actor-project";
+    return Response.json(body,{status:201});
+  };
+  await assert.rejects(harness.revisePresentationCandidate("revision-job","response-2",payload,"authorized-document"));
+  assert.equal(harness.jobs[0].status,"failed");assert.deepEqual(harness.hydrations,[]);assert.deepEqual(harness.contentValues,{});
 });

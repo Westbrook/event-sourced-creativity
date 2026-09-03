@@ -42,7 +42,9 @@ test("the real executive document exposes all twelve inline authored slides befo
   assert.deepEqual(outline.slides.map((slide) => slide.number), Array.from({ length: 12 }, (_, index) => index + 1));
   assert.deepEqual(outline.sections.map((section) => section.slideNumbers), [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]);
   assert.match(authoringSource, /#presentationOutline\(\)\{return inferPresentationSourceOutline\(this\.#projection\(\)\.blocks/);
-  assert.match(authoringSource, /if\(this\.#kind==="slides"\)this\.#resetPresentationCount\(\)/);
+  assert.match(presentationContractMember(authoringSource,"DocumentArtifacts","#openCreate"),/if\(this\.#kind==="slides"&&!this\.#requestDrafts\.has\("slides"\)\)this\.#resetPresentationCount\(\)/u,"first opening derives the authored count; reopening must preserve this format's draft");
+  assert.match(authoringSource,/if\(kind==="slides"&&!this\.#requestDrafts\.has\("slides"\)\)this\.#resetPresentationCount\(\)/u,"the format picker follows the same first-opening-only count rule");
+  assert.match(presentationContractMember(authoringSource,"DocumentArtifacts","#selectArtifactKind"),/this\.#itemCount=saved\?\.itemCount\?\?6;this\.#managedSlideInput=saved\?\.managedSlideInput\?\?"";this\.#invalidSlideCount=saved\?\.invalidSlideCount\?\?false;/u,"returning to Slides preserves its count text and validation state");
   assert.match(authoringSource, /authoredSlideCount=outline\?\.authoredSlideCount\?\?null/);
   assert.match(authoringSource, /Predicted presentation/);
   assert.match(authoringSource,/\?selected=\$\{count===this\.#itemCount\}/,"the visible manual selector must match the actual authored-slide request on its first render");
@@ -91,7 +93,9 @@ test("presentation authoring names the real paid provider, bounded repair exposu
 test("clears actor-private presentation receipts immediately when authorization changes", () => {
   assert.match(authoringSource, /#actorInputContent:Record<string,string>/);
   const privateCleanup=authoringSource.slice(authoringSource.indexOf("  #clearPrivateGenerationInputs="),authoringSource.indexOf("  override connectedCallback()"));
-  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{\s*this\.#privateSourceRevision\+\+;\s*this\.#closeViewerPopovers\(\);this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/u, "authorization withdrawal invalidates the owned Scene input read before clearing its quote");
+  assert.match(privateCleanup, /#clearPrivateGenerationInputs=\(\)=>\{\s*this\.#privateSourceRevision\+\+;this\.#presentationReceiptCheck=null;\s*this\.#closeViewerPopovers\(\);this\.#sceneInputCurrent=null;this\.#clearSceneCost\(\)/u, "authorization withdrawal retires private reads and receipt checks before closing the panel and clearing the Scene quote");
+  assert.match(presentationContractMember(authoringSource,"DocumentArtifacts","#clearCreationDraft"),/this\.#retireRequestReview\(\);this\.#requestDrafts\.clear\(\);/u,"format-isolated private drafts and pending request restoration cannot survive authorization withdrawal");
+  assert.match(privateCleanup,/this\.#clearCreationDraft\(\);this\.#viewDialog\(\)\?\.close\(\);this\.requestUpdate\(\);/u);
   assert.match(presentationContractMember(authoringSource,"DocumentArtifacts","#privateSourceCurrent"),/return\(\)=>this\.isConnected&&revision===this\.#privateSourceRevision&&this\.store\.sourceOwnershipActive\(source\);/u);
   assert.match(privateCleanup, /this\.#actorInputContent=\{\};this\.#failedInputJob=null;this\.#runningInputJob=null/);
   assert.doesNotMatch(privateCleanup, /\bawait\b/, "private receipts must be cleared synchronously on authorization withdrawal");
@@ -100,11 +104,23 @@ test("clears actor-private presentation receipts immediately when authorization 
   assert.match(authoringSource, /loadActorDocumentGenerationReceipt\(job\.jobId\)/);
 });
 
-test("rejected presentation drafts remain private, read-only, and available after their failure notice is dismissed",()=>{
+test("rejected originals remain private after dismissal; only explicit validated copies become new unapproved drafts",()=>{
   assert.match(authoringSource,/rejectedDraftJobs=readOnly\?\[\]:this\.store\.documentJobs\.get\(\)\.filter/u);
   assert.match(authoringSource,/<forma-presentation-rejected-drafts \.documentId=/u);
   assert.match(rejectedDraftSource,/Rejected drafts · private/u);
-  assert.match(rejectedDraftSource,/Only you can see this material\. It cannot be shared, exported, or promoted/u);
+  assert.match(rejectedDraftSource,/Original responses stay private\. A separately validated copy can become a new unapproved document draft; this does not approve release\./u);
+  const edit=presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#editCandidate");
+  const revise=presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#saveRevision");
+  const editor=presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#revisionEditor");
+  assert.match(edit,/if\(!detail\.revision\|\|this\.#revisionBusy\|\|!this\.store\.sourceOwnershipActive\(this\.#referenceSource\)\)return;/u,"editing needs a server-issued revision offer and current source ownership");
+  assert.match(revise,/if\(!detail\.revision\|\|this\.#revisionBusy\|\|this\.#editingResponse!==detail\.responseId\)return;/u);
+  assert.match(revise,/const current=\(\)=>this\.isConnected&&this\.store\.sourceOwnershipActive\(source\)&&revision===this\.#privateRevision\s*&&this\.#jobId===jobId&&this\.documentId===documentId&&this\.#editingResponse===detail\.responseId;/u);
+  assert.match(revise,/if\(!current\(\)\)return;\s*const edits=detail\.revision\.fields\.filter/u,"only explicitly offered visible fields may become patches, not a rewritten original candidate");
+  assert.match(revise,/await this\.store\.revisePresentationCandidate\(jobId,detail\.responseId,\{\s*revisionToken:detail\.revision\.token,idempotencyKey:this\.#revisionKey,confirmed:true,edits,\s*\},documentId\);\s*if\(!current\(\)\)return;\s*if\("issues"in outcome\)\{this\.#editIssues=outcome\.issues;return;\}/u,"explicit token-bound confirmation and full-validation failures must precede any save-success UI");
+  assert.match(editor,/separate unapproved draft in this document after full source validation/u);
+  assert.match(editor,/Source assignments, quotes, numerical precision, slide count and layout stay fixed/u);
+  assert.match(editor,/@click=\$\{\(\)=>void this\.#saveRevision\(detail\)\}/u);
+  assert.doesNotMatch(revise,/renderDocumentArtifact|recoverDocumentPresentation|ArtifactApproved|DocumentRenderCompleted|JSON\.stringify\(detail\)/u,"revision cannot start provider work, approve release, or publish the rejected original");
   assert.match(rejectedDraftSource,/loadPreservedPresentationCandidateJobs\(documentId\)/u,"governed drafts remain discoverable after transient job history expires");
   assert.match(presentationContractMember(rejectedDraftSource,"PresentationRejectedDrafts","#openDrafts"),/loadPresentationCandidates\(jobId, documentId\)/u);
   assert.match(rejectedDraftSource,/Number\(right\.complete\) - Number\(left\.complete\)/u,"review prioritizes the best fully validated retained provider response");
@@ -131,7 +147,7 @@ test("managed presentation requests reject unsupported counts, prevent duplicate
   assert.match(authoringSource, /value>MAX_MANAGED_PRESENTATION_SLIDES/);
   assert.match(authoringSource, /this\.#invalidSlideCount\?(?:this\.i18n\.system\("|`)Enter a whole number/);
   assert.match(authoringSource, /unsupportedAuthoredSlideCount=authoredSlideCount!==null&&authoredSlideCount>MAX_MANAGED_PRESENTATION_SLIDES/);
-  assert.match(authoringSource, /this\.#productionMode==="managed"&&this\.#kind!=="scene"&&!unsupportedAuthoredSlideCount\?buildManagedProductionPlan/);
+  assert.match(authoringSource, /this\.#productionMode==="managed"&&this\.#kind!=="scene"&&this\.#kind!=="model3d"&&!unsupportedAuthoredSlideCount\?buildManagedProductionPlan/);
   assert.match(authoringSource, /authored slides exceed the \$\{MAX_MANAGED_PRESENTATION_SLIDES\}-slide editable PowerPoint limit/);
   assert.match(authoringSource, /\|\|unsupportedAuthoredSlideCount\|\|/);
   assert.match(authoringSource, /if\(this\.#submitting\|\|this\.#referenceBusy/);

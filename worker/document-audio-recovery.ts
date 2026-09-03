@@ -1,4 +1,4 @@
-import { audioAdapterContractForModel, normalizeAudioRequestProfile } from "../src/model/audio.ts";
+import { audioAdapterContractForModel, audioDurationMetadata, normalizeAudioRequestProfile } from "../src/model/audio.ts";
 import { creativeContextRightsIssue } from "../src/model/context-health.ts";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
 import { hasUnresolvedProviderSubmission, providerSubmissions } from "../src/model/provider-submission.ts";
@@ -330,7 +330,7 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
         item_count: plan.items.length, items: plan.items.map((item, index) => ({ id: `${artifactId}-item-${index + 1}`, title: item.title, context_group_ids: item.context_group_ids ?? [], media_url: null, media_type: null })), presentation: null,
         media_url: stagedMedia.url, media_type: stagedMedia.mimeType, provider: "fal", provider_job_id: providerId, model_id: model, planner_model_id: checkpoint.plannerModel, planner_response_id: plannerResponseId,
         reference_inputs: [], used_reference_pixels: false, latency_ms: Number(checkpoint.plannerLatencyMs ?? 0) + audio.latencyMs, recovery,
-        settings: { ...originalSettings, ...accounting, production_mode: "manual", audio_profile: profile, audio_provider_model: model, source_media_sha256: stagedMedia.contentHash, duration_seconds: stagedMedia.durationSeconds,
+        settings: { ...originalSettings, ...accounting, production_mode: "manual", audio_profile: profile, audio_provider_model: model, source_media_sha256: stagedMedia.contentHash, ...audioDurationMetadata(stagedMedia, profile.durationSeconds),
           audio_goal: profile.goal, audio_role: profile.role, audio_destination: profile.destination, audio_synthid_watermarked: contract.watermark === "synthid", audio_watermark_basis: contract.watermark === "synthid" ? "provider-disclosed" : null, lyrics: audio.lyrics, recovery }, source_surface: row.source_surface,
       }, { causationId: requested.eventId });
       const recoveredUsage = makeEvent(user.streamId, head + 2, "worker:policy", "server:document-job:render_document", correlationId, "GenerationUsageRecorded", {

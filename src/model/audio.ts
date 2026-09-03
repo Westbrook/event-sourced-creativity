@@ -11,6 +11,41 @@ export const SAFE_AUDIO_MIME_TYPES = [
 
 export const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+export type AudioPlaybackTiming = { seconds: number; basis: "measured" | "estimate" | "recorded" };
+const positiveAudioSeconds = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+
+/** Persist container measurements separately from a requested, unverified runtime. */
+export function audioDurationMetadata(media: { url: string; contentHash: string; durationSeconds: number | null }, estimate?: number | null) {
+  const measured = positiveAudioSeconds(media.durationSeconds);
+  const estimated = measured === null ? positiveAudioSeconds(estimate) : null;
+  return { duration_seconds: measured, estimated_duration_seconds: estimated,
+    duration_basis: measured !== null ? "media-container" : estimated !== null ? "estimate" : null,
+    duration_media_url: media.url, duration_media_sha256: media.contentHash };
+}
+
+/** Legacy values are recorded, not newly certified; mismatched media never inherits timing. */
+export function audioPlaybackTiming(properties: Record<string, unknown>, mediaUrl: string | null | undefined): AudioPlaybackTiming | null {
+  if (!mediaUrl) return null;
+  if (properties.duration_media_url !== undefined && properties.duration_media_url !== mediaUrl) return null;
+  const sourceHash = properties.source_media_sha256 ?? properties.source_content_hash;
+  if (properties.duration_media_sha256 !== undefined && properties.duration_media_sha256 !== sourceHash) return null;
+  const measured = positiveAudioSeconds(properties.duration_seconds);
+  if (measured !== null && properties.duration_basis !== "estimate")
+    return { seconds: measured, basis: properties.duration_basis === "media-container" ? "measured" : "recorded" };
+  const estimated = positiveAudioSeconds(properties.estimated_duration_seconds);
+  return estimated === null ? null : { seconds: estimated, basis: "estimate" };
+}
+
+/** Source replacements invalidate derived timing, without rewriting authored words or permissions. */
+export function audioMetadataAfterSourceEdit(type: string, properties: Record<string, unknown>, property: string, value: unknown) {
+  if (type !== "audio" && ![properties.media_type, properties.source_mime_type].some(mime => String(mime ?? "").startsWith("audio/"))) return properties;
+  if (!["media_url", "media_type", "source_mime_type", "source_content_hash", "source_media_sha256"].includes(property) || Object.is(properties[property], value)) return properties;
+  const next = { ...properties };
+  for (const key of ["duration_seconds", "estimated_duration_seconds", "duration_basis", "duration_media_url", "duration_media_sha256", "analysis_provenance"]) delete next[key];
+  return next;
+}
+
+
 export const AUDIO_ADAPTER_CONTRACT = {
   adapterId: "fal-lyria-music",
   adapterVersion: "1.1.0",
