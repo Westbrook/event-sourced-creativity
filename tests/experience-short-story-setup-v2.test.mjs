@@ -5,7 +5,9 @@ import { canonicalJson, compileExperience, digest } from "../src/experiences/com
 import { fixtureCatalog } from "../src/experiences/catalog.ts";
 import { BLOCK_TYPES } from "../src/model/block-types.ts";
 import { inspectOutputRequirement, outputRequirementInterpretationNeedsReview } from "../src/model/output-requirements.ts";
-import { buildShortStorySetupV2, decodeShortStorySetupV2, decodeShortStorySetupV2Receipt, shortStorySetupV2Archive, SHORT_STORY_SETUP_V2_BASE_RELEASE_HASH } from "../src/experiences/short-story-setup-v2.ts";
+import { buildShortStorySetupV2, decodeShortStorySetupV2, decodeShortStorySetupV2Receipt, captureExperienceIntakeJson, prepareShortStorySetupV2ReceiptChecker, shortStorySetupV2Archive, SHORT_STORY_SETUP_V2_BASE_RELEASE_HASH } from "../src/experiences/short-story-setup-v2.ts";
+
+import { activeExperienceAdmission, EXPERIENCE_SETUP_ACTIVATION, SHORT_STORY_SETUP_V2_ARCHIVED_IDENTITY, readExperiencePrepare, experiencePrepareBody, readExperienceCommit, experienceCommitBody, readExperienceAdmission, experiencePrepareAdmission, experiencePlanAdmission, experienceAdmissionsEqual } from "../src/experiences/intake-protocol.ts";
 
 // Static synthetic references from the owner's one approved unchanged V1 replay.
 // baseline.json SHA-256: ffc1c04910ef83132fe2ff764c9615c9607ec76939b3942320f32e05c01e979f.
@@ -352,4 +354,172 @@ pure("descriptor quarantine prevents getters, live Proxy rereads and post-call m
   const sparse = clone(plan); sparse.events = new Array(8);
   for (const candidate of [cycle, symbol, method, prototype]) await assert.rejects(buildShortStorySetupV2(owner, candidate, release, archive.identity), /experience_setup_invalid/);
   await assert.rejects(decodeShortStorySetupV2(owner, sparse, archive.identity, retained), /experience_setup_invalid/);
+});
+
+pure("protocol preserves raw V1 bytes and requires explicit exact V2 envelopes", async () => {
+  const { archive, plan } = await fixture();
+  assert.deepEqual(archive.identity, SHORT_STORY_SETUP_V2_ARCHIVED_IDENTITY, "observed archived pin must match unchanged descriptor, not activation");
+  assert.deepEqual(EXPERIENCE_SETUP_ACTIVATION, { shortStoryV2: false }); frozen(EXPERIENCE_SETUP_ACTIVATION);
+  for (const row of v1Golden) {
+    const original = clone(row.request), prepared = readExperiencePrepare(original);
+    assert.equal(prepared.version, 1); frozen(prepared);
+    assert.equal(JSON.stringify(experiencePrepareBody(prepared)), JSON.stringify(original));
+    const active = activeExperienceAdmission(await registeredExperience(row.id));
+    assert.equal(active.planVersion, 1); assert.equal(active.baseReleaseHash, row.releaseHash);
+    assert.equal(experienceAdmissionsEqual(experiencePrepareAdmission(prepared), active), true);
+  }
+  assert.equal(activeExperienceAdmission(null), null);
+  const wire = { version: 2, request: clone(plan.request), setup: clone(archive.identity) };
+  const prepared = readExperiencePrepare(wire); frozen(prepared);
+  assert.deepEqual(experiencePrepareBody(prepared), wire);
+  const v2Admission = { planVersion: 2, experienceId: "short-story", setup: archive.identity };
+  assert.deepEqual(readExperienceAdmission(v2Admission), v2Admission);
+  assert.equal(experienceAdmissionsEqual(experiencePrepareAdmission(prepared), v2Admission), true);
+  assert.equal(experienceAdmissionsEqual(experiencePlanAdmission(plan), v2Admission), true);
+  assert.equal(experienceAdmissionsEqual(experiencePrepareAdmission(readExperiencePrepare(plan.request)), v2Admission), false, "same base hash is not setup equality");
+  assert.equal(experienceAdmissionsEqual(null, null), false); assert.equal(experienceAdmissionsEqual(v2Admission, null), false);
+  assert.equal(experienceAdmissionsEqual(v2Admission, { ...v2Admission, setup: { ...archive.identity, setupHash: "sha256:" + "0".repeat(64) } }), false);
+  assert.equal(readExperienceAdmission(null), null);
+  assert.throws(() => readExperienceAdmission({ ...v2Admission, extra: true }), /experience_protocol_invalid/);
+  assert.throws(() => readExperiencePrepare({ version: 1, request: plan.request }), /experience_protocol_invalid/);
+  for (const mutate of [
+    value => { value.version = 3; }, value => { value.extra = true; }, value => { delete value.setup; },
+    value => { value.request.extra = true; }, value => { value.request.experienceId = "image"; },
+    value => { value.request.releaseHash = "sha256:" + "0".repeat(64); }, value => { value.setup.version = 3; },
+    value => { value.setup.extra = true; }, value => { value.setup.setupHash = "sha256:" + "0".repeat(64); },
+    value => { value.request.values.character.private = true; }, value => { value.request.values.character.provenance = "confirmed"; },
+    value => { value.request.values.character.value = { field: { nested: "not-an-experience-value" } }; },
+  ]) {
+    const candidate = clone(wire); mutate(candidate); assert.throws(() => readExperiencePrepare(candidate), /experience_protocol_invalid/);
+  }
+  assert.deepEqual(experienceCommitBody(readExperienceCommit({ draftHash: "changed" })), { draftHash: "changed" }, "legacy V1 stale hash remains a string, not malformed V2");
+  const originalCommit = { draftHash: storyGolden.draftHash };
+  assert.equal(JSON.stringify(experienceCommitBody(readExperienceCommit(originalCommit))), JSON.stringify(originalCommit));
+  const v2Commit = { version: 2, draftHash: plan.draftHash, setup: archive.identity };
+  assert.deepEqual(experienceCommitBody(readExperienceCommit(v2Commit)), v2Commit);
+  for (const candidate of [
+    { version: 1, ...originalCommit }, { version: 3, ...originalCommit }, { ...v2Commit, extra: true },
+    { draftHash: plan.draftHash, setup: archive.identity }, { version: 2, draftHash: plan.draftHash },
+    { ...v2Commit, setup: { ...archive.identity, setupHash: "sha256:" + "0".repeat(64) } },
+  ]) assert.throws(() => readExperienceCommit(candidate), /experience_protocol_invalid/);
+});
+
+pure("prepared receipt checker is synchronous over decoded frozen original and exact complete core", async () => {
+  const { archive, plan, retained } = await fixture();
+  const checker = await prepareShortStorySetupV2ReceiptChecker(owner, plan, archive.identity, retained);
+  frozen(checker.plan); assert.equal(Object.isFrozen(checker), true);
+  assert.notEqual(checker.plan, plan); assert.deepEqual(checker.plan, plan);
+  const receipt = receiptFor(plan);
+  const { draftId: _draft, draftHash: _hash, generation: _generation, documentRoute: _route, ...core } = receipt;
+  const checked = checker.check(receipt), completed = checker.complete(core);
+  assert.equal(checked instanceof Promise, false); assert.equal(completed instanceof Promise, false);
+  assert.deepEqual(checked, receipt); assert.deepEqual(completed, receipt); frozen(checked); frozen(completed);
+  assert.equal(checker.acceptCompleted(core), true);
+  assert.deepEqual(completed, await decodeShortStorySetupV2Receipt(owner, plan, receipt, archive.identity, retained));
+  for (const mutate of [
+    value => { value.status = "unknown"; }, value => { delete value.status; }, value => { value.extra = true; },
+    value => { value.appended.pop(); }, value => { value.appended[1].causationId = value.appended[0].eventId; },
+    value => { value.appended[0].payload.client_event_id += "suffix"; }, value => { value.projectId = plan.documentId; },
+  ]) {
+    const candidate = clone(core); mutate(candidate);
+    assert.equal(checker.acceptCompleted(candidate), false);
+    assert.throws(() => checker.complete(candidate), /experience_setup_invalid/);
+  }
+  const original = checker.complete(core); core.appended[0].actor = "system";
+  assert.equal(original.appended[0].actor, "user", "publication is an owned frozen snapshot");
+  assert.equal(checker.acceptCompleted(core), false);
+});
+
+pure("each asynchronous input boundary is captured independently before its first await", async () => {
+  const { archive, plan, retained, release } = await fixture();
+  const mutations = {
+    plan: value => { value.events[3].payload.properties.text = "changed after call"; },
+    approved: value => { value.setupHash = "sha256:" + "0".repeat(64); },
+    expected: value => { value.draftHash = "sha256:" + "0".repeat(64); },
+  };
+  for (const [key, mutate] of Object.entries(mutations)) {
+    const args = { plan: clone(plan), approved: clone(archive.identity), expected: clone(retained) };
+    const pending = prepareShortStorySetupV2ReceiptChecker(owner, args.plan, args.approved, args.expected);
+    mutate(args[key]);
+    const checker = await pending;
+    assert.deepEqual(checker.plan, plan, key);
+    assert.deepEqual(checker.check(receiptFor(plan)), receiptFor(plan), key);
+  }
+  for (const key of ["plan", "receipt", "approved", "expected"]) {
+    const args = { plan: clone(plan), receipt: receiptFor(plan), approved: clone(archive.identity), expected: clone(retained) };
+    const pending = decodeShortStorySetupV2Receipt(owner, args.plan, args.receipt, args.approved, args.expected);
+    if (key === "receipt") args.receipt.appended[0].actor = "system"; else mutations[key](args[key]);
+    assert.deepEqual(await pending, receiptFor(plan), key);
+  }
+  for (const key of ["request", "release", "approved"]) {
+    const args = { request: clone(plan.request), release: clone(release), approved: clone(archive.identity) };
+    const pending = buildShortStorySetupV2(owner, args.request, args.release, args.approved);
+    if (key === "request") args.request.values.character.value = "changed after call";
+    else if (key === "release") args.release.output.label = "changed after call";
+    else mutations.approved(args.approved);
+    assert.deepEqual(await pending, plan, key);
+  }
+  const archiveInput = clone(release), archivePending = shortStorySetupV2Archive(archiveInput);
+  archiveInput.output.label = "changed after call";
+  assert.deepEqual((await archivePending).identity, archive.identity);
+});
+
+pure("protocol and prepared receipt boundary never execute live getters or Proxy get traps", async () => {
+  const { archive, plan, retained } = await fixture();
+  let gets = 0;
+  const trap = value => new Proxy(value, { get() { gets++; return { private: "unvalidated" }; } });
+  const wire = { version: 2, request: clone(plan.request), setup: clone(archive.identity) };
+  assert.deepEqual(readExperiencePrepare(trap(clone(wire))), readExperiencePrepare(wire));
+  const commit = { version: 2, draftHash: plan.draftHash, setup: archive.identity };
+  assert.deepEqual(readExperienceCommit(trap(clone(commit))), readExperienceCommit(commit));
+  const checker = await prepareShortStorySetupV2ReceiptChecker(owner, trap(clone(plan)), trap(clone(archive.identity)), trap(clone(retained)));
+  assert.deepEqual(checker.check(trap(receiptFor(plan))), receiptFor(plan));
+  assert.equal(gets, 0);
+  const accessorWire = clone(wire);
+  Object.defineProperty(accessorWire.setup, "setupHash", { enumerable: true, get() { gets++; return archive.identity.setupHash; } });
+  assert.throws(() => readExperiencePrepare(accessorWire), /experience_protocol_invalid/);
+  const accessorCommit = clone(commit);
+  Object.defineProperty(accessorCommit, "draftHash", { enumerable: true, get() { gets++; return plan.draftHash; } });
+  assert.throws(() => readExperienceCommit(accessorCommit), /experience_protocol_invalid/);
+  for (const key of ["plan", "approved", "expected"]) {
+    const args = { plan: clone(plan), approved: clone(archive.identity), expected: clone(retained) };
+    const property = key === "approved" ? "setupHash" : "draftHash";
+    Object.defineProperty(args[key], property, { enumerable: true, get() { gets++; return "sha256:" + "0".repeat(64); } });
+    await assert.rejects(prepareShortStorySetupV2ReceiptChecker(owner, args.plan, args.approved, args.expected), /experience_setup_invalid/);
+  }
+  const accessorReceipt = receiptFor(plan);
+  Object.defineProperty(accessorReceipt.appended[0], "occurredAt", { enumerable: true, get() { gets++; return "2026-09-02T12:00:00.000Z"; } });
+  assert.throws(() => checker.check(accessorReceipt), /experience_setup_invalid/);
+  const { draftId: _draft, draftHash: _hash, generation: _generation, documentRoute: _route, ...core } = receiptFor(plan);
+  Object.defineProperty(core, "head", { enumerable: true, get() { gets++; return 28; } });
+  assert.equal(checker.acceptCompleted(core), false); assert.throws(() => checker.complete(core), /experience_setup_invalid/);
+  assert.equal(gets, 0);
+});
+
+
+pure("descriptor capture bounds are isolated from recipe, hash and identity validation", async () => {
+  const chain = count => { let value = 0; for (let index = 0; index < count; index++) value = [value]; return value; };
+  const binary = depth => depth === 0 ? 0 : [binary(depth - 1), binary(depth - 1)];
+  assert.deepEqual(captureExperienceIntakeJson(chain(16)), chain(16));
+  assert.throws(() => captureExperienceIntakeJson(chain(17)), /experience_setup_invalid/);
+  const tree = binary(12); // 8191 nodes; nesting stays below depth16.
+  assert.deepEqual(captureExperienceIntakeJson([tree]), [tree]); // 8192 nodes.
+  assert.throws(() => captureExperienceIntakeJson([tree, 0]), /experience_setup_invalid/); // 8193.
+  assert.equal(captureExperienceIntakeJson(Array(64).fill(0)).length, 64);
+  assert.throws(() => captureExperienceIntakeJson(Array(65).fill(0)), /experience_setup_invalid/);
+  const object = count => Object.fromEntries(Array.from({ length: count }, (_, index) => ["k" + index, 0]));
+  assert.equal(Object.keys(captureExperienceIntakeJson(object(64))).length, 64);
+  assert.throws(() => captureExperienceIntakeJson(object(65)), /experience_setup_invalid/);
+  assert.deepEqual(captureExperienceIntakeJson({ ["k".repeat(128)]: 0 }), { ["k".repeat(128)]: 0 });
+  assert.throws(() => captureExperienceIntakeJson({ ["k".repeat(129)]: 0 }), /experience_setup_invalid/);
+  assert.equal(captureExperienceIntakeJson("x".repeat(8192)).length, 8192);
+  assert.throws(() => captureExperienceIntakeJson("x".repeat(8193)), /experience_setup_invalid/);
+  // This is the capture's conservative encoded-byte accounting, not a promise
+  // that every JSON text of exactly262144 bytes is accepted. Every other bound
+  // remains satisfied; escaping NUL charges six bytes per code unit plus quotes.
+  const byteNearLimit = [...Array(5).fill("\u0000".repeat(8192)), "\u0000".repeat(2727)];
+  assert.equal(8 + 5 * (6 * 8192 + 2) + (6 * 2727 + 2), 262142);
+  assert.deepEqual(captureExperienceIntakeJson(byteNearLimit), byteNearLimit);
+  byteNearLimit[5] += "\u0000"; // 262148 conservatively counted bytes, nodes7/depth1.
+  assert.throws(() => captureExperienceIntakeJson(byteNearLimit), /experience_setup_invalid/);
 });

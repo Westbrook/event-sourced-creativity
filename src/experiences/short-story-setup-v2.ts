@@ -122,6 +122,10 @@ function capture(input: unknown): Json {
   return visit(input, 0);
 }
 
+/** Owned inert snapshot only, not validation, admission or authority. */
+export { capture as captureExperienceIntakeJson };
+export type ExperienceIntakeJson = Json;
+
 async function pinnedRelease(value: Json): Promise<CompiledRelease> {
   const release = exact(value, ["schemaVersion", "qualification", "definition", "output", "interactions", "copy", "definitionHash", "releaseHash", "dependencies"]);
   check(release.releaseHash === SHORT_STORY_SETUP_V2_BASE_RELEASE_HASH && record(release.definition) && release.definition.id === "short-story"
@@ -276,14 +280,8 @@ function timestamp(value: Json | undefined): boolean {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) return false;
   const time = Date.parse(value); return Number.isFinite(time) && new Date(time).toISOString() === value;
 }
-/**
- * Prospective complete-response shape only, not server receipt/custody proof.
- * No synthetic timestamp/ID is generated and no partial batch is repaired.
- */
-export async function decodeShortStorySetupV2Receipt(ownerInput: unknown, retainedPlanInput: unknown, receiptInput: unknown, approvedIdentityInput: unknown, expectedRetainedIdentityInput: unknown): Promise<ShortStorySetupV2Receipt> {
-  const ownerId = owner(ownerInput), retainedPlan = capture(retainedPlanInput), receiptValue = capture(receiptInput), approved = capture(approvedIdentityInput), expected = capture(expectedRetainedIdentityInput);
+function checkCapturedReceipt(plan: ShortStorySetupV2Plan, receiptValue: Json): ShortStorySetupV2Receipt {
   const receipt = exact(receiptValue, ["status", "projectId", "documentId", "appended", "rejected", "head", "draftId", "draftHash", "generation", "documentRoute"]);
-  const plan = await decodeCaptured(ownerId, retainedPlan, approved, expected);
   check(receipt.status === "complete" && receipt.generation === "unavailable" && receipt.projectId === plan.projectId && receipt.documentId === plan.documentId
     && receipt.draftId === plan.draftId && receipt.draftHash === plan.draftHash && receipt.documentRoute === route(plan.documentId)
     && Array.isArray(receipt.rejected) && receipt.rejected.length === 0 && Number.isSafeInteger(receipt.head)
@@ -302,4 +300,45 @@ export async function decodeShortStorySetupV2Receipt(ownerInput: unknown, retain
   }
   check(Number(receipt.head) >= previousSequence);
   return freeze(receipt) as unknown as ShortStorySetupV2Receipt;
+}
+
+export type ShortStorySetupV2ReceiptChecker = Readonly<{
+  plan: ShortStorySetupV2Plan;
+  check: (receiptInput: unknown) => ShortStorySetupV2Receipt;
+  acceptCompleted: (coreInput: unknown) => boolean;
+  complete: (coreInput: unknown) => ShortStorySetupV2Receipt;
+}>;
+function preparedReceiptChecker(plan: ShortStorySetupV2Plan): ShortStorySetupV2ReceiptChecker {
+  // Closure retains only the fully reconstructed, deeply frozen plan. No caller
+  // can provide a typed-but-unvalidated plan to this synchronous constructor.
+  const complete = (coreInput: unknown) => {
+    const core = exact(capture(coreInput), ["status", "projectId", "documentId", "appended", "rejected", "head"]);
+    check(core.status === "complete");
+    // Project only original identity/route metadata. Never invent event IDs,
+    // timestamps, sequences, private payloads, status or native receipt custody.
+    return checkCapturedReceipt(plan, { ...core, draftId: plan.draftId, draftHash: plan.draftHash,
+      generation: "unavailable", documentRoute: route(plan.documentId) });
+  };
+  return Object.freeze({ plan,
+    check: (receiptInput: unknown) => checkCapturedReceipt(plan, capture(receiptInput)),
+    acceptCompleted: (coreInput: unknown) => { try { complete(coreInput); return true; } catch { return false; } },
+    complete,
+  });
+}
+/** Prepare before the owner's final private receipt read. Returned operations
+ * are synchronous; they add no await after that read. This is only structural
+ * validation, not evidence that a native transaction committed or remains owned. */
+export async function prepareShortStorySetupV2ReceiptChecker(ownerInput: unknown, retainedPlanInput: unknown, approvedIdentityInput: unknown, expectedRetainedIdentityInput: unknown): Promise<ShortStorySetupV2ReceiptChecker> {
+  const ownerId = owner(ownerInput), retainedPlan = capture(retainedPlanInput), approved = capture(approvedIdentityInput), expected = capture(expectedRetainedIdentityInput);
+  return preparedReceiptChecker(await decodeCaptured(ownerId, retainedPlan, approved, expected));
+}
+/**
+ * Prospective complete-response shape only, not server receipt/custody proof.
+ * Capture every caller argument, including receipt, before any decoder await.
+ * No synthetic timestamp/ID is generated and no partial batch is repaired.
+ */
+export async function decodeShortStorySetupV2Receipt(ownerInput: unknown, retainedPlanInput: unknown, receiptInput: unknown, approvedIdentityInput: unknown, expectedRetainedIdentityInput: unknown): Promise<ShortStorySetupV2Receipt> {
+  const ownerId = owner(ownerInput), retainedPlan = capture(retainedPlanInput), receiptValue = capture(receiptInput), approved = capture(approvedIdentityInput), expected = capture(expectedRetainedIdentityInput);
+  const plan = await decodeCaptured(ownerId, retainedPlan, approved, expected);
+  return checkCapturedReceipt(plan, receiptValue);
 }
