@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardReadOnlyNetwork } from "./helpers/read-only-network.mjs";
+import { installSyntheticNetwork, syntheticNetworkEnabled, syntheticNetworkProvenance, syntheticEvidence } from "./helpers/synthetic-network.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const extensionPath = resolve(directory, "zoom-extension");
@@ -12,6 +13,7 @@ const captureSessions = new WeakMap();
 export const test = base.extend({
   geometry: [{ viewport: { width: 1280, height: 900 }, zoom: 1 }, { option: true }],
   context: async ({ geometry, baseURL }, use, testInfo) => {
+    const synthetic = syntheticNetworkEnabled(baseURL);
     const profile = await mkdtemp(resolve(tmpdir(), "forma-a11y-"));
     let context;
     try {
@@ -31,6 +33,8 @@ export const test = base.extend({
         ],
       });
       const network = await guardReadOnlyNetwork(context, baseURL);
+      const syntheticNetwork = synthetic ? await installSyntheticNetwork(context, baseURL) : null;
+      if (synthetic) testInfo.annotations.push({ type: "synthetic-network", description: syntheticNetworkProvenance.authority });
       await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
       try {
         await use(context);
@@ -47,7 +51,11 @@ export const test = base.extend({
         }
         await context.close();
         context = null;
-        await testInfo.attach("read-only-network", { body: JSON.stringify(network, null, 2), contentType: "application/json" });
+        await testInfo.attach("read-only-network", { body: JSON.stringify(syntheticNetwork ? syntheticEvidence("read-only-network", network) : network, null, 2), contentType: "application/json" });
+        if (syntheticNetwork) {
+          await testInfo.attach("synthetic-network", { body: JSON.stringify(syntheticNetwork, null, 2), contentType: "application/json" });
+          expect(syntheticNetwork.forbidden, "Finite synthetic mode must not attempt undeclared APIs, writes or sockets").toEqual([]);
+        }
         expect(network.forbidden, "UI checks must not attempt writes or unreviewed external requests").toEqual([]);
       }
     } finally {
@@ -64,7 +72,8 @@ export const test = base.extend({
 export { expect };
 
 export async function attachJSON(testInfo, name, value) {
-  await testInfo.attach(name, { body: JSON.stringify(value, null, 2), contentType: "application/json" });
+  const labeled = syntheticNetworkEnabled(testInfo.project.use.baseURL) ? syntheticEvidence(name, value) : value;
+  await testInfo.attach(name, { body: JSON.stringify(labeled, null, 2), contentType: "application/json" });
 }
 
 export async function browserMetrics(page) {
@@ -155,7 +164,9 @@ export async function applyBrowserZoom(page, context, factor, testInfo) {
 
 export async function openForma(page, context, geometry, path, testInfo) {
   const response = await page.goto(path, { waitUntil: "domcontentloaded" });
-  expect(response?.ok(), "Reuse a running, built Forma preview with its existing local account/data").toBe(true);
+  expect(response?.ok(), syntheticNetworkEnabled(testInfo.project.use.baseURL)
+    ? "Reuse the actual source application with explicitly synthetic network declarations"
+    : "Reuse a running, built Forma preview with its existing local account/data").toBe(true);
   await expect(page.locator("forma-shell")).toBeAttached();
   const language = geometry.locale ?? "en-US";
   await expect(page.locator("html")).toHaveAttribute("lang", language);
