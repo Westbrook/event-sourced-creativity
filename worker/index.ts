@@ -35,6 +35,8 @@ import { handleContextIntelligence } from "./context-intelligence-api";
 import { handleContextApplication } from "./context-application-api";
 import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
+import { handleExperienceIntake } from "./experience-intake-api";
+import { experienceIds } from "../src/experiences/intake";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -83,6 +85,15 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
     const marketingRoute=parseMarketingRoute(url.pathname);
+    if(url.pathname.startsWith("/api/experiences/"))return handleExperienceIntake(request,env);
+    if(url.pathname==="/make"||url.pathname.startsWith("/make/")){
+      if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
+      const experiencePath=url.pathname.replace(/\/$/u,"");
+      if(experiencePath!=="/make"&&!experienceIds.some(id=>experiencePath===`/make/${id}`))return new Response(null,{status:404,headers:{"cache-control":"private, no-store"}});
+      const asset=await env.ASSETS.fetch(new Request(new URL("/experiences",request.url),request));
+      const headers=new Headers(asset.headers);headers.set("cache-control","private, no-store");headers.set("x-forma-route-family","experience");
+      return new Response(request.method==="HEAD"?null:asset.body,{status:asset.status,headers});
+    }
     if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
       // Cloudflare's asset binding resolves extensionless HTML directly. Asking

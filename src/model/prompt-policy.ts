@@ -2,6 +2,7 @@ import { isOutputContextBlock } from "./output-source-policy.ts";
 
 /** Durable platform terminology must never become model-facing creative copy. */
 const INTERNAL_CREATIVE_KEYS = new Set([
+  "experience_origin", "experience_release", "experience_binding", "experience_value",
   "combined_context",
   "combined_context_memberships",
   "context_group",
