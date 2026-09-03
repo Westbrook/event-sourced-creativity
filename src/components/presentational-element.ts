@@ -1,5 +1,5 @@
 import { LitElement, type PropertyValues } from "lit";
-import { FormaLocaleController } from "./design-system/localization";
+import { FormaLocaleController } from "./design-system/locale-controller";
 import { localizeTemplateResult } from "./design-system/localized-template";
 
 /** Stateless design-system elements never subscribe to or import application state. */
