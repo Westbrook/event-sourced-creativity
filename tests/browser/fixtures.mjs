@@ -183,6 +183,30 @@ export async function openForma(page, context, geometry, path, testInfo) {
     };
   });
   const arabic = language.split("-")[0] === "ar";
+  const japanese = language.split("-")[0] === "ja";
+  const readJapanesePolicy = () => page.evaluate(() => {
+    const expectedSelector = ":root:lang(ja), forma-ui-locale:lang(ja)";
+    const normalize = value => value.split(",").map(family => family.trim().replace(/^["']|["']$/g, "")).join(", ");
+    const declarations = [], errors = [];
+    for (const sheet of document.styleSheets) {
+      const viteSource = sheet.ownerNode?.getAttribute("data-vite-dev-id") ?? null;
+      const href = sheet.href ? new URL(sheet.href, location.href) : null;
+      const sourceOwner = sheet.ownerNode instanceof HTMLStyleElement && !href && Boolean(viteSource?.endsWith("/src/styles.css"))
+        || sheet.ownerNode instanceof HTMLLinkElement && href?.origin === location.origin
+          && href.pathname === "/src/styles.css" && !href.search && !href.hash;
+      if (!sourceOwner) continue;
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule.type !== CSSRule.STYLE_RULE || rule.selectorText !== expectedSelector) continue;
+          declarations.push({ owner: sheet.href ?? viteSource, selector: rule.selectorText,
+            sans: normalize(rule.style.getPropertyValue("--sans")), family: rule.style.getPropertyValue("--forma-font-family").trim(),
+            sansPriority: rule.style.getPropertyPriority("--sans"), familyPriority: rule.style.getPropertyPriority("--forma-font-family") });
+        }
+      } catch (error) { errors.push(String(error)); }
+    }
+    return { declarations, errors, fontsStatus: document.fonts.status,
+      declaredStackAvailable: document.fonts.check(`16px ${getComputedStyle(document.body).fontFamily}`, "日本語 ドキュメント名 フィルターをクリア") };
+  });
   if (arabic) {
     // The actual Arabic policy in styles.css deliberately uses system fonts.
     // RTL alone or an empty FontFaceSet must never exempt another locale.
@@ -190,6 +214,22 @@ export async function openForma(page, context, geometry, path, testInfo) {
     await expect.poll(readTypeface, {
       message: "Arabic layout requires the real Arabic locale and its declared system-font policy",
     }).toMatchObject({ language, direction: "rtl", bodyFont: systemStack, sansToken: systemStack, fontFamilyToken: systemStack });
+  } else if (japanese) {
+    // A positive source-declared Japanese stack and settled font set are required;
+    // neither an empty FontFaceSet nor absence of Manrope creates an exemption.
+    const japaneseStack = "Hiragino Sans, Yu Gothic, Noto Sans CJK JP, ui-sans-serif, system-ui, sans-serif";
+    await expect.poll(readTypeface, {
+      message: "Japanese layout requires the actual Japanese locale and selected source-declared stack",
+    }).toMatchObject({ language, direction: "ltr", bodyFont: japaneseStack, sansToken: japaneseStack, fontFamilyToken: japaneseStack });
+    await expect.poll(readJapanesePolicy, {
+      message: "Japanese layout requires the current styles.css policy and a ready, available declared font stack",
+    }).toMatchObject({ errors: [], fontsStatus: "loaded", declaredStackAvailable: true,
+      declarations: [{ selector: ":root:lang(ja), forma-ui-locale:lang(ja)", sans: japaneseStack,
+        family: "var(--sans)", sansPriority: "", familyPriority: "" }] });
+    await attachJSON(testInfo, "application-japanese-typeface-source", {
+      ...await readJapanesePolicy(),
+      limit: "FontFaceSet.check covers availability of the declared stack, including permitted system fallback; it does not identify the face used for each glyph or prove a particular installed Hiragino font.",
+    });
   } else {
     await expect.poll(async () => {
       const typeface = await readTypeface();
@@ -199,7 +239,7 @@ export async function openForma(page, context, geometry, path, testInfo) {
     }).toBe(true);
   }
   await attachJSON(testInfo, "application-typeface", {
-    policy: arabic ? "declared-arabic-system-font-stack" : "loaded-and-selected-manrope",
+    policy: arabic ? "declared-arabic-system-font-stack" : japanese ? "declared-japanese-system-font-stack" : "loaded-and-selected-manrope",
     expectedLanguage: language, ...await readTypeface(),
     limits: "Computed font policy is not platform glyph, contrast, or assistive-technology conformance.",
   });

@@ -374,3 +374,119 @@ test("Account overlay uses native popover activation and restores its keyboard i
   await pressTo(page, "Escape", trigger, testInfo, "account-04-space-escape-return");
   await expect(page.locator("#account-popover:popover-open")).toHaveCount(0);
 });
+
+// E7 follow-up only, after the original NI10 baseline/runtime/replay gates.
+// Reuse this file's four real browser geometries and the original read-only
+// network guard. No fixture writes, new layout emulator or focus repair.
+test("E7 displayed Document title and native Rename retain readable space and a complete target", async ({ page, context, geometry }, testInfo) => {
+  await openForma(page, context, geometry, documentPath, testInfo);
+  await waitForExistingDocument(page);
+  const header = page.locator(".page-header--document");
+  const heading = header.locator(".document-title-row > h1");
+  await expect(heading).toHaveJSProperty("textContent", "Atmosphere studies");
+  const title = await heading.textContent();
+  const rename = header.getByRole("button", { name: "Rename " + title, exact: true });
+  const originalArticles = await savedArticles(page);
+  const readHeader = () => header.evaluate(element => {
+    const doc = element.ownerDocument, win = doc.defaultView;
+    const copy = element.querySelector(".page-header-copy"), row = element.querySelector(".document-title-row");
+    const title = row?.querySelector("h1"), rename = row?.querySelector("button.icon-button");
+    const toolbar = element.querySelector(".page-header-actions");
+    if (!copy || !row || !title || !rename || !toolbar) throw new Error("Measure the actual displayed Document header");
+    const rect = node => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height };
+    };
+    const headerStyle = win.getComputedStyle(element), copyStyle = win.getComputedStyle(copy);
+    const rowStyle = win.getComputedStyle(row), titleStyle = win.getComputedStyle(title), toolbarStyle = win.getComputedStyle(toolbar);
+    const walker = doc.createTreeWalker(title, win.NodeFilter.SHOW_TEXT), nodes = [];
+    while (walker.nextNode()) if (walker.currentNode.textContent) nodes.push(walker.currentNode);
+    if (nodes.length !== 1 || nodes[0].textContent !== title.textContent) throw new Error("Expected the retained title's literal text node");
+    const words = [...title.textContent.matchAll(/\S+/gu)].map(match => {
+      const range = doc.createRange();
+      range.setStart(nodes[0], match.index); range.setEnd(nodes[0], match.index + match[0].length);
+      return { text: match[0], fragments: [...range.getClientRects()].filter(box => box.width > 0 && box.height > 0)
+        .map(box => ({ left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height })) };
+    });
+    return {
+      title: title.textContent, words, header: rect(element), copy: rect(copy), row: rect(row), heading: rect(title), rename: rect(rename),
+      posture: element.closest(".application-creative")?.getAttribute("data-nav-posture"),
+      shortHeight: element.closest(".application-creative")?.getAttribute("data-short-height"),
+      rootSize: Number.parseFloat(win.getComputedStyle(doc.documentElement).fontSize),
+      contentWidth: element.clientWidth - Number.parseFloat(headerStyle.paddingLeft) - Number.parseFloat(headerStyle.paddingRight),
+      contentLeft: element.getBoundingClientRect().left + element.clientLeft + Number.parseFloat(headerStyle.paddingLeft),
+      contentRight: element.getBoundingClientRect().left + element.clientLeft + element.clientWidth - Number.parseFloat(headerStyle.paddingRight),
+      copyPadding: Number.parseFloat(copyStyle.paddingLeft) + Number.parseFloat(copyStyle.paddingRight),
+      gap: Number.parseFloat(rowStyle.columnGap),
+      titleStyle: { whiteSpace: titleStyle.whiteSpace, overflowX: titleStyle.overflowX, textOverflow: titleStyle.textOverflow,
+        lineClamp: titleStyle.getPropertyValue("-webkit-line-clamp") },
+      toolbar: { box: rect(toolbar), flexWrap: toolbarStyle.flexWrap, overflowX: toolbarStyle.overflowX,
+        controls: [...toolbar.querySelectorAll("button")].map(button => ({ text: button.textContent, title: button.title,
+          ariaLabel: button.getAttribute("aria-label"), disabled: button.disabled })) },
+    };
+  });
+  const headerObstacles = [".topbar",
+    '.workspace-page[data-workbench="document"] > forma-project-rail',
+    '.workspace-page[data-workbench="document"] > .studio-main > .studio-header-stack > forma-studio-mode-nav > .studio-mode-nav'];
+  const options = { overlaySelectors: [".forma-assistant-launcher", ":popover-open", ":modal", ...headerObstacles],
+    regionSelectors: [".output-recipe-entry", ".output-requirement-warning", "forma-ui-notice"], checkVisibleControls: true };
+  for (const selector of headerObstacles) await expect(page.locator(selector)).toHaveCount(1);
+  await tabTo(page, rename);
+  const beforeFocus = await verifyFocus(page, rename, testInfo, "e7-display-01-rename", options);
+  const before = await readHeader();
+  await attachJSON(testInfo, "e7-display-before", before);
+
+  // The existing select-only method is not promised to move focus. Reach the
+  // actual input with native Tab if needed; never call focus() or synthesize it.
+  await page.keyboard.press("Enter");
+  const form = header.locator(".document-title-editor"), field = form.getByRole("textbox", { name: "Document name", exact: true });
+  await expect(form).toHaveCount(1);
+  await expect(field).toHaveValue(title);
+  await tabTo(page, field);
+  await verifyFocus(page, field, testInfo, "e7-display-02-native-rename-input", options);
+  const raw = "  Café e\u0301 العربية 日本語 — unsent name  ";
+  await field.fill(raw);
+  await expect(field).toHaveValue(raw);
+  const cancel = form.getByRole("button", { name: "Cancel", exact: true });
+  await pressTo(page, "Tab", cancel, testInfo, "e7-display-03-native-cancel", options);
+  await page.keyboard.press("Enter");
+  await expect(form).toHaveCount(0);
+  await expect(heading).toHaveJSProperty("textContent", title);
+  await tabTo(page, rename);
+  const afterFocus = await verifyFocus(page, rename, testInfo, "e7-display-04-returned-rename", options);
+  const after = await readHeader();
+  await expect(page).toHaveURL(new URL(documentPath, testInfo.project.use.baseURL).href);
+  expect(await savedArticles(page)).toEqual(originalArticles);
+  expect(after.toolbar.controls).toEqual(before.toolbar.controls);
+  expect(after.title).toBe(title);
+  await attachJSON(testInfo, "e7-display-after", { after, savedArticles: await savedArticles(page) });
+
+  // Desired geometry comes last, after native entry/cancel and custody checks.
+  // Accumulate both regressions rather than letting a visible focus ring stand
+  // in for the target's body or mask the separate title-width problem.
+  const violations = [], tolerance = 1 / 64;
+  for (const [stage, metrics, focus] of [["before", before, beforeFocus], ["after", after, afterFocus]]) {
+    if (focus.focus.raw.width + tolerance < 44 || focus.focus.raw.height + tolerance < 44)
+      violations.push({ stage, issue: "Rename body is below the shared 44px floor", raw: focus.focus.raw });
+    if (focus.focus.visible.width + tolerance < 44 || focus.focus.visible.height + tolerance < 44)
+      violations.push({ stage, issue: "Rename's complete shared target is not visible", visible: focus.focus.visible });
+    if (metrics.row.left < metrics.contentLeft - tolerance || metrics.row.right > metrics.contentRight + tolerance)
+      violations.push({ stage, issue: "title row escapes the existing header gutter", row: metrics.row });
+    if (metrics.posture === "compact") {
+      const usefulCopy = Math.min(metrics.contentWidth, 16 * metrics.rootSize);
+      const availableTitle = metrics.row.width - metrics.rename.width - metrics.gap;
+      const usefulTitle = Math.max(0, usefulCopy - metrics.copyPadding - metrics.rename.width - metrics.gap);
+      if (metrics.copy.width + tolerance < usefulCopy || availableTitle + tolerance < usefulTitle)
+        violations.push({ stage, issue: "compact title is squeezed before its useful row basis", usefulCopy, usefulTitle, availableTitle, copy: metrics.copy });
+      if (metrics.toolbar.flexWrap !== "nowrap" || metrics.toolbar.overflowX !== "auto")
+        violations.push({ stage, issue: "the existing horizontal toolbar changed ownership", toolbar: metrics.toolbar });
+    }
+    if (metrics.titleStyle.whiteSpace !== "normal" || metrics.titleStyle.overflowX !== "visible"
+      || metrics.titleStyle.textOverflow === "ellipsis" || !["", "none", "0"].includes(metrics.titleStyle.lineClamp))
+      violations.push({ stage, issue: "the full title is constrained or clipped", titleStyle: metrics.titleStyle });
+    for (const word of metrics.words) if (word.fragments.length !== 1)
+      violations.push({ stage, issue: "a normal word in the retained short title is split", word });
+  }
+  await attachJSON(testInfo, "e7-display-desired-geometry", { violations });
+  expect(violations).toEqual([]);
+});
