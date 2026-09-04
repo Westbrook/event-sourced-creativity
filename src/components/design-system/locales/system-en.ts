@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1avh66.101": "Reuse a creative decision or a previous project output. Everything remains editable in this document.",
+  "system.auto.z7ijvf.70": "Create a reusable decision or generate a project output to reuse here.",
   "system.auto.1i2qq03.94": "Explicit presentation only; the host supplies current ownership, never a fabricated saved row.",
   "system.auto.tqfa8e.80": "Recipe host's unresolved original ID only; no body, receipt or retry permission.",
   "system.auto.1w05nuc.88": "Explicitly resend this session's original Save; never materialize or rebase newer edits.",

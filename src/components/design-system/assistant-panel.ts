@@ -372,6 +372,13 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         ".library-body .section-heading > div > :is(.eyebrow,h2,p.section-note)",
         ".library-main > .library-body > section.lifecycle-next-actions > p.lifecycle-next-scope",
         '.library-main > .library-body > section.lifecycle-next-actions > p.muted[role="status"]',
+        '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > h3#library-block-content',
+        '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
+        '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+      ]],
+      ["forma-reality-layers", [
+        ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
+        ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"]) > output',
       ]],
       ["forma-project-contents", [".studio-main > .page-header--document > .page-header-copy > :is(.eyebrow,h1,p)"]],
       ["forma-workspace", [
@@ -395,6 +402,33 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           if (!(element instanceof HTMLLabelElement) || !field || element.control !== field
             || field.form !== element.parentElement) continue;
         }
+        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName)) {
+          const rich = element.parentElement;
+          const field = rich?.querySelector<HTMLTextAreaElement>(":scope > textarea.ui-rich-text-input");
+          const label = rich?.querySelector<HTMLLabelElement>(":scope > label.ui-rich-text-label");
+          const form = element.closest("form.library-block-form");
+          if (!field?.id || !(label instanceof HTMLLabelElement) || label.control !== field
+            || label.htmlFor !== field.id || !form || field.form !== form
+            || element.tagName === "LABEL" && element !== label) continue;
+          if (element.tagName === "SMALL" && (element.id !== `${field.id}-help`
+            || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
+        }
+        if (ownerSelector === "forma-reality-layers") {
+          const forms = [...surface.querySelectorAll<HTMLFormElement>(':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector]')];
+          const form = forms[0];
+          const label = element.tagName === "LABEL" ? element : element.parentElement;
+          if (forms.length !== 1 || !(form instanceof HTMLFormElement)
+            || !form.getAttribute("data-layer-inspector") || !(label instanceof HTMLLabelElement)
+            || label.parentElement !== form) continue;
+          const fields = [...label.querySelectorAll<HTMLInputElement>(':scope > input[name="weight"][type="range"]')];
+          const outputs = [...label.querySelectorAll<HTMLOutputElement>(":scope > output")];
+          const field = fields[0], output = outputs[0];
+          if (fields.length !== 1 || outputs.length !== 1 || !(field instanceof HTMLInputElement)
+            || !(output instanceof HTMLOutputElement) || !field.id || label.htmlFor !== field.id
+            || label.control !== field || field.labels?.length !== 1 || field.labels[0] !== label
+            || field.form !== form || output.form !== form || field.previousElementSibling !== output
+            || element !== label && element !== output) continue;
+        }
         if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)) {
           const label = element.parentElement;
           const field = label?.querySelector<HTMLInputElement | HTMLTextAreaElement>(':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]');
@@ -403,9 +437,13 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           if (element.tagName === "SMALL" && (element.id !== `${field.id}-help`
             || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
         }
-        // These six Document editor regions already carry a box-level critical
-        // copy contract. Other admitted page copy keeps separate text fragments.
-        const wholeRegion = ownerSelector === "forma-workspace";
+        // The Document editor, associated Library field/empty-state regions and
+        // native Layers weight label/output carry box-level copy contracts.
+        // Other admitted copy keeps text fragments.
+        const wholeRegion = ownerSelector === "forma-workspace"
+          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName)
+            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]"))
+          || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName);
         const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
           const parent = wholeRegion ? element : text.parentElement;
@@ -588,6 +626,60 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       }
       if (box.top - (next - offset) < 8) return;
       this.style.setProperty("--forma-assistant-obstacle-offset", `${next}px`);
+    }
+
+    // The last compact write can exhaust the pass budget on another obstacle.
+    // Complete only that tail from the same sampled owners, in the same lane.
+    if (!exactFocusPaint) return;
+    const box = launcher.getBoundingClientRect();
+    const finiteBox = (value: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
+      [value.left, value.top, value.right, value.bottom, value.width, value.height].every(Number.isFinite);
+    if (!finiteBox(box) || !Number.isFinite(innerHeight) || box.width <= 0 || box.height <= 0
+      || placementObstacles.some(({ box: obstacle }) => !finiteBox(obstacle))) return;
+    if (!placementIntersections(box).length) return;
+    const intervals = placementObstacles.filter(({ box: obstacle }) =>
+      box.left < obstacle.right && box.right > obstacle.left)
+      .map(({ box: obstacle }) => ({ top: Math.max(8, obstacle.top), bottom: Math.min(innerHeight - 8, obstacle.bottom) }))
+      .filter(interval => interval.bottom > interval.top)
+      .sort((a, b) => a.top - b.top || a.bottom - b.bottom);
+    const merged: Array<{ top: number; bottom: number }> = [];
+    for (const interval of intervals) {
+      const previous = merged[merged.length - 1];
+      if (previous && interval.top <= previous.bottom) previous.bottom = Math.max(previous.bottom, interval.bottom);
+      else merged.push({ ...interval });
+    }
+    const candidates: Array<{ top: number; floor: number; ceiling: number }> = [];
+    let floor = 8;
+    for (const interval of [...merged, { top: innerHeight - 8, bottom: innerHeight - 8 }]) {
+      const ceiling = interval.top;
+      if (ceiling - floor >= box.height) {
+        const top = floor + (ceiling - floor - box.height) / 2;
+        const candidate = { left: box.left, right: box.right, top, bottom: top + box.height };
+        if (candidate.top >= 8 && candidate.bottom <= innerHeight - 8
+          && !placementIntersections(candidate).length) candidates.push({ top, floor, ceiling });
+      }
+      floor = Math.max(floor, interval.bottom);
+    }
+    // Nearest centered gap wins; equal displacements retain upward preference.
+    candidates.sort((a, b) => Math.abs(a.top - box.top) - Math.abs(b.top - box.top) || a.top - b.top);
+    const candidate = candidates[0];
+    if (!candidate) return;
+    const previousOffset = this.style.getPropertyValue("--forma-assistant-obstacle-offset");
+    const previousTight = this.dataset.tightLauncher;
+    const currentOffset = Number.parseFloat(previousOffset || "0");
+    if (!Number.isFinite(currentOffset)) return;
+    this.dataset.tightLauncher = "true";
+    this.style.setProperty("--forma-assistant-obstacle-offset", `${currentOffset + box.top - candidate.top}px`);
+    // Native layout may quantize the center. Accept only the observed body in
+    // this same clear gap, with unchanged inline bounds and compact footprint.
+    const actual = launcher.getBoundingClientRect();
+    if (!finiteBox(actual) || !Number.isFinite(innerHeight)
+      || actual.left !== box.left || actual.right !== box.right || actual.width !== box.width || actual.height !== box.height
+      || actual.top < candidate.floor || actual.bottom > candidate.ceiling
+      || actual.top < 8 || actual.bottom > innerHeight - 8 || placementIntersections(actual).length) {
+      this.style.setProperty("--forma-assistant-obstacle-offset", previousOffset);
+      if (previousTight === undefined) delete this.dataset.tightLauncher;
+      else this.dataset.tightLauncher = previousTight;
     }
   }
 
