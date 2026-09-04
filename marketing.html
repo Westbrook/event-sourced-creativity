@@ -51,6 +51,9 @@
     </header>
 
     <main id="main-content" tabindex="-1">
+      <div class="marketing-page-controls">
+        <button class="marketing-motion-toggle" type="button" aria-pressed="false" aria-label="Pause page motion" data-copy="motionPauseLabel" data-copy-aria="motionPauseLabel" data-marketing-motion-toggle hidden>Pause page motion</button>
+      </div>
       <section class="marketing-hero" aria-labelledby="hero-title">
         <div class="marketing-hero__copy">
           <p class="marketing-eyebrow" data-copy="heroEyebrow">The creative context studio</p>
@@ -176,6 +179,18 @@
             <p class="context-demo__helper" data-copy="demoHelper">Choose what to notice. Every decision stays in the picture.</p>
             <div class="context-thread" aria-label="What the work carries forward" data-copy-aria="proofCarryLabel"><span data-copy="moodValue">Quietly magnetic</span><span data-copy="directionValue">Let the silence speak</span><span data-copy="referenceValue">Coastal light, just after sunset</span></div>
             <p class="marketing-screen-reader" role="status" aria-live="polite" data-context-announcement></p>
+            <details class="context-change" data-public-change-demo>
+              <summary data-copy="demoChangeTitle">Follow one illustrative decision change</summary>
+              <p class="context-demo__disclaimer" data-copy="demoChangeDisclosure">Fixed fictional walkthrough. Existing previews are unchanged: no regeneration, reviewer assignment or approval takes place.</p>
+              <ol>
+                <li><p data-copy="demoChangeBefore">Earlier illustrative brief: this boundary was not included.</p><p><span data-copy="demoChangeAfter">Changed decision: include this boundary.</span> <bdi dir="auto" data-copy="creativeBoundaryValue">No luxury clichés or empty promises</bdi></p></li>
+                <li><p data-copy="demoChangeAffected">Affected deliverables in this fixed example</p><ul>
+                  <li><a class="marketing-text-link" href="#example-story-preview" data-demo-preview="story"><span data-copy="formatStory">Story</span><span aria-hidden="true">·</span><bdi dir="auto" data-copy="storyHeading">Where the coastline exhales</bdi></a></li>
+                  <li><a class="marketing-text-link" href="#example-presentation-preview" data-demo-preview="presentation"><span data-copy="formatPresentation">Presentation</span><span aria-hidden="true">·</span><bdi dir="auto" data-copy="slideTitle">Find the quieter way.</bdi></a></li>
+                </ul></li>
+                <li><p data-copy="demoChangeReview">Next step: an independent reviewer compares these existing previews with the boundary before release.</p><strong data-copy="demoChangeStatus">Illustrative status: review required.</strong></li>
+              </ol>
+            </details>
           </div>
 
           <div class="context-demo__outcomes" aria-label="Illustrative outcomes that share the same creative direction" data-copy-aria="demoOutcomesLabel">
@@ -279,7 +294,7 @@
               <div class="output-piece__visual output-paper"><span data-copy="storyHeading">Where the coastline exhales</span><p data-copy="storyExcerpt">One amber-lit window in a slate-stone cottage; beyond it, an empty path fades into the blue.</p><span class="output-paper__context" data-copy="moodValue">Quietly magnetic</span></div>
               <div class="output-piece__caption"><h3 data-copy="formatStory">Story</h3><p data-copy="outputStoryDetail">Words that remember who the journey is for.</p></div>
               <details class="output-preview" data-output-preview="story">
-                <summary class="output-preview__action" aria-label="Read the complete short story" data-copy-aria="previewStoryAction"><span data-copy="previewStoryAction">Read the complete short story</span><span aria-hidden="true">↗</span></summary>
+                <summary id="example-story-preview" class="output-preview__action" aria-label="Read the complete short story" data-copy-aria="previewStoryAction"><span data-copy="previewStoryAction">Read the complete short story</span><span aria-hidden="true">↗</span></summary>
                 <article class="marketing-preview-panel marketing-preview-panel--story" data-preview-panel="story">
                   <header class="marketing-preview-panel__heading"><span data-copy="formatStory">Story</span><h3 data-copy="storyHeading">Where the coastline exhales</h3></header>
                   <div class="marketing-preview-pages" data-preview-pages>
@@ -308,7 +323,7 @@
               <div class="output-piece__visual output-slide"><picture class="output-slide__image" aria-hidden="true"><source type="image/avif" srcset="/assets/marketing/quiet-coast-landscape-480.341bff002e7a.avif 480w, /assets/marketing/quiet-coast-landscape-768.7efc8257ce46.avif 768w" sizes="(max-width: 760px) 90vw, 50vw" /><source type="image/webp" srcset="/assets/marketing/quiet-coast-landscape-480.fbd891fc07eb.webp 480w, /assets/marketing/quiet-coast-landscape-768.849ace442bfc.webp 768w" sizes="(max-width: 760px) 90vw, 50vw" /><img src="/assets/marketing/quiet-coast-landscape-480.fbd891fc07eb.webp" width="1536" height="1024" alt="" loading="lazy" decoding="async" /></picture><span data-copy="slideEyebrow">A different kind of arrival</span><strong data-copy="slideTitle">Find the quieter way.</strong><span class="output-slide__rule" aria-hidden="true"></span></div>
               <div class="output-piece__caption"><h3 data-copy="formatPresentation">Presentation</h3><p data-copy="outputPresentationDetail">An editable pitch built around the same direction.</p><span class="output-piece__signal" data-copy="directionValue">Let the silence speak</span></div>
               <details class="output-preview" data-output-preview="presentation">
-                <summary class="output-preview__action" aria-label="Explore the complete presentation" data-copy-aria="previewPresentationAction"><span data-copy="previewPresentationAction">Explore the complete presentation</span><span aria-hidden="true">↗</span></summary>
+                <summary id="example-presentation-preview" class="output-preview__action" aria-label="Explore the complete presentation" data-copy-aria="previewPresentationAction"><span data-copy="previewPresentationAction">Explore the complete presentation</span><span aria-hidden="true">↗</span></summary>
                 <article class="marketing-preview-panel marketing-preview-panel--presentation" data-preview-panel="presentation">
                   <div class="marketing-preview-pages" data-preview-pages>
                     <section class="preview-slide preview-slide--cover" data-preview-page="presentation"><picture class="preview-slide__image" aria-hidden="true"><source type="image/avif" srcset="/assets/marketing/quiet-coast-landscape-480.341bff002e7a.avif 480w, /assets/marketing/quiet-coast-landscape-768.7efc8257ce46.avif 768w" sizes="(max-width: 760px) 88vw, 62vw" /><img src="/assets/marketing/quiet-coast-landscape-768.849ace442bfc.webp" width="1200" height="800" alt="" loading="lazy" decoding="async" /></picture><div class="preview-slide__content"><span data-copy="slideEyebrow">A different kind of arrival</span><h3 data-copy="slideTitle">Find the quieter way.</h3><p data-copy="previewSlideOneBody">A coastal campaign for a slower kind of travel: less noise, more room to breathe, and an arrival that never needs to announce itself.</p></div></section>
@@ -423,6 +438,5 @@
         <footer class="marketing-image-dialog__footer"><nav aria-label="Preview navigation" data-copy-aria="previewNavigationLabel"><button class="marketing-image-dialog__step" type="button" aria-label="Previous image" data-copy-aria="imageViewerPrevious" data-image-viewer-previous><span aria-hidden="true">←</span></button><span class="marketing-image-dialog__status" role="status" aria-live="polite" aria-atomic="true" data-image-viewer-status></span><button class="marketing-image-dialog__step" type="button" aria-label="Next image" data-copy-aria="imageViewerNext" data-image-viewer-next><span aria-hidden="true">→</span></button></nav></footer>
       </div>
     </dialog>
-    <button class="marketing-motion-toggle" type="button" aria-pressed="false" aria-label="Pause page motion" data-copy-aria="motionPauseLabel" data-marketing-motion-toggle hidden></button>
   </body>
 </html>
