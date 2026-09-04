@@ -1,5 +1,9 @@
 # Native keyboard and browser-zoom regression checks
 
+Current E7 membership is recorded in [E7 title and optional localized controls](#e7-title-and-optional-localized-controls).
+Earlier journey summaries and numerical snapshots below retain their original
+phase context; they do not define the current project membership.
+
 Run these against the existing local Forma preview and its normal, already
 onboarded local account. The suite reuses `doc-atmosphere` and its five saved
 articles: four creative decisions and the existing legacy output. It does not seed/reset the database, accept onboarding terms, save a
@@ -397,3 +401,78 @@ claiming reading-region glyph/fit certification. Normal/focused controls,
 Escape, Close, original source, native fields, current owner and invoker, and
 forbidden requests remain asserted. Layout boxes/ranges and screenshots are
 separately timed diagnostics, not a same-frame or complete-paint certificate.
+
+
+## E7 title and optional localized controls
+
+After the retained E7 title appendix, the default unfiltered suite contains
+**73 cases** with the isolated E5/E6 and supplemental E7 flags absent: eleven
+calibrations, eleven cases in each of four main profiles, seven in each AR/FR
+recovery profile, two navigation cases and two coarse Assistant cases. This is
+source membership, not a passing-run receipt. All earlier E6 cases and strict
+observers remain; earlier numerical snapshots above describe their own phases.
+
+The added English title journey runs in the four existing main profiles. It
+reaches the actual display Rename button, enters the current native name input,
+retains unsent Unicode text, and activates Cancel. Native traversal reaches the
+returned display control; no automatic Cancel focus-return promise is inferred.
+It checks the full retained title, normal word wrapping, useful compact title
+width, header gutters, the actual 44px Rename body and visible target, and the
+existing toolbar ownership. The original title, route and five saved articles
+must survive. No saved rename is submitted.
+
+After that complete 73-case baseline/candidate cycle, the optional
+`FORMA_A11Y_E7_CONTROLS=1` project adds eight memberships: two native journeys in
+each of these four complementary profiles.
+
+| Profile | Actual configured geometry |
+|---|---|
+| English coarse | 390×844, context touch support |
+| French true 200% | `viewport: null`, 838×884 window, existing per-tab browser zoom 2 |
+| Arabic coarse | 320×800, context touch support and RTL |
+| Japanese | 768×900, declared Japanese font policy |
+
+Use the already qualified source-preview finite-transport environment, including
+its existing `FORMA_A11Y_SYNTHETIC_NETWORK=1`, assigned exclusive loopback
+`FORMA_A11Y_BASE_URL` and independently pinned retained archive inputs. Add the
+supplement flag to that environment:
+
+```sh
+FORMA_A11Y_E7_CONTROLS=1 pnpm test:a11y
+```
+
+The full unfiltered total is **81**, retaining all 73 cases. An eight-case
+selection does not replace that gate. The optional isolated E5/E6 projects are
+outside these totals; recount if enabling another project. The original English
+title case is unchanged, and these representative profiles do not establish
+every locale/width/pointer combination.
+
+The supplementary Rename journey traverses the actual labelled input, Cancel
+and unactivated Save name before canceling. It retains native form/control/label
+associations, exact raw input and original title/source custody. The Clear-filter
+journey selects the existing `collection-studio` / `studio-launch` through the
+native project rail, retains its document membership and raw Library query,
+then activates only the direct Library collection-filter Clear button. It
+observes the empty → selected → cleared filter and unchanged source/view/route.
+Clear removes its own button; actual post-action focus is recorded, then native
+search reachability is checked. No filing, collection edit, import/export,
+generation, rights or saved rename action is activated. Existing finite
+transport declarations are reused without new source data or a new harness.
+
+Both journeys retain strict native focus/ring/hit/overlay checks, including the
+topbar, genuine zoom and unchanged whole-viewport captures. Complete native
+button label ranges, ordinary-word fit, current supporting text size and
+same-rendered-row peer heights are observed separately. These E7 owners retain
+the declared 44px floor; a 48px coarse override is not declared for them. Coarse
+profiles must actually report coarse primary pointer and positive touch support.
+This is Chromium context evidence, not a physical-device or AT result.
+
+The Japanese opener requires the exact source-preview `styles.css` Japanese
+CSSOM rule and its computed body/`--sans`/`--forma-font-family` stack: Hiragino
+Sans, Yu Gothic, Noto Sans CJK JP, ui-sans-serif, system-ui, sans-serif. It also
+requires `document.fonts.ready`, loaded font-set status and a positive check for
+that declared stack. This retains permitted system fallback without identifying
+the installed face used for each glyph. Existing English/French loaded-Manrope
+and Arabic declared-system-stack requirements remain unchanged. No contrast,
+individual-glyph, backend permission, whole-surface or accessibility-conformance
+claim follows from membership or a green control test.

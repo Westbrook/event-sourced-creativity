@@ -1455,7 +1455,7 @@ test("E7 compact Document toolbar focus uses shared inset paint without replacin
     "the actual Compare control retains its existing handler and admission");
   assert.equal(winning(".ui-audience-navigation a:focus-visible", "outline-offset", compact[0])?.value, inset);
   for (const viewport of compact) {
-    assert.equal(winning(strip, "max-inline-size", viewport)?.value, "55%");
+    assert.equal(winning(strip, "max-inline-size", viewport)?.value, "100%");
     assert.equal(winning(strip, "flex-wrap", viewport)?.value, "nowrap");
     assert.equal(winning(strip, "overflow-x", viewport)?.value, "auto");
     assert.equal(winning(strip, "overscroll-behavior-inline", viewport)?.value, "contain");
