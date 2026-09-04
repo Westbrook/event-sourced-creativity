@@ -513,6 +513,120 @@ test("E noncanvas healthy: existing axis, artboard, checkbox and shared-button p
   assert.equal(unconditional(responsive, ":root")["--forma-hit-target"], "var(--forma-control-min-size, 2.75rem)");
 });
 
+// E final-preparation residuals: actual production markup and local CSS only.
+// These are declared peer-row contracts, never a DOM/layout/AT or request probe.
+const ePeerSources = Object.fromEntries(await Promise.all([
+  "outcome-desk", "forma-output-requirement-card", "context-intelligence",
+  "adaptive-proposal-dialog", "design-system/choice-card",
+].map(async name => [name, await read("src/components/" + name + ".ts")])));
+const ePeerStyles = Object.fromEntries(await Promise.all([
+  "outcome-desk", "forma-output-requirement-card", "context-intelligence",
+].map(async name => [name, postcss.parse(await read("src/components/" + name + ".css"))])));
+function ePeerFragment(name, start, end) {
+  const source = ePeerSources[name], at = source.indexOf(start);
+  assert.ok(at >= 0, name + ": inspect an existing current-source action row");
+  assert.equal(source.indexOf(start, at + start.length), -1, name + ": the source boundary is unique");
+  const finish = source.indexOf(end, at + start.length);
+  assert.ok(finish >= 0, name + ": inspect the complete current row");
+  return source.slice(at, finish + end.length);
+}
+function ePeerNatural(declared, selector) {
+  for (const prop of ["height", "block-size", "max-height", "max-block-size", "overflow", "text-overflow", "line-clamp", "-webkit-line-clamp"])
+    assert.equal(declared[prop], undefined, selector + ": no fixed-height or clipping substitute");
+  assert.notEqual(declared["white-space"], "nowrap", selector + ": labels may wrap");
+}
+
+test("E peer rows healthy: Arrangement uses the existing native ChoiceCard and exact Check/Close callbacks", () => {
+  const footer = ePeerFragment("outcome-desk", '<footer class="outcome-arrangement-actions">', "</footer>");
+  assert.equal((footer.match(/<forma-ui-choice-card\b/gu) ?? []).length, 1);
+  assert.equal((footer.match(/<button\b/gu) ?? []).length, 2, "only the two conditional/direct native peers");
+  assert.ok(footer.includes(".value=" + "$" + "{preview.operationId}"));
+  assert.ok(footer.includes("if (!options.busy && !options.submitted && !options.issue) options.confirm(preview,"));
+  assert.ok(footer.includes("options.retrieve(preview.operationId)"));
+  assert.ok(footer.includes("@click=" + "$" + "{options.cancel}"));
+  assert.ok(footer.includes("options.submitted ? copy.close : copy.cancel"));
+  assert.ok(ePeerSources["outcome-desk"].includes('import "./outcome-desk.css";'));
+  const primitive = ePeerSources["design-system/choice-card"];
+  assert.ok(primitive.includes('<button\n      type="button"'));
+  assert.ok(primitive.includes("class=" + "$" + "{" + String.fromCharCode(96) + "ui-choice-card"));
+  assert.ok(primitive.includes('if (!this.disabled) emitFormaEvent(this, "forma-action", { value: this.value });'));
+});
+
+test("E peer rows: Arrangement propagates same-line stretch through its actual ChoiceCard host", () => {
+  const sheet = ePeerStyles["outcome-desk"], row = unconditional(sheet, ".outcome-arrangement-actions");
+  assert.equal(row.display, "flex"); assert.equal(row["flex-wrap"], "wrap");
+  assert.equal(row["align-items"], "stretch", "native peers and the wrapped action share the same line cross-size");
+  const host = unconditional(sheet, ".outcome-arrangement-actions > forma-ui-choice-card");
+  assert.equal(host.display, "grid", "stretch must reach the actual native button, not stop at a block host");
+  assert.equal(host.flex, "1"); assert.equal(host["min-inline-size"], "min(100%, 14rem)", "retain the existing useful action basis");
+  assert.equal(unconditional(sheet, ".outcome-desk-header")["align-items"], "start", "header copy and its different-role content keep their posture");
+  assert.equal(unconditional(design, ".button")["align-self"], undefined, "native peers inherit the scoped row policy");
+  assert.equal(unconditional(design, ".ui-choice-card")["inline-size"], "100%");
+  ePeerNatural(row, "Arrangement row"); ePeerNatural(host, "Arrangement host");
+});
+
+test("E peer rows healthy: Output requirement editing retains current native Save/Cancel and correction actions", () => {
+  const source = ePeerSources["forma-output-requirement-card"];
+  assert.ok(source.includes('import "./forma-output-requirement-card.css";'));
+  const footer = ePeerFragment("forma-output-requirement-card", '<footer class="output-requirement-form-footer">', "</footer>");
+  assert.ok(footer.includes('<div class="output-requirement-actions">'));
+  assert.equal((footer.match(/<button\b/gu) ?? []).length, 2);
+  assert.ok(footer.includes('type="submit" form=') && footer.includes('type="button"'));
+  assert.ok(footer.includes('aria-keyshortcuts="Control+Enter Meta+Enter"'));
+  assert.ok(footer.includes("@click=" + "$" + "{this.#cancel}"));
+  assert.ok(source.includes("@click=" + "$" + "{this.#reapply}"));
+  assert.ok(source.includes('this.#cancelIntent = "reload"'));
+  assert.ok(source.includes('this.#t("confirmSeries")') && source.includes('this.#confirmSeries(deliverable)'));
+  const card = unconditional(ePeerStyles["forma-output-requirement-card"], "forma-output-requirement-card");
+  assert.equal(card.container, "output-requirement / inline-size");
+});
+
+test("E peer rows: Output requirement actions stretch above as well as below the narrow container boundary", () => {
+  const sheet = ePeerStyles["forma-output-requirement-card"];
+  const selector = "forma-output-requirement-card .output-requirement-actions";
+  const row = unconditional(sheet, selector);
+  assert.equal(row.display, "flex"); assert.equal(row["flex-wrap"], "wrap");
+  assert.equal(row["align-items"], "stretch", "a wide card can still contain a narrow nested action row");
+  assert.equal(row.gap, "var(--forma-space-2, .5rem)");
+  const compact = rules(sheet).filter(rule => rule.parent.type === "atrule" && rule.parent.name === "container" && rule.parent.params === "output-requirement (max-width: 34rem)");
+  assert.ok(compact.length);
+  assert.equal(declarations(compact.find(rule => rule.selector === selector + " > button")).flex, "1 1 11rem", "retain existing narrow wrapping widths");
+  const button = unconditional(sheet, "forma-output-requirement-card button");
+  assert.equal(button["min-block-size"], "var(--forma-control-min-size, 2.75rem)");
+  assert.equal(button["white-space"], "normal");
+  ePeerNatural(row, selector); ePeerNatural(button, "Output requirement button");
+});
+
+test("E peer rows healthy: Context analysis and Adaptive review share existing all-button rows, not status chips", () => {
+  const source = ePeerSources["context-intelligence"];
+  const entry = source.split("\n").find(line => line.includes("return html" + String.fromCharCode(96) + "<div class=") && line.includes('this.#begin("research")'));
+  assert.ok(entry, "the current authorized two-action entry exists");
+  assert.equal((entry.match(/<button\b/gu) ?? []).length, 2);
+  assert.ok(entry.includes('this.#begin("decompose")'));
+  assert.ok(entry.includes('this.#begin("research")'));
+  assert.ok(entry.includes('context.controls.resumeDecompose') && entry.includes('context.controls.resumeResearch'));
+  assert.ok(source.includes('import "./context-intelligence.css";'));
+  const footer = ePeerFragment("adaptive-proposal-dialog", '<footer class="context-intelligence-actions">', "</footer>");
+  assert.equal((footer.match(/<button\b/gu) ?? []).length, 6);
+  assert.doesNotMatch(footer, /<forma-ui-(?:badge|chip|status)\b/u);
+  for (const binding of ['controller.request("preview")', 'controller.request("apply")', "controller.resume()", "controller.discoverReceipts()", "controller.discoverDestinationReceipts()", 'controller.request("dismiss")'])
+    assert.ok(footer.includes(binding), "retain current executor: " + binding);
+});
+
+test("E peer rows: Context analysis and Adaptive review wrap and stretch only their existing action row", async () => {
+  const row = unconditional(ePeerStyles["context-intelligence"], ".context-intelligence-actions");
+  assert.equal(row.display, "flex"); assert.equal(row["flex-wrap"], "wrap");
+  assert.equal(row["align-items"], "stretch");
+  const adaptive = postcss.parse(await read("src/components/adaptive-proposal-dialog.css"));
+  assert.equal(unconditional(adaptive, ".adaptive-proposal-dialog .context-intelligence-actions")["align-items"], undefined, "the shared action policy is not replaced by a second scoped alignment");
+  assert.equal(unconditional(ePeerStyles["context-intelligence"], ".context-intelligence-actions .button")["align-items"], "center", "icon and text inside each button remain centered");
+  assert.equal(unconditional(design, "forma-ui-cluster")["align-items"], "center", "unrelated badge/status clusters stay centered");
+  const strip = '.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions';
+  assert.equal(unconditional(responsive, strip)["flex-wrap"], "nowrap");
+  assert.equal(unconditional(responsive, strip)["overflow-x"], "auto", "intentional navigation strips remain scrollable");
+  ePeerNatural(row, "Context action row");
+});
+
 test("Sessions original blank form keeps actions before a full-span current status", async () => {
   const sessions = await read("src/components/forma-sessions.ts");
   const start = sessions.indexOf("  #blankForm() {"), end = sessions.indexOf("\n  #brief()", start);
@@ -574,6 +688,60 @@ test("Sessions original blank form reuses wrapping peer controls and the shared 
       assert.equal(value[property], undefined, "No fixed-height or truncated substitute for real wrapping");
     assert.notEqual(value.overflow, "hidden"); assert.notEqual(value["white-space"], "nowrap");
   }
+});
+
+test("E Projects footer healthy: exact current actions keep their names, order and mobile column", async () => {
+  const source = await read("src/components/forma-projects.ts"), marker = '<footer>${project.state===';
+  const start = source.indexOf(marker), end = source.indexOf("</footer>", start);
+  assert.ok(start >= 0 && end > start, "inspect the current project-card footer, not the intake modal");
+  assert.equal(source.indexOf(marker, start + marker.length), -1);
+  const footer = source.slice(start, end);
+  for (const binding of [
+    "this.#openProject(project.id,destination)",
+    'this.#openProject(project.id,"/canvas/library")',
+    'this.#openProject(project.id,"/studio/project")',
+    'this.#openProject(project.id,"/canvas")',
+  ]) assert.ok(footer.includes(binding), "retain the current exact destination: " + binding);
+  const openerMarker = "  #openProject(projectId:string,destination:string){";
+  const openerAt = source.indexOf(openerMarker), openerEnd = source.indexOf("\n  override render()", openerAt);
+  assert.ok(openerAt >= 0 && openerEnd > openerAt, "inspect the actual owned project-opening method");
+  assert.equal(source.indexOf(openerMarker, openerAt + openerMarker.length), -1);
+  assert.equal(source.slice(openerAt, openerEnd).replace(/\s+/gu, ""),
+    '#openProject(projectId:string,destination:string){returnnavigateInApp(this,navigation=>this.store.openProject(projectId,destination,navigation));}',
+    "the current owner admits the exact project/destination and forwards the same navigation lease");
+  const bridge = (await read("src/components/command-departure.ts")).replace(/\s+/gu, "");
+  assert.ok(bridge.includes('exportfunctionnavigateInApp(origin:FormaElement,run:InAppNavigationAction,context:NavigationPresentationContext={}):Promise<boolean>{consthost=origin.closest<InAppNavigationHost>("forma-shell");returnhost?host.navigateFrom(origin,run,context):Promise.resolve(false);}'),
+    "the existing bridge delegates to its connected Shell owner or refuses; it does not invoke an unguarded Store callback");
+  for (const key of ["projects.continueNamed", "projects.openNamed", "projects.openLibraryNamed", "projects.openCanvasNamed"])
+    assert.ok(footer.includes(key), "retain the complete existing contextual action name: " + key);
+  assert.ok(footer.includes("\\u2068") && footer.includes("\\u2069"), "authored project names stay bidi-isolated");
+  assert.doesNotMatch(footer, /<forma-ui-(?:badge|chip|status)\b/u);
+  assert.ok(footer.indexOf('projects.continueNamed') < footer.indexOf('projects.openLibraryNamed')
+    && footer.indexOf('projects.openLibraryNamed') < footer.indexOf('projects.openCanvasNamed'), "conditional action order is unchanged");
+  assert.equal(unconditional(responsive, ".projects-page .projects-grid")["grid-template-columns"],
+    "repeat(auto-fit, minmax(min(18rem, 100%), 1fr))", "a wide viewport may still have narrow real cards");
+  const mobile = rules(base).filter(rule => rule.selectors.includes(".project-card footer")
+    && rule.parent.type === "atrule" && rule.parent.name === "media" && rule.parent.params === "(max-width: 760px)");
+  assert.equal(mobile.length, 1); assert.equal(declarations(mobile[0])["flex-direction"], "column");
+  assert.equal(declarations(mobile[0])["align-items"], "stretch");
+  assert.equal(unconditional(design, ".button")["min-height"], "2.75rem");
+  assert.equal(unconditional(design, ".button")["min-inline-size"], "var(--forma-control-min-size, 2.75rem)");
+  assert.equal(unconditional(base, ".project-card > header")["align-items"], "center", "mixed badge/header metadata remains centered");
+});
+
+test("E Projects footer wraps content-sized native peers without a viewport-only escape", () => {
+  const row = unconditional(base, ".project-card footer");
+  assert.equal(row.display, "flex"); assert.equal(row["flex-wrap"], "wrap");
+  assert.equal(row["min-inline-size"], "0"); assert.equal(row["align-items"], "stretch");
+  assert.equal(row.gap, "var(--forma-cluster-gap)");
+  assert.equal(row["flex-direction"], undefined, "keep ordinary DOM/writing-direction order");
+  const peers = unconditional(base, ".project-card footer > .button");
+  assert.equal(peers.flex, "0 1 auto", "do not force three equal shrinking text columns");
+  assert.equal(peers["max-inline-size"], "100%");
+  assert.equal(peers["white-space"], "normal"); assert.equal(peers["overflow-wrap"], "anywhere");
+  assert.equal(peers["min-height"], undefined); assert.equal(peers["min-block-size"], undefined, "shared floor remains authoritative");
+  assert.equal(row["padding-inline"], undefined); assert.equal(peers["padding-inline"], undefined, "do not introduce another in-section inset");
+  ePeerNatural(row, "Projects footer"); ePeerNatural(peers, "Projects native action");
 });
 
 // E6 follow-up after the original six-contract STOP/runtime/replay. This is a

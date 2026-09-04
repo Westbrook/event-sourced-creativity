@@ -310,3 +310,63 @@ for (const locale of ["en", "fr", "ar", "ja"]) for (const leading of ["authored-
     }
   });
 }
+
+// E catalog consistency: reuse this file's actual-case extraction and native
+// primitive observer. This is a declared composition contract, not measured CSS
+// geometry, a physical keyboard/AT result, or an application mutation exercise.
+let buttonExampleCase;
+const findButtonExample = node => {
+  if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.expression.text === "forma-ui-button") buttonExampleCase = node;
+  ts.forEachChild(node, findButtonExample);
+};
+findButtonExample(preview);
+assert.ok(buttonExampleCase && buttonExampleCase.statements.length === 1 && ts.isReturnStatement(buttonExampleCase.statements[0]));
+const renderButtonExample = new Function("html", "nothing", "return function() { " + buttonExampleCase.statements[0].getText(syntax.catalog) + " };")(html, nothing);
+const themeExample = catalog.members.find(member => member.name?.getText(syntax.catalog) === "#theme");
+assert.ok(themeExample);
+for (const locale of ["en", "fr", "ar", "ja"]) {
+  test("current Button catalog peer actions opt into shared stretch without changing native behavior in " + locale, async t => {
+    const i18n = await localeController(t, locale), host = new CatalogCase();
+    const view = observe(renderButtonExample.call(host), host), structure = templateElementTree(view);
+    assert.equal(structure.children.length, 1, "the existing one-group preview is not replaced by another wrapper");
+    const group = structure.children[0];
+    assert.equal(group.source.tag, "forma-ui-cluster");
+    assert.deepEqual(group.children.map(node => node.source.tag), ["forma-ui-button", "forma-ui-button"]);
+    const buttons = group.children.map(node => instantiate(Button, node.source));
+    const native = buttons.map(button => observe(button.render(), button).nodes.find(node => node.tag === "button"));
+    assert.ok(native.every(Boolean), "both actual wrapped buttons retain their native controls");
+    assert.deepEqual(native.map(node => node.textContent), [i18n.t("sample.saveDirection", "Save direction"), i18n.t("lab.unavailable", "Not available")]);
+    assert.deepEqual(native.map(node => node.attributes.type), ["button", "button"]);
+    assert.equal(buttons[0].value, "save-direction"); assert.equal(buttons[0].variant, "primary"); assert.equal(buttons[0].iconName, "check");
+    assert.equal(Object.hasOwn(native[0].attributes, "disabled"), false);
+    assert.equal(Object.hasOwn(native[1].attributes, "disabled"), true);
+
+    // Reuse the existing catalog's exact #demo listener as the finite bubbling
+    // port, just as the original Cluster cases above do; no new click executor.
+    const demoControl = observe(host.render(), host).nodes.find(node => node.tag === "button");
+    assert.equal(typeof demoControl?.handlers.click, "function");
+    const dispatches = [], before = host.updates;
+    for (const button of buttons) button.addEventListener("forma-press", event => {
+      dispatches.push({ type: event.type, detail: event.detail });
+      demoControl.handlers.click.call(host, event);
+    });
+    assert.equal(native[0].click().defaultPrevented, true, "the existing preview consumes the action");
+    native[1].click();
+    assert.deepEqual(dispatches, [{ type: "forma-press", detail: { value: "save-direction" } }]);
+    assert.equal(host.updates, before + 1, "the disabled peer does not invoke preview behavior");
+    assert.equal(host.message, i18n.t("catalog.previewAction", "", { label: buttons[0].label }));
+
+    const cluster = instantiate(Cluster, group.source);
+    cluster.children = buttons;
+    assert.equal(cluster.render(), nothing); assert.strictEqual(cluster.children, buttons, "layout preserves the original authored owners");
+    assert.equal(new Cluster().alignment, "center", "mixed and metadata consumers keep the global default");
+    const theme = themeExample.getText(syntax.catalog);
+    assert.ok(theme.includes("<forma-ui-cluster><forma-ui-button "), "the mixed theme preview remains a default cluster");
+    for (const tag of ["forma-ui-chip", "forma-ui-badge", "forma-ui-status"]) assert.ok(theme.includes("<" + tag + " "), "mixed theme retains " + tag);
+    t.diagnostic("CATALOG_BUTTON_PEERS " + JSON.stringify({ locale, route: "/knowledge/design-system#forma-ui-button",
+      labels: native.map(node => node.textContent), disabled: native.map(node => Object.hasOwn(node.attributes, "disabled")),
+      alignment: group.source.attributes.alignment ?? "default-center" }));
+    assert.equal(group.source.attributes.alignment, "stretch", "comparable action peers must opt into the existing shared row contract");
+    assert.equal(cluster.alignment, "stretch", "the actual layout primitive consumes the existing attribute");
+  });
+}
