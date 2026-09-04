@@ -104,7 +104,7 @@ async function loadActual(relative) {
 }
 
 class RendererPort {
-  constructor(fixture, registry) { this.fixture = fixture; this.registry = registry; this.instances = new Map(); this.nodes = []; this.bindings = []; this.activeCaches = new Set(); this.seen = new Set(); this.markup = ""; }
+  constructor(fixture, registry) { this.fixture = fixture; this.registry = registry; this.instances = new Map(); this.nodes = []; this.bindings = []; this.activeCaches = new Set(); this.seen = new Set(); this.markup = ""; this.nativeScrollCalls = []; }
   reference(value, owner) { const id = this.bindings.push({ value, owner }) - 1; return "__bound_" + id + "__"; }
   resolve(value) { const exact = value.match(/^__bound_(\d+)__$/); if (exact) return this.bindings[Number(exact[1])]?.value; return value.replace(/__bound_(\d+)__/g, (_, id) => String(this.bindings[Number(id)]?.value ?? "")); }
   attrs(raw) {
@@ -172,6 +172,7 @@ class RendererPort {
     for (const [full, tag, raw] of markup.matchAll(/<([\w-]+)([^>]*)>/g)) {
       const parsed = this.attrs(raw), node = { tag, owner, ...parsed, full, open: Object.hasOwn(parsed.attributes, "open"), isConnected: true, value: parsed.properties.value ?? parsed.attributes.value ?? "", checked: parsed.properties.checked ?? false };
       node.focus = () => this.fixture.trace.push("focus:" + (node.attributes.class ?? node.tag));
+      node.scrollIntoView = options => this.nativeScrollCalls.push({ node, options: { ...options } });
       node.closest = () => null;
       node.close = () => { if (node.open) { node.open = false; node.handlers.close?.call(owner, { target: node, currentTarget: node }); } };
       this.nodes.push(node);
@@ -355,16 +356,24 @@ test("empty and long manual edits survive close, another decision, reorder, and 
 
 test("composition-safe Escape closes controls, preserves the draft, and restores the named trigger", async () => {
   const f = fixture(); await f.select("decision-0"); await f.toggle("decision-0");
+  assert.equal(f.renderer.nativeScrollCalls.length, 0, "opening Controls does not reveal its panel");
   const block = f.block("decision-0"), panel = f.renderer.ownNodes(block, "div").find(node => node.attributes.class === "context-controls-panel");
   const textarea = f.renderer.ownNodes(block, "textarea")[0];
   textarea.handlers.keydown.call(block, { key: "Escape", isComposing: true, preventDefault() { assert.fail("the text editor intercepted composition"); } });
   assert.match(f.renderer.markup, /Esc to close controls/);
   await panel.handlers.keydown.call(block, { key: "Escape", isComposing: true, target: { closest: () => null }, preventDefault() { assert.fail("composition was intercepted"); } }); f.draw();
   assert.equal(f.renderer.controls("select"), 2);
+  assert.equal(f.renderer.nativeScrollCalls.length, 0, "composing Escape does not reveal a return target");
   await panel.handlers.keydown.call(block, { key: "Escape", isComposing: false, target: { closest: () => null }, preventDefault() {}, stopPropagation() {} }); f.draw();
   await Promise.resolve();
   assert.equal(f.renderer.controls("select"), 0);
   assert.ok(f.trace.some(entry => entry.includes("context-controls-toggle")));
+  assert.equal(f.renderer.nativeScrollCalls.length, 1);
+  const reveal = f.renderer.nativeScrollCalls[0];
+  assert.equal(reveal.node.tag, "button");
+  assert.equal(reveal.node.owner, block);
+  assert.ok(String(reveal.node.attributes.class).split(/\s+/).includes("context-controls-toggle"));
+  assert.deepEqual(reveal.options, { block: "center", inline: "nearest", behavior: "instant" });
 });
 
 test("actual intelligence review retains long proposals and original approval identity across controls detachment", async () => {
@@ -486,11 +495,16 @@ test("exact Library viewer routes contain calm inspection and no disabled author
   assert.ok(!f.renderer.markup.includes("Create reusable block"));
   assert.ok(!f.renderer.markup.includes("Fork as reusable block"));
   const inspection = f.renderer.component("forma-context-block", "decision-0");
+  assert.equal(inspection.surface, "library");
+  const scrollBefore = f.renderer.nativeScrollCalls.length;
   await f.renderer.handler(inspection, "button", node => String(node.attributes.class).includes("context-controls-toggle"))(); f.draw();
   assert.equal(f.renderer.controls("select"), 0);
   assert.equal(f.renderer.ownNodes(inspection, "form").length, 0);
   assert.equal(f.renderer.query(editor, "forma-context-intelligence").length, 1);
   assertReadOnlyReview(f, f.renderer.query(editor, "forma-context-intelligence")[0]);
+  await f.renderer.handler(inspection, "button", node => String(node.attributes.class).includes("context-controls-toggle"))(); f.draw();
+  await Promise.resolve();
+  assert.equal(f.renderer.nativeScrollCalls.length, scrollBefore, "Library open and close retain their focus-only behavior");
 });
 
 test("the Library named control retains the original authorized copy executor", async () => {

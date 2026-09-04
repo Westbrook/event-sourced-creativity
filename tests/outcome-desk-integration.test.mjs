@@ -263,10 +263,12 @@ test("Desk selects no substitute object, reuses canonical references and exposes
   assert.equal(opened, 1);
 });
 
-test("all seven formats remain one expert choice from existing preparation, and cannot purchase or author", () => {
+test("all eight formats remain one expert choice from existing preparation, and cannot purchase or author", () => {
   const host = deskFixture(), current = host.input(), before = JSON.stringify(current);
   const actions = outcomeDeskPreparationActions(current, "document:doc", host.ports);
-  assert.equal(actions.length, 7); assert.equal(new Set(actions.map(action => action.target.action.target.medium)).size, 7);
+  assert.deepEqual(actions.map(action => action.target.action.target.medium), [
+    "image", "short_story", "scene", "slides", "storyboard", "video", "audio", "model3d",
+  ]);
   assert.ok(actions.every(action => action.effect === "open-existing-executor" && action.target.action.target.kind === "configure"));
   assert.equal(JSON.stringify(current), before);
   assert.deepEqual(outcomeDeskPreparationActions({ ...current, facts: { ...current.facts, canConfigure: false } }, "document:doc", host.ports), []);
