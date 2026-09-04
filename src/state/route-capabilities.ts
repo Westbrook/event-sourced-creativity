@@ -10,6 +10,10 @@ export type RouteCapabilities = {
 export function routeCapabilities(path: string): RouteCapabilities {
   const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
 
+  if (pathname === "/make/short-story") {
+    return { profile: "workspace", privateContent: false, jobHistory: false };
+  }
+
   if (pathname === "/projects" || pathname.startsWith("/projects/") || pathname === "/canvas/projects" || pathname.startsWith("/canvas/projects/") || pathname === "/creative") {
     return { profile: "projects", privateContent: false, jobHistory: false };
   }

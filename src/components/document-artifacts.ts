@@ -1227,7 +1227,21 @@ export class DocumentArtifacts extends FormaElement {
     return this.updateComplete.then(()=>{
       if(!current())return;
       const target=this.#viewDialog()?.querySelector<HTMLTextAreaElement>('.artifact-direct-editor textarea[rows="12"]');
-      if(target?.isConnected)focus.run(target,()=>{if(!current())return false;target.focus();return true;});
+      if(target?.isConnected)focus.run(target,()=>{
+        if(!current())return false;
+        if(artifact.kind!=="short_story"||this.#viewerFocused){target.focus();return true;}
+        const editorCurrent=()=>current()&&target.isConnected&&!this.#viewerFocused
+          &&target.ownerDocument===this.ownerDocument
+          &&dialog?.getAttribute("data-artifact-kind")==="short_story"
+          &&dialog.getAttribute("data-output-focus")==="false"
+          &&dialog.querySelector<HTMLTextAreaElement>('.artifact-direct-editor textarea[rows="12"]')===target;
+        if(!editorCurrent())return false;
+        // Reveal the complete owned control, without relying on focus's scroll alignment.
+        target.focus({preventScroll:true});
+        if(!editorCurrent()||this.ownerDocument.activeElement!==target)return false;
+        target.scrollIntoView({block:"nearest",inline:"nearest",behavior:"instant"});
+        return editorCurrent()&&this.ownerDocument.activeElement===target;
+      });
     }).catch(()=>{/* A retired opening never recovers focus. */}).finally(()=>focus.dispose());
   }
   #cancelArtifactEdit(event?:MouseEvent){
