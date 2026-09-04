@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1avh66.101": "Réutilisez une décision créative ou une création précédente du projet. Tout reste modifiable dans ce document.",
+  "system.auto.z7ijvf.70": "Créez une décision réutilisable ou générez une création du projet à réutiliser ici.",
   "system.auto.1i2qq03.94": "Présentation explicite uniquement ; le composant hôte fournit le contrôle de rattachement au contexte actuel, jamais une ligne enregistrée fictive.",
   "system.auto.tqfa8e.80": "Uniquement l’identifiant d’origine encore non résolu du composant hôte de la recette ; aucun corps de requête, justificatif ni autorisation de réessai.",
   "system.auto.1w05nuc.88": "Renvoie explicitement la demande d’enregistrement d’origine de cette session ; ne matérialise jamais les modifications plus récentes et ne les réapplique jamais sur une nouvelle base.",

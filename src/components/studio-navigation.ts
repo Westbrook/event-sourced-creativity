@@ -351,6 +351,7 @@ export class StudioModeNav extends FormaElement {
     const projection = this.store.projection.get();
     const choosing = this.#contextSource === "choose";
     return html`<dialog class="modal context-set-picker-dialog" closedby="any" aria-labelledby="context-set-picker-title"
+      @keydown=${(event: KeyboardEvent) => { if (!event.isComposing && event.key === "Escape") event.stopPropagation(); }}
       @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#closeContextPicker(); }}
       @cancel=${(event: Event) => { event.preventDefault(); this.#closeContextPicker(); }}>
       <section class="context-set-picker-panel">
@@ -358,7 +359,7 @@ export class StudioModeNav extends FormaElement {
         <header>
           ${!choosing ? html`<button type="button" class="context-entry-back" @click=${() => this.#chooseContextSource("choose")}>${icon("back")} ${this.i18n.system("Add context")}</button>` : nothing}
           <h2 id="context-set-picker-title">${this.i18n.system(choosing ? "Add context" : "Add reusable context")}</h2>
-          <p>${this.i18n.system(choosing ? "Add an existing or new creative decision" : "Reuse a creative decision or any previous image, story, scene, presentation, storyboard, or video. Everything remains editable in this document.")}</p>
+          <p>${this.i18n.system(choosing ? "Add an existing or new creative decision" : "Reuse a creative decision or a previous project output. Everything remains editable in this document.")}</p>
         </header>
         ${choosing ? html`<section class="context-entry-choices" aria-label=${this.i18n.system("Add context")}>
           <forma-ui-choice-card .label=${this.i18n.system("Add a context block")} .detail=${this.i18n.system("Choose a block type")} icon-name="plus" value="create" @forma-action=${this.#requestContextCreation}></forma-ui-choice-card>
@@ -375,7 +376,7 @@ export class StudioModeNav extends FormaElement {
             </article>`;
           })}
           ${this.#previousWork()}
-        </div>` : html`<div class="context-set-picker-empty"><b>No reusable context yet</b><p>Create a reusable decision or generate an image, story, scene, presentation, storyboard, or video.</p><a href="/library/blocks/editor/new" @click=${this.#openEmptyContextLibrary}>Open Block editor ${icon("arrow")}</a></div>`}
+        </div>` : html`<div class="context-set-picker-empty"><b>No reusable context yet</b><p>${this.i18n.system("Create a reusable decision or generate a project output to reuse here.")}</p><a href="/library/blocks/editor/new" @click=${this.#openEmptyContextLibrary}>Open Block editor ${icon("arrow")}</a></div>`}
       </section>
     </dialog>`;
   }

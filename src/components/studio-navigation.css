@@ -14,7 +14,7 @@
 }
 .studio-mode-nav .studio-view-options {
   display: grid;
-  gap: var(--forma-space-1, .25rem);
+  gap: max(var(--forma-space-1, .25rem), var(--forma-focus-clearance, .5rem));
 }
 .studio-mode-nav .studio-view-options > a {
   display: flex;
@@ -99,4 +99,20 @@
 /* Collapsed text remains owned by its native action inside the scroll strip. */
 .studio-mode-nav > :is(.context-set-trigger, .document-focus-toggle) {
   position: relative;
+}
+
+/* Keep Add context's native floor when the Studio container hides its label. */
+.studio-mode-nav > button.context-set-trigger {
+  min-inline-size: var(--forma-hit-target);
+}
+
+/* Inline links do not honor the inherited Studio control block-size floor. */
+.context-set-picker-dialog > .context-set-picker-panel > .context-set-picker-empty > a {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The modal scroll owner may reveal a complete choice body at its edge. */
+.context-set-picker-dialog > .context-set-picker-panel > .context-entry-choices > forma-ui-choice-card > button.ui-choice-card:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
 }

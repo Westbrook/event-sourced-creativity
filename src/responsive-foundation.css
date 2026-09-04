@@ -1310,33 +1310,196 @@ html:not([data-document-focus]) .application-creative[data-nav-posture="compact"
   outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
 }
 
-/* Library landing owns root-scroll timing before native focus traversal.
+/* Library browsing and its block editor own root-scroll timing before native focus traversal.
  * Keep this owner policy independent of whichever control is focused. */
-html:has(.application-creative[data-layout-intent="browse"] > #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+html:has(.application-creative[data-layout-intent="browse"] > #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
   scroll-behavior: auto;
 }
 
-/* Library's tall browsing shell scrolls global chrome in natural order.
- * Local context sticks only after the complete task-navigation row has passed. */
-.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) > .topbar {
+/* Current Projects browsing owns native focus and reading scroll timing. */
+html:has(.application-creative[data-layout-intent="browse"] > #main-content > .projects-source-owner:not([hidden]):not([inert]) > forma-creative-application > forma-projects > .projects-page):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-behavior: auto;
+}
+
+/* Library's tall browsing shell and page heading scroll in natural order.
+ * The project rail retains its separate full-height context. */
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)) > .topbar {
   position: relative;
   top: auto;
 }
 
 .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) .library-page > .library-main > .page-header--library {
-  inset-block-start: 0;
+  position: relative;
+  inset-block-start: auto;
 }
 
-.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) .library-page > forma-project-rail > .project-rail {
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)) .library-page > forma-project-rail > .project-rail {
   inset-block-start: 0;
   block-size: 100dvb;
 }
 
 /* Match Library's existing small-viewport local header and rail flow. */
 @media (max-width: 760px) {
-  .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) > .topbar {
+  .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)) > .topbar {
     position: relative;
     top: auto;
+  }
+}
+
+/* Library output history keeps complete peers in its own wrapping heading. */
+.application-creative forma-library .library-content > section > .section-heading:has(> forma-ui-segmented-control.compact-segmented) {
+  flex-wrap: wrap;
+}
+
+.application-creative forma-library .library-content > section > .section-heading > forma-ui-segmented-control.compact-segmented {
+  flex: 0 1 auto;
+  inline-size: max-content;
+  max-inline-size: 100%;
+}
+
+.application-creative forma-library .library-content > section > .section-heading > forma-ui-segmented-control.compact-segmented > .ui-segmented > button {
+  flex: 0 0 auto;
+  min-inline-size: var(--forma-hit-target, 2.75rem);
+  min-block-size: var(--forma-hit-target, 2.75rem);
+}
+
+.application-creative forma-library .library-content > section > .section-heading > forma-ui-segmented-control.compact-segmented > .ui-segmented > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Empty output history reserves following reading space for native focus.
+ * This is a bounded viewport budget, not a measurement of the sibling copy. */
+.application-creative forma-library .library-content > section:has(> .family-empty[data-forma-empty-state]) > .section-heading > forma-ui-segmented-control.compact-segmented > .ui-segmented > button {
+  scroll-margin-block-end: max(0px, min(calc(50dvb + var(--forma-bottom-nav-size) + var(--forma-focus-clearance)), calc(100dvb - 5rem)));
+}
+
+/* Library form actions and the current content field retain native flow. */
+.application-creative forma-library forma-library-block-editor .library-block-form > footer {
+  position: static;
+  bottom: auto;
+}
+
+.application-creative forma-library forma-library-block-editor .library-block-form forma-ui-rich-text.block-editor-copy > .ui-rich-text > textarea,
+.application-creative forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"] {
+  scroll-margin-block: var(--forma-focus-clearance);
+  scroll-margin-block-end: calc(var(--forma-bottom-nav-size) + var(--forma-focus-clearance));
+}
+
+/* The next native field keeps the preceding content help readable in short views.
+ * This is an authoring budget, not a measurement of localized help height. */
+.application-creative[data-layout-intent="browse"][data-short-height="true"]:not(:has(> .impersonation-banner)) forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"] {
+  scroll-margin-block-start: min(60dvb, 20rem);
+}
+
+/* The view toolbar has its own rounded native scroller, separate from history. */
+.application-creative forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button {
+  flex: 0 0 auto;
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+.application-creative forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Existing native influence sliders retain the common target floor. */
+.application-creative forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"],
+.application-creative forma-reality-layers .layers-panel > form.layer-inspector[data-layer-inspector] > label > input[type="range"][name="weight"] {
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+@media (pointer: coarse) {
+  .application-creative forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"],
+  .application-creative forma-reality-layers .layers-panel > form.layer-inspector[data-layer-inspector] > label > input[type="range"][name="weight"] {
+    min-inline-size: var(--forma-hit-target-coarse);
+    min-block-size: var(--forma-hit-target-coarse);
+  }
+}
+
+/* Current Layers fields and footer buttons reserve native focus paint during root scrolling. */
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label > :is(input, textarea, select),
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > footer.platform-form-actions > button.button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label > textarea[name="instructions"] {
+  scroll-margin-block-end: min(50dvb, 8rem);
+}
+
+/* The existing small-container layout is a natural-flow stack. Its frame and
+ * inspector panel must not retain clipping from the separate bounded workbench. */
+@container studio (max-width: 720px) {
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"],
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel {
+    overflow: visible;
+  }
+}
+
+/* Layers uses the same root-owned native reading policy as Library/Projects. */
+html:not([data-document-focus]):has(.application-creative[data-layout-intent="browse"] > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-behavior: auto;
+}
+
+/* The tall-rail inspector reserves root reading space for native field arrival.
+ * Keep the inset on the current owner, independent of which field has focus. */
+html:not([data-document-focus]):has(.application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="false"] > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector]):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-padding-block-end: min(50dvb, 12rem);
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .topbar {
+  position: relative;
+  top: auto;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)) > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack {
+  position: static;
+  top: auto;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)) > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > forma-project-rail > .project-rail {
+  inset-block-start: 0;
+  block-size: 100dvb;
+}
+
+@media (max-width: 760px) {
+  html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .topbar {
+    position: relative;
+    top: auto;
+  }
+}
+
+/* In these long editors, mobile task navigation is an early native row.
+ * Retain the existing short-landscape side rail and Library landing policy. */
+@media not all and (max-height: 37.5rem) and (orientation: landscape) {
+  /* Native text editing retains a bounded authoring inset in the root view.
+   * It does not reserve a fixed dock: navigation is already in natural flow. */
+  html:not([data-document-focus]):has(.application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+    scroll-padding-block-end: min(50dvb, 12rem);
+  }
+
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
+    position: relative;
+    inset: auto;
+    inline-size: auto;
+    padding-block-end: 0;
+  }
+
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
+    padding-block-end: 0;
+  }
+
+  @media (max-width: 47.99rem) {
+    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
+      position: relative;
+      inset: auto;
+      inline-size: auto;
+      padding-block-end: 0;
+    }
+
+    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
+      padding-block-end: 0;
+    }
   }
 }
 
@@ -2943,6 +3106,11 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     padding-block: .5rem;
   }
 
+  /* Give the existing compact Ask lane room below the short Library rail. */
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="browse"]:has(> forma-creative-assistant > forma-assistant-panel) forma-library > .library-page > .library-main > .page-header--library {
+    padding-block-start: calc(.5rem + var(--forma-focus-clearance));
+  }
+
   .application-creative .chat-view-page {
     --forma-chat-shell-offset: var(--forma-short-topbar-height);
     position: relative;
@@ -3595,6 +3763,17 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
 .projects-page .project-card footer {
   margin-block-start: var(--forma-cluster-gap);
   padding-block-start: 0;
+}
+
+/* Native footer focus retains the existing outward ring at the page edge. */
+.application-creative[data-layout-intent="browse"] > #main-content > .projects-source-owner:not([hidden]):not([inert]) > forma-creative-application > forma-projects > .projects-page > .projects-grid > .project-card > footer > button.button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+/* Short Projects pages reserve a bounded reading lane after the first action
+   for its following peers and summary, without measuring or shortening copy. */
+.application-creative[data-layout-intent="browse"][data-short-height="true"] > #main-content > .projects-source-owner:not([hidden]):not([inert]) > forma-creative-application > forma-projects > .projects-page > .projects-grid > .project-card > footer:has(+ .project-card-summary) > button.button:first-child {
+  scroll-margin-block-end: calc(50dvb + 2 * var(--forma-focus-clearance));
 }
 
 .library-main .library-body {
