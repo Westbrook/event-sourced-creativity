@@ -386,11 +386,13 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
       ]],
+      ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
     ] as const;
     for (const [ownerSelector, selectors] of families) {
       const surfaces = [...main.querySelectorAll<HTMLElement>(ownerSelector)]
         .filter(surface => surface.isConnected && surface.closest("#main-content") === main
-          && surface.closest(".application-creative") === shell);
+          && surface.closest(".application-creative") === shell
+          && (ownerSelector !== '.application-loading[role="status"]' || surface.parentElement === main));
       if (surfaces.length !== 1) continue;
       const surface = surfaces[0]!;
       const elements = new Set(selectors.flatMap(selector => [...surface.querySelectorAll<HTMLElement>(selector)]));
@@ -512,7 +514,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       [style.transform, style.translate, style.rotate, style.scale, style.perspective, style.filter]
         .some((value) => value && value !== "none")
       || Boolean(style.zoom && !["normal", "1", "100%"].includes(style.zoom));
-    const controls = [...document.querySelectorAll<HTMLElement>("a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true'], .output-requirement-warning, .output-recipe-entry, forma-ui-notice")]
+    const controls = [...document.querySelectorAll<HTMLElement>("a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true'], .output-requirement-warning, .output-recipe-entry, forma-ui-notice, .app-shell > .error-banner[role='alert']")]
       .filter((control) => !this.contains(control)
         && !control.closest("[hidden], [inert], [aria-hidden='true']"))
       .map((control) => {

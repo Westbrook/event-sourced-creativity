@@ -1543,6 +1543,8 @@ export class FormaStore {
   }
 
   documentRouteState(path=this.route.get()):"ready"|"pending"|"unavailable"{
+    // A retired source cannot be ready merely because the address resolves.
+    if(this.#sourceRetired)return this.loading.get()?"pending":"unavailable";
     const addressed=isDocumentViewRoute(path)?documentIdFromRoute(path):null;
     if(!addressed||this.projection.get().documentId===addressed)return "ready";
     return this.loading.get()||this.#cachedHistoryRevalidation?"pending":"unavailable";

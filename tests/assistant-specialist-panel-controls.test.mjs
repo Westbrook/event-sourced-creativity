@@ -376,7 +376,7 @@ function d411Rect(left, top, width, height) {
 }
 function d411Placement(t, controls = [], viewport = { width: 419.5, height: 398.5 }, nativeWindow, locale = "en") {
   const f = fixture(locale, nativeWindow), values = new Map(), writes = [], boxes = [], restore = [];
-  const x = { f, controls, regions: [], queries: [], values, writes, boxes, hovered: false };
+  const x = { f, controls, regions: [], alertRegions: [], queries: [], values, writes, boxes, hovered: false };
   const setGlobal = (key, value) => {
     const previous = Object.getOwnPropertyDescriptor(globalThis, key);
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
@@ -419,10 +419,12 @@ function d411Placement(t, controls = [], viewport = { width: 419.5, height: 398.
     if (selector === "dialog:modal") return [];
     const controlsOnly = "a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true']";
     const withTaskRegions = controlsOnly + ", .output-requirement-warning, .output-recipe-entry, forma-ui-notice";
+    const withShellAlert = withTaskRegions + ", .app-shell > .error-banner[role='alert']";
     x.queries.push(selector);
     if (selector === controlsOnly) return x.controls;
-    assert.equal(selector, withTaskRegions, "only the explicit existing-region successor query is an added native port");
-    return [...x.controls, ...x.regions];
+    if (selector === withTaskRegions) return [...x.controls, ...x.regions];
+    assert.equal(selector, withShellAlert, "only the exact direct Shell alert extends the existing task-region query");
+    return [...x.controls, ...x.regions, ...x.alertRegions];
   };
   x.launcher = launcher;
   x.control = (rect, properties = {}) => ({
@@ -697,7 +699,7 @@ test("D411 transformed ancestor chains retain prior raw-box behavior instead of 
 // Each is a bounded scene subset, not a reconstructed DOM, Card journey,
 // stylesheet renderer, keyboard test, or proof that an entire long entry fits.
 // Noncontrol regions are supplied ONLY to the exact successor query.
-const d420TaskRegionQuery = "a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true'], .output-requirement-warning, .output-recipe-entry, forma-ui-notice";
+const d420TaskRegionQuery = "a[href], button, input, textarea, select, summary, [role='button'], [contenteditable='true'], .output-requirement-warning, .output-recipe-entry, forma-ui-notice, .app-shell > .error-banner[role='alert']";
 
 test("D420 actual placement clears the measured Cancel decision heading as well as Keep and Discard", { concurrency: false }, t => {
   const x = d411Placement(t, [], { width: 419, height: 398 });
@@ -1419,7 +1421,7 @@ function e3StudioSlot(t, { rtl = false, coarse = false, short = false } = {}) {
   // counterexample falls back to floating placement; native queries stay strict.
   x.copyOwnerQueries = [];
   main.querySelectorAll = selector => {
-    if (["forma-workspace-settings", "forma-library", "forma-reality-layers", "forma-project-contents", "forma-workspace"].includes(selector)) {
+    if (["forma-workspace-settings", "forma-library", "forma-reality-layers", "forma-project-contents", "forma-workspace", '.application-loading[role="status"]'].includes(selector)) {
       x.copyOwnerQueries.push(selector); return [];
     }
     assert.equal(selector, "forma-studio-mode-nav");
@@ -1601,6 +1603,8 @@ test("E3 an unsupported rounded or unknown clipping corner releases the cell wit
 // measured come from copy69-baseline-r1; these cases are not a DOM renderer,
 // complete-page reconstruction, native zoom, paint order or acceptance replay.
 const e6CopyFamilies = ["forma-workspace-settings", "forma-library", "forma-project-contents", "forma-workspace"];
+const fTerminalCopyOwner = '.application-loading[role="status"]';
+const fTerminalCopySelector = ":scope > div > :is(b,p)";
 const e6SettingsCopySelectors = [
   ".page-header-copy > :is(.eyebrow,h1,p)",
   'section[aria-labelledby="workspace-invitations-heading"] > :is(h2,p)',
@@ -1620,7 +1624,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
@@ -1628,10 +1632,13 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
   main.querySelectorAll = selector => {
     // Preserve the original four-family ledger while retaining EVERY actual
-    // query in allOwnerQueries. Only the exact new Layers owner gets this port.
+    // query in allOwnerQueries. Each exact added owner has its own narrow port.
     allOwnerQueries.push(selector);
     if (selector === "forma-reality-layers") {
       layersOwnerQueries.push(selector); return selector === family ? [surface] : [];
+    }
+    if (selector === fTerminalCopyOwner) {
+      terminalOwnerQueries.push(selector); return selector === family ? [surface] : [];
     }
     assert.ok(e6CopyFamilies.includes(selector), "only separately declared copy-owner families are queried");
     familyQueries.push(selector); return selector === family ? [surface] : [];
@@ -1643,6 +1650,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   surface.querySelectorAll = selector => {
     assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors]
       : family === "forma-library" ? e11LibraryCopySelectors
+      : family === fTerminalCopyOwner ? [fTerminalCopySelector]
       : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
       "copy selection remains restricted to the actual declared owner family");
     copyQueries.push(selector);
@@ -1696,11 +1704,12 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     const start = allOwnerQueries.length, box = baseRun();
     const actual = allOwnerQueries.slice(start);
     const expected = actual.length === 0 ? [] : actual.includes("forma-reality-layers")
-      ? [e6CopyFamilies[0], e6CopyFamilies[1], "forma-reality-layers", e6CopyFamilies[2], e6CopyFamilies[3]] : e6CopyFamilies;
-    assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four or extended-five owner query sequence");
+      ? [e6CopyFamilies[0], e6CopyFamilies[1], "forma-reality-layers", e6CopyFamilies[2], e6CopyFamilies[3]] : [...e6CopyFamilies];
+    if (actual.includes(fTerminalCopyOwner)) expected.push(fTerminalCopyOwner);
+    assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four, extended-five or terminal-six owner query sequence");
     return box;
   };
-  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -2318,7 +2327,7 @@ for (const locale of ['en', 'ar']) test('E11 ' + locale + ' measured Layers weig
   assert.equal(field.ariaLabel, measured.name); assert.equal(form.key, 'e6-network-fourth-decision');
   assert.deepEqual(x.copyBoxReads, [label, output]); assert.deepEqual(x.rangeReads, []);
   assert.deepEqual(x.copyQueries, e11LayersCopySelectors);
-  assert.deepEqual(x.allOwnerQueries, [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3]]);
+  assert.deepEqual(x.allOwnerQueries, [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3], ...x.terminalOwnerQueries]);
   assert.deepEqual(x.layersOwnerQueries, [e11LayersOwner]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
   assert.deepEqual(state.formQueries, [e11LayersFormSelector, e11LayersFormSelector]);
   assert.deepEqual(state.associationQueries, [':scope > input[name="weight"][type="range"]', ':scope > output', ':scope > input[name="weight"][type="range"]', ':scope > output']);
@@ -2487,7 +2496,7 @@ function e11CompactUnchanged(state, box, { queried = true, active = state.handle
   assert.deepEqual(x.copyQueries, queried ? e11LayersCopySelectors : []);
   assert.deepEqual(x.copyBoxReads, queried ? [label, output] : []);
   assert.deepEqual(x.allOwnerQueries, queried
-    ? [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3]] : []);
+    ? [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3], ...x.terminalOwnerQueries] : []);
   assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
   assert.ok(['left', 'top', 'right', 'bottom', 'width', 'height'].every(key => Number.isFinite(box[key])));
   assert.equal(box.width, 44); assert.equal(box.height, 44);
@@ -2603,4 +2612,121 @@ test('E11 compact completion chooses nearest free gaps with upward ties', { conc
       assert.ok(box.top >= 8 && box.bottom <= height - 8); assert.equal(box.width, 44); assert.equal(box.height, 44);
     } finally { for (const undo of cleanup.reverse()) undo(); }
   }
+});
+
+function fTerminalCopyPlacement(t) {
+  // R3 recorded this FR200 viewport, ordinary launcher width/base position,
+  // both Retry bodies and the main Retry ring. Main-copy Range rectangles were
+  // NOT recorded. The four fragments below are declared finite counterexample
+  // inputs within the pictured text region, not measured glyphs/native replay.
+  const x = e6CopyPlacement(t, { family: fTerminalCopyOwner, locale: "fr",
+    viewport: { width: 419, height: 398 }, right: 409, top: 346.5, normalWidth: 199.171875 });
+  const mainRetry = x.control(d411Rect(104, 297.7578125, 283, 44), { tagName: "BUTTON",
+    outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px" });
+  const bannerRetry = x.control(d411Rect(210.5234375, 128.5859375, 69.9453125, 21.1953125), { tagName: "BUTTON" });
+  const ring = d411Rect(98, 291.7578125, 295, 56);
+  x.controls.push(mainRetry, bannerRetry); x.f.document.activeElement = mainRetry;
+  const copyOwner = x.ancestor(d411Rect(104, 190, 283, 160), { parentElement: x.surface });
+  const fragments = [
+    d411Rect(104, 202, 276, 19),
+    d411Rect(104, 232, 272, 20), d411Rect(104, 256, 250, 20), d411Rect(104, 280, 192, 12),
+  ];
+  const heading = x.copy(fTerminalCopySelector, d411Rect(104, 190, 283, 40), [fragments[0]],
+    { tagName: "B", parentElement: copyOwner, textContent: "Ce document est indisponible." });
+  const body = x.copy(fTerminalCopySelector, d411Rect(104, 226, 283, 72), fragments.slice(1),
+    { parentElement: copyOwner, textContent: "L’adresse demandée a été conservée. Réessayez pour vérifier ; aucun nouveau document n’a été créé." });
+  x.f.panel.draftForTest = "  Preserve separate unsent guidance.  ";
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, owner: x.f.panel.parentElement };
+  const unchanged = () => {
+    assert.equal(x.f.document.activeElement, mainRetry);
+    assert.equal(x.f.panel.draftForTest, "  Preserve separate unsent guidance.  ");
+    assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+    assert.equal(x.f.panel.parentElement, before.owner); assert.deepEqual(x.f.emitted, []);
+  };
+  return { x, mainRetry, bannerRetry, ring, fragments, heading, body, unchanged };
+}
+
+test("F terminal Shell copy and native Retry share the existing finite launcher placement", { concurrency: false }, t => {
+  const { x, mainRetry, bannerRetry, ring, fragments, heading, body, unchanged } = fTerminalCopyPlacement(t);
+  const oldPosition = d411Rect(209.828125, 239.7578125, 199.171875, 44);
+  assert.equal(x.overlap(oldPosition, [ring, bannerRetry.getBoundingClientRect()]).length, 0,
+    "the retained R3 counterexample clears both native actions");
+  assert.ok(x.overlap(oldPosition, fragments).length > 0,
+    "the same old position still covers the declared terminal explanation");
+  const box = x.run();
+  // Deliberately first after actual placement: old five-family source must fail
+  // text overlap, not fixture query admission or a missing new-owner receipt.
+  assert.equal(x.overlap(box, [...fragments, ring, bannerRetry.getBoundingClientRect()]).length, 0,
+    "clear terminal heading/explanation and the focused native Retry together");
+  unchanged(); assert.equal(x.f.document.activeElement, mainRetry);
+  assert.ok(box.top >= 8 && box.bottom <= 390); assert.ok(x.boxes.length <= 16);
+  assert.deepEqual(x.rangeReads, [heading.textNodes[0], body.textNodes[0]]);
+  assert.deepEqual(x.detached, x.rangeReads);
+  assert.deepEqual(x.copyQueries, [fTerminalCopySelector]);
+  assert.deepEqual(x.terminalOwnerQueries, [fTerminalCopyOwner]);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+});
+
+test("F hidden or duplicate terminal copy cannot supply current placement obstacles", { concurrency: false }, () => {
+  for (const mode of ["hidden", "duplicate"]) {
+    const cleanup = [];
+    try {
+      const { x, fragments, heading, body, unchanged } = fTerminalCopyPlacement({ after: undo => cleanup.push(undo) });
+      if (mode === "hidden") { heading.hiddenAncestor = true; body.hiddenAncestor = true; }
+      else {
+        const query = x.main.querySelectorAll;
+        x.main.querySelectorAll = selector => {
+          const selected = query(selector);
+          return selector === fTerminalCopyOwner ? [x.surface, { ...x.surface }] : selected;
+        };
+      }
+      const box = x.run();
+      assert.deepEqual(box, d411Rect(209.828125, 239.7578125, 199.171875, 44));
+      assert.ok(x.overlap(box, fragments).length > 0, "excluded copy is not misreported as protected");
+      assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+      assert.deepEqual(x.queries, [d420TaskRegionQuery]); unchanged();
+      assert.ok(x.boxes.length <= 16);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test("F measured R4 Shell alert and terminal copy remain clear together at native Retry focus", { concurrency: false }, t => {
+  const { x, bannerRetry, ring, heading, body, unchanged } = fTerminalCopyPlacement(t);
+  // R4 report SHA256 98ba8b6ba956e809e3a4cbcf7de6cf6811870cd9560c1dc1084d0f20d47be5fa:
+  // f-main-copy-main-focus supplies these actual Range bounds. Retain the
+  // helper's declared ancestor ports; replace only this case's text fragments.
+  // The earlier declared-input terminal-copy tests remain unchanged.
+  const fragments = [
+    d411Rect(104, 198.46875, 235.96875, 22),
+    d411Rect(104, 228.0625, 241.4921875, 19),
+    d411Rect(104, 250.4609375, 259.7890625, 19),
+    d411Rect(104, 272.859375, 147.40625, 19),
+  ];
+  heading.textNodes[0].fragments = [fragments[0]];
+  body.textNodes[0].fragments = fragments.slice(1);
+  // f-banner-main-focus supplies the cohesive alert and its two body lines;
+  // f-main-retry-arrival supplies the failed normal launcher and Retry ring.
+  const alertBox = d411Rect(72, 48, 347, 111.78125);
+  const alertBody = [
+    d411Rect(81, 84.1953125, 322.203125, 16.5),
+    d411Rect(81, 103.390625, 231.3125, 16.5),
+  ];
+  x.alertRegions.push(x.control(alertBox, { tagName: "DIV", className: "error-banner" }));
+  const failedPosition = d411Rect(209.828125, 76.5859375, 199.171875, 44);
+  assert.equal(x.overlap(failedPosition, [...fragments, ring, bannerRetry.getBoundingClientRect()]).length, 0,
+    "R4 clears terminal copy and both actions but not the upstream alert");
+  assert.equal(x.overlap(failedPosition, alertBody).length, 2,
+    "the retained failed launcher intersects both observed alert body lines");
+  const box = x.run();
+  // First after placement: current source admits its old query and receives
+  // no new alert port, so its negative baseline fails on actual obstruction.
+  assert.equal(x.overlap(box, [alertBox, ...fragments, ring, bannerRetry.getBoundingClientRect()]).length, 0,
+    "protect the complete alert without trading away terminal text or native Retry focus");
+  assert.equal(x.f.panel.dataset.compactLauncher, "true");
+  assert.equal(box.width, 44); assert.equal(box.height, 44);
+  assert.ok(box.top >= 8 && box.bottom <= 390); assert.ok(x.boxes.length <= 16);
+  unchanged();
+  assert.deepEqual(x.rangeReads, [heading.textNodes[0], body.textNodes[0]]);
+  assert.deepEqual(x.detached, x.rangeReads);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]);
 });

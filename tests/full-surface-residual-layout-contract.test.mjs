@@ -166,3 +166,48 @@ test("E residual layout: viewer scrolling, media fit, focus posture and icon-end
   assert.equal(unconditional(canvas, '.canvas-artifact-viewer[data-output-focus="true"] .presentation-deck-viewport > .presentation-deck-frame')["inline-size"],
     "min(100cqi,calc(100cqb * 1.7778))");
 });
+
+test("F banner source layout: the shell alert wraps without replacing base typography or workbench flow", () => {
+  assert.deepEqual(unconditional(responsive, ".app-shell > .error-banner"), {
+    "min-inline-size": "0", "flex-wrap": "wrap", "overflow-wrap": "anywhere",
+  });
+  const original = unconditional(base, ".error-banner");
+  assert.equal(original.display, "flex");
+  assert.equal(original.padding, "9px");
+  assert.equal(original["font-size"], "var(--type-caption)");
+  assert.equal(unconditional(base, ".error-banner button")["text-decoration"], "underline");
+  const workbench = '.application-creative[data-layout-intent="workbench"] > :is(.topbar, .application-task-navigation, .impersonation-banner, .error-banner)';
+  assert.deepEqual(unconditional(responsive, workbench), { flex: "none" });
+});
+
+test("F banner source layout: only the two existing fixed side-rail predicates reserve inline space", () => {
+  const measured = '.application-creative[data-nav-posture="rail"][data-short-height="true"]';
+  const fallback = ".application-creative";
+  const reservations = rules(responsive).filter(rule => rule.selector.includes(".error-banner")
+    && declarations(rule)["margin-inline-start"] !== undefined);
+  assert.deepEqual(reservations.map(rule => rule.selector), [
+    measured + " > .error-banner", fallback + " > .error-banner",
+  ]);
+  assert.equal(reservations[0].parent.type, "root");
+  assert.equal(reservations[1].parent.type, "atrule");
+  assert.equal(reservations[1].parent.name, "media");
+  assert.equal(reservations[1].parent.params, "(max-height: 37.5rem) and (orientation: landscape)");
+  for (const [index, prefix] of [measured, fallback].entries()) {
+    const reservation = reservations[index];
+    assert.deepEqual(declarations(reservation), { "margin-inline-start": "var(--forma-landscape-rail-width)" });
+    const siblingRule = selector => {
+      const found = rules(responsive).filter(rule => rule.parent === reservation.parent && rule.selectors.includes(selector));
+      assert.equal(found.length, 1, "one same-scope rule must own " + selector);
+      return declarations(found[0]);
+    };
+    const navigation = siblingRule(prefix + ' > .application-task-navigation[data-primary-navigation="true"]');
+    assert.equal(navigation.position, "fixed");
+    assert.equal(navigation["inset-inline-start"], "0");
+    assert.equal(navigation["inline-size"], "var(--forma-landscape-rail-width)");
+    assert.equal(siblingRule(prefix + " > #main-content")["padding-inline-start"], "var(--forma-landscape-rail-width)");
+  }
+  assert.equal(unconditional(responsive, ":root")["--forma-landscape-rail-width"],
+    "calc(var(--forma-nav-rail-width) + var(--forma-safe-inline-start))");
+  assert.equal(unconditional(responsive, ':root[dir="rtl"]')["--forma-safe-inline-start"],
+    "env(safe-area-inset-right, 0px)");
+});

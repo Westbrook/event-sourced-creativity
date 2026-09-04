@@ -35,6 +35,7 @@ import { handleContextIntelligence } from "./context-intelligence-api";
 import { handleContextApplication } from "./context-application-api";
 import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
+import { handleRetainedStoryRead } from "./retained-story-api";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -82,6 +83,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const origin=request.headers.get("origin");
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
+    if(url.pathname==="/api/retained-story"||url.pathname.startsWith("/api/retained-story/"))return handleRetainedStoryRead(request,env);
     const marketingRoute=parseMarketingRoute(url.pathname);
     if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
@@ -273,7 +275,9 @@ export default {
   async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const started=performance.now();
     const response=await routeRequest(request,env,context);
-    if(new URL(request.url).pathname.startsWith("/api/")&&new URL(request.url).pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH)schedulePrivateContentRetention(env,context);
+    const pathname=new URL(request.url).pathname;
+    const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/");
+    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");

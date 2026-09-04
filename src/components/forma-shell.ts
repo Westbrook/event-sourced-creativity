@@ -9,7 +9,7 @@ import { commandDiscoveryCopy } from "./design-system/locales/command-discovery-
 import { documentArtifactDefinition } from "../model/document-artifacts";
 import { creativePreparationTargetAvailable, type CreativePreparationStage } from "../model/workspace-intelligence";
 import { nextActionFacts } from "../state/next-action-context";
-import type { AssignedReviewTask, CapturedSourceOwnership } from "../state/store";
+import type { AssignedReviewTask, CapturedSourceOwnership, EventSourceRetirement } from "../state/store";
 import type { FormaLibrary } from "./forma-library";
 import { joinNativeDialogClose, navigationPresentationClosing, navigationPresentationCurrent, type CommandDeparture, type CommandDepartureOwner, type InAppNavigationAction, type LocalNavigation, type NavigationClosingPresentation, type NavigationPresentationContext, type NavigationRefusal } from "./command-departure";
 import type { FormaWorkspace } from "./forma-workspace";
@@ -60,6 +60,8 @@ export class FormaShell extends FormaElement {
   #routeAnnouncement = "";
   #focusNextRoute = false;
   #routeFocus:ShellFocus|null=null;
+  #sourceRetirementFocus:ShellFocus|null=null;
+  #sourceRetirementSeen:CapturedSourceOwnership|null=null;
   #accountFocus:{panel:HTMLElement;open:boolean;owner:ShellFocus}|null=null;
   #accountReturnFocus=false;
   #localeRequest = 0;
@@ -85,7 +87,7 @@ export class FormaShell extends FormaElement {
     });
   };
   #shareScope(){const session=this.store.session.get(),context=session?.projectContext,projection=this.store.projection.get();return[session?.user.userId??"",context?.organizationId??"personal",context?.projectAccessId??"personal",projection.projectId,projection.documentId,session?.permissionEpoch??""].join("\u0000");}
-  #clearShareSecret=()=>{this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;if(this.store.ui.shareOpen)this.store.patchUi({shareOpen:false});};
+  #clearShareSecret=()=>{this.#retireSourceRetirementFocus();this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;if(this.store.ui.shareOpen)this.store.patchUi({shareOpen:false});};
   #openShare(closeAccount=false){if(!this.store.canManageProjectShares())return;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;void this.store.loadShares();this.store.patchUi({...closeAccount?{accountOpen:false}:{},shareOpen:true});}
   #closeShare(){this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;this.store.patchUi({shareOpen:false});}
   // A one-shot presentation lease, separate from navigation or action authority.
@@ -108,6 +110,85 @@ export class FormaShell extends FormaElement {
     unsubscribe=store.subscribe(()=>{scopeCurrent();});
     return{focus,scopeCurrent,dispose};
   }
+  #retireSourceRetirementFocus(){this.#sourceRetirementFocus?.dispose();}
+  #sourceRetired=(event:Event)=>{
+    const detail=(event as CustomEvent<EventSourceRetirement>).detail,store=this.store,document=this.ownerDocument;
+    const source=store.captureSourceOwnership();
+    if(!this.isConnected||!detail||![401,403,404].includes(detail.status)||!source
+      ||!store.sourceOwnershipScopeActive(detail.source)||source.generation!==detail.generation
+      ||detail.source.generation+1!==detail.generation||store.sourceOwnershipActive(source)
+      ||store.documentRouteState()!=="unavailable"||store.routeDataReady())return;
+    // A repeated notification cannot renew a handoff after newer user intent.
+    if(this.#sourceRetirementSeen?.generation===source.generation
+      &&store.sourceOwnershipScopeActive(this.#sourceRetirementSeen))return;
+    this.#sourceRetirementSeen=source;this.#retireSourceRetirementFocus();
+    const main=this.querySelector<HTMLElement>("#main-content"),origin=document.activeElement,view=document.defaultView;
+    const visible=(element:HTMLElement)=>{
+      if(!element.isConnected||!element.getClientRects().length||element.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+      for(let at:HTMLElement|null=element;at;at=at.parentElement){
+        const style=view?.getComputedStyle(at);
+        if(!style||style.display==="none"||style.visibility==="hidden"||style.visibility==="collapse"||style.opacity==="0")return false;
+      }
+      return true;
+    };
+    if(!main?.isConnected||!(origin instanceof HTMLElement)||origin===main||!main.contains(origin)||!visible(origin)
+      ||origin.closest(".application-loading")||origin.closest(".projects-source-owner")
+      ||document.visibilityState!=="visible"||!document.hasFocus()||document.querySelector("dialog[open]"))return;
+    const route=store.route.get(),locale=this.i18n.locale,messages=this.i18n.messages,localeRequest=this.#localeRequest,epoch=this.#commandEpoch;
+    let retired=false,unsubscribe=()=>{};
+    const dispose=()=>{
+      if(retired)return;retired=true;unsubscribe();focus.dispose();
+      document.removeEventListener("visibilitychange",pageChanged,true);
+      view?.removeEventListener("blur",pageBlur,true);view?.removeEventListener("pagehide",dispose,true);
+      if(this.#sourceRetirementFocus===owner)this.#sourceRetirementFocus=null;
+    };
+    const scopeCurrent=()=>{
+      if(retired)return false;
+      const current=store.captureSourceOwnership();
+      if(this.#sourceRetirementFocus!==owner||!this.isConnected||this.store!==store||this.ownerDocument!==document
+        ||store.route.get()!==route||this.i18n.locale!==locale||this.i18n.messages!==messages
+        ||this.#localeRequest!==localeRequest||this.#commandEpoch!==epoch||!store.sourceOwnershipScopeActive(detail.source)
+        ||!current||current.generation!==detail.generation||store.sourceOwnershipActive(current)
+        ||store.loading.get()||store.routeDataReady(route)||store.documentRouteState(route)!=="unavailable"
+        ||document.visibilityState!=="visible"||!document.hasFocus()||document.querySelector("dialog[open]")){
+        dispose();return false;
+      }
+      return true;
+    };
+    const pageChanged=()=>{if(document.visibilityState!=="visible"||!document.hasFocus())dispose();};
+    const pageBlur=(event:Event)=>{if(event.target===view)dispose();};
+    const focus=captureOutputNavigationFocus(document),owner:ShellFocus={focus,scopeCurrent,dispose};
+    this.#sourceRetirementFocus=owner;
+    document.addEventListener("visibilitychange",pageChanged,true);
+    view?.addEventListener("blur",pageBlur,true);view?.addEventListener("pagehide",dispose,true);
+    unsubscribe=store.subscribe(()=>{scopeCurrent();});
+    const retry=()=>{
+      const mains=[...this.querySelectorAll<HTMLElement>('main[id="main-content"]')];
+      if(mains.length!==1||mains[0].getAttribute("aria-busy")!=="false")return null;
+      const currentMain=mains[0],statuses=[...currentMain.querySelectorAll<HTMLElement>(".application-loading")]
+        .filter(element=>element.tagName==="SECTION"&&element.getAttribute("role")==="status");
+      if(statuses.length!==1)return null;
+      const status=statuses[0],buttons=[...status.querySelectorAll<HTMLButtonElement>("button")];
+      if(buttons.length!==1)return null;
+      const button=buttons[0],tabIndex=button.getAttribute("tabindex");
+      return button.getAttribute("type")==="button"&&!button.disabled&&!button.matches(":disabled")
+        &&(tabIndex===null||!(Number(tabIndex)<0))&&button.closest("#main-content")===currentMain
+        &&button.closest(".application-loading")===status&&visible(currentMain)&&visible(status)&&visible(button)?button:null;
+    };
+    // Capture was before descendant withdrawal; inspect the committed replacement
+    // only after the actual Shell update, without recapturing focus ownership.
+    this.requestUpdate();
+    void this.updateComplete.then(()=>{
+      try{
+        if(!scopeCurrent()||!focus.current()||origin.isConnected)return;
+        const target=retry();if(!target)return;
+        focus.run(target,()=>{
+          if(!scopeCurrent()||origin.isConnected||retry()!==target)return false;
+          target.focus();return document.activeElement===target&&scopeCurrent();
+        });
+      }finally{dispose();}
+    },()=>{dispose();});
+  };
   #retireAccountFocus(){this.#accountFocus?.owner.dispose();this.#accountFocus=null;}
   #retireRouteFocus(){this.#routeFocus?.dispose();this.#routeFocus=null;this.#focusNextRoute=false;}
   #accountBeforeToggle=(event:ToggleEvent)=>{
@@ -158,6 +239,7 @@ export class FormaShell extends FormaElement {
     }
   };
   #routeChanged = (event: Event) => {
+    this.#retireSourceRetirementFocus();
     if(this.store.ui.commandOpen)void this.#closeCommands(false);
     if(this.#commandRouteFocus&&this.#commandRouteFocus.route!==this.store.route.get()){this.#commandRouteFocus.focus.dispose();this.#commandRouteFocus=null;}
     this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;
@@ -192,6 +274,7 @@ export class FormaShell extends FormaElement {
   };
   #pop = () => { this.#focusNextRoute=true;this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
   #changeLocale = async (event: Event) => {
+    this.#retireSourceRetirementFocus();
     const picker = event.currentTarget as HTMLElementTagNameMap["forma-ui-language-picker"];
     const requested = (event as CustomEvent<{ value: string }>).detail.value;
     const revision = ++this.#localeRequest;
@@ -214,6 +297,7 @@ export class FormaShell extends FormaElement {
 
   override connectedCallback() {
     super.connectedCallback();window.addEventListener("keydown",this.#keydown);window.addEventListener("popstate",this.#pop);window.addEventListener("forma-route-changed",this.#routeChanged);window.addEventListener("forma-performance",this.#populated);window.addEventListener("forma-authorization-changed",this.#clearShareSecret);
+    window.addEventListener("forma-event-source-retired",this.#sourceRetired,true);
     window.visualViewport?.addEventListener("resize", this.#syncLayout);
     window.visualViewport?.addEventListener("scroll", this.#syncLayout);
     if (typeof ResizeObserver !== "undefined") { this.#layoutObserver = new ResizeObserver(this.#syncLayout); this.#layoutObserver.observe(this); }
@@ -228,7 +312,7 @@ export class FormaShell extends FormaElement {
     if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
     else if(!this.store.events.get().length)void this.store.load();
   }
-  override disconnectedCallback(){this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#commandEpoch++;this.#commandOpening=null;this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#retireSourceRetirementFocus();window.removeEventListener("forma-event-source-retired",this.#sourceRetired,true);this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#commandEpoch++;this.#commandOpening=null;this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
 
   #raiseToast() {
     const toast = this.querySelector<HTMLElement>(".toast[popover]");
@@ -1209,7 +1293,7 @@ export class FormaShell extends FormaElement {
       ${shared?html`<aside class="impersonation-banner workspace-shared-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</b>${canAuthor?nothing:html`<span>${this.i18n.t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")}</span>`}</div><button type="button" class="button secondary compact" @click=${()=>void this.#leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${errorMessage} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
-      <main id="main-content" tabindex="-1" aria-busy=${sourceReady?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourcePlaceholder}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourcePlaceholder}</main>
+      <main id="main-content" tabindex="-1" aria-busy=${sourceReady||documentRouteState==="unavailable"?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourcePlaceholder}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourcePlaceholder}</main>
       ${session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}

@@ -376,6 +376,8 @@ export function resolveServerRoute(routeValue: string): ServerRouteResolution | 
   const named = SITE_ROUTE_ENTRIES.find((entry) => entry.path === path);
   if (named) return { application: named.application, entryPath: directoryEntry(named.path), canonicalFamily: named.path };
 
+  if (path === "/make/short-story") return { application: "creative", entryPath: "/creative/", canonicalFamily: "/make/short-story" };
+
   if(/^\/settings\/workspaces(?:\/(?:invitations|[^/]+(?:\/(?:overview|members|projects|usage|activity))?))?$/.test(path)){
     const family=path==="/settings/workspaces"?"/settings/workspaces":path==="/settings/workspaces/invitations"?"/settings/workspaces/invitations":"/settings/workspaces/:organization/:section";
     return{application:"creative",entryPath:"/settings/",canonicalFamily:family};

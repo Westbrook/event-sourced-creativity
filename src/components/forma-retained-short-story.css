@@ -1,0 +1,48 @@
+/* Native reading flow, derived from the accepted literal Short Story reader.
+   No nested scroller, fixed height, media, gesture or zoom override. */
+.retained-story-page {
+  min-inline-size: 0;
+  color: var(--forma-color-text, var(--ink));
+  background: var(--forma-color-surface, var(--paper));
+}
+.retained-story-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 4vi, 3rem);
+}
+.retained-story-toolbar h1 { margin: 0; font: 500 1rem/1.4 var(--sans, sans-serif); }
+.retained-story-toolbar .button, .retained-story-retry { min-block-size: 44px; }
+.retained-story-status { margin: 0; padding-inline: clamp(1rem, 4vi, 3rem); }
+.retained-story-retry { margin: 1rem clamp(1rem, 4vi, 3rem); }
+.retained-story-reader {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  inline-size: 100%;
+  max-inline-size: 75ch;
+  margin-inline: auto;
+  padding-block: clamp(1.5rem, 4vi, 3rem) max(2rem, env(safe-area-inset-bottom));
+  padding-inline: clamp(1rem, 4vi, 3rem);
+  overflow-wrap: anywhere;
+}
+.retained-story-reader > .retained-story-title {
+  min-inline-size: 0;
+  margin-block: 0 1.5rem;
+  font: 500 clamp(1.75rem, 4vi, 2.75rem)/1.2 var(--serif, serif);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.retained-story-reader > .retained-story-content {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  font: 400 1.05rem/1.75 var(--serif, serif);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  unicode-bidi: plaintext;
+}

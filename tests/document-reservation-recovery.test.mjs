@@ -115,12 +115,34 @@ async function integratedProductionWorker() {
     ASSETS:{fetch:async()=>new Response(null,{status:404})},
     MEDIA:{put:async()=>undefined,get:async()=>null},
   };
-  const context={waitUntil(promise){background.push(promise);}};
+  const context={waitUntil(promise){
+    const pending=Promise.resolve(promise);
+    // Observe rejection immediately while retaining the original settlement.
+    void pending.catch(()=>{});
+    background.push(pending);
+  }};
+  const drainBackground=async()=>{
+    const failures=[];
+    while(background.length){
+      const settled=await Promise.allSettled(background.splice(0));
+      for(const result of settled)if(result.status==="rejected")failures.push(result.reason);
+    }
+    if(failures.length===1)throw failures[0];
+    if(failures.length>1)throw new AggregateError(failures,"Integrated worker background failed");
+  };
   const request=(path,init)=>worker.fetch(new Request(`http://localhost${path}`,init),environment,context);
-  assert.equal((await request("/api/session")).status,200);
-  sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
-  assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status,200);
-  return{sqlite,environment,request,async drainBackground(){while(background.length)await Promise.all(background.splice(0));}};
+  try{
+    assert.equal((await request("/api/session")).status,200);
+    sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
+    assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status,200);
+    return{sqlite,environment,request,drainBackground};
+  }catch(error){
+    const failures=[error];
+    try{await drainBackground();}catch(cleanupError){failures.push(cleanupError);}
+    try{sqlite.close();}catch(cleanupError){failures.push(cleanupError);}
+    if(failures.length===1)throw error;
+    throw new AggregateError(failures,"Integrated worker setup and cleanup failed");
+  }
 }
 
 async function integratedInterruptedRender(worker,{
@@ -864,4 +886,89 @@ test("legacy slide reconciliation cannot settle over a concurrently persisted pe
   f.env.DB.batch=async(statements)=>{if(!raced&&statements.some(statement=>statement.sql.startsWith("INSERT INTO output_atomic_assertions"))){raced=true;f.checkpoint.presentationProviderSubmission="pending";f.checkpoint.presentationProviderClientRequestId="later-repair";f.save(f.checkpoint);}return batch(statements);};
   assert.equal((await settleLegacyPresentationReservations(f.env,f.user,row)).status,"conflict");assert.equal(raced,true);assert.equal(f.snapshot(),before);
   assert.equal(JSON.parse(f.job().result_json).presentationProviderClientRequestId,"later-repair");
+});
+
+async function assertBundledOutputReconciliationHistory(context,present){
+  const failures=[];
+  let fixture;
+  let fetchCalls=0;
+  const owner="dev-local-creative",stream="creative:dev-local-creative",actor="user:dev-local-creative";
+  const historySql="SELECT EXISTS(SELECT 1 FROM events WHERE type='OutputExecutionAuthorized' AND (stream_id=? OR actor=?)) AS present";
+  const tables=["output_execution_grants","output_operation_slots","document_jobs","budget_reservations","cost_budget_reservations","output_provider_calls","output_native_storage_writes"];
+  const emptyOutputRows=()=>{
+    for(const table of tables){
+      const exists=fixture.sqlite.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if(exists)assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count,0,table);
+      // Absence is valid: do not initialize output schema in the no-history branch.
+    }
+  };
+  const collect=async action=>{try{await action();}catch(error){failures.push(error);}};
+  try{
+    context.mock.method(globalThis,"fetch",async()=>{
+      fetchCalls++;
+      throw new Error("bundled_output_reconciliation_network_forbidden");
+    });
+    fixture=await integratedProductionWorker();
+    await fixture.drainBackground();
+    emptyOutputRows();
+    assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,0);
+    if(present){
+      // A synthetic history marker, not a grant or provider authorization.
+      await appendAuditEvent(fixture.environment,stream,actor,"OutputExecutionAuthorized",{
+        grant_id:"f-historical-linkage-only",scope_kind:"personal",
+        owner_user_id:owner,actor_user_id:owner,fixture_only:true,
+      },"f-output-reconciliation-history");
+    }
+    assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,Number(present));
+    const beforeConsent=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='ConsentAccepted'").get(stream).count;
+    const witnesses=[
+      {name:"known-receipt",kind:"first",prefix:"SELECT slot.scope_key,slot.slot_id,slot.token_reservation_id,slot.cost_reservation_id,slot.updated_at, job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,",count:0},
+      {name:"expired-grant",kind:"all",prefix:"SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id, plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id WHERE grant_row.payer_user_id=? AND grant_row.actor_user_id=? AND grant_row.expires_at<=?",count:0},
+      {name:"native-storage",kind:"run",prefix:"UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written') AND publication_event_id IS NULL",count:0},
+    ];
+    const prototype=Object.getPrototypeOf(fixture.environment.DB.prepare("SELECT 1"));
+    const execute=prototype.execute;
+    context.mock.method(prototype,"execute",function(kind){
+      const sql=this.sql.replace(/\s+/gu," ").trim();
+      const witness=witnesses.find(candidate=>sql.startsWith(candidate.prefix));
+      if(witness)assert.equal(kind,witness.kind,witness.name+" execution kind");
+      const result=Reflect.apply(execute,this,[kind]);
+      if(witness)witness.count++;
+      return result;
+    });
+    const response=await fixture.request("/api/session",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({action:"accept_terms",ownershipConfirmed:true,providerProcessingConfirmed:true}),
+    });
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.equal(body.user?.userId,owner);
+    assert.equal(body.audience,"creative");
+    assert.equal(body.policy?.accepted,true);
+    assert.ok(Array.isArray(body.capabilities));
+    await fixture.drainBackground();
+    assert.deepEqual(witnesses.map(({name,count})=>[name,count]),witnesses.map(({name})=>[name,Number(present)]));
+    assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,Number(present));
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='ConsentAccepted'").get(stream).count,beforeConsent+1);
+    emptyOutputRows();
+  }catch(error){failures.push(error);}
+  finally{
+    if(fixture){
+      await collect(()=>fixture.drainBackground());
+      await collect(emptyOutputRows);
+      await collect(()=>fixture.sqlite.close());
+    }
+    await collect(()=>assert.equal(fetchCalls,0,"no fetch during setup, request, or background cleanup"));
+    await collect(()=>context.mock.restoreAll());
+  }
+  if(failures.length===1)throw failures[0];
+  if(failures.length>1)throw new AggregateError(failures,"Bundled output reconciliation regression and cleanup failed");
+}
+
+test("bundled output reconciliation skips the producer with no authorization history",async context=>{
+  await assertBundledOutputReconciliationHistory(context,false);
+});
+
+test("bundled output reconciliation reaches the producer with authorization history",async context=>{
+  await assertBundledOutputReconciliationHistory(context,true);
 });

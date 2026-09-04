@@ -745,7 +745,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
     env.DB.prepare("SELECT EXISTS(SELECT 1 FROM events WHERE type='OutputExecutionAuthorized' AND (stream_id=? OR actor=?)) AS present").bind(user.streamId,`user:${user.userId}`)]);
   if(outputHistory.results[0]?.present){
     await(await import("./output-requirements-ledger.ts")).ensureOutputRequirementsSchema(env);
-    await(await import("./output-execution-control.ts")).reconcileExpiredOutputAuthorizations(env,user,now);
+    await(await import("./output-reconciliation-entry.ts")).reconcileExpiredOutputAuthorizations(env,user,now);
   }
   for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,billingUserId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
 
