@@ -6040,6 +6040,231 @@ test("specialist feed certification: current other actor and route cannot obtain
   }finally{await state.cleanup();}
 });
 
+const ordinaryFeedLanes=[
+  {name:"personal document events",shared:false,route:"/document/doc-atmosphere",events:true},
+  {name:"personal page table",shared:false,route:"/projects/project-atmosphere",events:false},
+  {name:"shared document events",shared:true,route:"/document/doc-atmosphere",events:true},
+  {name:"shared page table",shared:true,route:"/projects/project-atmosphere",events:false},
+];
+function ordinaryFeedPointers(state,turn){
+  const row=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id);assert.ok(row);
+  const events=state.sqlite.prepare("SELECT event_id,type FROM events WHERE json_extract(payload,'$.turn_id')=? AND type IN('ChatMessageSent','AssistantReasoned') ORDER BY sequence").all(turn.id);
+  return{row,authored:row.user_content_ref,answer:row.assistant_content_ref,message:events.find(item=>item.type==="ChatMessageSent")?.event_id,response:events.find(item=>item.type==="AssistantReasoned")?.event_id};
+}
+async function ordinaryFeedTurn(state,id,options,message="PRIVATE_FREE_QUESTION_"+id){
+  const turn=await specialistFreeTurn(state,id,message,options),pointers=ordinaryFeedPointers(state,turn);
+  // Give this free fixture a distinct answer so an adjacent generic reply cannot mask a leak.
+  const reply="PRIVATE_FREE_REPLY_"+id;state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(reply,pointers.answer);
+  return{...turn,reply:{text:reply},pointers};
+}
+function assertOrdinaryFeedHidden(body,hidden,kept){
+  assert.equal(body.turns.some(turn=>turn.id===hidden.id),false,JSON.stringify(body));
+  assert.equal(body.context.recentTurns.some(turn=>turn.id===hidden.id+":user"||turn.id===hidden.id+":assistant"),false);
+  assert.equal(JSON.stringify(body).includes(hidden.user),false);assert.equal(JSON.stringify(body).includes(hidden.reply.text),false);
+  assert.equal(body.turns.find(turn=>turn.id===kept.id)?.reply.text,kept.reply.text);
+  assert.equal(body.context.recentTurns.some(turn=>turn.id===kept.id+":assistant"&&turn.text===kept.reply.text),true);
+  assert.doesNotMatch(JSON.stringify(body),/source_user_ref|source_answer_ref|source_turn_record|source_message_record|source_response_record|assistantFeedSources|feed_turn_retained/u);
+}
+async function assertOrdinaryFeedVisible(state,route,turns,headers=state.owner??{}){
+  const response=await state.request(endpoint(route),{headers}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+  for(const turn of turns){
+    assert.equal(body.turns.find(item=>item.id===turn.id)?.reply.text,turn.reply.text);
+    assert.equal(body.context.recentTurns.some(item=>item.id===turn.id+":assistant"&&item.text===turn.reply.text),true);
+  }
+  return body;
+}
+function ordinaryFeedCorruptCapturedEvent(state,turnId,field){
+  const prepare=state.env.DB.prepare;let captured=false;
+  state.env.DB.prepare=function(sql){
+    const statement=prepare.call(this,sql);
+    if(!sql.includes(" AS source_response_record"))return statement;
+    const bind=statement.bind;statement.bind=(...values)=>{
+      const bound=bind.call(statement,...values),all=bound.all;bound.all=async()=>{
+        const result=await all.call(bound);return{...result,results:result.results.map(row=>{
+          if(row.turn_id!==turnId)return row;captured=true;
+          return{...row,[field]:field==="source_response_id"?"missing-captured-event":"[]"};
+        })};
+      };return bound;
+    };return statement;
+  };
+  return{get captured(){return captured;},restore(){state.env.DB.prepare=prepare;}};
+}
+async function finishOrdinaryFeed(state,{failures,trace,restore,sourceCapture,clock}){
+  // Keep the body failure and attempt every teardown even if an earlier teardown rejects.
+  // Background work may still need either connection until cleanup finishes draining it.
+  for(const teardown of[()=>trace?.restore(),()=>restore?.(),()=>sourceCapture?.restore(),
+    async()=>{
+      while(state.background.length){
+        const settled=await Promise.allSettled(state.background.splice(0));
+        for(const result of settled)if(result.status==="rejected")failures.push(result.reason);
+      }
+    },
+    ()=>state.cleanup(),()=>clock?.close(),()=>state.sqlite.close()]){
+    try{await teardown();}catch(error){failures.push(error);}
+  }
+  if(failures.length===1)throw failures[0];
+  if(failures.length>1)throw new AggregateError(failures,"Ordinary feed test or cleanup failed");
+}
+for(const lane of ordinaryFeedLanes)for(const target of["authored","answer"])for(const withdrawal of["deadline","redacted","replaced","deleted"])
+test("ordinary feed retention: late "+withdrawal+" "+target+" in "+lane.name,async()=>{
+  const state=await specialistMockFixture({shared:lane.shared}),failures=[];let restore,trace,clock;
+  try{
+    const options={route:lane.route},hidden=await ordinaryFeedTurn(state,"ordinary-withdrawn",options),kept=await ordinaryFeedTurn(state,"ordinary-kept",options),ref=hidden.pointers[target];
+    await assertOrdinaryFeedVisible(state,lane.route,[hidden,kept]);
+    const expires=new Date(Date.now()+60_000).toISOString();
+    if(withdrawal==="deadline"){state.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run(expires,ref);clock=consequentialDbClock(state);}
+    let fired=false,before;restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained/u,()=>{
+      fired=true;
+      if(withdrawal==="deadline")clock.set(expires);
+      else if(withdrawal==="redacted")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);
+      else if(withdrawal==="replaced")state.sqlite.prepare("UPDATE private_content SET content='REPLACEMENT_NOT_HYDRATED' WHERE content_id=?").run(ref);
+      else state.sqlite.prepare("DELETE FROM private_content WHERE content_id=?").run(ref);
+      before=specialistFeedSnapshot(state);
+    });trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(lane.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertOrdinaryFeedHidden(body,hidden,kept);assert.doesNotMatch(JSON.stringify(body),/REPLACEMENT_NOT_HYDRATED/u);
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore,clock});}
+});
+for(const lane of ordinaryFeedLanes)for(const withdrawal of(lane.events?["captured-event-id","captured-event-record"]:["source-deleted","source-repointed"]))
+test("ordinary feed retention: "+withdrawal+" in "+lane.name,async()=>{
+  const state=await specialistMockFixture({shared:lane.shared}),failures=[];let restore,trace,sourceCapture;
+  try{
+    const options={route:lane.route},hidden=await ordinaryFeedTurn(state,"ordinary-source-hidden",options),kept=await ordinaryFeedTurn(state,"ordinary-source-kept",options);
+    await assertOrdinaryFeedVisible(state,lane.route,[hidden,kept]);
+    const immutable=lane.events?state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(hidden.pointers.response):null;
+    // Corrupt only the captured read: canonical event update/delete triggers remain enabled.
+    if(lane.events)sourceCapture=ordinaryFeedCorruptCapturedEvent(state,hidden.id,withdrawal==="captured-event-id"?"source_response_id":"source_response_record");
+    let fired=false,before;restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained/u,()=>{
+      fired=true;
+      if(!lane.events){
+        if(withdrawal==="source-deleted")state.sqlite.prepare("DELETE FROM assistant_turns WHERE turn_id=?").run(hidden.id);
+        else state.sqlite.prepare("UPDATE assistant_turns SET assistant_content_ref=? WHERE turn_id=?").run(kept.pointers.answer,hidden.id);
+      }
+      before=specialistFeedSnapshot(state);
+    });trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(lane.route),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    if(lane.events){assert.equal(sourceCapture.captured,true);assert.deepEqual(state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(hidden.pointers.response),immutable);}
+    assertOrdinaryFeedHidden(body,hidden,kept);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore,sourceCapture});}
+});
+for(const lane of ordinaryFeedLanes.filter(lane=>lane.shared))for(const withdrawal of["resource","retention",...(lane.events?["event"]:[])])
+test("ordinary feed retention: late "+withdrawal+" custody loss in "+lane.name,async()=>{
+  const state=await specialistMockFixture({shared:true}),failures=[];let restore,trace;
+  try{
+    const options={route:lane.route},hidden=await ordinaryFeedTurn(state,"ordinary-custody-hidden",options),kept=await ordinaryFeedTurn(state,"ordinary-custody-kept",options);
+    await assertOrdinaryFeedVisible(state,lane.route,[hidden,kept]);
+    let fired=false,before;restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained/u,()=>{
+      fired=true;
+      if(withdrawal==="resource")state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").run(hidden.pointers.answer);
+      else if(withdrawal==="retention")state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(hidden.pointers.answer);
+      else state.sqlite.prepare("DELETE FROM project_event_scopes WHERE event_id=?").run(hidden.pointers.response);
+      before=specialistFeedSnapshot(state);
+    });trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(lane.route),{headers:state.owner}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertOrdinaryFeedHidden(body,hidden,kept);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore});}
+});
+for(const source of["table","events"])for(const withdrawal of["unchanged","redacted",source==="events"?"captured-event-mismatch":"source-deleted","adopted"])
+test("ordinary feed retention: legacy "+source+" remains in its original lane after "+withdrawal,async()=>{
+  const state=await specialistMockFixture({shared:true,legacyConversation:source==="events"}),failures=[];let restore,trace,sourceCapture;
+  try{
+    const headers=Object.fromEntries(Object.entries(state.owner).filter(([key])=>key!=="cookie")),kept=await ordinaryFeedTurn(state,"ordinary-current-kept",{headers});
+    let hidden,ref,eventId;
+    if(source==="events"){
+      const row=state.sqlite.prepare("SELECT json_extract(message.payload,'$.turn_id') AS id,answer.content_id AS ref,answer.content AS reply,response.event_id AS eventId FROM events message JOIN events response ON response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id AND response.type='AssistantReasoned' JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') WHERE message.type='ChatMessageSent' AND answer.content='LEGACY PERSONAL CREATIVE ANSWER'").get();assert.ok(row);
+      hidden={id:row.id,user:"LEGACY PERSONAL CREATIVE QUESTION",reply:{text:row.reply}};ref=row.ref;eventId=row.eventId;
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_turns WHERE turn_id=?").get(hidden.id).n,0);
+    }else{
+      const id="ordinary-legacy-table",now=new Date().toISOString(),expires=new Date(Date.now()+86_400_000).toISOString();
+      for(const[kind,suffix,content]of[["chat-user","user","LEGACY_TABLE_QUESTION"],["chat-assistant","answer","LEGACY_TABLE_REPLY"]])state.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)VALUES(?,'assistant-owner',?,?,?,?,NULL)").run(id+"-"+suffix,kind,content,now,expires);
+      state.sqlite.prepare("INSERT INTO assistant_turns(turn_id,actor_user_id,scope_key,organization_id,project_access_id,project_id,document_id,route_family,user_content_ref,assistant_content_ref,proposal_json,permission_epoch,status,created_at,completed_at,request_json) SELECT ?,'assistant-owner',?,NULL,NULL,project_id,document_id,route_family,?,?,NULL,permission_epoch,'completed',created_at,completed_at,NULL FROM assistant_turns WHERE turn_id=?")
+        .run(id,JSON.stringify(["","","project-atmosphere","doc-atmosphere"]),id+"-user",id+"-answer",kept.id);
+      hidden={id,user:"LEGACY_TABLE_QUESTION",reply:{text:"LEGACY_TABLE_REPLY"}};ref=id+"-answer";
+    }
+    const initial=await(await state.request(endpoint(),{headers})).json();assert.equal(initial.turns.find(turn=>turn.id===hidden.id)?.reply.text,hidden.reply.text);
+    const immutable=eventId?state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(eventId):null;
+    if(withdrawal==="captured-event-mismatch")sourceCapture=ordinaryFeedCorruptCapturedEvent(state,hidden.id,"source_response_record");
+    let fired=false,before;restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained/u,()=>{
+      fired=true;
+      if(withdrawal==="redacted")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);
+      else if(withdrawal==="source-deleted")state.sqlite.prepare("DELETE FROM assistant_turns WHERE turn_id=?").run(hidden.id);
+      else if(withdrawal==="adopted")state.sqlite.prepare("UPDATE private_content_retention_scopes SET content_id=? WHERE content_id=?").run(ref,kept.pointers.answer);
+      before=specialistFeedSnapshot(state);
+    });trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),{headers}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    if(sourceCapture){assert.equal(sourceCapture.captured,true);assert.deepEqual(state.sqlite.prepare("SELECT * FROM events WHERE event_id=?").get(eventId),immutable);}
+    if(withdrawal==="unchanged"){
+      assert.equal(body.turns.find(turn=>turn.id===hidden.id)?.reply.text,hidden.reply.text);
+      assert.equal(body.context.recentTurns.some(turn=>turn.id===hidden.id+":assistant"&&turn.text===hidden.reply.text),true);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?").get(ref).n,0);
+    }else if(withdrawal==="adopted"){
+      // Adoption of either legacy source must not cause fallback into the newly scoped lane.
+      assert.equal(body.turns.some(turn=>turn.id===hidden.id),false);assert.equal(body.turns.some(turn=>turn.id===kept.id),false);
+      assert.equal(JSON.stringify(body).includes(hidden.reply.text),false);assert.equal(JSON.stringify(body).includes(kept.reply.text),false);
+      assert.equal(body.context.recentTurns.some(turn=>turn.id.startsWith(hidden.id+":")||turn.id.startsWith(kept.id+":")),false);
+    }else assertOrdinaryFeedHidden(body,hidden,kept);
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore,sourceCapture});}
+});
+
+for(const shared of[false,true])for(const change of["replaced","deleted","appeared"])
+test("ordinary feed retention: event metadata "+change+" after hydration in "+(shared?"shared":"personal")+" history",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore,trace;
+  try{
+    const hidden=await ordinaryFeedTurn(state,"ordinary-metadata-hidden"),kept=await ordinaryFeedTurn(state,"ordinary-metadata-kept"),saved=hidden.pointers.row;
+    if(change==="appeared")state.sqlite.prepare("DELETE FROM assistant_turns WHERE turn_id=?").run(hidden.id);
+    await assertOrdinaryFeedVisible(state,"/document/doc-atmosphere",[hidden,kept]);
+    let fired=false,before;restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained/u,()=>{
+      fired=true;
+      if(change==="replaced")state.sqlite.prepare("UPDATE assistant_turns SET request_json=json_set(request_json,'$.route','/changed-after-hydration') WHERE turn_id=?").run(hidden.id);
+      else if(change==="deleted")state.sqlite.prepare("DELETE FROM assistant_turns WHERE turn_id=?").run(hidden.id);
+      else state.sqlite.prepare("INSERT INTO assistant_turns("+Object.keys(saved).join(",")+") VALUES("+Object.keys(saved).map(()=>"?").join(",")+")").run(...Object.values(saved));
+      before=specialistFeedSnapshot(state);
+    });trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assertOrdinaryFeedHidden(body,hidden,kept);assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore});}
+});
+for(const shared of[false,true])for(const withdrawal of["unchanged","deadline","redacted","replaced","deleted","resolved","custody"])
+test("ordinary feed retention: pending proposal "+withdrawal+" after hydration in "+(shared?"shared":"personal")+" history",async()=>{
+  const state=await specialistMockFixture({shared}),failures=[];let restore,trace,clock;
+  try{
+    const hidden=await ordinaryFeedTurn(state,"ordinary-proposal-hidden",{},"Add palette: cobalt blue"),kept=await ordinaryFeedTurn(state,"ordinary-proposal-kept");
+    const proposal=state.sqlite.prepare("SELECT * FROM assistant_action_proposals WHERE turn_id=? AND status='pending'").get(hidden.id);assert.ok(proposal);
+    const ref=proposal.action_content_ref,summary="PRIVATE_PROPOSAL_SUMMARY_ONLY";
+    state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.text',?) WHERE content_id=?").run(summary,ref);
+    const initial=await assertOrdinaryFeedVisible(state,"/document/doc-atmosphere",[hidden,kept]);
+    assert.equal(initial.turns.find(turn=>turn.id===hidden.id).proposal.summary,summary);
+    const expires=new Date(Date.now()+60_000).toISOString();
+    if(withdrawal==="deadline"){state.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run(expires,ref);clock=consequentialDbClock(state);}
+    let fired=false,before;restore=interceptConsequentialDb(state,"batch",/AS feed_turn_retained/u,()=>{
+      fired=true;
+      if(withdrawal==="deadline")clock.set(expires);
+      else if(withdrawal==="redacted")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);
+      else if(withdrawal==="replaced")state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.text','NEW_UNREAD_PROPOSAL') WHERE content_id=?").run(ref);
+      else if(withdrawal==="deleted")state.sqlite.prepare("DELETE FROM assistant_action_proposals WHERE proposal_id=?").run(proposal.proposal_id);
+      else if(withdrawal==="resolved")state.sqlite.prepare("UPDATE assistant_action_proposals SET status='dismissed' WHERE proposal_id=?").run(proposal.proposal_id);
+      else if(withdrawal==="custody"){
+        if(shared)state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(ref);
+        else state.sqlite.prepare("UPDATE private_content SET owner_id='different-private-owner' WHERE content_id=?").run(ref);
+      }
+      before=specialistFeedSnapshot(state);
+    });trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    if(withdrawal==="unchanged")assert.equal(body.turns.find(turn=>turn.id===hidden.id).proposal.summary,summary);
+    else{assertOrdinaryFeedHidden(body,hidden,kept);assert.equal(JSON.stringify(body).includes(summary),false);assert.doesNotMatch(JSON.stringify(body),/NEW_UNREAD_PROPOSAL/u);}
+    assertSpecialistFeedReadOnly(state,before,trace,0);
+  }catch(error){failures.push(error);}finally{await finishOrdinaryFeed(state,{failures,trace,restore,clock});}
+});
+
 const specialistTestRoute="/document/doc-atmosphere";
 function specialistProtocolRequest(state,body,{headers=state.owner??{},route=specialistTestRoute,project="project-atmosphere",selected=[]}={}){
   const path=endpoint(route,project).replace("/api/assistant?","/api/assistant/specialist?")+selected.map(id=>"&selected="+encodeURIComponent(id)).join("");

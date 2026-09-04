@@ -370,8 +370,20 @@ function assistantFeedRetentionProof(actor:SpecialistActor,scopeKey:string,entry
     bindings:[JSON.stringify(expected),...approved.bindings,...authored.bindings,...answer.bindings,...retained.bindings]};
 }
 
-/** Final validation also covers visible paid turns that fell outside the eight-task feed. */
+// Request-local proof associations are not fields on the serialized turn or a durable memory cache.
+const assistantFeedSources=new WeakMap<SpecialistTurn,{serialized:string;proof:BudgetReservationGuard}>();
+export function rememberAssistantFeedTurnSource<T extends SpecialistTurn>(turn:T,proof:BudgetReservationGuard):T{
+  assistantFeedSources.set(turn,{serialized:JSON.stringify(turn),proof:{sql:proof.sql,bindings:[...proof.bindings]}});
+  return turn;
+}
+/** Every visible turn retains its original source lane; paid turns additionally require canonical consent. */
 function assistantFeedTurnProof(actor:SpecialistActor,scopeKey:string,turn:SpecialistTurn):BudgetReservationGuard{
+  const source=assistantFeedSources.get(turn);
+  if(!source||source.serialized!==JSON.stringify(turn))return{sql:"0",bindings:[]};
+  return join(source.proof,assistantFeedPaidTurnProof(actor,scopeKey,turn));
+}
+/** Final validation also covers visible paid turns that fell outside the eight-task feed. */
+function assistantFeedPaidTurnProof(actor:SpecialistActor,scopeKey:string,turn:SpecialistTurn):BudgetReservationGuard{
   const binding=scopeBinding(actor),authored=custody(binding,"authored"),answer=custody(binding,"answer");
   // Only used by the final SELECT-only feed batch, whose first AND last reads prove authority.
   // Reuse that same atomic proof; do not nest the full principal projection again per turn.

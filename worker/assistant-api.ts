@@ -25,7 +25,7 @@ import {
 } from "./pilot-policy.ts";
 import { type AssistantProviderResult } from "./assistant-provider.ts";
 import { reconcileConsequentialUsage } from "./consequential-consent.ts";
-import { assistantPaidReplyReadGuard, assistantSubmissionStatus, certifiedAssistantTaskFeed, type AssistantTaskFeedEntry, assistantTurnContentCustody, ensureAssistantSpecialistColumns, savedAssistantRequest, handleAssistantSpecialistConsent, parkUnsignedAssistantTasks, cancelConsentedAssistantTask, type SpecialistActor, type SpecialistTaskRecord, type AssistantSpecialistHost } from "./assistant-specialist-consent.ts";
+import { assistantPaidReplyReadGuard, assistantSubmissionStatus, certifiedAssistantTaskFeed, rememberAssistantFeedTurnSource, type AssistantTaskFeedEntry, assistantTurnContentCustody, ensureAssistantSpecialistColumns, savedAssistantRequest, handleAssistantSpecialistConsent, parkUnsignedAssistantTasks, cancelConsentedAssistantTask, type SpecialistActor, type SpecialistTaskRecord, type AssistantSpecialistHost } from "./assistant-specialist-consent.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 import { prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
 import { appendProjectEvents, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, resolveOwnerExecutionScope } from "./project-access.ts";
@@ -44,7 +44,9 @@ type PreparedAssistantAction = {
   summary: string;
   sourceVersions: Array<{ blockId: string; version: number }>;
 };
-type AssistantTurnRow = { turn_id: string; proposal_json: string | null; user_content: string; assistant_content: string; request_json?: string|null };
+type AssistantTurnRow = { turn_id: string; proposal_json: string | null; user_content: string; assistant_content: string; request_json?: string|null;
+  source_user_ref?:string;source_answer_ref?:string;source_turn_record?:string;source_message_id?:string;source_response_id?:string;
+  source_message_record?:string;source_response_record?:string;source_metadata_checked?:number;source_metadata_record?:string|null };
 type StoredAssistantProposal = {
   proposal_id: string;
   actor_user_id: string;
@@ -268,7 +270,9 @@ function preparedAssistantActions(message: string, context: AssistantContext, tu
   return prepareTypedAssistantActions(normalizeAssistantActions(message, context), context, turnId);
 }
 
-async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string, raw: string | null): Promise<AssistantProposal[]> {
+const assistantProposalSourceRecord="json_array(proposal.proposal_id,proposal.actor_user_id,proposal.scope_key,proposal.turn_id,proposal.organization_id,proposal.project_access_id,proposal.project_id,proposal.document_id,proposal.action_kind,proposal.action_content_ref,proposal.source_versions_json,proposal.expected_head,proposal.permission_epoch,proposal.status,proposal.expires_at,content.owner_id,content.kind,content.content,content.expires_at)";
+
+async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string, raw: string | null,sourceRecords?:string[]): Promise<AssistantProposal[]> {
   if (!raw) return [];
   let metadata: AssistantProposal[];
   try {
@@ -279,14 +283,14 @@ async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, 
   } catch { return []; }
   if (!metadata.some((proposal) => proposal.kind !== "navigate")) return metadata.filter((proposal) => proposal.kind === "navigate");
   const now = new Date().toISOString();
-  const rows = await env.DB.prepare(`SELECT proposal.proposal_id,proposal.action_kind,content.content
+  const rows = await env.DB.prepare(`SELECT proposal.proposal_id,proposal.action_kind,content.content,${assistantProposalSourceRecord} AS source_record
     FROM assistant_action_proposals proposal JOIN private_content content
       ON content.content_id=proposal.action_content_ref AND content.owner_id=proposal.actor_user_id
         AND content.redacted_at IS NULL AND content.expires_at>?
     WHERE proposal.actor_user_id=? AND proposal.scope_key=? AND proposal.turn_id=?
       AND proposal.status='pending' AND proposal.expires_at>?
     ORDER BY proposal.created_at,proposal.proposal_id`).bind(now, actor.principal.userId, assistantScopeKey(actor), turnId, now)
-    .all<{ proposal_id: string; action_kind: string; content: string }>();
+    .all<{ proposal_id: string; action_kind: string; content: string;source_record:string }>();
   const pending = new Map(rows.results.map((row) => [String(row.proposal_id), row]));
   return metadata.flatMap((proposal) => {
     if (proposal.kind === "navigate") return [proposal];
@@ -296,15 +300,61 @@ async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, 
       const action = JSON.parse(row.content) as AssistantContextAction;
       if (action.kind !== proposal.kind) return [];
       const summary = action.kind === "context.create" || action.kind === "context.edit" ? String(action.text ?? "").slice(0, 600) : "";
+      sourceRecords?.push(row.source_record);
       return [{ ...proposal, ...(summary ? { summary } : {}) }];
     } catch { return []; }
   });
 }
 
-async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, row: AssistantTurnRow): Promise<AssistantTurn> {
-  const proposals = await pendingTurnProposals(env, actor, String(row.turn_id), row.proposal_json);
+function assistantProposalSourceProof(actor:AuthorizedAssistant,records:string[]):BudgetReservationGuard{
+  if(!records.length)return{sql:"1",bindings:[]};
+  const custody=assistantTurnContentCustody(actor,"authored");
+  return{sql:`NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(
+    SELECT 1 FROM assistant_action_proposals proposal JOIN private_content content
+      ON content.content_id=proposal.action_content_ref AND content.owner_id=proposal.actor_user_id
+      AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE proposal.proposal_id=json_extract(expected.value,'$[0]') AND proposal.status='pending'
+      AND proposal.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${assistantProposalSourceRecord}=expected.value
+      AND ${custody.sql.replaceAll("authored.","content.")}))`,bindings:[JSON.stringify(records),...custody.bindings]};
+}
+
+const assistantHistoryTurnRecord="json_array(turn.actor_user_id,turn.scope_key,turn.turn_id,turn.organization_id,turn.project_access_id,turn.project_id,turn.document_id,turn.user_content_ref,turn.assistant_content_ref,turn.proposal_json,turn.request_json)";
+const assistantHistoryEventRecord=(alias:"message"|"response")=>"json_array("+["event_id","stream_id","sequence","type","actor","correlation_id","payload"].map(column=>alias+"."+column).join(",")+")";
+const assistantHistoryContentSources="authored.content_id AS source_user_ref,answer.content_id AS source_answer_ref";
+const assistantHistoryEventSources="message.event_id AS source_message_id,response.event_id AS source_response_id,"+assistantHistoryEventRecord("message")+" AS source_message_record,"+assistantHistoryEventRecord("response")+" AS source_response_record";
+
+/** Recheck the exact hydrated source in its original custody lane inside the final SELECT-only snapshot. */
+function assistantHistorySourceProof(actor:AuthorizedAssistant,row:AssistantTurnRow,sourceCustody:BudgetReservationGuard,scopeKey=assistantScopeKey(actor)):BudgetReservationGuard{
+  if(!row.source_user_ref||!row.source_answer_ref)return{sql:"0",bindings:[]};
+  const table=typeof row.source_turn_record==="string";
+  if(!table&&(!row.source_message_id||!row.source_response_id||!row.source_message_record||!row.source_response_record))return{sql:"0",bindings:[]};
+  const expected=JSON.stringify({actor:actor.principal.userId,scopeKey,turnId:row.turn_id,userRef:row.source_user_ref,answerRef:row.source_answer_ref,
+    user:String(row.user_content),reply:String(row.assistant_content),turn:row.source_turn_record??null,messageId:row.source_message_id??null,responseId:row.source_response_id??null,
+    message:row.source_message_record??null,response:row.source_response_record??null,metadata:row.source_metadata_record??null});
+  const source=table?`JOIN assistant_turns turn ON turn.actor_user_id=json_extract(expected.value,'$.actor')
+      AND turn.scope_key=json_extract(expected.value,'$.scopeKey') AND turn.turn_id=json_extract(expected.value,'$.turnId')`
+    :`JOIN events message ON message.event_id=json_extract(expected.value,'$.messageId')
+      JOIN events response ON response.event_id=json_extract(expected.value,'$.responseId') AND response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id`;
+  const metadata=!table&&row.source_metadata_checked===1?`LEFT JOIN assistant_turns metadata ON metadata.actor_user_id=json_extract(expected.value,'$.actor')
+    AND metadata.scope_key=json_extract(expected.value,'$.scopeKey') AND metadata.turn_id=json_extract(expected.value,'$.turnId')`:"";
+  const metadataExact=metadata?` AND (CASE WHEN metadata.turn_id IS NULL THEN NULL ELSE ${assistantHistoryTurnRecord.replaceAll("turn.","metadata.")} END) IS json_extract(expected.value,'$.metadata')`:"";
+  const exact=table?`${assistantHistoryTurnRecord}=json_extract(expected.value,'$.turn') AND turn.user_content_ref=authored.content_id AND turn.assistant_content_ref=answer.content_id`
+    :`${assistantHistoryEventRecord("message")}=json_extract(expected.value,'$.message') AND ${assistantHistoryEventRecord("response")}=json_extract(expected.value,'$.response')
+      AND json_extract(message.payload,'$.content_ref')=authored.content_id AND json_extract(response.payload,'$.content_ref')=answer.content_id`;
+  return{sql:`EXISTS(SELECT 1 FROM(SELECT ? AS value) expected ${source} ${metadata}
+    JOIN private_content authored ON authored.content_id=json_extract(expected.value,'$.userRef') AND authored.owner_id=json_extract(expected.value,'$.actor')
+      AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    JOIN private_content answer ON answer.content_id=json_extract(expected.value,'$.answerRef') AND answer.owner_id=json_extract(expected.value,'$.actor')
+      AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE ${exact}${metadataExact} AND authored.content=json_extract(expected.value,'$.user') AND answer.content=json_extract(expected.value,'$.reply') AND (${sourceCustody.sql}))`,
+    bindings:[expected,...sourceCustody.bindings]};
+}
+
+async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, row: AssistantTurnRow,sourceProof?:BudgetReservationGuard): Promise<AssistantTurn> {
+  const proposalSources:string[]=[];
+  const proposals = await pendingTurnProposals(env, actor, String(row.turn_id), row.proposal_json,sourceProof?proposalSources:undefined);
   let originalRequest:unknown;try{if(row.request_json)originalRequest=JSON.parse(row.request_json);}catch{/* Old free history may lack a reviewable request snapshot. */}
-  return {
+  const turn:AssistantTurn={
     id: String(row.turn_id),
     user: String(row.user_content),
     reply: { text: String(row.assistant_content) },
@@ -312,13 +362,17 @@ async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, 
     ...(proposals.length > 1 ? { proposals } : {}),
     ...(originalRequest?{originalRequest}:{}),
   };
+  if(!sourceProof)return turn;
+  const proposalProof=assistantProposalSourceProof(actor,proposalSources);
+  return rememberAssistantFeedTurnSource(turn,{sql:`(${sourceProof.sql}) AND (${proposalProof.sql})`,bindings:[...sourceProof.bindings,...proposalProof.bindings]});
 }
 
 async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant): Promise<AssistantTurn[]> {
   const replyProof=assistantPaidReplyReadGuard(actor,assistantScopeKey(actor),actor.surface.documentId?"json_extract(message.payload,'$.turn_id')":"turn.turn_id");
   const authoredCustody=assistantTurnContentCustody(actor,"authored"),answerCustody=assistantTurnContentCustody(actor,"answer");
   if (!actor.surface.documentId) {
-    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content
+    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content,
+      ${assistantHistoryContentSources},${assistantHistoryTurnRecord} AS source_turn_record
       FROM assistant_turns turn
       JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
       JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
@@ -326,7 +380,8 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
       ORDER BY turn.created_at DESC LIMIT ?`)
       .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor),...authoredCustody.bindings,...answerCustody.bindings,...replyProof.bindings, ASSISTANT_CONTEXT_LIMITS.turns)
       .all<AssistantTurnRow>();
-    return Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row)));
+    const sourceCustody={sql:`(${authoredCustody.sql}) AND (${answerCustody.sql})`,bindings:[...authoredCustody.bindings,...answerCustody.bindings]};
+    return Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row,assistantHistorySourceProof(actor,row,sourceCustody))));
   }
 
   const scope = actor.project;
@@ -349,7 +404,9 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
     guard = " AND "+authoredCustody.sql+" AND "+answerCustody.sql;
   }
 
-  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,metadata.request_json,authored.content AS user_content,answer.content AS assistant_content
+  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,metadata.request_json,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryEventSources},1 AS source_metadata_checked,
+    CASE WHEN metadata.turn_id IS NULL THEN NULL ELSE ${assistantHistoryTurnRecord.replaceAll("turn.","metadata.")} END AS source_metadata_record
     FROM events message INDEXED BY idx_events_stream_type
     JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=?
       AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
@@ -371,7 +428,8 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
     seen.add(id);
     return true;
   }).slice(0, ASSISTANT_CONTEXT_LIMITS.turns).reverse();
-  const current=await Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row)));
+  const sourceCustody={sql:"1"+guard,bindings:[...bindings]};
+  const current=await Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row,assistantHistorySourceProof(actor,row,sourceCustody))));
   if(!actor.legacyScopeKey)return current;
   const legacy=await legacyAssistantTurns(env,actor);
   return[...legacy.filter(turn=>!current.some(item=>item.id===turn.id)),...current].slice(-ASSISTANT_CONTEXT_LIMITS.turns);
@@ -381,14 +439,16 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
 
 async function legacyAssistantTurns(env:WorkerEnv,actor:AuthorizedAssistant){
   if(!actor.legacyScopeKey||actor.project?.ownerUserId!==actor.principal.userId)return[];
-  const rows=await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content
+  const rows=await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryTurnRecord} AS source_turn_record
     FROM assistant_turns turn JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.organization_id IS NULL AND turn.project_access_id IS NULL AND turn.project_id=?
       AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id))
     ORDER BY turn.created_at DESC LIMIT ?`).bind(actor.principal.userId,actor.legacyScopeKey,actor.projectId,ASSISTANT_CONTEXT_LIMITS.turns).all<AssistantTurnRow>();
   // Historical owner chat may predate assistant_turns. A derived resource index alone is not tenant adoption.
-  const historical=actor.surface.documentId?(await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,NULL AS proposal_json,authored.content AS user_content,answer.content AS assistant_content
+  const historical=actor.surface.documentId?(await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,NULL AS proposal_json,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryEventSources}
     FROM events message JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=? AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     JOIN events response ON response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id AND response.type='AssistantReasoned'
       AND json_extract(response.payload,'$.operation')='creative-chat' AND json_extract(response.payload,'$.document_id')=json_extract(message.payload,'$.document_id')
@@ -398,8 +458,10 @@ async function legacyAssistantTurns(env:WorkerEnv,actor:AuthorizedAssistant){
       AND COALESCE(json_extract(message.payload,'$.project_id'),?)=?
       AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id))
     ORDER BY message.sequence DESC,response.sequence DESC LIMIT ?`).bind(actor.principal.userId,actor.principal.userId,actor.principal.streamId,actor.surface.documentId,actor.projectId,actor.projectId,ASSISTANT_CONTEXT_LIMITS.turns).all<AssistantTurnRow>()).results:[];
+  const sourceCustody={sql:"NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id))",bindings:[]};
   const seen=new Set<string>();return[...rows.results,...historical].filter(row=>Boolean(row.turn_id)&&!seen.has(row.turn_id)&&Boolean(seen.add(row.turn_id))).slice(0,ASSISTANT_CONTEXT_LIMITS.turns).reverse()
-    .map(row=>({id:row.turn_id,user:row.user_content,reply:{text:row.assistant_content},proposal:null}as AssistantTurn));
+    .map(row=>rememberAssistantFeedTurnSource({id:row.turn_id,user:row.user_content,reply:{text:row.assistant_content},proposal:null}as AssistantTurn,
+      assistantHistorySourceProof(actor,row,sourceCustody,actor.legacyScopeKey)));
 }
 
 function assistantScopeKey(actor: AuthorizedAssistant) {
