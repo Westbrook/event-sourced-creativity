@@ -22,7 +22,7 @@ const inside = (node, parent) => { for (let at = node; at; at = at.parent) if (a
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const reusableId = "library-ack-reusable-direction";
 
-async function libraryAckPage(t, kind, { manual = null, libraryViewer = false, taste = false, slides = false } = {}) {
+async function libraryAckPage(t, kind, { manual = null, libraryViewer = false, taste = false, slides = false, locale = "en" } = {}) {
   assert.ok(!libraryViewer || manual === "artifact-viewer" && kind === "artifact", "Exact Library viewer source option only");
   assert.ok(manual === null || cManualCallers.includes(manual), "Explicit finite manual-reuse fixture option");
   assert.ok(!taste || manual === "output-card" && kind === "copy" && !libraryViewer, "Only the exact retained personal OutputCard admits the Taste observer");
@@ -46,7 +46,7 @@ async function libraryAckPage(t, kind, { manual = null, libraryViewer = false, t
   const events = h.store.events.get(), head = h.store.head.get(), content = h.store.content.get(), session = h.store.session.get();
   const resumes = observeActualSceneResumeReads(h);
   cleanup = async () => { await resumes.settleOriginalRequests(); await worker.drainBackground(); resumes.restore(); };
-  const f = await createCalmFullPage(t, { locale: "en", storeHost: h });
+  const f = await createCalmFullPage(t, { locale, storeHost: h });
   // The complete page fixture's 14-block presentation sample is not source proof.
   h.store.events.set(events); h.store.head.set(head); h.store.content.set(content); h.store.session.set(session);
   h.store.setRoute(withDocumentInRoute("/", worker.documentId, "One current authored direction"));
@@ -2094,6 +2094,265 @@ test("C Library new reusable block / different catalog choice retains its emitte
   current = view(); assert.equal(current.handle.port.value, ""); assert.equal(current.select.port.value, "Campaign goal");
   assert.equal(optionBinding(current, "Campaign goal").part, initial.part); assert.equal(editor.navigationBlocked, false);
   await unchanged();
+});
+
+// E11 copy only: reuse the original actual Library/Store/RAM Worker fixture.
+// Its existing remove setup supplies one genuinely kept story before the floor;
+// these cases never arm or activate Remove, Keep, import, creation or generation.
+// All old case bodies remain unchanged; the optional locale still defaults to en.
+// Observe every real filtered state and all custody before the desired copy.
+// This is finite text/interaction evidence, not CSS, native-language or audio proof.
+const E11_LIBRARY_FILTER_HELP = {
+  en: {
+    description: "Find reusable ideas and creative outputs in this project.",
+    recent: "Project outputs appear here when they match the current search and collection filter.",
+    kept: "Outputs kept for reuse appear here when they match the current search and collection filter.",
+  },
+  fr: {
+    description: "Retrouvez les idées réutilisables et les créations de ce projet.",
+    recent: "Les créations du projet apparaissent ici lorsqu’elles correspondent à la recherche et au filtre de collection actuels.",
+    kept: "Les créations conservées pour réutilisation apparaissent ici lorsqu’elles correspondent à la recherche et au filtre de collection actuels.",
+  },
+  ar: {
+    description: "اعثر على الأفكار القابلة لإعادة الاستخدام والمخرجات الإبداعية في هذا المشروع.",
+    recent: "تظهر مخرجات المشروع هنا عندما تطابق البحث الحالي وعامل تصفية المجموعة الحالي.",
+    kept: "تظهر المخرجات المحفوظة لإعادة الاستخدام هنا عندما تطابق البحث الحالي وعامل تصفية المجموعة الحالي.",
+  },
+  ja: {
+    description: "このプロジェクトの再利用可能なアイデアやクリエイティブな成果物を探せます。",
+    recent: "現在の検索条件とコレクションのフィルターに一致するプロジェクトの成果物がここに表示されます。",
+    kept: "再利用のために保存した成果物のうち、現在の検索条件とコレクションのフィルターに一致するものがここに表示されます。",
+  },
+};
+for (const [locale, expected] of Object.entries(E11_LIBRARY_FILTER_HELP)) test(
+  "E11 Library " + locale + " description and filtered Recent/Kept help are format-neutral without dispatch",
+  { concurrency: false, timeout: 45_000 }, async t => {
+    const q = await libraryAckPage(t, "remove", { locale }), { f, h, worker, owner, resumes, source, authorization } = q;
+    const settle = async () => { await f.settle(); await resumes.settleOriginalRequests(); await worker.drainBackground(); await f.settle(); };
+    await settle();
+    assert.equal(f.i18n.locale, locale); assert.equal(owner.i18n.locale, locale);
+    assert.equal(h.store.ui.libraryView, "all"); assert.equal(h.store.ui.libraryOutputScope, "recent");
+    assert.equal(h.store.ui.focusCollectionId, "", "Use the existing all-collections scope; no active-collection witness is claimed");
+    const original = structuredClone(h.store.projection.get().libraryArtifacts.find(artifact => artifact.id === "saved-scene-story"));
+    assert.ok(original); assert.equal(original.library, true); assert.equal(original.documentId, worker.documentId);
+    assert.deepEqual(h.store.projection.get().libraryArtifacts.filter(artifact => artifact.library).map(artifact => artifact.id), [original.id]);
+    assert.equal(h.store.projection.get().libraryOutputs.filter(output => output.library).length, 0);
+    assert.equal(h.store.content.get()[worker.contentRef], worker.content);
+    const acknowledgementOwner = { authorizationKey: authorization.key, actorUserId: h.store.session.get().user.userId,
+      projectId: worker.projectId, sourceGeneration: source.generation };
+    const privateRows = () => ({ content: worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+      payloads: worker.sqlite.prepare("SELECT * FROM event_private_payloads ORDER BY private_event_id").all() });
+    const floor = { route: h.store.route.get(), history: await readWorkspaceEvents(worker.env, worker.streamId),
+      private: privateRows(), money: financial(worker),
+      receipts: worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(),
+      events: JSON.stringify(h.store.events.get()), head: h.store.head.get(), content: JSON.stringify(h.store.content.get()),
+      session: JSON.stringify(h.store.session.get()), blocks: JSON.stringify(h.store.projection.get().libraryBlocks),
+      artifacts: JSON.stringify(h.store.projection.get().libraryArtifacts), outputs: JSON.stringify(h.store.projection.get().libraryOutputs),
+      collections: JSON.stringify(h.store.projection.get().collections), membership: JSON.stringify(h.store.projection.get().membership),
+      acknowledgements: structuredClone(h.store.eventWriteAcknowledgments(acknowledgementOwner)), requests: h.requests.length };
+    const unchanged = async () => {
+      await settle();
+      assert.equal(owner.isConnected, true); assert.equal(owner.store, h.store); assert.equal(owner.closest("forma-shell"), f.host);
+      assert.equal(h.store.route.get(), floor.route);
+      assert.equal(h.store.projection.get().projectId, worker.projectId); assert.equal(h.store.projection.get().documentId, worker.documentId);
+      assert.ok(h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authorization));
+      assert.deepEqual(await readWorkspaceEvents(worker.env, worker.streamId), floor.history);
+      assert.deepEqual(privateRows(), floor.private); assert.deepEqual(financial(worker), floor.money);
+      assert.deepEqual(worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(), floor.receipts);
+      assert.equal(JSON.stringify(h.store.events.get()), floor.events); assert.equal(h.store.head.get(), floor.head);
+      assert.equal(JSON.stringify(h.store.content.get()), floor.content); assert.equal(JSON.stringify(h.store.session.get()), floor.session);
+      assert.equal(JSON.stringify(h.store.projection.get().libraryBlocks), floor.blocks);
+      assert.equal(JSON.stringify(h.store.projection.get().libraryArtifacts), floor.artifacts);
+      assert.equal(JSON.stringify(h.store.projection.get().libraryOutputs), floor.outputs);
+      assert.equal(JSON.stringify(h.store.projection.get().collections), floor.collections);
+      assert.equal(JSON.stringify(h.store.projection.get().membership), floor.membership);
+      assert.equal(h.store.ui.focusCollectionId, ""); assert.equal(h.store.ui.libraryView, "all");
+      assert.deepEqual(h.store.projection.get().libraryArtifacts.find(artifact => artifact.id === original.id), original);
+      assert.deepEqual(h.store.eventWriteAcknowledgments(acknowledgementOwner), floor.acknowledgements);
+      assert.equal(q.armed, null); assert.equal(q.pending, null);
+      assert.deepEqual(h.requests.slice(floor.requests), [], "Filtering changes no request, receipt, import, entity, output or provider state");
+      assert.equal(globalThis.fetch.mock.callCount(), 0, "No swallowed external/provider call");
+    };
+    const view = () => {
+      const tree = f.tree();
+      const headers = tree.visible("header").filter(node => node.owner === owner && classed(node, "page-header--library"));
+      assert.equal(headers.length, 1);
+      const descriptions = tree.visible("p").filter(node => node.owner === owner && inside(node, headers[0]));
+      assert.equal(descriptions.length, 1);
+      const histories = tree.nodes.filter(node => node.tag === "forma-ui-segmented-control" && !node.hiddenBy
+        && node.owner === owner && classed(node, "compact-segmented"));
+      assert.equal(histories.length, 1); const history = histories[0];
+      assert.equal(history.component.parentElement, owner);
+      assert.equal(history.component.label, f.i18n.t("projects.outputHistory", "Output history"));
+      let section = history.parent; while (section && section.tag !== "section") section = section.parent;
+      assert.ok(section); assert.equal(section.owner, owner);
+      const grids = tree.visible("div").filter(node => node.owner === owner && classed(node, "library-output-grid") && inside(node, section));
+      assert.equal(grids.length, 1);
+      const buttons = tree.visible("button").filter(node => node.owner === history.component && inside(node, history));
+      assert.equal(buttons.length, 2);
+      const pressed = buttons.filter(node => String(node.attributes["aria-pressed"]) === "true");
+      assert.equal(pressed.length, 1);
+      const empty = tree.visible("div").filter(node => node.owner === owner && classed(node, "family-empty") && inside(node, section));
+      const cards = tree.visible("article").filter(node => node.owner === owner && classed(node, "library-output") && inside(node, grids[0]));
+      const artifactIds = tree.nodes.filter(node => node.tag === "forma-artifact-summary" && !node.hiddenBy && inside(node, grids[0]))
+        .map(node => node.component.artifact.id);
+      const help = empty.length ? tree.visible("p").filter(node => node.owner === owner && inside(node, empty[0])) : [];
+      assert.equal(empty.length, cards.length ? 0 : 1); assert.equal(help.length, empty.length);
+      return { description: descriptions[0].text, history, buttons, pressed: pressed[0], cards, artifactIds, help: help[0]?.text };
+    };
+    const currentSearch = () => f.find("input", node => node.owner.tag === "forma-ui-search" && node.owner.parentElement === owner);
+    const assertScope = (current, value) => {
+      assert.equal(current.history.component.value, value); assert.equal(h.store.ui.libraryOutputScope, value);
+      const option = current.history.component.options.find(item => item.value === value); assert.ok(option);
+      assert.equal(current.pressed.text, option.label);
+    };
+    const choose = async value => {
+      const current = view(), option = current.history.component.options.find(item => item.value === value); assert.ok(option);
+      const buttons = current.buttons.filter(node => node.text === option.label); assert.equal(buttons.length, 1);
+      const button = buttons[0]; assert.ok(button.port.isConnected && f.renderer.nodes.includes(button.port));
+      assert.equal(button.port.matches(":disabled"), false);
+      f.native.emit("pointerdown", button.port); f.native.focus(button.port); await f.act(button);
+      await unchanged(); assertScope(view(), value);
+    };
+    const search = async value => {
+      const current = currentSearch(); assert.ok(current.port.isConnected && f.renderer.nodes.includes(current.port));
+      assert.equal(current.port.matches(":disabled"), false);
+      f.native.emit("pointerdown", current.port); f.native.focus(current.port); current.port.value = value;
+      await f.act(current, "input"); await unchanged(); assert.equal(currentSearch().port.value, value);
+    };
+    let current = view(); assertScope(current, "recent"); assert.equal(currentSearch().port.value, "");
+    assert.ok(current.artifactIds.includes(original.id));
+    const observed = { description: current.description, recent: "", kept: "" };
+    await choose("kept"); current = view();
+    assert.equal(current.cards.length, 1); assert.deepEqual(current.artifactIds, [original.id]);
+    await choose("recent");
+    const raw = "  e11-no-matching-library-output-" + locale + " — 未入力  ";
+    await search(raw); current = view(); assertScope(current, "recent");
+    assert.equal(current.cards.length, 0); assert.deepEqual(current.artifactIds, []); assert.ok(current.help);
+    observed.recent = current.help;
+    await choose("kept"); current = view(); assert.equal(currentSearch().port.value, raw);
+    assert.equal(current.cards.length, 0); assert.deepEqual(current.artifactIds, []); assert.ok(current.help);
+    observed.kept = current.help;
+    await search(""); current = view(); assertScope(current, "kept");
+    assert.equal(current.cards.length, 1); assert.deepEqual(current.artifactIds, [original.id]);
+    await choose("recent"); await unchanged(); current = view(); assertScope(current, "recent");
+    assert.equal(currentSearch().port.value, ""); assert.ok(current.artifactIds.includes(original.id));
+    t.diagnostic("E11_LIBRARY_FILTER_HELP " + JSON.stringify({ locale, observed, originalArtifact: original.id,
+      realRecentAndKeptFilteredEmptyThenRestored: true, defaultAllCollectionsOnly: true,
+      originalSourceHistoryPrivateReceiptsAndFinancialUnchanged: true, newRequests: h.requests.length - floor.requests,
+      boundary: "actual rendered catalog text and current emitted controls; no physical-fit, audio, active-collection or generation claim" }));
+    assert.deepEqual(observed, expected, "Only after both real empty views, restored kept work and zero-new-effects proof: truthful format-neutral help");
+  });
+
+// E-stage copy only. Actual Library/Store/RAM Worker; no new audit seed or Save.
+// Property/label/help observations do not certify CSS, native selection or AT.
+test("E Library reusable content / French catalog guidance keeps authored text and selector keys", { concurrency: false, timeout: 45_000 }, async t => {
+  let cleanup = async () => {}; t.after(async () => { await cleanup(); });
+  const h = await writeFixture(t, { shared: false }), worker = h.worker;
+  const original = { events: h.store.events.get(), head: h.store.head.get(), content: h.store.content.get(), session: h.store.session.get(),
+    history: await readWorkspaceEvents(worker.env, worker.streamId) };
+  const resumes = observeActualSceneResumeReads(h);
+  cleanup = async () => { await resumes.settleOriginalRequests(); await worker.drainBackground(); resumes.restore(); };
+  const f = await createCalmFullPage(t, { locale: "fr", storeHost: h });
+  // Existing original Store window-event bridge, not a replacement navigation.
+  f.nativeHistoryLocation = h.location;
+  const dispatch = h.window.dispatchEvent, routedDispatch = function (event) {
+    const result = dispatch.call(this, event);
+    for (const listener of [...(f.listeners.get(event.type) ?? [])]) listener(event);
+    return result;
+  };
+  h.window.dispatchEvent = routedDispatch;
+  cleanup = async () => { try { await resumes.settleOriginalRequests(); await worker.drainBackground(); }
+    finally { resumes.restore(); if (h.window.dispatchEvent === routedDispatch) h.window.dispatchEvent = dispatch; } };
+  h.store.events.set(original.events); h.store.head.set(original.head); h.store.content.set(original.content); h.store.session.set(original.session);
+  h.store.setRoute(withDocumentInRoute("/", worker.documentId, "One current authored direction"));
+  await h.store.syncDocumentFromRoute(); await f.settle();
+  await registerCalmFullPageComponents(f, ["forma-workspace", "forma-library", "forma-library-block-editor"]);
+  f.native = installOutputNavigationFocusNative(t, f, ports);
+  const settle = async () => { await f.settle(); await resumes.settleOriginalRequests(); await worker.drainBackground(); await f.settle(); };
+  const activate = async (node, eventName = "click", value) => {
+    assert.ok(node.port.isConnected && f.renderer.nodes.includes(node.port)); assert.equal(node.port.matches(":disabled"), false);
+    assert.equal(node.port.handlers[eventName], node.handlers[eventName]); assert.equal(typeof node.handlers[eventName], "function");
+    f.native.emit("pointerdown", node.port); f.native.focus(node.port); if (value !== undefined) node.port.value = value;
+    await f.act(node, eventName, { button: 0 }); await settle();
+  };
+  await settle();
+  await activate(f.find("a", node => node.owner.tag === "forma-ui-audience-navigation"
+    && new URL(node.attributes.href, "https://fixture.invalid").pathname === "/library"));
+  const libraries = f.components().filter(value => value.tag === "forma-library" && value.isConnected && value.store === h.store);
+  assert.equal(libraries.length, 1); const library = libraries[0];
+  assert.ok(library instanceof f.modules.get("src/components/forma-library.ts").FormaLibrary);
+  const create = f.find("button", node => node.owner === library && node.attributes["data-context-controls-id"] === "__new__");
+  assert.equal(create.text.includes(f.i18n.t("projects.newReusableBlock", "New reusable block")), true);
+  await activate(create);
+  const editors = f.components().filter(value => value.tag === "forma-library-block-editor" && value.isConnected && value.store === h.store);
+  assert.equal(editors.length, 1); const editor = editors[0];
+  assert.ok(editor instanceof f.modules.get("src/components/library-block-editor.ts").LibraryBlockEditor);
+  assert.equal(editor.blockId, null); assert.equal(editor.closest("forma-library"), library); assert.equal(editor.closest("forma-shell"), f.host);
+  assert.equal(editor.i18n.locale, "fr"); assert.equal(h.store.session.get().projectContext, undefined);
+  assert.deepEqual(await readWorkspaceEvents(worker.env, worker.streamId), original.history, "Opening the untouched form creates no entity");
+  const view = () => {
+    const tree = f.tree(), forms = tree.visible("form").filter(node => node.owner === editor && classed(node, "library-block-form"));
+    assert.equal(forms.length, 1); const form = forms[0]; assert.ok(form.port.isConnected);
+    const richNodes = tree.nodes.filter(node => node.tag === "forma-ui-rich-text" && node.owner === editor && classed(node, "block-editor-copy") && inside(node, form));
+    assert.equal(richNodes.length, 1);
+    const rich = richNodes[0].component; assert.ok(rich.isConnected); assert.equal(rich.closest("forma-library-block-editor"), editor);
+    assert.ok(rich instanceof f.modules.get("src/components/design-system/forms.ts").FormaUiRichText);
+    const fields = tree.visible("textarea").filter(node => node.owner === rich && classed(node, "ui-rich-text-input"));
+    assert.equal(fields.length, 1); const text = fields[0]; assert.ok(text.port.isConnected);
+    const labels = tree.visible("label").filter(node => node.owner === rich && node.attributes.for === text.attributes.id);
+    const helpId = String(text.attributes["aria-describedby"]).split(" ")[0];
+    const helps = tree.visible("small").filter(node => node.owner === rich && node.attributes.id === helpId);
+    assert.equal(labels.length, 1); assert.equal(helps.length, 1);
+    const identity = tree.visible("fieldset").filter(node => node.owner === editor && node.attributes["aria-labelledby"] === "library-block-identity");
+    assert.equal(identity.length, 1);
+    const selects = tree.visible("select").filter(node => node.owner === editor && inside(node, identity[0]));
+    assert.equal(selects.length, 3);
+    for (const select of selects) assert.ok(select.port.isConnected && select.port.closest("form") === form.port);
+    const option = tree.nodes.filter(node => node.tag === "option" && node.owner === editor && inside(node, selects[0]) && node.attributes.value === "direction");
+    assert.equal(option.length, 1);
+    return { rich, text, label: labels[0], help: helps[0], selects, typeName: option[0].text };
+  };
+  const source = h.store.captureSourceOwnership(), authorization = h.store.captureAuthorizationScope();
+  assert.ok(source && authorization && h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authorization));
+  const ackOwner = { authorizationKey: authorization.key, actorUserId: h.store.session.get().user.userId,
+    projectId: worker.projectId, sourceGeneration: source.generation };
+  const privateRows = () => ({ content: worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+    payloads: worker.sqlite.prepare("SELECT * FROM event_private_payloads ORDER BY private_event_id").all() });
+  const floor = { route: h.store.route.get(), history: await readWorkspaceEvents(worker.env, worker.streamId), private: privateRows(), money: financial(worker),
+    receipts: worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(), events: JSON.stringify(h.store.events.get()),
+    head: h.store.head.get(), content: JSON.stringify(h.store.content.get()), session: JSON.stringify(h.store.session.get()),
+    blocks: JSON.stringify(h.store.projection.get().libraryBlocks), acknowledgements: structuredClone(h.store.eventWriteAcknowledgments(ackOwner)), requests: h.requests.length };
+  const noEffects = async () => {
+    await settle(); assert.equal(editor.isConnected, true); assert.equal(editor.blockId, null); assert.equal(editor.store, h.store);
+    assert.equal(h.store.route.get(), floor.route); assert.ok(h.store.sourceOwnershipActive(source) && h.store.authorizationScopeActive(authorization));
+    assert.deepEqual(await readWorkspaceEvents(worker.env, worker.streamId), floor.history); assert.deepEqual(privateRows(), floor.private);
+    assert.deepEqual(financial(worker), floor.money); assert.deepEqual(worker.sqlite.prepare("SELECT * FROM event_client_receipts ORDER BY stream_id,client_event_id").all(), floor.receipts);
+    assert.equal(JSON.stringify(h.store.events.get()), floor.events); assert.equal(h.store.head.get(), floor.head);
+    assert.equal(JSON.stringify(h.store.content.get()), floor.content); assert.equal(JSON.stringify(h.store.session.get()), floor.session);
+    assert.equal(JSON.stringify(h.store.projection.get().libraryBlocks), floor.blocks);
+    assert.deepEqual(h.store.eventWriteAcknowledgments(ackOwner), floor.acknowledgements); assert.deepEqual(h.requests.slice(floor.requests), []);
+    assert.equal(globalThis.fetch.mock.callCount(), 0, "No external/provider request");
+  };
+  let current = view(); const keys = current.selects.map(node => node.port.value);
+  assert.deepEqual(keys, ["direction", "Campaign goal", "include"]); assert.equal(current.typeName, "Orientation");
+  assert.equal(current.text.port.value, ""); assert.equal(editor.navigationBlocked, false);
+  const raw = "  The outcome or change the work should create — 私の文章  ";
+  await activate(current.text, "input", raw); await noEffects(); current = view();
+  assert.equal(current.text.port.value, raw); assert.equal(current.text.properties.value, raw); assert.equal(current.rich.value, raw);
+  assert.deepEqual(current.selects.map(node => node.port.value), keys); assert.equal(editor.navigationBlocked, true);
+  const label = f.i18n.system("{label} content", { label: f.i18n.system("Direction") });
+  const description = f.i18n.system("The outcome or change the work should create");
+  assert.equal(description, "Le résultat ou le changement que la création doit produire");
+  const help = f.i18n.system("{description}. This remains project context until someone copies it into a document.", { description });
+  t.diagnostic("E_LIBRARY_CATALOG_COPY " + JSON.stringify({ locale: editor.i18n.locale, typeKey: keys[0], typeLabel: current.typeName,
+    actualLabel: current.rich.label, actualHelp: current.rich.help, sameEditor: editor.isConnected && editor.store === h.store,
+    rawUnchanged: current.text.port.value === raw, originalHistoryPrivateReceiptsAndFiscalUnchanged: true }));
+  assert.equal(current.rich.label, label, "The catalog type inside the translated label uses the same existing French term as Type");
+  assert.equal(current.label.text, label); assert.equal(current.rich.help, help, "Translate the catalog description before interpolating the translated guidance");
+  assert.equal(current.help.text, help + " " + f.i18n.t("editor.help"));
+  await activate(current.text, "input", ""); await noEffects(); current = view();
+  assert.equal(current.text.port.value, ""); assert.deepEqual(current.selects.map(node => node.port.value), keys); assert.equal(editor.navigationBlocked, false);
 });
 
 // E4: one exact native edit handler at a time changes A to B and back to A.

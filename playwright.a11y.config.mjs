@@ -44,6 +44,10 @@ export default defineConfig({
       { name: "e9-outputcard-peers", testMatch: "**/forma-e9-outputcard-peers.spec.mjs",
         use: { baseURL: localTestOrigin("http://127.0.0.1:4186") } },
     ] : []),
+    ...(process.env.FORMA_A11Y_E11_COPY === "1" ? [
+      { name: "e11-copy-locales", testMatch: "**/forma-e11-copy-locales.spec.mjs",
+        use: { baseURL: localTestOrigin("http://127.0.0.1:4186") } },
+    ] : []),
     ...(process.env.FORMA_A11Y_ISOLATED_E5 === "1" ? [
       { name: "isolated-e5-presentation", testMatch: "**/isolated-presentation-owners.spec.mjs",
         use: { baseURL: localTestOrigin(process.env.FORMA_E5_SOURCE_BASE_URL ?? "http://127.0.0.1:4180") } },

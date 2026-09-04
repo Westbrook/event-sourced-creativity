@@ -516,3 +516,90 @@ test("en pending, unresolved and confirmed original creation never exposes local
       && node.text === x.f.i18n.t("projects.retryOriginal", "Retry same creation")), false);
   } finally { released.resolve(); await Promise.allSettled([pending]); }
 });
+
+// E11: actual existing Projects/Store/Worker and LocaleController. Counts come
+// from the original Worker projection; none are injected to imitate a result.
+// Keep the original27 untouched. This proves text/custody, not browser fit.
+const E_PROJECT_SUMMARY_NOUNS = {
+  en: {
+    documentNoun: { one: "document", other: "documents" },
+    decisionNoun: { one: "creative decision", other: "creative decisions" },
+    outputNoun: { one: "output", other: "outputs" },
+    collectionNoun: { one: "collection", other: "collections" },
+  },
+  fr: {
+    documentNoun: { one: "document", other: "documents" },
+    decisionNoun: { one: "décision créative", other: "décisions créatives" },
+    outputNoun: { one: "résultat", other: "résultats" },
+    collectionNoun: { one: "collection", other: "collections" },
+  },
+  ar: {
+    documentNoun: { zero: "مستند", one: "مستند", two: "مستندان", few: "مستندات", many: "مستندًا", other: "مستند" },
+    decisionNoun: { zero: "قرار إبداعي", one: "قرار إبداعي", two: "قراران إبداعيان", few: "قرارات إبداعية", many: "قرارًا إبداعيًا", other: "قرار إبداعي" },
+    outputNoun: { zero: "ناتج", one: "ناتج", two: "ناتجان", few: "نواتج", many: "ناتجًا", other: "ناتج" },
+    collectionNoun: { zero: "مجموعة", one: "مجموعة", two: "مجموعتان", few: "مجموعات", many: "مجموعةً", other: "مجموعة" },
+  },
+  ja: {
+    documentNoun: { one: "ドキュメント", other: "ドキュメント" },
+    decisionNoun: { one: "制作上の決定事項", other: "制作上の決定事項" },
+    outputNoun: { one: "生成結果", other: "生成結果" },
+    collectionNoun: { one: "コレクション", other: "コレクション" },
+  },
+};
+for (const locale of ["en", "fr", "ar", "ja"]) {
+  test(locale + " project summaries use complete localized count nouns without English suffixes", dIntakeDiscardOptions, async t => {
+    const x = await fixture(t, locale), before = await dIntakeDiscardBefore(x);
+    const projection = x.h.store.projection.get(), tree = x.f.tree();
+    const cards = tree.visible("article").filter(node => node.owner === x.owner && dIntakeDiscardClass(node, "project-card"));
+    assert.ok(projection.projects.length > 0); assert.equal(cards.length, projection.projects.length);
+    const rules = new Intl.PluralRules(locale);
+    const noun = (unit, count) => E_PROJECT_SUMMARY_NOUNS[locale][unit][rules.select(count)] ?? E_PROJECT_SUMMARY_NOUNS[locale][unit].other;
+    const observed = [], expected = [];
+    for (const [index, project] of projection.projects.entries()) {
+      const card = cards[index], children = card.children.filter(node => typeof node !== "string");
+      const titles = children.filter(node => node.tag === "div" && dIntakeDiscardClass(node, "project-card-title"));
+      assert.equal(titles.length, 1);
+      const headings = titles[0].children.filter(node => typeof node !== "string" && node.tag === "h2");
+      assert.equal(headings.length, 1); assert.equal(headings[0].attributes.dir, "auto");
+      assert.equal(headings[0].children.every(node => typeof node === "string"), true);
+      assert.equal(headings[0].children.join(""), project.name, "Authored project names are not translated or reconstructed");
+      const summaries = children.filter(node => node.tag === "div" && dIntakeDiscardClass(node, "project-card-summary"));
+      assert.equal(summaries.length, 1); assert.equal(summaries[0].port.isConnected, true);
+      const parts = summaries[0].children.filter(node => typeof node !== "string");
+      assert.deepEqual(parts.map(node => node.tag), ["span", "p"]);
+      const metric = parts[0].children.filter(node => typeof node !== "string"), paragraph = parts[1];
+      assert.deepEqual(metric.map(node => node.tag), ["strong", "small"]);
+      const emphasized = paragraph.children.filter(node => typeof node !== "string");
+      assert.deepEqual(emphasized.map(node => node.tag), ["b", "b", "b"]);
+      assert.equal(metric[0].text, String(project.documentCount));
+      assert.deepEqual(emphasized.map(node => node.text), [project.blockCount, project.outputCount, project.collectionCount].map(String),
+        "The same projected counts retain their original emphasis and value");
+      // This existing clause and conjunction are outside the noun repair.
+      const artifact = project.artifactCount ? " " + x.f.i18n.system(project.artifactCount === 1
+        ? "including {artifactCount} narrative, presentation, or motion result"
+        : "including {artifactCount} narrative, presentation, or motion results",
+      { artifactCount: x.f.i18n.number(project.artifactCount) }) : "";
+      observed.push({ document: metric[1].text, summary: paragraph.text });
+      expected.push({ document: noun("documentNoun", project.documentCount),
+        summary: (project.blockCount + " " + noun("decisionNoun", project.blockCount) + ", "
+          + project.outputCount + " " + noun("outputNoun", project.outputCount) + artifact
+          + x.f.i18n.system(", and") + " " + project.collectionCount + " " + noun("collectionNoun", project.collectionCount) + ".").replace(/\s+/gu, " ").trim() });
+    }
+    // Establish every no-effects/authority/raw-name prerequisite before the
+    // intended copy failure. Reading a summary never creates or navigates.
+    assert.equal(before.route, "/projects"); assert.equal(x.calls().length, 0);
+    assert.equal(dIntakeDiscardModal(x).length, 0);
+    await dIntakeDiscardUnchanged(x, before);
+    t.diagnostic(JSON.stringify({ locale, counts: projection.projects.map(project => ({
+      documents: project.documentCount, decisions: project.blockCount, outputs: project.outputCount, collections: project.collectionCount,
+    })), observed, expected, requestsAdded: x.h.requests.length - before.requests, evidence: "actual localized finite host, not physical layout" }));
+    assert.deepEqual(observed, expected, "Every count uses a complete locale-selected noun, never a translated singular plus English s");
+    // Existing controller only: no synthetic project/card or count injection.
+    // Intl chooses the category, including zero; no English count===1 rule.
+    for (const unit of Object.keys(E_PROJECT_SUMMARY_NOUNS.en)) for (const count of [0, 1, 2, 4, 11, 100, 1_000_000]) {
+      const english = E_PROJECT_SUMMARY_NOUNS.en[unit];
+      assert.equal(x.f.i18n.plural("projects.summary." + unit, count, english.one, english.other), noun(unit, count),
+        locale + " / " + unit + " / " + count + " uses the current controller's " + rules.select(count) + " category");
+    }
+  });
+}
