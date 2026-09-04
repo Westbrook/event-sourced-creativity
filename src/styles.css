@@ -1437,7 +1437,8 @@ html[data-document-focus] .reality-editor { height: calc(100dvh - 70px); max-hei
 .project-card-summary small { margin-top: 4px; color: var(--muted); font-size: var(--type-caption); }
 .project-card-summary p { margin: 0; color: var(--muted); font-size: var(--type-small); }
 .project-card-summary p b { color: var(--ink); }
-.project-card footer { display: flex; gap: 7px; margin-top: 19px; }
+.project-card footer { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: stretch; gap: var(--forma-cluster-gap); margin-top: 19px; }
+.project-card footer > .button { flex: 0 1 auto; max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
 .project-create-dialog label,.project-document-dialog label { display: grid; gap: 6px; margin-top: 16px; color: var(--muted); font: var(--type-caption) var(--mono); text-transform: uppercase; }.project-create-dialog input,.project-document-dialog input { background: var(--panel); font: var(--type-body) var(--sans); text-transform: none; }.project-create-dialog footer,.project-document-dialog footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 20px; }
 .project-document-dialog.new-document-dialog:not(.document-copy-dialog) > .modal-card > h2 {
   min-inline-size: 0;

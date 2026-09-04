@@ -7,9 +7,10 @@
 .outcome-desk-header, .outcome-arrangement-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: start;
   gap: var(--forma-space-4, 1rem);
 }
+.outcome-desk-header { align-items: start; }
+.outcome-arrangement-actions { align-items: stretch; }
 .outcome-desk-header > div { flex: 1; min-inline-size: 0; }
 .outcome-desk h2, .outcome-desk h3, .outcome-desk p,
 .outcome-arrangement-review h3, .outcome-arrangement-review p { overflow-wrap: anywhere; }
@@ -48,7 +49,7 @@
 .outcome-arrangement-table { overflow: auto; max-inline-size: 100%; padding: .25rem; }
 .outcome-arrangement-table table { inline-size: 100%; text-align: start; border-collapse: separate; border-spacing: .5rem; }
 .outcome-arrangement-table :is(th, td) { text-align: start; vertical-align: top; overflow-wrap: anywhere; }
-.outcome-arrangement-actions > forma-ui-choice-card { flex: 1; min-inline-size: min(100%, 14rem); }
+.outcome-arrangement-actions > forma-ui-choice-card { display: grid; flex: 1; min-inline-size: min(100%, 14rem); }
 @container (max-width: 44rem) { .outcome-desk-layout { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {
   .outcome-desk *, .outcome-arrangement-review * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

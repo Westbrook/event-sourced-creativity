@@ -204,6 +204,21 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
   padding-inline-end: calc((var(--forma-control-min-size,2.75rem) * 2) + 2rem);
 }
 
+/* Ordinary prose/storyboard sections share one existing card inset.
+ * Focused viewers, full-bleed media and the header's icon reservation stay separate. */
+.canvas-artifact-viewer:not([data-output-focus="true"]):is([data-artifact-kind="short_story"],[data-artifact-kind="scene"],[data-artifact-kind="storyboard"]) > .canvas-artifact-viewer-card {
+  --canvas-artifact-viewer-inset: var(--forma-card-inset,1.25rem);
+}
+
+.canvas-artifact-viewer:not([data-output-focus="true"]):is([data-artifact-kind="short_story"],[data-artifact-kind="scene"],[data-artifact-kind="storyboard"]) > .canvas-artifact-viewer-card > header {
+  padding-inline-start: var(--canvas-artifact-viewer-inset);
+}
+
+.canvas-artifact-viewer:not([data-output-focus="true"]):is([data-artifact-kind="short_story"],[data-artifact-kind="scene"],[data-artifact-kind="storyboard"]) > .canvas-artifact-viewer-card > .canvas-artifact-viewer-content,
+.canvas-artifact-viewer:not([data-output-focus="true"]):is([data-artifact-kind="short_story"],[data-artifact-kind="scene"],[data-artifact-kind="storyboard"]) > .canvas-artifact-viewer-card > footer {
+  padding-inline: var(--canvas-artifact-viewer-inset);
+}
+
 .canvas-output-viewer-card > header {
   min-inline-size: 0;
   padding-inline-end: calc((var(--forma-control-min-size,2.75rem) * 2) + 1rem);
