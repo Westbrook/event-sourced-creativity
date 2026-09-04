@@ -34,6 +34,10 @@ export default defineConfig({
     ...(process.env.FORMA_A11Y_E7_CONTROLS === "1" ? [
       { name: "e7-rename-filter-locales", testMatch: "**/forma-e7-rename-filter.spec.mjs" },
     ] : []),
+    ...(process.env.FORMA_A11Y_E8_PUBLIC === "1" ? [
+      { name: "e8-public-marketing", testMatch: "**/forma-public-marketing.spec.mjs",
+        use: { baseURL: localTestOrigin("http://127.0.0.1:4186"), publicMarketing: true } },
+    ] : []),
     ...(process.env.FORMA_A11Y_ISOLATED_E5 === "1" ? [
       { name: "isolated-e5-presentation", testMatch: "**/isolated-presentation-owners.spec.mjs",
         use: { baseURL: localTestOrigin(process.env.FORMA_E5_SOURCE_BASE_URL ?? "http://127.0.0.1:4180") } },
