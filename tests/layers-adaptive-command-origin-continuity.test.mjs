@@ -1976,3 +1976,161 @@ test("C Adaptive applied result / raw sibling Assistant stays until explicit cle
   const tree = x.f.tree(); assert.equal(tree.visible("article").filter(node => node.owner === targets[0]
     && node.attributes["data-block-id"] === blockId).length, 1);
 });
+
+// E-stage static-copy boundary only. Deliver the existing FR locale context to
+// the same finite component instances; this is not a native language-picker or AT test.
+test("E Layers current inspector / French local copy preserves unsaved native fields", options, async t => {
+  const x = await page(t, "layers"); await selectLayer(x);
+  const original = await before(x), first = c190LayerInspector(x), defaults = c190InspectorValues(first);
+  assert.equal(first.selected.id, x.block.id); const form = first.form.port;
+  const privateRows = () => ({ content: x.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+    payloads: x.worker.sqlite.prepare("SELECT * FROM event_private_payloads ORDER BY private_event_id").all() });
+  const privateBefore = privateRows(), sourceText = JSON.stringify(x.h.store.content.get());
+  const noEffects = async () => {
+    await unchanged(x, original);
+    assert.equal(x.h.store.route.get(), original.route); assert.equal(x.owner.isConnected, true); assert.equal(x.owner.store, x.h.store);
+    assert.deepEqual(privateRows(), privateBefore); assert.equal(JSON.stringify(x.h.store.content.get()), sourceText);
+    assert.deepEqual(x.h.requests.slice(original.requests), [], "Local edits, locale context and Discard make no request or implicit Save");
+  };
+  const rawHandle = "  direction/English label remains authored — 私の名  ";
+  const rawText = "  What it should do — this is my untranslated draft.  ";
+  await input(x, first.fields.handle, rawHandle); await drain(x);
+  await input(x, c190LayerInspector(x).fields.instructions, rawText); await noEffects();
+  let current = c190LayerInspector(x);
+  assert.equal(current.form.port, form); assert.equal(current.fields.handle.port.value, rawHandle);
+  assert.equal(current.fields.instructions.port.value, rawText); assert.equal(x.owner.captureCommandDeparture().blocked(), true);
+  const values = c190InspectorValues(current), previous = x.f.i18n, locale = "fr";
+  const controller = new ports.FormaLocaleController({ addController() {}, requestUpdate() {}, dispatchEvent(event) {
+    event.callback({ locale, formatLocale: locale, direction: "ltr", timeZone: "UTC",
+      messages: { ...ports.FORMA_DEFAULT_MESSAGES, ...ports.localeCatalogs[locale] }, revision: 2 }, () => {}); return true;
+  } });
+  controller.hostConnected(); previous.hostDisconnected(); x.f.i18n = controller; x.f.locale = locale;
+  // Existing native base ports receive locale via this public controller field.
+  // No owner, draft, current predicate, Source, Store or private state is replaced.
+  for (const component of x.f.components()) component.i18n = controller;
+  x.owner.requestUpdate(); await noEffects(); current = c190LayerInspector(x);
+  assert.equal(x.owner.i18n.locale, "fr"); assert.equal(current.selected.id, first.selected.id);
+  assert.equal(current.form.port, form, "The same current keyed native inspector survives locale rendering");
+  assert.deepEqual(c190InspectorValues(current), values); assert.equal(current.fields.handle.port.value, rawHandle);
+  assert.equal(current.fields.instructions.port.value, rawText); assert.equal(x.owner.captureCommandDeparture().blocked(), true);
+  const copy = [
+    ["handle", "Short name", "Nom abrégé"],
+    ["instructions", "What it should do", "Ce que cela doit accomplir"],
+    ["subtype", "Role", "Rôle"],
+    ["weight", "Influence on the result", "Influence sur le résultat"],
+  ];
+  const observed = copy.map(([name, source, translated]) => {
+    assert.equal(controller.system(source), translated, "The existing FR catalog already owns this system copy");
+    const field = current.fields[name], labels = current.tree.visible("label").filter(node => node.owner === x.owner
+      && under(field, parent => parent === node) && under(node, parent => parent === current.form));
+    assert.equal(labels.length, 1);
+    const text = labels[0].children.filter(child => typeof child === "string").join("").replace(/\s+/gu, " ").trim();
+    return { name, source, translated, actual: text };
+  });
+  const saves = current.tree.visible("button").filter(node => node.owner === x.owner && under(node, parent => parent === current.form)
+    && (!Object.hasOwn(node.attributes, "type") || node.attributes.type === "submit"));
+  assert.equal(saves.length, 1); assert.equal(saves[0].port.matches(":disabled"), false);
+  assert.equal(current.form.port.handlers.submit, current.form.handlers.submit); assert.equal(typeof current.form.handlers.submit, "function");
+  assert.equal(controller.system("Save decision"), "Enregistrer la décision");
+  t.diagnostic("E_LAYERS_KEYED_INSPECTOR_COPY " + JSON.stringify({ locale, labels: observed, saveLabel: saves[0].text,
+    sameOriginalForm: current.form.port === form, rawAndSelectorValuesUnchanged: true,
+    originalHistoryPrivateReceiptsAndFiscalUnchanged: true, noNativeSelectednessOrPhysicalLocaleClaim: true }));
+  assert.deepEqual(observed.map(value => value.actual), observed.map(value => value.translated),
+    "The keyed form's static labels must reach the existing localizer, not remain English behind an opaque directive");
+  assert.equal(saves[0].text, controller.system("Save decision"));
+  await c190DiscardInspector(x, first.selected, defaults); await noEffects(); current = c190LayerInspector(x);
+  assert.deepEqual(c190InspectorValues(current), defaults); assert.equal(current.form.port, form);
+  assert.equal(x.owner.captureCommandDeparture().blocked(), false);
+});
+
+// E11 conditional source regression. Existing full-class/native ports expose
+// emitted attributes, raw PropertyParts and exact retained submit-form ownership.
+// They do not compute label.control, input.labels or browser accessible names;
+// OUTPUT-before-range below is rendered sibling order, not a native DOM getter.
+test("E Layers Influence / explicit naming stays local, stable and unique across component instances", { ...options, timeout: 240000 }, async t => {
+  const instances = [];
+  for (const instance of [1, 2]) await t.test("actual component instance " + instance, options, async t => {
+    const x = await page(t, "layers"); await selectLayer(x);
+    const original = await before(x), first = c190LayerInspector(x), defaults = c190InspectorValues(first);
+    const owner = x.owner, form = first.form.port;
+    const valueParts = Object.fromEntries(Object.entries(first.fields).map(([name, field]) => [name, field.port.propertyParts.value]));
+    assert.ok(Object.values(valueParts).every(part => typeof part === "string" && part.length > 0));
+    const privateRows = () => ({ content: x.worker.sqlite.prepare("SELECT * FROM private_content ORDER BY content_id").all(),
+      payloads: x.worker.sqlite.prepare("SELECT * FROM event_private_payloads ORDER BY private_event_id").all() });
+    const privateBefore = privateRows(), sourceText = JSON.stringify(x.h.store.content.get());
+    const noEffects = async () => {
+      await unchanged(x, original);
+      assert.equal(x.h.store.route.get(), original.route); assert.equal(x.owner, owner);
+      assert.equal(owner.isConnected, true); assert.equal(owner.store, x.h.store);
+      assert.deepEqual(privateRows(), privateBefore); assert.equal(JSON.stringify(x.h.store.content.get()), sourceText);
+      assert.deepEqual(x.h.requests.slice(original.requests), [], "Naming, local edits and Discard make no request or implicit Save");
+    };
+    const labels = { en: "Influence on the result", fr: "Influence sur le résultat", ar: "التأثير في النتيجة", ja: "結果への影響度" };
+    const outputText = Math.round(Number(defaults.weight) * 100) + "%";
+    let originalId;
+    const witness = (locale, values, canonicalOutput = false) => {
+      const current = c190LayerInspector(x), range = current.fields.weight;
+      assert.equal(current.form.port, form, "The same keyed current submit-form port remains authoritative");
+      assert.equal(current.selected.id, first.selected.id); assert.equal(form.closest("forma-reality-layers"), owner);
+      assert.deepEqual(c190InspectorValues(current), values);
+      assert.deepEqual(Object.fromEntries(Object.entries(current.fields).map(([name, field]) => [name, field.port.propertyParts.value])), valueParts);
+      const candidates = current.tree.visible("label").filter(node => node.owner === owner
+        && under(range, parent => parent === node) && under(node, parent => parent === current.form));
+      assert.equal(candidates.length, 1); const label = candidates[0], id = range.attributes.id;
+      assert.equal(typeof id, "string", "The real range must emit its explicit instance ID"); assert.ok(id.length > 0);
+      if (originalId === undefined) originalId = id;
+      assert.equal(id, originalId, "The range ID cannot change across local edits, locale rendering or Discard");
+      assert.equal(range.port.getAttribute("id"), id); assert.equal(label.attributes.for, id);
+      assert.equal(label.port.getAttribute("for"), id);
+      assert.equal(current.tree.nodes.filter(node => node.attributes.id === id).length, 1, "Exactly one rendered element owns the current range ID");
+      assert.equal(current.tree.visible("label").filter(node => node.attributes.for === id).length, 1);
+      assert.equal(range.attributes.type, "range"); assert.equal(range.port.closest("form"), form);
+      assert.equal(range.attributes["aria-label"], labels[locale]);
+      assert.equal(range.port.getAttribute("aria-label"), labels[locale]);
+      assert.equal(Object.hasOwn(range.attributes, "aria-labelledby"), false);
+      assert.equal(x.f.i18n.system("Influence on the result"), labels[locale]);
+      assert.equal(label.children.filter(child => typeof child === "string").join(""), labels[locale] + " ");
+      const children = label.children.filter(child => typeof child !== "string");
+      assert.deepEqual(children.map(child => child.tag), ["output", "input"]);
+      assert.equal(children[1], range); assert.equal(children[0].parent, label);
+      const renderedOutput = children[0].children.filter(child => typeof child === "string").join("");
+      // This finite renderer does not retain a noChange ChildPart. Only the
+      // pristine/restored primitive output is asserted; dirty output is diagnostic.
+      if (canonicalOutput) assert.equal(renderedOutput, outputText);
+      assert.equal(children[0].port.closest("form"), form);
+      assert.equal(range.attributes["aria-label"].includes(outputText), false, "The emitted name excludes the neighboring percentage output");
+      return { id, locale, directLabel: labels[locale] + " ", ariaLabel: range.attributes["aria-label"],
+        expectedCanonicalOutput: outputText, renderedOutput, canonicalOutputAsserted: canonicalOutput };
+    };
+    const observations = [witness("en", defaults, true)];
+    assert.equal(instances.some(value => value.owner === owner), false, "Each subtest mounts a distinct actual Layers component");
+    assert.equal(instances.some(value => value.id === originalId), false, "Two actual component instances cannot share the range ID");
+    instances.push({ owner, id: originalId });
+    const rawHandle = "  direction/Influence remains authored — 私の名  ";
+    const rawText = "  Influence on the result — untouched authored draft العربية 日本語.  ";
+    await input(x, first.fields.handle, rawHandle); await drain(x);
+    await input(x, c190LayerInspector(x).fields.instructions, rawText); await noEffects();
+    const unsent = { ...defaults, handle: rawHandle, instructions: rawText };
+    observations.push(witness("en", unsent)); assert.equal(owner.captureCommandDeparture().blocked(), true);
+    for (const [index, locale] of ["fr", "ar", "ja"].entries()) {
+      const previous = x.f.i18n;
+      const controller = new ports.FormaLocaleController({ addController() {}, requestUpdate() {}, dispatchEvent(event) {
+        event.callback({ locale, formatLocale: locale, direction: locale === "ar" ? "rtl" : "ltr", timeZone: "UTC",
+          messages: { ...ports.FORMA_DEFAULT_MESSAGES, ...ports.localeCatalogs[locale] }, revision: index + 2 }, () => {}); return true;
+      } });
+      controller.hostConnected(); previous.hostDisconnected(); x.f.i18n = controller; x.f.locale = locale;
+      // Same existing public locale delivery as the retained French source test.
+      for (const component of x.f.components()) component.i18n = controller;
+      owner.requestUpdate(); await noEffects();
+      observations.push(witness(locale, unsent)); assert.equal(owner.captureCommandDeparture().blocked(), true);
+    }
+    await c190DiscardInspector(x, first.selected, defaults); await noEffects();
+    observations.push(witness("ja", defaults, true)); assert.equal(owner.captureCommandDeparture().blocked(), false);
+    t.diagnostic("E11_LAYERS_INFLUENCE_EMITTED_ASSOCIATION " + JSON.stringify({ instance, observations,
+      sameSourceOwnerAndKeyedForm: true, rawFieldsAndValuePartsPreserved: true, localDiscardRestored: true,
+      noRequestsSaveCopyProtectOrRangeEdits: true,
+      limit: "Finite source ports: emitted for/id/aria-label and rendered OUTPUT/input sibling order only. Dirty OUTPUT ChildPart noChange is unsupported and its serialization is diagnostic; canonical output text is asserted only pristine/restored. No native label.control, input.labels, accessible-name, DOM sibling-getter, physical locale, CSS or AT result." }));
+  });
+  assert.equal(instances.length, 2); assert.notEqual(instances[0].owner, instances[1].owner);
+  assert.notEqual(instances[0].id, instances[1].id);
+});

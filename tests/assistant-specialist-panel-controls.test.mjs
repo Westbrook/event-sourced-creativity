@@ -374,8 +374,8 @@ function fButton(fixture, key) { return fixture.button(fixture.render(), key); }
 function d411Rect(left, top, width, height) {
   return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height };
 }
-function d411Placement(t, controls = [], viewport = { width: 419.5, height: 398.5 }, nativeWindow) {
-  const f = fixture("en", nativeWindow), values = new Map(), writes = [], boxes = [], restore = [];
+function d411Placement(t, controls = [], viewport = { width: 419.5, height: 398.5 }, nativeWindow, locale = "en") {
+  const f = fixture(locale, nativeWindow), values = new Map(), writes = [], boxes = [], restore = [];
   const x = { f, controls, regions: [], queries: [], values, writes, boxes, hovered: false };
   const setGlobal = (key, value) => {
     const previous = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -1419,7 +1419,7 @@ function e3StudioSlot(t, { rtl = false, coarse = false, short = false } = {}) {
   // counterexample falls back to floating placement; native queries stay strict.
   x.copyOwnerQueries = [];
   main.querySelectorAll = selector => {
-    if (["forma-workspace-settings", "forma-library", "forma-project-contents", "forma-workspace"].includes(selector)) {
+    if (["forma-workspace-settings", "forma-library", "forma-reality-layers", "forma-project-contents", "forma-workspace"].includes(selector)) {
       x.copyOwnerQueries.push(selector); return [];
     }
     assert.equal(selector, "forma-studio-mode-nav");
@@ -1616,17 +1616,23 @@ const e6DocumentCopySelectors = [
   e6DocumentCopyPrefix + ' > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
 ];
 const e6DocumentFieldSelector = ':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]';
-function e6CopyPlacement(t, { family = "forma-workspace-settings", viewport = { width: 320, height: 800 }, right = 310, top = 680, normalWidth = 137.1875 } = {}) {
-  const x = d411Placement(t, [], viewport), full = d411Rect(0, 0, viewport.width, viewport.height);
+function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en", viewport = { width: 320, height: 800 }, right = 310, top = 680, normalWidth = 137.1875 } = {}) {
+  const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
   main.getAttribute = name => { assert.equal(name, "aria-busy"); return "false"; };
   main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
   main.querySelectorAll = selector => {
+    // Preserve the original four-family ledger while retaining EVERY actual
+    // query in allOwnerQueries. Only the exact new Layers owner gets this port.
+    allOwnerQueries.push(selector);
+    if (selector === "forma-reality-layers") {
+      layersOwnerQueries.push(selector); return selector === family ? [surface] : [];
+    }
     assert.ok(e6CopyFamilies.includes(selector), "only separately declared copy-owner families are queried");
     familyQueries.push(selector); return selector === family ? [surface] : [];
   };
@@ -1635,7 +1641,9 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", viewport = { 
     assert.equal(selector, ".application-creative"); return shell;
   };
   surface.querySelectorAll = selector => {
-    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors] : e6SettingsCopySelectors).includes(selector),
+    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors]
+      : family === "forma-library" ? e11LibraryCopySelectors
+      : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
       "copy selection remains restricted to the actual declared owner family");
     copyQueries.push(selector);
     // Retain the old exact help query for a meaningful pre-runtime baseline;
@@ -1683,7 +1691,16 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", viewport = { 
     const box = d411Rect(right - width, top - offset, width, 44);
     x.boxes.push({ ...box, offset, compact: x.f.panel.dataset.compactLauncher === "true" }); return box;
   };
-  return Object.assign(x, { familyQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  const baseRun = x.run;
+  x.run = () => {
+    const start = allOwnerQueries.length, box = baseRun();
+    const actual = allOwnerQueries.slice(start);
+    const expected = actual.length === 0 ? [] : actual.includes("forma-reality-layers")
+      ? [e6CopyFamilies[0], e6CopyFamilies[1], "forma-reality-layers", e6CopyFamilies[2], e6CopyFamilies[3]] : e6CopyFamilies;
+    assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four or extended-five owner query sequence");
+    return box;
+  };
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -1951,4 +1968,639 @@ test("E6 measured Document200 editor boxes use the existing clipped compact head
   assert.equal(x.f.panel.draftForTest, rawGuidance); assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
   assert.equal(context.scrollTop, before.context); assert.equal(studio.scrollTop, before.studio);
   assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.f.emitted, []);
+});
+
+
+// E11 exercises the existing real Panel -> updated -> finite RAF path. The
+// two FR cases use the R2 recorded target/native-focus/Ask rectangles. They
+// are bounded geometry ports, not a renderer, full-page reconstruction,
+// native zoom, hit-test or physical acceptance replay. Other geometry below
+// is explicitly synthetic, including the narrower Range counterexamples.
+const e11LibraryContentPrefix = '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"]';
+const e11LibraryCopySelectors = [
+  '.library-main > .page-header--library > .page-header-copy > :is(.eyebrow,h1,p)',
+  '.library-body .section-heading > div > :is(.eyebrow,h2,p.section-note)',
+  '.library-main > .library-body > section.lifecycle-next-actions > p.lifecycle-next-scope',
+  '.library-main > .library-body > section.lifecycle-next-actions > p.muted[role="status"]',
+  e11LibraryContentPrefix + ' > h3#library-block-content',
+  e11LibraryContentPrefix + ' > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
+  '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+];
+const e11LibraryLabelBox = d411Rect(88.7578125, 147, 313.484375, 22.3984375);
+const e11LibraryLabelRange = d411Rect(88.7578125, 148.5, 157.640625, 19);
+const e11LibraryRecentBox = d411Rect(121.7578125, 261.4375, 247.484375, 102.375);
+const e11LibraryRecentRanges = [
+  d411Rect(160.96875, 262.9375, 169.0546875, 22),
+  d411Rect(144.421875, 288.53125, 202.15625, 22),
+  d411Rect(127.390625, 314.125, 236.2109375, 22),
+  d411Rect(137.0625, 339.71875, 216.875, 22),
+];
+const e11LibraryRecentText = 'Les créations du projet apparaissent ici lorsqu’elles correspondent à la recherche et au filtre de collection actuels.';
+function e11LibraryPlacement(t, { top = 119.3984375 } = {}) {
+  const x = e6CopyPlacement(t, { family: 'forma-library', locale: 'fr',
+    viewport: { width: 419, height: 398 }, right: 409, top, normalWidth: 199.171875 });
+  x.surface.matches = selector => { assert.equal(selector, '.family-empty[data-forma-empty-state]'); return false; };
+  x.surface.scrollTop = 0;
+  x.f.panel.draftForTest = '  Garder cette question indépendante.  ';
+  x.before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, scroll: x.surface.scrollTop,
+    draft: x.f.panel.draftForTest };
+  return x;
+}
+function e11LibraryUnchanged(x, box, focused) {
+  assert.equal(x.f.i18n.t('assistant.open'), 'Demander à Forma', 'the actual fixture translation closure is French');
+  assert.equal(x.f.document.activeElement, focused);
+  assert.equal(x.f.panel.draftForTest, x.before.draft);
+  assert.equal(x.f.panel.tasks, x.before.tasks); assert.equal(x.f.panel.messages, x.before.messages);
+  assert.equal(x.surface.scrollTop, x.before.scroll); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.height, 44); assert.ok(box.width >= 44);
+  assert.ok(box.top >= 8 && box.bottom <= 390.5); assert.ok(x.boxes.length <= 14);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
+  assert.deepEqual(x.detached, x.rangeReads);
+}
+function e11LibraryEditor(t, { target = 'LABEL', defect = null } = {}) {
+  const x = e11LibraryPlacement(t);
+  class NativeLabel {}
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'HTMLLabelElement');
+  Object.defineProperty(globalThis, 'HTMLLabelElement', { configurable: true, value: NativeLabel });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'HTMLLabelElement', previous); else delete globalThis.HTMLLabelElement; });
+  const form = x.ancestor(d411Rect(72, 0, 347, 398), { parentElement: x.surface });
+  const rich = x.ancestor(d411Rect(88.7578125, 147, 313.484375, 250), { parentElement: form });
+  const field = x.control(d411Rect(88.7578125, 177.3984375, 313.484375, 164), {
+    tagName: 'TEXTAREA', id: 'e11-library-content', value: '', isConnected: true, form, parentElement: rich,
+    outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+    getAttribute(name) { assert.equal(name, 'aria-describedby'); return this.describedBy; },
+    describedBy: 'unrelated-help e11-library-content-help final-help',
+  });
+  const label = Object.assign(new NativeLabel(), { tagName: 'LABEL', parentElement: rich,
+    control: field, htmlFor: field.id, textContent: 'Contenu de Orientation' });
+  rich.querySelector = selector => {
+    if (selector === ':scope > textarea.ui-rich-text-input') return defect === 'missing-sibling' ? null : field;
+    assert.equal(selector, ':scope > label.ui-rich-text-label'); return label;
+  };
+  // The SMALL uses a declared counterexample footprint at the label position;
+  // R2 stopped at the label, so this is not a measured help-body claim.
+  const copy = x.copy(e11LibraryCopySelectors[5], e11LibraryLabelBox, [e11LibraryLabelRange], {
+    tagName: target, parentElement: rich, control: field, htmlFor: field.id,
+    id: target === 'SMALL' ? field.id + '-help' : '',
+    textContent: target === 'SMALL' ? 'La mise en forme Markdown est disponible.' : label.textContent,
+  });
+  const baseClosest = copy.closest;
+  copy.closest = function(selector) { return selector === 'form.library-block-form' ? form : baseClosest.call(this, selector); };
+  if (target === 'LABEL') {
+    Object.setPrototypeOf(copy, NativeLabel.prototype);
+    rich.querySelector = selector => {
+      if (selector === ':scope > textarea.ui-rich-text-input') return defect === 'missing-sibling' ? null : field;
+      assert.equal(selector, ':scope > label.ui-rich-text-label'); return defect === 'different-label' ? label : copy;
+    };
+  }
+  const associatedLabel = target === 'LABEL' ? copy : label;
+  if (defect === 'foreign-control') associatedLabel.control = {};
+  if (defect === 'foreign-for') associatedLabel.htmlFor = 'other-field';
+  if (defect === 'missing-id') field.id = '';
+  if (defect === 'foreign-form') field.form = {};
+  if (defect === 'foreign-help-id') copy.id = 'other-help';
+  if (defect === 'foreign-description') field.describedBy = 'prefix-e11-library-content-help-suffix';
+  x.controls.push(field); x.f.document.activeElement = field;
+  return { x, field, form, rich, label: associatedLabel, copy };
+}
+function e11LibraryHistory(t) {
+  const x = e11LibraryPlacement(t, { top: 346.5 });
+  const empty = x.ancestor(d411Rect(88.7578125, 100, 313.484375, 280), { parentElement: x.surface,
+    matches(selector) { assert.equal(selector, '.family-empty[data-forma-empty-state]'); return true; } });
+  const copy = x.copy(e11LibraryCopySelectors[6], e11LibraryRecentBox, e11LibraryRecentRanges,
+    { textContent: e11LibraryRecentText, parentElement: empty });
+  // Actual R2 Recent focus has an inset outline; its body is unchanged by it.
+  const focused = x.control(d411Rect(95.15625, 40.4453125, 89.1484375, 44), {
+    tagName: 'BUTTON', type: 'button', pressed: 'true', parentElement: x.surface,
+    outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '-3px',
+  });
+  x.controls.push(focused); x.f.document.activeElement = focused;
+  return { x, copy, empty, focused };
+}
+test('E11 FR measured Library label and native textarea ring clear Ask together', { concurrency: false }, t => {
+  const { x, field, label, copy } = e11LibraryEditor(t);
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [e11LibraryLabelBox]).length, 1);
+  assert.equal(x.overlap(initial, [e11LibraryLabelRange]).length, 1, 'the measured FR glyph collision is present in this input');
+  const box = x.run(), ring = d411Rect(82.7578125, 171.3984375, 325.484375, 176);
+  assert.equal(x.overlap(box, [e11LibraryLabelBox, ring]).length, 0,
+    'the full current label box and current native textarea/ring must both be clear');
+  assert.equal(box.bottom, 139, 'the label box, rather than its 1.5px-lower Range, sets the 8px clearance');
+  assert.equal(box.width, 199.171875); assert.equal(box.left, 209.828125);
+  assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+  assert.equal(label.control, field); assert.equal(label.htmlFor, field.id); assert.equal(field.value, '');
+  assert.deepEqual(x.copyQueries, e11LibraryCopySelectors); e11LibraryUnchanged(x, box, field);
+});
+test('E11 FR measured Library Recent help box clears Ask with native scope focus preserved', { concurrency: false }, t => {
+  const { x, copy, focused } = e11LibraryHistory(t), initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [e11LibraryRecentBox]).length, 1);
+  assert.equal(x.overlap(initial, [e11LibraryRecentRanges[3]]).length, 1, 'the measured fourth-line obstruction is present');
+  const box = x.run();
+  assert.equal(x.overlap(box, [e11LibraryRecentBox, focused.getBoundingClientRect()]).length, 0,
+    'clear the full history-help box without changing the current native scope');
+  assert.equal(box.bottom, 253.4375, 'the box top, not first-line Range top, controls clearance');
+  assert.equal(box.width, 199.171875); assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+  assert.equal(copy.textContent, e11LibraryRecentText); assert.equal(focused.pressed, 'true');
+  assert.deepEqual(x.copyQueries, e11LibraryCopySelectors); e11LibraryUnchanged(x, box, focused);
+});
+for (const target of ['LABEL', 'SMALL']) test('E11 Library full associated box protects whitespace / ' + target, { concurrency: false }, t => {
+  const { x, field, label, copy } = e11LibraryEditor(t, { target });
+  // Deliberately narrower than the measured FR label Range: this synthetic
+  // counterexample distinguishes the selected whole box from glyph coverage.
+  copy.textNodes[0].fragments = [d411Rect(90, 148.5, 80, 19)];
+  assert.equal(x.overlap(x.launcher.getBoundingClientRect(), copy.textNodes[0].fragments).length, 0);
+  field.value = '  Café — العربية — 日本語  ';
+  const box = x.run();
+  assert.equal(x.overlap(box, [e11LibraryLabelBox]).length, 0);
+  assert.equal(box.bottom, 139); assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+  assert.equal(label.control, field); assert.equal(label.htmlFor, field.id);
+  assert.equal(field.value, '  Café — العربية — 日本語  '); e11LibraryUnchanged(x, box, field);
+});
+for (const [target, defect] of [
+  ['LABEL', 'missing-sibling'], ['LABEL', 'foreign-control'], ['LABEL', 'foreign-for'],
+  ['LABEL', 'missing-id'], ['LABEL', 'foreign-form'], ['LABEL', 'different-label'],
+  ['SMALL', 'foreign-help-id'], ['SMALL', 'foreign-description'],
+]) test('E11 Library refuses unowned field copy / ' + defect, { concurrency: false }, t => {
+  const { x, field } = e11LibraryEditor(t, { target, defect });
+  const box = x.run();
+  assert.equal(box.top, 119.3984375); assert.equal(x.overlap(box, [e11LibraryLabelBox]).length, 1,
+    'rejected copy cannot become an obstacle through a foreign or missing native association');
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+  assert.equal(field.value, ''); e11LibraryUnchanged(x, box, field);
+});
+for (const defect of ['foreign-leaf', 'duplicate-owner', 'hidden-ancestor']) test('E11 Library retains current-owner copy gates / ' + defect, { concurrency: false }, t => {
+  const { x, copy, focused } = e11LibraryHistory(t);
+  if (defect === 'foreign-leaf') {
+    const closest = copy.closest;
+    copy.closest = function(selector) { return selector === 'forma-library' ? {} : closest.call(this, selector); };
+  }
+  if (defect === 'duplicate-owner') {
+    const query = x.main.querySelectorAll, otherCurrentSurface = { ...x.surface };
+    x.main.querySelectorAll = selector => { const result = query(selector); return selector === 'forma-library' ? [x.surface, otherCurrentSurface] : result; };
+  }
+  if (defect === 'hidden-ancestor') copy.hiddenAncestor = true;
+  const box = x.run();
+  assert.equal(box.top, 346.5); assert.equal(x.overlap(box, [e11LibraryRecentBox]).length, 1);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+  e11LibraryUnchanged(x, box, focused);
+});
+test('E11 Library content and history headings retain Range geometry beside existing Library copy', { concurrency: false }, t => {
+  const x = e11LibraryPlacement(t), raw = e11LibraryLabelBox;
+  const parent = x.ancestor(raw, { parentElement: x.surface,
+    matches(selector) { assert.equal(selector, '.family-empty[data-forma-empty-state]'); return false; } });
+  const empty = x.ancestor(raw, { parentElement: x.surface,
+    matches(selector) { assert.equal(selector, '.family-empty[data-forma-empty-state]'); return true; } });
+  // These short, declared fragments leave whitespace beneath Ask. The history
+  // H3 is deliberately inside the same empty card as the protected P family.
+  const fragment = d411Rect(90, 148.5, 80, 19);
+  const nodes = [
+    x.copy(e11LibraryCopySelectors[0], raw, [fragment], { tagName: 'H1' }),
+    x.copy(e11LibraryCopySelectors[4], raw, [fragment], { tagName: 'H3', parentElement: parent }),
+    x.copy(e11LibraryCopySelectors[6], raw, [fragment], { tagName: 'H3', parentElement: empty }),
+  ];
+  const box = x.run();
+  assert.equal(box.top, 119.3984375, 'heading whitespace is not upgraded to the full-box contract');
+  assert.equal(x.overlap(box, [raw]).length, 1);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, nodes.map(node => node.textNodes[0]));
+  assert.deepEqual(x.copyQueries, e11LibraryCopySelectors); e11LibraryUnchanged(x, box, null);
+});
+test('E11 Library empty help keeps the existing client clipping before obstacle placement', { concurrency: false }, t => {
+  const { x, copy, empty, focused } = e11LibraryHistory(t);
+  // Declared clip counterexample: only the first 8.5625px of the measured
+  // paragraph body remains inside this 20px client. No raw parent box replaces it.
+  const clip = x.ancestor(d411Rect(100, 250, 300, 20), { parentElement: x.surface, overflowY: 'hidden' });
+  empty.parentElement = clip;
+  const box = x.run(), visible = d411Rect(121.7578125, 261.4375, 247.484375, 8.5625);
+  assert.equal(box.top, 346.5); assert.equal(x.overlap(box, [e11LibraryRecentBox]).length, 1);
+  assert.equal(x.overlap(box, [visible]).length, 0, 'the raw, clipped-away body does not force an unnecessary move');
+  assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+  e11LibraryUnchanged(x, box, focused);
+});
+test('E11 an impossible Library full-box lane remains finite and visibly unresolved', { concurrency: false }, t => {
+  const { x, copy, focused } = e11LibraryHistory(t), full = d411Rect(0, 0, 419, 398);
+  copy.getBoundingClientRect = () => { x.copyBoxReads.push(copy); return full; };
+  // The deliberately short fragment leaves a false lane if this protected P
+  // were reduced to glyphs. Its full declared box leaves no possible placement.
+  copy.textNodes[0].fragments = [d411Rect(20, 100, 40, 20)];
+  const box = x.run();
+  assert.equal(x.overlap(box, [full]).length, 1, 'finite fallback is not proof of clearance');
+  // No lane exists, so the unchanged finite fallback retains the recorded
+  // reset geometry (bottom390.5) rather than claiming a new in-bounds placement.
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.equal(box.bottom, 390.5);
+  assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+  e11LibraryUnchanged(x, box, focused);
+});
+
+
+// E11 Layers: the real Panel -> updated -> one finite RAF path with R3
+// recorded LABEL/OUTPUT/range/Ask rectangles. Keep the measured 44px Ask
+// footprint for every CSSOM read; this is not a reproduction of compact-mode
+// transitions, all page peers, glyph paint, native zoom or full-page acceptance.
+const e11LayersOwner = 'forma-reality-layers';
+const e11LayersFormSelector = ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector]';
+const e11LayersCopySelectors = [
+  e11LayersFormSelector + ' > label:has(> input[name="weight"][type="range"])',
+  e11LayersFormSelector + ' > label:has(> input[name="weight"][type="range"]) > output',
+];
+const e11LayersMeasured = {
+  en: { viewport: { width: 390, height: 844 }, right: 380, top: 637.609375,
+    label: d411Rect(37, 646.109375, 316, 92), output: d411Rect(37, 666.109375, 316, 16),
+    range: d411Rect(39, 688.109375, 316, 48), ring: d411Rect(33, 682.109375, 328, 60),
+    labelText: 'Influence on the result ', labelRange: d411Rect(37, 647.109375, 103.828125, 14),
+    outputRange: d411Rect(37, 667.109375, 20.890625, 14), name: 'Influence on the result',
+    id: 'forma-layer-inspector-weight-4341bb5b-ad45-4658-b4a0-3fbb8cd31abc' },
+  ar: { viewport: { width: 320, height: 800 }, right: 54, top: 623.1875,
+    label: d411Rect(37, 630.6875, 246, 94), output: d411Rect(37, 651.6875, 246, 17),
+    range: d411Rect(35, 674.6875, 246, 48), ring: d411Rect(29, 668.6875, 258, 60),
+    labelText: 'التأثير في النتيجة ', labelRange: d411Rect(218.515625, 632.6875, 64.484375, 12),
+    outputRange: d411Rect(260.90625, 653.6875, 22.09375, 12), name: 'التأثير في النتيجة',
+    id: 'forma-layer-inspector-weight-3e8f42e4-8f05-4d49-9a64-c039a92e24ff' },
+};
+function e11LayersWeightPlacement(t, locale = 'en', defect = null) {
+  const measured = e11LayersMeasured[locale];
+  const x = e6CopyPlacement(t, { family: e11LayersOwner, locale, viewport: measured.viewport,
+    right: measured.right, top: measured.top, normalWidth: 44 });
+  class NativeForm {}
+  class NativeLabel {}
+  class NativeInput {}
+  class NativeOutput {}
+  const restore = [];
+  for (const [key, value] of [['HTMLFormElement', NativeForm], ['HTMLLabelElement', NativeLabel],
+    ['HTMLInputElement', NativeInput], ['HTMLOutputElement', NativeOutput]]) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+    restore.push(() => { if (previous) Object.defineProperty(globalThis, key, previous); else delete globalThis[key]; });
+  }
+  t.after(() => { for (const undo of restore.reverse()) undo(); });
+  // Form/source membership is a declared native-interface port. The recorded
+  // copy/range boxes are retained without inventing other control rectangles.
+  const form = Object.assign(new NativeForm(), x.ancestor(d411Rect(0, 0, measured.viewport.width, measured.viewport.height),
+    { parentElement: x.surface, isConnected: true }), {
+    key: 'e6-network-fourth-decision', getAttribute(name) { assert.equal(name, 'data-layer-inspector'); return this.key; },
+  });
+  const label = x.copy(e11LayersCopySelectors[0], measured.label, [measured.labelRange], {
+    tagName: 'LABEL', parentElement: form, textContent: measured.labelText + '50%', htmlFor: measured.id,
+  });
+  Object.setPrototypeOf(label, NativeLabel.prototype);
+  const output = x.copy(e11LayersCopySelectors[1], measured.output, [measured.outputRange], {
+    tagName: 'OUTPUT', parentElement: label, form, textContent: '50%', value: '50%',
+  });
+  Object.setPrototypeOf(output, NativeOutput.prototype);
+  const field = Object.assign(new NativeInput(), x.control(measured.range, {
+    tagName: 'INPUT', type: 'range', name: 'weight', id: measured.id, value: '0.5', min: '0', max: '1', step: '.05',
+    form, parentElement: label, previousElementSibling: output, labels: [label], isConnected: true,
+    disabled: false, ariaLabel: measured.name, outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+  }));
+  label.control = field;
+  label.textNodes = [{ textContent: measured.labelText, parentElement: label, fragments: [measured.labelRange] }, ...output.textNodes];
+  const forms = [form], formQueries = [], associationQueries = [];
+  const baseQuery = x.surface.querySelectorAll;
+  x.surface.querySelectorAll = selector => {
+    if (selector === e11LayersFormSelector) { formQueries.push(selector); return forms; }
+    return baseQuery(selector);
+  };
+  label.querySelectorAll = selector => {
+    associationQueries.push(selector);
+    if (selector === ':scope > input[name="weight"][type="range"]') return [field];
+    assert.equal(selector, ':scope > output'); return [output];
+  };
+  if (defect === 'foreign-for') { label.htmlFor = 'other-field'; label.control = {}; field.labels = []; }
+  if (defect === 'missing-id') { field.id = ''; label.control = null; field.labels = []; }
+  if (defect === 'additional-label') field.labels = [label, Object.assign(new NativeLabel(), { htmlFor: field.id, control: field })];
+  if (defect === 'foreign-range-form') field.form = new NativeForm();
+  if (defect === 'foreign-output-form') output.form = new NativeForm();
+  if (defect === 'multiple-current-forms') forms.push(Object.assign(new NativeForm(), form));
+  if (defect === 'empty-form-key') form.key = '';
+  if (defect === 'intervening-sibling') field.previousElementSibling = { tagName: 'SPAN', parentElement: label };
+  if (defect === 'foreign-owner') for (const node of [label, output]) {
+    const closest = node.closest;
+    node.closest = function(selector) { return selector === e11LayersOwner ? {} : closest.call(this, selector); };
+  }
+  if (defect === 'hidden-ancestor') { label.hiddenAncestor = true; output.hiddenAncestor = true; }
+  x.controls.push(field); x.f.document.activeElement = field;
+  x.f.panel.draftForTest = '  Keep this independent Layers question.  ';
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, draft: x.f.panel.draftForTest,
+    value: field.value, output: output.value, text: output.textContent, label: label.textContent,
+    key: form.key, formParent: form.parentElement, labelParent: label.parentElement,
+    fieldParent: field.parentElement, outputParent: output.parentElement,
+    fieldForm: field.form, outputForm: output.form, control: label.control, labels: field.labels,
+    forValue: label.htmlFor, id: field.id, sibling: field.previousElementSibling };
+  return { x, measured, form, label, output, field, forms, before, formQueries, associationQueries };
+}
+function e11LayersWeightUnchanged(state, box) {
+  const { x, measured, field, label, output, form, before } = state;
+  assert.equal(x.f.document.activeElement, field); assert.equal(field.getBoundingClientRect().height, 48);
+  assert.equal(field.value, before.value); assert.equal(output.value, before.output); assert.equal(output.textContent, before.text);
+  assert.equal(label.textContent, before.label); assert.equal(form.key, before.key);
+  assert.equal(form.parentElement, before.formParent); assert.equal(label.parentElement, before.labelParent);
+  assert.equal(field.parentElement, before.fieldParent); assert.equal(output.parentElement, before.outputParent);
+  assert.equal(field.form, before.fieldForm); assert.equal(output.form, before.outputForm); assert.equal(label.control, before.control);
+  assert.equal(field.labels, before.labels); assert.equal(label.htmlFor, before.forValue); assert.equal(field.id, before.id);
+  assert.equal(field.previousElementSibling, before.sibling);
+  assert.equal(x.f.panel.draftForTest, before.draft); assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+  assert.deepEqual(x.f.emitted, []); assert.equal(box.width, 44); assert.equal(box.height, 44);
+  assert.ok(box.top >= 8 && box.bottom <= measured.viewport.height - 8); assert.ok(x.boxes.length <= 14);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.detached, x.rangeReads);
+}
+for (const locale of ['en', 'ar']) test('E11 ' + locale + ' measured Layers weight boxes clear Ask while the current native range stays unchanged', { concurrency: false }, t => {
+  const state = e11LayersWeightPlacement(t, locale), { x, measured, form, label, output, field } = state;
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [measured.label, measured.output]).length, 2,
+    'the recorded compact Ask body crosses both required copy boxes');
+  assert.equal(x.overlap(initial, [measured.labelRange, measured.outputRange, measured.ring]).length, 0,
+    'the measured glyph Ranges and range focus envelope do not themselves explain this copy-box obstruction');
+  const box = x.run();
+  assert.equal(x.overlap(box, [measured.label, measured.output, measured.ring]).length, 0,
+    'protect the actual complete native LABEL/OUTPUT group as well as current range focus');
+  assert.equal(box.bottom, measured.label.top - 8); assert.equal(box.left, measured.right - 44);
+  assert.equal(label.control, field); assert.equal(label.htmlFor, field.id); assert.deepEqual(field.labels, [label]);
+  assert.equal(field.form, form); assert.equal(output.form, form); assert.equal(field.previousElementSibling, output);
+  assert.equal(field.ariaLabel, measured.name); assert.equal(form.key, 'e6-network-fourth-decision');
+  assert.deepEqual(x.copyBoxReads, [label, output]); assert.deepEqual(x.rangeReads, []);
+  assert.deepEqual(x.copyQueries, e11LayersCopySelectors);
+  assert.deepEqual(x.allOwnerQueries, [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3]]);
+  assert.deepEqual(x.layersOwnerQueries, [e11LayersOwner]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
+  assert.deepEqual(state.formQueries, [e11LayersFormSelector, e11LayersFormSelector]);
+  assert.deepEqual(state.associationQueries, [':scope > input[name="weight"][type="range"]', ':scope > output', ':scope > input[name="weight"][type="range"]', ':scope > output']);
+  e11LayersWeightUnchanged(state, box);
+});
+test('E11 Layers rejects copy outside its current native association', { concurrency: false }, () => {
+  for (const defect of ['foreign-for', 'missing-id', 'additional-label', 'foreign-range-form', 'foreign-output-form',
+    'multiple-current-forms', 'empty-form-key', 'intervening-sibling', 'foreign-owner', 'hidden-ancestor']) {
+    const cleanup = [];
+    try {
+      // Each row gets its own actual component and native-interface ports;
+      // restore globals completely before constructing the next row.
+      const state = e11LayersWeightPlacement({ after: undo => cleanup.push(undo) }, 'en', defect), { x, measured } = state;
+      const box = x.run();
+      assert.equal(box.top, measured.top, defect);
+      assert.equal(x.overlap(box, [measured.label, measured.output]).length, 2,
+        defect + ': invalid ownership cannot supply a replacement copy obstacle');
+      assert.deepEqual(x.copyBoxReads, [], defect); assert.deepEqual(x.rangeReads, [], defect);
+      e11LayersWeightUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('E11 Layers copy does not acquire native authority to move a hovered Ask', { concurrency: false }, t => {
+  const state = e11LayersWeightPlacement(t), { x, measured } = state;
+  x.hovered = true;
+  const box = x.run();
+  assert.equal(x.overlap(box, [measured.label, measured.output]).length, 2);
+  assert.equal(x.overlap(box, [measured.ring]).length, 0, 'the current native range is already clear');
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.layersOwnerQueries, []);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+  e11LayersWeightUnchanged(state, box);
+});
+
+
+// E11 R4 compact-tail counterexamples. Native controls, current handle ring,
+// weight LABEL and final compact Ask boxes below are retained R4 observations.
+// Ordinary width160 is a declared CSSOM premise; no ordinary-width rectangle
+// or per-iteration browser write instrumentation was retained. The inherited
+// OUTPUT rectangle is an explicitly contained R3 premise inside the equal R4
+// weight LABEL, so it cannot change the admitted obstacle union. These are
+// finite source fixtures, not a reconstruction of actual browser iterations.
+const e11CompactSnapshots = {
+  ar: {...{"width":320,"height":800,"resetTop":680,"capturedTop":323.125,"capturedOffset":356.875,"clip":[17,-27.875,286,300],"protectIndex":12,"handleIndex":13,"weightIndex":16,"listCount":12,"handleEnvelope":[34,375.125,252,50],"handleLabel":[37,357.125,246,65],"weightLabel":[37,630.6875,246,94]}, rows: [
+    {"tag":"BUTTON","className":null,"name":"نقل palette/dusk-warm إلى الأعلى","id":null,"box":[195,-16.875,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"نقل palette/dusk-warm إلى الأسفل","id":null,"box":[151,-16.875,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-visibility","name":"كتم reference/window-light","id":null,"box":[245,46.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-name","name":null,"id":null,"box":[80,46.125,160,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"نقل reference/window-light إلى الأعلى","id":null,"box":[195,96.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"نقل reference/window-light إلى الأسفل","id":null,"box":[151,96.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-remove","name":"إزالة reference/window-light","id":null,"box":[31,46.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-visibility","name":"كتم direction/nocturne","id":null,"box":[245,159.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-name","name":null,"id":null,"box":[80,159.125,160,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"نقل direction/nocturne إلى الأعلى","id":null,"box":[195,209.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"نقل direction/nocturne إلى الأسفل","id":null,"box":[151,209.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-remove","name":"إزالة direction/nocturne","id":null,"box":[31,159.125,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":null,"id":null,"box":[37,304.125,70.03125,44],"disabled":false},
+    {"tag":"INPUT","className":null,"name":null,"id":null,"box":[37,378.125,246,44],"disabled":false},
+    {"tag":"TEXTAREA","className":null,"name":null,"id":null,"box":[37,452.125,246,95.5625],"disabled":false},
+    {"tag":"SELECT","className":null,"name":null,"id":null,"box":[37,577.6875,246,44],"disabled":false},
+    {"tag":"INPUT","className":null,"name":"التأثير في النتيجة","id":"forma-layer-inspector-weight-1b76b431-e53f-4a26-bc95-d36efcb525da","box":[35,674.6875,246,48],"disabled":false},
+    {"tag":"BUTTON","className":"button ghost compact","name":null,"id":null,"box":[199.375,734.6875,83.625,44],"disabled":false},
+    {"tag":"BUTTON","className":"button ghost compact layer-inspector-discard","name":"تجاهل التغييرات غير المحفوظة — ⁨direction/synthetic-custody⁩","id":null,"box":[103.3125,784.6875,179.6875,44],"disabled":false}
+  ]},
+  en: {...{"width":390,"height":844,"resetTop":724,"capturedTop":345.359375,"capturedOffset":378.640625,"clip":[17,25.359375,356,270],"protectIndex":20,"handleIndex":21,"weightIndex":24,"listCount":20,"handleEnvelope":[34,397.359375,322,50],"handleLabel":[37,380.359375,316,64],"weightLabel":[37,646.109375,316,92]}, rows: [
+    {"tag":"BUTTON","className":"layer-visibility","name":"Mute direction/synthetic-custody","id":null,"box":[31,40.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-name","name":null,"id":null,"box":[80,40.359375,135,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move direction/synthetic-custody up","id":null,"box":[221,40.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move direction/synthetic-custody down","id":null,"box":[265,40.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-remove","name":"Remove direction/synthetic-custody","id":null,"box":[315,40.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-visibility","name":"Mute palette/dusk-warm","id":null,"box":[31,104.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-name","name":null,"id":null,"box":[80,104.359375,135,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move palette/dusk-warm up","id":null,"box":[221,104.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move palette/dusk-warm down","id":null,"box":[265,104.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-remove","name":"Remove palette/dusk-warm","id":null,"box":[315,104.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-visibility","name":"Mute reference/window-light","id":null,"box":[31,168.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-name","name":null,"id":null,"box":[80,168.359375,135,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move reference/window-light up","id":null,"box":[221,168.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move reference/window-light down","id":null,"box":[265,168.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-remove","name":"Remove reference/window-light","id":null,"box":[315,168.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-visibility","name":"Mute direction/nocturne","id":null,"box":[31,232.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-name","name":null,"id":null,"box":[80,232.359375,135,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move direction/nocturne up","id":null,"box":[221,232.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":"Move direction/nocturne down","id":null,"box":[265,232.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":"layer-remove","name":"Remove direction/nocturne","id":null,"box":[315,232.359375,44,44],"disabled":false},
+    {"tag":"BUTTON","className":null,"name":null,"id":null,"box":[272.328125,327.359375,80.671875,44],"disabled":false},
+    {"tag":"INPUT","className":null,"name":null,"id":null,"box":[37,400.359375,316,44],"disabled":false},
+    {"tag":"TEXTAREA","className":null,"name":null,"id":null,"box":[37,473.359375,316,90.75],"disabled":false},
+    {"tag":"SELECT","className":null,"name":null,"id":null,"box":[37,593.109375,316,44],"disabled":false},
+    {"tag":"INPUT","className":null,"name":"Influence on the result","id":"forma-layer-inspector-weight-a8ec99f8-a159-4e7b-8834-7aa29cb97557","box":[39,688.109375,316,48],"disabled":false},
+    {"tag":"BUTTON","className":"button ghost compact","name":null,"id":null,"box":[37,748.109375,94.265625,44],"disabled":false},
+    {"tag":"BUTTON","className":"button ghost compact layer-inspector-discard","name":"Discard unsaved changes — ⁨direction/synthetic-custody⁩","id":null,"box":[183.90625,748.109375,169.09375,44],"disabled":false},
+    {"tag":"BUTTON","className":"button primary compact","name":null,"id":null,"box":[37,798.109375,103.109375,44],"disabled":false}
+  ]}
+};
+
+function e11CompactSnapshotPlacement(t, locale = 'en') {
+  const state = e11LayersWeightPlacement(t, locale), { x, field, label, output } = state;
+  const measured = e11CompactSnapshots[locale];
+  const rect = values => d411Rect(...values);
+  const list = x.ancestor(rect(measured.clip), { overflowX: 'auto', overflowY: 'auto' });
+  x.controls.length = 0;
+  for (const [index, row] of measured.rows.entries()) {
+    const control = index === measured.weightIndex ? field : x.control(rect(row.box), {
+      tagName: row.tag, className: row.className, ariaLabel: row.name, disabled: row.disabled,
+      parentElement: index < measured.listCount ? list : state.form,
+    });
+    if (index === measured.weightIndex) {
+      field.id = row.id; label.htmlFor = row.id;
+      assert.deepEqual(field.getBoundingClientRect(), rect(row.box));
+    }
+    x.controls.push(control);
+  }
+  const handle = x.controls[measured.handleIndex], protect = x.controls[measured.protectIndex];
+  handle.name = 'handle'; handle.value = 'direction/synthetic-custody';
+  handle.outlineStyle = 'solid'; handle.outlineWidth = '3px'; handle.outlineOffset = '0px';
+  x.f.document.activeElement = handle;
+  // The RTL lane is anchored at the recorded left edge, including in ordinary
+  // mode. Its declared160px width reaches the recorded second-row arrows;
+  // pretending ordinary mode also stayed44px would skip compact exhaustion.
+  x.launcher.getBoundingClientRect = () => {
+    const offset = Number.parseFloat(x.values.get('--forma-assistant-obstacle-offset') || '0');
+    const compact = x.f.panel.dataset.compactLauncher === 'true', width = compact ? 44 : 160;
+    const left = locale === 'ar' ? 10 : measured.width - 10 - width;
+    let box = d411Rect(left, measured.resetTop - offset, width, 44);
+    if (x.f.panel.dataset.tightLauncher === 'true' && state.nativeCompletionRead) {
+      box = state.nativeCompletionRead(box);
+    }
+    x.boxes.push({ ...box, offset, compact });
+    return box;
+  };
+  const captured = d411Rect(locale === 'ar' ? 10 : measured.width - 54, measured.capturedTop, 44, 44);
+  const bounds = measured.rows.map((row, index) => {
+    const box = rect(row.box);
+    if (index === measured.handleIndex) return rect(measured.handleEnvelope);
+    if (index >= measured.listCount) return box;
+    const clip = rect(measured.clip), left = Math.max(box.left, clip.left), top = Math.max(box.top, clip.top);
+    return d411Rect(left, top, Math.min(box.right, clip.right) - left, Math.min(box.bottom, clip.bottom) - top);
+  });
+  assert.deepEqual(state.measured.label, rect(measured.weightLabel));
+  assert.ok(state.measured.output.left >= state.measured.label.left && state.measured.output.right <= state.measured.label.right
+    && state.measured.output.top >= state.measured.label.top && state.measured.output.bottom <= state.measured.label.bottom,
+  'the separately declared OUTPUT premise is contained by the observed R4 LABEL');
+  const before = {
+    controls: x.controls.map(control => ({ control, value: control.value, disabled: control.disabled, parent: control.parentElement })),
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages,
+    id: field.id, labelFor: label.htmlFor, labels: field.labels, form: field.form, outputForm: output.form,
+    control: label.control, previousSibling: field.previousElementSibling, output: output.value, labelText: label.textContent,
+  };
+  return Object.assign(state, { snapshot: measured, handle, protect, captured, bounds, before });
+}
+
+function e11CompactUnchanged(state, box, { queried = true, active = state.handle } = {}) {
+  const { x, field, label, output, before, snapshot } = state;
+  assert.equal(x.f.document.activeElement, active);
+  for (const row of before.controls) {
+    assert.equal(row.control.value, row.value); assert.equal(row.control.disabled, row.disabled);
+    assert.equal(row.control.parentElement, row.parent);
+  }
+  assert.equal(field.id, before.id); assert.equal(label.htmlFor, before.labelFor); assert.equal(field.labels, before.labels);
+  assert.equal(field.form, before.form); assert.equal(output.form, before.outputForm); assert.equal(label.control, before.control);
+  assert.equal(field.previousElementSibling, before.previousSibling); assert.equal(output.value, before.output);
+  assert.equal(label.textContent, before.labelText);
+  assert.equal(x.f.panel.draftForTest, before.draft); assert.equal(x.f.panel.tasks, before.tasks);
+  assert.equal(x.f.panel.messages, before.messages); assert.deepEqual(x.f.emitted, []);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.copyQueries, queried ? e11LayersCopySelectors : []);
+  assert.deepEqual(x.copyBoxReads, queried ? [label, output] : []);
+  assert.deepEqual(x.allOwnerQueries, queried
+    ? [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3]] : []);
+  assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+  assert.ok(['left', 'top', 'right', 'bottom', 'width', 'height'].every(key => Number.isFinite(box[key])));
+  assert.equal(box.width, 44); assert.equal(box.height, 44);
+  assert.equal(box.left, state.captured.left); assert.equal(box.right, state.captured.right);
+  assert.ok(box.top >= 8 && box.bottom <= snapshot.height - 8);
+  // Eight ordinary reads, compact check + four passes, one completion read,
+  // one candidate readback and the fixture's returned rectangle remain finite.
+  assert.ok(x.boxes.length <= 16, 'completion adds bounded readback, not another search/RAF loop');
+}
+
+for (const locale of ['en', 'ar']) test('E11 ' + locale + ' recorded compact exhaustion clears every current peer and weight copy', { concurrency: false }, t => {
+  const state = e11CompactSnapshotPlacement(t, locale), { x, protect, captured, snapshot } = state;
+  assert.equal(protect.tagName, 'BUTTON'); assert.equal(protect.disabled, false);
+  assert.equal(x.overlap(captured, [protect.getBoundingClientRect()]).length, 1,
+    'the retained compact body obstructs the eligible current Protect button');
+  assert.equal(x.overlap(captured, [d411Rect(...snapshot.handleEnvelope)]).length, 0,
+    'current native handle focus was already clear');
+  assert.equal(snapshot.resetTop - snapshot.capturedOffset, captured.top);
+  const box = x.run();
+  // Keep this outcome before any new completion-marker assertion: ae456 must
+  // fail for its real remaining Protect overlap, not a changed fixture port.
+  assert.equal(x.overlap(box, [...state.bounds, state.measured.label, state.measured.output,
+    d411Rect(...snapshot.handleLabel)]).length, 0,
+  'after four compact writes the actual body must clear all sampled peers and designated copy');
+  assert.equal(x.f.panel.dataset.compactLauncher, 'true'); assert.equal(x.f.panel.dataset.tightLauncher, 'true');
+  assert.equal(box.top, locale === 'en' ? 279.859375 : 231.625,
+    'use the nearest centered gap in this fixed finite snapshot');
+  e11CompactUnchanged(state, box);
+});
+
+test('E11 compact completion preserves no-gap, uncertain-focus and ordinary-hover refusal', { concurrency: false }, () => {
+  for (const mode of ['no-gap', 'uncertain-focus', 'hovered-unrelated-control']) {
+    const cleanup = [];
+    try {
+      const state = e11CompactSnapshotPlacement({ after: undo => cleanup.push(undo) }), { x, snapshot } = state;
+      if (mode === 'no-gap') {
+        // Explicit synthetic stress: close only the available outside gaps.
+        // These are extra declared native task regions, never R4 observations.
+        x.regions.push(x.control(d411Rect(state.captured.left, -20, 44, state.protect.getBoundingClientRect().top + 20),
+          { tagName: 'DETAILS', className: 'output-recipe-entry' }));
+        x.regions.push(x.control(d411Rect(state.captured.left, state.measured.label.bottom, 44, snapshot.height + 20 - state.measured.label.bottom),
+          { tagName: 'DIV', className: 'output-requirement-warning' }));
+      }
+      if (mode === 'uncertain-focus') state.handle.outlineStyle = 'auto';
+      if (mode === 'hovered-unrelated-control') {
+        x.f.panel.dataset.compactLauncher = 'true';
+        x.values.set('--forma-assistant-obstacle-offset', `${snapshot.capturedOffset}px`);
+        x.hovered = true;
+      }
+      const box = x.run();
+      assert.deepEqual(box, state.captured, mode + ': retain the explicitly unresolved compact body');
+      assert.equal(x.f.panel.dataset.tightLauncher, undefined);
+      assert.equal(x.overlap(box, [state.protect.getBoundingClientRect()]).length, 1);
+      if (mode === 'hovered-unrelated-control') assert.deepEqual(x.writes, [], 'an unrelated obstructed peer is not current-focus authority');
+      e11CompactUnchanged(state, box, { queried: mode !== 'hovered-unrelated-control' });
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('E11 compact completion accepts bounded native rounding and restores rejected readbacks', { concurrency: false }, () => {
+  for (const mode of ['rounded-inside-gap', 'outside-chosen-gap', 'inline-shift', 'size-change', 'nonfinite-top']) {
+    const cleanup = [];
+    try {
+      const state = e11CompactSnapshotPlacement({ after: undo => cleanup.push(undo) }), { x, snapshot } = state;
+      state.nativeCompletionRead = box => {
+        if (mode === 'rounded-inside-gap') return d411Rect(box.left, box.top + .125, box.width, box.height);
+        if (mode === 'outside-chosen-gap') return d411Rect(box.left, 9, box.width, box.height);
+        if (mode === 'inline-shift') return d411Rect(box.left - 1, box.top, box.width, box.height);
+        if (mode === 'size-change') return d411Rect(box.left, box.top, box.width, box.height + 1);
+        return { ...box, top: NaN, bottom: NaN };
+      };
+      const box = x.run();
+      if (mode === 'rounded-inside-gap') {
+        assert.equal(box.top, 279.984375, 'native rounding within the chosen clear gap is retained');
+        assert.equal(x.f.panel.dataset.tightLauncher, 'true');
+        assert.equal(x.overlap(box, [...state.bounds, state.measured.label, state.measured.output]).length, 0);
+      } else {
+        assert.deepEqual(box, state.captured, mode + ': rejected layout restores the pre-completion body');
+        assert.equal(x.values.get('--forma-assistant-obstacle-offset'), `${snapshot.capturedOffset}px`);
+        assert.equal(x.f.panel.dataset.tightLauncher, undefined);
+        assert.equal(x.overlap(box, [state.protect.getBoundingClientRect()]).length, 1,
+          'restoration does not misreport the previously obstructed body as clear');
+      }
+      e11CompactUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('E11 compact completion chooses nearest free gaps with upward ties', { concurrency: false }, () => {
+  for (const height of [836, 800]) {
+    const cleanup = [];
+    try {
+      // Explicit synthetic boundary case: eight native44px peers leave only
+      // two fitting gaps after compact exhaustion. No coordinates are R4 data.
+      const x = d411Placement({ after: undo => cleanup.push(undo) }, [], { width: 300, height });
+      for (const top of [140, 220, 300, 380, 460, 540, 620, 700]) {
+        x.controls.push(x.control(d411Rect(246, top, 44, 44), { tagName: 'BUTTON', disabled: false }));
+      }
+      x.f.document.activeElement = x.controls[0];
+      x.launcher.getBoundingClientRect = () => {
+        const offset = Number.parseFloat(x.values.get('--forma-assistant-obstacle-offset') || '0');
+        const compact = x.f.panel.dataset.compactLauncher === 'true', width = compact ? 44 : 160;
+        const box = d411Rect(290 - width, 708 - offset, width, 44);
+        x.boxes.push({ ...box, offset, compact }); return box;
+      };
+      const box = x.run();
+      assert.equal(x.overlap(box).length, 0, 'complete the unresolved fourth-write collision');
+      assert.equal(box.top, height === 836 ? 52 : 746,
+        height === 836 ? 'equal-distance centers choose upward' : 'a closer downward gap outranks upward ordering');
+      assert.equal(x.f.panel.dataset.tightLauncher, 'true'); assert.equal(x.f.panel.dataset.compactLauncher, 'true');
+      assert.equal(x.f.document.activeElement, x.controls[0]); assert.deepEqual(x.f.emitted, []);
+      assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.ok(x.boxes.length <= 16);
+      assert.ok(box.top >= 8 && box.bottom <= height - 8); assert.equal(box.width, 44); assert.equal(box.height, 44);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
 });
