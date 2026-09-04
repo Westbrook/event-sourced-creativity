@@ -6,13 +6,17 @@ import { fileURLToPath } from "node:url";
 import { guardReadOnlyNetwork } from "./helpers/read-only-network.mjs";
 import { installSyntheticNetwork, syntheticNetworkEnabled, syntheticNetworkProvenance, syntheticEvidence } from "./helpers/synthetic-network.mjs";
 
+import { installPublicMarketingNetwork, publicMarketingProvenance, publicMarketingEvidence } from "./helpers/public-marketing-network.mjs";
+
 const directory = dirname(fileURLToPath(import.meta.url));
 const extensionPath = resolve(directory, "zoom-extension");
 const captureSessions = new WeakMap();
 
 export const test = base.extend({
   geometry: [{ viewport: { width: 1280, height: 900 }, zoom: 1 }, { option: true }],
-  context: async ({ geometry, baseURL }, use, testInfo) => {
+  publicMarketing: [false, { option: true }],
+  publicJavaScript: [true, { option: true }],
+  context: async ({ geometry, baseURL, publicMarketing, publicJavaScript }, use, testInfo) => {
     const synthetic = syntheticNetworkEnabled(baseURL);
     const profile = await mkdtemp(resolve(tmpdir(), "forma-a11y-"));
     let context;
@@ -23,6 +27,7 @@ export const test = base.extend({
         viewport: geometry.viewport,
         baseURL,
         locale: geometry.locale ?? "en-US",
+        ...(publicMarketing ? { javaScriptEnabled: publicJavaScript } : {}),
         ...(geometry.hasTouch === true ? { hasTouch: true } : {}),
         serviceWorkers: "block",
         acceptDownloads: false,
@@ -33,8 +38,10 @@ export const test = base.extend({
         ],
       });
       const network = await guardReadOnlyNetwork(context, baseURL);
-      const syntheticNetwork = synthetic ? await installSyntheticNetwork(context, baseURL) : null;
-      if (synthetic) testInfo.annotations.push({ type: "synthetic-network", description: syntheticNetworkProvenance.authority });
+      const publicNetwork = publicMarketing ? await installPublicMarketingNetwork(context, baseURL) : null;
+      const syntheticNetwork = synthetic && !publicMarketing ? await installSyntheticNetwork(context, baseURL) : null;
+      if (syntheticNetwork) testInfo.annotations.push({ type: "synthetic-network", description: syntheticNetworkProvenance.authority });
+      if (publicNetwork) testInfo.annotations.push({ type: "public-marketing-network", description: publicMarketingProvenance.authority });
       await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
       try {
         await use(context);
@@ -51,7 +58,13 @@ export const test = base.extend({
         }
         await context.close();
         context = null;
-        await testInfo.attach("read-only-network", { body: JSON.stringify(syntheticNetwork ? syntheticEvidence("read-only-network", network) : network, null, 2), contentType: "application/json" });
+        await testInfo.attach("read-only-network", { body: JSON.stringify(publicNetwork ? publicMarketingEvidence("read-only-network", network) : syntheticNetwork ? syntheticEvidence("read-only-network", network) : network, null, 2), contentType: "application/json" });
+        if (publicNetwork) {
+          await testInfo.attach("public-marketing-network", { body: JSON.stringify(publicNetwork, null, 2), contentType: "application/json" });
+          expect(publicNetwork.denied, "Public SSR must not attempt private APIs, bindings, writes, unreviewed static traffic or sockets").toEqual([]);
+          expect(publicNetwork.ssrCalls.length, "Public entry must be served by the actual current Worker SSR seam").toBeGreaterThan(0);
+          expect(publicNetwork.ssrCalls.every(call => call.completed && call.status === 200 && call.assets.length === 1 && call.bindingsDenied.length === 0)).toBe(true);
+        }
         if (syntheticNetwork) {
           await testInfo.attach("synthetic-network", { body: JSON.stringify(syntheticNetwork, null, 2), contentType: "application/json" });
           expect(syntheticNetwork.forbidden, "Finite synthetic mode must not attempt undeclared APIs, writes or sockets").toEqual([]);
@@ -72,7 +85,8 @@ export const test = base.extend({
 export { expect };
 
 export async function attachJSON(testInfo, name, value) {
-  const labeled = syntheticNetworkEnabled(testInfo.project.use.baseURL) ? syntheticEvidence(name, value) : value;
+  const labeled = testInfo.project.use.publicMarketing === true ? publicMarketingEvidence(name, value)
+    : syntheticNetworkEnabled(testInfo.project.use.baseURL) ? syntheticEvidence(name, value) : value;
   await testInfo.attach(name, { body: JSON.stringify(labeled, null, 2), contentType: "application/json" });
 }
 
@@ -257,4 +271,85 @@ export async function openForma(page, context, geometry, path, testInfo) {
     bodyFont: getComputedStyle(document.body).fontFamily,
     fonts: [...document.fonts].map(face => ({ family: face.family, weight: face.weight, status: face.status })),
   })));
+}
+
+
+/** Explicit public admission. Keep openForma's Shell/account/typeface assertions
+ * unchanged; a public source document is a different real route owner. */
+export async function openPublicMarketing(page, context, geometry, profile, locale, testInfo, { enhanced = true } = {}) {
+  const profiles = ["generic", "marketers", "hollywood-filmmakers", "indie-filmmakers"];
+  expect(testInfo.project.use.publicMarketing, "Only the explicit public project may use this admission").toBe(true);
+  expect(profiles).toContain(profile); expect(["en", "fr", "ar", "ja"]).toContain(locale);
+  const path = `/welcome${profile === "generic" ? "" : "/" + profile}/${locale}`;
+  const response = await page.goto(path, { waitUntil: "domcontentloaded" });
+  expect(response?.status(), "Current built Worker SSR must serve this exact public GET").toBe(200);
+  expect(response?.headers()["x-forma-route-family"]).toBe("marketing");
+  expect(response?.headers()["content-language"]).toBe(locale);
+  expect(new URL(page.url()).origin).toBe("http://127.0.0.1:4186");
+  expect(new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash).toBe(path);
+  await expect(page.locator("html")).toHaveAttribute("lang", locale);
+  await expect(page.locator("html")).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
+  await expect(page.locator("body")).toHaveAttribute("data-marketing-profile", profile);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", path);
+  await expect(page.locator("forma-shell,.consent-modal")).toHaveCount(0);
+  await expect(page.locator("details[data-public-change-demo]")).toHaveCount(1);
+  await expect(page.locator("details[data-output-preview]")).toHaveCount(4);
+  await expect(page.locator("dialog[data-marketing-preview-dialog]")).toHaveCount(1);
+  if (enhanced) {
+    await expect(page.locator("html")).toHaveAttribute("data-forma-experience", "marketing");
+    await expect(page.locator("[data-language-picker] forma-ui-language-picker select")).toHaveValue(locale);
+    await expect(page.locator("[data-language-picker] forma-ui-language-picker select")).toBeEnabled();
+    // The top-level marker precedes catalog loading. These actual controller
+    // attributes positively witness the completed preview initialization.
+    for (const kind of ["story", "presentation"]) {
+      await expect(page.locator(`[data-public-change-demo] a[data-demo-preview="${kind}"]`)).toHaveAttribute("aria-controls", "marketing-preview");
+      await expect(page.locator(`[data-public-change-demo] a[data-demo-preview="${kind}"]`)).toHaveAttribute("aria-haspopup", "dialog");
+    }
+  } else {
+    await expect(page.locator("html")).not.toHaveAttribute("data-forma-experience", "marketing");
+    await expect(page.locator("[data-language-picker] forma-ui-language-picker")).toHaveCount(0);
+    await expect(page.locator(".marketing-language__trigger[popovertarget=marketing-language-menu]")).toHaveCount(1);
+    await expect(page.locator("[data-public-change-demo] a[aria-controls]")).toHaveCount(0);
+  }
+  await page.evaluate(() => document.fonts.ready);
+  const stack = locale === "ar" ? "Geeza Pro, Noto Naskh Arabic, Tahoma, ui-sans-serif, system-ui, sans-serif"
+    : locale === "ja" ? "Hiragino Kaku Gothic ProN, Yu Gothic, Meiryo, ui-sans-serif, system-ui, sans-serif"
+      : "Manrope, ui-sans-serif, system-ui, sans-serif";
+  const fontSelector = locale === "ar" ? "html:lang(ar)" : locale === "ja" ? "html:lang(ja)" : ":root";
+  const readFont = () => page.evaluate(({ selector, sample }) => {
+    const normalize = value => value.split(",").map(family => family.trim().replace(/^["']|["']$/g, "")).join(", ");
+    const declarations = [], errors = [];
+    for (const sheet of document.styleSheets) {
+      const vite = sheet.ownerNode?.getAttribute("data-vite-dev-id") ?? null;
+      const href = sheet.href ? new URL(sheet.href, location.href) : null;
+      const sourceOwner = sheet.ownerNode instanceof HTMLStyleElement && !href && Boolean(vite?.endsWith("/src/marketing/marketing.css"))
+        || sheet.ownerNode instanceof HTMLLinkElement && href?.origin === location.origin && href.pathname === "/src/marketing/marketing.css" && !href.search && !href.hash;
+      if (!sourceOwner) continue;
+      try { for (const rule of sheet.cssRules) {
+        if (rule.type !== CSSRule.STYLE_RULE || rule.selectorText !== selector || !rule.style.getPropertyValue("--marketing-font")) continue;
+        declarations.push({ owner: sheet.href ?? vite, selector: rule.selectorText, stack: normalize(rule.style.getPropertyValue("--marketing-font")), priority: rule.style.getPropertyPriority("--marketing-font") });
+      } } catch (error) { errors.push(String(error)); }
+    }
+    return { language: document.documentElement.lang, direction: document.documentElement.dir,
+      token: normalize(getComputedStyle(document.documentElement).getPropertyValue("--marketing-font")),
+      body: normalize(getComputedStyle(document.body).fontFamily), fontsStatus: document.fonts.status,
+      declaredStackAvailable: document.fonts.check(`16px ${getComputedStyle(document.body).fontFamily}`, sample), declarations, errors,
+      fontFaces: [...document.fonts].map(face => ({ family: face.family, weight: face.weight, status: face.status })) };
+  }, { selector: fontSelector, sample: locale === "ar" ? "مثال افتراضي المراجعة" : locale === "ja" ? "架空の例 レビュー" : "Illustrative décision review" });
+  await expect.poll(readFont, { message: "Public geometry requires the actual marketing CSS declaration, selected stack and settled available fonts" }).toMatchObject({
+    language: locale, direction: locale === "ar" ? "rtl" : "ltr", token: stack, body: stack,
+    fontsStatus: "loaded", declaredStackAvailable: true, errors: [], declarations: [{ selector: fontSelector, stack, priority: "" }],
+  });
+  await attachJSON(testInfo, "public-typeface", { ...await readFont(),
+    limit: "The public stylesheet declares system fallback and imports no webfont. This witnesses its exact selected stack/availability, not a loaded Manrope or per-glyph face, contrast or AT conformance." });
+  await applyBrowserZoom(page, context, geometry.zoom, testInfo);
+  if (geometry.viewport) {
+    const metrics = await browserMetrics(page); expect(metrics.width).toBe(geometry.viewport.width); expect(metrics.height).toBe(geometry.viewport.height);
+  }
+  await attachJSON(testInfo, "public-admission", { profile, locale, path, enhanced,
+    ...await page.evaluate(() => ({ url: location.href, scripts: [...document.scripts].map(script => script.src).filter(Boolean),
+      stylesheets: [...document.styleSheets].map(sheet => sheet.href ?? sheet.ownerNode?.getAttribute("data-vite-dev-id")).filter(Boolean),
+      title: document.title, hero: document.querySelector("h1")?.textContent,
+      primaryCTA: document.querySelector(".marketing-header__actions > a.marketing-button--header")?.getAttribute("href") })),
+    boundary: "Actual public Worker SSR plus unmodified source client, explicit finite ASSETS; no account, backend authorization, completed generation or publication evidence." });
 }
