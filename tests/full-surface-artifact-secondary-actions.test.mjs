@@ -727,3 +727,165 @@ for (const boundary of ["current", "focus", "route", "source", "binding", "autho
     unchanged(x);
   });
 }
+
+// The unchanged native port emits document focusin synchronously after recording
+// focus arguments and before focus returns. These observations assert ownership
+// and command order only; they do not model viewport, caret or scroll geometry.
+function observeOwnedEditArrival(t, x, onArrival = () => {}) {
+  const { f, native } = x, observations = [], errors = []; let armed = true;
+  const listener = event => {
+    const target = event.target;
+    if (!armed || target?.owner !== f.host || target.tag !== "textarea" || target.attributes.rows !== "12") return;
+    armed = false;
+    try {
+      const dialogs = nodes(f, "dialog").filter(node => hasClass(node, "document-artifact-view"));
+      assert.equal(dialogs.length, 1);
+      const dialog = dialogs[0], focus = native.nativeFocus.at(-1);
+      const observation = { target, dialog, focus, scrollCount: native.nativeScroll.length, raw: target.value };
+      observations.push(observation);
+      assert.equal(target.isConnected, true);
+      assert.equal(dialog.open, true);
+      assert.equal(target.ownerDocument, native.document);
+      assert.equal(native.document.activeElement, target);
+      assert.equal(dialog.querySelector('.artifact-direct-editor textarea[rows="12"]'), target);
+      assert.equal(focus?.node, target, "the arrival was recorded by the actual product focus call");
+      onArrival(observation);
+    } catch (error) { errors.push(error); }
+  };
+  native.document.addEventListener("focusin", listener);
+  const dispose = () => native.document.removeEventListener("focusin", listener);
+  t.after(dispose);
+  return { observations, errors, dispose };
+}
+function requireOwnedEditArrival(observed) {
+  // Product's retired-opening catch must not swallow a test-listener assertion.
+  assert.deepEqual(observed.errors, []);
+  assert.equal(observed.observations.length, 1, "the synchronous post-focus seam was independently reached");
+  return observed.observations[0];
+}
+async function cancelUnsubmittedOwnedEdit(x, raw) {
+  const { f, native } = x;
+  const field = nodes(f, "textarea").find(node => node.attributes.rows === "12");
+  assert.ok(field && !disabled(field));
+  field.value = raw; field.handlers.input.call(f.host, { target: field, currentTarget: field }); await settle(f);
+  assert.equal(nodes(f, "textarea").find(node => node.attributes.rows === "12").value, raw);
+  unchanged(x);
+  const cancel = tree(f).visible("button").find(row => row.port.handlers.click?.toString().includes("#cancelArtifactEdit"));
+  assert.ok(cancel && within(cancel, parent => parent.tag === "footer") && !disabled(cancel.port));
+  const beforeFocus = native.nativeFocus.length, beforeScroll = native.nativeScroll.length;
+  click(f, cancel.port); await settle(f);
+  const returned = native.nativeFocus.slice(beforeFocus).at(-1)?.node, menu = menuState(f);
+  assert.ok(returned && hasClass(returned, "ui-popover-trigger"));
+  assert.equal(returned.owner, menu.menu);
+  assert.equal(returned.attributes.popovertarget, menu.panel.attributes.id);
+  assert.equal(menu.panel.matches(":popover-open"), false);
+  assert.equal(nodes(f, "textarea").some(node => node.attributes.rows === "12"), false);
+  assert.equal(native.nativeScroll.length, beforeScroll, "Cancel retains its existing focus-only return");
+  unchanged(x);
+}
+for (const [artifactKind, focused] of [["short_story", false], ["short_story", true], ["scene", false], ["storyboard", false], ["slides", false], ["video", false]]) {
+  test("Story owned editor reveal keeps the exact edit mode / " + artifactKind + "/" + (focused ? "focused" : "normal"), async t => {
+    const x = await currentHost(t, { locale: "en", artifactKind }, true), { f, native } = x;
+    if (focused) {
+      const toggle = tree(f).visible("button").find(row => hasClass(row.port, "artifact-viewer-focus-toggle"))?.port;
+      assert.ok(toggle && !disabled(toggle)); click(f, toggle);
+      await settle(f, () => nodes(f, "dialog").some(node => hasClass(node, "document-artifact-view") && node.getAttribute("data-output-focus") === "true"));
+    }
+    await openMore(x);
+    const beforeFocus = native.nativeFocus.length, beforeScroll = native.nativeScroll.length;
+    const observed = observeOwnedEditArrival(t, x, ({ dialog }) => {
+      assert.equal(dialog.getAttribute("data-artifact-kind"), artifactKind);
+      assert.equal(dialog.getAttribute("data-output-focus"), String(focused));
+    });
+    try { await chooseCurrent(x, "#startArtifactEdit"); } finally { observed.dispose(); }
+    const arrival = requireOwnedEditArrival(observed);
+    assert.equal(arrival.scrollCount, beforeScroll, "the actual focus call precedes any editor reveal");
+    assert.equal(native.nativeFocus.slice(beforeFocus).filter(row => row.node.owner === f.host && row.node.tag === "textarea" && row.node.attributes.rows === "12").length, 1);
+    const reveal = native.nativeScroll.slice(beforeScroll);
+    if (artifactKind === "short_story" && !focused) {
+      assert.deepEqual(arrival.focus.args, [{ preventScroll: true }], "normal Story acquires focus without the browser's default focus scroll");
+      assert.equal(reveal.length, 1, "one owned native reveal completes normal Story arrival");
+      assert.equal(reveal[0].node, arrival.target);
+      assert.deepEqual(reveal[0].args, [{ block: "nearest", inline: "nearest", behavior: "instant" }]);
+    } else {
+      assert.deepEqual(arrival.focus.args, [], "other editable kinds and focused Story retain plain focus");
+      assert.deepEqual(reveal, [], "the new reveal has no authority in another edit mode");
+    }
+    unchanged(x);
+    await cancelUnsubmittedOwnedEdit(x, "  Unsubmitted " + artifactKind + " café العربية 日本語.\n");
+  });
+}
+test("Story programmatic Edit without an event retains no focus or reveal lease", async t => {
+  const x = await currentHost(t, { locale: "en", artifactKind: "short_story" }, true), { f, native } = x;
+  await openMore(x);
+  const row = tree(f).visible("button").find(value => value.port.handlers.click?.toString().includes("#startArtifactEdit"));
+  assert.ok(row && within(row, parent => hasClass(parent, "artifact-viewer-actions-body")) && !disabled(row.port));
+  const action = row.port;
+  // Deliver the actual action EventPart without an event. This is a finite
+  // programmatic-call control, not a claimed native click or private-method call.
+  menuState(f).panel.hidePopover();
+  const beforeFocus = native.nativeFocus.length, beforeScroll = native.nativeScroll.length;
+  await action.handlers.click.call(action.owner); await settle(f);
+  assert.ok(nodes(f, "textarea").some(node => node.attributes.rows === "12"));
+  assert.equal(native.nativeFocus.length, beforeFocus);
+  assert.equal(native.nativeScroll.length, beforeScroll);
+  unchanged(x);
+  await cancelUnsubmittedOwnedEdit(x, "  No-event raw draft remains local.\n");
+});
+for (const boundary of ["source-retirement-event", "authorization", "native-close", "target-replacement", "newer-draft", "focus-transfer"]) {
+  test("Story post-focus reveal yields synchronously / " + boundary, async t => {
+    const x = await currentHost(t, { locale: "en", artifactKind: "short_story" }, true), { f, h, native } = x;
+    await openMore(x);
+    const beforeScroll = native.nativeScroll.length, source = h.store.captureSourceOwnership();
+    assert.ok(source && h.store.sourceOwnershipActive(source));
+    let mutation = null;
+    const observed = observeOwnedEditArrival(t, x, ({ target, dialog, scrollCount }) => {
+      assert.equal(dialog.getAttribute("data-artifact-kind"), "short_story");
+      assert.equal(dialog.getAttribute("data-output-focus"), "false");
+      assert.equal(scrollCount, beforeScroll);
+      if (boundary === "source-retirement-event") {
+        const callbacks = [...(f.listeners.get("forma-event-source-retired") ?? [])];
+        assert.ok(callbacks.length > 0, "the current component registered its real source-retirement callback");
+        assert.equal(h.store.sourceOwnershipScopeActive(source), true);
+        for (const callback of callbacks) callback({ type: "forma-event-source-retired", detail: { source } });
+        assert.equal(dialog.open, false, "actual component source retirement closes its original native dialog");
+        assert.equal(h.store.sourceOwnershipActive(source), true, "explicit event delivery does not pretend a Store 403 or source erasure");
+        mutation = { kind: boundary, closed: dialog };
+      } else if (boundary === "authorization") {
+        const authorization = h.store.captureAuthorizationScope(); assert.ok(authorization);
+        h.store.session.set({ ...h.store.session.get(), permissionEpoch: "Story-post-focus-withdrawn-scope" });
+        assert.equal(h.store.authorizationScopeActive(authorization), false);
+        mutation = { kind: boundary };
+      } else if (boundary === "native-close") {
+        dialog.close(); assert.equal(dialog.open, false); mutation = { kind: boundary, closed: dialog };
+      } else if (boundary === "target-replacement") {
+        f.draw();
+        const replacement = dialog.querySelector('.artifact-direct-editor textarea[rows="12"]');
+        assert.equal(nodes(f, "dialog").find(node => hasClass(node, "document-artifact-view")), dialog);
+        assert.equal(target.isConnected, false);
+        assert.ok(replacement && replacement.isConnected && replacement !== target);
+        assert.equal(replacement.value, target.value);
+        mutation = { kind: boundary, replacement };
+      } else if (boundary === "newer-draft") {
+        const raw = "  A synchronous newer draft keeps its own caret and exact text.\n";
+        target.value = raw; target.handlers.input.call(f.host, { target, currentTarget: target });
+        assert.equal(target.value, raw); mutation = { kind: boundary, raw };
+      } else {
+        const next = tree(f).visible("button").find(row => row.port.handlers.click?.toString().includes("#cancelArtifactEdit"))?.port;
+        assert.ok(next && !disabled(next) && next !== target);
+        native.focus(next); assert.equal(native.document.activeElement, next);
+        mutation = { kind: boundary, next };
+      }
+    });
+    try { await chooseCurrent(x, "#startArtifactEdit"); } finally { observed.dispose(); }
+    const arrival = requireOwnedEditArrival(observed);
+    assert.equal(mutation?.kind, boundary, "this case reaches its own post-focus invalidation without relying on the positive case");
+    assert.equal(native.nativeScroll.length, beforeScroll, "the invalidated arrival may not reveal any stale target or replacement");
+    if (boundary === "focus-transfer") assert.equal(native.document.activeElement, mutation.next);
+    if (boundary === "target-replacement") assert.equal(arrival.target.isConnected, false);
+    if (boundary === "newer-draft") assert.equal(nodes(f, "textarea").find(node => node.attributes.rows === "12").value, mutation.raw);
+    if (boundary === "source-retirement-event") assert.equal(nodes(f, "textarea").some(node => node.attributes.rows === "12"), false);
+    if (mutation.closed) assert.equal(mutation.closed.open, false);
+    unchanged(x);
+  });
+}

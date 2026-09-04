@@ -12723,6 +12723,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-retained-short-story.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaRetainedShortStory",
+          "tagName": "forma-retained-short-story",
+          "customElement": true,
+          "summary": "Short story",
+          "description": "Short story",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-retained-short-story",
+          "declaration": {
+            "name": "FormaRetainedShortStory",
+            "module": "src/components/forma-retained-short-story.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaRetainedShortStory",
+          "declaration": {
+            "name": "FormaRetainedShortStory",
+            "module": "src/components/forma-retained-short-story.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-scout.ts",
       "declarations": [
         {
