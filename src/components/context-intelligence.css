@@ -1,5 +1,5 @@
 forma-context-intelligence{display:block;min-inline-size:0}
-.context-intelligence-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.3rem;margin-block:.55rem}
+.context-intelligence-actions{display:flex;flex-wrap:wrap;align-items:stretch;gap:.3rem;margin-block:.55rem}
 .context-intelligence-actions .button{display:inline-flex;min-inline-size:44px;min-block-size:44px;align-items:center;gap:.3rem}
 .context-intelligence-actions.compact{margin-block:.1rem}
 .context-intelligence-actions.compact .button{min-block-size:44px;padding-inline:.45rem;font-size:var(--type-micro)}

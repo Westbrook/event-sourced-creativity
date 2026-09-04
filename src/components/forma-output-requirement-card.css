@@ -37,7 +37,7 @@ forma-output-requirement-card .output-requirement-results > li {
 }
 forma-output-requirement-card .output-requirement-header > div,
 forma-output-requirement-card .output-requirement-results > li > div { min-inline-size: 0; }
-forma-output-requirement-card .output-requirement-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--forma-space-2, .5rem); }
+forma-output-requirement-card .output-requirement-actions { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--forma-space-2, .5rem); }
 forma-output-requirement-card button,
 forma-output-requirement-card summary {
   min-block-size: var(--forma-control-min-size, 2.75rem);
@@ -114,7 +114,6 @@ forma-output-requirement-card [data-presentation="compact"] { padding: var(--for
   forma-output-requirement-card .output-requirement-card { padding: var(--forma-space-3, .75rem); }
   forma-output-requirement-card .output-requirement-fields { grid-template-columns: minmax(0, 1fr); }
   forma-output-requirement-card .output-requirement-header { display: grid; }
-  forma-output-requirement-card .output-requirement-actions { align-items: stretch; }
   forma-output-requirement-card .output-requirement-actions > button { flex: 1 1 11rem; }
   forma-output-requirement-card .output-requirement-group { padding: var(--forma-space-3, .75rem); }
 }

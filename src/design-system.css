@@ -4461,7 +4461,7 @@ forma-ui-button .button { max-width: 100%; }
 .shared-text-dialog-card{display:grid;width:min(30rem,calc(100vw - 2rem));gap:var(--space-6)}
 .shared-text-dialog-card>h2{margin:0;font-size:var(--type-title)}
 .shared-text-dialog-card>label{display:grid;gap:var(--space-2);font-weight:600}
-.shared-text-dialog-card>footer{display:flex;justify-content:flex-end;gap:var(--space-3)}
+.shared-text-dialog-card>footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-3)}
 .application-loading{display:flex;min-height:min(24rem,55dvh);align-items:center;justify-content:center;gap:var(--space-4);padding:var(--space-8)}
 .application-loading>span{width:.85rem;height:.85rem;background:var(--accent);border-radius:50%;animation:application-loading-pulse 1.3s ease-in-out infinite}
 .application-loading>div{display:grid;gap:var(--space-1)}

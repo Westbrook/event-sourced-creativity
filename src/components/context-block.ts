@@ -190,12 +190,18 @@ export class ContextBlock extends FormaElement {
     return focus;
   }
 
-  #focusAfterUpdate(target: () => HTMLElement | null, focus = this.#captureControlFocus()) {
+  #focusAfterUpdate(target: () => HTMLElement | null, focus = this.#captureControlFocus(), reveal = false) {
     void this.updateComplete.then(() => {
       try {
         if (!focus.current() || this.ownerDocument.querySelector("dialog[open]")) return;
         const element = target();
-        if (element) focus.lease.run(element, () => { element.focus({ preventScroll: true }); return true; });
+        if (element) focus.lease.run(element, () => {
+          if (reveal) {
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+            if (!focus.current() || !element.isConnected || target() !== element || this.ownerDocument.querySelector("dialog[open]")) return false;
+          }
+          element.focus({ preventScroll: true }); return true;
+        });
       } finally { this.#disposeControlFocus(focus); }
     }, () => this.#disposeControlFocus(focus));
   }
@@ -258,7 +264,7 @@ export class ContextBlock extends FormaElement {
     this.#editingRequest = "";
     if (this.store.ui.editingBlockId === this.block.id) this.store.patchUi({ editingBlockId: "" });
     this.#controlsOpen = false; this.#editingFocused = false; this.requestUpdate();
-    this.#focusAfterUpdate(() => this.querySelector<HTMLButtonElement>(".context-controls-toggle"), this.#captureControlFocus(this.store.ui.editingBlockId));
+    this.#focusAfterUpdate(() => this.querySelector<HTMLButtonElement>(".context-controls-toggle"), this.#captureControlFocus(this.store.ui.editingBlockId), this.surface === "document");
   }
 
   #toggleControls() {
