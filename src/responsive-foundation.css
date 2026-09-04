@@ -1305,6 +1305,41 @@ html:not([data-document-focus]) .application-creative[data-nav-posture="compact"
   outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
 }
 
+/* Library's inline and native rail triggers share the bounded toolbar paint. */
+.application-creative[data-nav-posture="rail"] .library-page > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Library landing owns root-scroll timing before native focus traversal.
+ * Keep this owner policy independent of whichever control is focused. */
+html:has(.application-creative[data-layout-intent="browse"] > #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-behavior: auto;
+}
+
+/* Library's tall browsing shell scrolls global chrome in natural order.
+ * Local context sticks only after the complete task-navigation row has passed. */
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) > .topbar {
+  position: relative;
+  top: auto;
+}
+
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) .library-page > .library-main > .page-header--library {
+  inset-block-start: 0;
+}
+
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) .library-page > forma-project-rail > .project-rail {
+  inset-block-start: 0;
+  block-size: 100dvb;
+}
+
+/* Match Library's existing small-viewport local header and rail flow. */
+@media (max-width: 760px) {
+  .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) > .topbar {
+    position: relative;
+    top: auto;
+  }
+}
+
 /* A translated native-popover invoker owns a row in the short rail posture.
  * The existing wide inline rail keeps its separate floating control policy. */
 @media (max-height: 37.5rem) and (orientation: landscape) {
@@ -3271,6 +3306,23 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   overflow-wrap: anywhere;
 }
 
+.document-title-row > .icon-button {
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  flex: 0 0 auto;
+}
+
+/* Keep Rename's ring inside the short rail header's existing scrollport. */
+.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document .document-title-row > .icon-button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Keep title controls inside the paint boundary of their adjacent chrome. */
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document .document-title-row > .icon-button:focus-visible,
+.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document .document-title-editor > .button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] {
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -3278,6 +3330,7 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
   min-block-size: var(--forma-hit-target);
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--forma-cluster-gap);
   padding-block: .125rem;
@@ -3285,13 +3338,13 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-copy {
   min-inline-size: 0;
-  flex: 1 1 auto;
+  flex: 1 1 min(100%, 16rem);
 }
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions {
   inline-size: auto;
   width: auto;
-  max-inline-size: 55%;
+  max-inline-size: 100%;
   flex-wrap: nowrap;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
@@ -4939,6 +4992,41 @@ forma-presentation-deck {
 .workspace-settings-card > .workspace-settings-list > li:has(> .button ~ .button) > .button,
 .workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li:has(> .button ~ .button) > .button {
   align-self: stretch;
+}
+
+/* Keep the existing Document rename field and its direct actions as peers.
+ * A shared target floor must not become a ceiling on translated labels. */
+.document-title-editor {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-title-editor > input {
+  flex: 1 1 min(100%, 16rem);
+  min-inline-size: 0;
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+}
+
+.document-title-editor > .button {
+  flex: 0 1 auto;
+  max-inline-size: 100%;
+  align-self: stretch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The shared compact ghost control supplies the target and padding.
+ * Override only the older, more-specific micro-text rule on this row. */
+.collection-filter > .button {
+  max-inline-size: 100%;
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  line-height: var(--forma-body-line-height, 1.6);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* These E6 native controls keep the existing coarse target floor when
