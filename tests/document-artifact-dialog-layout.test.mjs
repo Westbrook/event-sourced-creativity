@@ -191,3 +191,50 @@ test("mobile grouped reader quantity wraps without changing the editing footer f
   }
   assert.equal(winning(`${popover} .ui-popover-panel`, "inline-size"), "min(24rem,calc(100dvi - 1rem))");
 });
+
+test("reader header reserves readable identity space when localized actions need another row", () => {
+  const header = ".document-artifact-reader > .artifact-viewer-header";
+  const identity = `${header} > .artifact-viewer-identity`;
+  const actions = `${header} > .document-artifact-reader-actions`;
+  const intent = `${actions} > .artifact-viewer-review-toggle`;
+  const kind = `${identity} > .artifact-viewer-kicker > span`;
+
+  // The retained 320px failure had open production evidence in an almost
+  // zero-width identity column, a 5140px header and a zero-height content
+  // scroller. Intrinsic row allocation must respond to actual available
+  // width, including translated labels and zoom above a viewport breakpoint.
+  // This source policy does not certify native geometry or full text paint.
+  assert.equal(winning(header, "flex-wrap"), "wrap");
+  assert.equal(winning(identity, "flex"), "1 1 18rem");
+  assert.equal(winning(".artifact-viewer-identity", "min-inline-size"), "0");
+  assert.equal(winning(actions, "min-inline-size"), "0");
+  assert.equal(winning(actions, "max-inline-size"), "100%");
+  assert.equal(winning(actions, "flex-wrap"), "wrap");
+  assert.equal(winning(intent, "min-inline-size"), "var(--forma-hit-target,var(--forma-control-min-size,2.75rem))");
+  assert.equal(winning(kind, "min-inline-size"), "0");
+  for (const selector of [intent, kind]) {
+    assert.equal(winning(selector, "max-inline-size"), "100%");
+    assert.equal(winning(selector, "white-space"), "normal");
+    assert.equal(winning(selector, "overflow-wrap"), "anywhere");
+  }
+
+  // Keep all actions in their existing DOM order and preserve native target
+  // sizes. Neither the title policy nor reader/evidence scrolling is replaced
+  // to hide the width-allocation failure.
+  assert.match(component, /<header class="artifact-viewer-header"><div class="artifact-viewer-identity">/u);
+  assert.match(component, /<\/details><\/div><div class="document-artifact-reader-actions">/u);
+  assert.match(component, /class="artifact-viewer-details"><summary>/u);
+  assert.equal(winning(".document-artifact-reader-actions", "flex"), "none");
+  for (const dimension of ["min-inline-size", "min-block-size"]) {
+    assert.equal(winning(".document-artifact-reader-actions > .icon-button", dimension), "var(--forma-hit-target,var(--forma-control-min-size,2.75rem))");
+  }
+  assert.equal(winning(".artifact-viewer-review-toggle", "min-block-size"), "var(--forma-hit-target,var(--forma-control-min-size,2.75rem))");
+  assert.equal(winning(".document-artifact-reader-content", "min-height"), "0");
+  assert.equal(winning(".document-artifact-reader-content", "overflow"), "auto");
+  assert.equal(winning(".document-artifact-reader-content", "overscroll-behavior"), "contain");
+  for (const selector of [header, identity, actions, intent, kind]) {
+    for (const property of ["width", "min-width", "max-width", "height", "max-height", "overflow", "overflow-x", "overflow-y", "order", "direction"]) {
+      assert.equal(winning(selector, property), undefined, `Header allocation does not replace ${selector} ${property}`);
+    }
+  }
+});

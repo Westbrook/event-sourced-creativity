@@ -2091,8 +2091,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .document-artifact-dialog > header h2,.document-artifact-reader > header h2 { margin: .25rem 0; font: 600 clamp(1.5rem,3vw,2.25rem)/1.05 var(--sans); letter-spacing: -.035em; }
 .document-artifact-dialog > header p,.document-artifact-reader > header p { max-width: 48rem; margin: 0; color: var(--muted); }
 .document-artifact-reader-actions { display: flex; flex: none; align-items: center; gap: 1rem; }
-.document-artifact-reader > .artifact-viewer-header { align-items: center; gap: 1rem; padding-block: .6rem; padding-inline: clamp(.8rem,2.5vi,2rem); }
+.document-artifact-reader > .artifact-viewer-header { flex-wrap: wrap; align-items: center; gap: 1rem; padding-block: .6rem; padding-inline: clamp(.8rem,2.5vi,2rem); }
 .artifact-viewer-identity { min-inline-size: 0; }
+.document-artifact-reader > .artifact-viewer-header > .artifact-viewer-identity { flex: 1 1 18rem; }
 .artifact-viewer-kicker { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: center; gap: .25rem .7rem; color: var(--muted); font-size: var(--type-caption); }
 .artifact-viewer-kicker > span { flex: none; }
 .artifact-viewer-kicker .artifact-review-status { min-inline-size: 0; font-size: inherit; overflow-wrap: anywhere; }
@@ -2102,6 +2103,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .artifact-viewer-details > div { display: grid; gap: .35rem; padding-block-end: .7rem; }
 .artifact-viewer-details > div > p { overflow-wrap: anywhere; }
 .document-artifact-reader-actions { gap: .35rem; }
+.document-artifact-reader > .artifact-viewer-header > .document-artifact-reader-actions { min-inline-size: 0; max-inline-size: 100%; flex-wrap: wrap; }
+.document-artifact-reader > .artifact-viewer-header > .document-artifact-reader-actions > .artifact-viewer-review-toggle { min-inline-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+.document-artifact-reader > .artifact-viewer-header > .artifact-viewer-identity > .artifact-viewer-kicker > span { min-inline-size: 0; max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
 .document-artifact-reader-actions > .icon-button { min-inline-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); min-block-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); }
 .artifact-viewer-review-toggle { min-block-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); }
 .artifact-slide-footer-toggle { display: inline-flex; align-items: center; gap: .55rem; color: var(--muted); font-size: var(--type-caption); font-weight: 600; cursor: pointer; }
