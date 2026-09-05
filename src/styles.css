@@ -2505,6 +2505,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .artifact-viewer-review-toggle { padding-inline: .6rem; }
   .document-artifact-reader > footer { align-items: center; flex-direction: row; }
   .document-artifact-reader > footer > span { max-inline-size: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .document-artifact-reader > footer:has(> forma-ui-popover.artifact-viewer-actions-popover) > span { min-inline-size: 0; flex: 1 1 0; max-inline-size: none; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
   .document-artifact-reader > footer > div { inline-size: auto; flex-wrap: nowrap; justify-content: start; overflow-x: auto; padding-block: .15rem; }
   .document-artifact-reader > footer .button { inline-size: auto; flex: none; white-space: nowrap; }
   .document-artifact-reader > footer > div > .button.primary { order: -1; }

@@ -121,3 +121,73 @@ test("included transcripts and soundtrack companions keep their full focus outli
     assert.equal(winning(supplementalSections, property), undefined, `Section spacing does not replace ${property}`);
   }
 });
+test("mobile grouped reader quantity wraps without changing the editing footer fallback", () => {
+  const footer = ".document-artifact-reader > footer";
+  const quantity = `${footer} > span`;
+  const groupedQuantity = `${footer}:has(> forma-ui-popover.artifact-viewer-actions-popover) > span`;
+  const mobileRules = (selector) => {
+    const results = [];
+    stylesheet.walkRules((rule) => {
+      if (!rule.selectors?.includes(selector)) return;
+      let mobile = false;
+      for (let parent = rule.parent; parent; parent = parent.parent) {
+        if (parent.type !== "atrule") continue;
+        if (parent.name !== "media" || !/^\(max-width:\s*720px\)$/u.test(parent.params)) return;
+        mobile = true;
+      }
+      if (mobile) results.push(rule);
+    });
+    return results;
+  };
+  const mobileValue = (selector, property) => {
+    const values = [];
+    for (const rule of mobileRules(selector)) {
+      rule.walkDecls(property, (declaration) => values.push(declaration.value));
+    }
+    return values.at(-1);
+  };
+
+  // The retained 320px failure displayed "1 part" completely, but applied an
+  // ellipsis policy. Only grouped More actions get wrapping metadata; editing
+  // keeps its existing fallback beside nonshrinking Save/Cancel controls.
+  // These source policies do not establish native full-text or control fit.
+  assert.match(component, /const groupViewerActions=!editing&&viewerSecondaryCount>1;/u);
+  assert.equal(mobileRules(groupedQuantity).length, 1);
+  assert.equal(mobileValue(groupedQuantity, "min-inline-size"), "0");
+  assert.equal(mobileValue(groupedQuantity, "flex"), "1 1 0");
+  assert.equal(mobileValue(groupedQuantity, "white-space"), "normal");
+  assert.equal(mobileValue(groupedQuantity, "overflow-wrap"), "anywhere");
+  assert.equal(mobileValue(groupedQuantity, "max-inline-size"), "none");
+  assert.equal(mobileValue(groupedQuantity, "overflow"), "visible");
+  assert.equal(mobileValue(groupedQuantity, "text-overflow"), "clip");
+  for (const property of ["overflow-x", "overflow-y", "-webkit-line-clamp"]) {
+    assert.equal(mobileValue(groupedQuantity, property), undefined, `Grouped metadata must not truncate through ${property}`);
+    assert.equal(winning(quantity, property), undefined, `The base quantity must not reintroduce ${property}`);
+  }
+
+  assert.equal(mobileRules(quantity).length, 1);
+  assert.equal(mobileValue(quantity, "max-inline-size"), "35%");
+  assert.equal(mobileValue(quantity, "overflow"), "hidden");
+  assert.equal(mobileValue(quantity, "text-overflow"), "ellipsis");
+  assert.equal(mobileValue(quantity, "white-space"), "nowrap");
+  assert.equal(mobileValue(quantity, "flex"), undefined);
+  assert.equal(mobileValue(quantity, "min-inline-size"), undefined);
+  assert.equal(winning(quantity, "flex"), "0 0 auto");
+
+  assert.equal(winning(footer, "position"), "sticky");
+  assert.equal(winning(footer, "display"), "flex");
+  assert.equal(winning(footer, "gap"), ".75rem");
+  assert.equal(mobileValue(footer, "flex-direction"), "row");
+  assert.equal(mobileValue(footer, "align-items"), "center");
+  assert.equal(mobileValue(`${footer} > div`, "overflow-x"), "auto");
+  assert.equal(mobileValue(`${footer} > div`, "flex-wrap"), "nowrap");
+  assert.equal(mobileValue(`${footer} .button`, "flex"), "none");
+  assert.equal(mobileValue(`${footer} .button`, "white-space"), "nowrap");
+
+  const popover = ".artifact-viewer-actions-popover";
+  assert.equal(winning(popover, "display"), "inline-block");
+  for (const dimension of ["min-inline-size", "min-block-size"]) {
+    assert.equal(winning(`${popover} .ui-popover-trigger`, dimension), "var(--forma-control-min-size,2.75rem)");
+  }
+  assert.equal(winning(`${popover} .ui-popover-panel`, "inline-size"), "min(24rem,calc(100dvi - 1rem))");
+});
