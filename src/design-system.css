@@ -3356,6 +3356,10 @@ forma-replay-app-runner { display: block; min-width: 0; }
 .layer-inspector button,
 .creative-tool-more { color: var(--fixed-dark-accent); }
 
+.layer-inspector > footer.platform-form-actions > button.button.ghost.layer-inspector-discard:not(:hover) {
+  color: var(--fixed-dark-muted);
+}
+
 .creative-editor-toolbar .button.primary,
 .reality-stage > footer .button {
   color: var(--on-accent);

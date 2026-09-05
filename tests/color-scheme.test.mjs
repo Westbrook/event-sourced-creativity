@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [legacy, design] = await Promise.all([
+const [legacy, design, layers] = await Promise.all([
   readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   readFile(new URL("../src/design-system.css", import.meta.url), "utf8"),
+  readFile(new URL("../src/components/forma-studio-editor-alternatives.ts", import.meta.url), "utf8"),
 ]);
 
 const rgb = (hex) => {
@@ -155,4 +156,52 @@ test("fixed-dark inspection surfaces use a non-reactive readable foreground pale
   assert.match(design, /\.spatial-kind-picker input:checked \+ span\s*\{[^}]*color:\s*var\(--on-accent\);[^}]*background:\s*var\(--orange\);/s);
   assert.match(design, /\.spatial-direct-tools button\[aria-pressed="true"\],[^}]*background:\s*var\(--orange\);/s);
   assert.match(design, /\.actual-replay-warning > span\s*\{\s*color:\s*var\(--on-accent\);\s*background:\s*var\(--warning\);\s*\}/);
+});
+
+// This finite source check resolves the two relevant author rules and their
+// tokens. It does not measure computed browser colors or native text paint.
+const discardForegroundRule = () => design.match(/(\.layer-inspector\s*>\s*footer\.platform-form-actions\s*>\s*button\.button\.ghost\.layer-inspector-discard:not\(:hover\))\s*\{([^}]*)\}/);
+
+for (const mode of ["light", "dark"]) {
+  test(`enabled Layers Discard has a readable source foreground on its fixed dark inspector in ${mode} preference`, () => {
+    const discard = layers.match(/<button type="button" class="([^"]*\blayer-inspector-discard\b[^"]*)"([\s\S]*?)<\/button>/);
+    assert.ok(discard, "the actual Layers renderer supplies the Discard button");
+    assert.ok(discard[1].split(/\s+/).includes("button"));
+    assert.ok(discard[1].split(/\s+/).includes("ghost"));
+    assert.match(layers, /<footer class="platform-form-actions">/);
+    const background = legacy.match(/\.layer-inspector\s*\{[^}]*background:\s*(#[0-9a-f]+)\s*;/i)?.[1];
+    assert.ok(background, "use the actual fixed inspector background");
+    const ghost = design.match(/\.button\.ghost\s*\{[^}]*color:\s*var\(--([a-z-]+)\)/)?.[1];
+    assert.equal(ghost, "muted", "the general two-class ghost rule remains theme dependent");
+    assert.match(design, /\.layer-inspector button,[^{}]*\{\s*color:\s*var\(--fixed-dark-accent\);\s*\}/);
+    // The general .button.ghost (0,2,0) beats .layer-inspector button
+    // (0,1,1). Only the current footer's more specific rule changes that.
+    const owned = discardForegroundRule();
+    const token = owned ? owned[2].match(/(?:^|;)\s*color:\s*var\(--([a-z-]+)\)\s*;/)?.[1] : ghost;
+    assert.ok(token, "the participating foreground is an existing CSS token");
+    const fixed = legacy.match(new RegExp(`--${token}:\\s*(#[0-9a-f]+)\\s*;`, "i"))?.[1];
+    const foreground = fixed ?? themeValues(token)[mode];
+    assert.ok(contrast(foreground, background) >= 4.5,
+      `source-derived ${token} ${foreground} on ${background} should meet 4.5:1 in ${mode} preference; got ${contrast(foreground, background)}`);
+  });
+}
+
+test("the Layers Discard foreground rule preserves hover colors and native disabled styling", () => {
+  const owned = discardForegroundRule();
+  assert.ok(owned, "only the actual Discard footer owner receives the resting foreground");
+  assert.ok((owned[1].match(/\.[a-z-]+/g) ?? []).length > 2,
+    "owned selector must outrank the two-class general ghost rule");
+  assert.match(owned[1], /:not\(:hover\)$/);
+  assert.match(owned[2], /^\s*color:\s*var\(--fixed-dark-muted\);\s*$/,
+    "a foreground correction must not override opacity, focus, backgrounds or pointer behavior");
+  const hover = design.match(/\.button\.secondary:hover,\s*\.button\.ghost:hover,\s*\.icon-button:hover\s*\{([^}]*)\}/)?.[1];
+  assert.ok(hover, "shared ghost hover keeps its complete foreground/background pair");
+  assert.match(hover, /color:\s*var\(--ink\);/);
+  assert.match(hover, /background:\s*var\(--panel-2\);/);
+  for (const mode of ["light", "dark"]) {
+    assert.ok(contrast(themeValues("ink")[mode], themeValues("panel-2")[mode]) >= 4.5,
+      `unchanged ghost hover should remain readable in ${mode} preference`);
+  }
+  assert.match(legacy, /button:disabled\s*\{\s*cursor:\s*not-allowed;\s*opacity:\s*\.48;\s*\}/);
+  assert.doesNotMatch(owned[2], /!important|forced-color-adjust/);
 });
