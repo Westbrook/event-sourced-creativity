@@ -1651,6 +1651,8 @@ const fLibraryWeightCopySelector = fLibraryWeightFormSelector + ' > fieldset[ari
 const fLibraryWeightLabelCopySelector = fLibraryWeightFormSelector + ' > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
 const fLibraryStateEditorSelector = '.library-main > forma-library-block-editor';
 const fLibraryStateCopySelector = fLibraryStateEditorSelector + ' > section.library-block-editor > header.library-block-editor-header > div:first-child > p.context-library-state';
+const fLibrarySearchFormSelector = '.library-main > .library-body > form.library-toolbar';
+const fLibrarySearchCopySelector = fLibrarySearchFormSelector + ' > forma-ui-search.searchbox > div.ui-search > label';
 const fDocumentStatePanelSelector = ':scope > section.workspace-page[data-workbench="document"] > .studio-main > .studio-grid > section#document-context-panel.context-column';
 const fDocumentStateHostsSelector = ':scope > .block-list[data-forma-content="primary"] > forma-context-block';
 const fDocumentSummarySelector = 'article.context-block.context-block--summary[data-block-id]';
@@ -1662,7 +1664,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], fStateQueries = [], fDocumentStateQueries = [], fDocumentBodyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], fStateQueries = [], fSearchQueries = [], fDocumentStateQueries = [], fDocumentBodyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
@@ -1690,7 +1692,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   surface.querySelectorAll = selector => {
     assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors, fRecipeFooterCopySelector, fDocumentStateCopySelector, fDocumentBodyCopySelector]
-      : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector, fLibraryStateCopySelector]
+      : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector, fLibraryStateCopySelector, fLibrarySearchCopySelector]
       : family === fTerminalCopyOwner ? [fTerminalCopySelector]
       : family === imageHistoryCopyOwner ? [imageHistoryCopySelector]
       : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
@@ -1701,6 +1703,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     if (selector === fRecipeFooterCopySelector || selector === fLibraryWeightCopySelector) fCopyQueries.push(selector);
     else if (selector === fLibraryWeightLabelCopySelector) fLabelQueries.push(selector);
     else if (selector === fLibraryStateCopySelector) fStateQueries.push(selector);
+    else if (selector === fLibrarySearchCopySelector) fSearchQueries.push(selector);
     else if (selector === fDocumentStateCopySelector) fDocumentStateQueries.push(selector);
     else if (selector === fDocumentBodyCopySelector) fDocumentBodyQueries.push(selector);
     else copyQueries.push(selector);
@@ -1769,18 +1772,20 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
       const base = family === "forma-workspace" ? e6DocumentCopySelectors : e11LibraryCopySelectors;
       const labelTail = family === "forma-library" && actualCopy.includes(fLibraryWeightLabelCopySelector) ? [fLibraryWeightLabelCopySelector] : [];
       const stateTail = family === "forma-library" && actualCopy.includes(fLibraryStateCopySelector) ? [fLibraryStateCopySelector] : [];
+      const searchTail = family === "forma-library" && actualCopy.includes(fLibrarySearchCopySelector) ? [fLibrarySearchCopySelector] : [];
       const documentTail = family === "forma-workspace" && actualCopy.includes(fDocumentStateCopySelector) ? [fDocumentStateCopySelector] : [];
       const bodyTail = family === "forma-workspace" && actualCopy.includes(fDocumentBodyCopySelector) ? [fDocumentBodyCopySelector] : [];
       if (labelTail.length) assert.ok(actualCopy.includes(added), "the label admission follows the existing OUTPUT admission");
       if (stateTail.length) assert.equal(labelTail.length, 1, "the metadata admission follows the retained label and OUTPUT admissions");
+      if (searchTail.length) assert.equal(stateTail.length, 1, "the Search-label admission follows the retained Library metadata admission");
       if (documentTail.length) assert.ok(actualCopy.includes(added), "the Document status admission follows the retained recipe footer admission");
       if (bodyTail.length) assert.equal(documentTail.length, 1, "the authored-body admission follows the retained lock-state admission");
-      assert.deepEqual(actualCopy, actualCopy.length ? [...base, ...(actualCopy.includes(added) ? [added] : []), ...labelTail, ...stateTail, ...documentTail, ...bodyTail] : [],
+      assert.deepEqual(actualCopy, actualCopy.length ? [...base, ...(actualCopy.includes(added) ? [added] : []), ...labelTail, ...stateTail, ...searchTail, ...documentTail, ...bodyTail] : [],
         "the complete copy-query sequence retains the family and ordered F admissions, without skips, duplicates or hidden queries");
     }
     return box;
   };
-  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, allCopyQueries, fCopyQueries, fLabelQueries, fStateQueries, fDocumentStateQueries, fDocumentBodyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, allCopyQueries, fCopyQueries, fLabelQueries, fStateQueries, fSearchQueries, fDocumentStateQueries, fDocumentBodyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -3151,9 +3156,10 @@ function fCopyOmissionQueries(state, requireAdmission = true) {
   assert.deepEqual(x.fLabelQueries, x.fLabelQueries.length ? [fLibraryWeightLabelCopySelector] : []);
   if (kind === 'footer') assert.deepEqual(x.fLabelQueries, []);
   assert.deepEqual(x.fStateQueries, kind === 'weight' && x.fStateQueries.length ? [fLibraryStateCopySelector] : []);
+  assert.deepEqual(x.fSearchQueries, kind === 'weight' && x.fSearchQueries.length ? [fLibrarySearchCopySelector] : []);
   assert.deepEqual(x.fDocumentStateQueries, kind === 'footer' && x.fDocumentStateQueries.length ? [fDocumentStateCopySelector] : []);
   assert.deepEqual(x.fDocumentBodyQueries, kind === 'footer' && x.fDocumentBodyQueries.length ? [fDocumentBodyCopySelector] : []);
-  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries, ...x.fStateQueries, ...x.fDocumentStateQueries, ...x.fDocumentBodyQueries], 'the complete family and each exact optional F admission retain their order');
+  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries, ...x.fStateQueries, ...x.fSearchQueries, ...x.fDocumentStateQueries, ...x.fDocumentBodyQueries], 'the complete family and each exact optional F admission retain their order');
 }
 test('F recipe footer whole copy clears Ask without changing native Cancel or saving', { concurrency: false }, t => {
   const state = fCopyOmissionPlacement(t, 'footer'), { x, raw, fragment, ring, copy } = state;
@@ -4072,4 +4078,178 @@ test('F an impossible authored Document body lane stays finite and explicitly un
   paragraph.directNodes[0].fragments = [d411Rect(0, 0, 320, 800)]; state.before = state.snapshot();
   const box = x.run(); assert.equal(x.overlap(box, paragraph.directNodes[0].fragments).length, 1);
   fDocumentBodyReads(state, Boolean(x.fDocumentBodyQueries.length)); fDocumentStateUnchanged(state, box);
+});
+
+// Detached Search-label proposal: the retained French200 Clear-stage image
+// records a visible omission, while the later measurement package was not a
+// runtime fix. ALL coordinates here are synthetic Range/CSSOM inputs to the
+// existing real Panel placement fixture, not native pixels or browser closure.
+function fLibrarySearchPlacement(t, { direct = [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(244, 650, 43, 18)] }] } = {}) {
+  const x = e6CopyPlacement(t, { family: 'forma-library', viewport: { width: 320, height: 800 }, right: 310, top: 650, normalWidth: 44 });
+  const native = {}, calls = [], ownershipQueries = [], idQueries = [], walkerReads = [];
+  for (const key of ['HTMLFormElement', 'HTMLLabelElement', 'HTMLInputElement']) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key), Type = class {};
+    native[key] = Type; Object.defineProperty(globalThis, key, { configurable: true, value: Type });
+    t.after(() => { if (previous) Object.defineProperty(globalThis, key, previous); else delete globalThis[key]; });
+  }
+  const full = d411Rect(16, 0, 288, 800), raw = d411Rect(33, 620, 254, 74);
+  const form = Object.assign(new native.HTMLFormElement(), x.ancestor(full, { isConnected: true, parentElement: x.surface }));
+  const search = x.ancestor(full, { isConnected: true, parentElement: form, label: direct.map(node => node.text).join(''), value: 'Atmosphere', help: '' });
+  const box = x.ancestor(full, { isConnected: true, parentElement: search });
+  const controlRow = x.ancestor(d411Rect(33, 700, 254, 44), { parentElement: box });
+  const label = x.copy(fLibrarySearchCopySelector, raw, [], { tagName: 'LABEL', parentElement: box, form,
+    htmlFor: 'f-library-search', textContent: search.label });
+  Object.setPrototypeOf(label, native.HTMLLabelElement.prototype);
+  const field = Object.assign(new native.HTMLInputElement(), x.control(d411Rect(33, 700, 196, 44), {
+    tagName: 'INPUT', type: 'search', id: 'f-library-search', isConnected: true, parentElement: controlRow,
+    form, labels: [label], value: 'Atmosphere', placeholder: 'Rechercher dans tous les travaux du projet', name: '', formAttribute: null,
+    focus: () => calls.push('focus-search'), click: () => calls.push('click-search'),
+  }));
+  label.control = field;
+  const clear = x.control(d411Rect(243, 700, 44, 44), { tagName: 'BUTTON', type: 'button', parentElement: controlRow,
+    form, disabled: false, ariaLabel: 'Effacer la recherche', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+    focus: () => calls.push('focus-clear'), click: () => calls.push('clear-search') });
+  x.controls.push(field, clear); x.f.document.activeElement = clear;
+  const forms = [form], searches = [search], boxes = [box], labels = [label], fields = [field], ids = [field];
+  const query = x.surface.querySelectorAll;
+  x.surface.querySelectorAll = selector => {
+    if (selector === fLibrarySearchFormSelector) { ownershipQueries.push(selector); return forms; }
+    return query(selector);
+  };
+  form.querySelectorAll = selector => { assert.equal(selector, ':scope > forma-ui-search.searchbox'); ownershipQueries.push(selector); return searches; };
+  search.querySelectorAll = selector => { assert.equal(selector, ':scope > div.ui-search'); ownershipQueries.push(selector); return boxes; };
+  box.querySelectorAll = selector => {
+    ownershipQueries.push(selector);
+    if (selector === ':scope > label') return labels;
+    assert.equal(selector, ':scope > div.ui-search-control > input[type="search"]'); return fields;
+  };
+  const previousCSS = Object.getOwnPropertyDescriptor(globalThis, 'CSS');
+  Object.defineProperty(globalThis, 'CSS', { configurable: true, value: { escape(value) { assert.equal(value, 'f-library-search'); return value; } } });
+  t.after(() => { if (previousCSS) Object.defineProperty(globalThis, 'CSS', previousCSS); else delete globalThis.CSS; });
+  const documentQuery = x.f.document.querySelectorAll;
+  x.f.document.querySelectorAll = selector => {
+    if (selector === '[id="f-library-search"]') { idQueries.push(selector); return ids; }
+    return documentQuery(selector);
+  };
+  const textNode = (text, fragments, parent = label) => ({ nodeType: 3, textContent: text, fragments, parentElement: parent, parentNode: parent });
+  const directNodes = direct.map(node => textNode(node.text, node.fragments));
+  const whitespace = textNode(' \n ', [raw]), comment = { nodeType: 8, textContent: 'Lit marker', parentElement: label, parentNode: label };
+  const nested = x.ancestor(raw, { nodeType: 1, tagName: 'SPAN', parentElement: label });
+  const nestedText = textNode('Synthetic unselected descendant', [raw], nested); nested.childNodes = [nestedText];
+  label.childNodes = [...directNodes, whitespace, comment, nested]; label.textNodes = [...directNodes, whitespace, nestedText];
+  const walker = x.f.document.createTreeWalker;
+  x.f.document.createTreeWalker = (element, kind) => { walkerReads.push(element); return walker(element, kind); };
+  x.surface.scrollTop = 17; x.f.panel.draftForTest = '  Keep the independent Assistant question.  ';
+  const ring = d411Rect(237, 694, 56, 56);
+  const state = { x, native, raw, form, search, box, controlRow, label, field, clear, forms, searches, boxes, labels, fields, ids,
+    directNodes, whitespace, comment, nested, nestedText, calls, ownershipQueries, idQueries, walkerReads, ring };
+  state.snapshot = () => ({ focus: x.f.document.activeElement, controlBoxes: x.controls.map(control => control.getBoundingClientRect()),
+    ring: [clear.outlineStyle, clear.outlineWidth, clear.outlineOffset], clearDisabled: clear.disabled, clearName: clear.ariaLabel,
+    rawQuery: field.value, componentQuery: search.value, componentLabel: search.label, help: search.help,
+    placeholder: field.placeholder, name: field.name, formAttribute: field.formAttribute, id: field.id, htmlFor: label.htmlFor,
+    control: label.control, inputLabels: [...field.labels], forms: [label.form, field.form, clear.form],
+    labelText: label.textContent, directText: directNodes.map(node => node.textContent), children: [...label.childNodes],
+    parents: [label.parentElement, field.parentElement, clear.parentElement, box.parentElement, search.parentElement, form.parentElement],
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope,
+    owner: x.f.panel.parentElement, scroll: x.surface.scrollTop });
+  state.before = state.snapshot(); return state;
+}
+function fLibrarySearchUnchanged(state, box) {
+  const { x } = state;
+  assert.deepEqual(state.snapshot(), state.before, 'placement preserves the named native Search field, raw query, Clear focus, form, DOM, scroll and independent guidance');
+  assert.deepEqual(state.calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.ok(box.top >= 8 && box.bottom <= 792);
+  assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(state.walkerReads, []); assert.deepEqual(x.detached, x.rangeReads);
+}
+for (const shape of ['single fragment', 'wrapped text', 'split direct text']) {
+  test('F current Library Search label clears Ask while preserving native Clear focus / ' + shape, { concurrency: false }, t => {
+    const direct = shape === 'single fragment'
+      ? [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(244, 650, 43, 18)] }]
+      : shape === 'wrapped text'
+        ? [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)] }]
+        : [{ text: 'Rechercher dans la ', fragments: [d411Rect(40, 650, 80, 18)] }, { text: 'bibliothèque du projet', fragments: [d411Rect(244, 674, 43, 18)] }];
+    const state = fLibrarySearchPlacement(t, { direct }), { x, directNodes, ring } = state;
+    const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+    assert.equal(x.overlap(initial, fragments).length, 1, 'the visible label alone supplies the initial collision');
+    assert.equal(x.overlap(initial, [ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    const box = x.run();
+    assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+      'clear each direct label fragment without changing the current native Search or Clear control');
+    assert.deepEqual(x.fSearchQueries, [fLibrarySearchCopySelector]); assert.deepEqual(x.rangeReads, directNodes);
+    assert.deepEqual(state.idQueries, ['[id="f-library-search"]']); fLibrarySearchUnchanged(state, box);
+  });
+}
+test('F Library Search-label clearance rechecks an upstream wrapped fragment', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t, { direct: [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(244, 612, 43, 18), d411Rect(244, 650, 43, 18)] }] });
+  const { x, directNodes, ring } = state, fragments = directNodes.flatMap(node => node.fragments);
+  assert.equal(x.overlap(d411Rect(266, 598, 44, 44), fragments).length, 1, 'clearing the lower label line alone would land on the upper one');
+  const box = x.run(); assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+  assert.deepEqual(x.rangeReads, directNodes); fLibrarySearchUnchanged(state, box);
+});
+test('F Library Search copy refuses stale owners and broken native label/input/form associations', { concurrency: false }, () => {
+  for (const defect of ['foreign-library', 'disconnected-label', 'disconnected-form', 'disconnected-search', 'disconnected-box', 'disconnected-input',
+    'untyped-label', 'untyped-form', 'untyped-input', 'foreign-search-form', 'duplicate-form', 'duplicate-search', 'foreign-search', 'duplicate-box', 'foreign-box',
+    'duplicate-label', 'foreign-label', 'missing-input', 'duplicate-input', 'wrong-type', 'missing-id', 'foreign-for', 'wrong-control',
+    'foreign-label-form', 'foreign-input-form', 'duplicate-input-label', 'foreign-input-label', 'duplicate-id', 'foreign-id',
+    'hidden', 'inert', 'aria-hidden', 'hidden-text', 'display-none', 'transparent', 'busy-main', 'duplicate-library', 'foreign-main', 'duplicate-panel']) {
+    const cleanup = [];
+    try {
+      const state = fLibrarySearchPlacement({ after: undo => cleanup.push(undo) }), { x, label, form, search, box: ui, field, directNodes } = state;
+      if (defect === 'foreign-library') { const closest = label.closest; label.closest = function(selector) { return selector === 'forma-library' ? {} : closest.call(this, selector); }; }
+      for (const [name, node] of [['label', label], ['form', form], ['search', search], ['box', ui], ['input', field]]) if (defect === 'disconnected-' + name) node.isConnected = false;
+      for (const [name, node] of [['label', label], ['form', form], ['input', field]]) if (defect === 'untyped-' + name) Object.setPrototypeOf(node, Object.prototype);
+      if (defect === 'foreign-search-form') search.parentElement = {};
+      for (const [name, nodes] of [['form', state.forms], ['search', state.searches], ['box', state.boxes], ['label', state.labels], ['input', state.fields], ['id', state.ids]]) {
+        if (defect === 'duplicate-' + name) nodes.push({ ...nodes[0] });
+        if (defect === 'foreign-' + name) nodes[0] = { ...nodes[0] };
+      }
+      if (defect === 'missing-input') state.fields.length = 0;
+      if (defect === 'wrong-type') field.type = 'text';
+      if (defect === 'missing-id') field.id = '';
+      if (defect === 'foreign-for') label.htmlFor = 'another-search';
+      if (defect === 'wrong-control') label.control = state.clear;
+      if (defect === 'foreign-label-form') label.form = {};
+      if (defect === 'foreign-input-form') field.form = {};
+      if (defect === 'duplicate-input-label') field.labels.push({ ...label });
+      if (defect === 'foreign-input-label') field.labels[0] = { ...label };
+      if (['hidden', 'inert', 'aria-hidden'].includes(defect)) {
+        const closest = label.closest; label.closest = function(selector) { return selector.startsWith('[hidden]') ? { exclusion: defect } : closest.call(this, selector); };
+      }
+      if (defect === 'hidden-text') label.visibility = 'hidden';
+      if (defect === 'display-none') search.display = 'none';
+      if (defect === 'transparent') search.opacity = '0';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-library') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-library' ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'duplicate-panel') x.shell.querySelectorAll = selector => { assert.equal(selector, 'forma-assistant-panel'); return [x.f.panel, { closest: () => x.shell }]; };
+      state.before = state.snapshot(); const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, directNodes.flatMap(node => node.fragments)).length, 1,
+        defect + ': refused association cannot certify label clearance');
+      const measuredThenHidden = ['display-none', 'transparent'].includes(defect) && x.fSearchQueries.length;
+      assert.deepEqual(x.rangeReads, measuredThenHidden ? directNodes : [], defect); fLibrarySearchUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F Library Search label keeps fragments separate from enclosing whitespace and nested text', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t, { direct: [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(40, 620, 80, 18)] }] });
+  const { x, raw, directNodes, nestedText, whitespace, comment } = state, initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, nestedText.fragments).length, 1);
+  const box = x.run(); assert.deepEqual(box, initial);
+  assert.deepEqual(x.rangeReads, x.fSearchQueries.length ? directNodes : []);
+  for (const excluded of [nestedText, whitespace, comment]) assert.equal(x.rangeReads.includes(excluded), false);
+  fLibrarySearchUnchanged(state, box);
+});
+test('F Library Search text cannot invoke the hovered native-focus exception or activate Clear', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t), { x, label, directNodes, ring } = state;
+  x.hovered = true; const box = x.run();
+  assert.equal(x.overlap(box, directNodes[0].fragments).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.rangeReads, []); fLibrarySearchUnchanged(state, box);
+  x.f.document.activeElement = label; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); fLibrarySearchUnchanged(state, box);
+});
+test('F an impossible Library Search-label lane stays finite and explicitly unresolved', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t, { direct: [{ text: 'Declared no-fit Search-label stress', fragments: [d411Rect(0, 0, 320, 800)] }] });
+  const { x, directNodes } = state, box = x.run(); assert.equal(x.overlap(box, directNodes[0].fragments).length, 1);
+  assert.deepEqual(x.rangeReads, x.fSearchQueries.length ? directNodes : []); fLibrarySearchUnchanged(state, box);
 });
