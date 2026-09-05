@@ -452,8 +452,9 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-i
 .block-editor > label { color: var(--muted); font: var(--type-micro) var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .block-editor textarea { width: 100%; padding: 10px 11px; resize: vertical; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; font: 500 var(--type-body)/1.4 var(--serif); }
 .block-editor textarea:focus { border-color: var(--orange); outline: 3px solid var(--orange-soft); }
-.block-editor > div { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
-.block-editor > div small { margin-right: auto; color: var(--muted); font: var(--type-micro) var(--mono); }
+.block-editor > div { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--forma-cluster-gap); }
+.block-editor > div small { flex: 1 1 100%; min-inline-size: 0; margin-inline-end: auto; color: var(--muted); font: var(--type-micro) var(--mono); }
+.block-editor > div > .button { flex: 0 1 auto; align-self: stretch; max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
 .palette-row { display: flex; gap: 8px; padding: 14px 0 12px; }
 .swatch { position: relative; width: 53px; cursor: pointer; }
 .swatch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
@@ -2505,6 +2506,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .artifact-viewer-review-toggle { padding-inline: .6rem; }
   .document-artifact-reader > footer { align-items: center; flex-direction: row; }
   .document-artifact-reader > footer > span { max-inline-size: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .document-artifact-reader > footer:has(> forma-ui-popover.artifact-viewer-actions-popover) > span { min-inline-size: 0; flex: 1 1 0; max-inline-size: none; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
   .document-artifact-reader > footer > div { inline-size: auto; flex-wrap: nowrap; justify-content: start; overflow-x: auto; padding-block: .15rem; }
   .document-artifact-reader > footer .button { inline-size: auto; flex: none; white-space: nowrap; }
   .document-artifact-reader > footer > div > .button.primary { order: -1; }
@@ -2711,9 +2713,9 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .prompt-fan-image img { width: 100%; height: 100%; object-fit: contain; object-position: var(--focal-x,50%) var(--focal-y,50%); }
 .prompt-fan-pending { display: grid; height: 100%; place-content: center; gap: 8px; color: var(--muted); text-align: center; font-size: var(--type-caption); }
 .prompt-fan-pending:first-child { font-size: var(--type-heading); }
-.prompt-fan-option > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.prompt-fan-option > footer { display: flex; min-inline-size: 0; flex-direction: column; align-items: stretch; gap: 12px; margin-top: 14px; }
 .prompt-fan-option > footer > span { display: grid; min-width: 0; }
-.prompt-fan-option > footer small { overflow: hidden; color: var(--muted); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
+.prompt-fan-option > footer > span > small { overflow: visible; color: var(--muted); font-size: var(--type-micro); text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .prompt-fan-output-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .prompt-fan-option details { margin-top: 14px; border-top: 1px solid var(--line); }
 .prompt-fan-option summary { padding: 10px 0 0; color: var(--muted); cursor: pointer; font: 650 var(--type-micro) var(--sans); }
@@ -2962,6 +2964,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .forma-soundtrack-follow small { color: var(--muted); line-height: 1.45; }
 .forma-included-audio-transcripts { display: grid; gap: .4rem; }
 .artifact-audio-result { display: grid; gap: 1rem; padding: clamp(1rem,4vw,2rem); }
+.document-artifact-reader-content > :is(.forma-included-audio-transcripts,.forma-soundtrack-companions) { margin-inline: clamp(1rem,4vw,2rem); margin-block-end: clamp(1rem,4vw,2rem); }
 .artifact-audio-preview,.artifact-summary--audio .artifact-summary-copy { display: grid; gap: .65rem; align-content: center; color: var(--accent); }
 .artifact-audio-preview p { color: var(--ink); }
 .creative-audio-tool:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
