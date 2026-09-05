@@ -1,6 +1,7 @@
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, savedPresentationReceiptCheckResponse, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../model/document-render-guidance.ts";
 import { validateModel3dRequest, estimateModel3dCostMicrousd, type Model3dSettings } from "../model/model3d";
+import { adaptDocumentToModel3d, model3dAdaptationReceipt, type Model3dDocumentAdaptation } from "../model/model3d-prompt-adapter";
 import { validateModel3dAsset, MAX_MODEL3D_UPLOAD_BYTES } from "../model/model3d-assets";
 import type { Model3dView } from "../model/model3d-view";
 import { referenceCompositionSources, validateReferenceComposition, normalizeReferenceComposition, type ReferenceCompositionRecipe } from "../model/reference-composition";
@@ -466,6 +467,9 @@ export class FormaStore {
   }
   documentJob(kind:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&(job.status==="queued"||job.status==="running"||job.status==="committing"));}
   documentGenerationRevision(){return this.#generationContext().documentRevision;}
+  documentModel3dAdaptation(documentId=this.projection.get().documentId,referenceCount=0):Model3dDocumentAdaptation{
+    return adaptDocumentToModel3d(this.#generationContext(documentId).snapshot,{referenceCount});
+  }
   promptTechniquePreference(){const projection=this.projection.get();const filed=projection.membership[projection.documentId];return effectivePromptPreference(projection.preferences,{documentId:projection.documentId,collectionIds:filed?[filed.collectionId]:[],projectId:projection.projectId,accountId:this.session.get()?.user.userId});}
   documentGenerationRequestKey(kind:"preview"|"generate",sourcePreviewId?:string|null,promptTechnique:PromptTechnique=this.promptTechniquePreference().technique,promptFanId?:string|null){return generationRequestKeyFor(kind,this.documentGenerationRevision(),sourcePreviewId,promptTechnique,promptFanId);}
   generationReadinessRequestKey(kind:GenerationReadinessKind,sourcePreviewId?:string|null,promptTechnique:PromptTechnique=this.promptTechniquePreference().technique,productionMode:ProductionMode="manual"){const revision=this.documentGenerationRevision();const base=kind==="preview"?generationRequestKeyFor("preview",revision,null,promptTechnique):kind==="generate"?generationRequestKeyFor("generate",revision,sourcePreviewId,promptTechnique):`prompt-fan:${kind==="preview_fan"?"preview":"generate"}:${revision}:${sourcePreviewId||"document"}`;return productionMode==="managed"?`${base}:managed`:base;}
@@ -4398,18 +4402,23 @@ async syncDocumentJobs(){
     }
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{model3dPrompt?:string;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{model3dPrompt?:string;model3dPromptSource?:"document";model3dAdaptation?:ReturnType<typeof model3dAdaptationReceipt>;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
     if(kind==="model3d"){
       const source=this.captureSourceOwnership(),documentId=options.documentId??this.projection.get().documentId;
       const projection=this.projection.get(),context=this.#generationContext(documentId);
+      const fromDocument=options.model3dPromptSource==="document";
       const current=()=>this.sourceOwnershipActive(source)&&this.projection.get().documentId===documentId
-        &&this.#canRequestProjectOutputs()&&(!options.current||options.current());
+        &&this.#canRequestProjectOutputs()&&(!fromDocument||this.#generationContext(documentId).documentRevision===context.documentRevision)&&(!options.current||options.current());
       try{
         if(!current())return false;
+        if(options.model3dPromptSource!==undefined&&!fromDocument||!fromDocument&&options.model3dAdaptation!==undefined)throw new Error("Choose a supported 3D prompt source.");
         if(!this.session.get()?.provider.model3dConfigured)throw new Error("3D generation is not configured for this workspace.");
         if(options.paidMediaConfirmed!==true)throw new Error("Review the 3D generation cost before submitting.");
         const ids=options.model3dReferenceBlockIds??[];
         if(!Array.isArray(ids)||new Set(ids).size!==ids.length)throw new Error("Choose each 3D reference only once.");
+        const adaptation=fromDocument?adaptDocumentToModel3d(context.snapshot,{referenceCount:ids.length}):null;
+        const adaptationReceipt=adaptation?model3dAdaptationReceipt(adaptation):null;
+        if(adaptation&&(!adaptation.valid||options.model3dPrompt!==adaptation.prompt||JSON.stringify(options.model3dAdaptation)!==JSON.stringify(adaptationReceipt)))throw new Error("The document's 3D direction changed. Reopen Render document to review its prepared prompt.");
         const references=ids.map(id=>projection.blocks.find(block=>block.id===id&&!block.removed&&block.properties.active!==false&&(block.type==="reference"||block.type==="model3d")));
         if(references.some(block=>!block||!String(block.properties.media_url??"").startsWith("/api/media/")
           ||block.properties.pixel_reference_mode==="context_only"||!block.properties.pixel_reference_mode
@@ -4417,7 +4426,7 @@ async syncDocumentJobs(){
         const validation=validateModel3dRequest({prompt:options.model3dPrompt??"",settings:options.model3dSettings,referenceCount:ids.length,
           referenceMimeTypes:references.map(block=>String(block!.properties.media_type??block!.properties.source_mime_type??""))});
         if(!validation.valid)throw new Error(validation.issues[0]?.message??"Review the 3D request settings.");
-        const settings={model3dPrompt:options.model3dPrompt??"",model3dSettings:structuredClone(validation.settings),model3dReferenceBlockIds:[...ids]};
+        const settings={model3dPrompt:options.model3dPrompt??"",model3dSettings:structuredClone(validation.settings),model3dReferenceBlockIds:[...ids],...(adaptationReceipt?{model3dPromptSource:"document" as const,model3dAdaptation:structuredClone(adaptationReceipt)}:{})};
         const requestKey=`render:model3d:${context.documentRevision}:${generationRevisionFor(settings)}`;
         const result=await this.#startDocumentJob("render_document",{...context,...settings,requestKey,artifactKind:"model3d",productionMode:"manual",
           locale:options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en"),paidMediaConfirmed:true,itemCount:1},
