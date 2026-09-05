@@ -2901,7 +2901,8 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .generation-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .generation-actions .button { width: 100%; }
   .generation-action-pair { width: 100%; }
-  .generation-action-pair > .button { flex: 1; width: auto; }
+  .generation-action-pair > .button,
+  .document-generations > header .generation-action-pair > .button { flex: 1; width: auto; }
   .prompt-fan-card { width: calc(100% - 12px); max-height: calc(100dvh - 12px); margin: 6px auto; }
   .prompt-fan-preference-bar { align-items: stretch; flex-direction: column; gap: 10px; padding: 14px 18px; }
   .prompt-fan-preference-bar label { align-items: stretch; flex-direction: column; gap: 5px; }
