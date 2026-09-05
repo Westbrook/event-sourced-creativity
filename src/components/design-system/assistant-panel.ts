@@ -364,6 +364,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const libraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
     const libraryWeightCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output`;
     const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
+    const libraryStateEditorSelector = ".library-main > forma-library-block-editor";
+    const libraryStateCopySelector = `${libraryStateEditorSelector} > section.library-block-editor > header.library-block-editor-header > div:first-child > p.context-library-state`;
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -383,6 +385,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         libraryOutputCopySelector,
         libraryWeightCopySelector,
         libraryWeightLabelCopySelector,
+        libraryStateCopySelector,
       ]],
       ["forma-reality-layers", [
         ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
@@ -407,10 +410,21 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           && (ownerSelector !== '.application-loading[role="status"]' || surface.parentElement === main));
       if (surfaces.length !== 1) continue;
       const surface = surfaces[0]!;
-      const elements = new Set(selectors.flatMap(selector => [...surface.querySelectorAll<HTMLElement>(selector)]));
+      let libraryStates: HTMLElement[] = [];
+      const elements = new Set(selectors.flatMap(selector => {
+        const selected = [...surface.querySelectorAll<HTMLElement>(selector)];
+        if (selector === libraryStateCopySelector) libraryStates = selected;
+        return selected;
+      }));
       for (const element of elements) {
         if (!element.isConnected || element.closest(ownerSelector) !== surface
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
+        const libraryState = libraryStates.includes(element);
+        if (libraryState) {
+          const editors = [...surface.querySelectorAll<HTMLElement>(libraryStateEditorSelector)];
+          if (libraryStates.length !== 1 || editors.length !== 1 || !editors[0]?.isConnected
+            || element.closest("forma-library-block-editor") !== editors[0]) continue;
+        }
         const libraryWeightLabel = ownerSelector === "forma-library" && element.tagName === "LABEL"
           && element.matches(libraryWeightLabelCopySelector);
         if (ownerSelector === "forma-workspace-settings" && element.tagName === "LABEL") {
@@ -489,9 +503,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
           || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
           || ownerSelector === "forma-document-generations";
-        // Weight-label text is a separate fragment contract. Never walk into
-        // its OUTPUT or replace the row with a duplicate whole-label box.
-        const directText = libraryWeightLabel ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
+        // Weight-label and current editor metadata text have direct-fragment
+        // contracts. Never walk into descendants or substitute the whole row.
+        const directText = libraryWeightLabel || libraryState ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
         const walker = wholeRegion || directText ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         let directIndex = 0;
         for (let text: Node | null = wholeRegion ? element : directText?.[directIndex++] ?? walker?.nextNode() ?? null;
