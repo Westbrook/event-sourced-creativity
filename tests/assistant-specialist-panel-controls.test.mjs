@@ -1656,11 +1656,13 @@ const fDocumentStateHostsSelector = ':scope > .block-list[data-forma-content="pr
 const fDocumentSummarySelector = 'article.context-block.context-block--summary[data-block-id]';
 const fDocumentStatusPath = ' > div.block-body > header.block-heading > div.block-heading-state > span.context-lock-state';
 const fDocumentStateCopySelector = fDocumentStatePanelSelector + ' > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ' + fDocumentSummarySelector + fDocumentStatusPath;
+const fDocumentBodyPath = ' > div.block-body > p.block-copy[data-forma-content="primary"][dir="auto"]';
+const fDocumentBodyCopySelector = fDocumentStatePanelSelector + ' > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ' + fDocumentSummarySelector + fDocumentBodyPath;
 function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en", viewport = { width: 320, height: 800 }, right = 310, top = 680, normalWidth = 137.1875 } = {}) {
   const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], fStateQueries = [], fDocumentStateQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], fStateQueries = [], fDocumentStateQueries = [], fDocumentBodyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
@@ -1687,7 +1689,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     assert.equal(selector, ".application-creative"); return shell;
   };
   surface.querySelectorAll = selector => {
-    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors, fRecipeFooterCopySelector, fDocumentStateCopySelector]
+    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors, fRecipeFooterCopySelector, fDocumentStateCopySelector, fDocumentBodyCopySelector]
       : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector, fLibraryStateCopySelector]
       : family === fTerminalCopyOwner ? [fTerminalCopySelector]
       : family === imageHistoryCopyOwner ? [imageHistoryCopySelector]
@@ -1700,6 +1702,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     else if (selector === fLibraryWeightLabelCopySelector) fLabelQueries.push(selector);
     else if (selector === fLibraryStateCopySelector) fStateQueries.push(selector);
     else if (selector === fDocumentStateCopySelector) fDocumentStateQueries.push(selector);
+    else if (selector === fDocumentBodyCopySelector) fDocumentBodyQueries.push(selector);
     else copyQueries.push(selector);
     // Retain the old exact help query for a meaningful pre-runtime baseline;
     // the new union selects that same original node, not a duplicate fixture.
@@ -1767,15 +1770,17 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
       const labelTail = family === "forma-library" && actualCopy.includes(fLibraryWeightLabelCopySelector) ? [fLibraryWeightLabelCopySelector] : [];
       const stateTail = family === "forma-library" && actualCopy.includes(fLibraryStateCopySelector) ? [fLibraryStateCopySelector] : [];
       const documentTail = family === "forma-workspace" && actualCopy.includes(fDocumentStateCopySelector) ? [fDocumentStateCopySelector] : [];
+      const bodyTail = family === "forma-workspace" && actualCopy.includes(fDocumentBodyCopySelector) ? [fDocumentBodyCopySelector] : [];
       if (labelTail.length) assert.ok(actualCopy.includes(added), "the label admission follows the existing OUTPUT admission");
       if (stateTail.length) assert.equal(labelTail.length, 1, "the metadata admission follows the retained label and OUTPUT admissions");
       if (documentTail.length) assert.ok(actualCopy.includes(added), "the Document status admission follows the retained recipe footer admission");
-      assert.deepEqual(actualCopy, actualCopy.length ? [...base, ...(actualCopy.includes(added) ? [added] : []), ...labelTail, ...stateTail, ...documentTail] : [],
+      if (bodyTail.length) assert.equal(documentTail.length, 1, "the authored-body admission follows the retained lock-state admission");
+      assert.deepEqual(actualCopy, actualCopy.length ? [...base, ...(actualCopy.includes(added) ? [added] : []), ...labelTail, ...stateTail, ...documentTail, ...bodyTail] : [],
         "the complete copy-query sequence retains the family and ordered F admissions, without skips, duplicates or hidden queries");
     }
     return box;
   };
-  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, allCopyQueries, fCopyQueries, fLabelQueries, fStateQueries, fDocumentStateQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, allCopyQueries, fCopyQueries, fLabelQueries, fStateQueries, fDocumentStateQueries, fDocumentBodyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -3147,7 +3152,8 @@ function fCopyOmissionQueries(state, requireAdmission = true) {
   if (kind === 'footer') assert.deepEqual(x.fLabelQueries, []);
   assert.deepEqual(x.fStateQueries, kind === 'weight' && x.fStateQueries.length ? [fLibraryStateCopySelector] : []);
   assert.deepEqual(x.fDocumentStateQueries, kind === 'footer' && x.fDocumentStateQueries.length ? [fDocumentStateCopySelector] : []);
-  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries, ...x.fStateQueries, ...x.fDocumentStateQueries], 'the complete family and each exact optional F admission retain their order');
+  assert.deepEqual(x.fDocumentBodyQueries, kind === 'footer' && x.fDocumentBodyQueries.length ? [fDocumentBodyCopySelector] : []);
+  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries, ...x.fStateQueries, ...x.fDocumentStateQueries, ...x.fDocumentBodyQueries], 'the complete family and each exact optional F admission retain their order');
 }
 test('F recipe footer whole copy clears Ask without changing native Cancel or saving', { concurrency: false }, t => {
   const state = fCopyOmissionPlacement(t, 'footer'), { x, raw, fragment, ring, copy } = state;
@@ -3892,4 +3898,178 @@ test('F an impossible Document lock-text lane stays finite and explicitly unreso
   card.directNodes[0].fragments = [d411Rect(0, 0, 320, 800)]; state.before = state.snapshot();
   const box = x.run(); assert.equal(x.overlap(box, card.directNodes[0].fragments).length, 1);
   assert.deepEqual(x.rangeReads, x.fDocumentStateQueries.length ? card.directNodes : []); fDocumentStateUnchanged(state, box);
+});
+
+// The retained Experience R3 observation is authored Direction prose under Ask;
+// the later offscreen paragraph does not close it. These independent synthetic
+// Range inputs exercise that exact closed-summary P with the accepted ownership
+// fixture. No coordinates below are recovered native pixels or browser proof.
+function fDocumentBodyPlacement(t) {
+  const state = fDocumentStatePlacement(t), { x } = state;
+  const paragraphs = [], byCard = new Map();
+  const addParagraph = (card, { direct = [{ text: '  Keep the lower Direction text visible — العربية — 日本語.  ', fragments: [d411Rect(244, 650, 43, 18)] }], selector = fDocumentBodyCopySelector } = {}) => {
+    // The already-protected lock text is explicit non-colliding input. A body
+    // omission must not pass merely because the status moved Ask incidentally.
+    card.directNodes[0].fragments = [d411Rect(40, 590, 80, 18)];
+    const raw = d411Rect(33, 620, 254, 94);
+    const copy = x.copy(selector, raw, [], { tagName: 'P', parentElement: card.body,
+      textContent: direct.map(node => node.text).join(''), dir: 'auto', dataset: { formaContent: 'primary' },
+      closest(query) { return card.copy.closest.call(this, query); } });
+    const textNode = (text, fragments, parent = copy) => ({ nodeType: 3, textContent: text, fragments, parentElement: parent, parentNode: parent });
+    const directNodes = direct.map(node => textNode(node.text, node.fragments));
+    const whitespace = textNode(' \n ', [raw]), comment = { nodeType: 8, textContent: 'Lit marker', parentElement: copy, parentNode: copy };
+    const nested = x.ancestor(raw, { nodeType: 1, tagName: 'EM', parentElement: copy });
+    const nestedText = textNode('Synthetic unselected descendant', [raw], nested); nested.childNodes = [nestedText];
+    copy.childNodes = [...directNodes, whitespace, comment, nested]; copy.textNodes = [...directNodes, whitespace, nestedText];
+    let copies = byCard.get(card);
+    if (!copies) {
+      copies = []; byCard.set(card, copies);
+      const query = card.article.querySelectorAll;
+      card.article.querySelectorAll = querySelector => {
+        if (querySelector === ':scope' + fDocumentBodyPath) { state.ownershipQueries.push(querySelector); return copies; }
+        return query(querySelector);
+      };
+    }
+    if (selector === fDocumentBodyCopySelector) copies.push(copy);
+    const paragraph = { card, raw, copy, directNodes, whitespace, comment, nested, nestedText, copies, selector };
+    paragraphs.push(paragraph); return paragraph;
+  };
+  const paragraph = addParagraph(state.card), originalSnapshot = state.snapshot;
+  state.snapshot = () => ({ document: originalSnapshot(), paragraphs: paragraphs.map(item => ({ text: item.copy.textContent,
+    directText: item.directNodes.map(node => node.textContent), children: [...item.copy.childNodes], parent: item.copy.parentElement,
+    dir: item.copy.dir, primary: item.copy.dataset.formaContent })) });
+  Object.assign(state, { paragraphs, paragraph, addParagraph }); state.before = state.snapshot(); return state;
+}
+function fDocumentBodyReads(state, admitted = true) {
+  const { x } = state, directNodes = state.paragraphs.flatMap(item => item.directNodes);
+  assert.deepEqual(x.rangeReads.filter(node => directNodes.includes(node)), admitted ? directNodes : [],
+    'only the exact admitted direct body text receives Range measurement');
+  for (const item of state.paragraphs) for (const excluded of [item.whitespace, item.comment, item.nestedText]) {
+    assert.equal(x.rangeReads.includes(excluded), false, 'body descendants and whitespace are not promoted into this copy contract');
+  }
+}
+for (const shape of ['single fragment', 'wrapped text', 'split direct text', 'peer cards', 'nested summaries']) {
+  test('F authored Document body clears Ask with lock text and native Controls unchanged / ' + shape, { concurrency: false }, t => {
+    const state = fDocumentBodyPlacement(t), { x, paragraph, card, owner, ring } = state;
+    if (shape === 'wrapped text') paragraph.directNodes[0].fragments = [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)];
+    if (shape === 'split direct text') {
+      paragraph.directNodes[0].textContent = 'Keep the direction '; paragraph.directNodes[0].fragments = [d411Rect(40, 650, 80, 18)];
+      const tail = { nodeType: 3, textContent: 'العربية 日本語 visible.', fragments: [d411Rect(244, 674, 43, 18)], parentElement: paragraph.copy, parentNode: paragraph.copy };
+      paragraph.directNodes.push(tail); paragraph.copy.childNodes.push(tail); paragraph.copy.textNodes.push(tail);
+      paragraph.copy.textContent = paragraph.directNodes.map(node => node.textContent).join('');
+    }
+    if (shape === 'peer cards') {
+      const peer = state.addCard(state.addHost('direction-2'), 'direction-2', [d411Rect(40, 590, 80, 18)]);
+      state.addParagraph(peer, { direct: [{ text: 'A distinct peer decision.', fragments: [d411Rect(244, 612, 43, 18)] }] });
+    }
+    if (shape === 'nested summaries') {
+      const child = state.addCard(owner, 'child', [d411Rect(40, 590, 80, 18)], card);
+      const grandchild = state.addCard(owner, 'grandchild', [d411Rect(40, 590, 80, 18)], child);
+      state.addParagraph(child, { direct: [{ text: 'Child direction.', fragments: [d411Rect(244, 612, 43, 18)] }] });
+      state.addParagraph(grandchild, { direct: [{ text: 'Grandchild direction.', fragments: [d411Rect(244, 574, 43, 18)] }] });
+    }
+    state.before = state.snapshot();
+    const bodyNodes = state.paragraphs.flatMap(item => item.directNodes), bodyFragments = bodyNodes.flatMap(node => node.fragments);
+    const statusNodes = state.cards.flatMap(item => item.directNodes), statusFragments = statusNodes.flatMap(node => node.fragments);
+    const initial = x.launcher.getBoundingClientRect();
+    assert.equal(x.overlap(initial, bodyFragments).length, 1, 'body text alone supplies the initial collision');
+    assert.equal(x.overlap(initial, [...statusFragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    if (state.paragraphs.length > 1) assert.equal(x.overlap(d411Rect(266, 598, 44, 44), bodyFragments).length, 1,
+      'clearing the first paragraph alone would land on another legitimate authored summary');
+    const box = x.run();
+    assert.equal(x.overlap(box, [...bodyFragments, ...statusFragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+      'clear every selected body fragment together with retained status copy and native Controls paint');
+    assert.deepEqual(x.fDocumentBodyQueries, [fDocumentBodyCopySelector]);
+    assert.deepEqual(x.rangeReads, [...statusNodes, ...bodyNodes]); fDocumentBodyReads(state); fDocumentStateUnchanged(state, box);
+  });
+}
+test('F Document lock clearance cannot land Ask over the authored paragraph', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, card, paragraph, ring } = state;
+  card.directNodes[0].fragments = [d411Rect(244, 650, 43, 18)];
+  paragraph.directNodes[0].fragments = [d411Rect(244, 612, 43, 18)]; state.before = state.snapshot();
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, card.directNodes[0].fragments).length, 1); assert.equal(x.overlap(initial, paragraph.directNodes[0].fragments).length, 0);
+  assert.equal(x.overlap(d411Rect(266, 598, 44, 44), paragraph.directNodes[0].fragments).length, 1, 'the accepted status-only destination is obstructed by body text');
+  const box = x.run();
+  assert.equal(x.overlap(box, [...card.directNodes[0].fragments, ...paragraph.directNodes[0].fragments, ring]).length, 0);
+  assert.deepEqual(x.rangeReads, [...card.directNodes, ...paragraph.directNodes]); fDocumentBodyReads(state); fDocumentStateUnchanged(state, box);
+});
+test('F authored Document paragraphs retain current ownership and independent per-card uniqueness', { concurrency: false }, () => {
+  for (const defect of ['foreign-workspace', 'foreign-panel', 'foreign-host', 'disconnected-copy', 'wrong-surface', 'stale-wrapper', 'stale-root',
+    'open-controls', 'duplicate-host', 'wrong-nested-chain', 'duplicate-body', 'foreign-body', 'hidden', 'inert', 'aria-hidden', 'hidden-text',
+    'display-none', 'transparent', 'busy-main', 'duplicate-workspace']) {
+    const cleanup = [];
+    try {
+      const state = fDocumentBodyPlacement({ after: undo => cleanup.push(undo) }), { x, card, paragraph, owner, ring } = state;
+      if (['foreign-workspace', 'foreign-panel', 'foreign-host'].includes(defect)) {
+        const closest = paragraph.copy.closest, target = { 'foreign-workspace': 'forma-workspace', 'foreign-panel': '#document-context-panel', 'foreign-host': 'forma-context-block' }[defect];
+        paragraph.copy.closest = function(selector) { return selector === target ? {} : closest.call(this, selector); };
+      }
+      if (defect === 'disconnected-copy') paragraph.copy.isConnected = false;
+      if (defect === 'wrong-surface') owner.host.surface = 'library';
+      if (defect === 'stale-wrapper') owner.wrapper.id = 'context-controls-document-stale';
+      if (defect === 'stale-root') card.article.dataset.blockId = 'stale-direction';
+      if (defect === 'open-controls') owner.decision.dataset.controlsOpen = 'true';
+      if (defect === 'duplicate-host') state.hosts.push({ ...owner.host });
+      if (defect === 'wrong-nested-chain') { owner.roots[0] = { ...card.article }; card.article.parentElement = state.panel; }
+      if (defect === 'duplicate-body') state.addParagraph(card);
+      if (defect === 'foreign-body') paragraph.copies[0] = { ...paragraph.copy };
+      if (['hidden', 'inert', 'aria-hidden'].includes(defect)) {
+        const closest = paragraph.copy.closest;
+        paragraph.copy.closest = function(selector) { return selector.startsWith('[hidden]') ? { exclusion: defect } : closest.call(this, selector); };
+      }
+      if (defect === 'hidden-text') paragraph.copy.visibility = 'hidden';
+      if (defect === 'display-none') state.panel.display = 'none';
+      if (defect === 'transparent') state.panel.opacity = '0';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-workspace') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-workspace' ? [x.surface, { ...x.surface }] : found; }; }
+      state.before = state.snapshot(); const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, paragraph.directNodes.flatMap(node => node.fragments)).length, 1,
+        defect + ': refusal is not reported as body clearance');
+      assert.equal(x.overlap(box, [ring]).length, 0);
+      const measuredThenClipped = ['display-none', 'transparent'].includes(defect) && x.fDocumentBodyQueries.length;
+      fDocumentBodyReads(state, Boolean(measuredThenClipped));
+      if (['duplicate-body', 'foreign-body'].includes(defect)) assert.deepEqual(x.rangeReads.filter(node => card.directNodes.includes(node)), card.directNodes,
+        'malformed prose cannot suppress independently valid lock-state copy');
+      fDocumentStateUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F authored Document text excludes nested descendants, enclosing whitespace and neighboring unselected prose', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, paragraph, card } = state;
+  paragraph.directNodes[0].fragments = [d411Rect(40, 620, 80, 18)];
+  const neighbor = state.addParagraph(card, { selector: fDocumentStatePanelSelector + ' p.unselected-guidance' });
+  state.before = state.snapshot(); const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [paragraph.raw]).length, 1); assert.equal(x.overlap(initial, paragraph.nestedText.fragments).length, 1);
+  assert.equal(x.overlap(initial, neighbor.directNodes[0].fragments).length, 1);
+  const box = x.run(); assert.deepEqual(box, initial);
+  assert.deepEqual(x.rangeReads, [...card.directNodes, ...(x.fDocumentBodyQueries.length ? paragraph.directNodes : [])]);
+  for (const excluded of [paragraph.nestedText, paragraph.whitespace, paragraph.comment, ...neighbor.directNodes]) assert.equal(x.rangeReads.includes(excluded), false);
+  fDocumentStateUnchanged(state, box);
+});
+test('F authored Document fragments obey the existing ancestor clip', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, card, paragraph } = state;
+  // Explicit CSSOM input clips at x=200; the colliding fragment at x244 is
+  // outside that clip. It is measured but cannot count as visible paint.
+  card.body.overflowX = 'hidden'; card.body.clientWidth = 200; state.before = state.snapshot();
+  const initial = x.launcher.getBoundingClientRect(); assert.equal(x.overlap(initial, paragraph.directNodes[0].fragments).length, 1);
+  const box = x.run(); assert.deepEqual(box, initial);
+  fDocumentBodyReads(state, Boolean(x.fDocumentBodyQueries.length)); fDocumentStateUnchanged(state, box);
+});
+test('F authored Document body cannot invoke the hovered native-focus exception', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, paragraph, ring } = state;
+  x.hovered = true; const box = x.run();
+  assert.equal(x.overlap(box, paragraph.directNodes[0].fragments).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.rangeReads, []);
+  fDocumentStateUnchanged(state, box);
+  // The colliding paragraph stays outside the native control authority list.
+  x.f.document.activeElement = paragraph.copy; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+  fDocumentStateUnchanged(state, box);
+});
+test('F an impossible authored Document body lane stays finite and explicitly unresolved', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, paragraph } = state;
+  paragraph.directNodes[0].fragments = [d411Rect(0, 0, 320, 800)]; state.before = state.snapshot();
+  const box = x.run(); assert.equal(x.overlap(box, paragraph.directNodes[0].fragments).length, 1);
+  fDocumentBodyReads(state, Boolean(x.fDocumentBodyQueries.length)); fDocumentStateUnchanged(state, box);
 });

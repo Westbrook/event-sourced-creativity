@@ -371,6 +371,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const documentSummarySelector = "article.context-block.context-block--summary[data-block-id]";
     const documentStatusPath = " > div.block-body > header.block-heading > div.block-heading-state > span.context-lock-state";
     const documentStateCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentStatusPath}`;
+    const documentBodyPath = ' > div.block-body > p.block-copy[data-forma-content="primary"][dir="auto"]';
+    const documentBodyCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentBodyPath}`;
     type DocumentContextHost = HTMLElement & { surface?: string; block?: { id?: string } };
     const families = [
       ["forma-workspace-settings", [
@@ -404,6 +406,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > footer.output-requirement-form-footer > p',
         documentStateCopySelector,
+        documentBodyCopySelector,
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
       ["forma-document-generations", [
@@ -419,16 +422,19 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       const surface = surfaces[0]!;
       let libraryStates: HTMLElement[] = [];
       let documentStates: HTMLElement[] = [];
+      let documentBodies: HTMLElement[] = [];
       const elements = new Set(selectors.flatMap(selector => {
         const selected = [...surface.querySelectorAll<HTMLElement>(selector)];
         if (selector === libraryStateCopySelector) libraryStates = selected;
         if (selector === documentStateCopySelector) documentStates = selected;
+        if (selector === documentBodyCopySelector) documentBodies = selected;
         return selected;
       }));
       for (const element of elements) {
         if (!element.isConnected || element.closest(ownerSelector) !== surface
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
-        const documentState = documentStates.includes(element);
+        const documentBody = documentBodies.includes(element);
+        const documentState = documentStates.includes(element) || documentBody;
         if (documentState) {
           const panels = [...surface.querySelectorAll<HTMLElement>(documentStatePanelSelector)];
           const panel = panels[0];
@@ -446,7 +452,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           const roots = [...wrapper.querySelectorAll<HTMLElement>(`:scope > ${documentSummarySelector}`)];
           const root = roots[0], card = element.closest<HTMLElement>(documentSummarySelector);
           if (roots.length !== 1 || !root?.isConnected || root.dataset.blockId !== blockId || !card?.isConnected) continue;
-          // Peers and recursive authored summaries each own their own status.
+          // Peers and recursive authored summaries each own their own copy.
           // Only the renderer's exact child chain can reach this bound root.
           let ancestor: HTMLElement | null = card;
           while (ancestor && ancestor !== root) {
@@ -459,8 +465,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             ancestor = parent;
           }
           if (ancestor !== root) continue;
-          const statuses = [...card.querySelectorAll<HTMLElement>(`:scope${documentStatusPath}`)];
-          if (statuses.length !== 1 || statuses[0] !== element) continue;
+          const copies = [...card.querySelectorAll<HTMLElement>(`:scope${documentBody ? documentBodyPath : documentStatusPath}`)];
+          if (copies.length !== 1 || copies[0] !== element) continue;
         }
         const libraryState = libraryStates.includes(element);
         if (libraryState) {
@@ -546,7 +552,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
           || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
           || ownerSelector === "forma-document-generations";
-        // Weight-label, editor metadata and closed-card status text have direct
+        // Weight-label, editor metadata and closed-card authored copy have direct
         // fragment contracts. Never include icon descendants or the whole row.
         const directText = libraryWeightLabel || libraryState || documentState ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
         const walker = wholeRegion || directText ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
