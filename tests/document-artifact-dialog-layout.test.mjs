@@ -238,3 +238,47 @@ test("reader header reserves readable identity space when localized actions need
     }
   }
 });
+
+test("narrow nonfocused Story identity uses content height in its existing column header", async () => {
+  const responsive = await readFile(new URL("../src/responsive-foundation.css", import.meta.url), "utf8");
+  const foundation = postcss.parse(responsive, { from: "src/responsive-foundation.css" });
+  const storyHeader = 'dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header';
+  const storyIdentity = `${storyHeader} > .artifact-viewer-identity`;
+  const mobileRules = (tree, selector) => {
+    const result = [];
+    tree.walkRules((rule) => {
+      if (!rule.selectors?.includes(selector)) return;
+      let mobile = false;
+      for (let parent = rule.parent; parent; parent = parent.parent) {
+        if (parent.type !== "atrule") continue;
+        if (parent.name !== "media" || !/^\(max-width:\s*720px\)$/u.test(parent.params)) return;
+        mobile = true;
+      }
+      if (mobile) result.push(rule);
+    });
+    return result;
+  };
+  const values = (rules, property) => {
+    const result = [];
+    for (const rule of rules) rule.walkDecls(property, (declaration) => result.push(declaration.value));
+    return result;
+  };
+
+  // Compose the real cross-file policies: the generic 18rem row preference
+  // becomes vertical in this existing Story column. Reset only its basis,
+  // without changing Story's order, controls, scroll owners or other kinds.
+  // This is a source regression, not evidence of native geometry or paint.
+  const columnRules = mobileRules(foundation, storyHeader);
+  assert.deepEqual(values(columnRules, "flex-direction"), ["column"]);
+  assert.deepEqual(values(columnRules, "align-items"), ["stretch"]);
+  assert.equal(winning(".document-artifact-reader > .artifact-viewer-header > .artifact-viewer-identity", "flex"), "1 1 18rem");
+  const resetRules = mobileRules(stylesheet, storyIdentity);
+  assert.equal(resetRules.length, 1, "The column Story identity needs its own intrinsic basis reset");
+  assert.deepEqual(values(resetRules, "flex-basis"), ["auto"]);
+  assert.deepEqual(resetRules[0].selectors, [storyIdentity], "The reset excludes focused Story, wider rows and every other artifact kind");
+  assert.deepEqual(resetRules[0].nodes.filter((node) => node.type === "decl").map((node) => node.prop), ["flex-basis"]);
+  assert.deepEqual(values(mobileRules(foundation, storyIdentity), "flex-basis"), [], "The later responsive sheet must not replace the reset");
+  assert.deepEqual(values(mobileRules(foundation, storyIdentity), "flex"), []);
+  assert.equal(winning(storyIdentity, "flex-basis"), undefined, "The reset does not affect wider Story headers");
+  assert.deepEqual(values(mobileRules(stylesheet, storyHeader), "flex-direction"), [], "The original Story column remains owned by the responsive sheet");
+});
