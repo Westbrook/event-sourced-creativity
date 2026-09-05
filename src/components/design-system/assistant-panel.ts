@@ -366,6 +366,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
     const libraryStateEditorSelector = ".library-main > forma-library-block-editor";
     const libraryStateCopySelector = `${libraryStateEditorSelector} > section.library-block-editor > header.library-block-editor-header > div:first-child > p.context-library-state`;
+    const documentStatePanelSelector = ':scope > section.workspace-page[data-workbench="document"] > .studio-main > .studio-grid > section#document-context-panel.context-column';
+    const documentStateHostsSelector = ':scope > .block-list[data-forma-content="primary"] > forma-context-block';
+    const documentSummarySelector = "article.context-block.context-block--summary[data-block-id]";
+    const documentStatusPath = " > div.block-body > header.block-heading > div.block-heading-state > span.context-lock-state";
+    const documentStateCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentStatusPath}`;
+    type DocumentContextHost = HTMLElement & { surface?: string; block?: { id?: string } };
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -397,6 +403,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > footer.output-requirement-form-footer > p',
+        documentStateCopySelector,
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
       ["forma-document-generations", [
@@ -411,14 +418,50 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       if (surfaces.length !== 1) continue;
       const surface = surfaces[0]!;
       let libraryStates: HTMLElement[] = [];
+      let documentStates: HTMLElement[] = [];
       const elements = new Set(selectors.flatMap(selector => {
         const selected = [...surface.querySelectorAll<HTMLElement>(selector)];
         if (selector === libraryStateCopySelector) libraryStates = selected;
+        if (selector === documentStateCopySelector) documentStates = selected;
         return selected;
       }));
       for (const element of elements) {
         if (!element.isConnected || element.closest(ownerSelector) !== surface
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
+        const documentState = documentStates.includes(element);
+        if (documentState) {
+          const panels = [...surface.querySelectorAll<HTMLElement>(documentStatePanelSelector)];
+          const panel = panels[0];
+          if (panels.length !== 1 || !panel?.isConnected || element.closest("#document-context-panel") !== panel) continue;
+          const hosts = [...panel.querySelectorAll<DocumentContextHost>(documentStateHostsSelector)];
+          const host = element.closest<DocumentContextHost>("forma-context-block"), blockId = host?.block?.id;
+          if (!host?.isConnected || host.surface !== "document" || typeof blockId !== "string" || !blockId.trim()
+            || !hosts.includes(host) || hosts.filter(candidate => candidate.block?.id === blockId).length !== 1) continue;
+          const decisions = [...host.querySelectorAll<HTMLElement>(":scope > section.context-decision")];
+          const decision = decisions[0];
+          if (decisions.length !== 1 || !decision?.isConnected || decision.dataset.controlsOpen !== "false") continue;
+          const wrappers = [...decision.querySelectorAll<HTMLElement>(':scope > div[id^="context-controls-"]')];
+          const wrapper = wrappers[0];
+          if (wrappers.length !== 1 || !wrapper?.isConnected || wrapper.id !== `context-controls-document-${blockId}`) continue;
+          const roots = [...wrapper.querySelectorAll<HTMLElement>(`:scope > ${documentSummarySelector}`)];
+          const root = roots[0], card = element.closest<HTMLElement>(documentSummarySelector);
+          if (roots.length !== 1 || !root?.isConnected || root.dataset.blockId !== blockId || !card?.isConnected) continue;
+          // Peers and recursive authored summaries each own their own status.
+          // Only the renderer's exact child chain can reach this bound root.
+          let ancestor: HTMLElement | null = card;
+          while (ancestor && ancestor !== root) {
+            const item: HTMLElement | null = ancestor.parentElement, children: HTMLElement | null | undefined = item?.parentElement;
+            const body: HTMLElement | null | undefined = children?.parentElement, parent: HTMLElement | null | undefined = body?.parentElement;
+            if (!item?.matches?.("li") || !children?.matches?.("ol.context-authored-children")
+              || !body?.matches?.("div.block-body") || !parent?.matches?.(documentSummarySelector)) {
+              ancestor = null; break;
+            }
+            ancestor = parent;
+          }
+          if (ancestor !== root) continue;
+          const statuses = [...card.querySelectorAll<HTMLElement>(`:scope${documentStatusPath}`)];
+          if (statuses.length !== 1 || statuses[0] !== element) continue;
+        }
         const libraryState = libraryStates.includes(element);
         if (libraryState) {
           const editors = [...surface.querySelectorAll<HTMLElement>(libraryStateEditorSelector)];
@@ -484,7 +527,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || field.form !== form || output.form !== form || field.previousElementSibling !== output
             || element !== label && element !== output) continue;
         }
-        if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-workspace" && !documentState && ["SPAN", "SMALL"].includes(element.tagName)) {
           const label = element.parentElement;
           const field = label?.querySelector<HTMLInputElement | HTMLTextAreaElement>(':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]');
           if (!(label instanceof HTMLLabelElement) || !field?.id || label.control !== field
@@ -496,16 +539,16 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         // current Library weight output, native Layers weight label/output and full Image-history header copy
         // carry box-level copy contracts, including their intentional whitespace.
         // Other admitted copy keeps text fragments.
-        const wholeRegion = ownerSelector === "forma-workspace"
+        const wholeRegion = ownerSelector === "forma-workspace" && !documentState
           || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel
             || element.tagName === "OUTPUT"
             || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]")
             || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
           || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
           || ownerSelector === "forma-document-generations";
-        // Weight-label and current editor metadata text have direct-fragment
-        // contracts. Never walk into descendants or substitute the whole row.
-        const directText = libraryWeightLabel || libraryState ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
+        // Weight-label, editor metadata and closed-card status text have direct
+        // fragment contracts. Never include icon descendants or the whole row.
+        const directText = libraryWeightLabel || libraryState || documentState ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
         const walker = wholeRegion || directText ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         let directIndex = 0;
         for (let text: Node | null = wholeRegion ? element : directText?.[directIndex++] ?? walker?.nextNode() ?? null;
