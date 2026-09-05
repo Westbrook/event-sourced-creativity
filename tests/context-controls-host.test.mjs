@@ -2085,3 +2085,87 @@ async function cContextLibraryNavigationParent(t, f) {
   f.contextLibraryNavigation = { shell, library, native, boundary: "actual Shell admission / explicitly finite original Store route port" };
   return f.contextLibraryNavigation;
 }
+
+// Actual full Library/editor rendering and input handlers, using the existing
+// keyed-cache port. Native attribute bindings are observable here; the port
+// does not implement browser label.control, accessible-name or focus semantics.
+for (const [locale, expectedName] of Object.entries({
+  en: "Default influence", fr: "Influence par défaut", ar: "التأثير الافتراضي", ja: "デフォルトの影響",
+})) test("Library influence range has a stable localized label through " + locale + " input and cache", { concurrency: false }, t => {
+  const f = fixture(locale);
+  t.after(() => f.i18n.hostDisconnected());
+  for (const id of ["decision-0", "decision-1"]) {
+    const created = f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === id);
+    created.payload.scope = "library"; delete created.payload.document_id;
+  }
+  const originalEvents = structuredClone(f.state.events), originalRequests = structuredClone(f.state.requests);
+  f.state.route = libraryBlockEditorRoute("decision-0");
+  activeFixture = f; f.host = new FormaLibrary(); f.draw();
+  assert.equal(f.i18n.system("Default influence"), expectedName, "use the exact current locale catalog");
+  const readWeight = (editor, value, expectedId) => {
+    assert.ok(editor instanceof registry["forma-library-block-editor"] && editor.isConnected);
+    const ranges = f.renderer.ownNodes(editor, "input").filter(node => node.attributes.type === "range");
+    assert.equal(ranges.length, 1);
+    const range = ranges[0], id = range.attributes.id;
+    assert.equal(typeof id, "string"); assert.ok(id.length > 0 && !/\s/u.test(id), "the real range has a usable ID");
+    if (expectedId !== undefined) assert.equal(id, expectedId, "redraw/cache never allocates a replacement range ID");
+    const labels = f.renderer.ownNodes(editor, "label").filter(node => node.attributes.class === "library-weight");
+    const outputs = f.renderer.ownNodes(editor, "output").filter(node => node.attributes.for === id);
+    assert.equal(labels.length, 1); assert.equal(outputs.length, 1);
+    assert.equal(labels[0].attributes.for, id, "the visible label addresses the range, not its preceding OUTPUT");
+    assert.equal(outputs[0].attributes.for, id, "the percentage records which range produced it");
+    assert.equal(range.attributes["aria-label"], expectedName, "the explicit range name excludes the changing percentage");
+    assert.equal(range.attributes.min, "0"); assert.equal(range.attributes.max, "1"); assert.equal(range.attributes.step, ".05");
+    assert.equal(range.value, String(value)); assert.equal(typeof range.handlers.input, "function");
+    const groups = [...editor.markup.matchAll(/<label\b[^>]*class="library-weight"[^>]*>([\s\S]*?)<\/label>/gu)];
+    assert.equal(groups.length, 1);
+    const parts = groups[0][1].match(/^([^<]*)<output\b[^>]*>([^<]*)<\/output>\s*<input\b/u);
+    assert.ok(parts, "the real emitted label keeps its text, percentage and range in the existing order");
+    assert.equal(parts[1].trim(), escapeText(expectedName));
+    assert.equal(parts[2], `${Math.round(value * 100)}%`, "percentage text comes from the real editor render");
+    assert.equal(f.renderer.ownNodes(editor, "input").filter(node => node.attributes.id === id).length, 1);
+    return { range, id };
+  };
+  const first = f.renderer.component("forma-library-block-editor", "decision-0");
+  const initial = readWeight(first, .7);
+  f.draw(); readWeight(first, .7, initial.id);
+  const handle = () => f.renderer.ownNodes(first, "input").find(node => node.attributes.maxlength === "96");
+  const handleDraft = "Unfinished Library influence handle", copyDraft = "  Keep this exact draft العربية 日本語.\n";
+  handle().handlers.input.call(first, { target: { value: handleDraft } }); f.draw();
+  const richText = f.renderer.query(first, "forma-ui-rich-text").find(child => child.attributes.class === "block-editor-copy");
+  assert.ok(richText);
+  richText.dispatchEvent(new CustomEvent("forma-input", { detail: { value: copyDraft } })); f.draw();
+  const firstRange = readWeight(first, .7, initial.id).range;
+  firstRange.value = "0.35";
+  firstRange.handlers.input.call(first, { target: firstRange, currentTarget: firstRange }); f.draw();
+  readWeight(first, .35, initial.id);
+  assert.deepEqual(f.state.events, originalEvents); assert.deepEqual(f.state.requests, originalRequests);
+
+  f.state.route = libraryBlockEditorRoute("decision-1"); f.draw();
+  assert.equal(first.isConnected, false);
+  const second = f.renderer.component("forma-library-block-editor", "decision-1");
+  assert.notEqual(second, first);
+  const other = readWeight(second, .7);
+  assert.notEqual(other.id, initial.id, "separate retained editor instances cannot share their range ID");
+  other.range.value = "0.85";
+  other.range.handlers.input.call(second, { target: other.range, currentTarget: other.range }); f.draw();
+  readWeight(second, .85, other.id);
+  f.state.route = "/library"; f.draw();
+  assert.equal(second.isConnected, false);
+  f.state.route = libraryBlockEditorRoute("decision-0"); f.draw();
+  assert.equal(f.renderer.component("forma-library-block-editor", "decision-0"), first);
+  readWeight(first, .35, initial.id);
+  assert.equal(handle().value, handleDraft);
+  assert.equal(f.renderer.query(first, "forma-ui-rich-text").find(child => child.attributes.class === "block-editor-copy"), richText);
+  assert.equal(richText.value, copyDraft); assert.equal(f.renderer.ownNodes(richText, "textarea")[0].value, copyDraft);
+  f.draw(); readWeight(first, .35, initial.id);
+  f.state.route = libraryBlockEditorRoute("decision-1"); f.draw();
+  assert.equal(f.renderer.component("forma-library-block-editor", "decision-1"), second);
+  readWeight(second, .85, other.id);
+  assert.deepEqual(f.state.events, originalEvents, "input and cache navigation neither save nor append an event");
+  assert.deepEqual(f.state.requests, originalRequests, "the range has no provider or fetch interaction");
+  for (const id of ["decision-0", "decision-1"]) {
+    assert.equal(f.store.projection.get().libraryBlocks.find(block => block.id === id).properties.weight, .7,
+      "the saved source weight stays unchanged while each instance keeps its local draft");
+  }
+});
