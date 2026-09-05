@@ -1208,3 +1208,270 @@ test("receipt check UI hides Output-bound and impersonated actions and retires l
   assert.ok(!f.renderer.markup.includes(f.i18n.system("Manual review is required. No new generation was started. The original request is unchanged and any original budget hold remains retained.")));
   assert.equal(Object.hasOwn(savedReceiptControl(f).attributes,"disabled"),false);assert.equal(f.state.requests.length,0);
 });
+
+// Actual creation-form EventParts, opening guards and authored native controls;
+// rectangles, native ancestry, activeElement and trusted-event flags below are
+// explicit finite test inputs. They are not browser layout or input provenance.
+// In particular, the existing renderer does not register the 3D editor: its
+// saved failure rectangle is exercised on the real generic creation input.
+async function createFocusCase(t, { medium = "short_story", locale = "en", targetTag = "input", roundMetrics = false } = {}) {
+  const { retainNativeSubmitForms } = await import("./helpers/deferred-focus-invokers.mjs");
+  const previous = { active: documentPort.activeElement, fixture: activeFixture,
+    style: windowPort.getComputedStyle, height: windowPort.innerHeight, viewport: windowPort.visualViewport };
+  t.after(() => { documentPort.activeElement = previous.active; activeFixture = previous.fixture;
+    windowPort.getComputedStyle = previous.style; windowPort.innerHeight = previous.height;
+    if (previous.viewport === undefined) delete windowPort.visualViewport; else windowPort.visualViewport = previous.viewport; });
+  const f = fixture("create", { locale });
+  retainNativeSubmitForms(f, new Set([f.host]), form => form.classList.contains("document-artifact-dialog"));
+  assert.equal(await f.open(medium), true);
+  const p = { f, scale: 1, targetScale: 1, top: 775.84375, height: 121.96875,
+    footerTop: 820, footerBottom: 883, modal: true, visibleFocus: true,
+    hidden: false, disabled: false, display: "block", visibility: "visible", outlineWidth: "3px", outlineOffset: "3px",
+    scrolls: [], outerScrolls: [], forms: null, footers: null, path: null };
+  const rect = (left, top, width, height) => ({ x: left, y: top, left, top, width, height, right: left + width, bottom: top + height });
+  const originals = new WeakMap();
+  p.wire = () => {
+    const nodes = f.renderer.ownNodes(f.host, "form");
+    p.form = nodes.find(node => node.attributes.class === "document-artifact-dialog");
+    p.dialog = f.renderer.ownNodes(f.host, "dialog").find(node => node.attributes.class === "document-artifact-create");
+    assert.ok(p.form && p.dialog); assert.equal(p.dialog.open, true);
+    const start = f.renderer.markup.indexOf(p.form.full), end = f.renderer.markup.indexOf("</form>", start);
+    assert.ok(start >= 0 && end > start, "the actual current creation form is completely emitted");
+    const formMarkup = f.renderer.markup.slice(start, end);
+    p.footer = f.renderer.ownNodes(f.host, "footer").find(node => formMarkup.includes(node.full));
+    assert.ok(p.footer); const footerStart = formMarkup.lastIndexOf(p.footer.full);
+    const footerMarkup = formMarkup.slice(footerStart);
+    p.target = targetTag === "input" ? requestField(f, "audience")
+      : f.renderer.ownNodes(f.host, targetTag).find(node => formMarkup.includes(node.full));
+    assert.ok(p.target && formMarkup.includes(p.target.full), "the target is emitted by the actual creation renderer");
+    p.footerButton = f.renderer.ownNodes(f.host, "button").find(node => footerMarkup.includes(node.full));
+    assert.ok(p.footerButton);
+    const formNodes = new Set(f.renderer.nodes.filter(node => node.owner === f.host && formMarkup.includes(node.full)));
+    const footerNodes = new Set(f.renderer.nodes.filter(node => node.owner === f.host && footerMarkup.includes(node.full)));
+    for (const node of formNodes) {
+      if (!originals.has(node)) originals.set(node, node.matches.bind(node));
+      node.matches = selector => selector === ":focus-visible" ? p.visibleFocus && documentPort.activeElement === node
+        : selector === ":disabled" ? p.disabled || node.disabled || Object.hasOwn(node.attributes, "disabled")
+        : originals.get(node)(selector);
+      node.closest = selector => {
+        for (const part of selector.split(",").map(value => value.trim())) {
+          if (part === "form" || part === "form.document-artifact-dialog" || part === ".document-artifact-dialog") return p.form;
+          if (part === "dialog" || part === "dialog.document-artifact-create" || part === ".document-artifact-create") return p.dialog;
+          if (part === "footer" && footerNodes.has(node)) return p.footer;
+          if ((part === "[hidden]" || part === "[inert]" || /^\[aria-hidden=/.test(part)) && p.hidden) return p.form;
+        }
+        return null;
+      };
+      node.getClientRects = () => p.hidden || p.display === "none" ? [] : [node.getBoundingClientRect()];
+      node.scrollIntoView = (...args) => p.outerScrolls.push({ node, args });
+    }
+    p.form.parentElement = p.dialog; p.footer.parentElement = p.form;
+    p.dialog.matches = selector => selector === ":modal" ? p.modal && p.dialog.open : selector === "dialog";
+    p.dialog.getClientRects = () => [p.dialog.getBoundingClientRect()];
+    p.dialog.getBoundingClientRect = () => rect(64, 16, 1152, 868);
+    p.dialog.offsetHeight = 868; p.dialog.clientTop = 1; p.dialog.clientHeight = 866;
+    p.dialog.querySelectorAll = selector => {
+      assert.ok(selector.includes("form"), "only the current dialog's form identity is requested");
+      return p.forms ?? [p.form];
+    };
+    p.dialog.querySelector = selector => p.dialog.querySelectorAll(selector)[0] ?? null;
+    p.dialog.contains = node => node === p.dialog || formNodes.has(node);
+    p.form.getBoundingClientRect = () => rect(65, 17, 1150, 868);
+    const metric = value => roundMetrics ? Math.round(value) : value;
+    Object.defineProperty(p.form, "offsetHeight", { configurable: true, get: () => metric(868 / p.scale) });
+    p.form.clientTop = 0;
+    Object.defineProperty(p.form, "clientHeight", { configurable: true, get: () => metric(868 / p.scale) });
+    Object.defineProperty(p.form, "scrollHeight", { configurable: true, get: () => metric(1979 / p.scale) });
+    p.form.scrollTop = 0; p.form.scrollLeft = -13;
+    p.form.querySelectorAll = selector => {
+      assert.ok(selector.includes("footer"), "only this form's current footer is requested");
+      return p.footers ?? [p.footer];
+    };
+    p.form.querySelector = selector => p.form.querySelectorAll(selector)[0] ?? null;
+    p.form.contains = node => formNodes.has(node);
+    p.form.scrollTo = options => { p.scrolls.push({ ...options }); p.form.scrollTop = options.top; };
+    p.footer.contains = node => footerNodes.has(node);
+    p.footer.getBoundingClientRect = () => rect(65, p.footerTop, 1150, p.footerBottom - p.footerTop);
+    p.target.getBoundingClientRect = () => rect(130.78125, p.top - p.form.scrollTop * p.scale, 1018.421875, p.height);
+    Object.defineProperty(p.target, "offsetHeight", { configurable: true, get: () => metric(p.height / p.targetScale) });
+    windowPort.innerHeight = 900;
+    windowPort.getComputedStyle = node => ({ display: p.display, visibility: p.visibility,
+      overflowY: node === p.form ? "auto" : "visible", position: node === p.footer ? "sticky" : "static",
+      outlineStyle: "solid", outlineWidth: p.outlineWidth, outlineOffset: p.outlineOffset,
+      direction: locale === "ar" ? "rtl" : "ltr" });
+    documentPort.activeElement = p.target;
+    return p;
+  };
+  p.wire();
+  p.invoke = (overrides = {}, handler = p.form.handlers.focusin) => {
+    assert.equal(typeof handler, "function", "the actual current creation form binds focusin");
+    const event = { type: "focusin", isTrusted: true, target: p.target, currentTarget: p.form,
+      composedPath: () => p.path ?? [p.target, p.form, p.dialog, f.host, documentPort],
+      preventDefault() { assert.fail("focus reveal must preserve native event defaults"); },
+      stopPropagation() { assert.fail("focus reveal must preserve event propagation"); }, ...overrides };
+    handler.call(f.host, event);
+  };
+  p.unchanged = operation => {
+    const before = { active: documentPort.activeElement, value: p.target.value, requests: structuredClone(f.state.requests),
+      events: structuredClone(f.state.events), trace: [...f.trace], markup: f.renderer.markup,
+      requested: f.requested, left: p.form.scrollLeft, listeners: [...f.listeners].map(([key, values]) => [key, [...values]]) };
+    operation();
+    assert.strictEqual(documentPort.activeElement, before.active); assert.equal(p.target.value, before.value);
+    assert.deepEqual(f.state.requests, before.requests); assert.deepEqual(f.state.events, before.events);
+    assert.deepEqual(f.trace, before.trace); assert.equal(f.renderer.markup, before.markup);
+    assert.equal(f.requested, before.requested); assert.equal(p.form.scrollLeft, before.left);
+    assert.deepEqual([...f.listeners], before.listeners); assert.deepEqual(p.outerScrolls, []);
+  };
+  return p;
+}
+
+for (const medium of ["short_story", "slides", "audio", "video"]) test("creation focus reveals the saved footer obstruction through the actual " + medium + " form", async t => {
+  const p = await createFocusCase(t, { medium }); p.target.value = "  Keep this raw 文書 draft  ";
+  p.unchanged(() => p.invoke());
+  assert.equal(p.scrolls.length, 1); assert.equal(p.scrolls[0].behavior, "instant");
+  assert.ok(p.form.scrollTop >= 83.8125 && p.form.scrollTop < 85, "reveal is bounded near the obstruction, allowing conservative metric rounding");
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 <= p.footerTop, "the true complete outline clears the footer without a tolerance waiver");
+  assert.ok(p.target.getBoundingClientRect().top - 6 >= 17, "the opposite edge stays inside the true client box");
+  p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 1, "already clear focus causes no extra scroll");
+});
+
+test("creation focus remeasures a wrapped footer and scaled readonly native target in RTL", async t => {
+  const p = await createFocusCase(t, { locale: "ar" }); p.scale = 2; p.targetScale = 1.5;
+  p.footerTop = 690; p.target.readOnly = true; p.target.value = "Exact read-only evidence العربية";
+  p.unchanged(() => p.invoke());
+  assert.ok(p.form.scrollTop >= 108.40625 && p.form.scrollTop < 110, "target outline uses its scale; scroll delta uses the form's scale");
+  assert.ok(p.target.getBoundingClientRect().bottom + 9 <= p.footerTop);
+  assert.ok(p.target.getBoundingClientRect().top - 9 >= 17);
+  p.footerTop = 630; p.unchanged(() => p.invoke());
+  assert.ok(p.form.scrollTop >= 138.40625 && p.form.scrollTop < 140, "current footer reflow is measured on the next focus transition");
+  assert.ok(p.target.getBoundingClientRect().bottom + 9 <= p.footerTop);
+  assert.ok(p.target.getBoundingClientRect().top - 9 >= 17);
+  assert.equal(p.target.readOnly, true);
+});
+
+test("creation focus reveals an actual summary above the current client box and preserves clear focus", async t => {
+  const p = await createFocusCase(t, { medium: "audio", targetTag: "summary" }); p.top = 150; p.height = 44; p.form.scrollTop = 180;
+  p.unchanged(() => p.invoke()); assert.ok(p.form.scrollTop >= 126 && p.form.scrollTop <= 127);
+  assert.ok(p.target.getBoundingClientRect().top - 6 >= 17);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 <= p.footerTop);
+  p.top = 300; p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 1);
+  assert.equal(p.target.tagName, "SUMMARY");
+});
+
+test("creation focus intersects modal and visual viewport bounds and clamps finite scroll limits", async t => {
+  const p = await createFocusCase(t); p.footerTop = 950; p.footerBottom = 1013;
+  windowPort.visualViewport = { offsetTop: 40, height: 660 };
+  p.unchanged(() => p.invoke()); assert.ok(p.form.scrollTop >= 203.8125 && p.form.scrollTop < 205);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 <= 700);
+  assert.ok(p.target.getBoundingClientRect().top - 6 >= 40);
+  delete windowPort.visualViewport; p.form.scrollTop = 0; p.top = 2500;
+  p.unchanged(() => p.invoke()); assert.equal(p.form.scrollTop, 1111, "best effort never exceeds this form's finite native range");
+  assert.ok(p.target.getBoundingClientRect().bottom > 883, "clamping is not a false full-fit certificate");
+});
+
+test("creation focus keeps an oversized target stable instead of alternating edges", async t => {
+  const p = await createFocusCase(t); p.top = 100; p.height = 1000;
+  p.unchanged(() => p.invoke()); assert.equal(p.form.scrollTop, 77);
+  p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 1);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 > p.footerTop, "an oversized envelope cannot fit the available lane");
+});
+
+test("creation focus excludes footer controls, untrusted events, invisible focus and invalid native geometry", async t => {
+  const p = await createFocusCase(t);
+  for (const [mutate, restore] of [
+    [() => { p.visibleFocus = false; }, () => { p.visibleFocus = true; }],
+    [() => { p.hidden = true; }, () => { p.hidden = false; }],
+    [() => { p.disabled = true; }, () => { p.disabled = false; }],
+    [() => { p.visibility = "hidden"; }, () => { p.visibility = "visible"; }],
+    [() => { p.display = "none"; }, () => { p.display = "block"; }],
+    [() => { p.scale = 0; }, () => { p.scale = 1; }],
+    [() => { p.top = NaN; }, () => { p.top = 775.84375; }],
+    [() => { p.modal = false; }, () => { p.modal = true; }],
+    [() => { p.footers = []; }, () => { p.footers = null; }],
+    [() => { p.footers = [p.footer, p.footer]; }, () => { p.footers = null; }],
+    [() => { p.forms = [p.form, p.form]; }, () => { p.forms = null; }],
+  ]) { mutate(); p.unchanged(() => p.invoke()); restore(); }
+  p.unchanged(() => p.invoke({ isTrusted: false }));
+  const target = p.target; p.target = p.footerButton; documentPort.activeElement = p.target;
+  p.unchanged(() => p.invoke()); p.target = target; documentPort.activeElement = target;
+  p.unchanged(() => p.invoke({ type: "input" }));
+  assert.deepEqual(p.scrolls, []);
+  p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 1, "each rejection leaves current ordinary focus usable");
+});
+
+test("creation focus refuses foreign focus, form, dialog and event-path owners", async t => {
+  const p = await createFocusCase(t), target = p.target, form = p.form, dialog = p.dialog;
+  const foreignForm = Object.assign(Object.create(ElementPort.prototype), { tagName: "FORM" });
+  const foreignDialog = Object.assign(Object.create(ElementPort.prototype), { tagName: "DIALOG" });
+  documentPort.activeElement = p.footerButton; p.unchanged(() => p.invoke()); documentPort.activeElement = target;
+  p.unchanged(() => p.invoke({ currentTarget: p.footerButton }));
+  p.path = [target, foreignForm, form, dialog, p.f.host, documentPort]; p.unchanged(() => p.invoke());
+  p.path = [target, form, foreignDialog, dialog, p.f.host, documentPort]; p.unchanged(() => p.invoke()); p.path = null;
+  form.parentElement = p.f.host; p.unchanged(() => p.invoke()); form.parentElement = dialog;
+  Object.defineProperty(target, "ownerDocument", { configurable: true, value: {} }); p.unchanged(() => p.invoke()); delete target.ownerDocument;
+  target.isConnected = false; p.unchanged(() => p.invoke()); target.isConnected = true;
+  dialog.open = false; p.unchanged(() => p.invoke()); dialog.open = true;
+  assert.deepEqual(p.scrolls, []);
+});
+
+test("creation focus rechecks the current opening and authorization before its only mutation", async t => {
+  const p = await createFocusCase(t);
+  const original = p.target.getBoundingClientRect;
+  p.target.getBoundingClientRect = () => { const value = original(); p.f.state.required = false; return value; };
+  p.unchanged(() => p.invoke()); assert.deepEqual(p.scrolls, []);
+  p.target.getBoundingClientRect = original; p.f.state.required = true;
+  p.f.state.authorization = "other-actor"; p.unchanged(() => p.invoke()); assert.deepEqual(p.scrolls, []);
+});
+
+test("creation focus uses the current retained form EventPart across format changes and retires closed openings", async t => {
+  const p = await createFocusCase(t); const form = p.form, first = form.handlers.focusin;
+  assert.equal(typeof first, "function");
+  const change = kind => {
+    const radio = p.f.renderer.ownNodes(p.f.host, "input").find(node => node.attributes.name === "artifact-kind" && node.attributes.value === kind);
+    assert.ok(radio); radio.handlers.change.call(p.f.host, {}); p.f.draw(); p.wire();
+    assert.strictEqual(p.form, form, "the actual submit EventPart retains this native form");
+  };
+  change("slides"); assert.notStrictEqual(p.form.handlers.focusin, first);
+  p.unchanged(() => p.invoke({}, first)); assert.deepEqual(p.scrolls, [], "a prior format binding cannot reveal another format");
+  p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 1);
+  change("short_story"); assert.notStrictEqual(p.form.handlers.focusin, first);
+  // There is no deferred focus callback or new epoch. Native EventPart delivery
+  // uses the current binding; an artificially invoked old A closure after ABA
+  // is deliberately not claimed to have monotonic lifetime protection.
+  p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 2);
+  const closed = p.form.handlers.focusin; await p.f.createClose(); await p.f.open("short_story"); p.wire();
+  assert.notStrictEqual(p.form, form); assert.equal(form.isConnected, false);
+  p.unchanged(() => p.invoke({}, closed)); assert.equal(p.scrolls.length, 2);
+  p.unchanged(() => p.invoke()); assert.equal(p.scrolls.length, 3);
+});
+
+test("creation focus clears the full saved outline when native offsetHeight rounds to 122", async t => {
+  const p = await createFocusCase(t, { roundMetrics: true });
+  assert.equal(p.target.getBoundingClientRect().height, 121.96875); assert.equal(p.target.offsetHeight, 122);
+  p.unchanged(() => p.invoke());
+  const rect = p.target.getBoundingClientRect();
+  assert.ok(rect.bottom + 6 <= p.footerTop, "the true six-pixel outline must be fully above the footer, including its last fraction");
+  assert.ok(rect.top - 6 >= 17); assert.ok(Number.isFinite(p.form.scrollTop));
+});
+
+test("creation focus respects independent true target and form scales with integer native metrics", async t => {
+  const p = await createFocusCase(t, { roundMetrics: true }); p.scale = 1.999; p.targetScale = 1.2;
+  assert.equal(p.form.offsetHeight, 434); assert.equal(p.target.offsetHeight, 102);
+  p.unchanged(() => p.invoke());
+  const rect = p.target.getBoundingClientRect();
+  assert.ok(rect.bottom + 7.2 <= p.footerTop, "clearance uses the true scaled outline, not the rounded-metric estimate");
+  assert.ok(rect.top - 7.2 >= 17); assert.ok(Number.isFinite(p.form.scrollTop));
+  assert.ok(p.form.scrollTop >= 0 && p.form.scrollTop <= p.form.scrollHeight - p.form.clientHeight);
+});
+
+test("creation focus preserves both true edges of a nearly fitting target with integer metrics", async t => {
+  const p = await createFocusCase(t, { roundMetrics: true }); p.scale = 1.999; p.height = 789.75;
+  p.top = p.footerTop - p.height - 6 + .25;
+  assert.equal(p.target.offsetHeight, 790); assert.equal(p.form.offsetHeight, 434);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 > p.footerTop, "the true bottom edge starts obstructed");
+  p.unchanged(() => p.invoke());
+  const rect = p.target.getBoundingClientRect();
+  assert.ok(rect.bottom + 6 <= p.footerTop, "the true bottom edge is revealed");
+  assert.ok(rect.top - 6 >= 17, "conservative rounding must not push the opposite edge behind the client boundary");
+  assert.ok(p.form.scrollTop > 0 && p.form.scrollTop < 1, "the nearly fitting envelope needs a bounded fractional scroll");
+});

@@ -606,6 +606,69 @@ export class DocumentArtifacts extends FormaElement {
     this.#confirmed=false;this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#clearSceneCost();
   }
   #createDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-create");}#viewDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-view");}
+  #revealCreateFocus(event:FocusEvent,current:()=>boolean){
+    if(event.type!=="focusin"||!event.isTrusted||!this.isConnected||!current())return;
+    const path=event.composedPath(),target=path[0],form=event.currentTarget,dialog=this.#createDialog(),document=this.ownerDocument,view=document.defaultView;
+    if(!(target instanceof HTMLElement)||!(form instanceof HTMLElement)||form.tagName!=="FORM"||!dialog||!view)return;
+    const ownsFocus=()=>this.isConnected&&current()&&target.isConnected&&form.isConnected&&dialog.isConnected
+      &&target.ownerDocument===document&&form.ownerDocument===document&&dialog.ownerDocument===document
+      &&document.activeElement===target&&this.#createDialog()===dialog&&dialog.open&&dialog.matches(":modal")
+      &&form.parentElement===dialog&&form.contains(target)&&target.closest("form")===form&&target.closest("dialog")===dialog
+      &&target.matches(":focus-visible")&&!target.matches(":disabled")&&target.getAttribute("aria-disabled")!=="true"
+      &&!target.closest('[hidden], [inert], [aria-hidden="true"]');
+    if(!ownsFocus()||!target.matches("button,input,select,textarea,summary,a[href]")
+      ||path.find(node=>node instanceof HTMLElement&&node.tagName==="FORM")!==form
+      ||path.find(node=>node instanceof HTMLElement&&node.tagName==="DIALOG")!==dialog)return;
+    const forms=dialog.querySelectorAll(":scope > form.document-artifact-dialog"),footers=form.querySelectorAll<HTMLElement>(":scope > footer");
+    if(forms.length!==1||forms[0]!==form||footers.length!==1)return;
+    const footer=footers[0]!;
+    if(!footer.isConnected||footer.ownerDocument!==document||footer.parentElement!==form||footer.contains(target))return;
+    const style=view.getComputedStyle(target);
+    if(!target.getClientRects().length||style.display==="none"||style.visibility==="hidden"||style.visibility==="collapse"||style.opacity==="0")return;
+    // Rectangles retain fractions; native offset/client metrics round to
+    // integers. Bound their rendered scale instead of shrinking the outline
+    // or under-scrolling when a rounded offset is slightly too large/small.
+    const clientBounds=(element:HTMLElement)=>{
+      const rect=element.getBoundingClientRect(),minScale=rect.height/(element.offsetHeight+.5),maxScale=rect.height/(element.offsetHeight-.5);
+      const top=rect.top+(element.clientTop+.5)*maxScale,bottom=rect.top+Math.max(0,element.clientTop+element.clientHeight-1)*minScale;
+      return [minScale,maxScale,top,bottom].every(Number.isFinite)&&minScale>0&&maxScale>=minScale&&bottom>top?{top,bottom,minScale,maxScale}:null;
+    };
+    const formBounds=clientBounds(form),dialogBounds=clientBounds(dialog),rect=target.getBoundingClientRect(),footerRect=footer.getBoundingClientRect();
+    const viewport=view.visualViewport,viewportTop=viewport?.offsetTop??0,viewportHeight=viewport?.height??view.innerHeight;
+    const targetScale=rect.height/(target.offsetHeight-.5),maxScroll=form.scrollHeight-form.clientHeight;
+    if(!formBounds||!dialogBounds||![rect.top,rect.bottom,rect.width,rect.height,targetScale,footerRect.top,footerRect.bottom,
+      viewportTop,viewportHeight,form.scrollTop,maxScroll].every(Number.isFinite)
+      ||rect.width<=0||rect.height<=0||targetScale<=0||footerRect.bottom<=footerRect.top||viewportHeight<=0||maxScroll<=0)return;
+    const top=Math.max(formBounds.top,dialogBounds.top,viewportTop),bottom=Math.min(formBounds.bottom,dialogBounds.bottom,viewportTop+viewportHeight,footerRect.top);
+    if(bottom<=top)return;
+    const width=Number.parseFloat(style.outlineWidth),offset=Number.parseFloat(style.outlineOffset);
+    const outline=style.outlineStyle!=="none"&&style.outlineStyle!=="hidden"&&Number.isFinite(width)&&Number.isFinite(offset)?Math.max(0,width+offset)*targetScale:0;
+    const start=rect.top-outline,end=rect.bottom+outline;
+    const lower=(end-bottom)/(end>bottom?formBounds.minScale:formBounds.maxScale);
+    const upper=(start-top)/(start<top?formBounds.minScale:formBounds.maxScale);
+    if(![start,end,lower,upper].every(Number.isFinite))return;
+    let requested=form.scrollTop;
+    if(lower<=upper){
+      // Both edges constrain the movement. Round outward only when that
+      // remains safe for the opposite edge; otherwise stay inside the finite
+      // fractional interval, leaving clearance on each side.
+      const delta=Math.max(lower,Math.min(upper,0));
+      if(delta!==0){
+        const rounded=delta>0?Math.ceil(form.scrollTop+delta):Math.floor(form.scrollTop+delta),movement=rounded-form.scrollTop;
+        requested=movement>=lower&&movement<=upper?rounded:form.scrollTop+(lower+upper)/2;
+      }
+    }else{
+      // An oversized or uncertain envelope cannot be certified to fit. Keep
+      // a span that already covers the lane; a one-CSS-pixel edge band avoids
+      // alternating tiny corrections after native metric/scroll rounding.
+      const band=formBounds.maxScale;
+      const delta=start>top+band?start-top:end<bottom-band?end-bottom:0;
+      if(delta!==0)requested=delta>0?Math.ceil(form.scrollTop+delta/formBounds.minScale):Math.floor(form.scrollTop+delta/formBounds.minScale);
+    }
+    const scrollTop=Math.max(0,Math.min(maxScroll,requested));
+    if(!Number.isFinite(scrollTop)||scrollTop===form.scrollTop||!ownsFocus())return;
+    form.scrollTo({top:scrollTop,behavior:"instant"});
+  }
   #configurationCurrent:CreativePreparationGuard|null=null;
   #creationScope="";
   #viewerPopoverScope="";
@@ -1435,7 +1498,7 @@ export class DocumentArtifacts extends FormaElement {
     const documentId=this.#targetDocumentId();const listSuffix=documentId.replace(/[^a-z0-9_-]/gi,"-");const audienceListId=`document-artifact-audiences-${listSuffix}`,toneListId=`document-artifact-tones-${listSuffix}`;const audienceSuggestions=[...this.#rememberedAudiences,...documentRenderSuggestions(this.store.events.get(),documentId,"audience")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);const toneSuggestions=[...this.#rememberedTones,...documentRenderSuggestions(this.store.events.get(),documentId,"tone")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);
     const close=()=>{if(!ownsOpening())return;this.#rememberRequestDraft();this.#retireRequestReview();this.#configurationCurrent=null;if(renderedKind==="scene")this.#clearSceneCost();this.#createOpen=false;this.#activeWorkflowStageId="";this.#createDialog()?.close();void this.#restoreWorkflowRegeneration();this.requestUpdate();};
     return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
-      <form class="document-artifact-dialog" @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!formCurrent())return;if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create(model3dAdaptation??undefined,model3dDocumentRevision);}}>
+      <form class="document-artifact-dialog" @focusin=${(event:FocusEvent)=>this.#revealCreateFocus(event,formCurrent)} @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!formCurrent())return;if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create(model3dAdaptation??undefined,model3dDocumentRevision);}}>
         <header><div><span>Render document</span><h2 id="document-artifact-create-title">Create another form of this work</h2><p>The same creative direction can become a story, presentation, storyboard, or video without changing the original document.</p></div><button type="button" class="icon-button" aria-label="Close" @click=${close}>${icon("close")}</button></header>
         <fieldset class="artifact-kind-picker" aria-label="Artifact type">${DOCUMENT_ARTIFACT_KINDS.map((kind)=>{const item=documentArtifactDefinition(kind);return html`<label class=${this.#kind===kind?"selected":""}><input type="radio" name="artifact-kind" value=${kind} .checked=${this.#kind===kind} @change=${()=>{this.#retireRequestReview();this.#selectArtifactKind(kind);if(kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount();this.#confirmed=false;this.requestUpdate();}}><span aria-hidden="true">${icon(kindIcon(kind))}</span><b>${this.i18n.system(item.label)}</b><small>${this.i18n.system(item.description)}</small></label>`;})}</fieldset>
         <section class="artifact-options">
