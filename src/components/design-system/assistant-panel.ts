@@ -358,7 +358,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if (panels.length !== 1 || panels[0] !== this || !main
       || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return obstacles;
     // Only current, owned copy families participate. Text is not native focus
-    // authority, and a header's intentional whitespace is not an obstacle.
+    // authority. Whitespace is protected only by explicit box-level contracts.
+    const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -375,6 +376,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > h3#library-block-content',
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
         '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+        libraryOutputCopySelector,
       ]],
       ["forma-reality-layers", [
         ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
@@ -387,6 +389,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
+      ["forma-document-generations", [
+        ":scope > section.document-generations > header > div:first-child > :is(.eyebrow,h2,p)",
+      ]],
     ] as const;
     for (const [ownerSelector, selectors] of families) {
       const surfaces = [...main.querySelectorAll<HTMLElement>(ownerSelector)]
@@ -440,12 +445,15 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
         }
         // The Document editor, associated Library field/empty-state regions and
-        // native Layers weight label/output carry box-level copy contracts.
+        // native Layers weight label/output and full Image-history header copy
+        // carry box-level copy contracts, including their intentional whitespace.
         // Other admitted copy keeps text fragments.
         const wholeRegion = ownerSelector === "forma-workspace"
           || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName)
-            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]"))
-          || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName);
+            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]")
+            || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
+          || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
+          || ownerSelector === "forma-document-generations";
         const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
           const parent = wholeRegion ? element : text.parentElement;
@@ -626,12 +634,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           return;
         }
       }
-      if (box.top - (next - offset) < 8) return;
+      if (box.top - (next - offset) < 8) break;
       this.style.setProperty("--forma-assistant-obstacle-offset", `${next}px`);
     }
 
-    // The last compact write can exhaust the pass budget on another obstacle.
-    // Complete only that tail from the same sampled owners, in the same lane.
+    // An upward boundary or the pass budget can leave a lower gap unexplored.
+    // Complete the search from the same sampled owners, in the same lane.
     if (!exactFocusPaint) return;
     const box = launcher.getBoundingClientRect();
     const finiteBox = (value: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
