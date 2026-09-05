@@ -2962,6 +2962,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .forma-soundtrack-follow small { color: var(--muted); line-height: 1.45; }
 .forma-included-audio-transcripts { display: grid; gap: .4rem; }
 .artifact-audio-result { display: grid; gap: 1rem; padding: clamp(1rem,4vw,2rem); }
+.document-artifact-reader-content > :is(.forma-included-audio-transcripts,.forma-soundtrack-companions) { margin-inline: clamp(1rem,4vw,2rem); margin-block-end: clamp(1rem,4vw,2rem); }
 .artifact-audio-preview,.artifact-summary--audio .artifact-summary-copy { display: grid; gap: .65rem; align-content: center; color: var(--accent); }
 .artifact-audio-preview p { color: var(--ink); }
 .creative-audio-tool:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }

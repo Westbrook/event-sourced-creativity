@@ -87,3 +87,37 @@ test("paid confirmation footer stays sticky while the creation form scrolls", ()
     assert.notEqual(winning(selector, "pointer-events"), "none");
   }
 });
+
+test("included transcripts and soundtrack companions keep their full focus outline inside the reader", () => {
+  const supplementalSections = ".document-artifact-reader-content > :is(.forma-included-audio-transcripts,.forma-soundtrack-companions)";
+  const inlineGutter = winning(supplementalSections, "margin-inline");
+  const endGutter = winning(supplementalSections, "margin-block-end");
+  const mainAudioGutter = winning(".artifact-audio-result", "padding");
+
+  assert.ok(inlineGutter, "Both direct supplemental sections need space on both inline edges");
+  assert.ok(endGutter, "The final section needs scrollable space below its focus outline");
+  assert.equal(inlineGutter, mainAudioGutter, "Supplemental sections align with the main audio content");
+  assert.equal(endGutter, mainAudioGutter, "The shared gutter also reserves space at the reader's end");
+
+  // Source-level spacing contract, not a substitute for native focus/paint
+  // evidence. The retained failure had a 3px outline plus a 3px offset.
+  const focusOutset = 3 + 3;
+  const clamp = /^clamp\(([\d.]+)rem,([\d.]+)vw,([\d.]+)rem\)$/u.exec(inlineGutter.replace(/\s+/gu, ""));
+  assert.ok(clamp, "The gutter has responsive bounds instead of a fixed-width section");
+  const [, minimumRem, viewportPercent, maximumRem] = clamp.map(Number);
+  for (const rootPixels of [16, 32]) {
+    for (const viewportPixels of [320, 640, 1280]) {
+      const gutter = Math.max(minimumRem * rootPixels, Math.min(viewportPercent * viewportPixels / 100, maximumRem * rootPixels));
+      assert.ok(gutter >= focusOutset, `${viewportPixels}px viewport/${rootPixels}px rem preserves the complete focus outset`);
+    }
+  }
+
+  assert.equal(winning(".document-artifact-reader-content", "overflow"), "auto");
+  assert.equal(winning(".document-artifact-reader-content", "overscroll-behavior"), "contain");
+  assert.equal(winning(".document-artifact-reader-content", "scrollbar-gutter"), "stable");
+  assert.equal(winning(".forma-soundtrack-companions", "padding"), "1rem");
+  assert.equal(winning(".forma-soundtrack-companions", "margin-block-start"), "1rem");
+  for (const property of ["overflow", "overflow-x", "overflow-y", "outline", "outline-width", "outline-offset", "z-index"]) {
+    assert.equal(winning(supplementalSections, property), undefined, `Section spacing does not replace ${property}`);
+  }
+});
