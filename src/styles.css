@@ -2711,9 +2711,9 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .prompt-fan-image img { width: 100%; height: 100%; object-fit: contain; object-position: var(--focal-x,50%) var(--focal-y,50%); }
 .prompt-fan-pending { display: grid; height: 100%; place-content: center; gap: 8px; color: var(--muted); text-align: center; font-size: var(--type-caption); }
 .prompt-fan-pending:first-child { font-size: var(--type-heading); }
-.prompt-fan-option > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.prompt-fan-option > footer { display: flex; min-inline-size: 0; flex-direction: column; align-items: stretch; gap: 12px; margin-top: 14px; }
 .prompt-fan-option > footer > span { display: grid; min-width: 0; }
-.prompt-fan-option > footer small { overflow: hidden; color: var(--muted); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
+.prompt-fan-option > footer > span > small { overflow: visible; color: var(--muted); font-size: var(--type-micro); text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .prompt-fan-output-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .prompt-fan-option details { margin-top: 14px; border-top: 1px solid var(--line); }
 .prompt-fan-option summary { padding: 10px 0 0; color: var(--muted); cursor: pointer; font: 650 var(--type-micro) var(--sans); }
