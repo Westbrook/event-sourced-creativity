@@ -1452,6 +1452,12 @@ html:has(.application-creative[data-layout-intent="browse"] > #main-content > .p
   scroll-margin-block-start: min(60dvb, 20rem);
 }
 
+/* Native entry to full Board history reserves room for the preceding copy.
+ * This is an authoring budget, not a measurement of localized copy height. */
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"][data-short-height="true"]:not(:has(> .impersonation-banner)) forma-context-board > section.workspace-page.studio-alternative > .studio-main > .studio-subpage-body > forma-document-generations[view="board"] > section.document-generations > header > .document-generation-header-actions > button.document-generation-collapse {
+  scroll-margin-block-start: min(60dvb, 20rem);
+}
+
 /* The view toolbar has its own rounded native scroller, separate from history. */
 .application-creative forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button {
   flex: 0 0 auto;

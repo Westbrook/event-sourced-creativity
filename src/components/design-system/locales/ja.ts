@@ -34,6 +34,8 @@ const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.ja,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.ja,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ja,
+  "generation.history.imageLabel": "画像生成の履歴",
+  "generation.history.imageEmpty": "この履歴には画像生成の記録がありません",
   "generation.reservationUncertainty": "失敗しても費用が発生していないとは限りません。プロバイダーの受付または最終費用が未確認の場合、予約枠が確保されたままになることがあります。元の処理記録を確認してください。",
   "generation.stopUncertainty": "停止しても、プロバイダーの処理停止や予約予算の解放は保証されません。発生済みの費用は残り、未確認の予約枠は確認が済むまで確保されます。元の処理記録を確認してください。",
   "generation.capacityNotice": "{notice} 残りのトークン数は{remaining}です。ドラフトの並列生成には{draft}、フル品質の並列生成には{full}が必要です。",

@@ -97,3 +97,46 @@ test("projects one prompt fan until members are promoted to stand alone", () => 
   assert.equal(promotedHistory.find((item) => item.kind === "fan")?.standaloneCount, 1);
   assert.ok(promotedHistory.some((item) => item.kind === "output" && item.id === "fan-json"));
 });
+
+// Source/model contracts only. This synthetic partition is not the production
+// Document, a browser rendering, private-source proof or a generation request.
+test("E image history does not describe six existing artifact results as no generations", async () => {
+  const kinds = ["slides", "short_story", "audio", "slides", "short_story", "audio"];
+  const artifactEvents = [...events.slice(0, 2), ...kinds.map((kind, index) => event(index + 3,
+    "DocumentRenderCompleted", { document_id: "d", artifact_id: "image-history-artifact-" + index,
+      artifact_kind: kind, title: "Synthetic retained result " + index, item_count: 1,
+      items: [{ id: "image-history-part-" + index, title: "Retained part", body: "Source-only fixture text" }] }))];
+  const artifactOnly = foldEvents(artifactEvents);
+  assert.equal(artifactOnly.artifacts.length, 6); assert.equal(new Set(artifactOnly.artifacts.map(item => item.kind)).size, 3);
+  assert.deepEqual(generationHistoryMix(artifactOnly.outputs), { total: 0, drafts: 0, full: 0 });
+  const mixed = foldEvents([...artifactEvents, ...events.slice(2).map((entry, index) =>
+    event(artifactEvents.length + index + 1, entry.type, entry.payload, entry.actor))]);
+  assert.deepEqual(mixed.artifacts, artifactOnly.artifacts, "Image/fan history never absorbs or removes separate artifact results");
+  assert.deepEqual(generationHistoryMix(mixed.outputs), { total: 3, drafts: 0, full: 3 });
+  const empty = foldEvents(events.slice(0, 2));
+  assert.equal(empty.artifacts.length, 0); assert.deepEqual(generationHistoryItems(empty.outputs), []);
+  const source = await readFile(new URL("../src/components/document-generations.ts", import.meta.url), "utf8");
+  assert.match(source, /const allOutputs = this\.store\.projection\.get\(\)\.outputs;/);
+  assert.match(source, /const mix = generationHistoryMix\(allOutputs\);/);
+  const start = source.indexOf('    return html`<forma-document-artifacts source=${this.view}>');
+  assert.ok(start >= 0, "The actual full renderer still renders separate Creative results first");
+  const full = source.slice(start);
+  assert.ok(full.includes('aria-label=${this.i18n.t("generation.history.imageLabel")}'));
+  assert.ok(full.includes('<span class="eyebrow">${this.i18n.t("generation.history.imageLabel")}</span>'));
+  assert.ok(full.includes(': this.i18n.t("generation.history.imageEmpty")}</h2>'));
+  assert.doesNotMatch(full, /The document has no generations yet/);
+});
+
+test("E image-history scope and empty copy are explicit in the existing four locale catalogs", async () => {
+  const cases = [
+    ["../src/components/design-system/localization.ts", "Image generation history", "No image generations in this history"],
+    ["../src/components/design-system/locales/fr.ts", "Historique des générations d’images", "Aucune génération d’images dans cet historique"],
+    ["../src/components/design-system/locales/ar.ts", "سجل توليد الصور", "لا توجد عمليات توليد صور في هذا السجل"],
+    ["../src/components/design-system/locales/ja.ts", "画像生成の履歴", "この履歴には画像生成の記録がありません"],
+  ];
+  for (const [path, label, empty] of cases) {
+    const source = await readFile(new URL(path, import.meta.url), "utf8");
+    for (const [key, value] of [["generation.history.imageLabel", label], ["generation.history.imageEmpty", empty]])
+      assert.ok(source.includes(JSON.stringify(key) + ": " + JSON.stringify(value) + ","), path + " contains the exact scoped " + key);
+  }
+});

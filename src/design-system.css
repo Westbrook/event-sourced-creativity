@@ -1637,8 +1637,8 @@ forma-document-generations { display: block; min-width: 0; }
   border-radius: 0;
 }
 
-.document-generations > header { align-items: flex-end; }
-.document-generations > header .eyebrow { display: none; }
+.document-generations > header { align-items: stretch; flex-direction: column; }
+.document-generations > header .eyebrow { display: block; }
 .document-generations h2 { font-size: clamp(1.5rem, 2.8vw, 2.5rem); }
 .document-generations p { font-size: var(--type-small); }
 
@@ -1646,21 +1646,40 @@ forma-document-generations { display: block; min-width: 0; }
   display: flex;
   flex: none;
   flex-wrap: wrap;
+  min-inline-size: 0;
+  max-inline-size: 100%;
   align-items: center;
   justify-content: flex-end;
   gap: .5rem;
 }
 
+.document-generation-header-actions > forma-generation-actions {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
 .document-generation-collapse {
-  min-height: 2.5rem;
+  min-block-size: var(--forma-hit-target, 2.75rem);
+  min-inline-size: var(--forma-hit-target, 2.75rem);
+  max-inline-size: 100%;
   padding-inline: .75rem;
   color: var(--muted);
   border: 1px solid transparent;
   border-radius: 6px;
   font-size: var(--type-small);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .document-generation-collapse:hover { color: var(--ink); background: var(--panel-2); }
+
+@media (pointer: coarse) {
+  .document-generation-collapse {
+    min-block-size: var(--forma-hit-target-coarse, 3rem);
+    min-inline-size: var(--forma-hit-target-coarse, 3rem);
+  }
+}
 
 .document-generations.collapsed { padding-bottom: 0; }
 

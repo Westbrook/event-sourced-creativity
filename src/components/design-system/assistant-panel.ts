@@ -358,7 +358,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if (panels.length !== 1 || panels[0] !== this || !main
       || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return obstacles;
     // Only current, owned copy families participate. Text is not native focus
-    // authority, and a header's intentional whitespace is not an obstacle.
+    // authority. Whitespace is protected only by explicit box-level contracts.
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -387,6 +387,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
+      ["forma-document-generations", [
+        ":scope > section.document-generations > header > div:first-child > :is(.eyebrow,h2,p)",
+      ]],
     ] as const;
     for (const [ownerSelector, selectors] of families) {
       const surfaces = [...main.querySelectorAll<HTMLElement>(ownerSelector)]
@@ -440,12 +443,14 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
         }
         // The Document editor, associated Library field/empty-state regions and
-        // native Layers weight label/output carry box-level copy contracts.
+        // native Layers weight label/output and full Image-history header copy
+        // carry box-level copy contracts, including their intentional whitespace.
         // Other admitted copy keeps text fragments.
         const wholeRegion = ownerSelector === "forma-workspace"
           || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName)
             || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]"))
-          || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName);
+          || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
+          || ownerSelector === "forma-document-generations";
         const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
           const parent = wholeRegion ? element : text.parentElement;

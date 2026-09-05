@@ -42,6 +42,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   ...FORMA_RESPONSIVE_MESSAGES.en,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.en,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.en,
+  "generation.history.imageLabel": "Image generation history",
+  "generation.history.imageEmpty": "No image generations in this history",
   "generation.reservationUncertainty": "Failure does not prove that no cost was incurred. A reservation can remain held while provider acceptance or final cost is unconfirmed. Check the original receipt.",
   "generation.stopUncertainty": "Stopping does not guarantee that provider work stops or that reserved budget is released. Incurred costs remain; uncertain holds stay reserved until verified. Check the original receipt.",
   "generation.capacityNotice": "{notice} {remaining} tokens remain. A draft fan needs {draft}; a full-quality fan needs {full}.",

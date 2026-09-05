@@ -1421,7 +1421,7 @@ function e3StudioSlot(t, { rtl = false, coarse = false, short = false } = {}) {
   // counterexample falls back to floating placement; native queries stay strict.
   x.copyOwnerQueries = [];
   main.querySelectorAll = selector => {
-    if (["forma-workspace-settings", "forma-library", "forma-reality-layers", "forma-project-contents", "forma-workspace", '.application-loading[role="status"]'].includes(selector)) {
+    if (["forma-workspace-settings", "forma-library", "forma-reality-layers", "forma-project-contents", "forma-workspace", '.application-loading[role="status"]', "forma-document-generations"].includes(selector)) {
       x.copyOwnerQueries.push(selector); return [];
     }
     assert.equal(selector, "forma-studio-mode-nav");
@@ -1605,6 +1605,8 @@ test("E3 an unsupported rounded or unknown clipping corner releases the cell wit
 const e6CopyFamilies = ["forma-workspace-settings", "forma-library", "forma-project-contents", "forma-workspace"];
 const fTerminalCopyOwner = '.application-loading[role="status"]';
 const fTerminalCopySelector = ":scope > div > :is(b,p)";
+const imageHistoryCopyOwner = "forma-document-generations";
+const imageHistoryCopySelector = ":scope > section.document-generations > header > div:first-child > :is(.eyebrow,h2,p)";
 const e6SettingsCopySelectors = [
   ".page-header-copy > :is(.eyebrow,h1,p)",
   'section[aria-labelledby="workspace-invitations-heading"] > :is(h2,p)',
@@ -1624,7 +1626,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
@@ -1640,6 +1642,9 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     if (selector === fTerminalCopyOwner) {
       terminalOwnerQueries.push(selector); return selector === family ? [surface] : [];
     }
+    if (selector === imageHistoryCopyOwner) {
+      imageOwnerQueries.push(selector); return selector === family ? [surface] : [];
+    }
     assert.ok(e6CopyFamilies.includes(selector), "only separately declared copy-owner families are queried");
     familyQueries.push(selector); return selector === family ? [surface] : [];
   };
@@ -1651,6 +1656,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors]
       : family === "forma-library" ? e11LibraryCopySelectors
       : family === fTerminalCopyOwner ? [fTerminalCopySelector]
+      : family === imageHistoryCopyOwner ? [imageHistoryCopySelector]
       : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
       "copy selection remains restricted to the actual declared owner family");
     copyQueries.push(selector);
@@ -1706,10 +1712,11 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     const expected = actual.length === 0 ? [] : actual.includes("forma-reality-layers")
       ? [e6CopyFamilies[0], e6CopyFamilies[1], "forma-reality-layers", e6CopyFamilies[2], e6CopyFamilies[3]] : [...e6CopyFamilies];
     if (actual.includes(fTerminalCopyOwner)) expected.push(fTerminalCopyOwner);
-    assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four, extended-five or terminal-six owner query sequence");
+    if (actual.includes(imageHistoryCopyOwner)) expected.push(imageHistoryCopyOwner);
+    assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four, extended-five, terminal-six or Image-seven owner query sequence");
     return box;
   };
-  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -2327,7 +2334,7 @@ for (const locale of ['en', 'ar']) test('E11 ' + locale + ' measured Layers weig
   assert.equal(field.ariaLabel, measured.name); assert.equal(form.key, 'e6-network-fourth-decision');
   assert.deepEqual(x.copyBoxReads, [label, output]); assert.deepEqual(x.rangeReads, []);
   assert.deepEqual(x.copyQueries, e11LayersCopySelectors);
-  assert.deepEqual(x.allOwnerQueries, [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3], ...x.terminalOwnerQueries]);
+  assert.deepEqual(x.allOwnerQueries, [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3], ...x.terminalOwnerQueries, ...x.imageOwnerQueries]);
   assert.deepEqual(x.layersOwnerQueries, [e11LayersOwner]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
   assert.deepEqual(state.formQueries, [e11LayersFormSelector, e11LayersFormSelector]);
   assert.deepEqual(state.associationQueries, [':scope > input[name="weight"][type="range"]', ':scope > output', ':scope > input[name="weight"][type="range"]', ':scope > output']);
@@ -2496,7 +2503,7 @@ function e11CompactUnchanged(state, box, { queried = true, active = state.handle
   assert.deepEqual(x.copyQueries, queried ? e11LayersCopySelectors : []);
   assert.deepEqual(x.copyBoxReads, queried ? [label, output] : []);
   assert.deepEqual(x.allOwnerQueries, queried
-    ? [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3], ...x.terminalOwnerQueries] : []);
+    ? [e6CopyFamilies[0], e6CopyFamilies[1], e11LayersOwner, e6CopyFamilies[2], e6CopyFamilies[3], ...x.terminalOwnerQueries, ...x.imageOwnerQueries] : []);
   assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
   assert.ok(['left', 'top', 'right', 'bottom', 'width', 'height'].every(key => Number.isFinite(box[key])));
   assert.equal(box.width, 44); assert.equal(box.height, 44);
@@ -2613,6 +2620,85 @@ test('E11 compact completion chooses nearest free gaps with upward ties', { conc
     } finally { for (const undo of cleanup.reverse()) undo(); }
   }
 });
+
+function imageHistoryCopyPlacement(t) {
+  // Exact layout boxes from Image R2 image-history-empty-focus at 1280x900.
+  // This is a finite geometry regression, not full-page/native reconstruction.
+  // In particular, the screenshot's heading words were NOT obscured: the
+  // failed native contract protects the whole H2 layout box, not only glyphs.
+  const x = e6CopyPlacement(t, { family: imageHistoryCopyOwner,
+    viewport: { width: 1280, height: 900 }, right: 1264, top: 658.90625 });
+  const headingBox = d411Rect(291.1875, 617.515625, 937.625, 49);
+  const eyebrowBox = d411Rect(291.1875, 595.734375, 937.625, 16.1875);
+  const oldPosition = d411Rect(1126.8125, 658.90625, 137.1875, 44);
+  const collapse = x.control(d411Rect(291.1875, 783.484375, 131.90625, 44), {
+    tagName: "BUTTON", outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
+  });
+  const ring = d411Rect(285.1875, 777.484375, 143.90625, 56);
+  x.controls.push(collapse); x.f.document.activeElement = collapse;
+  // Empty Range inputs make the distinction explicit: these exact admitted
+  // copy nodes must supply their layout boxes, not invented glyph rectangles.
+  const eyebrow = x.copy(imageHistoryCopySelector, eyebrowBox, [],
+    { tagName: "P", className: "eyebrow", textContent: "Image history" });
+  const heading = x.copy(imageHistoryCopySelector, headingBox, [],
+    { tagName: "H2", textContent: "Generations for your Document" });
+  x.f.panel.draftForTest = "  Preserve independent unsent direction.  ";
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, owner: x.f.panel.parentElement };
+  const unchanged = () => {
+    assert.equal(x.f.document.activeElement, collapse);
+    assert.equal(x.f.panel.draftForTest, "  Preserve independent unsent direction.  ");
+    assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+    assert.equal(x.f.panel.parentElement, before.owner); assert.deepEqual(x.f.emitted, []);
+    assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.ok(x.boxes.length <= 16);
+  };
+  return { x, heading, eyebrow, headingBox, eyebrowBox, oldPosition, ring, unchanged };
+}
+
+test("Image full-history copy boxes and focused Collapse share finite launcher placement", { concurrency: false }, t => {
+  const { x, heading, eyebrow, headingBox, eyebrowBox, oldPosition, ring, unchanged } = imageHistoryCopyPlacement(t);
+  assert.equal(x.overlap(oldPosition, [headingBox]).length, 1, "retain the measured H2 layout-box failure");
+  assert.equal(x.overlap(oldPosition, [ring, eyebrowBox]).length, 0);
+  const box = x.run();
+  // First after actual placement: six-family source fails on obstruction,
+  // not fixture query admission or a new-owner assertion.
+  assert.equal(x.overlap(box, [headingBox, eyebrowBox, ring]).length, 0,
+    "clear full-history heading/eyebrow boxes without obstructing Collapse focus");
+  unchanged(); assert.ok(box.top >= 8 && box.bottom <= 892);
+  assert.deepEqual(x.copyBoxReads, [eyebrow, heading]);
+  assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+  assert.deepEqual(x.copyQueries, [imageHistoryCopySelector]);
+  assert.deepEqual(x.imageOwnerQueries, [imageHistoryCopyOwner]);
+});
+
+for (const mode of ["hidden", "foreign", "duplicate", "compact-unmatched"]) {
+  test(`Image ${mode} copy cannot supply full-history placement obstacles`, { concurrency: false }, t => {
+    const { x, heading, eyebrow, headingBox, oldPosition, unchanged } = imageHistoryCopyPlacement(t);
+    if (mode === "hidden") { heading.hiddenAncestor = true; eyebrow.hiddenAncestor = true; }
+    else if (mode === "foreign") {
+      const foreignOwner = {};
+      for (const element of [heading, eyebrow]) {
+        const closest = element.closest.bind(element);
+        element.closest = selector => selector === imageHistoryCopyOwner ? foreignOwner : closest(selector);
+      }
+    } else if (mode === "duplicate") {
+      const query = x.main.querySelectorAll;
+      x.main.querySelectorAll = selector => {
+        const selected = query(selector);
+        return selector === imageHistoryCopyOwner ? [x.surface, { ...x.surface }] : selected;
+      };
+    } else {
+      // The actual selector is deliberately direct full-history structure;
+      // compact/canvas/rail headers supply no matching nodes through this port.
+      const query = x.surface.querySelectorAll;
+      x.surface.querySelectorAll = selector => { query(selector); return []; };
+    }
+    const box = x.run();
+    assert.deepEqual(box, oldPosition);
+    assert.equal(x.overlap(box, [headingBox]).length, 1, "excluded copy is not misreported as protected");
+    assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+    unchanged();
+  });
+}
 
 function fTerminalCopyPlacement(t) {
   // R3 recorded this FR200 viewport, ordinary launcher width/base position,

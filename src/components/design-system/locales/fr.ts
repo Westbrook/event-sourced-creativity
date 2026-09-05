@@ -34,6 +34,8 @@ const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.fr,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.fr,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.fr,
+  "generation.history.imageLabel": "Historique des générations d’images",
+  "generation.history.imageEmpty": "Aucune génération d’images dans cet historique",
   "generation.reservationUncertainty": "Un échec ne prouve pas l’absence de frais. Une réservation peut rester bloquée tant que l’acceptation par le fournisseur ou le coût final n’est pas confirmé. Consultez le reçu d’origine.",
   "generation.stopUncertainty": "L’arrêt ne garantit ni l’interruption du travail du fournisseur ni la libération du budget réservé. Les frais engagés subsistent ; les réservations incertaines restent bloquées jusqu’à vérification. Consultez le reçu d’origine.",
   "generation.capacityNotice": "{notice} Il reste {remaining} jetons. Une génération en éventail de brouillons nécessite {draft} ; une génération en éventail en qualité maximale nécessite {full}.",
