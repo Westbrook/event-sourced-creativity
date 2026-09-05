@@ -1090,8 +1090,9 @@ for (const journey of ["disabled-save", "skip-return"]) test(
 // port. The temporary top-layer button below is a declared synthetic blocker,
 // not a measured R8 popover: it causes the observed fallback through the real
 // routine without asserting why that intermediate browser placement happened.
-for (const paint of ["bounded", "unsupported"]) test(
-  "D428 current Account focus can recover a hovered non-tight fallback / " + paint,
+for (const paint of ["bounded", "unsupported", "available-lower-gap"]) test(
+  paint === "available-lower-gap" ? "D428 open Account preserves a valid lower same-lane gap"
+    : "D428 current Account focus can recover a hovered non-tight fallback / " + paint,
   { concurrency: false }, t => {
     const x = d411Placement(t, [], { width: 320, height: 800 });
     x.launcher.getBoundingClientRect = () => {
@@ -1128,7 +1129,15 @@ for (const paint of ["bounded", "unsupported"]) test(
       outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
       getBoundingClientRect: () => popupOpen ? popupBody : d411Rect(0, 0, 0, 0),
     });
-    x.controls.push(field, popupButton); x.regions.push(entry);
+    // A declared outside-popup task region closes the lower gap only while
+    // open. This supplies the no-fit prerequisite for the retained fallback;
+    // it is not measured R8 geometry and must not inherit the popup's clip.
+    const lowerTask = x.control(d411Rect(266, 733, 44, 67), {
+      tagName: "DIV", className: "output-requirement-warning",
+      getBoundingClientRect: () => popupOpen && paint !== "available-lower-gap"
+        ? d411Rect(266, 733, 44, 67) : d411Rect(0, 0, 0, 0),
+    });
+    x.controls.push(field, popupButton); x.regions.push(entry, lowerTask);
     x.f.panel.draftForTest = "  Keep the independent Assistant draft.  ";
     const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, scrollTop: context.scrollTop };
     x.f.document.activeElement = field;
@@ -1139,6 +1148,19 @@ for (const paint of ["bounded", "unsupported"]) test(
 
     popupOpen = true; x.f.document.activeElement = popupButton;
     const fallback = x.run();
+    if (paint === "available-lower-gap") {
+      // Keep the original popup scene's newly reachable lower gap as explicit
+      // coverage, alongside the no-fit premise needed for return-focus below.
+      assert.deepEqual(fallback, d411Rect(266, 740.5, 44, 44));
+      assert.equal(x.overlap(fallback, [...x.controls.map(control => control.getBoundingClientRect()), paintedEntry, accountRing]).length, 0);
+      assert.equal(x.f.panel.dataset.tightLauncher, "true");
+      assert.equal(x.f.document.activeElement, popupButton); assert.deepEqual(x.f.emitted, []);
+      assert.equal(field.value, "  Keep the exact output request.  "); assert.equal(entry.open, true);
+      assert.equal(context.scrollTop, before.scrollTop); assert.equal(x.f.panel.open, false);
+      assert.equal(x.f.panel.draftForTest, "  Keep the independent Assistant draft.  ");
+      assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+      return;
+    }
     assert.equal(fallback.top, 15.5); assert.equal(fallback.width, 44); assert.equal(fallback.height, 44);
     assert.equal(x.f.panel.dataset.compactLauncher, "true"); assert.equal(x.f.panel.dataset.tightLauncher, undefined);
     assert.equal(x.overlap(fallback, [account.getBoundingClientRect()]).length, 1,
@@ -1993,6 +2015,7 @@ test("E6 measured Document200 editor boxes use the existing clipped compact head
 // native zoom, hit-test or physical acceptance replay. Other geometry below
 // is explicitly synthetic, including the narrower Range counterexamples.
 const e11LibraryContentPrefix = '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"]';
+const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
 const e11LibraryCopySelectors = [
   '.library-main > .page-header--library > .page-header-copy > :is(.eyebrow,h1,p)',
   '.library-body .section-heading > div > :is(.eyebrow,h2,p.section-note)',
@@ -2001,6 +2024,7 @@ const e11LibraryCopySelectors = [
   e11LibraryContentPrefix + ' > h3#library-block-content',
   e11LibraryContentPrefix + ' > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
   '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+  libraryOutputCopySelector,
 ];
 const e11LibraryLabelBox = d411Rect(88.7578125, 147, 313.484375, 22.3984375);
 const e11LibraryLabelRange = d411Rect(88.7578125, 148.5, 157.640625, 19);
@@ -2815,4 +2839,168 @@ test("F measured R4 Shell alert and terminal copy remain clear together at nativ
   assert.deepEqual(x.rangeReads, [heading.textNodes[0], body.textNodes[0]]);
   assert.deepEqual(x.detached, x.rangeReads);
   assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+});
+
+
+// Comparison R3 supplies the child, action, focus-ring and failed Ask boxes
+// below (raw report ff2999d4bfa034e083006c7f2e0202ce968206d289e62525589592a31e5384c5,
+// story-touch320 / comparison-output-more). The enclosing copy DIV was NOT
+// measured: its 33,261.578125..287,366.15625 box is an explicit supplied bound.
+// The second card and all ancestor ports are likewise declared fixture inputs.
+// This reuses actual Panel -> updated -> finite RAF placement, not browser
+// layout, native keyboard, pixel, hit-test or full-page reconstruction.
+for (const mode of ["one-card", "multiple-cards", "hidden", "foreign-owner"]) {
+  test("Library OutputCard cohesive copy preserves native More focus / " + mode, { concurrency: false }, t => {
+    const x = e6CopyPlacement(t, { family: "forma-library", viewport: { width: 320, height: 800 },
+      right: 310, top: 320.15625, normalWidth: 137.1875 });
+    const measuredChildren = [
+      d411Rect(33, 261.578125, 67.78125, 24),
+      d411Rect(33, 289.578125, 254, 22),
+      d411Rect(33, 311.578125, 254, 13),
+    ];
+    const suppliedCopy = d411Rect(33, 261.578125, 254, 104.578125);
+    const failedAsk = d411Rect(172.8125, 320.15625, 137.1875, 44);
+    const moreRing = d411Rect(169.625, 372.15625, 123.375, 56);
+    const calls = [];
+    const open = x.control(d411Rect(33, 378.15625, 117.09375, 44), {
+      tagName: "BUTTON", click: () => calls.push("open"), focus: () => calls.push("focus-open"),
+    });
+    const more = x.control(d411Rect(175.625, 378.15625, 111.375, 44), {
+      tagName: "BUTTON", outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
+      click: () => calls.push("more"), focus: () => calls.push("focus-more"),
+    });
+    x.controls.push(open, more); x.f.document.activeElement = more;
+    // Only the child rectangles above and controls are observed R3 geometry.
+    // This article port carries the recorded client clip, not a reconstructed
+    // rounded border or actual ancestor tree.
+    const article = x.ancestor(d411Rect(19, -104.421875, 282, 539), {
+      parentElement: x.surface, overflowX: "hidden", overflowY: "hidden",
+    });
+    const copy = x.copy(libraryOutputCopySelector, suppliedCopy, [], {
+      tagName: "DIV", parentElement: article,
+      textContent: "Full quality\nRetained comparison timing en\nTake 1 · 80 × 60 · Latency 1.1s\nDecide whether to pin, save, export, or record what should change next time.",
+      matches(selector) { assert.equal(selector, libraryOutputCopySelector); return true; },
+    });
+    const copies = [copy], protectedBoxes = [suppliedCopy];
+    if (mode === "multiple-cards") {
+      // A second legitimate card belongs to the SAME current Library, and
+      // occupies the first card's otherwise-clear upstream placement.
+      const otherBox = d411Rect(33, 200, 254, 53);
+      const otherArticle = x.ancestor(d411Rect(19, 180, 282, 80), { parentElement: x.surface });
+      copies.push(x.copy(libraryOutputCopySelector, otherBox, [], {
+        tagName: "DIV", parentElement: otherArticle, textContent: "A separate retained output and its metadata.",
+        matches(selector) { assert.equal(selector, libraryOutputCopySelector); return true; },
+      }));
+      protectedBoxes.push(otherBox);
+    }
+    if (mode === "hidden") copy.hiddenAncestor = true;
+    if (mode === "foreign-owner") {
+      const closest = copy.closest;
+      copy.closest = function(selector) {
+        return selector === "forma-library" ? {} : closest.call(this, selector);
+      };
+    }
+    x.surface.scrollTop = 17;
+    x.f.panel.draftForTest = "  Keep this independent unsent guidance.  ";
+    const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages,
+      owner: x.f.panel.parentElement, texts: copies.map(node => node.textContent) };
+    for (const child of measuredChildren) {
+      assert.ok(child.left >= suppliedCopy.left && child.right <= suppliedCopy.right
+        && child.top >= suppliedCopy.top && child.bottom <= suppliedCopy.bottom,
+      "the supplied parent contains every measured child; it is not a measured parent claim");
+    }
+    assert.equal(x.overlap(failedAsk, [measuredChildren[2]]).length, 1);
+    assert.equal(x.overlap(failedAsk, [moreRing, open.getBoundingClientRect()]).length, 0);
+    const box = x.run();
+    // Geometry is the first post-placement oracle: old source fails the positive
+    // case on obstruction, not an absent selector or an added fixture query.
+    if (mode === "one-card" || mode === "multiple-cards") {
+      assert.equal(x.overlap(box, [...protectedBoxes, ...measuredChildren, moreRing, open.getBoundingClientRect()]).length, 0,
+        "clear the cohesive copy owners without trading away native More focus or Open");
+    } else {
+      assert.equal(x.overlap(box, [measuredChildren[2]]).length, 1,
+        "excluded hidden or foreign copy is not falsely reported as protected");
+      assert.deepEqual(box, failedAsk);
+    }
+    assert.equal(x.f.document.activeElement, more); assert.deepEqual(calls, []);
+    assert.equal(x.f.panel.draftForTest, "  Keep this independent unsent guidance.  ");
+    assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+    assert.equal(x.f.panel.parentElement, before.owner); assert.equal(x.surface.scrollTop, 17);
+    assert.deepEqual(copies.map(node => node.textContent), before.texts); assert.deepEqual(x.f.emitted, []);
+    assert.ok(box.top >= 8 && box.bottom <= 792); assert.ok(box.width >= 44); assert.equal(box.height, 44);
+    assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+    assert.deepEqual(x.familyQueries, e6CopyFamilies);
+    assert.deepEqual(x.copyQueries, e11LibraryCopySelectors);
+    assert.deepEqual(x.copyBoxReads, mode === "hidden" || mode === "foreign-owner" ? [] : copies);
+    assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+  });
+}
+
+test("Library compact top-bound exhaustion still checks a feasible lower same-lane gap", { concurrency: false }, t => {
+  // R4's saved compact top320.15625 plus offset359.84375 implies reset680.
+  // The fixed44px CSSOM footprint is supplied for every read; precompact width
+  // was not recorded. This is a deterministic search counterexample, not a
+  // reconstruction of R4's complete controls, DOM, native focus or pixels.
+  const x = e6CopyPlacement(t, { family: "forma-library", viewport: { width: 320, height: 800 },
+    right: 310, top: 680, normalWidth: 44 });
+  const measuredChildren = [
+    d411Rect(33, 261.578125, 67.78125, 24),
+    d411Rect(33, 289.578125, 254, 22),
+    d411Rect(33, 311.578125, 254, 13),
+    d411Rect(33, 333.375, 254, 34.78125),
+  ];
+  // The complete containing DIV is declared, not measured. Its lower bound
+  // includes the separately recorded P.output-next-step through368.15625.
+  const suppliedCopy = d411Rect(33, 261.578125, 254, 106.578125);
+  const moreRing = d411Rect(169.625, 372.15625, 123.375, 56), calls = [];
+  const article = x.ancestor(d411Rect(19, -104.421875, 282, 539), {
+    parentElement: x.surface, overflowX: "hidden", overflowY: "hidden",
+  });
+  const open = x.control(d411Rect(33, 378.15625, 117.09375, 44), {
+    tagName: "BUTTON", parentElement: article, disabled: false,
+    click: () => calls.push("open"), focus: () => calls.push("focus-open"),
+  });
+  const more = x.control(d411Rect(175.625, 378.15625, 111.375, 44), {
+    tagName: "BUTTON", parentElement: article, disabled: false,
+    outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
+    click: () => calls.push("more"), focus: () => calls.push("focus-more"),
+  });
+  x.controls.push(open, more); x.f.document.activeElement = more;
+  const copy = x.copy(libraryOutputCopySelector, suppliedCopy, [], {
+    tagName: "DIV", parentElement: article,
+    textContent: "Full quality\nRetained comparison timing en\nTake 1 · 80 × 60 · Latency 1.1s\nDecide whether to pin, save, export, or record what should change next time.",
+    matches(selector) { assert.equal(selector, libraryOutputCopySelector); return true; },
+  });
+  // These two admitted task regions are synthetic. Together with the copy,
+  // Open and More they are the COMPLETE supplied fixture inventory. They force
+  // the upward sequence680→378→320.15625→209.578125 to reach the top boundary,
+  // while leaving a single fitting lower gap730..792 in the same x266..310 lane.
+  const guards = [d411Rect(266, 0, 44, 250), d411Rect(266, 430, 44, 300)];
+  x.regions.push(
+    x.control(guards[0], { tagName: "DETAILS", className: "output-recipe-entry", parentElement: x.surface }),
+    x.control(guards[1], { tagName: "DIV", className: "output-requirement-warning", parentElement: x.surface }),
+  );
+  x.surface.scrollTop = 17; x.f.panel.draftForTest = "  Preserve this independent unsent guidance.  ";
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages,
+    owner: x.f.panel.parentElement, text: copy.textContent, parents: [open.parentElement, more.parentElement] };
+  for (const child of measuredChildren) assert.ok(child.left >= suppliedCopy.left && child.right <= suppliedCopy.right
+    && child.top >= suppliedCopy.top && child.bottom <= suppliedCopy.bottom);
+  const protectedBoxes = [...guards, suppliedCopy, ...measuredChildren, moreRing, open.getBoundingClientRect()];
+  const box = x.run();
+  // Keep geometry first: the prior early return fails on the upper task region,
+  // not on a new query, marker, altered copy contract or missing fixture port.
+  assert.equal(x.overlap(box, protectedBoxes).length, 0,
+    "top-bound exhaustion must still clear every supplied obstacle when a lower same-lane gap fits");
+  assert.deepEqual(box, d411Rect(266, 739, 44, 44));
+  assert.equal(x.f.panel.dataset.compactLauncher, "true"); assert.equal(x.f.panel.dataset.tightLauncher, "true");
+  assert.ok(box.top >= 8 && box.bottom <= 792); assert.ok(x.boxes.length <= 16);
+  assert.equal(x.f.document.activeElement, more); assert.deepEqual(calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(x.surface.scrollTop, 17); assert.equal(x.f.panel.draftForTest, "  Preserve this independent unsent guidance.  ");
+  assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+  assert.equal(x.f.panel.parentElement, before.owner); assert.equal(copy.textContent, before.text);
+  assert.deepEqual([open.parentElement, more.parentElement], before.parents);
+  assert.equal(open.disabled, false); assert.equal(more.disabled, false);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
+  assert.deepEqual(x.copyQueries, e11LibraryCopySelectors); assert.deepEqual(x.copyBoxReads, [copy]);
+  assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
 });
