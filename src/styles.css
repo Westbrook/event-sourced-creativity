@@ -2704,7 +2704,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .prompt-fan-preference-bar small { color: var(--muted); font-size: var(--type-micro); }
 .prompt-fan-preference-bar label { display: flex; flex: none; align-items: center; gap: 10px; color: var(--muted); font: 650 var(--type-micro) var(--sans); }
 .prompt-fan-preference-bar select { min-width: 180px; }
-.prompt-fan-grid { display: grid; min-height: 0; overflow: auto; grid-template-columns: repeat(4,minmax(0,1fr)); background: var(--line); gap: 1px; }
+.prompt-fan-grid { display: grid; min-height: 0; overflow: auto; scroll-padding-block: var(--forma-focus-clearance); grid-template-columns: repeat(4,minmax(0,1fr)); background: var(--line); gap: 1px; }
 .prompt-fan-option { display: flex; min-width: 0; flex-direction: column; padding: 20px; background: var(--panel); }
 .prompt-fan-option.preferred { background: color-mix(in srgb,var(--acid) 9%,var(--panel)); }
 .prompt-fan-option > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
