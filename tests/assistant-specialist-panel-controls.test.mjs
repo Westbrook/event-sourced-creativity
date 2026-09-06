@@ -4258,16 +4258,34 @@ test('F an impossible Library Search-label lane stays finite and explicitly unre
 // navigation cell and its five reflowed links are declared CSSOM inputs, not
 // browser paint, native text fit or a replay of the private failed placement.
 const fBrowseHostSelector = ':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]';
-function fBrowseSlot(t, { rtl = false, coarse = false } = {}) {
+function fBrowseSlot(t, { rtl = false, coarse = false, rail = false } = {}) {
   const x = e3StudioSlot(t, { rtl, coarse }), shell = x.main.parentElement;
   const host = x.host, nav = host.querySelector('.studio-mode-nav');
   const state = Object.assign(x.state, { intent: 'browse', eligible: true, top: 733, width: 320,
-    vertical: false, foreign: false, labelOverflow: false, targetNarrow: false, linkCount: 5 });
+    vertical: false, foreign: false, labelOverflow: false, targetNarrow: false, linkCount: 5,
+    rail, railWidth: 72, railHeight: 350.5, viewportWidth: 419, navFullHeight: false, malformedRows: false,
+    borderLeft: 0, borderRight: 1, borderTop: 0, borderBottom: 0,
+    paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 8, launcherShift: 0,
+    visual: { height: 398.5, scale: 1, offsetTop: 0, offsetLeft: 0 } });
+  if (rail) {
+    state.top = 48;
+    // The existing D411 teardown restores these globals. These are the saved
+    // layout/visual viewport inputs, not a browser zoom or viewport mutation.
+    globalThis.innerWidth = 419; globalThis.innerHeight = 398;
+    x.f.nativeWindow.visualViewport = state.visual;
+  }
   const size = () => state.coarse ? 48 : 44;
   const reserved = () => x.f.panel.dataset.browseSlot === 'true';
-  const hostBox = () => d411Rect(0, state.top, state.width, 67);
-  const navBox = () => d411Rect(reserved() && state.rtl ? size() + 16 : 0,
-    state.top + 1, state.width - (reserved() ? size() + 16 : 0), 66);
+  const hostBox = () => state.rail
+    ? d411Rect(state.rtl ? state.viewportWidth - state.railWidth : 0, state.top, state.railWidth, state.railHeight)
+    : d411Rect(0, state.top, state.width, 67);
+  const railContentWidth = () => state.railWidth - state.borderLeft - state.borderRight - state.paddingLeft - state.paddingRight;
+  const railNavHeight = () => state.railHeight - state.borderTop - state.borderBottom - state.paddingTop - state.paddingBottom - size() - 8;
+  const navBox = () => state.rail
+    ? d411Rect(hostBox().left + state.borderLeft + state.paddingLeft, state.top + state.borderTop + state.paddingTop,
+      railContentWidth(), state.navFullHeight ? state.railHeight : railNavHeight())
+    : d411Rect(reserved() && state.rtl ? size() + 16 : 0,
+      state.top + 1, state.width - (reserved() ? size() + 16 : 0), 66);
   host.parentElement = shell; host.getBoundingClientRect = hostBox;
   nav.parentElement = host; nav.getBoundingClientRect = navBox;
   const list = x.ancestor(navBox(), { parentElement: nav, isConnected: true });
@@ -4276,13 +4294,19 @@ function fBrowseSlot(t, { rtl = false, coarse = false } = {}) {
     const link = x.control(d411Rect(0, 0, 1, 1), { tagName: 'A', parentElement: li, isConnected: true });
     link.getBoundingClientRect = () => {
       const box = navBox(), width = (box.width - 16) / 5;
+      if (state.rail) {
+        const height = (box.height - 16 - 8) / 5;
+        return d411Rect(box.left + 8, box.top + 8 + index * (height + 2),
+          state.targetNarrow ? 43 : box.width - 16, height);
+      }
       return d411Rect(box.left + 4 + (state.rtl ? 4 - index : index) * (width + 2), box.top,
         state.targetNarrow ? 43 : width, box.height);
     };
     Object.defineProperties(link, {
       clientWidth: { get: () => Math.round(link.getBoundingClientRect().width) },
       scrollWidth: { get: () => Math.round(link.getBoundingClientRect().width) + Number(state.labelOverflow) },
-      clientHeight: { get: () => 66 }, scrollHeight: { get: () => 66 },
+      clientHeight: { get: () => state.rail ? Math.round(link.getBoundingClientRect().height) : 66 },
+      scrollHeight: { get: () => state.rail ? Math.round(link.getBoundingClientRect().height) : 66 },
     });
     return link;
   });
@@ -4295,25 +4319,36 @@ function fBrowseSlot(t, { rtl = false, coarse = false } = {}) {
   list.querySelectorAll = selector => (assert.equal(selector, ':scope > li > a[href]'), links.slice(0, state.linkCount));
   const style = getComputedStyle;
   globalThis.getComputedStyle = element => ({ ...style(element),
-    ...(element === x.f.panel ? { getPropertyValue: name => name === '--forma-assistant-browse-slot' && state.eligible ? '1' : '0' } : {}),
+    ...(element === x.f.panel ? { getPropertyValue: name => name === '--forma-assistant-browse-slot' && state.eligible ? state.rail ? 'rail' : '1' : '0' } : {}),
     ...(element === host ? { display: reserved() ? 'grid' : 'block',
       gridTemplateColumns: state.vertical ? '56px' : `${state.width - size() - 16}px ${size()}px`,
       columnGap: '8px', paddingLeft: state.rtl ? '8px' : '0px', paddingRight: state.rtl ? '0px' : '8px',
       transform: state.transform, overflowY: state.clip ? 'hidden' : 'visible',
-      borderTopLeftRadius: state.radius ?? '0px' } : {}),
+      borderTopLeftRadius: state.radius ?? '0px',
+      ...(state.rail ? { gridTemplateColumns: `${railContentWidth()}px`,
+        gridTemplateRows: state.malformedRows ? `${railNavHeight()}px` : `${railNavHeight()}px ${size()}px`, rowGap: '8px',
+        borderLeftWidth: `${state.borderLeft}px`, borderRightWidth: `${state.borderRight}px`,
+        borderTopWidth: `${state.borderTop}px`, borderBottomWidth: `${state.borderBottom}px`,
+        paddingLeft: `${state.paddingLeft}px`, paddingRight: `${state.paddingRight}px`,
+        paddingTop: `${state.paddingTop}px`, paddingBottom: `${state.paddingBottom}px` } : {}) } : {}),
   });
   const fallbackBox = x.launcher.getBoundingClientRect;
   x.launcher.getBoundingClientRect = () => x.f.panel.dataset.browseLauncher === 'true'
     ? d411Rect(Number(x.values.get('--forma-assistant-browse-left')?.replace('px', '')),
-      Number(x.values.get('--forma-assistant-browse-top')?.replace('px', '')),
+      Number(x.values.get('--forma-assistant-browse-top')?.replace('px', '')) + state.launcherShift,
       Number(x.values.get('--forma-assistant-browse-size')?.replace('px', '')),
       Number(x.values.get('--forma-assistant-browse-size')?.replace('px', '')))
     : fallbackBox();
   // Existing Library whole-copy ownership is retained, not a new selector.
+  // RTL is a declared horizontal mirror of this LTR saved scene, not a second
+  // observed failure. Navigation order stays unchanged in either direction.
+  const scene = (left, top, width, height) => d411Rect(state.rail && state.rtl
+    ? state.viewportWidth - left - width : left, top, width, height);
   const library = x.ancestor(d411Rect(0, -1606, 320, 3728), { parentElement: x.main, isConnected: true });
   library.closest = selector => selector === '#main-content' ? x.main
     : (assert.equal(selector, '.application-creative'), shell);
-  const copyBox = d411Rect(33, 259.578125, 254, 108.578125);
+  const copyBox = state.rail ? scene(105.7578125, 58.3046875, 279.484375, 109.09375)
+    : d411Rect(33, 259.578125, 254, 108.578125);
   const copy = x.ancestor(copyBox, { parentElement: library, isConnected: true, tagName: 'DIV',
     textContent: 'Take 1 · 80 × 60 · Latency 1.1s. Decide whether to pin, save, export, or record what should change next time.' });
   copy.closest = selector => selector === 'forma-library' ? library : null;
@@ -4321,14 +4356,20 @@ function fBrowseSlot(t, { rtl = false, coarse = false } = {}) {
   library.querySelectorAll = selector => selector === libraryOutputCopySelector ? [copy] : [];
   const mainQuery = x.main.querySelectorAll;
   x.main.querySelectorAll = selector => selector === 'forma-library' ? [library] : mainQuery(selector);
-  const more = x.control(d411Rect(175.625, 378.15625, 111.375, 44), {
+  const more = x.control(state.rail ? scene(273.875, 177.3984375, 111.3671875, 44)
+    : d411Rect(175.625, 378.15625, 111.375, 44), {
     tagName: 'BUTTON', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px' });
-  const observed = [d411Rect(19, -104.421875, 282, 352), d411Rect(32, 450.75, 256, 44),
+  const observed = state.rail ? [scene(91.7578125, -305.6953125, 307.484375, 352),
+    scene(104.7578125, 249.9921875, 281.484375, 44), scene(104.7578125, 301.9921875, 281.484375, 44),
+    scene(88.7578125, 377.9921875, 313.484375, 264.078125)] : [d411Rect(19, -104.421875, 282, 352), d411Rect(32, 450.75, 256, 44),
     d411Rect(32, 502.75, 256, 44), d411Rect(16, 578.75, 288, 264.0625)];
   x.controls.splice(0, x.controls.length, ...observed.map(box => x.control(box, { tagName: 'BUTTON' })), more, ...links);
   x.regions.length = 0; x.f.document.activeElement = more;
-  return Object.assign(x, { state, shell, nav, list, links, more, copyBox,
-    expectedBrowse: () => d411Rect(state.rtl ? 8 : state.width - size() - 8,
+  return Object.assign(x, { state, shell, nav, list, links, more, copyBox, scene,
+    expectedBrowse: () => state.rail
+      ? d411Rect(hostBox().left + state.borderLeft + state.paddingLeft + (railContentWidth() - size()) / 2,
+        hostBox().bottom - state.borderBottom - state.paddingBottom - size(), size(), size())
+      : d411Rect(state.rtl ? 8 : state.width - size() - 8,
       state.top + 1 + (66 - size()) / 2, size(), size()) });
 }
 
@@ -4410,25 +4451,61 @@ test('F an open Assistant revalidates its reservation on resize and pointer chan
   pointer.dispatchEvent(new Event('change')); assert.equal(x.f.frames.length, 0); x.custody();
 });
 
-test('F browse reservation CSS excludes the existing short-landscape rail before source measurement', async () => {
+test('F browse reservation CSS keeps the horizontal row and an independently measured one-column rail', async () => {
   const { createRequire } = await import('node:module');
   const postcss = createRequire(import.meta.resolve('vite'))('postcss');
   const css = postcss.parse(read('src/components/design-system/assistant-panel.css'));
-  const rules = [];
-  css.walkRules(rule => { if (rule.selector.includes('data-browse-slot') || rule.nodes.some(node => node.prop === '--forma-assistant-browse-slot')) rules.push(rule); });
-  assert.ok(rules.length >= 3, 'eligible policy and actual navigation reservation rules are present');
-  for (const rule of rules) {
-    let excluded = false;
+  const policies = { row: [], rail: [] };
+  css.walkRules(rule => {
+    if (!rule.selector.includes('data-browse-slot') && !rule.nodes.some(node => node.prop === '--forma-assistant-browse-slot')) return;
+    const media = [];
     for (let parent = rule.parent; parent; parent = parent.parent) {
-      if (parent.type === 'atrule' && parent.name === 'media'
-        && parent.params === 'not all and (max-height: 37.5rem) and (orientation: landscape)') excluded = true;
+      if (parent.type === 'atrule' && parent.name === 'media') media.push(parent.params);
     }
-    assert.equal(excluded, true, 'reservation cannot change the short-landscape rail axis');
+    const row = media.includes('not all and (max-height: 37.5rem) and (orientation: landscape)');
+    const rail = media.includes('(max-height: 37.5rem) and (orientation: landscape)');
+    assert.notEqual(row, rail, 'every reservation rule belongs to one disjoint layout policy');
     assert.match(rule.selector, /data-layout-intent="browse"/u);
     assert.match(rule.selector, /data-nav-posture="compact"/u);
-    assert.ok(!rule.nodes.some(node => node.type === 'decl' && /^(position|inset|inset-block|padding-block|direction|order)/u.test(node.prop)),
-      'existing navigation position, safe-area block padding, axis and order retain their original owners');
+    assert.ok(!rule.nodes.some(node => node.type === 'decl' && /^(position|inset|direction|order)(?:-|$)/u.test(node.prop)),
+      'position and navigation order retain their original owners');
+    if (row) assert.ok(!rule.nodes.some(node => node.type === 'decl' && /^(inset|padding-block)/u.test(node.prop)),
+      'the existing row retains its safe-area block policy');
+    policies[row ? 'row' : 'rail'].push({ rule, coarse: media.includes('(pointer: coarse)') });
+  });
+  const declarations = (entries, coarse) => {
+    const values = new Map();
+    for (const entry of entries) if (!entry.coarse || coarse) {
+      for (const node of entry.rule.nodes) if (node.type === 'decl') values.set(node.prop, node.value);
+    }
+    return values;
+  };
+  for (const [policy, entries] of Object.entries(policies)) {
+    assert.ok(entries.length >= 3);
+    const host = entries.filter(entry => entry.rule.selector.endsWith('[data-primary-navigation="true"]'));
+    for (const coarse of [false, true]) {
+      const values = declarations(host, coarse);
+      assert.equal(values.get('display'), 'grid');
+      assert.equal(values.get('grid-template-columns'), policy === 'rail' ? 'minmax(0, 1fr)'
+        : coarse ? 'minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem))'
+        : 'minmax(0, 1fr) var(--forma-control-min-size, 2.75rem)');
+      if (policy === 'rail') {
+        assert.equal(values.get('grid-template-rows'), coarse
+          ? 'minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem))'
+          : 'minmax(0, 1fr) var(--forma-control-min-size, 2.75rem)');
+        assert.equal(values.get('row-gap'), 'var(--forma-focus-clearance, .5rem)');
+        assert.equal(values.get('padding-block-end'), 'max(var(--forma-focus-clearance, .5rem), env(safe-area-inset-bottom, 0px))');
+      }
+    }
   }
+  const nav = declarations(policies.rail.filter(entry => entry.rule.selector.endsWith('> .ui-audience-navigation')), false);
+  assert.equal(nav.get('grid-row'), '1'); assert.equal(nav.get('min-block-size'), '0');
+  assert.equal(nav.get('block-size'), '100%'); assert.equal(nav.get('max-block-size'), '100%');
+  const list = declarations(policies.rail.filter(entry => entry.rule.selector.endsWith('> .ui-audience-navigation-list')), false);
+  assert.equal(list.get('box-sizing'), 'border-box'); assert.equal(list.get('min-block-size'), '0');
+  assert.equal(list.get('max-block-size'), '100%'); assert.equal(list.get('padding-block'), 'var(--forma-focus-clearance, .5rem)');
+  assert.ok(!policies.rail.some(entry => /(?:\ba\b|li)\s*$/u.test(entry.rule.selector)),
+    'all five destination labels, minimum targets and order keep their existing declarations');
 });
 for (const defect of ['narrow', 'coarse', 'vertical', 'offscreen', 'foreign', 'disconnected']) {
   test('F an open Assistant releases a formerly valid browse reservation / ' + defect, { concurrency: false }, async t => {
@@ -4484,5 +4561,100 @@ test('F a rejected closed browse reservation retries on a fine-pointer change wi
   assert.equal(x.f.panel.dataset.browseSlot, undefined);
   assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []); x.custody();
   x.f.panel.disconnectedCallback();
+  pointer.dispatchEvent(new Event('change')); assert.equal(x.f.frames.length, 0);
+});
+
+
+// The N7 zoom record supplied the right-lane rectangles and 419x398 layout /
+// 398.5 visual height. Only the proposed rail reflow below is synthetic CSSOM.
+// These complete-class regressions do not establish browser label or paint fit.
+for (const rtl of [false, true]) for (const coarse of [false, true]) {
+  test('F short browse rail reserves the same launcher outside dense zoom copy ' + JSON.stringify({ rtl, coarse }), { concurrency: false }, t => {
+    const x = fBrowseSlot(t, { rtl, coarse, rail: true }), size = coarse ? 48 : 44;
+    const links = [...x.links], focused = x.f.document.activeElement;
+    assert.equal(x.overlap(x.scene(365, 119.3984375, 44, 44), [x.copyBox]).length, 1,
+      'the saved LTR scene (or declared RTL mirror) retains the complete copy intersection');
+    const box = x.run();
+    assert.deepEqual(box, d411Rect((rtl ? 347 : 0) + (71 - size) / 2, 390.5 - size, size, size));
+    assert.equal(x.f.panel.dataset.browseSlot, 'true'); assert.equal(x.f.panel.dataset.browseLauncher, 'true');
+    assert.equal(x.f.panel.dataset.tightLauncher, 'true');
+    assert.ok(box.bottom <= 398 && box.left >= 0 && box.right <= 419);
+    assert.ok(x.nav.getBoundingClientRect().bottom + 8 <= box.top);
+    assert.equal(x.overlap(box, [x.copyBox, x.scene(267.875, 171.3984375, 123.3671875, 56),
+      ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    for (const link of links) {
+      const rect = link.getBoundingClientRect();
+      assert.ok(rect.width >= size && rect.height >= size && rect.bottom <= 398);
+      assert.equal(link.scrollWidth, link.clientWidth); assert.equal(link.scrollHeight, link.clientHeight);
+    }
+    assert.deepEqual(x.links, links); assert.equal(x.f.document.activeElement, focused);
+    assert.deepEqual(x.focuses, []); assert.deepEqual(x.queries, []); x.custody();
+  });
+}
+
+for (const rtl of [false, true]) test('F rail cell subtracts physical border and padding in ' + (rtl ? 'RTL' : 'LTR'), { concurrency: false }, t => {
+  const x = fBrowseSlot(t, { rtl, rail: true });
+  Object.assign(x.state, { railWidth: 88, borderLeft: 2, borderRight: 3, borderTop: 1, borderBottom: 2,
+    paddingLeft: 4, paddingRight: 6, paddingTop: 3, paddingBottom: 10 });
+  assert.deepEqual(x.run(), d411Rect((rtl ? 331 : 0) + 20.5, 342.5, 44, 44));
+  assert.equal(x.f.document.activeElement, x.more); assert.deepEqual(x.focuses, []); x.custody();
+});
+
+for (const defect of ['height', 'width', 'full-height-nav', 'rows', 'target', 'overflow', 'actual-cell',
+  'visual-pixel', 'visual-scale', 'visual-offset-top', 'visual-offset-left', 'visual-nonfinite', 'visual-missing', 'host-outside-visual']) {
+  test('F rail retires a reservation without compressing targets or accepting unknown viewport / ' + defect, { concurrency: false }, t => {
+    const x = fBrowseSlot(t, { rail: true, coarse: true }); assert.deepEqual(x.run(), x.expectedBrowse());
+    x.f.document.activeElement = x.launcher; x.hovered = true;
+    if (defect === 'height') x.state.railHeight = 280;
+    if (defect === 'width') x.state.railWidth = 62;
+    if (defect === 'full-height-nav') x.state.navFullHeight = true;
+    if (defect === 'rows') x.state.malformedRows = true;
+    if (defect === 'target') x.state.targetNarrow = true;
+    if (defect === 'overflow') x.state.labelOverflow = true;
+    if (defect === 'actual-cell') x.state.launcherShift = 1;
+    if (defect === 'visual-pixel') x.state.visual.height = 399;
+    if (defect === 'visual-scale') x.state.visual.scale = 2;
+    if (defect === 'visual-offset-top') x.state.visual.offsetTop = 1;
+    if (defect === 'visual-offset-left') x.state.visual.offsetLeft = 1;
+    if (defect === 'visual-nonfinite') x.state.visual.height = Infinity;
+    if (defect === 'visual-missing') x.f.nativeWindow.visualViewport = null;
+    if (defect === 'host-outside-visual') x.state.railHeight = 350.75;
+    x.run();
+    assert.equal(x.f.panel.dataset.browseSlot, undefined); assert.equal(x.f.panel.dataset.browseLauncher, undefined);
+    for (const name of ['left', 'top', 'size']) assert.equal(x.values.has('--forma-assistant-browse-' + name), false);
+    assert.equal(x.f.document.activeElement, x.launcher); assert.deepEqual(x.focuses, []); x.custody();
+  });
+}
+
+test('F an open rail reservation revalidates finite resize and closes to its current cell', { concurrency: false }, async t => {
+  const x = fBrowseSlot(t, { rail: true }); x.run();
+  x.f.panel.open = true; x.f.panel.updated(new Map([['open', false]])); await Promise.resolve();
+  for (const frame of x.f.frames.splice(0)) frame(0);
+  assert.equal(x.f.panel.dataset.browseSlot, 'true'); assert.equal(x.f.panel.dataset.browseLauncher, undefined);
+  x.state.railHeight = 280; x.f.panel.updated(new Map());
+  assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0); assert.equal(x.f.frames.length, 0);
+  assert.equal(x.f.panel.dataset.browseSlot, undefined); assert.deepEqual(x.focuses, []);
+  x.state.railHeight = 350.5; x.f.panel.open = false; x.f.panel.updated(new Map([['open', true]])); await Promise.resolve();
+  for (const frame of x.f.frames.splice(0)) frame(0);
+  assert.equal(x.f.panel.dataset.browseSlot, 'true'); assert.equal(x.focuses.length, 1);
+  assert.deepEqual(x.focuses[0].box, x.expectedBrowse()); x.custody();
+});
+
+test('F a rail retries coarse-to-fine admission and follows current hover without moving focus', { concurrency: false }, t => {
+  const x = fBrowseSlot(t, { rail: true, coarse: true }), pointer = new EventTarget();
+  x.f.nativeWindow.matchMedia = query => (assert.equal(query, '(pointer: coarse)'), pointer);
+  x.state.railHeight = 310; x.f.panel.connectedCallback(); x.run();
+  assert.equal(x.f.panel.dataset.browseSlot, undefined, 'all five 48px targets do not fit');
+  x.state.coarse = false; pointer.dispatchEvent(new Event('change'));
+  assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0); assert.equal(x.f.frames.length, 0);
+  assert.deepEqual(x.launcher.getBoundingClientRect(), x.expectedBrowse());
+  assert.equal(x.f.panel.dataset.browseSlot, 'true');
+  x.f.document.activeElement = x.launcher; x.hovered = true; x.state.railHeight = 330;
+  assert.deepEqual(x.run(), x.expectedBrowse()); assert.deepEqual(x.focuses, []);
+  x.state.coarse = true; pointer.dispatchEvent(new Event('change'));
+  assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0); assert.equal(x.f.frames.length, 0);
+  assert.equal(x.f.panel.dataset.browseSlot, 'true', 'the taller rail also fits all coarse targets');
+  assert.equal(x.f.document.activeElement, x.launcher); x.custody();
+  x.f.panel.disconnectedCallback(); assert.equal(x.f.panel.dataset.browseSlot, undefined);
   pointer.dispatchEvent(new Event('change')); assert.equal(x.f.frames.length, 0);
 });

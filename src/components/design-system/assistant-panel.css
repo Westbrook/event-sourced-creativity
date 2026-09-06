@@ -489,7 +489,7 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
 }
 /* A compact browse row can reserve real space for the existing Ask button.
    Source keeps this reservation only while all five destinations still fit.
-   Never replace the short-landscape rail's one-column layout. */
+   The separate short-landscape policy retains its one-column rail. */
 @media not all and (max-height: 37.5rem) and (orientation: landscape) {
   .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel {
     --forma-assistant-browse-slot: 1;
@@ -513,6 +513,46 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
   @media (pointer: coarse) {
     .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
       grid-template-columns: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+/* The existing side rail already owns space outside the reading lane. Keep
+   all five destinations above a measured utility cell, including while open. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: rail;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
+    row-gap: var(--forma-focus-clearance, .5rem);
+    padding-block-end: max(var(--forma-focus-clearance, .5rem), env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+    grid-row: 1;
+    min-block-size: 0;
+    block-size: 100%;
+    max-block-size: 100%;
+    min-inline-size: 0;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list {
+    box-sizing: border-box;
+    min-block-size: 0;
+    max-block-size: 100%;
+    padding-block: var(--forma-focus-clearance, .5rem);
+    padding-inline-start: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-start, 0px));
+    padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+      grid-template-rows: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
     }
   }
 }

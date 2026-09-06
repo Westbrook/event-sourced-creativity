@@ -365,9 +365,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   }
 
   #positionInBrowseSlot(launcher?: HTMLButtonElement) {
-    // CSS excludes the short-landscape rail before any reservation is made.
+    // CSS declares either the existing row or the short-landscape rail cell.
     // A failed measurement restores the original five-link layout in this pass.
-    if (!this.isConnected || getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-slot")?.trim() !== "1") return false;
+    if (!this.isConnected) return false;
+    const posture = getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-slot")?.trim();
+    const rail = posture === "rail";
+    if (!rail && posture !== "1") return false;
     const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
     if (!owner?.matches("forma-creative-assistant") || !shell
       || shell.getAttribute("data-layout-intent") !== "browse" || shell.getAttribute("data-nav-posture") !== "compact") return false;
@@ -395,26 +398,53 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       const finite = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
         [box.left, box.top, box.right, box.bottom, box.width, box.height].every(Number.isFinite);
       const columns = style.gridTemplateColumns?.trim().split(/\s+/u).map(value => Number.parseFloat(value)) ?? [];
-      const gap = Number.parseFloat(style.columnGap), size = columns[1];
-      if (style.display !== "grid" || columns.length !== 2 || !columns.every(value => Number.isFinite(value) && value > 0)
+      const tracks = rail ? style.gridTemplateRows?.trim().split(/\s+/u).map(value => Number.parseFloat(value)) ?? [] : columns;
+      const gap = Number.parseFloat(rail ? style.rowGap : style.columnGap), size = tracks[1];
+      if (style.display !== "grid" || columns.length !== (rail ? 1 : 2) || !columns.every(value => Number.isFinite(value) && value > 0)
+        || tracks.length !== 2 || !tracks.every(value => Number.isFinite(value) && value > 0)
         || size === undefined || size < 44 || !Number.isFinite(gap) || gap < 0 || !finite(bounds) || !finite(navBox)
         || !Number.isFinite(innerWidth) || !Number.isFinite(innerHeight)
-        || bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight
+        || bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth
         || navBox.width <= 0 || navBox.height < size) return false;
-      const inset = style.direction === "rtl"
-        ? Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
-        : Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
-      if (!Number.isFinite(inset) || inset < 0) return false;
-      const left = style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
-      // The navigation row excludes its host's bottom safe-area padding.
-      const top = navBox.top + (navBox.height - size) / 2;
+      if (bounds.bottom > innerHeight) {
+        // Tab zoom can expose a fractional final CSS pixel while innerHeight is
+        // integral. Only the rail host may use it; every target stays inside.
+        const viewport = rail ? window.visualViewport : null;
+        if (!viewport || !Number.isFinite(viewport.height) || viewport.scale !== 1
+          || viewport.offsetTop !== 0 || viewport.offsetLeft !== 0
+          || viewport.height < innerHeight || viewport.height - innerHeight >= 1
+          || bounds.bottom > viewport.height) return false;
+      }
+      let left: number, top: number;
+      if (rail) {
+        const start = Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft);
+        const end = Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
+        const before = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop);
+        const after = Number.parseFloat(style.borderBottomWidth) + Number.parseFloat(style.paddingBottom);
+        if (![start, end, before, after].every(value => Number.isFinite(value) && value >= 0)
+          || bounds.width - start - end < size
+          || navBox.left < bounds.left + start || navBox.right > bounds.right - end
+          || navBox.top < bounds.top + before) return false;
+        left = bounds.left + start + (bounds.width - start - end - size) / 2;
+        top = bounds.bottom - after - size;
+      } else {
+        const inset = style.direction === "rtl"
+          ? Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
+          : Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
+        if (!Number.isFinite(inset) || inset < 0) return false;
+        left = style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
+        // The navigation row excludes its host's bottom safe-area padding.
+        top = navBox.top + (navBox.height - size) / 2;
+      }
       const box = { left, right: left + size, top, bottom: top + size };
       if (box.left < bounds.left || box.right > bounds.right || box.top < bounds.top || box.bottom > bounds.bottom
-        || (style.direction === "rtl" ? box.right + gap > navBox.left : navBox.right + gap > box.left)) return false;
+        || (rail ? navBox.bottom + gap > box.top || box.bottom > innerHeight
+          : style.direction === "rtl" ? box.right + gap > navBox.left : navBox.right + gap > box.left)) return false;
       if (links.some(link => {
         const rect = link.getBoundingClientRect(), computed = getComputedStyle(link);
         return !finite(rect) || rect.width < size || rect.height < size
           || rect.left < navBox.left || rect.right > navBox.right || rect.top < navBox.top || rect.bottom > navBox.bottom
+          || (rail && (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight))
           || link.scrollWidth > link.clientWidth || link.scrollHeight > link.clientHeight
           || computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0;
       })) return false;
@@ -443,7 +473,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         this.style.setProperty("--forma-assistant-browse-size", `${size}px`);
         const actual = launcher.getBoundingClientRect();
         if (!finite(actual) || actual.width !== size || actual.height !== size || actual.left < box.left || actual.right > box.right
-          || actual.top < navBox.top || actual.bottom > navBox.bottom) return false;
+          || (rail ? actual.top < box.top || actual.bottom > box.bottom || actual.left < 0 || actual.top < 0
+            || actual.right > innerWidth || actual.bottom > innerHeight
+            : actual.top < navBox.top || actual.bottom > navBox.bottom)) return false;
         this.style.removeProperty("--forma-assistant-obstacle-offset");
       }
       accepted = true;
