@@ -1475,3 +1475,192 @@ test("creation focus preserves both true edges of a nearly fitting target with i
   assert.ok(rect.top - 6 >= 17, "conservative rounding must not push the opposite edge behind the client boundary");
   assert.ok(p.form.scrollTop > 0 && p.form.scrollTop < 1, "the nearly fitting envelope needs a bounded fractional scroll");
 });
+
+// Extend the same actual-form harness with authored audio DETAILS/SUMMARY.
+// The finite envelope encloses P6's saved Arabic/touch summary and list boxes.
+// Footer tops 625/630 are screenshot-informed finite inputs: no footer DOM
+// rectangle was serialized. The observed dialog clip remains separately 783.
+// This is not a rendered 3D editor, native toggle, or disclosure-layout certificate.
+async function createDisclosureCase(t, { touch = false } = {}) {
+  const p = await createFocusCase(t, { medium: "audio", locale: touch ? "en" : "ar", targetTag: "summary", roundMetrics: true });
+  const focusWire = p.wire;
+  p.top = touch ? 855.34375 : 732.96875; p.height = touch ? 51.1875 : 44;
+  p.expandedHeight = touch ? 350.984375 : 304.421875;
+  p.disclosureStyle = {}; p.summaries = null;
+  const rect = (left, top, width, height) => ({ x: left, y: top, left, top, width, height, right: left + width, bottom: top + height });
+  p.wire = () => {
+    focusWire();
+    const markup = p.f.renderer.markup, formStart = markup.indexOf(p.form.full), summaryStart = markup.indexOf(p.target.full, formStart);
+    const detailsStart = markup.lastIndexOf("<details", summaryStart), detailsEnd = markup.indexOf(">", detailsStart) + 1;
+    assert.ok(formStart >= 0 && detailsStart > formStart && detailsEnd <= summaryStart);
+    assert.equal(markup.slice(detailsEnd, summaryStart).trim(), "", "the authored summary is the direct first child of this actual details");
+    const tag = markup.slice(detailsStart, detailsEnd);
+    p.disclosure = p.f.renderer.ownNodes(p.f.host, "details").find(node => node.full === tag && p.form.contains(node));
+    assert.ok(p.disclosure && p.form.contains(p.disclosure));
+    p.disclosure.parentElement = p.form; p.target.parentElement = p.disclosure; p.disclosure.open = true;
+    p.disclosure.querySelectorAll = selector => {
+      assert.equal(selector, ":scope > summary", "only this disclosure's direct summaries are inspected");
+      return p.summaries ?? [p.target];
+    };
+    p.disclosure.querySelector = selector => p.disclosure.querySelectorAll(selector)[0] ?? null;
+    const closest = p.target.closest;
+    p.target.closest = selector => {
+      if (selector === '[hidden], [inert], [aria-hidden="true"]'
+        && (Object.hasOwn(p.disclosure.attributes, "hidden") || Object.hasOwn(p.disclosure.attributes, "inert")
+          || p.disclosure.attributes["aria-hidden"] === "true")) return p.disclosure;
+      return closest(selector);
+    };
+    p.form.getBoundingClientRect = () => rect(17, touch ? 17 : 15, 286, 768);
+    p.dialog.getBoundingClientRect = () => rect(16, 16, 288, 768);
+    p.dialog.offsetHeight = 768; p.dialog.clientTop = 1; p.dialog.clientHeight = 766;
+    Object.defineProperty(p.form, "offsetHeight", { configurable: true, get: () => Math.round(768 / p.scale) });
+    Object.defineProperty(p.form, "clientHeight", { configurable: true, get: () => Math.round(768 / p.scale) });
+    Object.defineProperty(p.form, "scrollHeight", { configurable: true, get: () => Math.round((touch ? 3539 : 3229) / p.scale) });
+    p.form.scrollTop = touch ? 480 : 159;
+    p.target.getBoundingClientRect = () => rect(47.59375, p.top - p.form.scrollTop * p.scale, 224.8125, p.height);
+    p.disclosure.getBoundingClientRect = () => rect(47.59375, p.top - p.form.scrollTop * p.scale, 224.8125, p.expandedHeight);
+    p.footerTop = touch ? 630 : 625; p.footerBottom = 783;
+    windowPort.innerHeight = 800; windowPort.visualViewport = { offsetTop: 0, height: 800 };
+    const getStyle = windowPort.getComputedStyle;
+    windowPort.getComputedStyle = node => node === p.disclosure ? { ...getStyle(node), ...p.disclosureStyle } : getStyle(node);
+    return p;
+  };
+  p.wire();
+  p.invokeToggle = (overrides = {}, handler = p.form.handlers.toggle) => {
+    assert.equal(handler.capture, true, "the actual form must capture native non-bubbling toggle");
+    assert.equal(typeof handler.handleEvent, "function");
+    handler.handleEvent({ type: "toggle", isTrusted: true, newState: "open", target: p.disclosure, currentTarget: p.form,
+      composedPath: () => p.path ?? [p.disclosure, p.form, p.dialog, p.f.host, documentPort],
+      preventDefault() { assert.fail("disclosure reveal must preserve native defaults"); },
+      stopPropagation() { assert.fail("disclosure reveal must preserve event propagation"); }, ...overrides });
+  };
+  const unchanged = p.unchanged;
+  p.unchanged = operation => {
+    const open = p.disclosure.open, parent = p.target.parentElement;
+    unchanged(operation); assert.equal(p.disclosure.open, open); assert.strictEqual(p.target.parentElement, parent);
+  };
+  return p;
+}
+
+test("creation disclosure reveals the saved Arabic list overflow while retaining the complete summary outline", async t => {
+  const p = await createDisclosureCase(t), initialScroll = p.form.scrollTop;
+  assert.equal(p.target.getBoundingClientRect().top, 573.96875); assert.equal(p.target.getBoundingClientRect().height, 44);
+  assert.equal(p.disclosure.getBoundingClientRect().bottom, 878.390625);
+  p.unchanged(() => p.invoke()); assert.deepEqual(p.scrolls, [], "the focused summary is already clear before expansion");
+  p.unchanged(() => p.invokeToggle());
+  assert.equal(p.scrolls.length, 1); assert.equal(p.scrolls[0].behavior, "instant");
+  assert.ok(p.form.scrollTop >= initialScroll + 253.390625 && p.form.scrollTop < initialScroll + 257,
+    "movement clears the tighter finite sticky footer, not merely the observed dialog clip");
+  assert.ok(p.disclosure.getBoundingClientRect().bottom <= p.footerTop, "the complete expanded box clears the finite 625 footer boundary");
+  const movement = p.form.scrollTop - initialScroll;
+  for (const bottom of [704.421875, 750.984375, 797.546875, 863.796875]) {
+    assert.ok(bottom - movement <= p.footerTop, "every saved suggestion text box clears the tighter footer boundary after movement");
+  }
+  assert.ok(p.target.getBoundingClientRect().top - 6 >= 17);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 <= p.footerTop);
+  p.unchanged(() => p.invokeToggle()); assert.equal(p.scrolls.length, 1, "the revealed disclosure stays stable");
+});
+
+test("creation disclosure reveals saved touch list geometry above a finite sticky footer despite fitting the dialog clip", async t => {
+  const p = await createDisclosureCase(t, { touch: true }), initialScroll = p.form.scrollTop;
+  assert.equal(p.target.getBoundingClientRect().top, 375.34375);
+  assert.equal(p.disclosure.getBoundingClientRect().bottom, 726.328125);
+  assert.ok(p.disclosure.getBoundingClientRect().bottom < 783 && p.disclosure.getBoundingClientRect().bottom > p.footerTop,
+    "dialog-boundary clearance alone does not establish footer clearance");
+  p.unchanged(() => p.invokeToggle());
+  assert.equal(p.scrolls.length, 1); assert.ok(p.form.scrollTop >= initialScroll + 96.328125 && p.form.scrollTop < initialScroll + 100);
+  assert.ok(p.disclosure.getBoundingClientRect().bottom <= p.footerTop);
+  assert.ok(p.target.getBoundingClientRect().top - 6 >= 17);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 <= p.footerTop);
+  p.unchanged(() => p.invokeToggle()); assert.equal(p.scrolls.length, 1);
+});
+
+test("creation disclosure leaves saved touch geometry stationary in a separately declared clear finite lane", async t => {
+  const p = await createDisclosureCase(t, { touch: true });
+  // This finite unobstructed footer position is not the historical touch footer
+  // and its stationarity is not established by the prior native test pass.
+  p.footerTop = 783; p.footerBottom = 846;
+  assert.equal(p.target.getBoundingClientRect().top, 375.34375);
+  assert.equal(p.disclosure.getBoundingClientRect().bottom, 726.328125);
+  p.unchanged(() => p.invokeToggle()); p.unchanged(() => p.invokeToggle());
+  assert.deepEqual(p.scrolls, []); assert.equal(p.form.scrollTop, 480);
+});
+
+test("creation disclosure preserves visible summary focus when expanded content is taller than the available lane", async t => {
+  const p = await createDisclosureCase(t); p.expandedHeight = 1000;
+  p.unchanged(() => p.invokeToggle()); p.unchanged(() => p.invokeToggle());
+  assert.deepEqual(p.scrolls, []); assert.equal(p.form.scrollTop, 159, "do not chase the bottom of an oversized disclosure");
+  assert.ok(p.disclosure.getBoundingClientRect().bottom > p.footerTop, "native scrolling remains necessary; this is not a full-fit claim");
+  p.top = 149; p.unchanged(() => p.invokeToggle());
+  assert.equal(p.scrolls.length, 1); assert.ok(p.form.scrollTop < 159 && p.form.scrollTop > 120, "only the obstructed summary envelope is revealed");
+  assert.ok(p.target.getBoundingClientRect().top - 6 >= 17);
+  assert.ok(p.target.getBoundingClientRect().bottom + 6 <= p.footerTop);
+  p.unchanged(() => p.invokeToggle()); assert.equal(p.scrolls.length, 1);
+});
+
+test("creation disclosure refuses closed, pointer-style, untrusted, hidden, inert and ambiguous expansions", async t => {
+  const p = await createDisclosureCase(t);
+  for (const [mutate, restore] of [
+    [() => { p.disclosure.open = false; }, () => { p.disclosure.open = true; }],
+    [() => { p.visibleFocus = false; }, () => { p.visibleFocus = true; }],
+    [() => { p.target.attributes["aria-disabled"] = "true"; }, () => { delete p.target.attributes["aria-disabled"]; }],
+    [() => { p.disclosure.attributes.hidden = ""; }, () => { delete p.disclosure.attributes.hidden; }],
+    [() => { p.disclosure.attributes.inert = ""; }, () => { delete p.disclosure.attributes.inert; }],
+    [() => { p.disclosure.attributes["aria-hidden"] = "true"; }, () => { delete p.disclosure.attributes["aria-hidden"]; }],
+    [() => { p.disclosureStyle.display = "none"; }, () => { delete p.disclosureStyle.display; }],
+    [() => { p.disclosureStyle.visibility = "hidden"; }, () => { delete p.disclosureStyle.visibility; }],
+    [() => { p.disclosureStyle.opacity = "0"; }, () => { delete p.disclosureStyle.opacity; }],
+    [() => { p.summaries = []; }, () => { p.summaries = null; }],
+    [() => { p.summaries = [p.target, p.target]; }, () => { p.summaries = null; }],
+    [() => { p.expandedHeight = NaN; }, () => { p.expandedHeight = 304.421875; }],
+    [() => { p.disclosure.isConnected = false; }, () => { p.disclosure.isConnected = true; }],
+    [() => { p.dialog.open = false; }, () => { p.dialog.open = true; }],
+    [() => { p.modal = false; }, () => { p.modal = true; }],
+  ]) { mutate(); p.unchanged(() => p.invokeToggle()); restore(); }
+  p.unchanged(() => p.invokeToggle({ isTrusted: false }));
+  p.unchanged(() => p.invokeToggle({ type: "beforetoggle" }));
+  p.unchanged(() => p.invokeToggle({ target: p.target }));
+  assert.deepEqual(p.scrolls, []);
+  p.unchanged(() => p.invokeToggle()); assert.equal(p.scrolls.length, 1, "refused events do not retire the usable current disclosure");
+});
+
+test("creation disclosure cannot scroll for another focused control, unrelated details or a foreign event owner", async t => {
+  const p = await createDisclosureCase(t), target = p.target, disclosure = p.disclosure;
+  documentPort.activeElement = p.footerButton; p.unchanged(() => p.invokeToggle()); documentPort.activeElement = target;
+  const foreignForm = Object.assign(Object.create(ElementPort.prototype), { tagName: "FORM" });
+  const foreignDialog = Object.assign(Object.create(ElementPort.prototype), { tagName: "DIALOG" });
+  p.path = [disclosure, foreignForm, p.form, p.dialog]; p.unchanged(() => p.invokeToggle());
+  p.path = [disclosure, p.form, foreignDialog, p.dialog]; p.unchanged(() => p.invokeToggle()); p.path = null;
+  p.unchanged(() => p.invokeToggle({ currentTarget: p.footerButton }));
+  const unrelatedSummary = Object.assign(Object.create(ElementPort.prototype), { tagName: "SUMMARY", isConnected: true });
+  const unrelatedDetails = Object.assign(Object.create(ElementPort.prototype), { tagName: "DETAILS", isConnected: true, open: true,
+    querySelectorAll: () => [unrelatedSummary] });
+  unrelatedSummary.parentElement = unrelatedDetails;
+  p.path = [unrelatedDetails, p.form, p.dialog];
+  p.unchanged(() => p.invokeToggle({ target: unrelatedDetails })); p.path = null;
+  target.parentElement = p.form; p.unchanged(() => p.invokeToggle()); target.parentElement = disclosure;
+  Object.defineProperty(disclosure, "ownerDocument", { configurable: true, value: {} });
+  p.unchanged(() => p.invokeToggle()); delete disclosure.ownerDocument;
+  const contains = p.form.contains; p.form.contains = node => node !== disclosure && contains(node);
+  p.unchanged(() => p.invokeToggle()); p.form.contains = contains;
+  assert.deepEqual(p.scrolls, []);
+});
+
+test("creation disclosure rechecks opening and focus ownership after expanded geometry reads", async t => {
+  const p = await createDisclosureCase(t), original = p.disclosure.getBoundingClientRect;
+  p.disclosure.getBoundingClientRect = () => { const value = original(); p.f.state.required = false; return value; };
+  p.unchanged(() => p.invokeToggle()); assert.deepEqual(p.scrolls, []);
+  p.disclosure.getBoundingClientRect = original; p.f.state.required = true;
+  p.disclosure.getBoundingClientRect = () => { const value = original(); documentPort.activeElement = p.footerButton; return value; };
+  p.invokeToggle(); assert.deepEqual(p.scrolls, []); assert.strictEqual(documentPort.activeElement, p.footerButton, "the helper does not restore retired summary focus");
+  p.disclosure.getBoundingClientRect = original; documentPort.activeElement = p.target;
+  p.f.state.authorization = "other-actor"; p.unchanged(() => p.invokeToggle()); assert.deepEqual(p.scrolls, []);
+});
+
+test("creation disclosure retires an old captured form listener after the dialog closes and reopens", async t => {
+  const p = await createDisclosureCase(t), oldForm = p.form, oldHandler = p.form.handlers.toggle;
+  await p.f.createClose(); await p.f.open("audio"); p.wire();
+  assert.notStrictEqual(p.form, oldForm); assert.equal(oldForm.isConnected, false);
+  p.unchanged(() => p.invokeToggle({}, oldHandler)); assert.deepEqual(p.scrolls, []);
+  p.unchanged(() => p.invokeToggle()); assert.equal(p.scrolls.length, 1);
+});

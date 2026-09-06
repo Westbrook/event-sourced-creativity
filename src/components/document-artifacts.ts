@@ -613,16 +613,26 @@ export class DocumentArtifacts extends FormaElement {
     this.#confirmed=false;this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#clearSceneCost();
   }
   #createDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-create");}#viewDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-view");}
-  #revealCreateFocus(event:FocusEvent,current:()=>boolean){
-    if(event.type!=="focusin"||!event.isTrusted||!this.isConnected||!current())return;
-    const path=event.composedPath(),target=path[0],form=event.currentTarget,dialog=this.#createDialog(),document=this.ownerDocument,view=document.defaultView;
-    if(!(target instanceof HTMLElement)||!(form instanceof HTMLElement)||form.tagName!=="FORM"||!dialog||!view)return;
+  #revealCreateFocus(event:Event,current:()=>boolean){
+    const toggled=event.type==="toggle";
+    if(event.type!=="focusin"&&!toggled||!event.isTrusted||!this.isConnected||!current())return;
+    const path=event.composedPath(),source=path[0],form=event.currentTarget,dialog=this.#createDialog(),document=this.ownerDocument,view=document.defaultView;
+    if(!(source instanceof HTMLElement)||!(form instanceof HTMLElement)||form.tagName!=="FORM"||!dialog||!view)return;
+    const disclosure=toggled&&source.tagName==="DETAILS"?source as HTMLDetailsElement:null;
+    if(toggled&&(!disclosure||event.target!==disclosure||!disclosure.open))return;
+    const summaries=disclosure?.querySelectorAll<HTMLElement>(":scope > summary");
+    const target=disclosure?summaries?.length===1?summaries[0]:null:source;
+    if(!(target instanceof HTMLElement))return;
+    const ownsDisclosure=()=>!disclosure||disclosure.isConnected&&disclosure.open&&disclosure.ownerDocument===document
+      &&form.contains(disclosure)&&disclosure.closest("form")===form&&disclosure.closest("dialog")===dialog
+      &&target.tagName==="SUMMARY"&&target.parentElement===disclosure
+      &&disclosure.querySelectorAll(":scope > summary").length===1&&disclosure.querySelector(":scope > summary")===target;
     const ownsFocus=()=>this.isConnected&&current()&&target.isConnected&&form.isConnected&&dialog.isConnected
       &&target.ownerDocument===document&&form.ownerDocument===document&&dialog.ownerDocument===document
       &&document.activeElement===target&&this.#createDialog()===dialog&&dialog.open&&dialog.matches(":modal")
       &&form.parentElement===dialog&&form.contains(target)&&target.closest("form")===form&&target.closest("dialog")===dialog
       &&target.matches(":focus-visible")&&!target.matches(":disabled")&&target.getAttribute("aria-disabled")!=="true"
-      &&!target.closest('[hidden], [inert], [aria-hidden="true"]');
+      &&!target.closest('[hidden], [inert], [aria-hidden="true"]')&&ownsDisclosure();
     if(!ownsFocus()||!target.matches("button,input,select,textarea,summary,a[href]")
       ||path.find(node=>node instanceof HTMLElement&&node.tagName==="FORM")!==form
       ||path.find(node=>node instanceof HTMLElement&&node.tagName==="DIALOG")!==dialog)return;
@@ -650,7 +660,21 @@ export class DocumentArtifacts extends FormaElement {
     if(bottom<=top)return;
     const width=Number.parseFloat(style.outlineWidth),offset=Number.parseFloat(style.outlineOffset);
     const outline=style.outlineStyle!=="none"&&style.outlineStyle!=="hidden"&&Number.isFinite(width)&&Number.isFinite(offset)?Math.max(0,width+offset)*targetScale:0;
-    const start=rect.top-outline,end=rect.bottom+outline;
+    let start=rect.top-outline,end=rect.bottom+outline;
+    if(disclosure){
+      const expanded=disclosure.getBoundingClientRect(),expandedStyle=view.getComputedStyle(disclosure);
+      if(!disclosure.getClientRects().length||expandedStyle.display==="none"||expandedStyle.visibility==="hidden"
+        ||expandedStyle.visibility==="collapse"||expandedStyle.opacity==="0"
+        ||![expanded.top,expanded.bottom,expanded.width,expanded.height].every(Number.isFinite)||expanded.width<=0||expanded.height<=0)return;
+      const expandedStart=Math.min(start,expanded.top),expandedEnd=Math.max(end,expanded.bottom);
+      const lower=(expandedEnd-bottom)/(expandedEnd>bottom?formBounds.minScale:formBounds.maxScale);
+      const upper=(expandedStart-top)/(expandedStart<top?formBounds.minScale:formBounds.maxScale);
+      if(![lower,upper].every(Number.isFinite))return;
+      // Opening details does not move focus. Reveal its contents with the
+      // summary's full outline only when both fit; oversized disclosures keep
+      // the focused summary's envelope and remain available to native scrolling.
+      if(lower<=upper){start=expandedStart;end=expandedEnd;}
+    }
     const lower=(end-bottom)/(end>bottom?formBounds.minScale:formBounds.maxScale);
     const upper=(start-top)/(start<top?formBounds.minScale:formBounds.maxScale);
     if(![start,end,lower,upper].every(Number.isFinite))return;
@@ -1453,6 +1477,8 @@ export class DocumentArtifacts extends FormaElement {
     const renderedKind=this.#kind,configurationOpening=this.#configurationCurrent;
     const ownsOpening=()=>Boolean(configurationOpening&&this.#createOpen&&this.#configurationCurrent===configurationOpening&&this.#kind===renderedKind);
     const formCurrent=()=>this.isConnected&&ownsOpening()&&this.#createDialog()?.open===true&&Boolean(configurationOpening?.());
+    // Native details toggle does not bubble; capture it on this form owner.
+    const captureToggle={capture:true,handleEvent:(event:Event)=>this.#revealCreateFocus(event,formCurrent)};
     // One submit activation authorizes the prompt visible at dialog capture.
     // A render between capture and bubble cannot renew that event's approval.
     const captureSubmit={capture:true,handleEvent:(event:SubmitEvent)=>{
@@ -1537,7 +1563,7 @@ export class DocumentArtifacts extends FormaElement {
     const documentId=this.#targetDocumentId();const listSuffix=documentId.replace(/[^a-z0-9_-]/gi,"-");const audienceListId=`document-artifact-audiences-${listSuffix}`,toneListId=`document-artifact-tones-${listSuffix}`;const audienceSuggestions=[...this.#rememberedAudiences,...documentRenderSuggestions(this.store.events.get(),documentId,"audience")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);const toneSuggestions=[...this.#rememberedTones,...documentRenderSuggestions(this.store.events.get(),documentId,"tone")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);
     const close=()=>{if(!ownsOpening())return;this.#rememberRequestDraft();this.#retireRequestReview();this.#configurationCurrent=null;if(renderedKind==="scene")this.#clearSceneCost();this.#createOpen=false;this.#activeWorkflowStageId="";this.#createDialog()?.close();void this.#restoreWorkflowRegeneration();this.requestUpdate();};
     return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @submit=${captureSubmit} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
-      <form class="document-artifact-dialog" @focusin=${(event:FocusEvent)=>this.#revealCreateFocus(event,formCurrent)} @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${submit}>
+      <form class="document-artifact-dialog" @focusin=${(event:FocusEvent)=>this.#revealCreateFocus(event,formCurrent)} @toggle=${captureToggle} @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${submit}>
         <header><div><span>Render document</span><h2 id="document-artifact-create-title">Create another form of this work</h2><p>The same creative direction can become a story, presentation, storyboard, or video without changing the original document.</p></div><button type="button" class="icon-button" aria-label="Close" @click=${close}>${icon("close")}</button></header>
         <fieldset class="artifact-kind-picker" aria-label="Artifact type">${DOCUMENT_ARTIFACT_KINDS.map((kind)=>{const item=documentArtifactDefinition(kind);return html`<label class=${this.#kind===kind?"selected":""}><input type="radio" name="artifact-kind" value=${kind} .checked=${this.#kind===kind} @change=${()=>{this.#retireRequestReview();this.#selectArtifactKind(kind);if(kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount();this.#confirmed=false;this.requestUpdate();}}><span aria-hidden="true">${icon(kindIcon(kind))}</span><b>${this.i18n.system(item.label)}</b><small>${this.i18n.system(item.description)}</small></label>`;})}</fieldset>
         <section class="artifact-options">
