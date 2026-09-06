@@ -282,11 +282,12 @@ test("narrow nonfocused Story identity uses content height in its existing colum
   assert.equal(winning(storyIdentity, "flex-basis"), undefined, "The reset does not affect wider Story headers");
   assert.deepEqual(values(mobileRules(stylesheet, storyHeader), "flex-direction"), [], "The original Story column remains owned by the responsive sheet");
 });
-test("narrow nonfocused Scene footer shares Story paint clearance without broadening reader modes", async () => {
+test("narrow nonfocused Scene and Audio footers share Story paint clearance without broadening reader modes", async () => {
   const responsive = await readFile(new URL("../src/responsive-foundation.css", import.meta.url), "utf8");
   const foundation = postcss.parse(responsive, { from: "src/responsive-foundation.css" });
   const storyFooter = 'dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > footer';
   const sceneFooter = 'dialog.document-artifact-view[data-artifact-kind="scene"][data-output-focus="false"] > article.document-artifact-reader > footer';
+  const audioFooter = 'dialog.document-artifact-view[data-artifact-kind="audio"][data-output-focus="false"] > article.document-artifact-reader > footer';
   const sceneRules = [];
   foundation.walkRules((rule) => {
     if (rule.selectors?.includes(sceneFooter)) sceneRules.push(rule);
@@ -296,7 +297,7 @@ test("narrow nonfocused Scene footer shares Story paint clearance without broade
   const [clearance] = sceneRules;
   // Exact selector membership excludes focused outputs, other artifact kinds,
   // nested editor controls and headers. The media parent excludes wider rows.
-  assert.deepEqual(clearance.selectors, [storyFooter, sceneFooter]);
+  assert.deepEqual(clearance.selectors, [storyFooter, sceneFooter, audioFooter]);
   assert.equal(clearance.parent.type, "atrule");
   assert.equal(clearance.parent.name, "media");
   assert.match(clearance.parent.params, /^\(max-width:\s*720px\)$/u);

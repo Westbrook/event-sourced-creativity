@@ -845,7 +845,8 @@ html[data-document-focus] .studio-subpage-body {
   }
 
   dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > footer,
-  dialog.document-artifact-view[data-artifact-kind="scene"][data-output-focus="false"] > article.document-artifact-reader > footer {
+  dialog.document-artifact-view[data-artifact-kind="scene"][data-output-focus="false"] > article.document-artifact-reader > footer,
+  dialog.document-artifact-view[data-artifact-kind="audio"][data-output-focus="false"] > article.document-artifact-reader > footer {
     padding-block-end: calc(.65rem + var(--forma-focus-clearance));
   }
 
