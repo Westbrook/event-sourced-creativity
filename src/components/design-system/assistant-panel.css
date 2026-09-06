@@ -487,3 +487,47 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
   block-size: var(--forma-assistant-studio-size);
   min-block-size: var(--forma-assistant-studio-size);
 }
+/* A compact browse row can reserve real space for the existing Ask button.
+   Source keeps this reservation only while all five destinations still fit.
+   Never replace the short-landscape rail's one-column layout. */
+@media not all and (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: 1;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
+    column-gap: var(--forma-focus-clearance, .5rem);
+    align-items: center;
+    padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+    box-sizing: border-box;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+    grid-column: 1;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+      grid-template-columns: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+forma-assistant-panel[data-browse-launcher="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-browse-left);
+  top: var(--forma-assistant-browse-top);
+  inline-size: var(--forma-assistant-browse-size);
+  block-size: var(--forma-assistant-browse-size);
+}
+
+forma-assistant-panel[data-browse-launcher="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-browse-size);
+  min-inline-size: var(--forma-assistant-browse-size);
+  block-size: var(--forma-assistant-browse-size);
+  min-block-size: var(--forma-assistant-browse-size);
+}

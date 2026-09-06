@@ -177,8 +177,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #modalReady = false;
   #dismissedSpecialistId = "";
   #positionFrame = 0;
+  #browsePointer: MediaQueryList | null = null;
+  #revalidateBrowseSlot = () => {
+    this.#schedulePosition();
+  };
   #schedulePosition = () => {
-    if (this.#positionFrame || this.open) return;
+    if (this.#positionFrame || this.open && this.dataset.browseSlot !== "true") return;
     this.#positionFrame = requestAnimationFrame(() => {
       this.#positionFrame = 0;
       this.#positionLauncher();
@@ -214,10 +218,15 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     window.addEventListener("scroll", this.#schedulePosition, { capture: true, passive: true });
     window.addEventListener("focusin", this.#schedulePosition, { passive: true });
     window.addEventListener("transitionend", this.#schedulePosition, { passive: true });
+    this.#browsePointer = typeof window.matchMedia === "function" ? window.matchMedia("(pointer: coarse)") : null;
+    this.#browsePointer?.addEventListener("change", this.#revalidateBrowseSlot);
   }
 
   override disconnectedCallback() {
     this.#clearStudioLauncher();
+    this.#clearBrowseLauncher();
+    this.#browsePointer?.removeEventListener("change", this.#revalidateBrowseSlot);
+    this.#browsePointer = null;
     window.removeEventListener("resize", this.#schedulePosition);
     window.removeEventListener("scroll", this.#schedulePosition, true);
     window.removeEventListener("focusin", this.#schedulePosition);
@@ -259,9 +268,11 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     } else this.#modalReady = false;
     if (this.open) {
       this.#clearStudioLauncher();
+      this.#clearBrowseLauncher(false);
       this.style.removeProperty("--forma-assistant-obstacle-offset");
       delete this.dataset.compactLauncher;
       delete this.dataset.tightLauncher;
+      if (this.dataset.browseSlot === "true") this.#schedulePosition();
     } else this.#schedulePosition();
   }
 
@@ -279,6 +290,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #clearStudioLauncher() {
     delete this.dataset.studioLauncher;
     for (const name of ["left", "top", "size"]) this.style.removeProperty(`--forma-assistant-studio-${name}`);
+  }
+
+  #clearBrowseLauncher(reservation = true) {
+    delete this.dataset.browseLauncher;
+    if (reservation) delete this.dataset.browseSlot;
+    for (const name of ["left", "top", "size"]) this.style.removeProperty(`--forma-assistant-browse-${name}`);
   }
 
   #positionInStudioSlot() {
@@ -345,6 +362,99 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.style.setProperty("--forma-assistant-studio-top", `${top}px`);
     this.style.setProperty("--forma-assistant-studio-size", `${size}px`);
     return true;
+  }
+
+  #positionInBrowseSlot(launcher?: HTMLButtonElement) {
+    // CSS excludes the short-landscape rail before any reservation is made.
+    // A failed measurement restores the original five-link layout in this pass.
+    if (!this.isConnected || getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-slot")?.trim() !== "1") return false;
+    const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
+    if (!owner?.matches("forma-creative-assistant") || !shell
+      || shell.getAttribute("data-layout-intent") !== "browse" || shell.getAttribute("data-nav-posture") !== "compact") return false;
+    const panels = [...shell.querySelectorAll("forma-assistant-panel")]
+      .filter(panel => panel.closest(".application-creative") === shell);
+    const main = shell.querySelector<HTMLElement>("#main-content");
+    if (panels.length !== 1 || panels[0] !== this || !main
+      || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return false;
+    const hosts = [...shell.querySelectorAll<HTMLElement>(':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]')]
+      .filter(host => host.isConnected && host.parentElement === shell && host.closest(".application-creative") === shell);
+    if (hosts.length !== 1) return false;
+    const host = hosts[0]!;
+    if (host.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+    const navs = [...host.querySelectorAll<HTMLElement>(":scope > .ui-audience-navigation")], nav = navs[0];
+    if (navs.length !== 1 || nav?.parentElement !== host) return false;
+    const lists = [...nav.querySelectorAll<HTMLElement>(":scope > .ui-audience-navigation-list")], list = lists[0];
+    if (lists.length !== 1 || list?.parentElement !== nav) return false;
+    const links = [...list.querySelectorAll<HTMLAnchorElement>(":scope > li > a[href]")];
+    if (links.length !== 5 || links.some(link => !link.isConnected || link.parentElement?.parentElement !== list)) return false;
+    let accepted = false;
+    const compact = this.dataset.compactLauncher, tight = this.dataset.tightLauncher;
+    this.dataset.browseSlot = "true";
+    try {
+      const style = getComputedStyle(host), bounds = host.getBoundingClientRect(), navBox = nav.getBoundingClientRect();
+      const finite = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
+        [box.left, box.top, box.right, box.bottom, box.width, box.height].every(Number.isFinite);
+      const columns = style.gridTemplateColumns?.trim().split(/\s+/u).map(value => Number.parseFloat(value)) ?? [];
+      const gap = Number.parseFloat(style.columnGap), size = columns[1];
+      if (style.display !== "grid" || columns.length !== 2 || !columns.every(value => Number.isFinite(value) && value > 0)
+        || size === undefined || size < 44 || !Number.isFinite(gap) || gap < 0 || !finite(bounds) || !finite(navBox)
+        || !Number.isFinite(innerWidth) || !Number.isFinite(innerHeight)
+        || bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight
+        || navBox.width <= 0 || navBox.height < size) return false;
+      const inset = style.direction === "rtl"
+        ? Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
+        : Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
+      if (!Number.isFinite(inset) || inset < 0) return false;
+      const left = style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
+      // The navigation row excludes its host's bottom safe-area padding.
+      const top = navBox.top + (navBox.height - size) / 2;
+      const box = { left, right: left + size, top, bottom: top + size };
+      if (box.left < bounds.left || box.right > bounds.right || box.top < bounds.top || box.bottom > bounds.bottom
+        || (style.direction === "rtl" ? box.right + gap > navBox.left : navBox.right + gap > box.left)) return false;
+      if (links.some(link => {
+        const rect = link.getBoundingClientRect(), computed = getComputedStyle(link);
+        return !finite(rect) || rect.width < size || rect.height < size
+          || rect.left < navBox.left || rect.right > navBox.right || rect.top < navBox.top || rect.bottom > navBox.bottom
+          || link.scrollWidth > link.clientWidth || link.scrollHeight > link.clientHeight
+          || computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0;
+      })) return false;
+      // Reuse the Studio cell's conservative native clipping boundary.
+      for (let ancestor: HTMLElement | null = host; ancestor; ancestor = ancestor.parentElement) {
+        const computed = getComputedStyle(ancestor);
+        if (computed.display === "none" || computed.visibility !== "visible" || Number(computed.opacity) === 0
+          || [computed.transform, computed.translate, computed.rotate, computed.scale, computed.perspective,
+            computed.filter, computed.clipPath, computed.maskImage].some(value => value && value !== "none")
+          || Boolean(computed.zoom && !["normal", "1", "100%"].includes(computed.zoom))) return false;
+        const clipsX = /^(auto|scroll|hidden|clip)$/.test(computed.overflowX), clipsY = /^(auto|scroll|hidden|clip)$/.test(computed.overflowY);
+        if (!clipsX && !clipsY) continue;
+        if ([computed.borderTopLeftRadius, computed.borderTopRightRadius, computed.borderBottomLeftRadius,
+          computed.borderBottomRightRadius].some(radius => typeof radius !== "string"
+          || !/^0(?:\.0+)?(?:px|%)?(?:\s+0(?:\.0+)?(?:px|%)?)?$/u.test(radius.trim()))) return false;
+        const clip = ancestor.getBoundingClientRect(), x = clip.left + ancestor.clientLeft, y = clip.top + ancestor.clientTop;
+        if (clipsX && (box.left < x || box.right > x + ancestor.clientWidth)
+          || clipsY && (box.top < y || box.bottom > y + ancestor.clientHeight)) return false;
+      }
+      if (launcher) {
+        this.dataset.compactLauncher = "true";
+        this.dataset.tightLauncher = "true";
+        this.dataset.browseLauncher = "true";
+        this.style.setProperty("--forma-assistant-browse-left", `${left}px`);
+        this.style.setProperty("--forma-assistant-browse-top", `${top}px`);
+        this.style.setProperty("--forma-assistant-browse-size", `${size}px`);
+        const actual = launcher.getBoundingClientRect();
+        if (!finite(actual) || actual.width !== size || actual.height !== size || actual.left < box.left || actual.right > box.right
+          || actual.top < navBox.top || actual.bottom > navBox.bottom) return false;
+        this.style.removeProperty("--forma-assistant-obstacle-offset");
+      }
+      accepted = true;
+      return true;
+    } finally {
+      if (!accepted) {
+        this.#clearBrowseLauncher();
+        if (compact === undefined) delete this.dataset.compactLauncher; else this.dataset.compactLauncher = compact;
+        if (tight === undefined) delete this.dataset.tightLauncher; else this.dataset.tightLauncher = tight;
+      }
+    }
   }
 
   #ordinaryCopyObstacles() {
@@ -637,11 +747,20 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   }
 
   #positionLauncher() {
+    if (this.open) {
+      if (this.dataset.browseSlot === "true") {
+        this.#clearBrowseLauncher();
+        this.#positionInBrowseSlot();
+      }
+      return;
+    }
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
     this.#clearStudioLauncher();
+    this.#clearBrowseLauncher();
     // Following the same reserved cell is layout reflow, even under its own
     // focus/hover. No collision search or lane change runs in that cell.
     if (launcher && !this.open && this.#positionInStudioSlot()) return;
+    if (launcher && this.#positionInBrowseSlot(launcher)) return;
     const focused = document.activeElement;
     if (!launcher || this.open || launcher.contains(focused)) return;
     const hovered = launcher.matches(":hover");
