@@ -4658,3 +4658,83 @@ test('F a rail retries coarse-to-fine admission and follows current hover withou
   x.f.panel.disconnectedCallback(); assert.equal(x.f.panel.dataset.browseSlot, undefined);
   pointer.dispatchEvent(new Event('change')); assert.equal(x.f.frames.length, 0);
 });
+
+// N8's saved zoom trace reports browse + rail + short-height=true, unlike the
+// compact posture inherited by the earlier rail fixture. The LTR paragraph
+// and Ask boxes below are retained CSS-pixel observations; the reserved cell,
+// RTL mirror and coarse targets remain synthetic CSSOM, not native clearance.
+for (const configuration of [{ rtl: false, coarse: false }, { rtl: true, coarse: true }]) {
+  test('F N8 actual short rail posture reserves the utility cell outside whole output copy ' + JSON.stringify(configuration), { concurrency: false }, t => {
+    const x = fBrowseSlot(t, { ...configuration, rail: true }); x.state.short = true;
+    assert.equal(x.shell.getAttribute('data-layout-intent'), 'browse');
+    assert.equal(x.shell.getAttribute('data-nav-posture'), 'rail');
+    assert.equal(x.shell.getAttribute('data-short-height'), 'true');
+    const paragraph = x.scene(105.7578125, 132.6015625, 279.484375, 34.796875);
+    const savedAsk = x.scene(365, 119.3984375, 44, 44);
+    assert.equal(Math.min(savedAsk.right, paragraph.right) - Math.max(savedAsk.left, paragraph.left), 20.2421875);
+    assert.equal(Math.min(savedAsk.bottom, paragraph.bottom) - Math.max(savedAsk.top, paragraph.top), 30.796875);
+    const focused = x.f.document.activeElement, links = [...x.links], size = configuration.coarse ? 48 : 44;
+    const box = x.run();
+    assert.deepEqual(box, x.expectedBrowse(), 'the actual rail posture must enter its measured cell instead of retaining the reading-lane fallback');
+    assert.equal(x.overlap(box, [paragraph, x.copyBox, x.scene(267.875, 171.3984375, 123.3671875, 56),
+      ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    assert.equal(x.f.panel.dataset.browseSlot, 'true'); assert.equal(x.f.panel.dataset.browseLauncher, 'true');
+    assert.ok(box.bottom <= 398 && box.left >= 0 && box.right <= 419);
+    assert.ok(x.nav.getBoundingClientRect().bottom + 8 <= box.top);
+    for (const link of links) {
+      const rect = link.getBoundingClientRect();
+      assert.ok(rect.width >= size && rect.height >= size && rect.bottom <= 398);
+      assert.equal(link.scrollWidth, link.clientWidth); assert.equal(link.scrollHeight, link.clientHeight);
+    }
+    assert.deepEqual(x.links, links); assert.equal(x.f.document.activeElement, focused);
+    assert.deepEqual(x.focuses, []); assert.deepEqual(x.queries, []); x.custody();
+  });
+}
+
+test('F actual rail admission refuses a row policy or missing current short-height ownership', { concurrency: false }, () => {
+  for (const defect of ['row-policy', 'not-short', 'missing-short', 'unknown-posture']) {
+    const cleanup = [];
+    try {
+      const x = fBrowseSlot({ after: undo => cleanup.push(undo) }, { rail: true }); x.state.short = true;
+      const getAttribute = x.shell.getAttribute;
+      x.shell.getAttribute = name => name === 'data-short-height' && defect === 'not-short' ? 'false'
+        : name === 'data-short-height' && defect === 'missing-short' ? null
+        : name === 'data-nav-posture' && defect === 'unknown-posture' ? 'wide' : getAttribute(name);
+      if (defect === 'row-policy') x.state.rail = false;
+      x.f.document.activeElement = x.launcher; x.hovered = true;
+      const before = x.launcher.getBoundingClientRect();
+      assert.deepEqual(x.run(), before, defect + ': a refused rail cannot move an already focused launcher');
+      assert.equal(x.f.panel.dataset.browseSlot, undefined); assert.equal(x.f.panel.dataset.browseLauncher, undefined);
+      for (const name of ['left', 'top', 'size']) assert.equal(x.values.has('--forma-assistant-browse-' + name), false);
+      assert.equal(x.f.document.activeElement, x.launcher); assert.deepEqual(x.focuses, []); x.custody();
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('F every short-landscape reservation selector includes the actual N8 rail owner without broadening the row', async () => {
+  const { createRequire } = await import('node:module');
+  const postcss = createRequire(import.meta.resolve('vite'))('postcss');
+  const css = postcss.parse(read('src/components/design-system/assistant-panel.css'));
+  const compact = '.application-creative[data-layout-intent="browse"][data-nav-posture="compact"]';
+  const actualRail = '.application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]';
+  let rowCount = 0, railCount = 0;
+  css.walkRules(rule => {
+    if (!rule.selector.includes('data-browse-slot') && !rule.nodes.some(node => node.prop === '--forma-assistant-browse-slot')) return;
+    const media = [];
+    for (let parent = rule.parent; parent; parent = parent.parent) {
+      if (parent.type === 'atrule' && parent.name === 'media') media.push(parent.params);
+    }
+    const first = rule.selectors[0]; assert.ok(first.startsWith(compact));
+    const suffix = first.slice(compact.length);
+    if (media.includes('(max-height: 37.5rem) and (orientation: landscape)')) {
+      railCount++;
+      assert.deepEqual(rule.selectors, [compact + suffix, actualRail + suffix],
+        'both exact owners receive the same rail declaration; preserving the original selector also preserves its specificity');
+    } else {
+      rowCount++;
+      assert.ok(media.includes('not all and (max-height: 37.5rem) and (orientation: landscape)'));
+      assert.deepEqual(rule.selectors, [compact + suffix], 'the horizontal row retains only its existing compact owner');
+    }
+  });
+  assert.equal(rowCount, 4); assert.equal(railCount, 5);
+});

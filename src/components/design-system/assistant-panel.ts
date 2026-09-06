@@ -373,7 +373,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if (!rail && posture !== "1") return false;
     const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
     if (!owner?.matches("forma-creative-assistant") || !shell
-      || shell.getAttribute("data-layout-intent") !== "browse" || shell.getAttribute("data-nav-posture") !== "compact") return false;
+      || shell.getAttribute("data-layout-intent") !== "browse" || (shell.getAttribute("data-nav-posture") !== "compact"
+        && (!rail || shell.getAttribute("data-nav-posture") !== "rail"
+          || shell.getAttribute("data-short-height") !== "true"))) return false;
     const panels = [...shell.querySelectorAll("forma-assistant-panel")]
       .filter(panel => panel.closest(".application-creative") === shell);
     const main = shell.querySelector<HTMLElement>("#main-content");

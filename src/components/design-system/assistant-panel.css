@@ -520,11 +520,13 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
 /* The existing side rail already owns space outside the reading lane. Keep
    all five destinations above a measured utility cell, including while open. */
 @media (max-height: 37.5rem) and (orientation: landscape) {
-  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"] > forma-creative-assistant > forma-assistant-panel {
     --forma-assistant-browse-slot: rail;
   }
 
-  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"],
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
@@ -533,7 +535,8 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
     box-sizing: border-box;
   }
 
-  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
     grid-row: 1;
     min-block-size: 0;
     block-size: 100%;
@@ -541,7 +544,8 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
     min-inline-size: 0;
   }
 
-  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list {
     box-sizing: border-box;
     min-block-size: 0;
     max-block-size: 100%;
@@ -551,7 +555,8 @@ forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
   }
 
   @media (pointer: coarse) {
-    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"],
+    .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
       grid-template-rows: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
     }
   }
