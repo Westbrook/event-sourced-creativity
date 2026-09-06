@@ -381,7 +381,7 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
   .application-canvas .canvas-selection-hud > button.canvas-selected-primary { border-color:Highlight; color:HighlightText; background:Highlight; }
 }
 
-.application-canvas .canvas-view-actions { display:grid; }
+.application-canvas .canvas-view-actions { display:grid; row-gap:var(--forma-space-2,.5rem); }
 .application-canvas .canvas-view-menu .ui-popover-panel { max-block-size:min(34rem,var(--forma-popover-max-height,calc(100dvb - 1rem))); }
 
 /* Outcome Desk is a presentation of this Canvas; the authoring subtree stays mounted. */
