@@ -1683,3 +1683,81 @@ test("E6 short shared chrome removes only the application title already represen
     assert.equal(ruleActive(rules[0], viewport), shortLandscape, viewport.name + ": retain the existing short-chrome media scope");
   }
 });
+test("Canvas View-menu padding clears the recorded full focus envelope at rounded boundaries", () => {
+  // B6 attachment canvas-path-semantic-action, observation7 / sequentialKey11:
+  // Accessible reading order was fully visible, but the conservative rounded
+  // proof did not contain its 6px focus envelope. This is a source/geometry
+  // regression, not a browser layout, glyph-paint, zoom or native PASS claim.
+  const panel = ".canvas-view-menu .ui-popover-panel";
+  const panels = [".ui-popover-panel[popover]", panel, ".application-canvas " + panel];
+  const actions = ".application-canvas .canvas-view-actions";
+  const recorded = {
+    rootPixels: 16, paddingPixels: .45 * 16, extent: 6, radius: 9,
+    raw: { left: 834.46875, top: 520.921875, right: 1122.09375, bottom: 567.6875 },
+    // Retain the observer's one-pixel integer-client inset, including the
+    // fractional bottom deficit. Do not substitute the larger painted box.
+    clip: { left: 828.28125, top: 62.390625, right: 1128.28125, bottom: 573.390625 },
+  };
+  const envelope = raw => ({ left: raw.left - recorded.extent, top: raw.top - recorded.extent,
+    right: raw.right + recorded.extent, bottom: raw.bottom + recorded.extent });
+  const withinRectangle = (box, clip) => box.left >= clip.left && box.right <= clip.right
+    && box.top >= clip.top && box.bottom <= clip.bottom;
+  const withinRounded = (box, clip) => {
+    if (!withinRectangle(box, clip)) return false;
+    return [box.left, box.right].every(x => [box.top, box.bottom].every(y => {
+      const dx = Math.max(clip.left + recorded.radius - x, 0, x - clip.right + recorded.radius);
+      const dy = Math.max(clip.top + recorded.radius - y, 0, y - clip.bottom + recorded.radius);
+      return dx * dx + dy * dy <= recorded.radius * recorded.radius;
+    }));
+  };
+  const projected = padding => {
+    const delta = padding - recorded.paddingPixels;
+    // Fixed outer inline size: symmetric padding narrows the control. The
+    // recorded intrinsic menu grows by two block insets; target height stays
+    // unchanged. Actual line wrapping and max-height scrolling remain native
+    // obligations; neither is simulated by this recorded-layout projection.
+    return {
+      raw: { left: recorded.raw.left + delta, top: recorded.raw.top + delta,
+        right: recorded.raw.right - delta, bottom: recorded.raw.bottom + delta },
+      clip: { ...recorded.clip, bottom: recorded.clip.bottom + 2 * delta },
+    };
+  };
+  const originalEnvelope = envelope(recorded.raw);
+  assert.equal(originalEnvelope.bottom - recorded.clip.bottom, .296875);
+  assert.equal(withinRounded(originalEnvelope, recorded.clip), false, "retain the exact recorded unresolved boundary");
+  const rectangleOnly = projected(.6 * recorded.rootPixels);
+  assert.equal(withinRectangle(envelope(rectangleOnly.raw), rectangleOnly.clip), true);
+  assert.equal(withinRounded(envelope(rectangleOnly.raw), rectangleOnly.clip), false,
+    "a rectangular containment check alone misses the still-unsafe rounded corners");
+
+  for (const viewport of viewports) {
+    const padding = winning(panels, "padding", viewport);
+    assert.equal(padding?.file, "canvas.css", "the existing View-menu owner supplies its inset");
+    const length = padding?.value.match(/^([\d.]+)(rem|px)$/);
+    assert.ok(length, "inspect the actual symmetric single-length padding rather than assuming its value");
+    const pixels = Number(length[1]) * (length[2] === "rem" ? recorded.rootPixels : 1);
+    const next = projected(pixels);
+    for (const direction of ["ltr", "rtl"]) {
+      const raw = direction === "ltr" ? next.raw : { ...next.raw,
+        left: next.clip.left + next.clip.right - next.raw.right,
+        right: next.clip.left + next.clip.right - next.raw.left };
+      assert.ok(withinRounded(envelope(raw), next.clip),
+        viewport.name + "/" + direction + ": the complete recorded 6px envelope must clear every rounded corner");
+      assert.ok(raw.right - raw.left >= 44 && raw.bottom - raw.top >= 44,
+        "clearance must not consume the recorded native target's 44px floor");
+      assert.equal(raw.bottom - raw.top, recorded.raw.bottom - recorded.raw.top,
+        "padding does not shrink the recorded control height");
+    }
+    for (const property of ["padding-inline", "padding-block", "padding-inline-start", "padding-inline-end", "padding-block-start", "padding-block-end"])
+      assert.equal(winning(panels, property, viewport), undefined, "no axis-specific rule may silently undo the symmetric inset");
+    assert.equal(winning(panels, "width", viewport)?.value, "min(19rem,calc(100vw - 2rem))");
+    assert.equal(winning(panels, "max-height", viewport)?.value, "min(34rem,75dvh)");
+    assert.equal(winning(panels, "max-block-size", viewport)?.value,
+      "min(34rem,var(--forma-popover-max-height,calc(100dvb - 1rem)))");
+    assert.equal(winning(panels, "overflow", viewport)?.value, "auto", "retain the native menu scroll owner");
+    assert.equal(winning(panels, "border-radius", viewport)?.value, recorded.radius + "px");
+    assert.equal(winning(actions, "display", viewport)?.value, "grid");
+    assert.equal(winning(actions, "row-gap", viewport)?.value, "var(--forma-space-2,.5rem)",
+      "retain the accepted separation between Resume, Outcome Desk and subsequent actions");
+  }
+});
