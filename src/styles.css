@@ -2538,6 +2538,23 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck-stage > nav > .presentation-deck-jump { display: none; }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck-supporting { inline-size: 100%; grid-column: 2; grid-row: 2; grid-auto-flow: column; grid-auto-columns: minmax(11rem,max-content); grid-template-columns: none; overflow-x: auto; }
 }
+
+/* Short reading surfaces scroll complete evidence and content without a covering footer. */
+@media (max-height: 32rem) {
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:not(:has(> .document-artifact-reader-content > .artifact-direct-editor)),
+  dialog.document-artifact-view[data-artifact-kind="scene"][data-output-focus="false"] > article.document-artifact-reader:not(:has(> .document-artifact-reader-content > .artifact-direct-editor)),
+  dialog.document-artifact-view[data-artifact-kind="audio"][data-output-focus="false"] > article.document-artifact-reader:not(:has(> .document-artifact-reader-content > .artifact-direct-editor)) {
+    grid-template-rows: max-content max-content;
+    overflow-y: auto;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:not(:has(> .document-artifact-reader-content > .artifact-direct-editor)) > footer,
+  dialog.document-artifact-view[data-artifact-kind="scene"][data-output-focus="false"] > article.document-artifact-reader:not(:has(> .document-artifact-reader-content > .artifact-direct-editor)) > footer,
+  dialog.document-artifact-view[data-artifact-kind="audio"][data-output-focus="false"] > article.document-artifact-reader:not(:has(> .document-artifact-reader-content > .artifact-direct-editor)) > footer {
+    position: static;
+  }
+}
+
 .generation-actions-shell { min-width: 0; }
 .generation-actions-shell.compact { display: block; }
 .generation-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
