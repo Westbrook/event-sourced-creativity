@@ -359,6 +359,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       || main.closest(".application-creative") !== shell || main.getAttribute("aria-busy") === "true") return obstacles;
     // Only current, owned copy families participate. Text is not native focus
     // authority. Whitespace is protected only by explicit box-level contracts.
+    const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
+    const libraryWeightFormSelector = ".library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form";
+    const libraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
+    const libraryWeightCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output`;
+    const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
+    const libraryStateEditorSelector = ".library-main > forma-library-block-editor";
+    const libraryStateCopySelector = `${libraryStateEditorSelector} > section.library-block-editor > header.library-block-editor-header > div:first-child > p.context-library-state`;
+    const librarySearchFormSelector = ".library-main > .library-body > form.library-toolbar";
+    const librarySearchCopySelector = `${librarySearchFormSelector} > forma-ui-search.searchbox > div.ui-search > label`;
+    const documentStatePanelSelector = ':scope > section.workspace-page[data-workbench="document"] > .studio-main > .studio-grid > section#document-context-panel.context-column';
+    const documentStateHostsSelector = ':scope > .block-list[data-forma-content="primary"] > forma-context-block';
+    const documentSummarySelector = "article.context-block.context-block--summary[data-block-id]";
+    const documentStatusPath = " > div.block-body > header.block-heading > div.block-heading-state > span.context-lock-state";
+    const documentStateCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentStatusPath}`;
+    const documentBodyPath = ' > div.block-body > p.block-copy[data-forma-content="primary"][dir="auto"]';
+    const documentBodyCopySelector = `${documentStatePanelSelector} > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ${documentSummarySelector}${documentBodyPath}`;
+    type DocumentContextHost = HTMLElement & { surface?: string; block?: { id?: string } };
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -375,6 +392,11 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > h3#library-block-content',
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
         '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+        libraryOutputCopySelector,
+        libraryWeightCopySelector,
+        libraryWeightLabelCopySelector,
+        libraryStateCopySelector,
+        librarySearchCopySelector,
       ]],
       ["forma-reality-layers", [
         ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
@@ -385,6 +407,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
+        '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > footer.output-requirement-form-footer > p',
+        documentStateCopySelector,
+        documentBodyCopySelector,
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
       ["forma-document-generations", [
@@ -398,16 +423,116 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           && (ownerSelector !== '.application-loading[role="status"]' || surface.parentElement === main));
       if (surfaces.length !== 1) continue;
       const surface = surfaces[0]!;
-      const elements = new Set(selectors.flatMap(selector => [...surface.querySelectorAll<HTMLElement>(selector)]));
+      let libraryStates: HTMLElement[] = [];
+      let librarySearchLabels: HTMLElement[] = [];
+      let documentStates: HTMLElement[] = [];
+      let documentBodies: HTMLElement[] = [];
+      const elements = new Set(selectors.flatMap(selector => {
+        const selected = [...surface.querySelectorAll<HTMLElement>(selector)];
+        if (selector === libraryStateCopySelector) libraryStates = selected;
+        if (selector === librarySearchCopySelector) librarySearchLabels = selected;
+        if (selector === documentStateCopySelector) documentStates = selected;
+        if (selector === documentBodyCopySelector) documentBodies = selected;
+        return selected;
+      }));
       for (const element of elements) {
         if (!element.isConnected || element.closest(ownerSelector) !== surface
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
+        const documentBody = documentBodies.includes(element);
+        const documentState = documentStates.includes(element) || documentBody;
+        if (documentState) {
+          const panels = [...surface.querySelectorAll<HTMLElement>(documentStatePanelSelector)];
+          const panel = panels[0];
+          if (panels.length !== 1 || !panel?.isConnected || element.closest("#document-context-panel") !== panel) continue;
+          const hosts = [...panel.querySelectorAll<DocumentContextHost>(documentStateHostsSelector)];
+          const host = element.closest<DocumentContextHost>("forma-context-block"), blockId = host?.block?.id;
+          if (!host?.isConnected || host.surface !== "document" || typeof blockId !== "string" || !blockId.trim()
+            || !hosts.includes(host) || hosts.filter(candidate => candidate.block?.id === blockId).length !== 1) continue;
+          const decisions = [...host.querySelectorAll<HTMLElement>(":scope > section.context-decision")];
+          const decision = decisions[0];
+          if (decisions.length !== 1 || !decision?.isConnected || decision.dataset.controlsOpen !== "false") continue;
+          const wrappers = [...decision.querySelectorAll<HTMLElement>(':scope > div[id^="context-controls-"]')];
+          const wrapper = wrappers[0];
+          if (wrappers.length !== 1 || !wrapper?.isConnected || wrapper.id !== `context-controls-document-${blockId}`) continue;
+          const roots = [...wrapper.querySelectorAll<HTMLElement>(`:scope > ${documentSummarySelector}`)];
+          const root = roots[0], card = element.closest<HTMLElement>(documentSummarySelector);
+          if (roots.length !== 1 || !root?.isConnected || root.dataset.blockId !== blockId || !card?.isConnected) continue;
+          // Peers and recursive authored summaries each own their own copy.
+          // Only the renderer's exact child chain can reach this bound root.
+          let ancestor: HTMLElement | null = card;
+          while (ancestor && ancestor !== root) {
+            const item: HTMLElement | null = ancestor.parentElement, children: HTMLElement | null | undefined = item?.parentElement;
+            const body: HTMLElement | null | undefined = children?.parentElement, parent: HTMLElement | null | undefined = body?.parentElement;
+            if (!item?.matches?.("li") || !children?.matches?.("ol.context-authored-children")
+              || !body?.matches?.("div.block-body") || !parent?.matches?.(documentSummarySelector)) {
+              ancestor = null; break;
+            }
+            ancestor = parent;
+          }
+          if (ancestor !== root) continue;
+          const copies = [...card.querySelectorAll<HTMLElement>(`:scope${documentBody ? documentBodyPath : documentStatusPath}`)];
+          if (copies.length !== 1 || copies[0] !== element) continue;
+        }
+        const libraryState = libraryStates.includes(element);
+        if (libraryState) {
+          const editors = [...surface.querySelectorAll<HTMLElement>(libraryStateEditorSelector)];
+          if (libraryStates.length !== 1 || editors.length !== 1 || !editors[0]?.isConnected
+            || element.closest("forma-library-block-editor") !== editors[0]) continue;
+        }
+        const librarySearchLabel = librarySearchLabels.includes(element);
+        if (librarySearchLabel) {
+          const forms = [...surface.querySelectorAll<HTMLFormElement>(librarySearchFormSelector)];
+          const form = forms[0], box = element.parentElement, search = box?.parentElement;
+          if (librarySearchLabels.length !== 1 || !(element instanceof HTMLLabelElement)
+            || forms.length !== 1 || !(form instanceof HTMLFormElement) || !form.isConnected
+            || !box?.isConnected || !search?.isConnected || search.parentElement !== form) continue;
+          const searches = [...form.querySelectorAll<HTMLElement>(":scope > forma-ui-search.searchbox")];
+          const boxes = [...search.querySelectorAll<HTMLElement>(":scope > div.ui-search")];
+          const labels = [...box.querySelectorAll<HTMLLabelElement>(":scope > label")];
+          const fields = [...box.querySelectorAll<HTMLInputElement>(':scope > div.ui-search-control > input[type="search"]')];
+          const field = fields[0];
+          if (searches.length !== 1 || searches[0] !== search || boxes.length !== 1 || boxes[0] !== box
+            || labels.length !== 1 || labels[0] !== element || fields.length !== 1
+            || !(field instanceof HTMLInputElement) || !field.isConnected || field.type !== "search"
+            || !field.id || element.control !== field || element.htmlFor !== field.id
+            || element.form !== form || field.form !== form
+            || field.labels?.length !== 1 || field.labels[0] !== element) continue;
+          const ids = [...document.querySelectorAll(`[id="${CSS.escape(field.id)}"]`)];
+          if (ids.length !== 1 || ids[0] !== field) continue;
+        }
+        const libraryWeightLabel = ownerSelector === "forma-library" && element.tagName === "LABEL"
+          && element.matches(libraryWeightLabelCopySelector);
         if (ownerSelector === "forma-workspace-settings" && element.tagName === "LABEL") {
           const field = element.querySelector<HTMLInputElement>(':scope > input[name="name"]');
           if (!(element instanceof HTMLLabelElement) || !field || element.control !== field
             || field.form !== element.parentElement) continue;
         }
-        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-library" && (element.tagName === "OUTPUT" || libraryWeightLabel)) {
+          const forms = [...surface.querySelectorAll<HTMLFormElement>(libraryWeightFormSelector)];
+          const form = forms[0], label = libraryWeightLabel ? element : element.parentElement;
+          if (forms.length !== 1 || !(form instanceof HTMLFormElement)
+            || !(label instanceof HTMLLabelElement) || !label.isConnected) continue;
+          const labels = [...form.querySelectorAll<HTMLLabelElement>(libraryWeightLabelSelector)];
+          const outputs = [...label.querySelectorAll<HTMLOutputElement>(":scope > output")];
+          const fields = [...label.querySelectorAll<HTMLInputElement>(':scope > input[type="range"]')];
+          const field = fields[0], output = outputs[0];
+          // The visible label names the current range; OUTPUT refers to that
+          // same range while retaining its separately measured copy box.
+          if (labels.length !== 1 || labels[0] !== label || outputs.length !== 1
+            || !(output instanceof HTMLOutputElement) || !output.isConnected || output.form !== form
+            || !libraryWeightLabel && output !== element
+            || fields.length !== 1 || !(field instanceof HTMLInputElement) || !field.isConnected
+            || field.form !== form || field.previousElementSibling !== output
+            || !field.id || label.htmlFor !== field.id || label.control !== field
+            || field.labels?.length !== 1 || field.labels[0] !== label
+            || output.htmlFor.length !== 1 || output.htmlFor[0] !== field.id
+            || field.min !== "0" || field.max !== "1" || field.step !== ".05") continue;
+          const value = Number(field.value);
+          if (!field.value.trim() || !Number.isFinite(value) || value < 0 || value > 1
+            || output.value !== `${Math.round(value * 100)}%`
+            || output.textContent?.trim() !== output.value) continue;
+        }
+        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel && !librarySearchLabel) {
           const rich = element.parentElement;
           const field = rich?.querySelector<HTMLTextAreaElement>(":scope > textarea.ui-rich-text-input");
           const label = rich?.querySelector<HTMLLabelElement>(":scope > label.ui-rich-text-label");
@@ -434,7 +559,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || field.form !== form || output.form !== form || field.previousElementSibling !== output
             || element !== label && element !== output) continue;
         }
-        if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-workspace" && !documentState && ["SPAN", "SMALL"].includes(element.tagName)) {
           const label = element.parentElement;
           const field = label?.querySelector<HTMLInputElement | HTMLTextAreaElement>(':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]');
           if (!(label instanceof HTMLLabelElement) || !field?.id || label.control !== field
@@ -443,16 +568,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
         }
         // The Document editor, associated Library field/empty-state regions and
-        // native Layers weight label/output and full Image-history header copy
+        // current Library weight output, native Layers weight label/output and full Image-history header copy
         // carry box-level copy contracts, including their intentional whitespace.
         // Other admitted copy keeps text fragments.
-        const wholeRegion = ownerSelector === "forma-workspace"
-          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName)
-            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]"))
+        const wholeRegion = ownerSelector === "forma-workspace" && !documentState
+          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel && !librarySearchLabel
+            || element.tagName === "OUTPUT"
+            || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]")
+            || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
           || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
           || ownerSelector === "forma-document-generations";
-        const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
+        // Search/weight labels, editor metadata and closed-card authored copy have direct
+        // fragment contracts. Never include icon descendants or the whole row.
+        const directText = libraryWeightLabel || librarySearchLabel || libraryState || documentState ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
+        const walker = wholeRegion || directText ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let directIndex = 0;
+        for (let text: Node | null = wholeRegion ? element : directText?.[directIndex++] ?? walker?.nextNode() ?? null;
+          text; text = directText ? directText[directIndex++] ?? null : walker?.nextNode() ?? null) {
           const parent = wholeRegion ? element : text.parentElement;
           if (!text.textContent?.trim() || !parent
             || parent.closest("[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon")
@@ -631,12 +763,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           return;
         }
       }
-      if (box.top - (next - offset) < 8) return;
+      if (box.top - (next - offset) < 8) break;
       this.style.setProperty("--forma-assistant-obstacle-offset", `${next}px`);
     }
 
-    // The last compact write can exhaust the pass budget on another obstacle.
-    // Complete only that tail from the same sampled owners, in the same lane.
+    // An upward boundary or the pass budget can leave a lower gap unexplored.
+    // Complete the search from the same sampled owners, in the same lane.
     if (!exactFocusPaint) return;
     const box = launcher.getBoundingClientRect();
     const finiteBox = (value: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>

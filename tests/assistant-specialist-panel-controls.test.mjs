@@ -1090,8 +1090,9 @@ for (const journey of ["disabled-save", "skip-return"]) test(
 // port. The temporary top-layer button below is a declared synthetic blocker,
 // not a measured R8 popover: it causes the observed fallback through the real
 // routine without asserting why that intermediate browser placement happened.
-for (const paint of ["bounded", "unsupported"]) test(
-  "D428 current Account focus can recover a hovered non-tight fallback / " + paint,
+for (const paint of ["bounded", "unsupported", "available-lower-gap"]) test(
+  paint === "available-lower-gap" ? "D428 open Account preserves a valid lower same-lane gap"
+    : "D428 current Account focus can recover a hovered non-tight fallback / " + paint,
   { concurrency: false }, t => {
     const x = d411Placement(t, [], { width: 320, height: 800 });
     x.launcher.getBoundingClientRect = () => {
@@ -1128,7 +1129,15 @@ for (const paint of ["bounded", "unsupported"]) test(
       outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
       getBoundingClientRect: () => popupOpen ? popupBody : d411Rect(0, 0, 0, 0),
     });
-    x.controls.push(field, popupButton); x.regions.push(entry);
+    // A declared outside-popup task region closes the lower gap only while
+    // open. This supplies the no-fit prerequisite for the retained fallback;
+    // it is not measured R8 geometry and must not inherit the popup's clip.
+    const lowerTask = x.control(d411Rect(266, 733, 44, 67), {
+      tagName: "DIV", className: "output-requirement-warning",
+      getBoundingClientRect: () => popupOpen && paint !== "available-lower-gap"
+        ? d411Rect(266, 733, 44, 67) : d411Rect(0, 0, 0, 0),
+    });
+    x.controls.push(field, popupButton); x.regions.push(entry, lowerTask);
     x.f.panel.draftForTest = "  Keep the independent Assistant draft.  ";
     const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages, scrollTop: context.scrollTop };
     x.f.document.activeElement = field;
@@ -1139,6 +1148,19 @@ for (const paint of ["bounded", "unsupported"]) test(
 
     popupOpen = true; x.f.document.activeElement = popupButton;
     const fallback = x.run();
+    if (paint === "available-lower-gap") {
+      // Keep the original popup scene's newly reachable lower gap as explicit
+      // coverage, alongside the no-fit premise needed for return-focus below.
+      assert.deepEqual(fallback, d411Rect(266, 740.5, 44, 44));
+      assert.equal(x.overlap(fallback, [...x.controls.map(control => control.getBoundingClientRect()), paintedEntry, accountRing]).length, 0);
+      assert.equal(x.f.panel.dataset.tightLauncher, "true");
+      assert.equal(x.f.document.activeElement, popupButton); assert.deepEqual(x.f.emitted, []);
+      assert.equal(field.value, "  Keep the exact output request.  "); assert.equal(entry.open, true);
+      assert.equal(context.scrollTop, before.scrollTop); assert.equal(x.f.panel.open, false);
+      assert.equal(x.f.panel.draftForTest, "  Keep the independent Assistant draft.  ");
+      assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+      return;
+    }
     assert.equal(fallback.top, 15.5); assert.equal(fallback.width, 44); assert.equal(fallback.height, 44);
     assert.equal(x.f.panel.dataset.compactLauncher, "true"); assert.equal(x.f.panel.dataset.tightLauncher, undefined);
     assert.equal(x.overlap(fallback, [account.getBoundingClientRect()]).length, 1,
@@ -1622,11 +1644,27 @@ const e6DocumentCopySelectors = [
   e6DocumentCopyPrefix + ' > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
 ];
 const e6DocumentFieldSelector = ':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]';
+const fRecipeFooterCopySelector = e6DocumentCopyPrefix + ' > footer.output-requirement-form-footer > p';
+const fLibraryWeightFormSelector = '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form';
+const fLibraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
+const fLibraryWeightCopySelector = fLibraryWeightFormSelector + ' > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output';
+const fLibraryWeightLabelCopySelector = fLibraryWeightFormSelector + ' > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
+const fLibraryStateEditorSelector = '.library-main > forma-library-block-editor';
+const fLibraryStateCopySelector = fLibraryStateEditorSelector + ' > section.library-block-editor > header.library-block-editor-header > div:first-child > p.context-library-state';
+const fLibrarySearchFormSelector = '.library-main > .library-body > form.library-toolbar';
+const fLibrarySearchCopySelector = fLibrarySearchFormSelector + ' > forma-ui-search.searchbox > div.ui-search > label';
+const fDocumentStatePanelSelector = ':scope > section.workspace-page[data-workbench="document"] > .studio-main > .studio-grid > section#document-context-panel.context-column';
+const fDocumentStateHostsSelector = ':scope > .block-list[data-forma-content="primary"] > forma-context-block';
+const fDocumentSummarySelector = 'article.context-block.context-block--summary[data-block-id]';
+const fDocumentStatusPath = ' > div.block-body > header.block-heading > div.block-heading-state > span.context-lock-state';
+const fDocumentStateCopySelector = fDocumentStatePanelSelector + ' > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ' + fDocumentSummarySelector + fDocumentStatusPath;
+const fDocumentBodyPath = ' > div.block-body > p.block-copy[data-forma-content="primary"][dir="auto"]';
+const fDocumentBodyCopySelector = fDocumentStatePanelSelector + ' > .block-list[data-forma-content="primary"] > forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] ' + fDocumentSummarySelector + fDocumentBodyPath;
 function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en", viewport = { width: 320, height: 800 }, right = 310, top = 680, normalWidth = 137.1875 } = {}) {
   const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], fStateQueries = [], fSearchQueries = [], fDocumentStateQueries = [], fDocumentBodyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
@@ -1653,13 +1691,22 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     assert.equal(selector, ".application-creative"); return shell;
   };
   surface.querySelectorAll = selector => {
-    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors]
-      : family === "forma-library" ? e11LibraryCopySelectors
+    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors, fRecipeFooterCopySelector, fDocumentStateCopySelector, fDocumentBodyCopySelector]
+      : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector, fLibraryStateCopySelector, fLibrarySearchCopySelector]
       : family === fTerminalCopyOwner ? [fTerminalCopySelector]
       : family === imageHistoryCopyOwner ? [imageHistoryCopySelector]
       : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
       "copy selection remains restricted to the actual declared owner family");
-    copyQueries.push(selector);
+    // Preserve every old case's exact ledger and record each addition without
+    // hiding a query. The complete ordered sequence is checked below.
+    allCopyQueries.push(selector);
+    if (selector === fRecipeFooterCopySelector || selector === fLibraryWeightCopySelector) fCopyQueries.push(selector);
+    else if (selector === fLibraryWeightLabelCopySelector) fLabelQueries.push(selector);
+    else if (selector === fLibraryStateCopySelector) fStateQueries.push(selector);
+    else if (selector === fLibrarySearchCopySelector) fSearchQueries.push(selector);
+    else if (selector === fDocumentStateCopySelector) fDocumentStateQueries.push(selector);
+    else if (selector === fDocumentBodyCopySelector) fDocumentBodyQueries.push(selector);
+    else copyQueries.push(selector);
     // Retain the old exact help query for a meaningful pre-runtime baseline;
     // the new union selects that same original node, not a duplicate fixture.
     return selector === e6DocumentCopySelectors[2]
@@ -1685,6 +1732,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   x.copy = (selector, raw, fragments, properties = {}) => {
     const element = x.control(raw, { tagName: "P", textContent: "Existing authored copy", isConnected: true, parentElement: surface,
+      matches(query) { assert.equal(query, fLibraryWeightLabelCopySelector); return false; },
       closest(query) {
         if (query === family) return surface;
         assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
@@ -1694,6 +1742,11 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     element.getBoundingClientRect = () => { copyBoxReads.push(element); return raw; };
     element.textNodes = [{ textContent: element.textContent, parentElement: element, fragments }];
     selected.set(selector, [...(selected.get(selector) ?? []), element]); return element;
+  };
+  x.selectWeightLabelForTest = label => {
+    assert.equal(family, "forma-library"); assert.equal(label.tagName, "LABEL");
+    assert.equal(selected.has(fLibraryWeightLabelCopySelector), false, "select the same associated label only once");
+    selected.set(fLibraryWeightLabelCopySelector, [label]);
   };
   x.replaceOriginalHelpForTest = node => {
     selected.set(e6HelpCopySelector, [node]);
@@ -1707,16 +1760,32 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   const baseRun = x.run;
   x.run = () => {
-    const start = allOwnerQueries.length, box = baseRun();
+    const start = allOwnerQueries.length, copyStart = allCopyQueries.length, box = baseRun();
     const actual = allOwnerQueries.slice(start);
     const expected = actual.length === 0 ? [] : actual.includes("forma-reality-layers")
       ? [e6CopyFamilies[0], e6CopyFamilies[1], "forma-reality-layers", e6CopyFamilies[2], e6CopyFamilies[3]] : [...e6CopyFamilies];
     if (actual.includes(fTerminalCopyOwner)) expected.push(fTerminalCopyOwner);
     if (actual.includes(imageHistoryCopyOwner)) expected.push(imageHistoryCopyOwner);
     assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four, extended-five, terminal-six or Image-seven owner query sequence");
+    if (family === "forma-workspace" || family === "forma-library") {
+      const actualCopy = allCopyQueries.slice(copyStart), added = family === "forma-workspace" ? fRecipeFooterCopySelector : fLibraryWeightCopySelector;
+      const base = family === "forma-workspace" ? e6DocumentCopySelectors : e11LibraryCopySelectors;
+      const labelTail = family === "forma-library" && actualCopy.includes(fLibraryWeightLabelCopySelector) ? [fLibraryWeightLabelCopySelector] : [];
+      const stateTail = family === "forma-library" && actualCopy.includes(fLibraryStateCopySelector) ? [fLibraryStateCopySelector] : [];
+      const searchTail = family === "forma-library" && actualCopy.includes(fLibrarySearchCopySelector) ? [fLibrarySearchCopySelector] : [];
+      const documentTail = family === "forma-workspace" && actualCopy.includes(fDocumentStateCopySelector) ? [fDocumentStateCopySelector] : [];
+      const bodyTail = family === "forma-workspace" && actualCopy.includes(fDocumentBodyCopySelector) ? [fDocumentBodyCopySelector] : [];
+      if (labelTail.length) assert.ok(actualCopy.includes(added), "the label admission follows the existing OUTPUT admission");
+      if (stateTail.length) assert.equal(labelTail.length, 1, "the metadata admission follows the retained label and OUTPUT admissions");
+      if (searchTail.length) assert.equal(stateTail.length, 1, "the Search-label admission follows the retained Library metadata admission");
+      if (documentTail.length) assert.ok(actualCopy.includes(added), "the Document status admission follows the retained recipe footer admission");
+      if (bodyTail.length) assert.equal(documentTail.length, 1, "the authored-body admission follows the retained lock-state admission");
+      assert.deepEqual(actualCopy, actualCopy.length ? [...base, ...(actualCopy.includes(added) ? [added] : []), ...labelTail, ...stateTail, ...searchTail, ...documentTail, ...bodyTail] : [],
+        "the complete copy-query sequence retains the family and ordered F admissions, without skips, duplicates or hidden queries");
+    }
     return box;
   };
-  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, allCopyQueries, fCopyQueries, fLabelQueries, fStateQueries, fSearchQueries, fDocumentStateQueries, fDocumentBodyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -1993,6 +2062,7 @@ test("E6 measured Document200 editor boxes use the existing clipped compact head
 // native zoom, hit-test or physical acceptance replay. Other geometry below
 // is explicitly synthetic, including the narrower Range counterexamples.
 const e11LibraryContentPrefix = '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"]';
+const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
 const e11LibraryCopySelectors = [
   '.library-main > .page-header--library > .page-header-copy > :is(.eyebrow,h1,p)',
   '.library-body .section-heading > div > :is(.eyebrow,h2,p.section-note)',
@@ -2001,6 +2071,7 @@ const e11LibraryCopySelectors = [
   e11LibraryContentPrefix + ' > h3#library-block-content',
   e11LibraryContentPrefix + ' > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
   '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+  libraryOutputCopySelector,
 ];
 const e11LibraryLabelBox = d411Rect(88.7578125, 147, 313.484375, 22.3984375);
 const e11LibraryLabelRange = d411Rect(88.7578125, 148.5, 157.640625, 19);
@@ -2815,4 +2886,1370 @@ test("F measured R4 Shell alert and terminal copy remain clear together at nativ
   assert.deepEqual(x.rangeReads, [heading.textNodes[0], body.textNodes[0]]);
   assert.deepEqual(x.detached, x.rangeReads);
   assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+});
+
+
+// Comparison R3 supplies the child, action, focus-ring and failed Ask boxes
+// below (raw report ff2999d4bfa034e083006c7f2e0202ce968206d289e62525589592a31e5384c5,
+// story-touch320 / comparison-output-more). The enclosing copy DIV was NOT
+// measured: its 33,261.578125..287,366.15625 box is an explicit supplied bound.
+// The second card and all ancestor ports are likewise declared fixture inputs.
+// This reuses actual Panel -> updated -> finite RAF placement, not browser
+// layout, native keyboard, pixel, hit-test or full-page reconstruction.
+for (const mode of ["one-card", "multiple-cards", "hidden", "foreign-owner"]) {
+  test("Library OutputCard cohesive copy preserves native More focus / " + mode, { concurrency: false }, t => {
+    const x = e6CopyPlacement(t, { family: "forma-library", viewport: { width: 320, height: 800 },
+      right: 310, top: 320.15625, normalWidth: 137.1875 });
+    const measuredChildren = [
+      d411Rect(33, 261.578125, 67.78125, 24),
+      d411Rect(33, 289.578125, 254, 22),
+      d411Rect(33, 311.578125, 254, 13),
+    ];
+    const suppliedCopy = d411Rect(33, 261.578125, 254, 104.578125);
+    const failedAsk = d411Rect(172.8125, 320.15625, 137.1875, 44);
+    const moreRing = d411Rect(169.625, 372.15625, 123.375, 56);
+    const calls = [];
+    const open = x.control(d411Rect(33, 378.15625, 117.09375, 44), {
+      tagName: "BUTTON", click: () => calls.push("open"), focus: () => calls.push("focus-open"),
+    });
+    const more = x.control(d411Rect(175.625, 378.15625, 111.375, 44), {
+      tagName: "BUTTON", outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
+      click: () => calls.push("more"), focus: () => calls.push("focus-more"),
+    });
+    x.controls.push(open, more); x.f.document.activeElement = more;
+    // Only the child rectangles above and controls are observed R3 geometry.
+    // This article port carries the recorded client clip, not a reconstructed
+    // rounded border or actual ancestor tree.
+    const article = x.ancestor(d411Rect(19, -104.421875, 282, 539), {
+      parentElement: x.surface, overflowX: "hidden", overflowY: "hidden",
+    });
+    const copy = x.copy(libraryOutputCopySelector, suppliedCopy, [], {
+      tagName: "DIV", parentElement: article,
+      textContent: "Full quality\nRetained comparison timing en\nTake 1 · 80 × 60 · Latency 1.1s\nDecide whether to pin, save, export, or record what should change next time.",
+      matches(selector) { assert.equal(selector, libraryOutputCopySelector); return true; },
+    });
+    const copies = [copy], protectedBoxes = [suppliedCopy];
+    if (mode === "multiple-cards") {
+      // A second legitimate card belongs to the SAME current Library, and
+      // occupies the first card's otherwise-clear upstream placement.
+      const otherBox = d411Rect(33, 200, 254, 53);
+      const otherArticle = x.ancestor(d411Rect(19, 180, 282, 80), { parentElement: x.surface });
+      copies.push(x.copy(libraryOutputCopySelector, otherBox, [], {
+        tagName: "DIV", parentElement: otherArticle, textContent: "A separate retained output and its metadata.",
+        matches(selector) { assert.equal(selector, libraryOutputCopySelector); return true; },
+      }));
+      protectedBoxes.push(otherBox);
+    }
+    if (mode === "hidden") copy.hiddenAncestor = true;
+    if (mode === "foreign-owner") {
+      const closest = copy.closest;
+      copy.closest = function(selector) {
+        return selector === "forma-library" ? {} : closest.call(this, selector);
+      };
+    }
+    x.surface.scrollTop = 17;
+    x.f.panel.draftForTest = "  Keep this independent unsent guidance.  ";
+    const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages,
+      owner: x.f.panel.parentElement, texts: copies.map(node => node.textContent) };
+    for (const child of measuredChildren) {
+      assert.ok(child.left >= suppliedCopy.left && child.right <= suppliedCopy.right
+        && child.top >= suppliedCopy.top && child.bottom <= suppliedCopy.bottom,
+      "the supplied parent contains every measured child; it is not a measured parent claim");
+    }
+    assert.equal(x.overlap(failedAsk, [measuredChildren[2]]).length, 1);
+    assert.equal(x.overlap(failedAsk, [moreRing, open.getBoundingClientRect()]).length, 0);
+    const box = x.run();
+    // Geometry is the first post-placement oracle: old source fails the positive
+    // case on obstruction, not an absent selector or an added fixture query.
+    if (mode === "one-card" || mode === "multiple-cards") {
+      assert.equal(x.overlap(box, [...protectedBoxes, ...measuredChildren, moreRing, open.getBoundingClientRect()]).length, 0,
+        "clear the cohesive copy owners without trading away native More focus or Open");
+    } else {
+      assert.equal(x.overlap(box, [measuredChildren[2]]).length, 1,
+        "excluded hidden or foreign copy is not falsely reported as protected");
+      assert.deepEqual(box, failedAsk);
+    }
+    assert.equal(x.f.document.activeElement, more); assert.deepEqual(calls, []);
+    assert.equal(x.f.panel.draftForTest, "  Keep this independent unsent guidance.  ");
+    assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+    assert.equal(x.f.panel.parentElement, before.owner); assert.equal(x.surface.scrollTop, 17);
+    assert.deepEqual(copies.map(node => node.textContent), before.texts); assert.deepEqual(x.f.emitted, []);
+    assert.ok(box.top >= 8 && box.bottom <= 792); assert.ok(box.width >= 44); assert.equal(box.height, 44);
+    assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+    assert.deepEqual(x.familyQueries, e6CopyFamilies);
+    assert.deepEqual(x.copyQueries, e11LibraryCopySelectors);
+    assert.deepEqual(x.copyBoxReads, mode === "hidden" || mode === "foreign-owner" ? [] : copies);
+    assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+  });
+}
+
+test("Library compact top-bound exhaustion still checks a feasible lower same-lane gap", { concurrency: false }, t => {
+  // R4's saved compact top320.15625 plus offset359.84375 implies reset680.
+  // The fixed44px CSSOM footprint is supplied for every read; precompact width
+  // was not recorded. This is a deterministic search counterexample, not a
+  // reconstruction of R4's complete controls, DOM, native focus or pixels.
+  const x = e6CopyPlacement(t, { family: "forma-library", viewport: { width: 320, height: 800 },
+    right: 310, top: 680, normalWidth: 44 });
+  const measuredChildren = [
+    d411Rect(33, 261.578125, 67.78125, 24),
+    d411Rect(33, 289.578125, 254, 22),
+    d411Rect(33, 311.578125, 254, 13),
+    d411Rect(33, 333.375, 254, 34.78125),
+  ];
+  // The complete containing DIV is declared, not measured. Its lower bound
+  // includes the separately recorded P.output-next-step through368.15625.
+  const suppliedCopy = d411Rect(33, 261.578125, 254, 106.578125);
+  const moreRing = d411Rect(169.625, 372.15625, 123.375, 56), calls = [];
+  const article = x.ancestor(d411Rect(19, -104.421875, 282, 539), {
+    parentElement: x.surface, overflowX: "hidden", overflowY: "hidden",
+  });
+  const open = x.control(d411Rect(33, 378.15625, 117.09375, 44), {
+    tagName: "BUTTON", parentElement: article, disabled: false,
+    click: () => calls.push("open"), focus: () => calls.push("focus-open"),
+  });
+  const more = x.control(d411Rect(175.625, 378.15625, 111.375, 44), {
+    tagName: "BUTTON", parentElement: article, disabled: false,
+    outlineStyle: "solid", outlineWidth: "3px", outlineOffset: "3px",
+    click: () => calls.push("more"), focus: () => calls.push("focus-more"),
+  });
+  x.controls.push(open, more); x.f.document.activeElement = more;
+  const copy = x.copy(libraryOutputCopySelector, suppliedCopy, [], {
+    tagName: "DIV", parentElement: article,
+    textContent: "Full quality\nRetained comparison timing en\nTake 1 · 80 × 60 · Latency 1.1s\nDecide whether to pin, save, export, or record what should change next time.",
+    matches(selector) { assert.equal(selector, libraryOutputCopySelector); return true; },
+  });
+  // These two admitted task regions are synthetic. Together with the copy,
+  // Open and More they are the COMPLETE supplied fixture inventory. They force
+  // the upward sequence680→378→320.15625→209.578125 to reach the top boundary,
+  // while leaving a single fitting lower gap730..792 in the same x266..310 lane.
+  const guards = [d411Rect(266, 0, 44, 250), d411Rect(266, 430, 44, 300)];
+  x.regions.push(
+    x.control(guards[0], { tagName: "DETAILS", className: "output-recipe-entry", parentElement: x.surface }),
+    x.control(guards[1], { tagName: "DIV", className: "output-requirement-warning", parentElement: x.surface }),
+  );
+  x.surface.scrollTop = 17; x.f.panel.draftForTest = "  Preserve this independent unsent guidance.  ";
+  const before = { tasks: x.f.panel.tasks, messages: x.f.panel.messages,
+    owner: x.f.panel.parentElement, text: copy.textContent, parents: [open.parentElement, more.parentElement] };
+  for (const child of measuredChildren) assert.ok(child.left >= suppliedCopy.left && child.right <= suppliedCopy.right
+    && child.top >= suppliedCopy.top && child.bottom <= suppliedCopy.bottom);
+  const protectedBoxes = [...guards, suppliedCopy, ...measuredChildren, moreRing, open.getBoundingClientRect()];
+  const box = x.run();
+  // Keep geometry first: the prior early return fails on the upper task region,
+  // not on a new query, marker, altered copy contract or missing fixture port.
+  assert.equal(x.overlap(box, protectedBoxes).length, 0,
+    "top-bound exhaustion must still clear every supplied obstacle when a lower same-lane gap fits");
+  assert.deepEqual(box, d411Rect(266, 739, 44, 44));
+  assert.equal(x.f.panel.dataset.compactLauncher, "true"); assert.equal(x.f.panel.dataset.tightLauncher, "true");
+  assert.ok(box.top >= 8 && box.bottom <= 792); assert.ok(x.boxes.length <= 16);
+  assert.equal(x.f.document.activeElement, more); assert.deepEqual(calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(x.surface.scrollTop, 17); assert.equal(x.f.panel.draftForTest, "  Preserve this independent unsent guidance.  ");
+  assert.equal(x.f.panel.tasks, before.tasks); assert.equal(x.f.panel.messages, before.messages);
+  assert.equal(x.f.panel.parentElement, before.owner); assert.equal(copy.textContent, before.text);
+  assert.deepEqual([open.parentElement, more.parentElement], before.parents);
+  assert.equal(open.disabled, false); assert.equal(more.disabled, false);
+  assert.deepEqual(x.queries, [d420TaskRegionQuery]); assert.deepEqual(x.familyQueries, e6CopyFamilies);
+  assert.deepEqual(x.copyQueries, e11LibraryCopySelectors); assert.deepEqual(x.copyBoxReads, [copy]);
+  assert.deepEqual(x.rangeReads, []); assert.deepEqual(x.detached, []);
+});
+
+// F adds two precise copy admissions using the existing actual Panel -> updated
+// -> finite RAF fixture. ALL coordinates below are declared synthetic inputs,
+// including the Library OUTPUT box: no original JA output geometry was measured.
+// The narrow text fragments deliberately miss Ask; the whole selected box does
+// not. These are source counterexamples, not a DOM/CSS renderer or native replay.
+function fCopyOmissionPlacement(t, kind, { top = 650, value = '0.65' } = {}) {
+  const family = kind === 'footer' ? 'forma-workspace' : 'forma-library';
+  const selector = kind === 'footer' ? fRecipeFooterCopySelector : fLibraryWeightCopySelector;
+  const x = e6CopyPlacement(t, { family, viewport: { width: 320, height: 800 }, right: 310, top, normalWidth: 44 });
+  const calls = [], formQueries = [], associationQueries = [];
+  const form = x.ancestor(d411Rect(16, 0, 288, 800), { tagName: 'FORM', isConnected: true, parentElement: x.surface });
+  const raw = d411Rect(33, 650, 254, kind === 'footer' ? 65 : 40);
+  const fragment = d411Rect(40, 655, 80, 18);
+  let parent, copy, field, focused, ring, label, output, forms, labels, outputs, fields;
+  const native = {};
+  const action = name => ({ focus: () => calls.push('focus-' + name), click: () => calls.push('click-' + name) });
+  if (kind === 'footer') {
+    parent = x.ancestor(d411Rect(33, 640, 254, 154), { tagName: 'FOOTER', className: 'output-requirement-form-footer', parentElement: form });
+    const actions = x.ancestor(d411Rect(33, 740, 254, 44), { parentElement: parent });
+    field = x.control(d411Rect(33, 450, 254, 100), { tagName: 'TEXTAREA', name: 'originalText', form, parentElement: form,
+      value: '  Keep the complete original request — العربية — 日本語.  ', ...action('original') });
+    const save = x.control(d411Rect(33, 740, 112, 44), { tagName: 'BUTTON', type: 'submit', form, parentElement: actions, disabled: false, ...action('save') });
+    focused = x.control(d411Rect(193, 740, 94, 44), { tagName: 'BUTTON', type: 'button', form, parentElement: actions, disabled: false,
+      outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px', ...action('cancel') });
+    ring = d411Rect(187, 734, 106, 56);
+    x.controls.push(field, save, focused);
+    copy = x.copy(selector, raw, [fragment], { parentElement: parent,
+      textContent: 'Save this interpretation. Review and confirm the delivery plan before generation; saving never starts generation, approves results, or authorizes spending.' });
+  } else {
+    // The paired Library source gives the range a stable id and an explicit
+    // visible label. OUTPUT references that same range without owning the label.
+    for (const key of ['HTMLFormElement', 'HTMLLabelElement', 'HTMLInputElement', 'HTMLOutputElement']) {
+      const previous = Object.getOwnPropertyDescriptor(globalThis, key), Type = class {};
+      native[key] = Type;
+      Object.defineProperty(globalThis, key, { configurable: true, value: Type });
+      t.after(() => { if (previous) Object.defineProperty(globalThis, key, previous); else delete globalThis[key]; });
+    }
+    Object.setPrototypeOf(form, native.HTMLFormElement.prototype);
+    const fieldset = x.ancestor(d411Rect(33, 620, 254, 140), { tagName: 'FIELDSET', parentElement: form });
+    label = Object.assign(new native.HTMLLabelElement(), x.ancestor(d411Rect(33, 640, 254, 114), {
+      tagName: 'LABEL', className: 'library-weight', isConnected: true, parentElement: fieldset,
+      htmlFor: 'f-library-weight', textContent: 'Default influence',
+    }));
+    parent = label;
+    copy = x.copy(selector, raw, [fragment], { tagName: 'OUTPUT', parentElement: label, form, textContent: Math.round(Number(value) * 100) + '%' });
+    Object.setPrototypeOf(copy, native.HTMLOutputElement.prototype);
+    output = copy;
+    // A normal OUTPUT value setter also replaces its text. Keep them coupled
+    // except in the explicitly named interface-defense counterexample below.
+    Object.defineProperty(output, 'value', { configurable: true, get() { return this.textContent; }, set(next) {
+      this.textContent = String(next); this.textNodes[0].textContent = this.textContent;
+    } });
+    field = Object.assign(new native.HTMLInputElement(), x.control(d411Rect(33, 700, 254, 44), {
+      tagName: 'INPUT', type: 'range', id: 'f-library-weight', ariaLabel: 'Default influence',
+      isConnected: true, min: '0', max: '1', step: '.05', value,
+      form, parentElement: label, previousElementSibling: output, labels: [label], disabled: false,
+      outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px', ...action('range'),
+    }));
+    label.control = field; output.labels = []; output.htmlFor = [field.id];
+    forms = [form]; labels = [label]; outputs = [output]; fields = [field];
+    const query = x.surface.querySelectorAll;
+    x.surface.querySelectorAll = querySelector => {
+      if (querySelector === fLibraryWeightFormSelector) { formQueries.push(querySelector); return forms; }
+      return query(querySelector);
+    };
+    form.querySelectorAll = querySelector => { assert.equal(querySelector, fLibraryWeightLabelSelector); associationQueries.push(querySelector); return labels; };
+    label.querySelectorAll = querySelector => {
+      associationQueries.push(querySelector);
+      if (querySelector === ':scope > output') return outputs;
+      assert.equal(querySelector, ':scope > input[type="range"]'); return fields;
+    };
+    focused = field; ring = d411Rect(27, 694, 266, 56); x.controls.push(field);
+  }
+  x.f.document.activeElement = focused; x.surface.scrollTop = 17;
+  x.f.panel.draftForTest = '  Preserve the independent unsent Assistant question.  ';
+  const state = { x, kind, family, selector, raw, fragment, parent, form, copy, field, focused, ring,
+    label, output, forms, labels, outputs, fields, native, calls, formQueries, associationQueries };
+  state.snapshot = () => ({ focus: x.f.document.activeElement, fieldValue: field.value, text: copy.textContent,
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope,
+    owner: x.f.panel.parentElement, scroll: x.surface.scrollTop, copyParent: copy.parentElement, fieldParent: field.parentElement,
+    fieldForm: field.form, outputForm: output?.form, outputValue: output?.value, outputLabels: output?.labels,
+    fieldLabels: field.labels, fieldId: field.id, fieldName: field.ariaLabel, labelText: label?.textContent,
+    labelFor: label?.htmlFor, outputFor: output?.htmlFor,
+    control: label?.control, sibling: field.previousElementSibling, min: field.min, max: field.max, step: field.step });
+  state.before = state.snapshot();
+  return state;
+}
+function fCopyOmissionUnchanged(state, box) {
+  const { x } = state;
+  assert.deepEqual(state.snapshot(), state.before, 'placement preserves native focus, raw values, association, scope and independent guidance');
+  assert.deepEqual(state.calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.ok(box.top >= 8 && box.bottom <= 792);
+  assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.detached, x.rangeReads);
+}
+function fCopyOmissionQueries(state, requireAdmission = true) {
+  const { x, kind, selector } = state;
+  const base = kind === 'footer' ? e6DocumentCopySelectors : e11LibraryCopySelectors;
+  const added = requireAdmission ? [selector] : x.fCopyQueries;
+  assert.ok(added.length === 0 || added.length === 1 && added[0] === selector);
+  assert.deepEqual(x.copyQueries, base); assert.deepEqual(x.fCopyQueries, added);
+  assert.deepEqual(x.fLabelQueries, x.fLabelQueries.length ? [fLibraryWeightLabelCopySelector] : []);
+  if (kind === 'footer') assert.deepEqual(x.fLabelQueries, []);
+  assert.deepEqual(x.fStateQueries, kind === 'weight' && x.fStateQueries.length ? [fLibraryStateCopySelector] : []);
+  assert.deepEqual(x.fSearchQueries, kind === 'weight' && x.fSearchQueries.length ? [fLibrarySearchCopySelector] : []);
+  assert.deepEqual(x.fDocumentStateQueries, kind === 'footer' && x.fDocumentStateQueries.length ? [fDocumentStateCopySelector] : []);
+  assert.deepEqual(x.fDocumentBodyQueries, kind === 'footer' && x.fDocumentBodyQueries.length ? [fDocumentBodyCopySelector] : []);
+  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries, ...x.fStateQueries, ...x.fSearchQueries, ...x.fDocumentStateQueries, ...x.fDocumentBodyQueries], 'the complete family and each exact optional F admission retain their order');
+}
+test('F recipe footer whole copy clears Ask without changing native Cancel or saving', { concurrency: false }, t => {
+  const state = fCopyOmissionPlacement(t, 'footer'), { x, raw, fragment, ring, copy } = state;
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, [fragment, ring]).length, 0);
+  const box = x.run();
+  // Geometry first: old source fails here, not on a missing query/fixture port.
+  assert.equal(x.overlap(box, [raw, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+    'the whole no-generation paragraph, including whitespace, and every supplied native control stay clear');
+  assert.equal(box.bottom, 642); assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+  fCopyOmissionQueries(state); fCopyOmissionUnchanged(state, box);
+});
+test('F Library explicitly labelled range and associated OUTPUT protect the whole percentage box at current values', { concurrency: false }, () => {
+  for (const value of ['0', '0.65', '1']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, 'weight', { value });
+      const { x, raw, fragment, ring, output, field, label, form } = state;
+      const initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, [fragment, ring]).length, 0);
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+        'clear full percentage copy without altering the current named native range');
+      assert.equal(box.bottom, 642); assert.deepEqual(x.copyBoxReads, [output]); assert.deepEqual(x.rangeReads, []);
+      assert.equal(label.control, field); assert.equal(label.htmlFor, field.id); assert.deepEqual(field.labels, [label]);
+      assert.equal(field.ariaLabel, label.textContent); assert.deepEqual(output.labels, []); assert.deepEqual(output.htmlFor, [field.id]);
+      assert.equal(output.form, form); assert.equal(field.form, form); assert.equal(field.previousElementSibling, output);
+      assert.equal(output.value, Math.round(Number(value) * 100) + '%');
+      assert.deepEqual(state.formQueries, [fLibraryWeightFormSelector]);
+      assert.deepEqual(state.associationQueries, [fLibraryWeightLabelSelector, ':scope > output', ':scope > input[type="range"]']);
+      fCopyOmissionQueries(state); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F footer and weight copy retain current-owner, visibility and main-readiness exclusions', { concurrency: false }, () => {
+  for (const kind of ['footer', 'weight']) for (const defect of ['foreign-leaf', 'disconnected-copy', 'hidden-ancestor', 'hidden-text', 'busy-main', 'duplicate-owner', 'foreign-main', 'duplicate-panel']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, kind), { x, copy, family, raw } = state;
+      if (defect === 'foreign-leaf') { const closest = copy.closest; copy.closest = function(selector) { return selector === family ? {} : closest.call(this, selector); }; }
+      if (defect === 'disconnected-copy') copy.isConnected = false;
+      if (defect === 'hidden-ancestor') copy.hiddenAncestor = true;
+      if (defect === 'hidden-text') copy.visibility = 'hidden';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-owner') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === family ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'duplicate-panel') x.shell.querySelectorAll = selector => { assert.equal(selector, 'forma-assistant-panel'); return [x.f.panel, { closest: () => x.shell }]; };
+      state.before = state.snapshot();
+      const box = x.run();
+      assert.equal(box.top, 650, kind + '/' + defect); assert.equal(x.overlap(box, [raw]).length, 1);
+      assert.deepEqual(x.copyBoxReads, [], kind + '/' + defect); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F Library OUTPUT refuses duplicate, indirect or foreign native associations', { concurrency: false }, () => {
+  for (const defect of ['untyped-form', 'untyped-label', 'untyped-output', 'untyped-range', 'disconnected-label', 'disconnected-range',
+    'duplicate-form', 'duplicate-label', 'foreign-label', 'no-direct-output', 'duplicate-output', 'no-direct-range', 'duplicate-range',
+    'foreign-output-form', 'foreign-range-form', 'intervening-sibling', 'label-controls-output', 'additional-range-label', 'foreign-range-label',
+    'missing-range-id', 'foreign-label-for', 'missing-output-for', 'foreign-output-for', 'additional-output-for', 'foreign-output']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, 'weight');
+      const { x, form, label, output, field, forms, labels, outputs, fields, raw } = state;
+      if (defect === 'untyped-form') Object.setPrototypeOf(form, Object.prototype);
+      if (defect === 'untyped-label') Object.setPrototypeOf(label, Object.prototype);
+      if (defect === 'untyped-output') Object.setPrototypeOf(output, Object.prototype);
+      if (defect === 'untyped-range') Object.setPrototypeOf(field, Object.prototype);
+      if (defect === 'disconnected-label') label.isConnected = false;
+      if (defect === 'disconnected-range') field.isConnected = false;
+      const other = node => Object.assign(Object.create(Object.getPrototypeOf(node)), node);
+      if (defect === 'duplicate-form') forms.push(other(form));
+      if (defect === 'duplicate-label') labels.push(other(label));
+      if (defect === 'foreign-label') labels[0] = other(label);
+      if (defect === 'no-direct-output') outputs.length = 0;
+      if (defect === 'duplicate-output') outputs.push(other(output));
+      if (defect === 'no-direct-range') fields.length = 0;
+      if (defect === 'duplicate-range') fields.push(other(field));
+      if (defect === 'foreign-output-form') output.form = {};
+      if (defect === 'foreign-range-form') field.form = {};
+      if (defect === 'intervening-sibling') field.previousElementSibling = {};
+      if (defect === 'label-controls-output') label.control = output;
+      if (defect === 'additional-range-label') field.labels = [label, other(label)];
+      if (defect === 'foreign-range-label') field.labels = [other(label)];
+      if (defect === 'missing-range-id') field.id = '';
+      if (defect === 'foreign-label-for') label.htmlFor = 'other-range';
+      if (defect === 'missing-output-for') output.htmlFor = [];
+      if (defect === 'foreign-output-for') output.htmlFor = ['other-range'];
+      if (defect === 'additional-output-for') output.htmlFor = [field.id, 'other-range'];
+      if (defect === 'foreign-output') outputs[0] = other(output);
+      state.before = state.snapshot();
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw]).length, 1, defect + ': a refused association cannot silently grant copy coverage');
+      assert.equal(box.top, 650); assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionQueries(state, false); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F Library percentage rejects stale display and declared invalid range-interface states', { concurrency: false }, () => {
+  // Stale percentage updates both OUTPUT value/text, as the native interface
+  // does. Invalid strings/bounds and a split value/text port below are explicit
+  // defensive-interface stress, not claims about settled native range values.
+  for (const defect of ['stale-percentage', 'wrong-min', 'wrong-max', 'wrong-step', 'empty', 'not-finite', 'below', 'above', 'split-output-interface']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, 'weight'), { x, output, field, raw } = state;
+      if (defect === 'stale-percentage') output.value = '60%';
+      if (defect === 'wrong-min') field.min = '-1';
+      if (defect === 'wrong-max') field.max = '2';
+      if (defect === 'wrong-step') field.step = '.1';
+      if (defect === 'empty') field.value = '  ';
+      if (defect === 'not-finite') field.value = 'NaN';
+      if (defect === 'below') field.value = '-0.05';
+      if (defect === 'above') field.value = '1.05';
+      // Keep the display consistent with each invalid scalar so rejection must
+      // come from trim/finite/bounds guards, not a coincident stale percentage.
+      if (['empty', 'not-finite', 'below', 'above'].includes(defect)) output.value = Math.round(Number(field.value) * 100) + '%';
+      if (defect === 'split-output-interface') { Object.defineProperty(output, 'value', { configurable: true, value: '65%' }); output.textContent = '60%'; }
+      state.before = state.snapshot();
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw]).length, 1, defect); assert.equal(box.top, 650);
+      assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionQueries(state, false); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F new copy admissions do not collect neighboring unselected prose or readouts', { concurrency: false }, () => {
+  for (const kind of ['footer', 'weight']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, kind), { x, copy, raw, ring } = state;
+      // This separate unqueried sibling spans the expected new placement. It is
+      // inventory for a negative selector contract, not evidence of native fit.
+      const unrelated = x.copy(kind === 'footer' ? e6DocumentCopyPrefix + ' > p.unrelated-copy' : e11LibraryContentPrefix + ' > p.unrelated-copy',
+        d411Rect(33, 590, 254, 54), [d411Rect(33, 590, 254, 54)], { textContent: 'A separate unadmitted sibling.' });
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw, ring]).length, 0); assert.equal(box.bottom, 642);
+      assert.equal(x.overlap(box, unrelated.textNodes[0].fragments).length, 1, 'do not silently expand this contract to unrelated copy');
+      assert.deepEqual(x.copyBoxReads, [copy]); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionQueries(state); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F footer and OUTPUT boxes retain the existing ancestor clipping boundary', { concurrency: false }, () => {
+  for (const kind of ['footer', 'weight']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, kind), { x, parent, copy, raw } = state;
+      // Explicitly declared clipping CSSOM: only x33..233 of the copy paints.
+      // The raw right-hand whitespace under Ask lies outside that inner clip.
+      parent.overflowX = 'hidden'; parent.clientWidth = 200;
+      const visible = d411Rect(33, raw.top, 200, raw.height);
+      const box = x.run();
+      assert.equal(x.overlap(box, [visible]).length, 0); assert.equal(x.overlap(box, [raw]).length, 1);
+      assert.equal(box.top, 650); assert.deepEqual(x.copyBoxReads, x.fCopyQueries.includes(state.selector) ? [copy] : []); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionQueries(state, false); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F footer and OUTPUT copy cannot authorize hovered Ask movement or take focus', { concurrency: false }, () => {
+  for (const kind of ['footer', 'weight']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, kind), { x, raw, ring, copy } = state;
+      x.hovered = true;
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw]).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+      assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.allCopyQueries, []);
+      assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []); fCopyOmissionUnchanged(state, box);
+      // A deliberately nonnative activeElement port must not acquire authority
+      // merely because that same copy node is one of the new ordinary families.
+      x.f.document.activeElement = copy; state.before = state.snapshot();
+      assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+// F r2 selects the SAME typed weight LABEL already returned by its native
+// association queries. These are declared synthetic text/box inventories, not
+// measured JA geometry or native DOM/paint/accessible-name observations.
+function fWeightLabelTextPlacement(t, {
+  direct = [{ text: 'Default influence', fragments: [d411Rect(244, 650, 43, 18)] }],
+  outputBox = d411Rect(40, 650, 80, 40),
+} = {}) {
+  const state = fCopyOmissionPlacement(t, 'weight'), { x, label, output, field } = state;
+  const labelRaw = d411Rect(33, 600, 254, 154), fieldset = label.parentElement;
+  fieldset.getBoundingClientRect = () => d411Rect(33, 592, 254, 168);
+  fieldset.clientWidth = 254; fieldset.clientHeight = 168;
+  label.clientWidth = labelRaw.width; label.clientHeight = labelRaw.height;
+  label.getBoundingClientRect = () => { x.copyBoxReads.push(label); return labelRaw; };
+  output.getBoundingClientRect = () => { x.copyBoxReads.push(output); return outputBox; };
+  state.raw = outputBox;
+  label.matches = selector => { assert.equal(selector, fLibraryWeightLabelCopySelector); return true; };
+  const closest = function(selector) {
+    if (selector === 'forma-library') return x.surface;
+    assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
+      ':modal, :popover-open'].includes(selector));
+    if (selector.startsWith('[hidden]')) {
+      if (this.hiddenAncestor) return this;
+      for (let node = this.parentElement; node; node = node.parentElement) if (node.hiddenAncestor) return node;
+    }
+    return null;
+  };
+  label.closest = closest; output.closest = closest;
+  const textNode = (text, fragments, parent) => ({
+    nodeType: 3, textContent: text, fragments, parentNode: parent, parentElement: parent,
+  });
+  const directNodes = direct.map(({ text, fragments }) => textNode(text, fragments, label));
+  const whitespace = textNode(' \n  ', [d411Rect(244, 650, 43, 18)], label);
+  const comment = { nodeType: 8, textContent: 'Lit marker, not visible text', fragments: [d411Rect(40, 632, 80, 12)], parentNode: label, parentElement: label };
+  const nested = x.ancestor(d411Rect(33, 632, 254, 58), {
+    nodeType: 1, tagName: 'SPAN', parentNode: label, parentElement: label, textContent: 'Separate nested text', closest,
+  });
+  const nestedText = textNode(nested.textContent, [d411Rect(40, 632, 80, 12)], nested);
+  nested.childNodes = [nestedText];
+  output.nodeType = 1; output.parentNode = label; field.nodeType = 1; field.parentNode = label;
+  Object.assign(output.textNodes[0], { nodeType: 3, parentNode: output });
+  label.childNodes = [...directNodes, whitespace, comment, output, field, nested];
+  // A real SHOW_TEXT traversal would also visit the OUTPUT and nested SPAN.
+  // Keep that complete inventory distinct so a generic descendant walk cannot
+  // masquerade as the required direct-TEXT-only traversal.
+  label.textNodes = [...directNodes, whitespace, output.textNodes[0], nestedText];
+  Object.defineProperty(label, 'textContent', { configurable: true, get() {
+    return directNodes.map(node => node.textContent).join('') + whitespace.textContent + output.textContent + nested.textContent;
+  } });
+  x.selectWeightLabelForTest(label);
+  const snapshot = state.snapshot;
+  state.snapshot = () => ({ ...snapshot(), directText: directNodes.map(node => node.textContent),
+    childOrder: [...label.childNodes], descendantTextInventory: [...label.textNodes],
+    nestedText: nestedText.textContent, commentText: comment.textContent });
+  Object.assign(state, { directNodes, whitespace, comment, nested, nestedText, labelRaw, outputBox });
+  state.before = state.snapshot();
+  return state;
+}
+function fWeightLabelQueries(state, requireLabel = true) {
+  fCopyOmissionQueries(state);
+  assert.deepEqual(state.x.fLabelQueries, requireLabel || state.x.fLabelQueries.length ? [fLibraryWeightLabelCopySelector] : []);
+}
+test('F weight direct label text alone and every wrapped fragment clear Ask with the named range unchanged', { concurrency: false }, () => {
+  const variants = [
+    [{ text: 'Default influence', fragments: [d411Rect(244, 650, 43, 18)] }],
+    [{ text: 'Default influence', fragments: [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)] }],
+    [{ text: 'Default ', fragments: [d411Rect(40, 650, 80, 18)] }, { text: 'influence', fragments: [d411Rect(244, 674, 43, 18)] }],
+  ];
+  for (const direct of variants) {
+    const cleanup = [];
+    try {
+      const state = fWeightLabelTextPlacement({ after: undo => cleanup.push(undo) }, { direct });
+      const { x, directNodes, outputBox, output, ring, label, field } = state;
+      const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, fragments).length, 1, 'only the direct label text supplies the initial copy collision');
+      assert.equal(x.overlap(initial, [outputBox, ring, field.getBoundingClientRect()]).length, 0);
+      const box = x.run();
+      // Geometry comes first: the preserved OUTPUT-only source leaves this
+      // label collision, independently of the added selector/traversal ledger.
+      assert.equal(x.overlap(box, [...fragments, outputBox, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+        'clear every direct text fragment together with the entire OUTPUT and native focus envelope');
+      fWeightLabelQueries(state);
+      assert.deepEqual(x.rangeReads, directNodes); assert.deepEqual(x.copyBoxReads, [output]);
+      assert.equal(label.control, field); assert.equal(field.ariaLabel, 'Default influence');
+      assert.deepEqual(field.labels, [label]); assert.deepEqual(output.htmlFor, [field.id]);
+      assert.deepEqual(state.formQueries, [fLibraryWeightFormSelector, fLibraryWeightFormSelector]);
+      assert.deepEqual(state.associationQueries, [
+        fLibraryWeightLabelSelector, ':scope > output', ':scope > input[type="range"]',
+        fLibraryWeightLabelSelector, ':scope > output', ':scope > input[type="range"]',
+      ]);
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F weight relanding clears direct label text as well as the whole OUTPUT and native ring', { concurrency: false }, t => {
+  const state = fWeightLabelTextPlacement(t, {
+    direct: [{ text: 'Default influence', fragments: [d411Rect(244, 612, 43, 18)] }],
+    outputBox: d411Rect(33, 650, 254, 40),
+  });
+  const { x, directNodes, outputBox, output, ring } = state;
+  const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [outputBox]).length, 1); assert.equal(x.overlap(initial, [...fragments, ring]).length, 0);
+  const outputOnlyDestination = d411Rect(266, 598, 44, 44);
+  assert.equal(x.overlap(outputOnlyDestination, [outputBox, ring]).length, 0);
+  assert.equal(x.overlap(outputOnlyDestination, fragments).length, 1, 'the declared upstream label defeats an OUTPUT-only destination');
+  const box = x.run();
+  assert.equal(x.overlap(box, [...fragments, outputBox, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+  fWeightLabelQueries(state); assert.deepEqual(x.rangeReads, directNodes); assert.deepEqual(x.copyBoxReads, [output]);
+  fCopyOmissionUnchanged(state, box);
+});
+test('F weight label whitespace, comments and nested descendants do not become a whole-row copy obstacle', { concurrency: false }, () => {
+  for (const mode of ['row-whitespace', 'nested-text', 'comment-text', 'clipped-direct-text']) {
+    const cleanup = [];
+    try {
+      const direct = [{ text: 'Default influence', fragments: [d411Rect(40, 616, 80, 18)] }];
+      const state = fWeightLabelTextPlacement({ after: undo => cleanup.push(undo) }, { direct });
+      const { x, label, labelRaw, output, outputBox, directNodes, nestedText, comment, ring } = state;
+      const collision = d411Rect(244, 650, 43, 18);
+      if (mode === 'nested-text') nestedText.fragments = [collision];
+      if (mode === 'comment-text') comment.fragments = [collision];
+      if (mode === 'clipped-direct-text') {
+        directNodes[0].fragments = [collision];
+        // Declared client clipping retains only x33..233 of this row. The
+        // colliding direct text lies entirely outside that actual clip port.
+        label.overflowX = 'hidden'; label.clientWidth = 200;
+      }
+      state.before = state.snapshot();
+      const initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, [labelRaw]).length, 1); assert.equal(x.overlap(initial, [outputBox, ring]).length, 0);
+      if (mode === 'nested-text') assert.equal(x.overlap(initial, nestedText.fragments).length, 1);
+      if (mode === 'comment-text') assert.equal(x.overlap(initial, comment.fragments).length, 1);
+      const box = x.run();
+      assert.deepEqual(box, initial, mode + ': unadmitted or clipped text does not relocate Ask');
+      fWeightLabelQueries(state, false);
+      assert.deepEqual(x.rangeReads, x.fLabelQueries.length ? directNodes : []);
+      assert.deepEqual(x.copyBoxReads.filter(node => node !== label), [output]);
+      if (mode !== 'clipped-direct-text') assert.deepEqual(x.copyBoxReads, [output], 'do not read a duplicate whole-label box');
+      assert.equal(x.rangeReads.includes(nestedText), false); assert.equal(x.rangeReads.includes(comment), false);
+      assert.equal(x.rangeReads.includes(output.textNodes[0]), false); assert.equal(x.rangeReads.includes(state.whitespace), false);
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F weight direct label copy retains current-owner, connected OUTPUT, association and value guards', { concurrency: false }, () => {
+  for (const defect of ['foreign-label-owner', 'hidden-label', 'hidden-label-text', 'busy-main', 'duplicate-owner', 'foreign-main',
+    'disconnected-label', 'disconnected-output', 'untyped-label', 'untyped-output', 'duplicate-form', 'duplicate-label',
+    'no-direct-output', 'duplicate-output', 'no-direct-range', 'duplicate-range', 'label-controls-output', 'foreign-label-for',
+    'foreign-range-label', 'foreign-output-for', 'intervening-sibling', 'foreign-output-form', 'stale-percentage', 'invalid-current-value']) {
+    const cleanup = [];
+    try {
+      const state = fWeightLabelTextPlacement({ after: undo => cleanup.push(undo) });
+      const { x, label, output, field, forms, labels, outputs, fields, directNodes, outputBox, ring } = state;
+      if (defect === 'foreign-label-owner') { const closest = label.closest; label.closest = function(selector) { return selector === 'forma-library' ? {} : closest.call(this, selector); }; }
+      if (defect === 'hidden-label') label.hiddenAncestor = true;
+      if (defect === 'hidden-label-text') label.visibility = 'hidden';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-owner') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-library' ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'disconnected-label') label.isConnected = false;
+      if (defect === 'disconnected-output') output.isConnected = false;
+      if (defect === 'untyped-label') Object.setPrototypeOf(label, Object.prototype);
+      if (defect === 'untyped-output') Object.setPrototypeOf(output, Object.prototype);
+      const other = node => Object.assign(Object.create(Object.getPrototypeOf(node)), node);
+      if (defect === 'duplicate-form') forms.push(other(state.form));
+      if (defect === 'duplicate-label') labels.push(other(label));
+      if (defect === 'no-direct-output') outputs.length = 0;
+      if (defect === 'duplicate-output') outputs.push(other(output));
+      if (defect === 'no-direct-range') fields.length = 0;
+      if (defect === 'duplicate-range') fields.push(other(field));
+      if (defect === 'label-controls-output') label.control = output;
+      if (defect === 'foreign-label-for') label.htmlFor = 'another-range';
+      if (defect === 'foreign-range-label') field.labels = [other(label)];
+      if (defect === 'foreign-output-for') output.htmlFor = ['another-range'];
+      if (defect === 'intervening-sibling') field.previousElementSibling = {};
+      if (defect === 'foreign-output-form') output.form = {};
+      if (defect === 'stale-percentage') output.value = '60%';
+      if (defect === 'invalid-current-value') { field.value = '1.05'; output.value = '105%'; }
+      state.before = state.snapshot();
+      const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, fragments).length, 1); assert.equal(x.overlap(initial, [outputBox, ring]).length, 0);
+      const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, fragments).length, 1, defect + ': refusal is not copy-clearance evidence');
+      assert.deepEqual(x.rangeReads, [], defect + ': no refused label text is measured');
+      assert.equal(x.copyBoxReads.includes(label), false, defect + ': no whole-label fallback');
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F weight label text cannot authorize hovered Ask movement or become native focus authority', { concurrency: false }, t => {
+  const state = fWeightLabelTextPlacement(t), { x, label, directNodes, outputBox, ring } = state;
+  const fragments = directNodes.flatMap(node => node.fragments);
+  x.hovered = true;
+  const box = x.run();
+  assert.equal(x.overlap(box, fragments).length, 1); assert.equal(x.overlap(box, [outputBox, ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.allCopyQueries, []);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []); fCopyOmissionUnchanged(state, box);
+  // Deliberately defensive nonnative activeElement port, not a claim that a
+  // native LABEL receives focus from Tab in the real editor.
+  x.f.document.activeElement = label; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+  fCopyOmissionUnchanged(state, box);
+});
+
+// This is a separate source-derived Library omission, NOT the retained FR200
+// Document card observation. The unchanged Library renderer emits one direct
+// metadata P in its current editor header. Every coordinate below is synthetic
+// input to the real Panel -> updated -> finite RAF routine, not native pixels,
+// a complete rendered page, zoom evidence or an accessibility-tree observation.
+function fLibraryStatePlacement(t, { direct = [{ text: 'Direction · Guide · Unlocked', fragments: [d411Rect(244, 650, 43, 18)] }] } = {}) {
+  const x = e6CopyPlacement(t, { family: 'forma-library', viewport: { width: 320, height: 800 }, right: 310, top: 650, normalWidth: 44 });
+  const full = d411Rect(16, 0, 288, 800), raw = d411Rect(33, 620, 254, 74);
+  const editor = x.ancestor(full, { tagName: 'FORMA-LIBRARY-BLOCK-EDITOR', isConnected: true, parentElement: x.surface });
+  const section = x.ancestor(full, { tagName: 'SECTION', className: 'library-block-editor', parentElement: editor });
+  const header = x.ancestor(d411Rect(33, 600, 254, 194), { tagName: 'HEADER', className: 'library-block-editor-header', parentElement: section });
+  const metadata = x.ancestor(raw, { tagName: 'DIV', parentElement: header,
+    matches(selector) { assert.equal(selector, '.family-empty[data-forma-empty-state]'); return false; } });
+  const actions = x.ancestor(d411Rect(33, 740, 254, 44), { tagName: 'DIV', parentElement: header });
+  const calls = [], editorQueries = [], walkerReads = [], editors = [editor];
+  const copy = x.copy(fLibraryStateCopySelector, raw, [], { tagName: 'P', className: 'context-library-state', parentElement: metadata,
+    textContent: direct.map(node => node.text).join('') });
+  const originalClosest = copy.closest;
+  copy.closest = function(selector) { return selector === 'forma-library-block-editor' ? editor : originalClosest.call(this, selector); };
+  const textNode = (text, fragments, parent = copy) => ({ nodeType: 3, textContent: text, fragments, parentElement: parent, parentNode: parent });
+  const directNodes = direct.map(node => textNode(node.text, node.fragments));
+  const whitespace = textNode(' \n ', [d411Rect(244, 650, 43, 18)]);
+  const comment = { nodeType: 8, textContent: 'Lit marker', parentElement: copy, parentNode: copy, fragments: [d411Rect(244, 650, 43, 18)] };
+  const nested = x.ancestor(raw, { nodeType: 1, tagName: 'SPAN', parentElement: copy });
+  const nestedText = textNode('Unselected future nested content', [d411Rect(244, 650, 43, 18)], nested);
+  nested.childNodes = [nestedText];
+  copy.childNodes = [...directNodes, whitespace, comment, nested];
+  // A TreeWalker would reach nested text. Record that port separately so the
+  // metadata contract cannot silently expand to descendants or the whole P.
+  copy.textNodes = [...directNodes, whitespace, nestedText];
+  const treeWalker = x.f.document.createTreeWalker;
+  x.f.document.createTreeWalker = (element, kind) => { walkerReads.push(element); return treeWalker(element, kind); };
+  const query = x.surface.querySelectorAll;
+  x.surface.querySelectorAll = selector => {
+    if (selector === fLibraryStateEditorSelector) { editorQueries.push(selector); return editors; }
+    return query(selector);
+  };
+  const focused = x.control(d411Rect(193, 740, 94, 44), { tagName: 'BUTTON', type: 'button', parentElement: actions,
+    textContent: 'Back to Library', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+    focus: () => calls.push('focus-back'), click: () => calls.push('click-back') });
+  const field = x.control(d411Rect(33, 450, 254, 100), { tagName: 'TEXTAREA', parentElement: section, value: '  Preserve reusable direction العربية 日本語.  ',
+    focus: () => calls.push('focus-content'), click: () => calls.push('click-content') });
+  const ring = d411Rect(187, 734, 106, 56);
+  x.controls.push(field, focused); x.f.document.activeElement = focused;
+  x.surface.scrollTop = 17; x.f.panel.draftForTest = '  Preserve the independent Assistant question.  ';
+  const state = { x, raw, editor, editors, section, header, metadata, copy, directNodes, whitespace, comment, nested, nestedText,
+    calls, editorQueries, walkerReads, focused, field, ring };
+  state.snapshot = () => ({ focus: x.f.document.activeElement, controlBoxes: x.controls.map(control => control.getBoundingClientRect()),
+    focusPaint: [focused.outlineStyle, focused.outlineWidth, focused.outlineOffset], fieldValue: field.value,
+    text: copy.textContent, directText: directNodes.map(node => node.textContent), children: [...copy.childNodes],
+    parents: [copy.parentElement, metadata.parentElement, header.parentElement, section.parentElement, editor.parentElement, focused.parentElement, field.parentElement],
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope,
+    owner: x.f.panel.parentElement, scroll: x.surface.scrollTop });
+  state.before = state.snapshot();
+  return state;
+}
+function fLibraryStateUnchanged(state, box) {
+  const { x } = state;
+  assert.deepEqual(state.snapshot(), state.before, 'ordinary metadata placement changes no focus, control paint, content, DOM ownership, scroll, actions or Assistant state');
+  assert.deepEqual(state.calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.ok(box.top >= 8 && box.bottom <= 792);
+  assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.detached, x.rangeReads); assert.deepEqual(state.walkerReads, []);
+  assert.deepEqual(x.copyBoxReads, [], 'the metadata paragraph is never promoted to a whole box');
+}
+for (const shape of ['single fragment', 'wrapped text', 'split direct text']) {
+  test('F Library editor metadata clears Ask with existing native controls unchanged / ' + shape, { concurrency: false }, t => {
+    const direct = shape === 'single fragment'
+      ? [{ text: 'Direction · Guide · Unlocked', fragments: [d411Rect(244, 650, 43, 18)] }]
+      : shape === 'wrapped text'
+        ? [{ text: 'Direction · Guide · Unlocked', fragments: [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)] }]
+        : [{ text: 'Direction · Guide · ', fragments: [d411Rect(40, 650, 80, 18)] }, { text: 'Unlocked', fragments: [d411Rect(244, 674, 43, 18)] }];
+    const state = fLibraryStatePlacement(t, { direct }), { x, directNodes, ring } = state;
+    const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+    assert.equal(x.overlap(initial, fragments).length, 1, 'metadata alone supplies the initial collision');
+    assert.equal(x.overlap(initial, [ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    const box = x.run();
+    assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+      'clear every metadata fragment while preserving the exact native Back focus envelope and content field');
+    assert.deepEqual(x.fStateQueries, [fLibraryStateCopySelector]); assert.deepEqual(state.editorQueries, [fLibraryStateEditorSelector]);
+    assert.deepEqual(x.rangeReads, directNodes); fLibraryStateUnchanged(state, box);
+  });
+}
+test('F Library metadata rechecks an upstream fragment before settling Ask', { concurrency: false }, t => {
+  const state = fLibraryStatePlacement(t, { direct: [{ text: 'Direction · Guide · Unlocked', fragments: [d411Rect(244, 612, 43, 18), d411Rect(244, 650, 43, 18)] }] });
+  const { x, directNodes, ring } = state, fragments = directNodes.flatMap(node => node.fragments);
+  const firstDestination = d411Rect(266, 598, 44, 44);
+  assert.equal(x.overlap(firstDestination, fragments).length, 1, 'clearing the lower line alone would land on the upper one');
+  const box = x.run();
+  assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+  assert.deepEqual(x.rangeReads, directNodes); fLibraryStateUnchanged(state, box);
+});
+test('F Library metadata excludes stale, foreign, hidden and ambiguous owners before reading copy', { concurrency: false }, () => {
+  for (const defect of ['foreign-library', 'foreign-editor', 'disconnected-copy', 'disconnected-editor', 'hidden', 'inert', 'aria-hidden',
+    'hidden-text', 'display-none', 'transparent', 'busy-main', 'duplicate-library', 'foreign-main', 'duplicate-panel', 'duplicate-editor', 'duplicate-metadata']) {
+    const cleanup = [];
+    try {
+      const state = fLibraryStatePlacement({ after: undo => cleanup.push(undo) }), { x, copy, editor, editors, directNodes, ring } = state;
+      if (defect === 'foreign-library' || defect === 'foreign-editor') {
+        const closest = copy.closest, foreignSelector = defect === 'foreign-library' ? 'forma-library' : 'forma-library-block-editor';
+        copy.closest = function(selector) { return selector === foreignSelector ? {} : closest.call(this, selector); };
+      }
+      if (defect === 'disconnected-copy') copy.isConnected = false;
+      if (defect === 'disconnected-editor') editor.isConnected = false;
+      if (['hidden', 'inert', 'aria-hidden'].includes(defect)) {
+        const closest = copy.closest;
+        copy.closest = function(selector) { return selector.startsWith('[hidden]') ? { exclusion: defect } : closest.call(this, selector); };
+      }
+      if (defect === 'hidden-text') copy.visibility = 'hidden';
+      if (defect === 'display-none') state.header.display = 'none';
+      if (defect === 'transparent') state.header.opacity = '0';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-library') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-library' ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'duplicate-panel') x.shell.querySelectorAll = selector => { assert.equal(selector, 'forma-assistant-panel'); return [x.f.panel, { closest: () => x.shell }]; };
+      if (defect === 'duplicate-editor') editors.push({ ...editor });
+      if (defect === 'duplicate-metadata') x.copy(fLibraryStateCopySelector, state.raw, [], { ...copy });
+      state.before = state.snapshot();
+      const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, directNodes.flatMap(node => node.fragments)).length, 1,
+        defect + ': refused copy is not falsely reported clear');
+      assert.equal(x.overlap(box, [ring]).length, 0);
+      const observedVisibleChain = ['display-none', 'transparent'].includes(defect) && x.fStateQueries.length;
+      assert.deepEqual(x.rangeReads, observedVisibleChain ? directNodes : [], defect);
+      fLibraryStateUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F Library metadata protects direct text without enclosing whitespace or nested descendant paint', { concurrency: false }, t => {
+  const state = fLibraryStatePlacement(t, { direct: [{ text: 'Direction · Guide · Unlocked', fragments: [d411Rect(40, 620, 80, 18)] }] });
+  const { x, raw, directNodes, whitespace, comment, nestedText, ring } = state;
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, directNodes.flatMap(node => node.fragments)).length, 0);
+  assert.equal(x.overlap(initial, nestedText.fragments).length, 1, 'a synthetic nested descendant would obstruct Ask if this contract expanded');
+  const box = x.run();
+  assert.deepEqual(box, initial); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.rangeReads, x.fStateQueries.length ? directNodes : []);
+  for (const unselected of [whitespace, comment, nestedText]) assert.equal(x.rangeReads.includes(unselected), false);
+  fLibraryStateUnchanged(state, box);
+});
+test('F Library metadata cannot authorize hovered Ask movement or become native focus authority', { concurrency: false }, t => {
+  const state = fLibraryStatePlacement(t), { x, copy, directNodes, ring } = state;
+  x.hovered = true;
+  const box = x.run();
+  assert.equal(x.overlap(box, directNodes.flatMap(node => node.fragments)).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.allCopyQueries, []);
+  assert.deepEqual(x.rangeReads, []); fLibraryStateUnchanged(state, box);
+  // This defensive nonnative activeElement port makes no claim that native
+  // Tab can focus an ordinary paragraph in the real Library editor.
+  x.f.document.activeElement = copy; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+  fLibraryStateUnchanged(state, box);
+});
+test('F an impossible Library metadata lane stays finite and explicitly unresolved', { concurrency: false }, t => {
+  const state = fLibraryStatePlacement(t, { direct: [{ text: 'Declared no-fit metadata stress', fragments: [d411Rect(0, 0, 320, 800)] }] });
+  const { x, directNodes } = state, box = x.run();
+  assert.equal(x.overlap(box, directNodes.flatMap(node => node.fragments)).length, 1, 'no available lane is not misreported as clearance');
+  assert.deepEqual(x.rangeReads, x.fStateQueries.length ? directNodes : []); fLibraryStateUnchanged(state, box);
+});
+
+// Document's closed authored-summary lock text is a distinct retained FR200
+// omission (Ask covered "Déverrouillé"). ALL geometry below is synthesized for
+// the existing placement fixture; it neither replays those pixels nor closes
+// native zoom, rendering, focus-order or browser acceptance. The real renderer
+// has peer hosts and recursively nested summaries, so status uniqueness belongs
+// to one summary, not to the entire Document or a host's complete subtree.
+function fDocumentStatePlacement(t) {
+  const x = e6CopyPlacement(t, { family: 'forma-workspace', viewport: { width: 320, height: 800 }, right: 310, top: 650, normalWidth: 44 });
+  const full = d411Rect(0, 0, 320, 800), raw = d411Rect(244, 620, 43, 74);
+  const page = x.ancestor(full, { parentElement: x.surface }), main = x.ancestor(full, { parentElement: page });
+  const grid = x.ancestor(full, { parentElement: main }), panel = x.ancestor(full, { isConnected: true, parentElement: grid });
+  const list = x.ancestor(full, { parentElement: panel });
+  const panels = [panel], hosts = [], cards = [], calls = [], ownershipQueries = [], walkerReads = [];
+  const query = x.surface.querySelectorAll;
+  x.surface.querySelectorAll = selector => {
+    if (selector === fDocumentStatePanelSelector) { ownershipQueries.push(selector); return panels; }
+    return query(selector);
+  };
+  panel.querySelectorAll = selector => { assert.equal(selector, fDocumentStateHostsSelector); ownershipQueries.push(selector); return hosts; };
+  const treeWalker = x.f.document.createTreeWalker;
+  x.f.document.createTreeWalker = (element, kind) => { walkerReads.push(element); return treeWalker(element, kind); };
+  const addHost = id => {
+    const host = x.ancestor(full, { tagName: 'FORMA-CONTEXT-BLOCK', isConnected: true, parentElement: list, surface: 'document', block: { id } });
+    const decision = x.ancestor(full, { isConnected: true, parentElement: host, dataset: { controlsOpen: 'false' } });
+    const wrapper = x.ancestor(full, { isConnected: true, parentElement: decision, id: 'context-controls-document-' + id });
+    const decisions = [decision], wrappers = [wrapper], roots = [];
+    host.querySelectorAll = selector => { assert.equal(selector, ':scope > section.context-decision'); ownershipQueries.push(selector); return decisions; };
+    decision.querySelectorAll = selector => { assert.equal(selector, ':scope > div[id^="context-controls-"]'); ownershipQueries.push(selector); return wrappers; };
+    wrapper.querySelectorAll = selector => { assert.equal(selector, ':scope > ' + fDocumentSummarySelector); ownershipQueries.push(selector); return roots; };
+    hosts.push(host); return { host, decision, wrapper, decisions, wrappers, roots };
+  };
+  const addCard = (owner, id, fragments, parentCard = null, direct = null) => {
+    let parent = owner.wrapper, children = null, item = null;
+    if (parentCard) {
+      children = x.ancestor(full, { parentElement: parentCard.body, matches: selector => selector === 'ol.context-authored-children' });
+      item = x.ancestor(full, { parentElement: children, matches: selector => selector === 'li' }); parent = item;
+    }
+    const article = x.ancestor(full, { isConnected: true, parentElement: parent, dataset: { blockId: id }, matches: selector => selector === fDocumentSummarySelector });
+    const body = x.ancestor(full, { parentElement: article, matches: selector => selector === 'div.block-body' });
+    const heading = x.ancestor(full, { parentElement: body }), status = x.ancestor(raw, { parentElement: heading });
+    const copy = x.copy(fDocumentStateCopySelector, raw, [], { tagName: 'SPAN', parentElement: status, textContent: 'Déverrouillé' });
+    const closest = copy.closest;
+    copy.closest = function(selector) {
+      if (selector === '#document-context-panel') return panel;
+      if (selector === 'forma-context-block') return owner.host;
+      if (selector === fDocumentSummarySelector) return article;
+      return closest.call(this, selector);
+    };
+    const textNode = (text, bounds, parentElement = copy) => ({ nodeType: 3, textContent: text, fragments: bounds, parentElement, parentNode: parentElement });
+    const directNodes = (direct ?? [{ text: 'Déverrouillé', fragments }]).map(node => textNode(node.text, node.fragments));
+    const whitespace = textNode(' \n ', [raw]), comment = { nodeType: 8, textContent: 'Lit marker', parentElement: copy, parentNode: copy };
+    const icon = x.ancestor(raw, { nodeType: 1, tagName: 'SVG', parentElement: copy });
+    const iconText = textNode('Synthetic icon descendant', [raw], icon); icon.childNodes = [iconText];
+    copy.textContent = directNodes.map(node => node.textContent).join('');
+    copy.childNodes = [icon, comment, ...directNodes, whitespace]; copy.textNodes = [iconText, ...directNodes, whitespace];
+    const statuses = [copy];
+    article.querySelectorAll = selector => { assert.equal(selector, ':scope' + fDocumentStatusPath); ownershipQueries.push(selector); return statuses; };
+    if (!parentCard) owner.roots.push(article);
+    const card = { owner, article, body, heading, status, copy, directNodes, whitespace, comment, icon, iconText, statuses, children, item };
+    cards.push(card); return card;
+  };
+  const owner = addHost('direction-1'), card = addCard(owner, 'direction-1', [d411Rect(244, 650, 43, 18)]);
+  const focused = x.control(d411Rect(193, 740, 94, 44), { tagName: 'BUTTON', type: 'button', parentElement: owner.decision,
+    textContent: 'Controls for Direction', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+    focus: () => calls.push('focus-controls'), click: () => calls.push('open-controls') });
+  const select = x.control(d411Rect(33, 740, 110, 44), { tagName: 'INPUT', type: 'radio', parentElement: owner.decision, checked: true,
+    focus: () => calls.push('focus-selection'), click: () => calls.push('select-decision') });
+  x.controls.push(select, focused); x.f.document.activeElement = focused;
+  x.surface.scrollTop = 17; x.f.panel.draftForTest = '  Keep this independent question.  ';
+  const ring = d411Rect(187, 734, 106, 56);
+  const state = { x, raw, panel, panels, hosts, cards, owner, card, addHost, addCard, calls, ownershipQueries, walkerReads, focused, select, ring };
+  state.snapshot = () => ({ focus: x.f.document.activeElement, focusPaint: [focused.outlineStyle, focused.outlineWidth, focused.outlineOffset],
+    controls: x.controls.map(control => ({ element: control, box: control.getBoundingClientRect(), parent: control.parentElement })), checked: select.checked,
+    cards: cards.map(item => ({ text: item.copy.textContent, direct: item.directNodes.map(node => node.textContent), children: [...item.copy.childNodes],
+      parents: [item.copy.parentElement, item.status.parentElement, item.heading.parentElement, item.body.parentElement, item.article.parentElement],
+      block: item.owner.host.block, controlsOpen: item.owner.decision.dataset.controlsOpen })),
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope,
+    owner: x.f.panel.parentElement, scroll: x.surface.scrollTop });
+  state.before = state.snapshot(); return state;
+}
+function fDocumentStateUnchanged(state, box) {
+  const { x } = state;
+  assert.deepEqual(state.snapshot(), state.before, 'copy protection changes no decision, Controls state, native focus paint, DOM, scroll, action or Assistant state');
+  assert.deepEqual(state.calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.ok(box.top >= 8 && box.bottom <= 792);
+  assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(state.walkerReads, []); assert.deepEqual(x.detached, x.rangeReads);
+}
+for (const shape of ['single fragment', 'wrapped text', 'split direct text', 'peer cards', 'nested summaries']) {
+  test('F Document closed-card lock text clears Ask and preserves native Controls focus / ' + shape, { concurrency: false }, t => {
+    const state = fDocumentStatePlacement(t), { x, card, owner, cards, ring } = state;
+    if (shape === 'wrapped text') card.directNodes[0].fragments = [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)];
+    if (shape === 'split direct text') {
+      card.directNodes[0].textContent = 'Déver'; card.directNodes[0].fragments = [d411Rect(40, 650, 80, 18)];
+      const tail = { nodeType: 3, textContent: 'rouillé', fragments: [d411Rect(244, 674, 43, 18)], parentElement: card.copy, parentNode: card.copy };
+      card.directNodes.push(tail); card.copy.childNodes.push(tail); card.copy.textNodes.push(tail);
+    }
+    if (shape === 'peer cards') state.addCard(state.addHost('direction-2'), 'direction-2', [d411Rect(244, 612, 43, 18)]);
+    if (shape === 'nested summaries') {
+      const child = state.addCard(owner, 'child', [d411Rect(244, 612, 43, 18)], card);
+      state.addCard(owner, 'grandchild', [d411Rect(244, 574, 43, 18)], child);
+      state.addCard(owner, 'sibling', [d411Rect(244, 536, 43, 18)], card);
+    }
+    state.before = state.snapshot();
+    const directNodes = cards.flatMap(item => item.directNodes), fragments = directNodes.flatMap(node => node.fragments);
+    const initial = x.launcher.getBoundingClientRect();
+    assert.equal(x.overlap(initial, fragments).length, 1, 'only status text supplies the initial collision');
+    assert.equal(x.overlap(initial, [ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    if (cards.length > 1) assert.equal(x.overlap(d411Rect(266, 598, 44, 44), fragments).length, 1, 'clearing the first card alone would land on another legitimate status');
+    const box = x.run();
+    assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+      'clear all selected text fragments, peer and nested summaries while preserving the current native Controls envelope');
+    assert.deepEqual(x.fDocumentStateQueries, [fDocumentStateCopySelector]); assert.deepEqual(x.rangeReads, directNodes);
+    assert.ok(state.ownershipQueries.includes(fDocumentStatePanelSelector)); fDocumentStateUnchanged(state, box);
+  });
+}
+test('F Document status rejects foreign, stale, open, hidden and ambiguous render owners', { concurrency: false }, () => {
+  for (const defect of ['foreign-workspace', 'foreign-panel', 'foreign-host', 'disconnected-copy', 'disconnected-host', 'wrong-surface', 'missing-block-id',
+    'duplicate-panel', 'duplicate-host-id', 'missing-decision', 'duplicate-decision', 'open-decision', 'disconnected-decision',
+    'wrong-wrapper-id', 'duplicate-wrapper', 'disconnected-wrapper', 'missing-root', 'duplicate-root', 'stale-root-id', 'disconnected-root',
+    'unowned-summary', 'wrong-nested-chain', 'duplicate-status', 'foreign-status', 'hidden', 'inert', 'aria-hidden', 'hidden-text', 'display-none', 'transparent',
+    'busy-main', 'duplicate-workspace', 'foreign-main', 'duplicate-panel-owner']) {
+    const cleanup = [];
+    try {
+      const state = fDocumentStatePlacement({ after: undo => cleanup.push(undo) }), { x, card, owner, hosts, panels, ring } = state;
+      if (['foreign-workspace', 'foreign-panel', 'foreign-host'].includes(defect)) {
+        const closest = card.copy.closest, target = { 'foreign-workspace': 'forma-workspace', 'foreign-panel': '#document-context-panel', 'foreign-host': 'forma-context-block' }[defect];
+        card.copy.closest = function(selector) { return selector === target ? {} : closest.call(this, selector); };
+      }
+      if (defect === 'disconnected-copy') card.copy.isConnected = false;
+      if (defect === 'disconnected-host') owner.host.isConnected = false;
+      if (defect === 'wrong-surface') owner.host.surface = 'library';
+      if (defect === 'missing-block-id') owner.host.block.id = '';
+      if (defect === 'duplicate-panel') panels.push({ ...state.panel });
+      if (defect === 'duplicate-host-id') hosts.push({ ...owner.host });
+      if (defect === 'missing-decision') owner.decisions.length = 0;
+      if (defect === 'duplicate-decision') owner.decisions.push({ ...owner.decision });
+      if (defect === 'open-decision') owner.decision.dataset.controlsOpen = 'true';
+      if (defect === 'disconnected-decision') owner.decision.isConnected = false;
+      if (defect === 'wrong-wrapper-id') owner.wrapper.id = 'context-controls-document-stale';
+      if (defect === 'duplicate-wrapper') owner.wrappers.push({ ...owner.wrapper });
+      if (defect === 'disconnected-wrapper') owner.wrapper.isConnected = false;
+      if (defect === 'missing-root') owner.roots.length = 0;
+      if (defect === 'duplicate-root') owner.roots.push({ ...card.article });
+      if (defect === 'stale-root-id') card.article.dataset.blockId = 'stale-direction';
+      if (defect === 'disconnected-root') card.article.isConnected = false;
+      if (defect === 'unowned-summary') {
+        const closest = card.copy.closest;
+        card.copy.closest = function(selector) { return selector === fDocumentSummarySelector ? { ...card.article, parentElement: state.panel } : closest.call(this, selector); };
+      }
+      if (defect === 'wrong-nested-chain') {
+        // Keep a valid root, but make the selected article an unowned nested
+        // branch rather than the renderer's LI/OL/body ancestry.
+        owner.roots[0] = { ...card.article }; card.article.parentElement = state.panel;
+      }
+      if (defect === 'duplicate-status') card.statuses.push({ ...card.copy });
+      if (defect === 'foreign-status') card.statuses[0] = { ...card.copy };
+      if (['hidden', 'inert', 'aria-hidden'].includes(defect)) {
+        const closest = card.copy.closest; card.copy.closest = function(selector) { return selector.startsWith('[hidden]') ? { exclusion: defect } : closest.call(this, selector); };
+      }
+      if (defect === 'hidden-text') card.copy.visibility = 'hidden';
+      if (defect === 'display-none') state.panel.display = 'none';
+      if (defect === 'transparent') state.panel.opacity = '0';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-workspace') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-workspace' ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'duplicate-panel-owner') x.shell.querySelectorAll = selector => { assert.equal(selector, 'forma-assistant-panel'); return [x.f.panel, { closest: () => x.shell }]; };
+      state.before = state.snapshot(); const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, card.directNodes.flatMap(node => node.fragments)).length, 1,
+        defect + ': refused text is not falsely certified clear');
+      assert.equal(x.overlap(box, [ring]).length, 0);
+      const displayChain = ['display-none', 'transparent'].includes(defect) && x.fDocumentStateQueries.length;
+      assert.deepEqual(x.rangeReads, displayChain ? card.directNodes : [], defect); fDocumentStateUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F Document lock status measures direct text without icon descendants or enclosing whitespace', { concurrency: false }, t => {
+  const state = fDocumentStatePlacement(t), { x, card, raw } = state;
+  card.directNodes[0].fragments = [d411Rect(40, 620, 80, 18)]; state.before = state.snapshot();
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, card.iconText.fragments).length, 1);
+  assert.equal(x.overlap(initial, card.directNodes[0].fragments).length, 0);
+  const box = x.run(); assert.deepEqual(box, initial);
+  assert.deepEqual(x.rangeReads, x.fDocumentStateQueries.length ? card.directNodes : []);
+  for (const unselected of [card.iconText, card.whitespace, card.comment]) assert.equal(x.rangeReads.includes(unselected), false);
+  fDocumentStateUnchanged(state, box);
+});
+test('F Document lock text cannot invoke the hovered native-focus exception or open Controls', { concurrency: false }, t => {
+  const state = fDocumentStatePlacement(t), { x, card, ring } = state;
+  x.hovered = true; const box = x.run();
+  assert.equal(x.overlap(box, card.directNodes[0].fragments).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.rangeReads, []);
+  fDocumentStateUnchanged(state, box);
+  // Retain hover and defensively point activeElement at the colliding text.
+  // Copy still cannot acquire the authority reserved for native control focus.
+  x.f.document.activeElement = card.copy; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+  fDocumentStateUnchanged(state, box);
+});
+test('F an impossible Document lock-text lane stays finite and explicitly unresolved', { concurrency: false }, t => {
+  const state = fDocumentStatePlacement(t), { x, card } = state;
+  card.directNodes[0].fragments = [d411Rect(0, 0, 320, 800)]; state.before = state.snapshot();
+  const box = x.run(); assert.equal(x.overlap(box, card.directNodes[0].fragments).length, 1);
+  assert.deepEqual(x.rangeReads, x.fDocumentStateQueries.length ? card.directNodes : []); fDocumentStateUnchanged(state, box);
+});
+
+// The retained Experience R3 observation is authored Direction prose under Ask;
+// the later offscreen paragraph does not close it. These independent synthetic
+// Range inputs exercise that exact closed-summary P with the accepted ownership
+// fixture. No coordinates below are recovered native pixels or browser proof.
+function fDocumentBodyPlacement(t) {
+  const state = fDocumentStatePlacement(t), { x } = state;
+  const paragraphs = [], byCard = new Map();
+  const addParagraph = (card, { direct = [{ text: '  Keep the lower Direction text visible — العربية — 日本語.  ', fragments: [d411Rect(244, 650, 43, 18)] }], selector = fDocumentBodyCopySelector } = {}) => {
+    // The already-protected lock text is explicit non-colliding input. A body
+    // omission must not pass merely because the status moved Ask incidentally.
+    card.directNodes[0].fragments = [d411Rect(40, 590, 80, 18)];
+    const raw = d411Rect(33, 620, 254, 94);
+    const copy = x.copy(selector, raw, [], { tagName: 'P', parentElement: card.body,
+      textContent: direct.map(node => node.text).join(''), dir: 'auto', dataset: { formaContent: 'primary' },
+      closest(query) { return card.copy.closest.call(this, query); } });
+    const textNode = (text, fragments, parent = copy) => ({ nodeType: 3, textContent: text, fragments, parentElement: parent, parentNode: parent });
+    const directNodes = direct.map(node => textNode(node.text, node.fragments));
+    const whitespace = textNode(' \n ', [raw]), comment = { nodeType: 8, textContent: 'Lit marker', parentElement: copy, parentNode: copy };
+    const nested = x.ancestor(raw, { nodeType: 1, tagName: 'EM', parentElement: copy });
+    const nestedText = textNode('Synthetic unselected descendant', [raw], nested); nested.childNodes = [nestedText];
+    copy.childNodes = [...directNodes, whitespace, comment, nested]; copy.textNodes = [...directNodes, whitespace, nestedText];
+    let copies = byCard.get(card);
+    if (!copies) {
+      copies = []; byCard.set(card, copies);
+      const query = card.article.querySelectorAll;
+      card.article.querySelectorAll = querySelector => {
+        if (querySelector === ':scope' + fDocumentBodyPath) { state.ownershipQueries.push(querySelector); return copies; }
+        return query(querySelector);
+      };
+    }
+    if (selector === fDocumentBodyCopySelector) copies.push(copy);
+    const paragraph = { card, raw, copy, directNodes, whitespace, comment, nested, nestedText, copies, selector };
+    paragraphs.push(paragraph); return paragraph;
+  };
+  const paragraph = addParagraph(state.card), originalSnapshot = state.snapshot;
+  state.snapshot = () => ({ document: originalSnapshot(), paragraphs: paragraphs.map(item => ({ text: item.copy.textContent,
+    directText: item.directNodes.map(node => node.textContent), children: [...item.copy.childNodes], parent: item.copy.parentElement,
+    dir: item.copy.dir, primary: item.copy.dataset.formaContent })) });
+  Object.assign(state, { paragraphs, paragraph, addParagraph }); state.before = state.snapshot(); return state;
+}
+function fDocumentBodyReads(state, admitted = true) {
+  const { x } = state, directNodes = state.paragraphs.flatMap(item => item.directNodes);
+  assert.deepEqual(x.rangeReads.filter(node => directNodes.includes(node)), admitted ? directNodes : [],
+    'only the exact admitted direct body text receives Range measurement');
+  for (const item of state.paragraphs) for (const excluded of [item.whitespace, item.comment, item.nestedText]) {
+    assert.equal(x.rangeReads.includes(excluded), false, 'body descendants and whitespace are not promoted into this copy contract');
+  }
+}
+for (const shape of ['single fragment', 'wrapped text', 'split direct text', 'peer cards', 'nested summaries']) {
+  test('F authored Document body clears Ask with lock text and native Controls unchanged / ' + shape, { concurrency: false }, t => {
+    const state = fDocumentBodyPlacement(t), { x, paragraph, card, owner, ring } = state;
+    if (shape === 'wrapped text') paragraph.directNodes[0].fragments = [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)];
+    if (shape === 'split direct text') {
+      paragraph.directNodes[0].textContent = 'Keep the direction '; paragraph.directNodes[0].fragments = [d411Rect(40, 650, 80, 18)];
+      const tail = { nodeType: 3, textContent: 'العربية 日本語 visible.', fragments: [d411Rect(244, 674, 43, 18)], parentElement: paragraph.copy, parentNode: paragraph.copy };
+      paragraph.directNodes.push(tail); paragraph.copy.childNodes.push(tail); paragraph.copy.textNodes.push(tail);
+      paragraph.copy.textContent = paragraph.directNodes.map(node => node.textContent).join('');
+    }
+    if (shape === 'peer cards') {
+      const peer = state.addCard(state.addHost('direction-2'), 'direction-2', [d411Rect(40, 590, 80, 18)]);
+      state.addParagraph(peer, { direct: [{ text: 'A distinct peer decision.', fragments: [d411Rect(244, 612, 43, 18)] }] });
+    }
+    if (shape === 'nested summaries') {
+      const child = state.addCard(owner, 'child', [d411Rect(40, 590, 80, 18)], card);
+      const grandchild = state.addCard(owner, 'grandchild', [d411Rect(40, 590, 80, 18)], child);
+      state.addParagraph(child, { direct: [{ text: 'Child direction.', fragments: [d411Rect(244, 612, 43, 18)] }] });
+      state.addParagraph(grandchild, { direct: [{ text: 'Grandchild direction.', fragments: [d411Rect(244, 574, 43, 18)] }] });
+    }
+    state.before = state.snapshot();
+    const bodyNodes = state.paragraphs.flatMap(item => item.directNodes), bodyFragments = bodyNodes.flatMap(node => node.fragments);
+    const statusNodes = state.cards.flatMap(item => item.directNodes), statusFragments = statusNodes.flatMap(node => node.fragments);
+    const initial = x.launcher.getBoundingClientRect();
+    assert.equal(x.overlap(initial, bodyFragments).length, 1, 'body text alone supplies the initial collision');
+    assert.equal(x.overlap(initial, [...statusFragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    if (state.paragraphs.length > 1) assert.equal(x.overlap(d411Rect(266, 598, 44, 44), bodyFragments).length, 1,
+      'clearing the first paragraph alone would land on another legitimate authored summary');
+    const box = x.run();
+    assert.equal(x.overlap(box, [...bodyFragments, ...statusFragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+      'clear every selected body fragment together with retained status copy and native Controls paint');
+    assert.deepEqual(x.fDocumentBodyQueries, [fDocumentBodyCopySelector]);
+    assert.deepEqual(x.rangeReads, [...statusNodes, ...bodyNodes]); fDocumentBodyReads(state); fDocumentStateUnchanged(state, box);
+  });
+}
+test('F Document lock clearance cannot land Ask over the authored paragraph', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, card, paragraph, ring } = state;
+  card.directNodes[0].fragments = [d411Rect(244, 650, 43, 18)];
+  paragraph.directNodes[0].fragments = [d411Rect(244, 612, 43, 18)]; state.before = state.snapshot();
+  const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, card.directNodes[0].fragments).length, 1); assert.equal(x.overlap(initial, paragraph.directNodes[0].fragments).length, 0);
+  assert.equal(x.overlap(d411Rect(266, 598, 44, 44), paragraph.directNodes[0].fragments).length, 1, 'the accepted status-only destination is obstructed by body text');
+  const box = x.run();
+  assert.equal(x.overlap(box, [...card.directNodes[0].fragments, ...paragraph.directNodes[0].fragments, ring]).length, 0);
+  assert.deepEqual(x.rangeReads, [...card.directNodes, ...paragraph.directNodes]); fDocumentBodyReads(state); fDocumentStateUnchanged(state, box);
+});
+test('F authored Document paragraphs retain current ownership and independent per-card uniqueness', { concurrency: false }, () => {
+  for (const defect of ['foreign-workspace', 'foreign-panel', 'foreign-host', 'disconnected-copy', 'wrong-surface', 'stale-wrapper', 'stale-root',
+    'open-controls', 'duplicate-host', 'wrong-nested-chain', 'duplicate-body', 'foreign-body', 'hidden', 'inert', 'aria-hidden', 'hidden-text',
+    'display-none', 'transparent', 'busy-main', 'duplicate-workspace']) {
+    const cleanup = [];
+    try {
+      const state = fDocumentBodyPlacement({ after: undo => cleanup.push(undo) }), { x, card, paragraph, owner, ring } = state;
+      if (['foreign-workspace', 'foreign-panel', 'foreign-host'].includes(defect)) {
+        const closest = paragraph.copy.closest, target = { 'foreign-workspace': 'forma-workspace', 'foreign-panel': '#document-context-panel', 'foreign-host': 'forma-context-block' }[defect];
+        paragraph.copy.closest = function(selector) { return selector === target ? {} : closest.call(this, selector); };
+      }
+      if (defect === 'disconnected-copy') paragraph.copy.isConnected = false;
+      if (defect === 'wrong-surface') owner.host.surface = 'library';
+      if (defect === 'stale-wrapper') owner.wrapper.id = 'context-controls-document-stale';
+      if (defect === 'stale-root') card.article.dataset.blockId = 'stale-direction';
+      if (defect === 'open-controls') owner.decision.dataset.controlsOpen = 'true';
+      if (defect === 'duplicate-host') state.hosts.push({ ...owner.host });
+      if (defect === 'wrong-nested-chain') { owner.roots[0] = { ...card.article }; card.article.parentElement = state.panel; }
+      if (defect === 'duplicate-body') state.addParagraph(card);
+      if (defect === 'foreign-body') paragraph.copies[0] = { ...paragraph.copy };
+      if (['hidden', 'inert', 'aria-hidden'].includes(defect)) {
+        const closest = paragraph.copy.closest;
+        paragraph.copy.closest = function(selector) { return selector.startsWith('[hidden]') ? { exclusion: defect } : closest.call(this, selector); };
+      }
+      if (defect === 'hidden-text') paragraph.copy.visibility = 'hidden';
+      if (defect === 'display-none') state.panel.display = 'none';
+      if (defect === 'transparent') state.panel.opacity = '0';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-workspace') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-workspace' ? [x.surface, { ...x.surface }] : found; }; }
+      state.before = state.snapshot(); const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, paragraph.directNodes.flatMap(node => node.fragments)).length, 1,
+        defect + ': refusal is not reported as body clearance');
+      assert.equal(x.overlap(box, [ring]).length, 0);
+      const measuredThenClipped = ['display-none', 'transparent'].includes(defect) && x.fDocumentBodyQueries.length;
+      fDocumentBodyReads(state, Boolean(measuredThenClipped));
+      if (['duplicate-body', 'foreign-body'].includes(defect)) assert.deepEqual(x.rangeReads.filter(node => card.directNodes.includes(node)), card.directNodes,
+        'malformed prose cannot suppress independently valid lock-state copy');
+      fDocumentStateUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F authored Document text excludes nested descendants, enclosing whitespace and neighboring unselected prose', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, paragraph, card } = state;
+  paragraph.directNodes[0].fragments = [d411Rect(40, 620, 80, 18)];
+  const neighbor = state.addParagraph(card, { selector: fDocumentStatePanelSelector + ' p.unselected-guidance' });
+  state.before = state.snapshot(); const initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [paragraph.raw]).length, 1); assert.equal(x.overlap(initial, paragraph.nestedText.fragments).length, 1);
+  assert.equal(x.overlap(initial, neighbor.directNodes[0].fragments).length, 1);
+  const box = x.run(); assert.deepEqual(box, initial);
+  assert.deepEqual(x.rangeReads, [...card.directNodes, ...(x.fDocumentBodyQueries.length ? paragraph.directNodes : [])]);
+  for (const excluded of [paragraph.nestedText, paragraph.whitespace, paragraph.comment, ...neighbor.directNodes]) assert.equal(x.rangeReads.includes(excluded), false);
+  fDocumentStateUnchanged(state, box);
+});
+test('F authored Document fragments obey the existing ancestor clip', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, card, paragraph } = state;
+  // Explicit CSSOM input clips at x=200; the colliding fragment at x244 is
+  // outside that clip. It is measured but cannot count as visible paint.
+  card.body.overflowX = 'hidden'; card.body.clientWidth = 200; state.before = state.snapshot();
+  const initial = x.launcher.getBoundingClientRect(); assert.equal(x.overlap(initial, paragraph.directNodes[0].fragments).length, 1);
+  const box = x.run(); assert.deepEqual(box, initial);
+  fDocumentBodyReads(state, Boolean(x.fDocumentBodyQueries.length)); fDocumentStateUnchanged(state, box);
+});
+test('F authored Document body cannot invoke the hovered native-focus exception', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, paragraph, ring } = state;
+  x.hovered = true; const box = x.run();
+  assert.equal(x.overlap(box, paragraph.directNodes[0].fragments).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.rangeReads, []);
+  fDocumentStateUnchanged(state, box);
+  // The colliding paragraph stays outside the native control authority list.
+  x.f.document.activeElement = paragraph.copy; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+  fDocumentStateUnchanged(state, box);
+});
+test('F an impossible authored Document body lane stays finite and explicitly unresolved', { concurrency: false }, t => {
+  const state = fDocumentBodyPlacement(t), { x, paragraph } = state;
+  paragraph.directNodes[0].fragments = [d411Rect(0, 0, 320, 800)]; state.before = state.snapshot();
+  const box = x.run(); assert.equal(x.overlap(box, paragraph.directNodes[0].fragments).length, 1);
+  fDocumentBodyReads(state, Boolean(x.fDocumentBodyQueries.length)); fDocumentStateUnchanged(state, box);
+});
+
+// Detached Search-label proposal: the retained French200 Clear-stage image
+// records a visible omission, while the later measurement package was not a
+// runtime fix. ALL coordinates here are synthetic Range/CSSOM inputs to the
+// existing real Panel placement fixture, not native pixels or browser closure.
+function fLibrarySearchPlacement(t, { direct = [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(244, 650, 43, 18)] }] } = {}) {
+  const x = e6CopyPlacement(t, { family: 'forma-library', viewport: { width: 320, height: 800 }, right: 310, top: 650, normalWidth: 44 });
+  const native = {}, calls = [], ownershipQueries = [], idQueries = [], walkerReads = [];
+  for (const key of ['HTMLFormElement', 'HTMLLabelElement', 'HTMLInputElement']) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key), Type = class {};
+    native[key] = Type; Object.defineProperty(globalThis, key, { configurable: true, value: Type });
+    t.after(() => { if (previous) Object.defineProperty(globalThis, key, previous); else delete globalThis[key]; });
+  }
+  const full = d411Rect(16, 0, 288, 800), raw = d411Rect(33, 620, 254, 74);
+  const form = Object.assign(new native.HTMLFormElement(), x.ancestor(full, { isConnected: true, parentElement: x.surface }));
+  const search = x.ancestor(full, { isConnected: true, parentElement: form, label: direct.map(node => node.text).join(''), value: 'Atmosphere', help: '' });
+  const box = x.ancestor(full, { isConnected: true, parentElement: search });
+  const controlRow = x.ancestor(d411Rect(33, 700, 254, 44), { parentElement: box });
+  const label = x.copy(fLibrarySearchCopySelector, raw, [], { tagName: 'LABEL', parentElement: box, form,
+    htmlFor: 'f-library-search', textContent: search.label });
+  Object.setPrototypeOf(label, native.HTMLLabelElement.prototype);
+  const field = Object.assign(new native.HTMLInputElement(), x.control(d411Rect(33, 700, 196, 44), {
+    tagName: 'INPUT', type: 'search', id: 'f-library-search', isConnected: true, parentElement: controlRow,
+    form, labels: [label], value: 'Atmosphere', placeholder: 'Rechercher dans tous les travaux du projet', name: '', formAttribute: null,
+    focus: () => calls.push('focus-search'), click: () => calls.push('click-search'),
+  }));
+  label.control = field;
+  const clear = x.control(d411Rect(243, 700, 44, 44), { tagName: 'BUTTON', type: 'button', parentElement: controlRow,
+    form, disabled: false, ariaLabel: 'Effacer la recherche', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+    focus: () => calls.push('focus-clear'), click: () => calls.push('clear-search') });
+  x.controls.push(field, clear); x.f.document.activeElement = clear;
+  const forms = [form], searches = [search], boxes = [box], labels = [label], fields = [field], ids = [field];
+  const query = x.surface.querySelectorAll;
+  x.surface.querySelectorAll = selector => {
+    if (selector === fLibrarySearchFormSelector) { ownershipQueries.push(selector); return forms; }
+    return query(selector);
+  };
+  form.querySelectorAll = selector => { assert.equal(selector, ':scope > forma-ui-search.searchbox'); ownershipQueries.push(selector); return searches; };
+  search.querySelectorAll = selector => { assert.equal(selector, ':scope > div.ui-search'); ownershipQueries.push(selector); return boxes; };
+  box.querySelectorAll = selector => {
+    ownershipQueries.push(selector);
+    if (selector === ':scope > label') return labels;
+    assert.equal(selector, ':scope > div.ui-search-control > input[type="search"]'); return fields;
+  };
+  const previousCSS = Object.getOwnPropertyDescriptor(globalThis, 'CSS');
+  Object.defineProperty(globalThis, 'CSS', { configurable: true, value: { escape(value) { assert.equal(value, 'f-library-search'); return value; } } });
+  t.after(() => { if (previousCSS) Object.defineProperty(globalThis, 'CSS', previousCSS); else delete globalThis.CSS; });
+  const documentQuery = x.f.document.querySelectorAll;
+  x.f.document.querySelectorAll = selector => {
+    if (selector === '[id="f-library-search"]') { idQueries.push(selector); return ids; }
+    return documentQuery(selector);
+  };
+  const textNode = (text, fragments, parent = label) => ({ nodeType: 3, textContent: text, fragments, parentElement: parent, parentNode: parent });
+  const directNodes = direct.map(node => textNode(node.text, node.fragments));
+  const whitespace = textNode(' \n ', [raw]), comment = { nodeType: 8, textContent: 'Lit marker', parentElement: label, parentNode: label };
+  const nested = x.ancestor(raw, { nodeType: 1, tagName: 'SPAN', parentElement: label });
+  const nestedText = textNode('Synthetic unselected descendant', [raw], nested); nested.childNodes = [nestedText];
+  label.childNodes = [...directNodes, whitespace, comment, nested]; label.textNodes = [...directNodes, whitespace, nestedText];
+  const walker = x.f.document.createTreeWalker;
+  x.f.document.createTreeWalker = (element, kind) => { walkerReads.push(element); return walker(element, kind); };
+  x.surface.scrollTop = 17; x.f.panel.draftForTest = '  Keep the independent Assistant question.  ';
+  const ring = d411Rect(237, 694, 56, 56);
+  const state = { x, native, raw, form, search, box, controlRow, label, field, clear, forms, searches, boxes, labels, fields, ids,
+    directNodes, whitespace, comment, nested, nestedText, calls, ownershipQueries, idQueries, walkerReads, ring };
+  state.snapshot = () => ({ focus: x.f.document.activeElement, controlBoxes: x.controls.map(control => control.getBoundingClientRect()),
+    ring: [clear.outlineStyle, clear.outlineWidth, clear.outlineOffset], clearDisabled: clear.disabled, clearName: clear.ariaLabel,
+    rawQuery: field.value, componentQuery: search.value, componentLabel: search.label, help: search.help,
+    placeholder: field.placeholder, name: field.name, formAttribute: field.formAttribute, id: field.id, htmlFor: label.htmlFor,
+    control: label.control, inputLabels: [...field.labels], forms: [label.form, field.form, clear.form],
+    labelText: label.textContent, directText: directNodes.map(node => node.textContent), children: [...label.childNodes],
+    parents: [label.parentElement, field.parentElement, clear.parentElement, box.parentElement, search.parentElement, form.parentElement],
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope,
+    owner: x.f.panel.parentElement, scroll: x.surface.scrollTop });
+  state.before = state.snapshot(); return state;
+}
+function fLibrarySearchUnchanged(state, box) {
+  const { x } = state;
+  assert.deepEqual(state.snapshot(), state.before, 'placement preserves the named native Search field, raw query, Clear focus, form, DOM, scroll and independent guidance');
+  assert.deepEqual(state.calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.ok(box.top >= 8 && box.bottom <= 792);
+  assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(state.walkerReads, []); assert.deepEqual(x.detached, x.rangeReads);
+}
+for (const shape of ['single fragment', 'wrapped text', 'split direct text']) {
+  test('F current Library Search label clears Ask while preserving native Clear focus / ' + shape, { concurrency: false }, t => {
+    const direct = shape === 'single fragment'
+      ? [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(244, 650, 43, 18)] }]
+      : shape === 'wrapped text'
+        ? [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)] }]
+        : [{ text: 'Rechercher dans la ', fragments: [d411Rect(40, 650, 80, 18)] }, { text: 'bibliothèque du projet', fragments: [d411Rect(244, 674, 43, 18)] }];
+    const state = fLibrarySearchPlacement(t, { direct }), { x, directNodes, ring } = state;
+    const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+    assert.equal(x.overlap(initial, fragments).length, 1, 'the visible label alone supplies the initial collision');
+    assert.equal(x.overlap(initial, [ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+    const box = x.run();
+    assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+      'clear each direct label fragment without changing the current native Search or Clear control');
+    assert.deepEqual(x.fSearchQueries, [fLibrarySearchCopySelector]); assert.deepEqual(x.rangeReads, directNodes);
+    assert.deepEqual(state.idQueries, ['[id="f-library-search"]']); fLibrarySearchUnchanged(state, box);
+  });
+}
+test('F Library Search-label clearance rechecks an upstream wrapped fragment', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t, { direct: [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(244, 612, 43, 18), d411Rect(244, 650, 43, 18)] }] });
+  const { x, directNodes, ring } = state, fragments = directNodes.flatMap(node => node.fragments);
+  assert.equal(x.overlap(d411Rect(266, 598, 44, 44), fragments).length, 1, 'clearing the lower label line alone would land on the upper one');
+  const box = x.run(); assert.equal(x.overlap(box, [...fragments, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+  assert.deepEqual(x.rangeReads, directNodes); fLibrarySearchUnchanged(state, box);
+});
+test('F Library Search copy refuses stale owners and broken native label/input/form associations', { concurrency: false }, () => {
+  for (const defect of ['foreign-library', 'disconnected-label', 'disconnected-form', 'disconnected-search', 'disconnected-box', 'disconnected-input',
+    'untyped-label', 'untyped-form', 'untyped-input', 'foreign-search-form', 'duplicate-form', 'duplicate-search', 'foreign-search', 'duplicate-box', 'foreign-box',
+    'duplicate-label', 'foreign-label', 'missing-input', 'duplicate-input', 'wrong-type', 'missing-id', 'foreign-for', 'wrong-control',
+    'foreign-label-form', 'foreign-input-form', 'duplicate-input-label', 'foreign-input-label', 'duplicate-id', 'foreign-id',
+    'hidden', 'inert', 'aria-hidden', 'hidden-text', 'display-none', 'transparent', 'busy-main', 'duplicate-library', 'foreign-main', 'duplicate-panel']) {
+    const cleanup = [];
+    try {
+      const state = fLibrarySearchPlacement({ after: undo => cleanup.push(undo) }), { x, label, form, search, box: ui, field, directNodes } = state;
+      if (defect === 'foreign-library') { const closest = label.closest; label.closest = function(selector) { return selector === 'forma-library' ? {} : closest.call(this, selector); }; }
+      for (const [name, node] of [['label', label], ['form', form], ['search', search], ['box', ui], ['input', field]]) if (defect === 'disconnected-' + name) node.isConnected = false;
+      for (const [name, node] of [['label', label], ['form', form], ['input', field]]) if (defect === 'untyped-' + name) Object.setPrototypeOf(node, Object.prototype);
+      if (defect === 'foreign-search-form') search.parentElement = {};
+      for (const [name, nodes] of [['form', state.forms], ['search', state.searches], ['box', state.boxes], ['label', state.labels], ['input', state.fields], ['id', state.ids]]) {
+        if (defect === 'duplicate-' + name) nodes.push({ ...nodes[0] });
+        if (defect === 'foreign-' + name) nodes[0] = { ...nodes[0] };
+      }
+      if (defect === 'missing-input') state.fields.length = 0;
+      if (defect === 'wrong-type') field.type = 'text';
+      if (defect === 'missing-id') field.id = '';
+      if (defect === 'foreign-for') label.htmlFor = 'another-search';
+      if (defect === 'wrong-control') label.control = state.clear;
+      if (defect === 'foreign-label-form') label.form = {};
+      if (defect === 'foreign-input-form') field.form = {};
+      if (defect === 'duplicate-input-label') field.labels.push({ ...label });
+      if (defect === 'foreign-input-label') field.labels[0] = { ...label };
+      if (['hidden', 'inert', 'aria-hidden'].includes(defect)) {
+        const closest = label.closest; label.closest = function(selector) { return selector.startsWith('[hidden]') ? { exclusion: defect } : closest.call(this, selector); };
+      }
+      if (defect === 'hidden-text') label.visibility = 'hidden';
+      if (defect === 'display-none') search.display = 'none';
+      if (defect === 'transparent') search.opacity = '0';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-library') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-library' ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'duplicate-panel') x.shell.querySelectorAll = selector => { assert.equal(selector, 'forma-assistant-panel'); return [x.f.panel, { closest: () => x.shell }]; };
+      state.before = state.snapshot(); const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, directNodes.flatMap(node => node.fragments)).length, 1,
+        defect + ': refused association cannot certify label clearance');
+      const measuredThenHidden = ['display-none', 'transparent'].includes(defect) && x.fSearchQueries.length;
+      assert.deepEqual(x.rangeReads, measuredThenHidden ? directNodes : [], defect); fLibrarySearchUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+test('F Library Search label keeps fragments separate from enclosing whitespace and nested text', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t, { direct: [{ text: 'Rechercher dans la bibliothèque du projet', fragments: [d411Rect(40, 620, 80, 18)] }] });
+  const { x, raw, directNodes, nestedText, whitespace, comment } = state, initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, nestedText.fragments).length, 1);
+  const box = x.run(); assert.deepEqual(box, initial);
+  assert.deepEqual(x.rangeReads, x.fSearchQueries.length ? directNodes : []);
+  for (const excluded of [nestedText, whitespace, comment]) assert.equal(x.rangeReads.includes(excluded), false);
+  fLibrarySearchUnchanged(state, box);
+});
+test('F Library Search text cannot invoke the hovered native-focus exception or activate Clear', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t), { x, label, directNodes, ring } = state;
+  x.hovered = true; const box = x.run();
+  assert.equal(x.overlap(box, directNodes[0].fragments).length, 1); assert.equal(x.overlap(box, [ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.rangeReads, []); fLibrarySearchUnchanged(state, box);
+  x.f.document.activeElement = label; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); fLibrarySearchUnchanged(state, box);
+});
+test('F an impossible Library Search-label lane stays finite and explicitly unresolved', { concurrency: false }, t => {
+  const state = fLibrarySearchPlacement(t, { direct: [{ text: 'Declared no-fit Search-label stress', fragments: [d411Rect(0, 0, 320, 800)] }] });
+  const { x, directNodes } = state, box = x.run(); assert.equal(x.overlap(box, directNodes[0].fragments).length, 1);
+  assert.deepEqual(x.rangeReads, x.fSearchQueries.length ? directNodes : []); fLibrarySearchUnchanged(state, box);
 });
