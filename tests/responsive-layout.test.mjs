@@ -246,3 +246,51 @@ test("keeps the fixed document composer task-focused while disclosing generation
   assert.match(styles,/\.generation-details-body\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*auto/);
   assert.match(formatEditor,/\?selected=\$\{item\.id===preset\}/);
 });
+
+// Source declarations only; native clipping, wrapping and paint are separate.
+test("prompt-fan comparison gives its full content one scroll owner with focus clearance", async () => {
+  const styles = await read("../src/styles.css");
+  const compact = value => value.replace(/\s+/g, "");
+  const rules = [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  const rule = selector => {
+    const entries = rules.filter(row => row[1].replace(/\/\*[\s\S]*?\*\//g, "").split(",").some(value => compact(value) === compact(selector)));
+    assert.ok(entries.length, "Missing rule: " + selector);
+    // Merge exact-selector declarations in source order. Critical scroll-owner
+    // properties must also agree across media branches; this is not a CSS engine.
+    const guarded = {
+      ".prompt-fan-card": ["grid-template-rows", "overflow"],
+      ".prompt-fan-scroll-body": ["min-block-size", "min-inline-size", "overflow", "scroll-padding-block"],
+      ".prompt-fan-scroll-body > .prompt-fan-grid": ["overflow"],
+    }[selector] ?? [];
+    const declarations = new Map();
+    for (const entry of entries) for (const value of entry[2].split(";").filter(value => value.includes(":"))) {
+      const colon = value.indexOf(":"), property = value.slice(0, colon).trim(), next = value.slice(colon + 1).trim();
+      if (guarded.includes(property) && declarations.has(property))
+        assert.equal(compact(next), compact(declarations.get(property)), "Conflicting scroll-owner declaration: " + selector + " / " + property);
+      declarations.set(property, next);
+    }
+    return declarations;
+  };
+  const card = rule(".prompt-fan-card"), body = rule(".prompt-fan-scroll-body");
+  assert.equal(compact(card.get("grid-template-rows")), "autominmax(0,1fr)auto");
+  assert.equal(card.get("overflow"), "hidden");
+  assert.equal(body.get("min-block-size"), "0"); assert.equal(body.get("min-inline-size"), "0");
+  assert.equal(body.get("overflow"), "auto");
+  assert.equal(compact(body.get("scroll-padding-block")), "var(--forma-focus-clearance)");
+  assert.equal(body.has("position"), false); assert.notEqual(body.get("display"), "contents");
+  assert.equal(rule(".prompt-fan-scroll-body > .prompt-fan-grid").get("overflow"), "visible",
+    "The more specific child rule transfers scrolling to the content body");
+  const close = rule(".prompt-fan-card > .modal-close");
+  assert.equal(close.get("position"), "static"); assert.equal(close.get("justify-self"), "end");
+  assert.equal(compact(close.get("margin-block")), "14pxvar(--forma-focus-clearance)");
+  for (const property of ["height", "block-size", "min-height", "min-block-size", "font-size"]) assert.equal(close.has(property), false);
+  const footer = rule(".prompt-fan-card > footer");
+  assert.equal(footer.get("display"), "flex"); assert.equal(footer.has("position"), false); assert.equal(footer.has("overflow"), false);
+  const summary = rule(".prompt-fan-summary");
+  assert.equal(compact(summary.get("font-size")), "var(--type-caption)");
+  for (const property of ["display", "visibility", "line-clamp", "text-overflow", "overflow"]) assert.equal(summary.has(property), false);
+  assert.ok(rule(".prompt-fan-card > .prompt-fan-scroll-body > header").has("padding"));
+  assert.equal(rule(".prompt-fan-output-actions").get("flex-wrap"), "wrap");
+  assert.equal(rule(".prompt-fan-output-actions").get("gap"), "6px");
+  assert.equal(compact(rule(".prompt-fan-output-actions > button").get("flex")), "1110rem");
+});

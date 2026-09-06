@@ -2694,11 +2694,14 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .library-prompt-fan-copy h3 { margin: 5px 0 3px; font: 600 var(--type-body) var(--sans); }
 .library-prompt-fan-copy p { margin: 0; color: var(--muted); font-size: var(--type-caption); }
 .library-prompt-fan > .prompt-fan-review-trigger-wrap { margin-top: auto; padding: 8px 14px 14px; }
-.prompt-fan-card { display: grid; width: min(1440px,calc(100% - 28px)); max-height: calc(100dvh - 28px); grid-template-rows: auto auto minmax(0,1fr) auto; overflow: hidden; margin: 14px auto; padding: 0; }
-.prompt-fan-card > header { padding: 30px 64px 22px 32px; border-bottom: 1px solid var(--line); }
-.prompt-fan-card > header > span { color: var(--muted); font: 700 var(--type-micro) var(--sans); letter-spacing: .08em; text-transform: uppercase; }
-.prompt-fan-card > header h2 { margin: 5px 0 7px; font: 600 clamp(1.45rem,2.5vw,2.35rem)/1.05 var(--sans); letter-spacing: -.035em; }
-.prompt-fan-card > header p { max-width: 760px; margin: 0; color: var(--muted); }
+.prompt-fan-card { display: grid; width: min(1440px,calc(100% - 28px)); max-height: calc(100dvh - 28px); grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; margin: 14px auto; padding: 0; }
+.prompt-fan-card > .modal-close { position: static; justify-self: end; margin-block: 14px var(--forma-focus-clearance); margin-inline: 14px; }
+.prompt-fan-scroll-body { min-block-size: 0; min-inline-size: 0; overflow: auto; scroll-padding-block: var(--forma-focus-clearance); }
+.prompt-fan-scroll-body > .prompt-fan-grid { overflow: visible; }
+.prompt-fan-card > .prompt-fan-scroll-body > header { padding: 30px 64px 22px 32px; border-bottom: 1px solid var(--line); }
+.prompt-fan-card > .prompt-fan-scroll-body > header > span { color: var(--muted); font: 700 var(--type-micro) var(--sans); letter-spacing: .08em; text-transform: uppercase; }
+.prompt-fan-card > .prompt-fan-scroll-body > header h2 { margin: 5px 0 7px; font: 600 clamp(1.45rem,2.5vw,2.35rem)/1.05 var(--sans); letter-spacing: -.035em; }
+.prompt-fan-card > .prompt-fan-scroll-body > header p { max-width: 760px; margin: 0; color: var(--muted); }
 .prompt-fan-preference-bar { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 32px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
 .prompt-fan-preference-bar > div { display: grid; gap: 2px; }
 .prompt-fan-preference-bar small { color: var(--muted); font-size: var(--type-micro); }
@@ -2727,8 +2730,8 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .prompt-fan-option pre { max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 12px; background: var(--panel-2); font-size: var(--type-micro); white-space: pre-wrap; overflow-wrap: anywhere; }
 .prompt-fan-option .prompt-fan-failure-prompt > p { min-height: 0; margin: 8px 0; color: var(--muted); font-size: var(--type-micro); }
 .prompt-fan-option > .prompt-fan-failure-prompt-unavailable { min-height: 0; margin: 12px 0 0; color: var(--muted); font-size: var(--type-micro); }
-.prompt-fan-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 32px; border-top: 1px solid var(--line); }
-.prompt-fan-card > footer p { margin: 0; color: var(--muted); font-size: var(--type-caption); }
+.prompt-fan-card > footer { display: flex; align-items: center; justify-content: flex-end; gap: 24px; padding: 16px 32px; border-top: 1px solid var(--line); }
+.prompt-fan-summary { margin: 0; padding: 16px 32px; color: var(--muted); font-size: var(--type-caption); }
 .prompt-fan-card > footer > div { display: flex; flex: none; gap: 8px; }
 .generation-queue-trigger { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; padding: 6px 9px; color: var(--forest-2); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; font: 650 var(--type-micro) var(--sans); white-space: nowrap; }
 .generation-queue-trigger:hover { color: var(--forest); background: var(--panel-2); }
@@ -2915,7 +2918,8 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .prompt-fan-preference-bar label { align-items: stretch; flex-direction: column; gap: 5px; }
   .prompt-fan-preference-bar select { width: 100%; min-width: 0; }
   .prompt-fan-grid { grid-template-columns: minmax(0,1fr); }
-  .prompt-fan-card > header { padding: 24px 52px 18px 18px; }
+  .prompt-fan-card > .prompt-fan-scroll-body > header { padding: 24px 52px 18px 18px; }
+  .prompt-fan-summary { padding: 15px 18px; }
   .prompt-fan-card > footer { align-items: stretch; flex-direction: column; gap: 12px; padding: 15px 18px; }
   .prompt-fan-card > footer > div,.prompt-fan-output-actions { justify-content: stretch; }
   .prompt-fan-card > footer > div > button,.prompt-fan-output-actions > button { flex: 1 1 10rem; }

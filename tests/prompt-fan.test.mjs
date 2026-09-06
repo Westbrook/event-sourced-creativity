@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { foldEvents, generationHistoryItems, generationHistoryMix } from "../src/model/events.ts";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 
 const event = (sequence, type, payload, actor = "worker:generator") => ({
   eventId: `e${sequence}`, streamId: "s", sequence, occurredAt: new Date(sequence * 1000).toISOString(), recordedAt: new Date(sequence * 1000).toISOString(), actor, clientId: "test", correlationId: "c", causationId: null, compensatesEventId: null, schemaVersion: 1, type, payload,
@@ -138,5 +139,87 @@ test("E image-history scope and empty copy are explicit in the existing four loc
     const source = await readFile(new URL(path, import.meta.url), "utf8");
     for (const [key, value] of [["generation.history.imageLabel", label], ["generation.history.imageEmpty", empty]])
       assert.ok(source.includes(JSON.stringify(key) + ": " + JSON.stringify(value) + ","), path + " contains the exact scoped " + key);
+  }
+});
+
+// Source/template contracts and an isolated status expression; no DOM paint claim.
+test("prompt-fan comparison keeps one content body between persistent close and actions", async () => {
+  const source = await readFile(new URL("../src/components/prompt-fan-review.ts", import.meta.url), "utf8");
+  // Derive parent ownership from literal container tags; conditional Lit branches
+  // remain source contracts, not an instantiated DOM or a visibility witness.
+  const nodes = [], stack = [];
+  for (const match of source.matchAll(/<(\/?)(section|div|header|form|footer|p|button)\b([^>]*)>/g)) {
+    const [, closing, tag, attributes] = match;
+    if (closing) {
+      const node = stack.pop();
+      assert.equal(node?.tag, tag, "Balanced source container: " + tag);
+      node.end = match.index + match[0].length;
+    } else {
+      const node = { tag, attributes, start: match.index, parent: stack.at(-1) ?? null };
+      nodes.push(node); stack.push(node);
+    }
+  }
+  assert.equal(stack.length, 0);
+  const hasClass = (node, name) => (node.attributes.match(/\bclass="([^"]*)"/)?.[1].split(/\s+/) ?? []).includes(name);
+  const one = predicate => { const values = nodes.filter(predicate); assert.equal(values.length, 1); return values[0]; };
+  const card = one(node => node.tag === "section" && hasClass(node, "prompt-fan-card"));
+  const bodyNode = one(node => hasClass(node, "prompt-fan-scroll-body"));
+  const closeNode = one(node => hasClass(node, "modal-close"));
+  const footerNode = one(node => node.parent === card && node.tag === "footer");
+  const summaryNode = one(node => hasClass(node, "prompt-fan-summary"));
+  assert.equal(bodyNode.parent, card); assert.equal(closeNode.parent, card);
+  assert.equal(summaryNode.parent, bodyNode);
+  assert.ok(closeNode.start < bodyNode.start && bodyNode.end < footerNode.start);
+  const content = [
+    one(node => node.parent === bodyNode && node.tag === "header"),
+    one(node => node.parent === bodyNode && hasClass(node, "prompt-fan-preference-bar")),
+    one(node => node.parent === bodyNode && hasClass(node, "prompt-fan-grid")),
+    summaryNode,
+  ];
+  assert.ok(content.every((node, index) => index === 0 || node.start > content[index - 1].end));
+  const close = source.slice(closeNode.start, closeNode.end);
+  const body = source.slice(bodyNode.start, bodyNode.end);
+  const actions = source.slice(footerNode.start, footerNode.end);
+  assert.match(close, /aria-label="Close prompt fan comparison"/);
+  assert.match(close, /@click=\$\{this\.#close\}/);
+  assert.match(source, /aria-labelledby="prompt-fan-title"/);
+  assert.match(body, /<h2 id="prompt-fan-title">One generation, four ways to hand off the plan<\/h2>/);
+  assert.match(body, /All four images share one document state and one fan identity\./);
+  assert.match(body, /!context\?html`<form class="prompt-fan-preference-bar"/);
+  assert.match(body, /class="prompt-fan-grid">\$\{PROMPT_TECHNIQUE_DEFINITIONS\.map/);
+  assert.match(body, /promotePromptFanOutputs[\s\S]*preferPromptTechnique[\s\S]*#useAsInput[\s\S]*this\.i18n\.system\("Inspect inputs"\)/);
+  assert.equal(one(node => node.parent === footerNode && node.tag === "div").parent, footerNode);
+  assert.equal((actions.match(/<button\b/g) ?? []).length, 2);
+  assert.match(actions, /!context\?html`<button class="button primary" \?disabled=\$\{!promotable\.length\}/);
+  assert.match(actions, /promotePromptFanOutputs\(fanId, promotable\.map\(\(output\) => output\.id\)\)/);
+  assert.match(actions, /this\.i18n\.system\("Promote all \{count\}", \{ count: this\.i18n\.number\(promotable\.length\) \}\)/);
+  assert.match(actions, /<button class="button secondary" @click=\$\{this\.#close\}>Done<\/button>/);
+  assert.doesNotMatch(actions, /prompt-fan-summary|<p>|prompt-fan-grid/);
+});
+
+test("prompt-fan scrolling summary retains completion, promotion and failure state copy", async () => {
+  const source = await readFile(new URL("../src/components/prompt-fan-review.ts", import.meta.url), "utf8");
+  const slots = [...source.matchAll(/<p class="prompt-fan-summary">\$\{([\s\S]*?)\}<\/p>/g)];
+  assert.equal(slots.length, 1, "One unchanged state expression remains after the comparison grid");
+  const i18n = {
+    number: value => String(value),
+    system: (text, values) => text.replace(/\{([^}]+)\}/g, (_, key) => String(values[key])),
+  };
+  const history = "The complete fan remains one comparison in history.";
+  const failures = "Failures are terminal and remain part of this comparison receipt.";
+  const cases = [
+    { complete: 4, failed: 0, standalone: 0, count: 4, expected: "No images promoted. " + history },
+    { complete: 4, failed: 0, standalone: 1, count: 4, expected: "1 image promoted. " + history },
+    { complete: 4, failed: 0, standalone: 2, count: 4, expected: "2 images promoted. " + history },
+    { complete: 4, failed: 3, standalone: 0, count: 1, expected: "1 image ready and 3 failed. " + failures },
+    { complete: 4, failed: 2, standalone: 0, count: 2, expected: "2 images ready and 2 failed. " + failures },
+    { complete: 4, failed: 4, standalone: 0, count: 0, expected: "0 images ready and 4 failed. " + failures },
+    { complete: 2, failed: 1, standalone: 0, count: 1, expected: "2 of 4 prompt processes finished. Remaining jobs continue if this dialog or page closes." },
+  ];
+  for (const { count, expected, ...state } of cases) {
+    const actual = runInNewContext("(" + slots[0][1] + ")", {
+      ...state, fanOutputs: Array.from({ length: count }, () => ({})), i18n,
+    }, { timeout: 1000 });
+    assert.equal(actual, expected, JSON.stringify(state));
   }
 });
