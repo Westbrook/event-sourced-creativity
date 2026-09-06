@@ -352,7 +352,7 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
 .application-canvas .canvas-planning-summary { min-inline-size:0; display:grid; gap:.2rem; }
 .application-canvas .canvas-planning-summary > span { color:var(--muted); font-size:var(--type-caption); }
 .application-canvas .canvas-planning-summary :is(b,p) { margin:0; overflow-wrap:anywhere; }
-.application-canvas .canvas-planning-choice { display:grid; min-inline-size:0; gap:.35rem; }
+.application-canvas .canvas-planning-choice { display:grid; min-inline-size:0; gap:var(--forma-space-2,.5rem); }
 .application-canvas .canvas-planning-choice select { min-block-size:44px; inline-size:100%; max-inline-size:100%; }
 .application-canvas .canvas-empty-tools { display:flex; flex-wrap:wrap; gap:.25rem; }
 .application-canvas .canvas-empty-tools .canvas-batch-select { position:static; max-inline-size:none; }
