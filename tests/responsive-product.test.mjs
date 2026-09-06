@@ -1585,8 +1585,8 @@ test("E6 short native-rail Document keeps a usable pane behind scrollable header
     { name: "native owner above existing 760px static-header seam", width: 767, height: 390, pointer: "fine" },
     { name: "existing short-height boundary", width: 700, height: 600, pointer: "fine" },
   ]) {
-    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto auto minmax(16rem, 1fr)",
-      viewport.name + ": header rows cannot consume the complete editing pane");
+    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto max-content minmax(16rem, 1fr)",
+      viewport.name + ": task choices keep their intrinsic row above the usable editing pane");
     assert.equal(winning(stage, "overflow-y", viewport)?.value, "auto", "native scrollIntoView can reveal the pane through this ancestor");
     assert.equal(winning(stage, "overscroll-behavior", viewport)?.value, "contain");
     assert.equal(winning([".studio-header-stack", stage + " > .studio-header-stack"], "position", viewport)?.value, "static",

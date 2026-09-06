@@ -1617,11 +1617,12 @@ html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][d
   }
 
   /* Keep a usable pane when the native rail and complete header need rows.
+   * The scrolling task strip needs an intrinsic row even in a short stage.
    * Native focus can scroll this ancestor as well as the existing pane. */
   .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main {
     grid-column: 1;
     grid-row: 2;
-    grid-template-rows: auto auto minmax(16rem, 1fr);
+    grid-template-rows: auto max-content minmax(16rem, 1fr);
     overflow-y: auto;
     overscroll-behavior: contain;
     scroll-padding-block: var(--forma-focus-clearance);
