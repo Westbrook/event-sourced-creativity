@@ -107,6 +107,11 @@ type SceneCostView = {
 const sceneRequestHandles = new WeakMap<object, Map<string, SceneRequestHandle>>();
 const MAX_SCENE_REQUEST_HANDLES = 32;
 
+type Model3dSubmitBasis = Readonly<{
+  adaptation:Model3dDocumentAdaptation;revision:string;opening:CreativePreparationGuard;
+  form:HTMLFormElement;dialog:HTMLDialogElement;kind:"model3d";
+}>;
+
 export class DocumentArtifacts extends FormaElement {
   static properties={compact:{type:Boolean},source:{type:String},documentId:{type:String,attribute:"document-id"},launcherOnly:{type:Boolean,attribute:"launcher-only"}};
   compact=false;source="document";documentId="";launcherOnly=false;#kind:DocumentArtifactKind="short_story";#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false;#itemCount=6;#managedSlideInput="";#invalidSlideCount=false;#presentationStyle:SlideStylePresetId|"document"="document";#presentationFidelity:"faithful"|"creative"="faithful";#audience="";#tone="";#rememberedAudiences=new Set<string>();#rememberedTones=new Set<string>();#seconds:VideoDurationSeconds=VIDEO_ADAPTER_CONTRACT.defaultDuration;#videoSize:"1280x720"|"720x1280"="1280x720";#videoAudioMode:VideoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;#confirmed=false;#submitting=false;#referenceBusy=false;#activeId="";#inputId="";#failedInputJob:DocumentJob|null=null;#runningInputJob:DocumentJob|null=null;#actorInputContent:Record<string,string>={};#createOpen=false;#convertingId="";#showAll=false;#editingId="";#editMarkdown="";#editItems:Array<{title:string;body:string;notes:string}>=[];#editRevision=0;#savingEdit=false;#historyOpen=false;#historyBusy=false;#revisionHistory:ArtifactRevisionSummary[]=[];#revisionBefore:number|null=null;#revisionPreview:ArtifactRevisionDetail|null=null;#reviewers:Array<{userId:string;displayName:string}>=[];#selectedReviewerId="";#reviewNote="";#viewerFocused=false;#reviewPanelOpen=false;#viewerActionsOpen=false;#viewerReturnFocus?:HTMLElement;
@@ -118,6 +123,8 @@ export class DocumentArtifacts extends FormaElement {
   #restoredRequest:{jobId:string;needsTransferConfirmation:boolean}|null=null;
   #model3dSettings:Model3dSettings=structuredClone(DEFAULT_MODEL3D_SETTINGS);
   #model3dReferenceBlockIds:string[]=[];#model3dDraftRevision=0;
+  #model3dSubmitBasis=new WeakMap<SubmitEvent,Model3dSubmitBasis|null>();
+  #model3dSubmitEvents=new WeakSet<SubmitEvent>();
   #sceneMedium:SceneMedium="visual";
   #sceneCostView:SceneCostView|null=null;
   #sceneCostRevision=0;
@@ -144,7 +151,7 @@ export class DocumentArtifacts extends FormaElement {
     if(source&&this.store.sourceOwnershipScopeActive(source))this.#clearPrivateGenerationInputs();
   };
   #clearPrivateGenerationInputs=()=>{
-    this.#privateSourceRevision++;this.#presentationReceiptCheck=null;
+    this.#privateSourceRevision++;this.#presentationReceiptCheck=null;this.#model3dSubmitBasis=new WeakMap();
     this.#closeViewerPopovers();this.#sceneInputCurrent=null;this.#clearSceneCost();
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;
     this.#viewerCloseGuard=null;this.#viewerCurrent=null;this.#viewerOpening=false;this.#viewerReturnFocus=undefined;
@@ -1446,6 +1453,38 @@ export class DocumentArtifacts extends FormaElement {
     const renderedKind=this.#kind,configurationOpening=this.#configurationCurrent;
     const ownsOpening=()=>Boolean(configurationOpening&&this.#createOpen&&this.#configurationCurrent===configurationOpening&&this.#kind===renderedKind);
     const formCurrent=()=>this.isConnected&&ownsOpening()&&this.#createDialog()?.open===true&&Boolean(configurationOpening?.());
+    // One submit activation authorizes the prompt visible at dialog capture.
+    // A render between capture and bubble cannot renew that event's approval.
+    const captureSubmit={capture:true,handleEvent:(event:SubmitEvent)=>{
+      if(renderedKind!=="model3d"&&this.#kind!=="model3d"||this.#model3dSubmitEvents.has(event))return;
+      // No private payload: this refusal marker survives source clearing and consumption.
+      this.#model3dSubmitEvents.add(event);
+      const dialog=this.#createDialog(),form=event.target as HTMLFormElement|null;
+      let basis:Model3dSubmitBasis|null=null;
+      if(event.type==="submit"&&!event.defaultPrevented&&renderedKind==="model3d"&&this.#kind===renderedKind
+        &&model3dAdaptation&&configurationOpening&&formCurrent()&&dialog&&event.currentTarget===dialog
+        &&form?.isConnected&&form.parentElement===dialog&&dialog.querySelector(":scope > form.document-artifact-dialog")===form){
+        basis=Object.freeze({adaptation:structuredClone(model3dAdaptation),revision:model3dDocumentRevision,
+          opening:configurationOpening,form,dialog,kind:"model3d"});
+      }
+      // Retain a rejection too: later callbacks cannot replace a missing owner.
+      this.#model3dSubmitBasis.set(event,basis);
+    }};
+    const submit=(event:SubmitEvent)=>{
+      const captured=this.#model3dSubmitEvents.has(event),basis=this.#model3dSubmitBasis.get(event);
+      this.#model3dSubmitBasis.delete(event);
+      const canceled=event.defaultPrevented;event.preventDefault();
+      if(captured||renderedKind==="model3d"||this.#kind==="model3d"){
+        if(!basis||canceled||event.type!=="submit"||basis.kind!==renderedKind||this.#kind!==basis.kind
+          ||basis.opening!==configurationOpening||basis.opening!==this.#configurationCurrent||!formCurrent()
+          ||event.target!==basis.form||event.currentTarget!==basis.form||!basis.form.isConnected
+          ||basis.dialog!==this.#createDialog()||!basis.dialog.open||basis.form.parentElement!==basis.dialog
+          ||basis.dialog.querySelector(":scope > form.document-artifact-dialog")!==basis.form)return;
+        void this.#create(basis.adaptation,basis.revision);return;
+      }
+      if(!formCurrent())return;
+      if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create(model3dAdaptation??undefined,model3dDocumentRevision);
+    };
     const videoUnavailable=this.#kind==="video"&&!session?.provider.videoConfigured;const audioUnavailable=this.#kind==="audio"&&!session?.provider.audioConfigured;
     const references=videoReferencePreflight(this.#projection().blocks,this.store.events.get());
     const videoBlocked=this.#kind==="video"&&Boolean(references.rightsBlockedCount||references.unavailablePixelCount||this.#productionMode!=="managed"&&references.providerLimitExceededCount);
@@ -1497,8 +1536,8 @@ export class DocumentArtifacts extends FormaElement {
     const paidConfirmation=this.#kind==="model3d"?this.i18n.t("model3d.cost.confirmation","This submits one paid Rodin 2.5 request to Fal and Hyper3D and reserves {amount}. Only the exact prompt and {count} selected images are sent. Provider content review still applies.",{amount:formatGenerationUsd(estimatedCost),count:this.i18n.number(this.#model3dReferenceBlockIds.length)}):this.#kind==="audio"?`${audioMaximumReservation?this.i18n.t("audio.provider.maximum","Maximum provider reservation: {amount}",{amount:preciseAudioPrice}):this.i18n.t("audio.provider.estimate","Estimated provider cost: {amount}",{amount:preciseAudioPrice})} · ${this.i18n.system("Total reserved: up to {amount}.",{amount:preciseTotalAudioPrice})}`:this.#kind==="video"&&managedPlan?(managedPlan.scenes.length===1?this.i18n.system("This starts {count} paid video scene totaling {seconds} seconds and reserves up to {amount}.",{count:this.i18n.number(managedPlan.scenes.length),seconds:this.i18n.number(managedPlan.totalDurationSeconds),amount:formatGenerationUsd(managedEstimate)}):this.i18n.system("This starts {count} paid video scenes totaling {seconds} seconds and reserves up to {amount}.",{count:this.i18n.number(managedPlan.scenes.length),seconds:this.i18n.number(managedPlan.totalDurationSeconds),amount:formatGenerationUsd(managedEstimate)}))+" "+(references.providerPixelCount?references.providerPixelCount===1?this.i18n.system("{count} authorized image may be sent to the provider; {descriptions} remain description-only.",{count:this.i18n.number(references.providerPixelCount),descriptions:this.i18n.number(references.describeOnlyCount)}):this.i18n.system("{count} authorized images may be sent to the provider; {descriptions} remain description-only.",{count:this.i18n.number(references.providerPixelCount),descriptions:this.i18n.number(references.describeOnlyCount)}):this.i18n.system("No existing user reference images are sent."))+(generatedAnchor?" "+this.i18n.system("Forma will generate and send an account-owned continuity image to the video provider."):"")+audioConfirmation:this.#kind==="video"?videoConfirmation+" "+this.i18n.system("Total reserved: up to {amount}.",{amount:formatGenerationUsd(estimatedCost)}):(managedPlan?.scenes.length??this.#itemCount)===1?this.i18n.system("This creates {count} paid storyboard frame, saves every finished image, and reserves up to {amount}.",{count:this.i18n.number(managedPlan?.scenes.length??this.#itemCount),amount:formatGenerationUsd(estimatedCost)}):this.i18n.system("This creates {count} paid storyboard frames, saves every finished image, and reserves up to {amount}.",{count:this.i18n.number(managedPlan?.scenes.length??this.#itemCount),amount:formatGenerationUsd(estimatedCost)});
     const documentId=this.#targetDocumentId();const listSuffix=documentId.replace(/[^a-z0-9_-]/gi,"-");const audienceListId=`document-artifact-audiences-${listSuffix}`,toneListId=`document-artifact-tones-${listSuffix}`;const audienceSuggestions=[...this.#rememberedAudiences,...documentRenderSuggestions(this.store.events.get(),documentId,"audience")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);const toneSuggestions=[...this.#rememberedTones,...documentRenderSuggestions(this.store.events.get(),documentId,"tone")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);
     const close=()=>{if(!ownsOpening())return;this.#rememberRequestDraft();this.#retireRequestReview();this.#configurationCurrent=null;if(renderedKind==="scene")this.#clearSceneCost();this.#createOpen=false;this.#activeWorkflowStageId="";this.#createDialog()?.close();void this.#restoreWorkflowRegeneration();this.requestUpdate();};
-    return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
-      <form class="document-artifact-dialog" @focusin=${(event:FocusEvent)=>this.#revealCreateFocus(event,formCurrent)} @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!formCurrent())return;if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create(model3dAdaptation??undefined,model3dDocumentRevision);}}>
+    return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @submit=${captureSubmit} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
+      <form class="document-artifact-dialog" @focusin=${(event:FocusEvent)=>this.#revealCreateFocus(event,formCurrent)} @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${submit}>
         <header><div><span>Render document</span><h2 id="document-artifact-create-title">Create another form of this work</h2><p>The same creative direction can become a story, presentation, storyboard, or video without changing the original document.</p></div><button type="button" class="icon-button" aria-label="Close" @click=${close}>${icon("close")}</button></header>
         <fieldset class="artifact-kind-picker" aria-label="Artifact type">${DOCUMENT_ARTIFACT_KINDS.map((kind)=>{const item=documentArtifactDefinition(kind);return html`<label class=${this.#kind===kind?"selected":""}><input type="radio" name="artifact-kind" value=${kind} .checked=${this.#kind===kind} @change=${()=>{this.#retireRequestReview();this.#selectArtifactKind(kind);if(kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount();this.#confirmed=false;this.requestUpdate();}}><span aria-hidden="true">${icon(kindIcon(kind))}</span><b>${this.i18n.system(item.label)}</b><small>${this.i18n.system(item.description)}</small></label>`;})}</fieldset>
         <section class="artifact-options">
