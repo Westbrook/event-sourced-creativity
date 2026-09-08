@@ -125,11 +125,12 @@ function winning(selectors, property, viewport, container) {
   return result;
 }
 
-test("content-priority style sheets parse and modern fractional container ranges have no dead zone", () => {
-  for (const width of [735.84, 735.85, 735.9, 735.99]) {
+test("document pane tracks and switcher share rendered posture across fractional and scrollbar boundaries", () => {
+  const narrow='.workspace-page[data-workbench="document"][data-workbench-narrow="true"]';
+  for (const width of [730, 735.84, 735.85, 735.9, 735.99, 736, 745, 760, 761, 768]) {
     const container = { name: "studio", width };
-    assert.equal(winning(".document-workbench-tasks", "display", portrait, container)?.value, "flex", `${width}px still exposes the narrow work selector`);
-    assert.equal(winning([".studio-grid", '.workspace-page[data-workbench="document"] .studio-grid'], "grid-template-columns", portrait, container)?.value, "minmax(0, 1fr)", `${width}px stays in the actual one-pane posture`);
+    assert.equal(winning([".document-workbench-tasks", narrow+" .document-workbench-tasks"], "display", portrait, container)?.value, "flex", `${width}px exposes the same rendered narrow selector`);
+    assert.equal(winning([".studio-grid", '.workspace-page[data-workbench="document"] .studio-grid',narrow+" .studio-grid"], "grid-template-columns", portrait, container)?.value, "minmax(0, 1fr)", `${width}px cannot reserve a hidden pane's track`);
   }
 
   const expanded = { name: "studio", width: 736 };
@@ -137,9 +138,15 @@ test("content-priority style sheets parse and modern fractional container ranges
   assert.match(winning(".studio-grid", "grid-template-columns", portrait, expanded)?.value ?? "", /minmax\(18rem,\s*\.72fr\).*minmax\(25rem,\s*1fr\)/);
 
   const zoomed = { ...portrait, rootRem: 20 };
-  assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 919.99 })?.value, "flex");
+  assert.equal(winning([".document-workbench-tasks",narrow+" .document-workbench-tasks"], "display", zoomed, { name: "studio", width: 919.99 })?.value, "flex");
   assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 920 })?.value, "none");
   assert.equal(winning(['.studio-grid', '.workspace-page[data-workbench="document"] .studio-grid'], "display", portrait, { name: "studio", width: 320 })?.value, "grid");
+  assert.match(workspace,/data-workbench-narrow=\$\{String\(this\.#narrowWorkbench\)\}/);
+  assert.equal(winning(".studio-mode-nav","grid-template-columns",portrait,{name:"studio",width:390})?.value,"minmax(0, 1fr) max-content max-content");
+  const compact='.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav > button';
+  assert.equal(winning(compact,"flex",portrait,{name:"studio",width:745})?.value,"0 0 auto");
+  assert.equal(winning(compact,"min-inline-size",portrait,{name:"studio",width:745})?.value,"var(--forma-hit-target)");
+  assert.equal(winning(".dropzone","position",portrait,{name:"studio",width:745})?.value,"relative","the visually hidden file input remains contained by its upload control");
 });
 
 test("document-only containment preserves neutral writing intent and exact result-directed project navigation", () => {

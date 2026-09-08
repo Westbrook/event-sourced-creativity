@@ -247,6 +247,29 @@ test("same synthetic full hierarchy at934/847 exposes real Results contributors;
  t.diagnostic("Same synthetic14 data;790/718="+JSON.stringify(before)+";934/847="+JSON.stringify(wider.controls())+". Actual renderer/ResizeObserver ports, not native CSS geometry or production study counts.");
 });
 
+test("Document rendered posture and hidden panes agree across scrollbar and rem breakpoints",async t=>{
+ const f=await fixture(t,{width:745,height:883,studioWidth:730});
+ for(const [studioWidth,rootFont,narrow] of [[730,16,true],[735.99,16,true],[736,16,false],[745,16,false],[730,16,true],[760,16,false],[761,16,false],[768,16,false],[919.99,20,true],[920,20,false]]){
+  f.measure({studioWidth,rootFont});await f.settle();
+  const section=f.dom.nodes.find(node=>node.attributes["data-workbench"]==="document");
+  assert.equal(section.attributes["data-workbench-narrow"],String(narrow),`posture at ${studioWidth}px / ${rootFont}px rem`);
+  const context=f.dom.nodes.find(node=>node.attributes.id==="document-context-panel");
+  const result=f.dom.nodes.find(node=>node.attributes.id==="document-results-panel");
+  assert.equal(context.hiddenBy,null);
+  assert.equal(result.hiddenBy,narrow?"document-results-panel":null);
+  if(narrow){
+   const route=f.store.route.get(),requests=f.storeHost.requests.length;
+   for(const pane of ["result","review","write"]){
+    await f.dispatch(f.dom.nodes.find(node=>node.attributes["data-workbench-pane"]===pane));
+    assert.equal(f.dom.nodes.find(node=>node.attributes["data-workbench"]==="document").attributes["data-workbench-narrow"],"true");
+    assert.equal(f.dom.nodes.find(node=>node.attributes.id==="document-context-panel").hiddenBy,pane==="write"?null:"document-context-panel");
+    assert.equal(f.dom.nodes.find(node=>node.attributes.id==="document-results-panel").hiddenBy,pane==="write"?"document-results-panel":null);
+   }
+   assert.equal(f.store.route.get(),route);assert.equal(f.storeHost.requests.length,requests);
+  }
+ }
+});
+
 test("real document anchor keeps modifier/middle navigation native and exact normal navigation closes first",async t=>{
  const f=await fixture(t);await f.open();
  const link=f.dom.visible("a").find(node=>node.owner===f.rail&&node.attributes["aria-current"]==="page"&&hasClass("rail-document-links")(node.parent));

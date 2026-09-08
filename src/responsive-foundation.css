@@ -3004,7 +3004,7 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 
   .studio-mode-nav {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--forma-hit-target) var(--forma-hit-target);
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
     grid-template-rows: repeat(2, var(--forma-hit-target));
     align-items: center;
     gap: .25rem;
@@ -3500,14 +3500,15 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   gap: var(--forma-cluster-gap);
 }
 
-@container studio (width < 46rem) {
-  .document-workbench-tasks {
-    display: flex;
-  }
+/* Pane visibility, its switcher, and track count share one rendered posture.
+   An independently evaluated container breakpoint can otherwise leave a
+   hidden pane's track behind while scrollbar width is changing. */
+.workspace-page[data-workbench="document"][data-workbench-narrow="true"] .document-workbench-tasks {
+  display: flex;
+}
 
-  .workspace-page[data-workbench="document"] .studio-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.workspace-page[data-workbench="document"][data-workbench-narrow="true"] .studio-grid {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .document-workbench-critical {
@@ -3628,7 +3629,8 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav > button,
 .application-creative[data-short-height="true"][data-layout-intent="workbench"] .studio-mode-nav > button {
-  flex: 0 0 var(--forma-hit-target);
+  flex: 0 0 auto;
+  min-inline-size: var(--forma-hit-target);
   grid-column: auto;
   grid-row: auto;
 }
