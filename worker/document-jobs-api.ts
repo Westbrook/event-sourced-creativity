@@ -2938,9 +2938,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         const checkpoint=parseResult(final),detail=errorDetailFromResult(checkpoint),summary=generationExecutionSummary(checkpoint,detail);
         const monetaryKeys=new Set(["artifact_kind","provider","model","actual_provider_call_count","actual_planner_call_count","actual_media_call_count","unresolved_provider_call_count","provider_submission_uncertain","provider_call_breakdown_complete","execution_evidence_version","reservation_microusd","settled_cost_microusd","reservation_status","source_transmission_status","provider_request_status","failure_code","failure_category","failure_stage"]);
         const safeReceipt=Object.fromEntries(Object.entries(summary).filter(([key])=>monetaryKeys.has(key)));
+        const administrativelyReleased=outcome.status!=="known"&&outcome.reason==="administrative_disposition_requires_review";
+        if(administrativelyReleased){safeReceipt.reservation_status="administratively_released";safeReceipt.provider_request_status="submission_unknown";}
+
         const safeDetail=detail?{code:detail.code,category:detail.category,scope:detail.scope,action:detail.action,retryable:false,retryAfterMs:null,
           requestId:detail.requestId,httpStatus:detail.httpStatus,
-          message:outcome.status==="known"?"The saved request receipts and charges are verified. Review the retained draft before any new generation.":"The exact paid request evidence is incomplete. The original reservation remains held; ask support to inspect the original provider request records.",
+          message:administrativelyReleased?"Internal capacity was released by an audited administrative decision. Provider billing remains unknown. Any later charge requires a separate reviewed correction.":outcome.status==="known"?"The saved request receipts and charges are verified. Review the retained draft before any new generation.":"The exact paid request evidence is incomplete. The original reservation remains held; ask support to inspect the original provider request records.",
           ...(detail.validationIssues?{validationIssues:detail.validationIssues.flatMap(issue=>safePresentationCandidateIssues([issue],{
             pageIndex:Number.isSafeInteger(issue.pageIndex)?issue.pageIndex:0,pageCount:Number.isSafeInteger(issue.pageCount)&&issue.pageCount>0?issue.pageCount:1,
             globalStartIndex:0,providerAttempt:Number.isSafeInteger(issue.providerAttempt)&&issue.providerAttempt>0?issue.providerAttempt:1,stage:issue.stage==="repair"?"repair":"initial",
@@ -2949,8 +2952,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         const visible=serializeJob(presentation);
         await authorizedRead();
         const reconciliation=outcome.status==="known"?{status:"known",settled:outcome.settled,auditRepaired:outcome.auditRepaired,usedTokens:outcome.usedTokens,usedMicrousd:outcome.usedMicrousd}
-          :{status:"operator_required",reason:outcome.reason,reservationRetained:true,
-            operatorAction:"Inspect the original provider request and billing records using the attempt and client trace IDs. A retained initial response does not verify a later repair, and a client trace ID is not guaranteed provider idempotency. Do not resubmit an unknown request.",
+          :{status:"operator_required",reason:outcome.reason,reservationRetained:!administrativelyReleased,
+            operatorAction:administrativelyReleased?"Review the administrative disposition before any later charge. Do not reopen the original reservation or resubmit the unknown request.":"Inspect the original provider request and billing records using the attempt and client trace IDs. A retained initial response does not verify a later repair, and a client trace ID is not guaranteed provider idempotency. Do not resubmit an unknown request.",
             attemptCorrelationId:target.correlation_id,currentClientRequestId:typeof original.presentationProviderClientRequestId==="string"?original.presentationProviderClientRequestId:null,
             requests:calls.map(call=>({clientRequestId:call.clientRequestId,unitId:call.unitId??null,model:call.model,status:call.status,submittedAt:call.submittedAt??null,providerResponseId:call.providerRequestId??null,httpRequestId:call.httpRequestId??null}))};
         return Response.json({job:{...visible,members:[],moderationPromptRef:null,progressMessage:safeDetail?.message??"Saved provider receipt check complete.",

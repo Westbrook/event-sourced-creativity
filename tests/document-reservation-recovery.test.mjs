@@ -972,3 +972,268 @@ test("bundled output reconciliation skips the producer with no authorization his
 test("bundled output reconciliation reaches the producer with authorization history",async context=>{
   await assertBundledOutputReconciliationHistory(context,true);
 });
+
+import { applyHoldDisposition, previewHoldDisposition, HOLD_ACKNOWLEDGEMENT } from "../worker/budget-hold-dispositions.ts";
+import { verifyHoldDisposition } from "../worker/budget-hold-verification.ts";
+import { handleHoldDispositions } from "../worker/budget-hold-api.ts";
+import { requireExistingHoldAdministrator, releaseBudget, releaseCostBudget, POLICY_VERSION } from "../worker/pilot-policy.ts";
+import { presentationCandidateAccounting } from "../src/model/presentation-candidates.ts";
+
+async function administrativeHoldFixture() {
+  const f=await legacySlidesSettlementFixture();
+  const now=new Date().toISOString();
+  f.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,'admin',?,?,?,?)")
+    .run(f.user.userId,"hold-admin@example.test","Hold admin",POLICY_VERSION,now,now,now);
+  f.env.FORMA_HOLD_DISPOSITION_ENABLED="true";
+  f.save({...f.checkpoint,presentationProviderSubmission:"pending",generationReceipt:{provider_request_status:"submission_unknown"}});
+  f.headers={origin:"https://forma.test","content-type":"application/json","oai-authenticated-user-id":f.user.userId,"oai-authenticated-user-email":"hold-admin@example.test"};
+  f.request=(body,extra={})=>new Request("https://forma.test/api/admin/budget-hold-dispositions",{method:"POST",headers:{...f.headers,...extra},body:JSON.stringify(body)});
+  f.user=(await requireExistingHoldAdministrator(f.request({}),f.env)).user;
+  const preview=await previewHoldDisposition(f.env,f.user,f.job().job_id);
+  f.command={dispositionId:"hold-test-1",jobId:f.job().job_id,previewSha256:preview.previewSha256,approvalRef:"test-fixture-approval",supportRef:"test-fixture-support",
+    reason:"Synthetic test: provider cannot resolve historical billing",evidenceSha256:"e".repeat(64),acknowledgement:HOLD_ACKNOWLEDGEMENT};
+  f.fullSnapshot=()=>JSON.stringify({finance:f.snapshot(),holds:f.sqlite.prepare("SELECT * FROM budget_hold_dispositions").all(),job:f.job()});
+  return f;
+}
+
+function denyWrites(env) {
+  return {...env,DB:{prepare(sql){assert.match(sql,/^\s*SELECT\b/i,"follow-up must issue SELECT only");return env.DB.prepare(sql);},batch(statements){return env.DB.batch(statements);}}};
+}
+
+test("administrative hold: atomic capacity release preserves unknown provider evidence and settled spending",async()=>{
+  const f=await administrativeHoldFixture(),original=f.job().result_json;
+  const result=await applyHoldDisposition(f.env,f.user,f.command);
+  assert.equal(result.applied,true);
+  const verified=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+  assert.equal(verified.verified,true,JSON.stringify(verified.checks));
+  assert.equal(f.job().result_json,original);
+  assert.equal(f.usages().length,0);
+  for(const table of ["budget_counters","cost_budget_counters"]){
+    const unit=table==="budget_counters"?"tokens":"microusd";
+    for(const row of f.sqlite.prepare(`SELECT * FROM ${table}`).all())assert.deepEqual([row[`used_${unit}`],row[`reserved_${unit}`]],[0,0]);
+  }
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BudgetHoldAdministrativelyReleased'").get().n,1);
+  assert.throws(()=>f.sqlite.exec("UPDATE budget_hold_dispositions SET created_at='changed'"),/append_only/);
+  assert.throws(()=>f.sqlite.exec("DELETE FROM budget_hold_dispositions"),/append_only/);
+  for(const table of ["budget_reservations","cost_budget_reservations"]){
+    assert.throws(()=>f.sqlite.exec(`UPDATE ${table} SET status='active'`),/requires_review/);
+    assert.throws(()=>f.sqlite.exec(`DELETE FROM ${table}`),/requires_review/);
+  }
+});
+
+test("administrative hold: exact duplicate and concurrent command cannot release twice",async()=>{
+  const f=await administrativeHoldFixture();
+  const result=await Promise.allSettled([applyHoldDisposition(f.env,f.user,f.command),applyHoldDisposition(f.env,f.user,f.command)]);
+  assert.equal(result.filter(x=>x.status==="fulfilled"&&x.value.applied).length,1);
+  const before=f.fullSnapshot();
+  assert.equal((await applyHoldDisposition(f.env,f.user,{...f.command})).replayed,true);
+  assert.equal(f.fullSnapshot(),before);
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,{...f.command,reason:"A changed replay is never the same decision"}));
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: a lost commit acknowledgment is recognized by its exact durable receipt",async()=>{
+  const f=await administrativeHoldFixture(),batch=f.env.DB.batch;
+  f.env.DB.batch=async statements=>{const result=await batch(statements);if(statements.some(s=>s.sql.startsWith("INSERT INTO budget_hold_dispositions")))throw Error("ack lost");return result;};
+  const result=await applyHoldDisposition(f.env,f.user,f.command);
+  assert.equal(result.replayed,true);
+  assert.equal((await verifyHoldDisposition(f.env,f.user.userId,f.command.dispositionId)).verified,true);
+});
+
+test("administrative hold: disabled feature and missing explicit acknowledgement cannot mutate",async()=>{
+  const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+  f.env.FORMA_HOLD_DISPOSITION_ENABLED=undefined;
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/disabled/);
+  f.env.FORMA_HOLD_DISPOSITION_ENABLED="true";
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,{...f.command,acknowledgement:"yes"}),/explicit_command/);
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: stale preview and invalid scope fail without an adjustment",async()=>{
+  for(const sql of [
+    "UPDATE document_jobs SET result_json=json_set(result_json,'$.newReceipt','late')",
+    "UPDATE budget_reservations SET correlation_id='different-attempt'",
+    "UPDATE cost_budget_reservations SET period='2025-12'",
+    "UPDATE budget_reservations SET owner_id='different-owner'",
+    "UPDATE cost_budget_reservations SET stream_id='creative:another'",
+    "UPDATE cost_budget_reservations SET operation='document-render:video'",
+    "UPDATE cost_budget_reservations SET workspace_id='another-workspace'",
+    "UPDATE document_jobs SET status='running'",
+    "UPDATE cost_budget_counters SET reserved_microusd=999",
+    "DELETE FROM budget_counters WHERE scope='workspace'",
+    "UPDATE budget_counters SET reserved_tokens=1000.5",
+    "INSERT INTO project_budget_reservation_scopes SELECT 'tokens',reservation_id,'org','project','slides-owner','org',created_at FROM budget_reservations",
+  ]){
+    const f=await administrativeHoldFixture();f.sqlite.exec(sql);const before=f.fullSnapshot();
+    await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),undefined,sql);
+    assert.equal(f.fullSnapshot(),before,sql);
+  }
+});
+
+test("administrative hold: state and authority races inside the transaction abort the full batch",async()=>{
+  for(const sql of [
+    "UPDATE users SET role='creator'",
+    "UPDATE users SET consent_version='revoked'",
+    "UPDATE document_jobs SET result_json=json_set(result_json,'$.lateReceipt',1)",
+    "UPDATE cost_budget_counters SET reserved_microusd=999",
+    "INSERT INTO impersonation_sessions VALUES('session','slides-owner','persona','fictional','replay','active','2020-01-01','2099-01-01',NULL)",
+  ]){
+    const f=await administrativeHoldFixture(),batch=f.env.DB.batch;let raced=false,before;
+    f.env.DB.batch=async statements=>{if(!raced&&statements.some(s=>s.sql.startsWith("INSERT INTO budget_hold_dispositions"))){raced=true;f.sqlite.exec(sql);before=f.fullSnapshot();}return batch(statements);};
+    await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/,sql);
+    assert.equal(f.fullSnapshot(),before,sql);
+  }
+});
+
+test("administrative hold: silent counter, reservation, and event failures roll back every change",async()=>{
+  for(const [table,action] of [["cost_budget_counters","UPDATE"],["budget_reservations","UPDATE"],["events","INSERT"],["budget_hold_dispositions","INSERT"]]){
+    const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+    f.sqlite.exec(`CREATE TRIGGER injected_noop BEFORE ${action} ON ${table} BEGIN SELECT RAISE(IGNORE); END`);
+    await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/);
+    assert.equal(f.fullSnapshot(),before,table);
+  }
+});
+
+test("administrative hold: later provider evidence cannot silently charge or reopen the original hold",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  f.save(f.checkpoint);
+  const stable=()=>JSON.stringify(JSON.parse(f.fullSnapshot()),(key,value)=>key==="finance"?JSON.parse(value,(k,v)=>k==="updated_at"?undefined:v):value);
+  const before=stable();
+  assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).reason,"administrative_disposition_requires_review");
+  assert.equal((await settleBudget(f.env,f.user.userId,f.token.reservationId,240,"late" )).settled,false);
+  assert.equal((await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224)).settled,false);
+  await releaseBudget(f.env,f.user.userId,f.token.reservationId,"late");
+  await releaseCostBudget(f.env,f.user.userId,f.cost.reservationId);
+  await reconcileFailedBudgetReservations(f.env,f.user);
+  assert.equal(stable(),before);
+  const verified=await verifyHoldDisposition(f.env,f.user.userId,f.command.dispositionId);
+  assert.equal(verified.transactionVerified,true);
+  assert.equal(verified.checks.providerEvidenceUnchanged,false);
+});
+
+test("administrative hold: follow-up allows unrelated later activity but detects counter drift",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  await reserveBudget(f.env,f.user.userId,300,{streamId:f.user.streamId,correlationId:"unrelated",operation:"chat"});
+  await reserveCostBudget(f.env,f.user.userId,400,{reservationId:"unrelated",maximumMicrousd:400,allowUserOverage:false,streamId:f.user.streamId,correlationId:"unrelated",operation:"chat"});
+  assert.equal((await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId)).verified,true);
+  f.sqlite.exec("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+1 WHERE scope='user'");
+  const v=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+  assert.equal(v.transactionVerified,true);assert.equal(v.verified,false);assert.equal(v.checks.currentReservedProjection,false);
+});
+
+test("administrative hold: HTTP preview and follow-up are SELECT-only and scoped to the administrator",async()=>{
+  const f=await administrativeHoldFixture();
+  assert.equal((await handleHoldDispositions(f.request({action:"preview",jobId:f.job().job_id}),denyWrites(f.env))).status,200);
+  assert.equal((await handleHoldDispositions(f.request({action:"apply",command:f.command}),f.env)).status,200);
+  const url=`https://forma.test/api/admin/budget-hold-dispositions?dispositionId=${f.command.dispositionId}`;
+  const get=(extra={})=>new Request(url,{headers:{...f.headers,...extra}});
+  const before=f.fullSnapshot();
+  const result=await handleHoldDispositions(get(),denyWrites(f.env));assert.equal(result.status,200);assert.equal((await result.json()).verified,true);
+  assert.equal(f.fullSnapshot(),before);
+  assert.equal((await handleHoldDispositions(get({cookie:"forma_impersonation=unknown"}),denyWrites(f.env))).status,409);
+  assert.equal((await handleHoldDispositions(get({cookie:"forma_project_context=unknown"}),denyWrites(f.env))).status,409);
+  f.sqlite.exec("UPDATE users SET role='creator'");
+  assert.equal((await handleHoldDispositions(get(),denyWrites(f.env))).status,403);
+});
+
+test("administrative hold: HTTP rejects cross-origin, malformed, excessive and identity-forged requests",async()=>{
+  const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+  for(const origin of ["https://attacker.test",""]){assert.equal((await handleHoldDispositions(f.request({action:"apply",command:f.command},{origin}),f.env)).status,403);}
+  assert.equal((await handleHoldDispositions(f.request({action:"apply",command:{...f.command,operatorId:f.user.userId}}),f.env)).status,400);
+  assert.equal((await handleHoldDispositions(f.request({action:"preview",jobId:"other-owner-job"}),f.env)).status,404);
+  assert.equal((await handleHoldDispositions(f.request({action:"apply",command:{...f.command,reason:"x".repeat(9000)}}),f.env)).status,413);
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: organization identity-policy revocation is checked at commit",async()=>{
+  const f=await administrativeHoldFixture(),now=new Date().toISOString();
+  f.sqlite.prepare("INSERT INTO organizations VALUES('hold-org','Synthetic org',?,'active',?,?)").run(f.user.userId,now,now);
+  f.sqlite.prepare("INSERT INTO organization_memberships(membership_id,organization_id,user_id,role,status,invited_by_user_id,accepted_at,created_at,updated_at) VALUES('hold-membership','hold-org',?,'owner','active',?,?,?,?)")
+    .run(f.user.userId,f.user.userId,now,now,now);
+  f.sqlite.prepare("INSERT INTO organization_security_policies(organization_id,updated_by_user_id,updated_at) VALUES('hold-org',?,?)").run(f.user.userId,now);
+  f.user=(await requireExistingHoldAdministrator(f.request({}),f.env)).user;
+  f.command.previewSha256=(await previewHoldDisposition(f.env,f.user,f.job().job_id)).previewSha256;
+  const batch=f.env.DB.batch;let before,changed=false;
+  f.env.DB.batch=async statements=>{
+    if(!changed&&statements.some(s=>s.sql.startsWith("INSERT INTO budget_hold_dispositions"))){
+      changed=true;f.sqlite.exec("UPDATE organization_security_policies SET require_mfa=1,version=version+1");before=f.fullSnapshot();
+    }
+    return batch(statements);
+  };
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/);
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: candidate and account summaries distinguish released capacity from unknown billing",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  const accounting=presentationCandidateAccounting(JSON.parse(f.job().result_json),{
+    reservations:f.sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),usage:[],responseIds:[],minimumAttempt:1,preserved:[],
+  });
+  assert.equal(accounting.reservation_status,"administratively_released");
+  assert.equal(accounting.reservation_microusd,0);
+  assert.equal(accounting.settled_cost_microusd,null);
+  assert.equal(accounting.settled_cost_complete,false);
+  assert.equal(accounting.provider_submission_uncertain,true);
+  const {readOutcomeTelemetryLiveEvidence}=await import("../worker/outcome-telemetry.ts");
+  const live=await readOutcomeTelemetryLiveEvidence(f.env,f.user);
+  assert.equal(live.ok,true);
+  assert.equal(live.evidence.finance.periods[0].releasedCount,1);
+  assert.equal(live.evidence.finance.periods[0].unclassifiedCount,0);
+  assert.equal(live.evidence.finance.heldMicrousd,0);
+  assert.equal(live.evidence.finance.providerInvoiceReconciled,null);
+});
+
+test("administrative hold: full worker follow-up neither writes nor schedules cleanup or provider work",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  const worker=(await import("../dist/server/index.js")).default;
+  const noWrites=denyWrites(f.env),originalFetch=globalThis.fetch;
+  globalThis.fetch=()=>{throw Error("unexpected network request");};
+  try{
+    const result=await worker.fetch(new Request(`https://forma.test/api/admin/budget-hold-dispositions?dispositionId=${f.command.dispositionId}`,{headers:f.headers}),noWrites,
+      {waitUntil(){throw Error("unexpected background work");}});
+    assert.equal(result.status,200);
+    assert.equal((await result.json()).verified,true);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("administrative hold: a missing schema fails closed without creating it during verification",async()=>{
+  const {env,sqlite}=reconciliationDatabase();
+  const request=new Request("https://forma.test/api/admin/budget-hold-dispositions?dispositionId=hold-test-1",{headers:{"oai-authenticated-user-id":"owner","oai-authenticated-user-email":"owner@example.test"}});
+  assert.equal((await handleHoldDispositions(request,denyWrites(env))).status,503);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_schema").get().n,0);
+});
+
+test("administrative hold: used-counter changes require review rather than passing silently",async()=>{
+  for(const [table,unit] of [["budget_counters","tokens"],["cost_budget_counters","microusd"]]){
+    const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+    f.sqlite.exec(`UPDATE ${table} SET used_${unit}=used_${unit}+1 WHERE scope='user'`);
+    const v=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+    assert.equal(v.transactionVerified,true);assert.equal(v.verified,false);
+    assert.deepEqual(v.requiresReview,["settledCountersUnchanged"]);
+  }
+});
+
+test("administrative hold: follow-up revalidates exact live document and attempt metadata",async()=>{
+  for(const column of ["document_id","correlation_id","status","attempt_count"]){
+    const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+    f.sqlite.exec(`UPDATE document_jobs SET ${column}=${column==="attempt_count"?"attempt_count+1":"'changed'"}`);
+    const v=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+    assert.equal(v.checks.providerEvidenceUnchanged,true,"JSON bytes alone do not prove the attempt binding");
+    assert.equal(v.checks.liveJobBinding,false);assert.equal(v.verified,false);
+  }
+});
+
+test("administrative hold: explicit migration is idempotent and missing immutable guards fail closed",async()=>{
+  const {readFile}=await import("node:fs/promises");
+  const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
+  const migration=await readFile(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8");
+  const sqlite=new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE budget_reservations(reservation_id TEXT); CREATE TABLE cost_budget_reservations(reservation_id TEXT)");
+  sqlite.exec(migration);sqlite.exec(migration);
+  const proof=holdSchemaProof();assert.equal(sqlite.prepare("SELECT 1 AS ready WHERE "+proof.sql).get(...proof.bindings).ready,1);sqlite.close();
+  const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+  f.sqlite.exec("DROP TRIGGER budget_hold_dispositions_no_update");
+  await assert.rejects(()=>previewHoldDisposition(f.env,f.user,f.job().job_id),/schema_not_ready/);
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/);
+  assert.equal(f.fullSnapshot(),before);
+});

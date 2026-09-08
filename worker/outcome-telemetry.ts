@@ -122,8 +122,8 @@ export function prepareOutcomeTelemetryLiveEvidence(
       env.DB.prepare(`SELECT 1 AS authorized WHERE ${guard.sql}`).bind(...guard.bindings),
       env.DB.prepare(`SELECT period,COUNT(*) AS reservation_count,
         SUM(status='active') AS active_count,SUM(status='executing') AS executing_count,
-        SUM(status='settled') AS settled_count,SUM(status='released') AS released_count,
-        SUM(status NOT IN('active','executing','settled','released')) AS unclassified_count,
+        SUM(status='settled') AS settled_count,SUM(status IN('released','administratively_released')) AS released_count,
+        SUM(status NOT IN('active','executing','settled','released','administratively_released')) AS unclassified_count,
         SUM(CASE WHEN (${validMoneySql("reserved_microusd")}) AND (${validMoneySql("used_microusd")}) THEN 0 ELSE 1 END) AS invalid_amount_count,
         TOTAL(CASE WHEN status IN('active','executing') THEN reserved_microusd ELSE 0 END) AS held_microusd,
         TOTAL(CASE WHEN status='settled' THEN used_microusd ELSE 0 END) AS settled_microusd

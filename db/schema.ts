@@ -1566,3 +1566,12 @@ export const outputDeliveryManifests = sqliteTable(
     check("output_delivery_manifests_check_1", sql.raw("is_partial IN(0,1)")),
   ],
 );
+
+/** An administrative capacity release is not a zero-cost provider settlement. */
+export const budgetHoldDispositions = sqliteTable("budget_hold_dispositions", {
+  dispositionId: text("disposition_id").primaryKey(), operatorId: text("operator_id").notNull(),
+  jobId: text("job_id").notNull(), correlationId: text("correlation_id").notNull(),
+  tokenReservationId: text("token_reservation_id").notNull().unique(), costReservationId: text("cost_reservation_id").notNull().unique(),
+  commandSha256: text("command_sha256").notNull(), recordSha256: text("record_sha256").notNull(), recordJson: text("record_json").notNull(),
+  eventId: text("event_id").notNull().unique(), createdAt: text("created_at").notNull(),
+}, table => [uniqueIndex("idx_hold_dispositions_job_attempt").on(table.jobId, table.correlationId)]);

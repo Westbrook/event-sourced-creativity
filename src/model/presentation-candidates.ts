@@ -284,7 +284,7 @@ export type PresentationCandidateAccounting = {
   settled_cost_complete: boolean;
   /** Current outstanding hold, never the original reservation allocation. */
   reservation_microusd: number | null;
-  reservation_status: "active" | "executing" | "settled" | "released" | "unknown";
+  reservation_status: "active" | "executing" | "settled" | "released" | "administratively_released" | "unknown";
   actual_provider_call_count: number | null;
   attempted_provider_call_count: number | null;
   unresolved_provider_call_count: number | null;
@@ -341,7 +341,7 @@ export function presentationCandidateAccounting(checkpoint: Record<string, unkno
   for (const row of evidence.reservations) {
     const id = candidateText(row.reservation_id);
     if (!id || reservations.has(id) || candidateCount(row.used_microusd) === null || candidateCount(row.reserved_microusd) === null
-      || !["active", "executing", "settled", "released"].includes(String(row.status))) { invalid = true; continue; }
+      || !["active", "executing", "settled", "released", "administratively_released"].includes(String(row.status))) { invalid = true; continue; }
     reservations.set(id, row);
   }
   const charges = new Map<string, number>();
@@ -362,9 +362,10 @@ export function presentationCandidateAccounting(checkpoint: Record<string, unkno
   const holdAmount = held.reduce((total, row) => total + Number(row.reserved_microusd), 0);
   const status = invalid || !reservations.size ? "unknown"
     : held.some(row => row.status === "executing") ? "executing" : held.length ? "active"
+      : [...reservations.values()].some(row => row.status === "administratively_released") ? "administratively_released"
       : [...reservations.values()].some(row => row.status === "settled") ? "settled" : "released";
   const settled = !Number.isSafeInteger(amount) ? null : amount > 0 ? amount : explicitZero && !uncertain && !held.length ? 0 : null;
-  const complete = settled !== null && !invalid && reservations.size > 0 && !held.length && !uncertain
+  const complete = status !== "administratively_released" && settled !== null && !invalid && reservations.size > 0 && !held.length && !uncertain
     && unresolved === 0 && attempted !== null && !hasUnsettledProviderSubmission(checkpoint)
     && (hasCurrentCalls || preserved.some(value => value.settled_cost_complete === true));
   return {

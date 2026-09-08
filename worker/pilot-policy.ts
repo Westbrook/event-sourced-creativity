@@ -189,6 +189,24 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
   return { response: null, user, principal, impersonation };
 }
 
+/** Existing-account administrative reads must not bootstrap schema, identity, or counters. */
+export async function requireExistingHoldAdministrator(request: Request, env: WorkerEnv) {
+  const deny = (error: string, status = 403) => ({user: null, response: Response.json({error}, {status, headers:{"cache-control":"private, no-store"}})});
+  if (/(?:^|;\s*)(?:forma_impersonation|forma_project_context)=/.test(request.headers.get("cookie") ?? "")) return deny("return_to_principal_before_internal_access",409);
+  const identity = identityFromRequest(request); if (!identity) return deny("authentication_required",401);
+  const row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string,unknown>>();
+  if (!row || row.email !== identity.email || row.role !== "admin" || row.consent_version !== POLICY_VERSION) return deny("hold_principal_administrator_required");
+  const admission = configuredPilotAdmissionGuard(env, {userId:identity.userId,email:identity.email});
+  if (!await env.DB.prepare("SELECT 1 AS allowed WHERE " + admission.sql).bind(...admission.bindings).first()) return deny("pilot_participant_required");
+  const access = await principalAccessFromRow(row,"admin",{email:identity.email,source:identity.source,subject:identity.userId});
+  if (access.identityPolicyDeniedCustody) return deny("organization_identity_policy_required");
+  const user: PilotUser = {userId:identity.userId,email:identity.email,displayName:String(row.display_name),role:"admin",consentVersion:POLICY_VERSION,
+    consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${identity.userId}`,access,
+    authorizationSnapshot:{updatedAt:String(row.updated_at??""),rawEpoch:String(row.permission_epoch??""),grants:String(row.grants_json??"[]"),
+      organizations:String(row.organizations_json??"[]"),projects:String(row.projects_json??"[]"),identityPolicies:String(row.identity_policies_json??"[]"),canvasRequirements:Number(row.approved_canvas_requirements??0)}};
+  return {user,response:null};
+}
+
 export function hasCapability(user: PilotUser, capability: FormaCapability, scope?: { organizationId?: string | null; projectAccessId?: string | null }) {
   return principalHasCapability(user.access, capability, scope);
 }
@@ -596,6 +614,9 @@ export async function settleLegacyPresentationReservations(
   const receipt=parseDocumentReservationJson(JSON.stringify(checkpoint.generationReceipt??{}));
   if(job.owner_id!==user.userId||job.stream_id!==user.streamId||job.kind!=="render_document"||request.artifactKind!=="slides"
     ||!["failed","canceled","completed","partial"].includes(job.status))return stop("legacy_presentation_attempt_mismatch","conflict");
+  await ensureSchema(env);
+  if(await env.DB.prepare("SELECT 1 AS disposed FROM budget_hold_dispositions WHERE job_id=? AND operator_id=? AND correlation_id=?")
+    .bind(job.job_id,user.userId,job.correlation_id).first())return stop("administrative_disposition_requires_review","conflict");
   if(checkpoint.providerSubmissionProtocol!==1||hasUnsettledProviderSubmission(checkpoint))return stop("legacy_presentation_unresolved_provider_call");
   const calls=providerSubmissions(checkpoint);
   if(!calls.length)return stop("legacy_presentation_per_call_evidence_missing");

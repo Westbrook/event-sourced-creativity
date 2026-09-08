@@ -1,3 +1,4 @@
+import { handleHoldDispositions } from "./budget-hold-api.ts";
 import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, requireCapability, requireConsent, requireUser } from "./pilot-policy";
@@ -153,6 +154,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     }
     if(url.pathname==="/api/performance")return handlePerformanceSample(request,env);
     if(url.pathname==="/api/impersonation")return handleImpersonation(request,env);
+    if(url.pathname==="/api/admin/budget-hold-dispositions")return handleHoldDispositions(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
     if(url.pathname==="/api/analytics")return handleAnalytics(request,env,context);
     if(url.pathname==="/api/generation-readiness")return handleGenerationReadiness(request,env);
@@ -277,7 +279,7 @@ export default {
     const response=await routeRequest(request,env,context);
     const pathname=new URL(request.url).pathname;
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/");
-    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
