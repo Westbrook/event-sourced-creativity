@@ -29,20 +29,22 @@ export class FormaScout extends FormaElement {
   async #promote(observation: CreativeEvent) {
     const candidate = record(observation.payload.candidate); const kind = String(candidate.kind ?? "");
     if (!kind) return;
-    const blockId = crypto.randomUUID(); const label = String(candidate.label ?? "Scout candidate");
+    const blockId = crypto.randomUUID(); const documentId = this.store.projection.get().documentId;
+    const label = String(candidate.label ?? "Scout candidate");
     const type = kind === "palette-anchor" ? "palette" : "style";
     const properties = type === "palette"
       ? { label, colors: list(candidate.colors).map(String), weight: .65, authority: "authored", source_claim_ref: `observation:${String(observation.payload.observation_id)}` }
       : { text: label, weight: .65, authority: "authored", source_claim_ref: `observation:${String(observation.payload.observation_id)}` };
     const appended = await this.store.append({ type: "BlockCreated", payload: {
       block_id: blockId,
-      document_id: this.store.projection.get().documentId,
+      document_id: documentId,
       type,
       handle: `${type}/scout-${blockId.slice(0, 8)}`,
       position: `z${String(this.store.head.get()).padStart(8, "0")}`,
       properties,
     } });
-    if (appended.length) this.store.toast("Scout candidate promoted as an authored document block.");
+    if (appended.some(event => event.type === "BlockCreated" && event.payload.block_id === blockId
+      && event.payload.document_id === documentId)) this.store.toast("Scout candidate promoted as an authored document block.");
   }
 
   override render() {

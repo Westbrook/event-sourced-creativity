@@ -266,3 +266,96 @@ for (const locale of locales) test("actual Design lab template distinguishes sha
     assert.equal(f.host.store, undefined, "audience examples do not load customer work");
   }
 });
+
+// Exercise the actual Scout control and Store acknowledgment path. Only the
+// existing HTTP intercept supplies two finite append responses; no Scout run,
+// provider, real backend persistence or native browser behavior is claimed.
+for (const outcome of ["rejected", "created"]) test(outcome === "rejected"
+  ? "Scout promotion preserves a validator-only rejection without claiming success"
+  : "Scout promotion reports success for its exact acknowledged authored block", async t => {
+  const f = await createCalmFullPage(t, { locale: "en", assistant: false });
+  const documentId = f.store.projection.get().documentId;
+  const projectId = f.store.projection.get().projectId;
+  const actor = "user"; // Existing personal-stream actor; user:<id> belongs to shared-project writes.
+  const observationId = "scout-promotion-ack-observation";
+  const candidateText = "Keep the exact candidate café العربية 日本語.";
+  assert.ok(documentId && projectId);
+  assert.equal(f.store.session.get().projectContext ?? null, null, "personal Scout prerequisite");
+  f.appendEvent("ScoutObserved", {
+    observation_id: observationId, signature: "scout-promotion-ack-signature",
+    type: "adjacency", label: "Retained synthetic suggestion", summary: "An unpaid promotion acknowledgment check.",
+    confidence: .9, evidence_refs: [], evidence_metrics: {},
+    candidate: { kind: "style-anchor", label: candidateText },
+  });
+  f.store.route.set("/scout");
+  await f.settle();
+  assert.equal(f.store.projection.get().documentId, documentId);
+  const scout = f.components().find(component => component.tag === "forma-scout");
+  assert.ok(scout?.isConnected, "actual Scout is mounted by the existing Shell");
+  const promotion = f.find("button", node => node.owner === scout && node.text === f.i18n.system("Promote to document"));
+  const before = structuredClone(f.store.events.get());
+  const blocksBefore = structuredClone(f.store.projection.get().blocks);
+  const requestsBefore = f.storeHost.requests.length;
+  const reason = "Synthetic Scout promotion was rejected.";
+  let requested = null, acknowledgment = null;
+  f.storeHost.intercept = request => {
+    if (["GET", "HEAD"].includes(String(request.init.method ?? "GET").toUpperCase())) return undefined;
+    assert.equal(request.url, "/api/events", "no generation or other mutation is admitted");
+    assert.equal(request.init.method, "POST");
+    assert.equal(request.body.action, "append");
+    assert.equal(request.body.events.length, 1);
+    assert.equal(requested, null, "the visible promotion sends exactly one original change");
+    requested = structuredClone(request.body.events[0]);
+    assert.deepEqual(request.body.event, requested);
+    assert.equal(requested.type, "BlockCreated");
+    assert.equal(requested.payload.document_id, documentId);
+    assert.equal(requested.payload.type, "style");
+    assert.deepEqual(requested.payload.properties, {
+      text: candidateText, weight: .65, authority: "authored", source_claim_ref: `observation:${observationId}`,
+    });
+    assert.ok(typeof requested.payload.block_id === "string" && requested.payload.block_id);
+    assert.ok(!blocksBefore.some(block => block.id === requested.payload.block_id));
+    const sequence = f.store.head.get() + 1;
+    acknowledgment = {
+      eventId: `scout-promotion-ack-${outcome}`, streamId: f.storeHost.worker.streamId,
+      sequence, occurredAt: "2026-09-08T00:00:00.000Z", recordedAt: "2026-09-08T00:00:00.000Z",
+      clientId: request.body.clientId, correlationId: "scout-promotion-ack", schemaVersion: 1,
+      actor: outcome === "created" ? actor : "worker:validator",
+      type: outcome === "created" ? "BlockCreated" : "ValidationFailed",
+      payload: outcome === "created" ? { ...structuredClone(requested.payload), project_id: projectId }
+        : { rejected_event_type: "BlockCreated", reason },
+    };
+    return Response.json({ appended: [acknowledgment], head: sequence,
+      rejected: outcome === "created" ? [] : [{ index: 0, type: "BlockCreated", reason }] });
+  };
+  await f.act(promotion);
+  assert.ok(requested && acknowledgment, "actual Store reached and consumed the finite append response");
+  assert.deepEqual(f.store.events.get(), [...before, acknowledgment], "source history is preserved and only the response event is merged");
+  assert.equal(f.store.head.get(), acknowledgment.sequence);
+  assert.deepEqual(f.store.optimisticEvents.get(), []);
+  assert.equal(f.store.route.get(), "/scout");
+  const writes = f.storeHost.requests.slice(requestsBefore).filter(request =>
+    !["GET", "HEAD"].includes(String(request.init.method ?? "GET").toUpperCase()));
+  assert.equal(writes.length, 1, "no second promotion, judgment, Scout run or provider request");
+  const success = f.i18n.system("Scout candidate promoted as an authored document block.");
+  if (outcome === "rejected") {
+    assert.deepEqual(f.store.projection.get().blocks, blocksBefore, "a validator event creates no authored block");
+    assert.equal(f.store.appendFailure.get(), `BlockCreated: ${reason}`);
+    assert.equal(f.store.ui.toast, f.i18n.system("{count} event rejected; valid events still appended.", { count: 1 }),
+      "Scout preserves the Store rejection instead of overwriting it with promotion success");
+    assert.notEqual(f.store.ui.toast, success);
+    const remaining = f.find("button", node => node.owner === scout && node.text === f.i18n.system("Promote to document"));
+    assert.ok(!Object.hasOwn(remaining.attributes, "disabled"), "no false promoted state is shown");
+  } else {
+    const block = f.store.projection.get().blocks.find(candidate => candidate.id === requested.payload.block_id);
+    assert.ok(block, "the acknowledged exact block is actually projected");
+    assert.equal(block.documentId, documentId);
+    assert.equal(block.type, "style");
+    assert.deepEqual(block.properties, requested.payload.properties);
+    assert.deepEqual(f.store.projection.get().blocks.filter(candidate => candidate.id !== block.id), blocksBefore);
+    assert.equal(f.store.appendFailure.get(), "");
+    assert.equal(f.store.ui.toast, success);
+    const promoted = f.find("button", node => node.owner === scout && node.text === f.i18n.system("Promoted"));
+    assert.ok(Object.hasOwn(promoted.attributes, "disabled"), "normal successful promotion remains reflected in its control");
+  }
+});
