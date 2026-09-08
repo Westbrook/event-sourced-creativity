@@ -28,6 +28,7 @@ const { creativeNextActions } = await lifecyclePorts.loadActual("src/model/works
 const { renderLifecycleNextActionCards } = await lifecyclePorts.loadActual("src/components/next-action-cards.ts");
 const { openCreativeNextActionDestination } = await lifecyclePorts.loadActual("src/components/creative-next-action-navigation.ts");
 const { navigateInApp } = await lifecyclePorts.loadActual("src/components/command-departure.ts");
+const { captureOutputNavigationFocus } = await lifecyclePorts.loadActual("src/components/output-navigation-focus.ts");
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
@@ -46,6 +47,7 @@ const [storeSource, activitySource, deliverSource, localizationSource] = await P
 
 const runtimeKey = Symbol.for("forma.activity-navigation-test.runtime");
 globalThis[runtimeKey] = {
+  captureOutputNavigationFocus,
   navigateInApp,
   nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
   formaActivityJobNeedsAttention,
@@ -89,6 +91,7 @@ function actualStoreSourceField(name) {
 
 const harnessSource = `
 const {
+  captureOutputNavigationFocus,
   navigateInApp,
   nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
   formaActivityJobNeedsAttention,
@@ -246,6 +249,7 @@ class ActivityBase {
       captureSourceOwnership: () => null,
       refreshEvents: () => { this.calls.push("events"); return Promise.resolve(); },
       syncReviewInbox: () => { this.calls.push("reviews"); },
+      reviewInboxState: { get: () => "ready" },
       syncProjectNotifications: () => { this.calls.push("notifications"); },
       syncOrganizationContextPackages: () => { this.calls.push("context-packages"); },
       syncDocumentJobs: () => { this.calls.push("jobs"); },
@@ -263,6 +267,11 @@ class ActivityBase {
 }
 
 export class ActivityLifecycleHarness extends ActivityBase {
+  ${actualMethod(activitySource, "FormaActivity", "#reviewRetrySequence")}
+  ${actualMethod(activitySource, "FormaActivity", "#reviewRetryPending")}
+  ${actualMethod(activitySource, "FormaActivity", "#reviewRetryFocus")}
+  ${actualMethod(activitySource, "FormaActivity", "#retryReviews")}
+  ${actualMethod(activitySource, "FormaActivity", "#reviewLoadStatus")}
   ${actualMethod(activitySource, "FormaActivity", "#lifecycleOpening")}
   ${actualMethod(activitySource, "FormaActivity", "#nextContext")}
   ${actualMethod(activitySource, "FormaActivity", "#navigationBlocked")}

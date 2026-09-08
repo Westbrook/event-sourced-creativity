@@ -285,6 +285,10 @@ export class FormaStore {
   #organizationCatalogDeniedThrough=0;
   #organizationCatalogCompletedRead=0;
   readonly reviewInbox = new Signal.State<AssignedReviewTask[]>([]);
+  readonly reviewInboxState = new Signal.State<"idle"|"loading"|"ready"|"error"|"unavailable">("idle");
+  #reviewInboxReadSequence=0;
+  #reviewInboxCompletedRead=0;
+  #reviewInboxDeniedThrough=0;
   readonly documentJobs = new Signal.State<DocumentJob[]>([]);
   readonly generationReadiness = new Signal.State<Record<string,GenerationReadiness>>({});
   readonly adaptiveStructures = new Signal.State<Record<string,AdaptiveStructure>>({});
@@ -1427,7 +1431,7 @@ export class FormaStore {
     this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
     this.loading.set(false);this.busy.set("");this.error.set("The current source is unavailable. Its saved operation references are retained.");this.appendFailure.set("");this.ui.toast="";
     this.generationReadiness.set({});this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});
-    this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);
+    this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.#resetReviewInbox();
     this.#privateContentScope="none";this.#historyProfile="projects";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
     this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";
     this.#readinessAcknowledgements.clear();this.#readinessInFlight.clear();this.#undo=[];this.#redo=[];
@@ -2795,7 +2799,7 @@ async syncDocumentJobs(){
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
       this.#cachedHistoryRevalidation=undefined;
       this.documentCopyReviews.set({});this.#documentCopyRequest+=1;
-      this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
+      this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.#resetReviewInbox();this.optimisticEvents.set([]);
       this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
       this.#adaptiveStructureJobIds.clear();this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
       this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#readinessAcknowledgements.clear();this.#dismissedAdaptiveSuggestions.clear();this.#readinessInFlight.clear();this.#jobStarts.clear();this.#jobsDriving.clear();this.#presentationRecoveryAttempts.clear();this.#focalInFlight.clear();
@@ -2867,8 +2871,48 @@ async syncDocumentJobs(){
   async syncProjectNotifications(){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}const session=this.session.get();if(!session?.projectContext){this.projectNotifications.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/project-notifications");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {notifications?:ProjectNotification[]};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(response.ok){this.projectNotifications.set(body.notifications??[]);this.notify();}}catch{/* Event polling retries project follow-up without blocking the actual work. */}}
   async acknowledgeProjectNotification(id:string){const session=this.session.get();if(!session?.projectContext)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/project-notifications",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({notificationId:id})},"acknowledge this project update");this.#assertAuthorizationScope(authorization);const body=await response.json() as {readAt?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)return false;this.projectNotifications.set(this.projectNotifications.get().map((item)=>item.id===id?{...item,readAt:body.readAt??new Date().toISOString()}:item));this.notify();return true;}catch{return false;}}
-  async syncReviewInbox(){
-    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}const session=this.session.get();if(!session){this.reviewInbox.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/workspaces/reviews",{credentials:"same-origin"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {tasks?:AssignedReviewTask[]};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(response.ok){this.reviewInbox.set(body.tasks??[]);this.notify();}}catch{/* Reviewer work is refreshed without exposing stale cross-tenant responses. */}}
+  #resetReviewInbox(){
+    this.#reviewInboxDeniedThrough=++this.#reviewInboxReadSequence;
+    this.#reviewInboxCompletedRead=this.#reviewInboxReadSequence;
+    this.reviewInbox.set([]);this.reviewInboxState.set("idle");
+  }
+  async syncReviewInbox():Promise<boolean>{
+    const sourceOwner=this.captureSourceOwnership(),session=this.session.get();
+    if(!session||!this.sourceOwnershipActive(sourceOwner)){
+      this.#resetReviewInbox();this.notify();return false;
+    }
+    const authorization=this.#authorizationScope(session),read=++this.#reviewInboxReadSequence;
+    const scopeCurrent=()=>this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner);
+    const current=()=>scopeCurrent()&&read>this.#reviewInboxDeniedThrough&&read>=this.#reviewInboxCompletedRead;
+    this.reviewInboxState.set("loading");this.notify();
+    try{
+      const response=await fetch("/api/workspaces/reviews",{credentials:"same-origin"});
+      if(!current())return false;
+      if(response.status===401||response.status===403){
+        // A current denial withdraws this inbox, including reads already in flight.
+        // Only a later explicit positive read can establish the list again.
+        this.#reviewInboxDeniedThrough=this.#reviewInboxReadSequence;
+        this.#reviewInboxCompletedRead=Math.max(this.#reviewInboxCompletedRead,read);
+        this.reviewInbox.set([]);this.reviewInboxState.set("unavailable");this.notify();return false;
+      }
+      if(!current())return false;
+      if(!response.ok)throw new Error("review_inbox_unavailable");
+      const body=await response.json() as {tasks?:AssignedReviewTask[];error?:unknown}|null;
+      if(!current())return false;
+      if(!body||typeof body!=="object"||Array.isArray(body)||Object.hasOwn(body,"error")||!Array.isArray(body.tasks)
+        ||!body.tasks.every(task=>task&&typeof task==="object"&&!Array.isArray(task)&&typeof task.status==="string"))
+        throw new Error("review_inbox_unavailable");
+      this.#reviewInboxCompletedRead=read;
+      this.reviewInbox.set(body.tasks);this.reviewInboxState.set("ready");this.notify();return true;
+    }catch{
+      if(current()){
+        this.#reviewInboxCompletedRead=read;
+        this.reviewInbox.set([]);this.reviewInboxState.set("error");this.notify();
+      }
+      return false;
+    }
+  }
+
   async syncOrganizationContextPackages(){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const session=this.session.get(),context=session?.projectContext;

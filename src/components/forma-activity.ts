@@ -6,6 +6,7 @@ import { renderLifecycleNextActionCards } from "./next-action-cards";
 import { openCreativeNextActionDestination } from "./creative-next-action-navigation";
 
 import { repeat } from "lit/directives/repeat.js";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { formaActivityJobNeedsAttention, formaActivityUnread, scopedFormaActivity } from "../model/activity";
 import { documentArtifactDefinition, isDocumentArtifactKind } from "../model/document-artifacts";
 import {
@@ -52,6 +53,56 @@ export class FormaActivity extends FormaElement {
       void this.store.syncOrganizationContextPackages();
     }
     void this.store.syncDocumentJobs();
+  }
+
+  #reviewRetrySequence=0;
+  #reviewRetryPending=false;
+  #reviewRetryFocus:OutputNavigationFocusLease|null=null;
+  override disconnectedCallback(){
+    this.#reviewRetrySequence+=1;this.#reviewRetryFocus?.dispose();
+    this.#reviewRetryFocus=null;this.#reviewRetryPending=false;
+    super.disconnectedCallback();
+  }
+  async #retryReviews(){
+    const store=this.store,document=this.ownerDocument,route=store.route.get(),locale=this.i18n.locale;
+    if(this.#reviewRetryPending||store.reviewInboxState.get()==="loading")return;
+    const source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
+    if(!authorization||!store.sourceOwnershipActive(source))return;
+    const sequence=++this.#reviewRetrySequence,focus=captureOutputNavigationFocus(document);
+    this.#reviewRetryFocus?.dispose();this.#reviewRetryFocus=focus;
+    this.#reviewRetryPending=true;this.requestUpdate();
+    const current=()=>this.isConnected&&this.store===store&&this.ownerDocument===document
+      &&this.#reviewRetrySequence===sequence&&store.route.get()===route&&this.i18n.locale===locale
+      &&store.authorizationScopeActive(authorization)&&store.sourceOwnershipActive(source);
+    try{
+      if(!await store.syncReviewInbox()||!current()||!focus.current()||store.reviewInboxState.get()!=="ready")return;
+      await this.updateComplete;
+      if(!current()||!focus.current())return;
+      const heading=this.querySelector<HTMLElement>(".page-header-copy > h1");
+      if(!heading?.isConnected)return;
+      focus.run(heading,()=>{
+        if(!current())return false;
+        if(!heading.hasAttribute("tabindex")){
+          heading.setAttribute("tabindex","-1");
+          heading.addEventListener("blur",()=>heading.removeAttribute("tabindex"),{once:true});
+        }
+        heading.focus({preventScroll:true});return document.activeElement===heading;
+      });
+    }finally{
+      focus.dispose();
+      if(this.#reviewRetryFocus===focus){this.#reviewRetryFocus=null;this.#reviewRetryPending=false;this.requestUpdate();}
+    }
+  }
+  #reviewLoadStatus(){
+    const state=this.store.reviewInboxState.get();
+    if(state==="ready")return nothing;
+    const failed=state==="error",unavailable=state==="unavailable";
+    return html`<div class="forma-activity-card forma-activity-card--attention" data-activity-review-load=${state} role=${failed||unavailable?"alert":"status"}>
+      <div class="forma-activity-card-icon" aria-hidden="true">${icon(failed||unavailable?"info":"clock")}</div>
+      <div class="forma-activity-card-copy"><h3>${failed?this.i18n.t("activity.reviews.failed","Assigned reviews could not be loaded"):unavailable?this.i18n.t("activity.reviews.unavailable","Assigned reviews are unavailable"):this.i18n.t("activity.reviews.loading","Checking assigned reviews")}</h3>
+        <p>${failed?this.i18n.t("activity.reviews.retryDetail","Retry to check your current assignments."):unavailable?this.i18n.t("activity.reviews.unavailableDetail","This session cannot read assigned reviews. Restore access, then retry."):this.i18n.t("activity.reviews.loadingDetail","Your current assignments are loading.")}</p></div>
+      ${failed||unavailable||this.#reviewRetryPending?html`<button type="button" class="button secondary" aria-disabled=${this.#reviewRetryPending?"true":"false"} @click=${()=>void this.#retryReviews()}>${this.i18n.t("activity.reviews.retry","Retry assigned reviews")}</button>`:nothing}
+    </div>`;
   }
 
   #lifecycleOpening=0;
@@ -249,13 +300,14 @@ export class FormaActivity extends FormaElement {
     return html`<section class="workspace-page studio-subpage forma-activity-page"><forma-project-rail surface="studio" destination="/activity" quiet></forma-project-rail>
       <div class="studio-main forma-activity-main"><header class="page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${projection.projectName ? `${projection.projectName} / ` : ""}${this.i18n.t("activity.inbox", "Activity · inbox")}</span><h1>${this.i18n.t("shell.navigation.activity", "Activity")}</h1><p>${this.i18n.t("activity.description", "Keep track of assigned reviews, authorized project updates, and your own background operations.")}</p></div><div class="forma-activity-header-actions">${session?.projectContext ? html`<button type="button" class="button ghost" @click=${() => void navigateInApp(this,navigation=>this.store.leaveProjectContext({...navigation,destination:"/activity"}))}>${this.i18n.t("activity.viewAllAssignments", "View all my assigned reviews")}</button>` : nothing}<a class="button secondary" href=${withProjectTaskDocumentInRoute("/deliver",projection.documentId, this.store.route.get())} @click=${(event: MouseEvent) => { if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault(); this.#open(withProjectTaskDocumentInRoute("/deliver",projection.documentId, this.store.route.get())); }}>${this.i18n.t("activity.openDeliverables", "View deliverables")} ${icon("arrow")}</a></div></header>
         <div class="forma-activity-sections">
+          ${this.#reviewLoadStatus()}
           ${next?renderLifecycleNextActionCards(creativeNextActions(next.facts),this.i18n,action=>void this.#followLifecycleAction(action),{projectName:next.projectName,documentTitle:next.document.title,scopeUnknown:next.facts.lifecycle?.output.scopeKnown!==true}):nothing}
           ${planningRecovery.length?html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("planning.recovery.heading","Earlier planning requests")}</h2><span>${this.i18n.number(planningRecovery.length)}</span></header><div class="forma-activity-list">${planningRecovery.map(identity=>this.#planningRecovery(identity,documentNames.get(identity.documentId)??projection.projectName))}</div></section>`:nothing}
           ${activity.reviews.length || unread.length || failedJobs.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.needsYou", "Needs you")}</h2><span>${activity.reviews.length + unread.length + failedJobs.length}</span></header><div class="forma-activity-list">${repeat(activity.reviews, reviewKey, (task, index) => this.#review(task, reviewDescriptions[index]!))}${repeat(failedJobs, failedJobKey, job => this.#job(job, documentNames.get(job.documentId) ?? projection.projectName))}${repeat(unread, notificationKey, notification => this.#notification(notification, documentNames.get(notification.documentId ?? "") ?? projection.projectName, resultScopes, "needs-you"))}</div></section>` : nothing}
           ${activeJobs.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.inProgress", "In progress")}</h2><span>${activeJobs.length}</span></header><div class="forma-activity-list">${activeJobs.map((job) => this.#job(job, documentNames.get(job.documentId) ?? projection.projectName))}</div></section>` : nothing}
           ${readyArtifacts.length || readyOutputs.length || completedJobs.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.ready", "Ready to continue")}</h2><span>${readyArtifacts.length + readyOutputs.length + completedJobs.length}</span></header><div class="forma-activity-list">${readyArtifacts.map((artifact) => {const delivery=artifactDeliveryFor(this.store,artifact),scope=resultScope(artifact.documentId,artifact.kind,artifact.id),href=artifactFocusRoute(artifact.id,artifact.title,{expectedRevision:delivery.revision,...(delivery.contentSha256?{expectedContentSha256:delivery.contentSha256}:{}),intent:delivery.intent},this.store.route.get());return html`<article class="forma-activity-card" aria-label=${scope?.context??artifact.title}><div class="forma-activity-card-icon" aria-hidden="true">${icon("check")}</div><div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.system(documentArtifactDefinition(artifact.kind).label)}</span><h3 dir="auto">${scope?.title??resultNames.get(artifact.id)??artifact.title}</h3><p dir="auto">${scope?.documentTitle??documentNames.get(artifact.documentId)??projection.projectName}${scope?.qualifier?html` · ${scope.qualifier}`:nothing} · ${this.i18n.t(`deliver.review.${delivery.review.status}`,delivery.review.label)}</p></div><a class="button secondary" href=${href} aria-label=${namedAction(this.i18n.t(`artifact.delivery.action.${delivery.action}`),scope?.context??artifact.title)} @click=${(event:MouseEvent)=>{if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.#open(href);}}>${this.i18n.t(`artifact.delivery.action.${delivery.action}`)} ${icon("arrow")}</a></article>`;})}${readyOutputs.map((output) => {const title=resultNames.get(output.id)??documentNames.get(output.documentId)??projection.projectName,scope=resultScope(output.documentId,"image",output.id);return html`<article class="forma-activity-card" aria-label=${scope?.context??title}><div class="forma-activity-card-icon" aria-hidden="true">${icon("image")}</div><div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("deliver.visualOutput", "Visual output")}</span><h3 dir="auto">${scope?.title??title}</h3><p>${output.purpose === "final" ? this.i18n.t("deliver.finalQuality", "Final quality") : this.i18n.t("deliver.workingDirection", "Working direction")}</p>${scope?.showDocument?html`<p dir="auto">${scope.documentTitle}${scope.qualifier?html` · ${scope.qualifier}`:nothing}</p>`:nothing}</div><button type="button" class="button secondary" aria-label=${namedAction(this.i18n.t("activity.openResult","Open result"),scope?.context??title)} @click=${() => this.#open(libraryFocusRoute("output", output.id,title))}>${this.i18n.t("activity.openResult", "Open result")} ${icon("arrow")}</button></article>`;})}${completedJobs.map((job) => this.#job(job, documentNames.get(job.documentId) ?? projection.projectName))}</div></section>` : nothing}
           ${read.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.recent", "Recent project updates")}</h2></header><div class="forma-activity-list">${repeat(read, notificationKey, notification => this.#notification(notification, documentNames.get(notification.documentId ?? "") ?? projection.projectName, resultScopes, "recent"))}</div></section>` : nothing}
-          ${!activity.reviews.length && !activity.notifications.length && !activity.jobs.length && !planningRecovery.length && !readyArtifacts.length && !readyOutputs.length ? html`<div class="forma-responsive-empty"><span aria-hidden="true">${icon("check")}</span><h2>${this.i18n.t("activity.emptyTitle", "You’re all caught up")}</h2><p>${this.i18n.t("activity.emptyDescription", "Assigned reviews, shared project updates, and your own background work will appear here when they need you.")}</p><button type="button" class="button secondary" @click=${() => this.#open("/")}>${this.i18n.t("activity.continueWorking", "Continue working")}</button></div>` : nothing}
+          ${this.store.reviewInboxState.get()==="ready" && !activity.reviews.length && !activity.notifications.length && !activity.jobs.length && !planningRecovery.length && !readyArtifacts.length && !readyOutputs.length ? html`<div class="forma-responsive-empty"><span aria-hidden="true">${icon("check")}</span><h2>${this.i18n.t("activity.emptyTitle", "You’re all caught up")}</h2><p>${this.i18n.t("activity.emptyDescription", "Assigned reviews, shared project updates, and your own background work will appear here when they need you.")}</p><button type="button" class="button secondary" @click=${() => this.#open("/")}>${this.i18n.t("activity.continueWorking", "Continue working")}</button></div>` : nothing}
         </div>
       </div>
     </section>`;
