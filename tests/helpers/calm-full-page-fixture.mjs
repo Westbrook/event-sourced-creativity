@@ -37,6 +37,11 @@ replacePort('const child = this.value(rendered, instance, id, caches);','const c
 // Observe only the actual factory return inside an explicitly opted-in host construction.
 replacePort("else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });","else if (/\\/adaptive-proposal-review(?:\\.ts)?$/u.test(specifier)) {\n      const actual = await loadActual(\"src/components/adaptive-proposal-review.ts\");\n      dependencies.set(specifier, { ...actual, createAdaptiveProposalReview(...args) {\n        const controller = Reflect.apply(actual.createAdaptiveProposalReview, this, args);\n        if (adaptiveProposalConstruction) {\n          assert.equal(args[0], adaptiveProposalConstruction.fixture.store, \"observe the actual owning Store argument\");\n          assert.ok(controller instanceof actual.AdaptiveProposalReviewController, \"observe the actual factory result\");\n          adaptiveProposalConstruction.controllers.push(controller);\n        }\n        return controller;\n      } });\n    }\n    else if (/\\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });");
 replacePort('const instance = new this.registry[tag]();','const instance = constructObservedComponent(this.fixture, tag, this.registry[tag]);');
+// False by default: a focused route-loader test may hold native custom-element
+// registration while its actual module promise is pending. Keep the registered
+// real constructor intact; no placeholder component or application method runs.
+replacePort('if (raw.includes("data-rendered-port") || !this.registry[tag]) return whole;',
+  'if (raw.includes("data-rendered-port") || !this.registry[tag] || this.fixture.pendingNativeComponentTags?.has(tag)) return whole;');
 const fullPageNativePorts=String.raw`
 // Opt-in read-only observation of the exact controller constructed by the
 // current complete host. Neither host nor controller gains an accessor.
@@ -266,7 +271,12 @@ export function fullPageTree(f,markup=f.renderer.markup){
     const preservesAuthoredChildren=["forma-ui-stack","forma-ui-cluster","forma-ui-surface"].includes(parent.tag);
     const owner=preservesAuthoredChildren?parent.owner:parent.component??parent.owner;
     const componentId=parsed.attributes["data-fixture-component"],component=componentId?f.renderer.instances.get(componentId)?.instance:null;
-    if(tag.startsWith("forma-"))assert.ok(component,"full hierarchy includes actual "+tag);
+    if(tag.startsWith("forma-")){
+      if(f.pendingNativeComponentTags?.has(tag)){
+        assert.equal(component,null,"a declared pending native tag has not upgraded: "+tag);
+        assert.equal(typeof f.renderer.registry[tag],"function","pending registration retains the real component: "+tag);
+      }else assert.ok(component,"full hierarchy includes actual "+tag);
+    }
     const port=f.renderer.nodes.find(candidate=>candidate.owner===owner&&candidate.full===token)??null;
     let hiddenBy=parent.hiddenBy;
     if(!hiddenBy&&Object.hasOwn(parsed.attributes,"hidden"))hiddenBy=parsed.attributes.id??tag+"[hidden]";

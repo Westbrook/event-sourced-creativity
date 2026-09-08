@@ -998,6 +998,10 @@ export class FormaShell extends FormaElement {
     navigation.bind(focus,ownedRouteFocus);
     try{
       if(!await this.store.openAssignedReview(task,{current:()=>focus.current(),focus,onOriginHandoff:()=>navigation.handoff(),onDestinationSource:source=>navigation.adoptSource(source)})||!destinationCurrent()||!focus.current())return false;
+      // Module readiness is asynchronous; animation frames only wait for the
+      // connected renderer after the existing route import has completed.
+      await loadRouteComponent(this.store.route.get());
+      if(!destinationCurrent()||!focus.current())return false;
       for(let attempt=0;attempt<24&&destinationCurrent()&&focus.current();attempt++){
         await new Promise<void>(resolve=>window.requestAnimationFrame(()=>resolve()));
         if(!destinationCurrent()||!focus.current())return false;
