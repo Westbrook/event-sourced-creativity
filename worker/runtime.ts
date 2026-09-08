@@ -1,4 +1,3 @@
-import { HOLD_DISPOSITION_SCHEMA } from "./budget-hold-schema.ts";
 import { OUTPUT_REQUIREMENTS_SCHEMA, OUTPUT_MODEL3D_SCHEMA_STATE_SQL, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
 import { markOutputSchemaReady } from "./output-schema-state.ts";
 import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
@@ -295,7 +294,6 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_cost_budget_reservations_owner_status_period ON cost_budget_reservations(owner_id,status,period)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_cost_budget_reservations_owner_correlation ON cost_budget_reservations(owner_id,correlation_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_cost_budget_reservations_workspace_period_status ON cost_budget_reservations(workspace_id,period,status)"),
-    ...HOLD_DISPOSITION_SCHEMA.map(sql => env.DB.prepare(sql)),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS consequential_executions (execution_id TEXT PRIMARY KEY NOT NULL,actor_user_id TEXT NOT NULL,stream_id TEXT NOT NULL,project_id TEXT NOT NULL,document_id TEXT NOT NULL,organization_id TEXT,project_access_id TEXT,operation TEXT NOT NULL,intent_hash TEXT NOT NULL,binding_hash TEXT NOT NULL,consent_ref TEXT NOT NULL,result_ref TEXT,status TEXT NOT NULL,error_code TEXT,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,updated_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_consequential_executions_actor_scope ON consequential_executions(actor_user_id,project_id,document_id,status,created_at)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS consequential_execution_steps (execution_id TEXT NOT NULL,step_index INTEGER NOT NULL,token_reservation_id TEXT NOT NULL,cost_reservation_id TEXT NOT NULL,maximum_tokens INTEGER NOT NULL,maximum_microusd INTEGER NOT NULL,status TEXT NOT NULL,provider_request_id TEXT,verified_tokens INTEGER,verified_microusd INTEGER,updated_at TEXT NOT NULL,PRIMARY KEY(execution_id,step_index))"),

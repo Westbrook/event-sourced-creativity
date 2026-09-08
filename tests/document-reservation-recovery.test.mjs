@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
@@ -768,6 +769,8 @@ test("the bundled worker resumes a submitted scene without a duplicate provider 
 
 async function legacySlidesSettlementFixture(){
   const {sqlite,env}=reconciliationDatabase();await ensureSchema(env);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_schema WHERE name='budget_hold_dispositions'").get().n,0,"runtime initialization must not create the administrative schema");
+  sqlite.exec(await readFile(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8"));
   const user={userId:"slides-owner",streamId:"creative:slides-owner"},jobId="paid-slides",correlation=jobId+":attempt:1",operation="document-render:slides",now=new Date().toISOString();
   const token=await reserveBudget(env,user.userId,1000,{streamId:user.streamId,correlationId:correlation,operation});assert.equal(token.ok,true);
   const cost=await reserveCostBudget(env,user.userId,1000,{reservationId:"slides-cost",maximumMicrousd:1000,allowUserOverage:false,streamId:user.streamId,correlationId:correlation,operation,period:token.period});assert.equal(cost.ok,true);
@@ -1021,6 +1024,40 @@ test("administrative hold: atomic capacity release preserves unknown provider ev
   }
 });
 
+for(const recursiveTriggers of [0,1])test(`administrative hold: replacement writes cannot replace immutable records with recursive_triggers=${recursiveTriggers}`,async()=>{
+  const f=await administrativeHoldFixture();
+  try{
+    f.sqlite.exec(`PRAGMA recursive_triggers=${recursiveTriggers}`);
+    await applyHoldDisposition(f.env,f.user,f.command);
+    const before=f.fullSnapshot();
+    const replace=(table,row)=>{
+      const columns=Object.keys(row);
+      return f.sqlite.prepare(`INSERT OR REPLACE INTO ${table} (${columns.join(",")}) VALUES (${columns.map(()=>"?").join(",")})`).run(...Object.values(row));
+    };
+    const original=f.sqlite.prepare("SELECT * FROM budget_hold_dispositions").get();
+    // Exercise every unique-key collision, not only replacement of the primary key.
+    for(const keys of [["disposition_id"],["token_reservation_id"],["cost_reservation_id"],["event_id"],["job_id","correlation_id"]]){
+      const candidate={...original,disposition_id:"replacement-decision",token_reservation_id:"replacement-token",cost_reservation_id:"replacement-cost",event_id:"replacement-event",job_id:"replacement-job",correlation_id:"replacement-attempt"};
+      for(const key of keys)candidate[key]=original[key];
+      assert.throws(()=>replace("budget_hold_dispositions",candidate),/append_only/,keys.join(","));
+      assert.equal(f.fullSnapshot(),before,keys.join(","));
+    }
+    for(const table of ["budget_reservations","cost_budget_reservations"]){
+      const originalReservation=f.sqlite.prepare(`SELECT * FROM ${table}`).get();
+      assert.throws(()=>replace(table,{...originalReservation,status:"active"}),/requires_review/,table);
+      assert.equal(f.fullSnapshot(),before,table);
+      const unrelatedId=`unrelated-${table}`;
+      replace(table,{...originalReservation,reservation_id:unrelatedId,status:"released"});
+      const beforeUpdate=f.fullSnapshot();
+      assert.throws(()=>f.sqlite.prepare(`UPDATE OR REPLACE ${table} SET reservation_id=? WHERE reservation_id=?`).run(originalReservation.reservation_id,unrelatedId),/requires_review/,`${table} update replacement`);
+      assert.equal(f.fullSnapshot(),beforeUpdate,`${table} update replacement`);
+      f.sqlite.prepare(`DELETE FROM ${table} WHERE reservation_id=?`).run(unrelatedId);
+      assert.equal(f.fullSnapshot(),before,`${table} synthetic unrelated row removed`);
+    }
+    assert.equal((await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId)).verified,true);
+  }finally{f.sqlite.close();}
+});
+
 test("administrative hold: exact duplicate and concurrent command cannot release twice",async()=>{
   const f=await administrativeHoldFixture();
   const result=await Promise.allSettled([applyHoldDisposition(f.env,f.user,f.command),applyHoldDisposition(f.env,f.user,f.command)]);
@@ -1223,17 +1260,47 @@ test("administrative hold: follow-up revalidates exact live document and attempt
   }
 });
 
-test("administrative hold: explicit migration is idempotent and missing immutable guards fail closed",async()=>{
-  const {readFile}=await import("node:fs/promises");
+test("administrative hold: generated migration and idempotent reference verify all table, index and guard definitions",async()=>{
   const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
-  const migration=await readFile(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8");
+  const reference=await readFile(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8");
+  const migration=await readFile(new URL("../drizzle/0036_budget_hold_dispositions.sql",import.meta.url),"utf8");
   const sqlite=new DatabaseSync(":memory:");
   sqlite.exec("CREATE TABLE budget_reservations(reservation_id TEXT); CREATE TABLE cost_budget_reservations(reservation_id TEXT)");
-  sqlite.exec(migration);sqlite.exec(migration);
-  const proof=holdSchemaProof();assert.equal(sqlite.prepare("SELECT 1 AS ready WHERE "+proof.sql).get(...proof.bindings).ready,1);sqlite.close();
-  const f=await administrativeHoldFixture(),before=f.fullSnapshot();
-  f.sqlite.exec("DROP TRIGGER budget_hold_dispositions_no_update");
-  await assert.rejects(()=>previewHoldDisposition(f.env,f.user,f.job().job_id),/schema_not_ready/);
-  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/);
-  assert.equal(f.fullSnapshot(),before);
+  sqlite.exec(migration);sqlite.exec(reference);sqlite.exec(reference);
+  const proof=holdSchemaProof();
+  assert.equal(proof.bindings.length,28,"one table, four unique indexes and nine immutable guards are pinned");
+  assert.equal(sqlite.prepare("SELECT 1 AS ready WHERE "+proof.sql).get(...proof.bindings).ready,1);sqlite.close();
+});
+
+test("administrative hold: missing immutable guards or unique indexes fail closed",async()=>{
+  const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
+  const proof=holdSchemaProof();
+  for(const name of proof.bindings.filter((_,index)=>index%2===0).filter(name=>name!=="budget_hold_dispositions")){
+    const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+    try{
+      const objectType=f.sqlite.prepare("SELECT type FROM sqlite_schema WHERE name=?").get(name).type;
+      assert.ok(["index","trigger"].includes(objectType));
+      f.sqlite.exec(`DROP ${objectType.toUpperCase()} ${name}`);
+      await assert.rejects(()=>previewHoldDisposition(f.env,f.user,f.job().job_id),/schema_not_ready/,name);
+      await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/,name);
+      assert.equal(f.fullSnapshot(),before,name);
+    }finally{f.sqlite.close();}
+  }
+});
+
+test("administrative hold: a same-named nonunique replacement index cannot satisfy the installed proof",async()=>{
+  const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
+  const proof=holdSchemaProof();
+  for(let index=0;index<proof.bindings.length;index+=2){
+    const [name,sql]=proof.bindings.slice(index,index+2);
+    if(!sql.startsWith("CREATE UNIQUE INDEX "))continue;
+    const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+    try{
+      f.sqlite.exec(`DROP INDEX ${name}`);
+      f.sqlite.exec(sql.replace("CREATE UNIQUE INDEX ","CREATE INDEX "));
+      await assert.rejects(()=>previewHoldDisposition(f.env,f.user,f.job().job_id),/schema_not_ready/,name);
+      await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/,name);
+      assert.equal(f.fullSnapshot(),before,name);
+    }finally{f.sqlite.close();}
+  }
 });

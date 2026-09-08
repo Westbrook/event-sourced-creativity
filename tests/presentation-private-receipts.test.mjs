@@ -32,6 +32,7 @@ after(() => fixtureHooks.deregister());
 const privateReceiptFixture=async function privateReceiptFixture(helpers,{shared=false,valid=true,lostRepair=false}={}){
  const {reliabilityWorker,json,seedIndependentPresentation,independentProviderResponse,presentationAdmission}=helpers;
  const fixture=await reliabilityWorker();await fixture.drainBackground();
+ fixture.sqlite.exec(readFileSync(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8"));
  const documentId=await seedIndependentPresentation(fixture,"private-receipt-document");
  let headers={},project=null;
  if(shared){
