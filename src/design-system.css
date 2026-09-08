@@ -3788,6 +3788,47 @@ forma-workspace-settings .workspace-settings-form > button { scroll-margin-block
   }
   .page-header--library .page-header-actions { justify-content: flex-start; }
   .library-toolbar .searchbox { width: 100%; }
+  /* Keep all four Library content filters together when its actual container
+     narrows, including the main width reserved for the native Ask control. */
+  forma-library .library-toolbar > forma-ui-segmented-control.segmented {
+    align-self: stretch;
+    inline-size: 100%;
+    min-inline-size: 0;
+  }
+  forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented {
+    display: grid;
+    box-sizing: border-box;
+    inline-size: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* Reflowed filters fit their rows; keep their rounded surfaces without a
+     second nested scroll clip around the complete labels and focus rings. */
+  .application-creative forma-library form.library-toolbar > forma-ui-segmented-control.segmented,
+  .application-creative forma-library form.library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented {
+    overflow: visible;
+  }
+  forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    scroll-margin-block: var(--forma-focus-clearance, .5rem);
+  }
+  @media (pointer: coarse) {
+    .application-creative forma-library form.library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button {
+      min-inline-size: max(48px,var(--forma-control-min-size,2.75rem));
+      min-block-size: max(48px,var(--forma-control-min-size,2.75rem));
+    }
+  }
+  @media (max-height: 37.5rem) {
+    /* Keep the complete empty-history help in the existing native focus budget. */
+    forma-library .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] {
+      padding-block: 1rem;
+      padding-inline: 1rem;
+    }
+    /* Give the full title and help priority over the decorative icon row. */
+    forma-library .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > span:has(> .forma-icon[aria-hidden="true"]) {
+      display: none;
+    }
+  }
   .family-lightbox-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
