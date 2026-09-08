@@ -306,6 +306,7 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
       schema_version: 1, artifact_id: artifactId, artifact_kind: "model3d", ...sourceReceipt, captured_at: new Date().toISOString(),
       request: { ...workflowLineage, model3d_prompt: prepared.prompt, model3d_settings: prepared.settings,
         model3d_reference_block_ids: prepared.referenceBlockIds, source_surface: sourceSurface,
+        ...(body.model3dPromptSource === "document" ? { model3d_prompt_source: "document", model3d_adaptation: body.model3dAdaptation } : {}),
         estimated_cost_microusd: estimatedCostMicrousd, reserved_cost_microusd: costReservationMicrousd },
       document_snapshot: snapshot, planner: null, render: { ...preparedReceipt, submitted_prompt: preparedReceipt.submittedPrompt,
         reference_inputs: preparedReceipt.referenceInputs, used_reference_pixels: preparedReceipt.usedReferencePixels,

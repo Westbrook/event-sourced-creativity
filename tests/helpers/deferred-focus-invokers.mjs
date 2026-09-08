@@ -46,3 +46,10 @@ export function retainNativeSubmitForms(f, owners, accepts) {
   retainNativeEventParts(f, owners, "form", "submit",
     /\s@submit=(?:["'])?__bound_(\d+)__(?:["'])?(?=[\s>])/u, accepts);
 }
+
+// Dialog-only opt-in through its existing click EventPart. This retains actual
+// native dialog identity without depending on a newly added submit listener.
+export function retainNativeClickDialogs(f, owners, accepts) {
+  retainNativeEventParts(f, owners, "dialog", "click",
+    /\s@click=(?:["'])?__bound_(\d+)__(?:["'])?(?=[\s>])/u, accepts);
+}

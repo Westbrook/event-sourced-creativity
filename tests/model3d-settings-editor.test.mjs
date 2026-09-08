@@ -57,9 +57,15 @@ function* templates(value) {
   yield value;
   for (const item of value.values) yield* templates(item);
 }
+function templateText(value) {
+  if (Array.isArray(value)) return value.map(templateText).join(" ");
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (value && typeof value === "object" && Array.isArray(value.strings) && Array.isArray(value.values)) return value.strings.join(" ") + " " + value.values.map(templateText).join(" ");
+  return "";
+}
 
 /** Resolve the attributes of rendered controls, preserving callback identity and values. */
-function namedControl(root, name) {
+function renderedControls(root) {
   const found = [];
   for (const template of templates(root)) {
     const markup = template.strings.map((part, index) => part + (index < template.values.length ? `__LIT_VALUE_${index}__` : "")).join("");
@@ -70,12 +76,48 @@ function namedControl(root, name) {
         const marker = typeof raw === "string" ? /^__LIT_VALUE_(\d+)__$/u.exec(raw) : null;
         attributes.set(attribute[1], marker ? template.values[Number(marker[1])] : raw);
       }
-      if (attributes.get("name") === name) found.push({ tag: tag[1], attributes });
+      found.push({ tag: tag[1], attributes });
     }
   }
+  return found;
+}
+function namedControl(root, name) {
+  const found = renderedControls(root).filter(field => field.attributes.get("name") === name);
   assert.equal(found.length, 1, `exactly one rendered control named ${name}`);
   return found[0];
 }
+
+test("document mode shows a read-only prepared prompt and rejects an old authored input callback", () => {
+  const h = fixture(), staleInput = h.control("model3d_prompt").attributes.get("@input");
+  h.editor.promptSource = "document";
+  h.editor.prompt = "Subject: A ceramic bird with a curved beak.";
+  h.editor.adaptation = { prompt: h.editor.prompt, valid: true, adapterVersion: "fixture", includedBlockIds: ["subject"], omittedBlockIds: ["optional"], issues: [], suggestions: [{ code: "model3d_suggest_material", message: "A Material block can clarify surfaces, textures, and finish.", blockTypes: ["material"] }], promptCharacters: h.editor.prompt.length };
+  h.editor.blockLabels = { optional: "Optional backdrop", subject: "Ceramic bird" };
+  h.flush();
+  const controls = renderedControls(h.editor.render());
+  assert.equal(controls.some(field => field.attributes.get("name") === "model3d_prompt"), false);
+  const prompt = controls.filter(field => field.tag === "textarea");
+  assert.equal(prompt.length, 1);
+  assert.equal(prompt[0].attributes.get("readonly"), true);
+  assert.equal(prompt[0].attributes.get(".value"), h.editor.prompt);
+  assert.equal(prompt[0].attributes.has("required"), false);
+  assert.equal(prompt[0].attributes.has("@input"), false);
+  assert.equal(h.latest().valid, true, "optional missing context does not disable valid provider settings");
+  const before = h.emitted.length, prepared = h.editor.prompt;
+  staleInput.call(h.editor, { currentTarget: { value: "A stale manual prompt" } });
+  assert.equal(h.editor.prompt, prepared); assert.equal(h.emitted.length, before);
+  h.change("seed", "42"); assert.equal(h.latest().settings.seed, 42); assert.equal(h.latest().prompt, prepared);
+});
+
+test("document adaptation identifies contributing authored block labels without exposing raw block IDs", () => {
+  const h = fixture(); h.editor.promptSource = "document";
+  h.editor.adaptation = { prompt: "", valid: false, adapterVersion: "fixture", includedBlockIds: [], omittedBlockIds: ["private-omitted-id"], issues: [{ code: "model3d_document_required_context_too_long", message: "Shorten the identified blocks before generating.", blockIds: ["private-required-id", "unavailable-id"] }], suggestions: [], promptCharacters: 0 };
+  h.editor.blockLabels = { "private-required-id": "Detailed ceramic bird", "private-omitted-id": "Optional backdrop" };
+  const visible = templateText(h.editor.render());
+  assert.match(visible, /Detailed ceramic bird/); assert.match(visible, /Optional backdrop/);
+  assert.doesNotMatch(visible, /private-required-id|private-omitted-id|unavailable-id/);
+  assert.doesNotMatch(visible, /selected image views supply/, "empty context cannot claim an image-only request");
+});
 
 test("the exact prompt preserves 1,025 Unicode code points and accepts 1,024 emoji", () => {
   const h = fixture();

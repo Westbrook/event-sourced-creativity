@@ -13,6 +13,7 @@ import {
   type Model3dValidationIssue,
 } from "../model/model3d";
 import { FormaElement } from "./forma-element";
+import type { Model3dDocumentAdaptation } from "../model/model3d-prompt-adapter";
 import { localizedModel3dValidationIssue } from "./design-system/localized-model3d";
 import "./model3d-settings-editor.css";
 
@@ -26,11 +27,17 @@ export class Model3dSettingsEditor extends FormaElement {
   static properties = {
     settings: { attribute: false },
     prompt: { type: String },
+    promptSource: { type: String, attribute: "prompt-source" },
+    adaptation: { attribute: false },
+    blockLabels: { attribute: false },
     referenceCount: { type: Number, attribute: "reference-count" },
     disabled: { type: Boolean },
   };
   settings: Model3dSettings = normalizeModel3dSettings();
   prompt = "";
+  promptSource: "exact" | "document" = "exact";
+  adaptation: Model3dDocumentAdaptation | null = null;
+  blockLabels: Record<string,string> = {};
   referenceCount = 0;
   disabled = false;
   #id = `model3d-settings-${crypto.randomUUID()}`;
@@ -59,7 +66,7 @@ export class Model3dSettingsEditor extends FormaElement {
 
   protected override updated(changed: PropertyValues<this>) {
     super.updated(changed);
-    if (changed.has("settings") || changed.has("prompt") || changed.has("referenceCount")) this.#emitChange();
+    if (changed.has("settings") || changed.has("prompt") || changed.has("referenceCount") || changed.has("promptSource")) this.#emitChange();
   }
 
   #preflight(settings: unknown = this.settings) {
@@ -82,7 +89,7 @@ export class Model3dSettingsEditor extends FormaElement {
   }
 
   #changePrompt(event: InputEvent) {
-    if (this.disabled) return;
+    if (this.disabled || this.promptSource === "document") return;
     this.prompt = (event.currentTarget as HTMLTextAreaElement).value;
     this.#emitChange();
   }
@@ -168,13 +175,20 @@ export class Model3dSettingsEditor extends FormaElement {
 
   override render() {
     const checked = this.#preflight();
+    const adaptation = this.promptSource === "document" ? this.adaptation : null;
+    const issues = checked.issues.filter(issue => !(adaptation?.issues.length && issue.field === "prompt"));
     const bboxEnabled = this.settings.bbox_condition !== null;
     const highPackCost = estimateModel3dCostMicrousd({ ...this.settings, addons: { high_pack: true } }) - estimateModel3dCostMicrousd({ ...this.settings, addons: { high_pack: false } });
     const dimensionHelp = this.i18n.t("model3d.settings.dimensionHelp", "Whole number from 1 to 2,048.");
     return html`<section class="model3d-settings-editor" aria-label=${this.i18n.t("model3d.settings.heading", "3D generation settings")}>
+      ${this.promptSource === "document" ? html`<p>${this.i18n.t("model3d.document.help", "Forma adapts the active document context into a model description. You do not need to write a separate prompt. Only the prepared text and the image views you select are sent to Rodin.")}</p>` : nothing}
+      ${adaptation?.issues.length ? html`<div class="model3d-settings-validation has-errors" role="status"><h4>${this.i18n.t("model3d.settings.review", "Review before generating")}</h4><ul>${adaptation.issues.map(issue => html`<li>${this.i18n.t(`model3d.adaptation.${issue.code}`, issue.message)}${issue.blockIds.some(id => this.blockLabels[id]) ? html`<ul>${issue.blockIds.filter(id => this.blockLabels[id]).map(id => html`<li dir="auto">${this.blockLabels[id]}</li>`)}</ul>` : nothing}</li>`)}</ul></div>` : nothing}
+      ${adaptation?.suggestions.length ? html`<details class="model3d-settings-advanced"><summary>${this.i18n.t("model3d.document.suggestions", "Suggestions for clearer model direction")}</summary><ul class="model3d-settings-guidance">${adaptation.suggestions.map(suggestion => html`<li>${this.i18n.t(`model3d.adaptation.${suggestion.code}`, suggestion.message)}</li>`)}</ul></details>` : nothing}
+      ${adaptation?.omittedBlockIds.length ? html`<details class="model3d-settings-advanced"><summary>${this.i18n.t("model3d.document.omitted", "Context left out of the prepared prompt: {count}", { count: this.i18n.number(adaptation.omittedBlockIds.length) })}</summary><p>${this.i18n.t("model3d.document.omittedHelp", "Review the prepared description before generating. To prioritize another detail, revise the document's context blocks.")}</p><ul class="model3d-settings-guidance">${adaptation.omittedBlockIds.filter(id => this.blockLabels[id]).map(id => html`<li dir="auto">${this.blockLabels[id]}</li>`)}</ul></details>` : nothing}
       <fieldset ?disabled=${this.disabled}>
-        <label>${this.i18n.t("model3d.prompt.label", "Exact 3D prompt")}<textarea name="model3d_prompt" rows="4" .value=${this.prompt} ?required=${this.referenceCount === 0} aria-invalid=${this.#invalid("prompt") ? "true" : "false"} aria-describedby=${`${this.#id}-prompt-help ${this.#id}-prompt-count`} @input=${this.#changePrompt}></textarea></label>
-        <div class="model3d-prompt-meta"><small id=${`${this.#id}-prompt-help`}>${this.referenceCount > 0 ? this.i18n.t("model3d.prompt.imageHelp", "Optional with image references. Describe a single subject and the details the views do not show. This exact text is sent to Rodin.") : this.i18n.t("model3d.prompt.textHelp", "Describe a single subject, its shape, and its materials. This exact text is sent to Rodin; document text is not added automatically.")}</small><small class=${`model3d-prompt-count${checked.promptCharacters > RODIN_PROMPT_MAX_CHARS ? " over-limit" : ""}`} id=${`${this.#id}-prompt-count`}>${this.i18n.t("model3d.prompt.count", "{count} / {limit} characters", { count: this.i18n.number(checked.promptCharacters), limit: this.i18n.number(RODIN_PROMPT_MAX_CHARS) })}</small></div>
+        ${this.promptSource === "document" ? html`<details class="model3d-settings-advanced model3d-document-prompt"><summary>${this.i18n.t("model3d.document.prompt", "Prepared model prompt")}</summary><p>${this.i18n.t("model3d.document.promptHelp", "Forma prepares this text from the document. Edit its context blocks to change the model direction.")}</p>${this.prompt ? html`<textarea readonly rows="4" .value=${this.prompt} aria-label=${this.i18n.t("model3d.document.prompt", "Prepared model prompt")}></textarea>` : this.referenceCount > 0 ? html`<p>${this.i18n.t("model3d.document.imageOnly", "The selected image views supply the model direction without an additional text prompt.")}</p>` : nothing}<small>${this.i18n.t("model3d.prompt.count", "{count} / {limit} characters", { count: this.i18n.number(checked.promptCharacters), limit: this.i18n.number(RODIN_PROMPT_MAX_CHARS) })}</small></details>` : html`
+          <label>${this.i18n.t("model3d.prompt.label", "Exact 3D prompt")}<textarea name="model3d_prompt" rows="4" .value=${this.prompt} ?required=${this.referenceCount === 0} aria-invalid=${this.#invalid("prompt") ? "true" : "false"} aria-describedby=${`${this.#id}-prompt-help ${this.#id}-prompt-count`} @input=${this.#changePrompt}></textarea></label>
+          <div class="model3d-prompt-meta"><small id=${`${this.#id}-prompt-help`}>${this.referenceCount > 0 ? this.i18n.t("model3d.prompt.imageHelp", "Optional with image references. Describe a single subject and the details the views do not show. This exact text is sent to Rodin.") : this.i18n.t("model3d.prompt.textHelp", "Describe a single subject, its shape, and its materials. This exact text is sent to Rodin; document text is not added automatically.")}</small><small class=${`model3d-prompt-count${checked.promptCharacters > RODIN_PROMPT_MAX_CHARS ? " over-limit" : ""}`} id=${`${this.#id}-prompt-count`}>${this.i18n.t("model3d.prompt.count", "{count} / {limit} characters", { count: this.i18n.number(checked.promptCharacters), limit: this.i18n.number(RODIN_PROMPT_MAX_CHARS) })}</small></div>`}
         <div class="model3d-settings-grid">
           ${this.#select("tier", RODIN_TIERS, this.i18n.t("model3d.settings.tier", "Generation tier"), this.i18n.t("model3d.settings.tierHelp", "Choose the geometry detail level. Micro detail requires Extreme High; creative mode requires Medium or higher."), (value) => this.#tierLabel(value))}
           ${this.#select("geometry_file_format", MODEL3D_FORMATS, this.i18n.t("model3d.settings.format", "Model format"), this.i18n.t("model3d.settings.formatHelp", "GLB supports interactive preview and saved image views in Forma. USDZ, FBX, OBJ, and STL can be downloaded."), (value) => value.toUpperCase())}
@@ -201,7 +215,7 @@ export class Model3dSettingsEditor extends FormaElement {
           ${bboxEnabled ? html`<div class="model3d-bbox-grid">${this.#number("width", this.i18n.t("model3d.settings.width", "Width"), dimensionHelp)}${this.#number("height", this.i18n.t("model3d.settings.height", "Height"), dimensionHelp)}${this.#number("length", this.i18n.t("model3d.settings.length", "Length"), dimensionHelp)}</div>` : nothing}
         </div>
       </fieldset></details>
-      ${checked.issues.length ? html`<div class="model3d-settings-validation has-errors" role="status" aria-live="polite"><h4>${this.i18n.t("model3d.settings.review", "Review before generating")}</h4><ul>${checked.issues.map((issue) => html`<li>${this.#issueText(issue)}</li>`)}</ul></div>` : nothing}
+      ${issues.length ? html`<div class="model3d-settings-validation has-errors" role="status" aria-live="polite"><h4>${this.i18n.t("model3d.settings.review", "Review before generating")}</h4><ul>${issues.map((issue) => html`<li>${this.#issueText(issue)}</li>`)}</ul></div>` : nothing}
       ${checked.warnings.length ? html`<ul class="model3d-settings-guidance" aria-label=${this.i18n.t("model3d.settings.guidance", "3D generation guidance")}>${checked.warnings.map((warning) => html`<li>${this.i18n.system(warning)}</li>`)}</ul>` : nothing}
     </section>`;
   }

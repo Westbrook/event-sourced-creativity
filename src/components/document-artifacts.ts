@@ -24,6 +24,7 @@ import { artifactGenerationInputInspection, documentGenerationInputInspection, f
 import { positionImageAtFocalPoint } from "../model/image-focus";
 import { videoReferencePreflight, type VideoReferencePreflightItem } from "../model/video-references";
 import { DEFAULT_MODEL3D_SETTINGS, RODIN_IMAGE_MIME_TYPES, RODIN_MAX_IMAGE_REFERENCES, estimateModel3dCostMicrousd, validateModel3dRequest, type Model3dSettings } from "../model/model3d";
+import { model3dAdaptationReceipt, type Model3dDocumentAdaptation } from "../model/model3d-prompt-adapter";
 import { model3dArtifactFiles, model3dPreviewFile, type Model3dArtifactFile } from "./model3d-output";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, VIDEO_DURATION_SECONDS, type VideoAudioMode, type VideoDurationSeconds } from "../model/video-adapter";
 import {
@@ -106,6 +107,11 @@ type SceneCostView = {
 const sceneRequestHandles = new WeakMap<object, Map<string, SceneRequestHandle>>();
 const MAX_SCENE_REQUEST_HANDLES = 32;
 
+type Model3dSubmitBasis = Readonly<{
+  adaptation:Model3dDocumentAdaptation;revision:string;opening:CreativePreparationGuard;
+  form:HTMLFormElement;dialog:HTMLDialogElement;kind:"model3d";
+}>;
+
 export class DocumentArtifacts extends FormaElement {
   static properties={compact:{type:Boolean},source:{type:String},documentId:{type:String,attribute:"document-id"},launcherOnly:{type:Boolean,attribute:"launcher-only"}};
   compact=false;source="document";documentId="";launcherOnly=false;#kind:DocumentArtifactKind="short_story";#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false;#itemCount=6;#managedSlideInput="";#invalidSlideCount=false;#presentationStyle:SlideStylePresetId|"document"="document";#presentationFidelity:"faithful"|"creative"="faithful";#audience="";#tone="";#rememberedAudiences=new Set<string>();#rememberedTones=new Set<string>();#seconds:VideoDurationSeconds=VIDEO_ADAPTER_CONTRACT.defaultDuration;#videoSize:"1280x720"|"720x1280"="1280x720";#videoAudioMode:VideoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;#confirmed=false;#submitting=false;#referenceBusy=false;#activeId="";#inputId="";#failedInputJob:DocumentJob|null=null;#runningInputJob:DocumentJob|null=null;#actorInputContent:Record<string,string>={};#createOpen=false;#convertingId="";#showAll=false;#editingId="";#editMarkdown="";#editItems:Array<{title:string;body:string;notes:string}>=[];#editRevision=0;#savingEdit=false;#historyOpen=false;#historyBusy=false;#revisionHistory:ArtifactRevisionSummary[]=[];#revisionBefore:number|null=null;#revisionPreview:ArtifactRevisionDetail|null=null;#reviewers:Array<{userId:string;displayName:string}>=[];#selectedReviewerId="";#reviewNote="";#viewerFocused=false;#reviewPanelOpen=false;#viewerActionsOpen=false;#viewerReturnFocus?:HTMLElement;
@@ -116,7 +122,9 @@ export class DocumentArtifacts extends FormaElement {
   #requestReviewLoading=false;
   #restoredRequest:{jobId:string;needsTransferConfirmation:boolean}|null=null;
   #model3dSettings:Model3dSettings=structuredClone(DEFAULT_MODEL3D_SETTINGS);
-  #model3dPrompt="";#model3dReferenceBlockIds:string[]=[];#model3dSettingsValid=true;#model3dDraftRevision=0;
+  #model3dReferenceBlockIds:string[]=[];#model3dDraftRevision=0;
+  #model3dSubmitBasis=new WeakMap<SubmitEvent,Model3dSubmitBasis|null>();
+  #model3dSubmitEvents=new WeakSet<SubmitEvent>();
   #sceneMedium:SceneMedium="visual";
   #sceneCostView:SceneCostView|null=null;
   #sceneCostRevision=0;
@@ -143,7 +151,7 @@ export class DocumentArtifacts extends FormaElement {
     if(source&&this.store.sourceOwnershipScopeActive(source))this.#clearPrivateGenerationInputs();
   };
   #clearPrivateGenerationInputs=()=>{
-    this.#privateSourceRevision++;this.#presentationReceiptCheck=null;
+    this.#privateSourceRevision++;this.#presentationReceiptCheck=null;this.#model3dSubmitBasis=new WeakMap();
     this.#closeViewerPopovers();this.#sceneInputCurrent=null;this.#clearSceneCost();
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;
     this.#viewerCloseGuard=null;this.#viewerCurrent=null;this.#viewerOpening=false;this.#viewerReturnFocus=undefined;
@@ -605,6 +613,115 @@ export class DocumentArtifacts extends FormaElement {
     this.#confirmed=false;this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#clearSceneCost();
   }
   #createDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-create");}#viewDialog(){return this.renderRoot.querySelector<HTMLDialogElement>(".document-artifact-view");}
+  #revealCreateFocus(event:Event,current:()=>boolean){
+    const toggled=event.type==="toggle";
+    if(event.type!=="focusin"&&!toggled||!event.isTrusted||!this.isConnected||!current())return;
+    const path=event.composedPath(),source=path[0],form=event.currentTarget,dialog=this.#createDialog(),document=this.ownerDocument,view=document.defaultView;
+    if(!(source instanceof HTMLElement)||!(form instanceof HTMLElement)||form.tagName!=="FORM"||!dialog||!view)return;
+    const disclosure=toggled&&source.tagName==="DETAILS"?source as HTMLDetailsElement:null;
+    if(toggled&&(!disclosure||event.target!==disclosure||!disclosure.open))return;
+    const summaries=disclosure?.querySelectorAll<HTMLElement>(":scope > summary");
+    const target=disclosure?summaries?.length===1?summaries[0]:null:source;
+    if(!(target instanceof HTMLElement)||path.find(node=>node instanceof HTMLElement&&node.tagName==="FORM")!==form
+      ||path.find(node=>node instanceof HTMLElement&&node.tagName==="DIALOG")!==dialog)return;
+    this.#revealOwnedCreateFocus(target,form,current,disclosure);
+  }
+  #revealModel3dLayoutFocus(event:Event,current:()=>boolean){
+    const editor=event.currentTarget,target=this.ownerDocument.activeElement;
+    if(event.type!=="model3d-settings-change"||!(editor instanceof HTMLElement)||event.target!==editor
+      ||!editor.matches('forma-model3d-settings-editor[prompt-source="document"]')||!editor.isConnected
+      ||editor.ownerDocument!==this.ownerDocument||!(target instanceof HTMLElement)||!editor.contains(target)
+      ||target.closest("forma-model3d-settings-editor")!==editor)return;
+    const form=editor.closest("form.document-artifact-dialog");
+    if(!(form instanceof HTMLElement))return;
+    const ownsEditor=()=>{
+      const editors=form.querySelectorAll('forma-model3d-settings-editor[prompt-source="document"]');
+      return this.ownerDocument.hasFocus()&&editor.isConnected&&editor.ownerDocument===this.ownerDocument&&editor.matches('forma-model3d-settings-editor[prompt-source="document"]')
+        &&editor.contains(target)&&target.closest("forma-model3d-settings-editor")===editor&&editor.closest("form.document-artifact-dialog")===form
+        &&editors.length===1&&editors[0]===editor;
+    };
+    // The editor emits its existing change after a changed prompt has rendered.
+    // Recheck the still-owned focus against that layout without moving focus.
+    this.#revealOwnedCreateFocus(target,form,()=>current()&&ownsEditor());
+  }
+  #revealOwnedCreateFocus(target:HTMLElement,form:HTMLElement,current:()=>boolean,disclosure:HTMLDetailsElement|null=null){
+    const dialog=this.#createDialog(),document=this.ownerDocument,view=document.defaultView;
+    if(!dialog||!view)return;
+    const ownsDisclosure=()=>!disclosure||disclosure.isConnected&&disclosure.open&&disclosure.ownerDocument===document
+      &&form.contains(disclosure)&&disclosure.closest("form")===form&&disclosure.closest("dialog")===dialog
+      &&target.tagName==="SUMMARY"&&target.parentElement===disclosure
+      &&disclosure.querySelectorAll(":scope > summary").length===1&&disclosure.querySelector(":scope > summary")===target;
+    const ownsFocus=()=>this.isConnected&&current()&&target.isConnected&&form.isConnected&&dialog.isConnected
+      &&target.ownerDocument===document&&form.ownerDocument===document&&dialog.ownerDocument===document
+      &&document.activeElement===target&&this.#createDialog()===dialog&&dialog.open&&dialog.matches(":modal")
+      &&form.parentElement===dialog&&form.contains(target)&&target.closest("form")===form&&target.closest("dialog")===dialog
+      &&target.matches(":focus-visible")&&!target.matches(":disabled")&&target.getAttribute("aria-disabled")!=="true"
+      &&!target.closest('[hidden], [inert], [aria-hidden="true"]')&&ownsDisclosure();
+    if(!ownsFocus()||!target.matches("button,input,select,textarea,summary,a[href]"))return;
+    const forms=dialog.querySelectorAll(":scope > form.document-artifact-dialog"),footers=form.querySelectorAll<HTMLElement>(":scope > footer");
+    if(forms.length!==1||forms[0]!==form||footers.length!==1)return;
+    const footer=footers[0]!;
+    if(!footer.isConnected||footer.ownerDocument!==document||footer.parentElement!==form||footer.contains(target))return;
+    const style=view.getComputedStyle(target);
+    if(!target.getClientRects().length||style.display==="none"||style.visibility==="hidden"||style.visibility==="collapse"||style.opacity==="0")return;
+    // Rectangles retain fractions; native offset/client metrics round to
+    // integers. Bound their rendered scale instead of shrinking the outline
+    // or under-scrolling when a rounded offset is slightly too large/small.
+    const clientBounds=(element:HTMLElement)=>{
+      const rect=element.getBoundingClientRect(),minScale=rect.height/(element.offsetHeight+.5),maxScale=rect.height/(element.offsetHeight-.5);
+      const top=rect.top+(element.clientTop+.5)*maxScale,bottom=rect.top+Math.max(0,element.clientTop+element.clientHeight-1)*minScale;
+      return [minScale,maxScale,top,bottom].every(Number.isFinite)&&minScale>0&&maxScale>=minScale&&bottom>top?{top,bottom,minScale,maxScale}:null;
+    };
+    const formBounds=clientBounds(form),dialogBounds=clientBounds(dialog),rect=target.getBoundingClientRect(),footerRect=footer.getBoundingClientRect();
+    const viewport=view.visualViewport,viewportTop=viewport?.offsetTop??0,viewportHeight=viewport?.height??view.innerHeight;
+    const targetScale=rect.height/(target.offsetHeight-.5),maxScroll=form.scrollHeight-form.clientHeight;
+    if(!formBounds||!dialogBounds||![rect.top,rect.bottom,rect.width,rect.height,targetScale,footerRect.top,footerRect.bottom,
+      viewportTop,viewportHeight,form.scrollTop,maxScroll].every(Number.isFinite)
+      ||rect.width<=0||rect.height<=0||targetScale<=0||footerRect.bottom<=footerRect.top||viewportHeight<=0||maxScroll<=0)return;
+    const top=Math.max(formBounds.top,dialogBounds.top,viewportTop),bottom=Math.min(formBounds.bottom,dialogBounds.bottom,viewportTop+viewportHeight,footerRect.top);
+    if(bottom<=top)return;
+    const width=Number.parseFloat(style.outlineWidth),offset=Number.parseFloat(style.outlineOffset);
+    const outline=style.outlineStyle!=="none"&&style.outlineStyle!=="hidden"&&Number.isFinite(width)&&Number.isFinite(offset)?Math.max(0,width+offset)*targetScale:0;
+    let start=rect.top-outline,end=rect.bottom+outline;
+    if(disclosure){
+      const expanded=disclosure.getBoundingClientRect(),expandedStyle=view.getComputedStyle(disclosure);
+      if(!disclosure.getClientRects().length||expandedStyle.display==="none"||expandedStyle.visibility==="hidden"
+        ||expandedStyle.visibility==="collapse"||expandedStyle.opacity==="0"
+        ||![expanded.top,expanded.bottom,expanded.width,expanded.height].every(Number.isFinite)||expanded.width<=0||expanded.height<=0)return;
+      const expandedStart=Math.min(start,expanded.top),expandedEnd=Math.max(end,expanded.bottom);
+      const lower=(expandedEnd-bottom)/(expandedEnd>bottom?formBounds.minScale:formBounds.maxScale);
+      const upper=(expandedStart-top)/(expandedStart<top?formBounds.minScale:formBounds.maxScale);
+      if(![lower,upper].every(Number.isFinite))return;
+      // Opening details does not move focus. Reveal its contents with the
+      // summary's full outline only when both fit; oversized disclosures keep
+      // the focused summary's envelope and remain available to native scrolling.
+      if(lower<=upper){start=expandedStart;end=expandedEnd;}
+    }
+    const lower=(end-bottom)/(end>bottom?formBounds.minScale:formBounds.maxScale);
+    const upper=(start-top)/(start<top?formBounds.minScale:formBounds.maxScale);
+    if(![start,end,lower,upper].every(Number.isFinite))return;
+    let requested=form.scrollTop;
+    if(lower<=upper){
+      // Both edges constrain the movement. Round outward only when that
+      // remains safe for the opposite edge; otherwise stay inside the finite
+      // fractional interval, leaving clearance on each side.
+      const delta=Math.max(lower,Math.min(upper,0));
+      if(delta!==0){
+        const rounded=delta>0?Math.ceil(form.scrollTop+delta):Math.floor(form.scrollTop+delta),movement=rounded-form.scrollTop;
+        requested=movement>=lower&&movement<=upper?rounded:form.scrollTop+(lower+upper)/2;
+      }
+    }else{
+      // An oversized or uncertain envelope cannot be certified to fit. Keep
+      // a span that already covers the lane; a one-CSS-pixel edge band avoids
+      // alternating tiny corrections after native metric/scroll rounding.
+      const band=formBounds.maxScale;
+      const delta=start>top+band?start-top:end<bottom-band?end-bottom:0;
+      if(delta!==0)requested=delta>0?Math.ceil(form.scrollTop+delta/formBounds.minScale):Math.floor(form.scrollTop+delta/formBounds.minScale);
+    }
+    const scrollTop=Math.max(0,Math.min(maxScroll,requested));
+    if(!Number.isFinite(scrollTop)||scrollTop===form.scrollTop||!ownsFocus())return;
+    form.scrollTo({top:scrollTop,behavior:"instant"});
+  }
   #configurationCurrent:CreativePreparationGuard|null=null;
   #creationScope="";
   #viewerPopoverScope="";
@@ -614,7 +731,7 @@ export class DocumentArtifacts extends FormaElement {
     if(scope!==this.#viewerPopoverScope)this.#closeViewerPopovers();
     this.#viewerPopoverScope=scope;
   }
-  #clearCreationDraft(){this.#retireRequestReview();this.#requestDrafts.clear();this.#model3dSettings=structuredClone(DEFAULT_MODEL3D_SETTINGS);this.#model3dPrompt="";this.#model3dReferenceBlockIds=[];this.#model3dSettingsValid=true;this.#model3dDraftRevision++;this.#clearSceneCost();this.#createOpen=false;this.#confirmed=false;this.#configurationCurrent=null;this.#audience="";this.#tone="";this.#rememberedAudiences.clear();this.#rememberedTones.clear();this.#soundtrackBlockIds=[];this.#audioImageBlockId="";this.#audioVideoArtifactId="";this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#createDialog()?.close();}
+  #clearCreationDraft(){this.#retireRequestReview();this.#requestDrafts.clear();this.#model3dSettings=structuredClone(DEFAULT_MODEL3D_SETTINGS);this.#model3dReferenceBlockIds=[];this.#model3dDraftRevision++;this.#clearSceneCost();this.#createOpen=false;this.#confirmed=false;this.#configurationCurrent=null;this.#audience="";this.#tone="";this.#rememberedAudiences.clear();this.#rememberedTones.clear();this.#soundtrackBlockIds=[];this.#audioImageBlockId="";this.#audioVideoArtifactId="";this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#createDialog()?.close();}
   #viewerCurrent:(()=>boolean)|null=null;
   #viewerOpening=false;
   #deliveryBinding:{artifactId:string;revision:number;content:string;contentSha256:string;current:()=>boolean}|null=null;
@@ -807,7 +924,8 @@ export class DocumentArtifacts extends FormaElement {
     const references=this.#model3dReferences();
     return this.#model3dReferenceBlockIds.some(id=>!references.some(item=>item.block.id===id&&item.sendsPixels&&item.rightsConfirmed&&this.#model3dReferenceSupported(item)));
   }
-  #model3dValidation(){return validateModel3dRequest({prompt:this.#model3dPrompt,settings:this.#model3dSettings,referenceCount:this.#model3dReferenceBlockIds.length});}
+  #model3dAdaptation(){return this.store.documentModel3dAdaptation(this.#targetDocumentId(),this.#model3dReferenceBlockIds.length);}
+  #model3dValidation(adaptation:Model3dDocumentAdaptation){return validateModel3dRequest({prompt:adaptation.prompt,settings:this.#model3dSettings,referenceCount:this.#model3dReferenceBlockIds.length});}
   #changeModel3dReference(id:string,selected:boolean){
     if(this.#submitting)return;
     if(selected){if(this.#model3dReferenceBlockIds.length>=RODIN_MAX_IMAGE_REFERENCES||this.#model3dReferenceBlockIds.includes(id))return;this.#model3dReferenceBlockIds=[...this.#model3dReferenceBlockIds,id];}
@@ -821,19 +939,22 @@ export class DocumentArtifacts extends FormaElement {
     const next=[...this.#model3dReferenceBlockIds];[next[index],next[target]]=[next[target]!,next[index]!];
     this.#model3dReferenceBlockIds=next;this.#model3dDraftRevision++;this.#confirmed=false;this.requestUpdate();
   }
-  async #createModel3d(){
-    const validation=this.#model3dValidation(),opening=this.#configurationCurrent;
-    if(this.#submitting||this.#referenceBusy||this.#workflowBusy||!validation.valid||!this.#model3dSettingsValid||this.#model3dReferenceIssue()
+  async #createModel3d(reviewed:Model3dDocumentAdaptation,reviewedRevision:string){
+    const adaptation=this.#model3dAdaptation(),validation=this.#model3dValidation(adaptation),opening=this.#configurationCurrent;
+    if(!reviewed.valid||this.store.documentGenerationRevision()!==reviewedRevision||JSON.stringify(reviewed)!==JSON.stringify(adaptation)){this.requestUpdate();return;}
+    if(this.#submitting||this.#referenceBusy||this.#workflowBusy||!validation.valid||!adaptation.valid||this.#model3dReferenceIssue()
       ||!this.store.session.get()?.provider.model3dConfigured||!opening||!opening()||!this.#createDialog()?.open)return;
     const sourceCurrent=this.#privateSourceCurrent(),documentId=this.#targetDocumentId(),revision=this.#model3dDraftRevision;
-    const prompt=this.#model3dPrompt,settings=structuredClone(this.#model3dSettings),referenceBlockIds=[...this.#model3dReferenceBlockIds];
+    const prompt=reviewed.prompt,receipt=model3dAdaptationReceipt(reviewed),settings=structuredClone(this.#model3dSettings),referenceBlockIds=[...this.#model3dReferenceBlockIds];
+    const reviewedIdentity=JSON.stringify(reviewed);
     const current=()=>sourceCurrent()&&this.isConnected&&this.#createOpen&&this.#kind==="model3d"&&this.#configurationCurrent===opening
-      &&opening()&&this.#createDialog()?.open===true&&this.#targetDocumentId()===documentId&&this.#model3dDraftRevision===revision;
+      &&opening()&&this.#createDialog()?.open===true&&this.#targetDocumentId()===documentId&&this.#model3dDraftRevision===revision
+      &&this.store.documentGenerationRevision()===reviewedRevision&&JSON.stringify(this.#model3dAdaptation())===reviewedIdentity;
     if(!current()||generationBudgetGate(this.store.session.get()?.costBudgets,{projectedMicrousd:validation.estimatedCostMicrousd}).level==="blocked")return;
     this.#submitting=true;this.#confirmed=true;this.requestUpdate();
     try{
       const ok=await this.store.renderDocumentArtifact("model3d",{documentId,locale:this.i18n.locale,model3dPrompt:prompt,model3dSettings:settings,
-        model3dReferenceBlockIds:referenceBlockIds,productionMode:"manual",paidMediaConfirmed:true,sourceSurface:this.source,current});
+        model3dPromptSource:"document",model3dAdaptation:receipt,model3dReferenceBlockIds:referenceBlockIds,productionMode:"manual",paidMediaConfirmed:true,sourceSurface:this.source,current});
       if(!current())return;
       if(ok){this.#pendingWorkflowRegeneration=null;this.#activeWorkflowStageId="";this.#createOpen=false;this.#configurationCurrent=null;this.#createDialog()?.close();
         this.dispatchEvent(new CustomEvent("document-artifact-queued",{detail:{documentId,kind:"model3d"},bubbles:true,composed:true}));}
@@ -854,9 +975,9 @@ export class DocumentArtifacts extends FormaElement {
       ${this.#model3dReferenceIssue()?html`<p role="alert">${this.i18n.t("model3d.references.changed","A selected image is unavailable or its pixel permission or rights changed. Remove it or update the context block before generating.")}</p>`:nothing}
     </section>`;
   }
-  async #create(){
+  async #create(model3dAdaptation?:Model3dDocumentAdaptation,model3dDocumentRevision=""){
     if(this.#kind==="scene"||this.#requestReviewLoading)return;
-    if(this.#kind==="model3d"){await this.#createModel3d();return;}
+    if(this.#kind==="model3d"){if(model3dAdaptation)await this.#createModel3d(model3dAdaptation,model3dDocumentRevision);return;}
     const guidance=documentRenderGuidance({audience:this.#audience,tone:this.#tone});
     if(guidance.issues.length){this.requestUpdate();await this.updateComplete;this.#createDialog()?.querySelector<HTMLInputElement>(`[name="${guidance.issues[0]!.field}"]`)?.focus();return;}
     if(this.#submitting||this.#referenceBusy||this.#workflowBusy||this.#kind==="slides"&&this.#productionMode==="managed"&&this.#invalidSlideCount||this.#kind==="audio"&&this.#invalidAudioDuration)return;
@@ -1360,12 +1481,48 @@ export class DocumentArtifacts extends FormaElement {
     const paid=this.#kind==="storyboard"||this.#kind==="video"||this.#kind==="audio"||this.#kind==="model3d";
     const session=this.store.session.get();
     const sceneView=this.#sceneCostView?.current()?this.#sceneCostView:null,scenePreview=this.#sceneFreshPreview();
-    const model3dValidation=this.#kind==="model3d"?this.#model3dValidation():null;
+    const model3dAdaptation=this.#kind==="model3d"?this.#model3dAdaptation():null;
+    const model3dDocumentRevision=model3dAdaptation?this.store.documentGenerationRevision():"";
+    const model3dValidation=model3dAdaptation?this.#model3dValidation(model3dAdaptation):null;
     const model3dUnavailable=this.#kind==="model3d"&&!session?.provider.model3dConfigured;
-    const model3dBlocked=this.#kind==="model3d"&&(!model3dValidation?.valid||!this.#model3dSettingsValid||this.#model3dReferenceIssue());
+    const model3dBlocked=this.#kind==="model3d"&&(!model3dAdaptation?.valid||!model3dValidation?.valid||this.#model3dReferenceIssue());
     const renderedKind=this.#kind,configurationOpening=this.#configurationCurrent;
     const ownsOpening=()=>Boolean(configurationOpening&&this.#createOpen&&this.#configurationCurrent===configurationOpening&&this.#kind===renderedKind);
     const formCurrent=()=>this.isConnected&&ownsOpening()&&this.#createDialog()?.open===true&&Boolean(configurationOpening?.());
+    // Native details toggle does not bubble; capture it on this form owner.
+    const captureToggle={capture:true,handleEvent:(event:Event)=>this.#revealCreateFocus(event,formCurrent)};
+    // One submit activation authorizes the prompt visible at dialog capture.
+    // A render between capture and bubble cannot renew that event's approval.
+    const captureSubmit={capture:true,handleEvent:(event:SubmitEvent)=>{
+      if(renderedKind!=="model3d"&&this.#kind!=="model3d"||this.#model3dSubmitEvents.has(event))return;
+      // No private payload: this refusal marker survives source clearing and consumption.
+      this.#model3dSubmitEvents.add(event);
+      const dialog=this.#createDialog(),form=event.target as HTMLFormElement|null;
+      let basis:Model3dSubmitBasis|null=null;
+      if(event.type==="submit"&&!event.defaultPrevented&&renderedKind==="model3d"&&this.#kind===renderedKind
+        &&model3dAdaptation&&configurationOpening&&formCurrent()&&dialog&&event.currentTarget===dialog
+        &&form?.isConnected&&form.parentElement===dialog&&dialog.querySelector(":scope > form.document-artifact-dialog")===form){
+        basis=Object.freeze({adaptation:structuredClone(model3dAdaptation),revision:model3dDocumentRevision,
+          opening:configurationOpening,form,dialog,kind:"model3d"});
+      }
+      // Retain a rejection too: later callbacks cannot replace a missing owner.
+      this.#model3dSubmitBasis.set(event,basis);
+    }};
+    const submit=(event:SubmitEvent)=>{
+      const captured=this.#model3dSubmitEvents.has(event),basis=this.#model3dSubmitBasis.get(event);
+      this.#model3dSubmitBasis.delete(event);
+      const canceled=event.defaultPrevented;event.preventDefault();
+      if(captured||renderedKind==="model3d"||this.#kind==="model3d"){
+        if(!basis||canceled||event.type!=="submit"||basis.kind!==renderedKind||this.#kind!==basis.kind
+          ||basis.opening!==configurationOpening||basis.opening!==this.#configurationCurrent||!formCurrent()
+          ||event.target!==basis.form||event.currentTarget!==basis.form||!basis.form.isConnected
+          ||basis.dialog!==this.#createDialog()||!basis.dialog.open||basis.form.parentElement!==basis.dialog
+          ||basis.dialog.querySelector(":scope > form.document-artifact-dialog")!==basis.form)return;
+        void this.#create(basis.adaptation,basis.revision);return;
+      }
+      if(!formCurrent())return;
+      if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create(model3dAdaptation??undefined,model3dDocumentRevision);
+    };
     const videoUnavailable=this.#kind==="video"&&!session?.provider.videoConfigured;const audioUnavailable=this.#kind==="audio"&&!session?.provider.audioConfigured;
     const references=videoReferencePreflight(this.#projection().blocks,this.store.events.get());
     const videoBlocked=this.#kind==="video"&&Boolean(references.rightsBlockedCount||references.unavailablePixelCount||this.#productionMode!=="managed"&&references.providerLimitExceededCount);
@@ -1417,8 +1574,8 @@ export class DocumentArtifacts extends FormaElement {
     const paidConfirmation=this.#kind==="model3d"?this.i18n.t("model3d.cost.confirmation","This submits one paid Rodin 2.5 request to Fal and Hyper3D and reserves {amount}. Only the exact prompt and {count} selected images are sent. Provider content review still applies.",{amount:formatGenerationUsd(estimatedCost),count:this.i18n.number(this.#model3dReferenceBlockIds.length)}):this.#kind==="audio"?`${audioMaximumReservation?this.i18n.t("audio.provider.maximum","Maximum provider reservation: {amount}",{amount:preciseAudioPrice}):this.i18n.t("audio.provider.estimate","Estimated provider cost: {amount}",{amount:preciseAudioPrice})} · ${this.i18n.system("Total reserved: up to {amount}.",{amount:preciseTotalAudioPrice})}`:this.#kind==="video"&&managedPlan?(managedPlan.scenes.length===1?this.i18n.system("This starts {count} paid video scene totaling {seconds} seconds and reserves up to {amount}.",{count:this.i18n.number(managedPlan.scenes.length),seconds:this.i18n.number(managedPlan.totalDurationSeconds),amount:formatGenerationUsd(managedEstimate)}):this.i18n.system("This starts {count} paid video scenes totaling {seconds} seconds and reserves up to {amount}.",{count:this.i18n.number(managedPlan.scenes.length),seconds:this.i18n.number(managedPlan.totalDurationSeconds),amount:formatGenerationUsd(managedEstimate)}))+" "+(references.providerPixelCount?references.providerPixelCount===1?this.i18n.system("{count} authorized image may be sent to the provider; {descriptions} remain description-only.",{count:this.i18n.number(references.providerPixelCount),descriptions:this.i18n.number(references.describeOnlyCount)}):this.i18n.system("{count} authorized images may be sent to the provider; {descriptions} remain description-only.",{count:this.i18n.number(references.providerPixelCount),descriptions:this.i18n.number(references.describeOnlyCount)}):this.i18n.system("No existing user reference images are sent."))+(generatedAnchor?" "+this.i18n.system("Forma will generate and send an account-owned continuity image to the video provider."):"")+audioConfirmation:this.#kind==="video"?videoConfirmation+" "+this.i18n.system("Total reserved: up to {amount}.",{amount:formatGenerationUsd(estimatedCost)}):(managedPlan?.scenes.length??this.#itemCount)===1?this.i18n.system("This creates {count} paid storyboard frame, saves every finished image, and reserves up to {amount}.",{count:this.i18n.number(managedPlan?.scenes.length??this.#itemCount),amount:formatGenerationUsd(estimatedCost)}):this.i18n.system("This creates {count} paid storyboard frames, saves every finished image, and reserves up to {amount}.",{count:this.i18n.number(managedPlan?.scenes.length??this.#itemCount),amount:formatGenerationUsd(estimatedCost)});
     const documentId=this.#targetDocumentId();const listSuffix=documentId.replace(/[^a-z0-9_-]/gi,"-");const audienceListId=`document-artifact-audiences-${listSuffix}`,toneListId=`document-artifact-tones-${listSuffix}`;const audienceSuggestions=[...this.#rememberedAudiences,...documentRenderSuggestions(this.store.events.get(),documentId,"audience")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);const toneSuggestions=[...this.#rememberedTones,...documentRenderSuggestions(this.store.events.get(),documentId,"tone")].filter((value,index,all)=>all.findIndex((candidate)=>candidate.toLocaleLowerCase()===value.toLocaleLowerCase())===index).slice(0,12);
     const close=()=>{if(!ownsOpening())return;this.#rememberRequestDraft();this.#retireRequestReview();this.#configurationCurrent=null;if(renderedKind==="scene")this.#clearSceneCost();this.#createOpen=false;this.#activeWorkflowStageId="";this.#createDialog()?.close();void this.#restoreWorkflowRegeneration();this.requestUpdate();};
-    return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
-      <form class="document-artifact-dialog" @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!formCurrent())return;if(renderedKind==="scene")void this.#submitScene(sceneView);else void this.#create();}}>
+    return html`<dialog class="document-artifact-create" closedby="any" aria-labelledby="document-artifact-create-title" @submit=${captureSubmit} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&event.currentTarget===this.#createDialog())close();}} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#createDialog())return;close();}}>
+      <form class="document-artifact-dialog" @focusin=${(event:FocusEvent)=>this.#revealCreateFocus(event,formCurrent)} @toggle=${captureToggle} @input=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @change=${()=>{if(this.#requestReviewLoading)this.#retireRequestReview();}} @submit=${submit}>
         <header><div><span>Render document</span><h2 id="document-artifact-create-title">Create another form of this work</h2><p>The same creative direction can become a story, presentation, storyboard, or video without changing the original document.</p></div><button type="button" class="icon-button" aria-label="Close" @click=${close}>${icon("close")}</button></header>
         <fieldset class="artifact-kind-picker" aria-label="Artifact type">${DOCUMENT_ARTIFACT_KINDS.map((kind)=>{const item=documentArtifactDefinition(kind);return html`<label class=${this.#kind===kind?"selected":""}><input type="radio" name="artifact-kind" value=${kind} .checked=${this.#kind===kind} @change=${()=>{this.#retireRequestReview();this.#selectArtifactKind(kind);if(kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount();this.#confirmed=false;this.requestUpdate();}}><span aria-hidden="true">${icon(kindIcon(kind))}</span><b>${this.i18n.system(item.label)}</b><small>${this.i18n.system(item.description)}</small></label>`;})}</fieldset>
         <section class="artifact-options">
@@ -1452,7 +1609,7 @@ export class DocumentArtifacts extends FormaElement {
           <label>Audience <span>optional</span><input name="audience" list=${audienceListId} autocomplete="off" placeholder="Festival audience, client team…" aria-invalid=${String(Boolean(guidanceIssue("audience")))} aria-describedby=${`${audienceListId}-count${guidanceIssue("audience")?` ${audienceListId}-error`:""}`} .value=${this.#audience} @input=${(event:InputEvent)=>this.#guidanceInput("audience",(event.target as HTMLInputElement).value)}><small id=${`${audienceListId}-count`}>${this.i18n.system("{count}/{maximum} UTF-16 code units",{count:this.i18n.number(guidance.audience.length),maximum:this.i18n.number(DOCUMENT_RENDER_GUIDANCE_MAX_LENGTH)})}</small>${guidanceIssue("audience")?html`<small id=${`${audienceListId}-error`} role="alert">${guidanceError("audience")}</small>`:nothing}<datalist id=${audienceListId}>${audienceSuggestions.map((value)=>html`<option value=${value}></option>`)}</datalist></label>
           <label>Tone <span>optional</span><input name="tone" list=${toneListId} autocomplete="off" placeholder="Let the document decide" aria-invalid=${String(Boolean(guidanceIssue("tone")))} aria-describedby=${`${toneListId}-count${guidanceIssue("tone")?` ${toneListId}-error`:""}`} .value=${this.#tone} @input=${(event:InputEvent)=>this.#guidanceInput("tone",(event.target as HTMLInputElement).value)}><small id=${`${toneListId}-count`}>${this.i18n.system("{count}/{maximum} UTF-16 code units",{count:this.i18n.number(guidance.tone.length),maximum:this.i18n.number(DOCUMENT_RENDER_GUIDANCE_MAX_LENGTH)})}</small>${guidanceIssue("tone")?html`<small id=${`${toneListId}-error`} role="alert">${guidanceError("tone")}</small>`:nothing}<datalist id=${toneListId}>${toneSuggestions.map((value)=>html`<option value=${value}></option>`)}</datalist></label>
           `:nothing}
-          ${this.#kind==="model3d"?html`<forma-model3d-settings-editor .settings=${this.#model3dSettings} .prompt=${this.#model3dPrompt} .referenceCount=${this.#model3dReferenceBlockIds.length} .disabled=${this.#submitting} @model3d-settings-change=${(event:CustomEvent<{settings:Model3dSettings;prompt:string;valid:boolean}>)=>{if(!ownsOpening())return;const {settings,prompt,valid}=event.detail;this.#model3dSettings=settings;this.#model3dPrompt=prompt;this.#model3dSettingsValid=valid;this.#model3dDraftRevision++;this.#confirmed=false;this.requestUpdate();}}></forma-model3d-settings-editor>`:nothing}
+          ${model3dAdaptation?html`<forma-model3d-settings-editor .settings=${this.#model3dSettings} .prompt=${model3dAdaptation.prompt} prompt-source="document" .adaptation=${model3dAdaptation} .blockLabels=${Object.fromEntries(this.#projection().blocks.map(block=>[block.id,String(block.properties.label??block.handle)]))} .referenceCount=${this.#model3dReferenceBlockIds.length} .disabled=${this.#submitting} @model3d-settings-change=${(event:CustomEvent<{settings:Model3dSettings;prompt:string;valid:boolean}>)=>{if(!ownsOpening())return;this.#model3dSettings=event.detail.settings;this.#model3dDraftRevision++;this.#confirmed=false;this.requestUpdate();this.#revealModel3dLayoutFocus(event,formCurrent);}}></forma-model3d-settings-editor>`:nothing}
         </section>
         ${this.#kind!=="model3d"?html`<aside class="artifact-request-summary" aria-label=${this.i18n.system("Current request settings")}>
           <b>${this.i18n.system("Current request settings")}</b>

@@ -2,6 +2,7 @@ import { sendsReferencePixels } from "../src/model/block-types.ts";
 import { audioRightsAllowed } from "../src/model/audio.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import { validateModel3dRequest, type Model3dSettings } from "../src/model/model3d.ts";
+import { adaptDocumentToModel3d, model3dAdaptationReceipt } from "../src/model/model3d-prompt-adapter.ts";
 import type { CreativeEvent } from "../src/model/events.ts";
 import type { ProjectExecutionScope } from "./pilot-policy.ts";
 import { readGeneratedImageReference, verifyModel3dBlockAssets } from "./media-api.ts";
@@ -24,6 +25,8 @@ export type PreparedModel3dRequest = {
   estimatedCostMicrousd: number;
   references: Model3dReferenceInput[];
   referenceBlockIds: string[];
+  promptSource?: "document";
+  adaptation?: ReturnType<typeof model3dAdaptationReceipt>;
 };
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -63,12 +66,36 @@ export async function prepareModel3dRequest(input: {
   snapshot: Record<string, unknown>;
   sourceEvents: readonly CreativeEvent[];
   prompt: unknown;
+  promptSource?: unknown;
+  adaptation?: unknown;
   settings: unknown;
   referenceBlockIds: unknown;
   projectScope?: ProjectExecutionScope;
 }): Promise<PreparedModel3dRequest> {
   const referenceBlockIds = model3dReferenceSelection(input.referenceBlockIds);
-  const checked = validateModel3dRequest({ prompt: input.prompt, settings: input.settings, referenceCount: referenceBlockIds.length });
+  if (input.promptSource !== undefined && input.promptSource !== "exact" && input.promptSource !== "document") {
+    reject("model3d_prompt_source_invalid", "Choose document adaptation or an exact 3D prompt.");
+  }
+  let prompt = input.prompt;
+  let adaptation: ReturnType<typeof model3dAdaptationReceipt> | undefined;
+  if (input.promptSource === "document") {
+    const adapted = adaptDocumentToModel3d(input.snapshot, { referenceCount: referenceBlockIds.length });
+    if (!adapted.valid) {
+      const issue = adapted.issues[0]!;
+      reject(issue.code, issue.message, issue.blockIds[0]);
+    }
+    adaptation = model3dAdaptationReceipt(adapted);
+    const reviewed = record(input.adaptation);
+    if (input.prompt !== adapted.prompt || reviewed.adapterVersion !== adaptation.adapterVersion
+      || JSON.stringify(reviewed.includedBlockIds) !== JSON.stringify(adaptation.includedBlockIds)
+      || JSON.stringify(reviewed.omittedBlockIds) !== JSON.stringify(adaptation.omittedBlockIds)) {
+      reject("model3d_document_adaptation_changed", "The document's prepared 3D prompt changed. Reopen Render document to review its current context before generating.", undefined, undefined, 409);
+    }
+    prompt = adapted.prompt;
+  } else if (input.adaptation !== undefined) {
+    reject("model3d_prompt_source_invalid", "Document adaptation details require a document-derived 3D request.");
+  }
+  const checked = validateModel3dRequest({ prompt, settings: input.settings, referenceCount: referenceBlockIds.length });
   if (!checked.valid) {
     const issue = checked.issues[0]!;
     reject(issue.code, issue.message);
@@ -129,8 +156,9 @@ export async function prepareModel3dRequest(input: {
     }
     references.push({ bytes: image.bytes, mimeType: image.mimeType, blockId, referenceId, label: String(properties.label ?? fact.handle ?? "Reference image") });
   }
-  const final = validateModel3dRequest({ prompt: input.prompt, settings: input.settings, referenceCount: references.length, referenceMimeTypes: references.map((reference) => reference.mimeType) });
+  const final = validateModel3dRequest({ prompt, settings: input.settings, referenceCount: references.length, referenceMimeTypes: references.map((reference) => reference.mimeType) });
   if (!final.valid) reject(final.issues[0]!.code, final.issues[0]!.message);
-  return { prompt: typeof input.prompt === "string" ? input.prompt : "", settings: final.settings, model: final.model,
-    estimatedCostMicrousd: final.estimatedCostMicrousd, references, referenceBlockIds };
+  return { prompt: typeof prompt === "string" ? prompt : "", settings: final.settings, model: final.model,
+    estimatedCostMicrousd: final.estimatedCostMicrousd, references, referenceBlockIds,
+    ...(adaptation ? { promptSource: "document", adaptation } : {}) };
 }

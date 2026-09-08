@@ -13982,6 +13982,22 @@
           "members": [
             {
               "kind": "field",
+              "name": "adaptation",
+              "type": {
+                "text": "Model3dDocumentAdaptation | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "blockLabels",
+              "type": {
+                "text": "Record<string, string>"
+              },
+              "default": "{}"
+            },
+            {
+              "kind": "field",
               "name": "disabled",
               "type": {
                 "text": "boolean"
@@ -13998,6 +14014,15 @@
               },
               "default": "\"\"",
               "attribute": "prompt"
+            },
+            {
+              "kind": "field",
+              "name": "promptSource",
+              "type": {
+                "text": "\"document\" | \"exact\""
+              },
+              "default": "\"exact\"",
+              "attribute": "prompt-source"
             },
             {
               "kind": "field",
@@ -14034,6 +14059,14 @@
                 "text": "string"
               },
               "default": "\"\""
+            },
+            {
+              "name": "prompt-source",
+              "fieldName": "promptSource",
+              "type": {
+                "text": "\"document\" | \"exact\""
+              },
+              "default": "\"exact\""
             },
             {
               "name": "reference-count",

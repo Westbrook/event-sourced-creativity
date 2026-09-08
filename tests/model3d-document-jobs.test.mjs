@@ -4,6 +4,7 @@ import { createSceneCostFixture } from "./helpers/scene-cost-fixture.mjs";
 import { DEFAULT_MODEL3D_SETTINGS, RODIN_TEXT_MODEL } from "../src/model/model3d.ts";
 import { documentJobCanRecoverProviderRender, generationFailureGuidance } from "../src/model/document-jobs.ts";
 import { appendAuditEvent } from "../worker/runtime.ts";
+import { adaptDocumentToModel3d, model3dAdaptationReceipt } from "../src/model/model3d-prompt-adapter.ts";
 
 const prompt = "One carved wooden chair with brass feet.";
 const payload = (changes = {}) => ({ artifactKind: "model3d", productionMode: "direct", paidMediaConfirmed: true,
@@ -47,12 +48,12 @@ function triangleGlb() {
   return bytes;
 }
 
-function rodinResponses({ failSubmit = false, failResult = false } = {}) {
+function rodinResponses({ failSubmit = false, failResult = false, expectedPrompt = prompt } = {}) {
   const id = "rodin-retained-001", root = `https://queue.fal.run/fal-ai/hyper3d/requests/${id}`;
   const media = "https://v3.fal.media/files/original-model.glb", bytes = triangleGlb();
   return async (request) => {
     if (request.url === `https://queue.fal.run/${RODIN_TEXT_MODEL}` && request.method === "POST") {
-      assert.equal(JSON.parse(request.init.body).prompt, prompt);
+      assert.equal(JSON.parse(request.init.body).prompt, expectedPrompt);
       if (failSubmit) throw new TypeError("Connection closed after sending the request");
       return Response.json({ request_id: id, status: "COMPLETED", status_url: `${root}/status`, response_url: root, cancel_url: `${root}/cancel` });
     }
@@ -105,6 +106,82 @@ test("3D admission pins the exact prompt, settings, single-call price and no Ope
   const changed = await (await submit(f, { ...changes, model3dPrompt: "A different chair." })).json();
   assert.notEqual(changed.job.jobId, job.jobId, "a changed prompt is a distinct authorized purchase");
   assert.deepEqual(budgetRows(f), { tokens: [], costs: [] }); assert.equal(calls.length, 0);
+});
+
+test("document adaptation is rederived before admission and frozen in the private receipt", async (t) => {
+  const f = await fixture(t), calls = mockNetwork(t, () => { throw new Error("Admission cannot call a provider"); });
+  const adapted = adaptDocumentToModel3d(f.payload.snapshot);
+  assert.equal(adapted.valid, true);
+  assert.match(adapted.prompt, /keeper checks the harbor/);
+  const reviewed = { model3dPromptSource: "document", model3dPrompt: adapted.prompt, model3dAdaptation: model3dAdaptationReceipt(adapted) };
+  const before = f.counts();
+  for (const changes of [{ model3dPrompt: "A client invented subject" }, { model3dAdaptation: { ...reviewed.model3dAdaptation, adapterVersion: "stale" } }]) {
+    const response = await submit(f, { ...reviewed, ...changes });
+    assert.equal(response.status, 409, await response.clone().text());
+    assert.equal((await response.json()).error, "model3d_document_adaptation_changed");
+    assert.deepEqual(f.counts(), before);
+  }
+  const response = await submit(f, reviewed);
+  assert.equal(response.status, 202, await response.clone().text());
+  const { job } = await response.json(), retained = savedJob(f, job.jobId);
+  assert.equal(retained.request.model3dPrompt, adapted.prompt);
+  assert.deepEqual(retained.request.model3dAdaptation, reviewed.model3dAdaptation);
+  const receipt = f.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(job.result.generationReceipt.input_ref);
+  assert.ok(receipt, "admission retains a private input receipt");
+  const privateInput = JSON.parse(receipt.content);
+  assert.equal(privateInput.request.model3d_prompt, adapted.prompt);
+  assert.equal(privateInput.request.model3d_prompt_source, "document");
+  assert.deepEqual(privateInput.request.model3d_adaptation, reviewed.model3dAdaptation);
+  assert.equal(privateInput.source.scope, "adapted_document_and_selected_reference_views");
+  assert.equal(job.result.generationReceipt.maximum_provider_call_count, 1);
+  assert.equal(job.result.generationReceipt.max_repair_call_count, 0);
+  assert.equal(job.result.generationReceipt.reservation_microusd, 400_000);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(budgetRows(f), { tokens: [], costs: [] });
+});
+
+test("document changes after enqueue stop 3D adaptation before the first provider dispatch", async (t) => {
+  const f = await fixture(t), calls = mockNetwork(t, () => { throw new Error("A stale document cannot reach a provider"); });
+  const adapted = adaptDocumentToModel3d(f.payload.snapshot);
+  const response = await submit(f, { model3dPromptSource: "document", model3dPrompt: adapted.prompt,
+    model3dAdaptation: model3dAdaptationReceipt(adapted) });
+  assert.equal(response.status, 202, await response.clone().text());
+  const { job } = await response.json();
+  await appendAuditEvent(f.env, f.streamId, "user", "BlockPropertyEdited", { project_id: f.projectId,
+    document_id: f.documentId, block_id: "scene-reuse-direction", property_path: "text", new_value: "An unreviewed replacement subject." });
+  await f.run(job.jobId);
+  const rejected = savedJob(f, job.jobId);
+  assert.equal(rejected.status, "failed");
+  assert.equal(rejected.result.errorDetail.code, "context_source_version_mismatch");
+  assert.equal(calls.length, 0);
+  assert.deepEqual(budgetRows(f), { tokens: [], costs: [] });
+});
+
+test("document-derived 3D recovery preserves the adapted prompt after its source changes", async (t) => {
+  const f = await fixture(t);
+  const adapted = adaptDocumentToModel3d(f.payload.snapshot);
+  let route = rodinResponses({ failResult: true, expectedPrompt: adapted.prompt });
+  const calls = mockNetwork(t, request => route(request));
+  const { job } = await (await submit(f, { model3dPromptSource: "document", model3dPrompt: adapted.prompt,
+    model3dAdaptation: model3dAdaptationReceipt(adapted) })).json();
+  await f.run(job.jobId);
+  const failed = savedJob(f, job.jobId);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.result.model3dInputReceipt.submittedPrompt, adapted.prompt);
+  await appendAuditEvent(f.env, f.streamId, "user", "BlockPropertyEdited", { project_id: f.projectId,
+    document_id: f.documentId, block_id: "scene-reuse-direction", property_path: "text", new_value: "A completely different subject." });
+  const retry = await f.request(`/api/document-jobs/${job.jobId}/retry`, f.json({}));
+  assert.equal(retry.status, 202, await retry.clone().text());
+  route = rodinResponses({ expectedPrompt: adapted.prompt });
+  const before = calls.length;
+  await f.run(job.jobId);
+  const recovered = savedJob(f, job.jobId);
+  assert.equal(recovered.status, "completed", JSON.stringify(recovered.result));
+  assert.equal(recovered.request.model3dPrompt, adapted.prompt);
+  assert.deepEqual(recovered.request.model3dAdaptation, model3dAdaptationReceipt(adapted));
+  assert.equal(calls.filter(call => call.method === "POST").length, 1);
+  assert.ok(calls.slice(before).length > 0);
+  assert.ok(calls.slice(before).every(call => call.method === "GET"));
 });
 
 test("an uncertain Rodin acceptance retains its budget and blocks retry without a second submission", async (t) => {

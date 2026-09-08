@@ -30,3 +30,18 @@ forma-model3d-settings-editor { display:block; min-inline-size:0; }
 .model3d-settings-validation ul { display:grid; gap:.4rem; margin:0; padding:0; }
 @media (max-width:36rem) { .model3d-settings-grid, .model3d-bbox-grid { grid-template-columns:minmax(0,1fr); } }
 @media (forced-colors:active) { .model3d-settings-guidance, .model3d-settings-validation, .model3d-settings-advanced { border-color:CanvasText; } .model3d-settings-editor [aria-invalid="true"], .model3d-settings-validation.has-errors { border:2px solid Mark; } .model3d-prompt-count.over-limit, .model3d-settings-error { color:Mark; } }
+
+/* Removing a validation message above focused suggestions must not anchor the
+   summary in place and leave its restored guidance beneath the sticky footer.
+   Keep native anchoring for validation, other controls and focus that does not match :focus-visible. */
+dialog.document-artifact-create:modal > form.document-artifact-dialog:has(
+  forma-model3d-settings-editor[prompt-source="document"] > .model3d-settings-editor > details.model3d-settings-advanced[open] > summary:focus-visible + ul.model3d-settings-guidance
+):not(:has(
+  forma-model3d-settings-editor[prompt-source="document"] > .model3d-settings-editor > .model3d-settings-validation.has-errors
+)) { overflow-anchor: none; }
+
+/* The dialog's viewport limit includes its two 1px borders. Keep the owned
+   form within that content box so native focus cannot scroll both containers. */
+dialog.document-artifact-create:modal > form.document-artifact-dialog:has(forma-model3d-settings-editor[prompt-source="document"]) {
+  max-block-size: calc(100dvh - 2rem - 2px);
+}
