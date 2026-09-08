@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1nn949p.38": "Personal memory application interface.",
+  "system.auto.1iw06ox.82": "Consent controls only. Mounting this component never enrolls or captures activity.",
+  "system.auto.1ebefvb.101": "Closing the composing host retires work before its next DOM update. Reopening requires a fresh mount.",
   "system.auto.1avh66.101": "Reuse a creative decision or a previous project output. Everything remains editable in this document.",
   "system.auto.z7ijvf.70": "Create a reusable decision or generate a project output to reuse here.",
   "system.auto.1i2qq03.94": "Explicit presentation only; the host supplies current ownership, never a fabricated saved row.",

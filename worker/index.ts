@@ -26,6 +26,9 @@ import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
+import { handleLiveMemory } from "./memory-live-api.ts";
+import { handleMemoryDocumentProfile } from "./memory-document-profile-api.ts";
+import { sweepExpiredDocumentProfileSuppressions } from "./memory-document-profile-store.ts";
 import { handleEventPrivacy } from "./privacy-api";
 import { handleProjectNotifications } from "./project-notifications-api";
 import { processReviewReminders } from "./review-automation-api";
@@ -130,6 +133,12 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
+    if(url.pathname==="/api/memory/settings")return handleLiveMemory(request,env,"settings");
+    if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
+    if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
+    if(url.pathname==="/api/memory/document-profile/settings")return handleMemoryDocumentProfile(request,env,"settings");
+    if(url.pathname==="/api/memory/document-profile/inspect")return handleMemoryDocumentProfile(request,env,"inspect");
+    if(url.pathname==="/api/memory/document-profile/suppress")return handleMemoryDocumentProfile(request,env,"suppress");
     if(url.pathname==="/api/context/decompose")return handleContextIntelligence(request,env,"decompose");
     if(url.pathname==="/api/context/research")return handleContextIntelligence(request,env,"research");
     if(url.pathname==="/api/context/apply")return handleContextApplication(request,env);
@@ -292,6 +301,12 @@ export default {
   },
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
     await observeScheduledRetention(env,1_000);
-    await processReviewReminders(env,100);
+    try {
+      // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
+      await sweepExpiredDocumentProfileSuppressions(env,128);
+    } finally {
+      // A profile-cleanup failure must not prevent the existing reminder pass.
+      await processReviewReminders(env,100);
+    }
   },
 };

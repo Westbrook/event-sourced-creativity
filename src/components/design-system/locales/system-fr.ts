@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1nn949p.38": "Interface de l’application de mémoire personnelle.",
+  "system.auto.1iw06ox.82": "Contrôles de consentement uniquement. Le montage de ce composant ne déclenche jamais d’inscription à la mémoire ni de capture d’activité.",
+  "system.auto.1ebefvb.101": "Fermer le composant hôte qui l’intègre invalide le travail en cours avant sa prochaine mise à jour du DOM. Une réouverture nécessite un nouveau montage.",
   "system.auto.1avh66.101": "Réutilisez une décision créative ou une création précédente du projet. Tout reste modifiable dans ce document.",
   "system.auto.z7ijvf.70": "Créez une décision réutilisable ou générez une création du projet à réutiliser ici.",
   "system.auto.1i2qq03.94": "Présentation explicite uniquement ; le composant hôte fournit le contrôle de rattachement au contexte actuel, jamais une ligne enregistrée fictive.",

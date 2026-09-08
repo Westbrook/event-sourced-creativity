@@ -12369,6 +12369,68 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-personal-memory.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaPersonalMemory",
+          "tagName": "forma-personal-memory",
+          "customElement": true,
+          "summary": "Personal memory application interface.",
+          "description": "Consent controls only. Mounting this component never enrolls or captures activity.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "suspendPresentation",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Closing the composing host retires work before its next DOM update. Reopening requires a fresh mount."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-personal-memory",
+          "declaration": {
+            "name": "FormaPersonalMemory",
+            "module": "src/components/forma-personal-memory.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaPersonalMemory",
+          "declaration": {
+            "name": "FormaPersonalMemory",
+            "module": "src/components/forma-personal-memory.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-platform-assistant.ts",
       "declarations": [
         {

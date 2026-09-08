@@ -10,8 +10,8 @@ import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, readSlideCountPolicy, resolvePresentationCountRequest, sameSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import { approvedAudioVideoReference, handleEvents } from "./events-api";
 import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, settleDocumentGenerationBudgets, storePrivateContent, preparePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
-import { prepareProjectResourceScopeStatement, hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
-import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
+import { prepareProjectResourceScopeStatement, projectSourceProjectionCurrentAssertion, hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
+import { appendAuditEvent, appendEvents, ensureSchema, EVENT_WRITE_COLUMNS, EVENT_WRITE_STAGE_TRIGGER_SQL, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, serializeEvent, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import { adaptiveRequestKey, adaptiveRequestLocale } from "../src/model/adaptive-request";
 import { livePlanningBoardGuard, planningBoardCurrent } from "./planning-destination";
@@ -71,6 +71,21 @@ import { settleLegacyPresentationReservations } from "./pilot-policy";
 import { claimConsequentialExecution, consentHash, executionAdmissionGuard, executionAuthorityCurrent, executionContentCustodyGuard, failConsequentialExecution, reconcileConsequentialUsage, type ConsequentialBinding } from "./consequential-consent";
 import { adaptiveExecutionResponse, adaptivePlanningAdmissionGuard, adaptivePlanningReviewAvailable, adaptivePriorExecutionResponse, executeApprovedAdaptivePlanning, handleAdaptivePlanning, readAdaptivePlanningJobResult, type AdaptivePlanningPorts, type AdaptivePlanningPrepared } from "./adaptive-planning";
 import type { BudgetReservationGuard } from "./pilot-policy";
+import { AssistantContextReadWitness, type AssistantContextReadDescriptor } from "./assistant-context-source.ts";
+import { liveMemoryAuthority, LIVE_MEMORY_POLICY, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
+import { liveMemoryEnabled, prepareNativeMemorySelection, nativeMemorySelectionStatements, nativeMemorySelectionMatches,
+  discoverNativeStructuredConversationOriginals, type NativeMemorySelection } from "./memory-live-store.ts";
+import { readNativeDocumentMemory, prepareNativeStructuredConversationContext, nativeStructuredConversationContextPrecommitStatements,
+  nativeStructuredConversationContextEvidence,
+  type NativeDocumentMemoryContext, type PreparedNativeStructuredConversationContext } from "./memory-live-context.ts";
+import { nativeMemoryAssistantReply, nativeStructuredMemoryAssistantReply } from "./memory-assistant-reply.ts";
+import type { LegacyConversationOriginalPrepared } from "./events-api.ts";
+import { nativeMemoryCanonical, nativeMemoryFingerprint, nativeMemoryAnswerFingerprint, nativeMemoryOriginCapture,
+  nativeStructuredOriginalProjection, nativeStructuredOriginSchema, type NativeMemoryOriginEnrollment,
+  type NativeStructuredMemoryOriginOriginal } from "./memory-native-origin.ts";
+import { DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE, encodeDocumentJobOriginManifest,
+  type DocumentJobOriginManifest, type DocumentJobOriginManifestMaterial } from "./memory-document-job-origin-manifest.ts";
+import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 
 export type DocumentJobRow = {
   output_slot_id?:string|null;
@@ -202,21 +217,95 @@ function projectJobAnchorPayload(scope:ProjectExecutionScope,job:{jobId:string;k
 }
 async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:string;kind:DocumentJobKind;documentId:string}>){
   const scope=user.projectExecution;if(!scope)return;
+  const db=env.DB,frame=()=>JSON.stringify([user.userId,user.streamId,user.projectExecution,jobs]),originalFrame=frame();
+  const sameFrame=()=>{if(env.DB!==db||frame()!==originalFrame)throw new Error("project_job_anchor_context_changed");};
   try{
     for(const job of jobs){
+      sameFrame();
       if(!await activeProjectExecution(env,user,job.documentId,job.jobId,false))throw new Error("project_access_revoked");
-      const event=await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"ProjectDocumentJobQueued",projectJobAnchorPayload(scope,job),job.jobId);
-      const anchored=await env.DB.prepare(`UPDATE project_resource_scopes SET source_event_id=? WHERE resource_kind='job' AND resource_id=? AND project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND actor_user_id=? AND source_event_id IS NULL AND ${activeProjectExecutionSql}`)
-        .bind(event.eventId,job.jobId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId,...projectExecutionBindings(scope,job.documentId)).run();
-      if(Number(anchored.meta.changes??0)!==1)throw new Error("project_access_revoked");
+      sameFrame();
+      const chat=job.kind==="chat"?await readJob(env,user.userId,job.jobId):null;
+      sameFrame();
+      if(job.kind==="chat"&&(!chat||chat.kind!=="chat"))throw new Error("project_job_anchor_context_changed");
+      if(job.kind!=="chat"||chat!.source_surface!=="chat"){
+        // Other queue surfaces retain their existing write/synchronization
+        // contract; their preflights may legitimately add other audit events.
+        const event=await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"ProjectDocumentJobQueued",projectJobAnchorPayload(scope,job),job.jobId);
+        sameFrame();
+        const anchored=await db.prepare(`UPDATE project_resource_scopes SET source_event_id=? WHERE resource_kind='job' AND resource_id=? AND project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND actor_user_id=? AND source_event_id IS NULL AND ${activeProjectExecutionSql}`)
+          .bind(event.eventId,job.jobId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId,...projectExecutionBindings(scope,job.documentId)).run();
+        sameFrame();
+        if(Number(anchored.meta.changes??0)!==1)throw new Error("project_access_revoked");
+        continue;
+      }
+      const event=makeEvent(user.streamId,0,`user:${user.userId}`,"server:policy",job.jobId,"ProjectDocumentJobQueued",projectJobAnchorPayload(scope,job));
+      // Queue audit events are deliberately outside the project event allowlist.
+      // Account for only this exact unindexed event, atomically with its job
+      // anchor. Never rebuild, reactivate a migration or skip another event.
+      await appendEvents(env,[event],{
+        prepareSidecars:()=>{
+          sameFrame();
+          const authority=documentJobProjectAuthority(user,job.documentId,job.jobId)!;
+          const current=projectSourceProjectionCurrentAssertion(scope);
+          const ownSql=`EXISTS(SELECT 1 FROM events anchor WHERE anchor.event_id=? AND anchor.stream_id=? AND anchor.sequence=?
+            AND anchor.actor=? AND anchor.client_id='server:policy' AND anchor.correlation_id=? AND anchor.type='ProjectDocumentJobQueued'
+            AND json_extract(anchor.payload,'$.job_id')=? AND json_extract(anchor.payload,'$.document_id')=? AND json_extract(anchor.payload,'$.kind')=?
+            AND json_extract(anchor.payload,'$.organization_id')=? AND json_extract(anchor.payload,'$.project_access_id')=?
+            AND json_extract(anchor.payload,'$.project_id')=? AND json_extract(anchor.payload,'$.history_owner_user_id')=?
+            AND json_extract(anchor.payload,'$.actor_user_id')=?) AND NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id=?)
+            AND EXISTS(SELECT 1 FROM document_jobs own_job WHERE own_job.job_id=? AND own_job.owner_id=? AND own_job.stream_id=? AND own_job.document_id=? AND own_job.kind='chat' AND own_job.source_surface='chat' AND own_job.status='queued')`;
+          const ownBindings=[event.eventId,user.streamId,event.sequence,event.actor,job.jobId,job.jobId,job.documentId,job.kind,
+            scope.organizationId,scope.projectAccessId,scope.projectId,scope.ownerUserId,scope.actorUserId,event.eventId,
+            job.jobId,user.userId,user.streamId,job.documentId];
+          return[
+            db.prepare(`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) THEN 1
+              WHEN (${ownSql}) AND ${activeProjectExecutionSql}
+                AND EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?)
+                AND EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='manifest_version' AND resource_id='canvas-v1')
+                AND EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='job' AND resource_id=? AND actor_user_id=? AND visibility='actor_private' AND source_event_id IS NULL)
+              THEN 1 ELSE json('project_job_anchor_projection_changed') END AS project_job_anchor_verified`)
+              .bind(event.eventId,...ownBindings,...projectExecutionBindings(scope,job.documentId),scope.projectAccessId,scope.organizationId,scope.ownerUserId,event.sequence-1,
+                scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,
+                scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,job.jobId,scope.actorUserId),
+            db.prepare(`UPDATE project_resource_scopes SET source_event_id=? WHERE resource_kind='job' AND resource_id=? AND project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND actor_user_id=? AND visibility='actor_private' AND source_event_id IS NULL AND (${ownSql}) AND ${activeProjectExecutionSql}`)
+              .bind(event.eventId,job.jobId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId,...ownBindings,...projectExecutionBindings(scope,job.documentId)),
+            db.prepare(`UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=? AND (${ownSql}) AND (${authority.sql})`)
+              .bind(event.sequence,event.recordedAt,scope.projectAccessId,scope.organizationId,scope.ownerUserId,event.sequence-1,...ownBindings,...(authority.bindings??[])),
+            // A lost head race inserts no event and leaves every sidecar idle,
+            // allowing appendEvents' existing bounded retry. A present event
+            // requires complete custody/currentness or the whole batch aborts.
+            db.prepare(`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM events WHERE event_id=?) THEN 1
+              WHEN (${ownSql}) AND (${authority.sql}) AND (${current.sql})
+                AND EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='job' AND resource_id=? AND source_event_id=? AND visibility='actor_private')
+              THEN 1 ELSE json('project_job_anchor_projection_changed') END AS project_job_anchor_verified`)
+              .bind(event.eventId,...ownBindings,...(authority.bindings??[]),...current.bindings,scope.projectAccessId,job.jobId,event.eventId),
+          ];
+        },
+        onSidecarsCommitted:results=>{
+          sameFrame();
+          // This acknowledgement is checked after commit. Failure is unknown
+          // confirmation, NOT proof that the atomic anchor was rolled back.
+          if(!Array.isArray(results)||results.length!==4||Array.from(results).some(result=>!result||typeof result!=="object"||Array.isArray(result)
+              ||!Object.hasOwn(result,"success")||result.success!==true||(result as { readonly error?: unknown }).error!==undefined||!Object.hasOwn(result,"results")||!Array.isArray(result.results))
+            ||[results[1],results[2]].some(result=>!Object.hasOwn(result,"meta")||!result.meta||typeof result.meta!=="object"||Array.isArray(result.meta)
+              ||!Object.hasOwn(result.meta,"changes")||result.meta.changes!==1||result.results.length!==0)
+            ||[results[0],results[3]].some(result=>result.results.length!==1||!result.results[0]||typeof result.results[0]!=="object"||Array.isArray(result.results[0])
+              ||Object.keys(result.results[0]).length!==1||!Object.hasOwn(result.results[0],"project_job_anchor_verified")
+              ||(result.results[0] as Record<string,unknown>).project_job_anchor_verified!==1))throw new Error("project_job_anchor_unconfirmed");
+        },
+      });
+      sameFrame();
     }
   }catch(error){
     for(const job of jobs){
+      sameFrame();
       const row=await readJob(env,user.userId,job.jobId);if(!row||row.status!=="queued"&&row.status!=="running")continue;
+      sameFrame();
       const now=new Date().toISOString();
       const changed=await env.DB.prepare(`UPDATE document_jobs SET status='canceled',error_message='project_job_authorization_failed',completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running') AND NOT (${unsettledProviderSubmissionSql()}) AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot JOIN output_provider_calls output_call ON output_call.scope_key=output_slot.scope_key AND output_call.slot_id=output_slot.slot_id WHERE output_slot.job_id=document_jobs.job_id AND output_call.status IN('pending','uncertain'))`)
         .bind(now,now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id).run();
-      if(Number(changed.meta.changes??0)===1){const terminal=await readJob(env,user.userId,row.job_id);if(terminal)await releaseInterruptedAttempt(env,user,terminal,"project_job_authorization_failed");}
+      sameFrame();
+      if(Number(changed.meta.changes??0)===1){const terminal=await readJob(env,user.userId,row.job_id);sameFrame();if(terminal){await releaseInterruptedAttempt(env,user,terminal,"project_job_authorization_failed");sameFrame();}}
     }
     throw error;
   }
@@ -2049,6 +2138,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       AND ${documentJobProjectSql("document_jobs")}<>''
       AND ${documentJobProjectSql("active")} NOT IN ('',${documentJobProjectSql("document_jobs")})))`;
   const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,...(outputBinding?[]:[staleBefore]),row.correlation_id,row.result_json,Number(independentPresentation)] as const;
+  const memoryClaimDb=env.DB,memoryClaimPrincipalKey=row.kind==="chat"&&row.source_surface==="chat"?documentJobMemoryPrincipalKey(user):"";
   let claimed;
   if (handoffPaidProviderReservations) {
     const billingOwnerId = user.billingUserId ?? user.userId;
@@ -2108,6 +2198,11 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       if (row.kind === "chat") payload.message = input;
       if (row.kind === "structure_adaptive") payload.prompt = input;
     }
+    // Registration is invisible to ordinary execution: it performs no memory read,
+    // enrollment, dispatch or response change. Only this successful native claim
+    // and its actual private-input reload can later issue a worker-only capability.
+    registerDocumentJobMemoryClaim(env, row, user, claimed, previousRow, attempt,
+      attemptCorrelationId, nowIso, leaseExpiresAt, inputRef, payload.message, memoryClaimDb, memoryClaimPrincipalKey);
     delete payload.expectedSequence; delete payload.jobInputRef;
     if(requiresForegroundDocumentExecution(row)){
       const checkpoint=parseResult(row);for(const key of ["providerSubmissionProtocol","providerSubmissionLegacyUncertain","providerSubmissions","artifactId","providerJobId","providerRequestId","provider","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","storyboardProviderRequestedAt","storyboardProviderAcceptedAt","storyboardSafeRecovery","storyboardRejectedProviderReceipt","artifactPlan","plannerModel","plannerResponseId","plannerResponseIds","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt","audioInputReceipt","audioEstimatedCostMicrousd","model3dInputReceipt","model3dProviderFiles","model3dProviderSubmission","model3dSettings","model3dEstimatedCostMicrousd","productionPlan","productionSceneReceipts","productionFrameReceipts","productionPrepaidSceneIds","productionPrepaidAnchor","prepaidProviderCostMicrousd","productionAnchor","costReservationMicrousd","costReservationId","costReservationPeriod","presentationProviderSubmission","presentationProviderClientRequestId","presentationCandidates","storyboardProviderSubmission"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if((checkpoint.providerJobId||checkpoint.productionSceneReceipts||checkpoint.productionFrameReceipts||checkpoint.productionAnchor||hasSavedPaidPresentation||trustedStoryboardSafeRecovery(checkpoint))&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
@@ -2123,6 +2218,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     outputOperationExecution=outputExecution;operationEnvironment=outputExecution?.guardedEnvironment??env;
     if(!foregroundPresentation)await updateJobProgress(operationEnvironment,row,"compiling",row.kind==="preview"||row.kind==="generate"?"Compiling the checked document state for generation.":row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
     const response = await runWithHeartbeat(operationEnvironment, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, outputExecution?{...control,output:outputExecution}:control),nativeExecutionPolicy);
+    documentJobMemoryClaims.delete(row);
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
     const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;
     const detail=!response.ok?classifyDocumentJobFailure(String(body.error??suppliedFailure?.message??"document_job_failed"),suppliedFailure,response.status):null;
@@ -2160,6 +2256,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       persistedForegroundPresentation=await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",saved);
     }else if(!outputBinding)await refreshGenerationReceipt(operationEnvironment,user,row,body,detail);
   } catch (error) {
+    documentJobMemoryClaims.delete(row);
     if(consentedAdaptiveJob(row)){
       const latest=await readJob(env,user.userId,row.job_id)??row,recovered=await certifiedAdaptiveJob(env,user,latest,true);if(recovered.status==="completed")return recovered;
       await releaseInterruptedAttempt(env,user,latest,"adaptive_execution_interrupted");
@@ -2210,12 +2307,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   return finishedRow;
 }
 
-async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current:PilotUser):Promise<PilotUser|null>{
+async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current?:PilotUser):Promise<PilotUser|null>{
   const project=await env.DB.prepare("SELECT organization_id,project_access_id,project_id,owner_user_id,actor_user_id,EXISTS(SELECT 1 FROM events anchor WHERE anchor.event_id=resource.source_event_id AND anchor.stream_id='creative:'||resource.owner_user_id AND anchor.actor='user:'||resource.actor_user_id AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=resource.resource_id AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id) AS anchor_valid FROM project_resource_scopes resource WHERE resource_kind='job' AND resource_id=? AND actor_user_id=? AND owner_user_id=?")
     .bind(row.job_id,row.owner_id,row.stream_id.slice("creative:".length)).first<{organization_id:string;project_access_id:string;project_id:string;owner_user_id:string;actor_user_id:string;anchor_valid:number}>();
   if(project&&!project.anchor_valid)return null;
-  if(project&&current.userId===row.owner_id&&current.projectExecution?.projectAccessId===project.project_access_id&&current.projectExecution.organizationId===project.organization_id)return current;
-  if(!project&&current.userId===row.owner_id&&!current.projectExecution&&current.streamId===row.stream_id)return current;
+  if(project&&current&&current.userId===row.owner_id&&current.projectExecution?.projectAccessId===project.project_access_id&&current.projectExecution.organizationId===project.organization_id)return current;
+  if(!project&&current&&current.userId===row.owner_id&&!current.projectExecution&&current.streamId===row.stream_id)return current;
   if(!project&&row.owner_id!==row.stream_id.slice("creative:".length))return null;
   const principal=await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(row.owner_id).first<Record<string,unknown>>();
   if(!principal||principal.consent_version!==POLICY_VERSION)return null;
@@ -3659,4 +3756,789 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const job = await readJob(env, user.userId, jobId);
   if(!requiresForegroundDocumentExecution(job!))context?.waitUntil(driveDocumentQueue(env,user));
   return Response.json({job:admissionUser.projectExecution?safeScopedJob(job!):serializeJob(job!),accepted:true},{status:202});
+}
+
+// Nonexposing foundation only. This capability does NOT supply memory text,
+// authorize a provider call, permit a job answer write or certify saved output.
+// Queued chat's real event/provenance shape still needs its own later protocol.
+const documentJobMemoryAuthorityType: unique symbol = Symbol("document-job-memory-authority");
+export type DocumentJobMemoryAuthority = Readonly<{[documentJobMemoryAuthorityType]:true}>;
+type DocumentJobMemoryRows = Record<string, unknown>;
+type DocumentJobMemoryClaim = {
+  env:WorkerEnv; db:WorkerEnv["DB"]; row:DocumentJobRow; user:PilotUser;
+  rowKey:string; principalKey:string; inputRef:string; input:string;
+};
+type DocumentJobMemoryFrame = {
+  claim:DocumentJobMemoryClaim; value:DocumentJobMemoryAuthority;
+  witness:AssistantContextReadWitness<null>; selection:NativeMemorySelection; validUntil:string;
+  // Retain the actual native preparation and the witnessed head, never a caller
+  // supplied binding or a later head that would extend this claim's authority.
+  prepared:LegacyConversationOriginalPrepared;
+  // Durable input/custody ceilings are not the short read/proof lease. Retain
+  // these original facts for the eventual writer; never reacquire or renew them.
+  inputExpiresAt:string; inputAssignedExpiresAt:string|null; projectSourceHead:number|null;
+};
+const documentJobMemoryClaims = new WeakMap<DocumentJobRow, DocumentJobMemoryClaim>();
+const documentJobMemoryFrames = new WeakMap<DocumentJobMemoryAuthority, DocumentJobMemoryFrame>();
+// Housekeeping progress may change result_json/updated_at. Everything here is
+// exact, including lease: heartbeat renewal retires this claim's authority lane.
+// Only another genuine acknowledged claim/registration can reopen it; issuance
+// does not refresh the lease identity retained by an existing registration.
+const DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS = ["job_id","owner_id","stream_id","document_id","kind","status",
+  "source_surface","correlation_id","requested_sequence","request_json","error_message","attempt_count",
+  "requested_at","started_at","completed_at","lease_expires_at","notified_at","expires_at"] as const;
+const DOCUMENT_JOB_MEMORY_ENROLLMENT_COLUMNS = ["enrollment_id","actor_user_id","owner_user_id","organization_id",
+  "project_access_id","project_id","document_id","permission_epoch","policy_version","revision","learn_enabled",
+  "recall_enabled","background_enabled","retention_days","time_zone","enrolled_at","expires_at","cursor_sequence",
+  "cutoff_sequence","last_local_day","last_admitted_at","next_due_at","lease_token","lease_expires_at","attempts","failure_code"] as const;
+const documentJobMemoryRowKey = (row:DocumentJobRow) => JSON.stringify(DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS.map(key=>row[key]));
+const documentJobMemoryPrincipalKey = (user:PilotUser) => JSON.stringify([user.userId,user.email,user.role,
+  user.consentVersion,user.access.permissionEpoch,user.authorizationSnapshot,user.projectExecution??null,user.streamId]);
+const documentJobMemoryIdentityKey = (user:PilotUser) => JSON.stringify([user.userId,user.email,user.role,
+  user.consentVersion,user.access.permissionEpoch,user.authorizationSnapshot]);
+function documentJobMemoryTimestamp(value:unknown):number|null {
+  if(typeof value!=="string")return null;
+  const at=Date.parse(value);return Number.isFinite(at)&&new Date(at).toISOString()===value?at:null;
+}
+function documentJobMemoryResults(results:readonly D1Result<DocumentJobMemoryRows>[],count:number):boolean {
+  return Array.isArray(results)&&results.length===count&&Array.from(results).every((result,index)=>
+    Object.prototype.hasOwnProperty.call(results,index)&&result&&Object.prototype.hasOwnProperty.call(result,"success")
+    &&result.success===true&&result.error===undefined&&Object.prototype.hasOwnProperty.call(result,"results")&&Array.isArray(result.results));
+}
+function documentJobMemoryAsserted(results:readonly D1Result<DocumentJobMemoryRows>[]):boolean {
+  return results.every(result=>result.results.length===1&&Object.prototype.hasOwnProperty.call(result.results,0)
+    &&result.results[0]&&typeof result.results[0]==="object"&&!Array.isArray(result.results[0])
+    &&Object.keys(result.results[0]).length===1&&Object.keys(result.results[0])[0]==="context_source_asserted"
+    &&Object.prototype.hasOwnProperty.call(result.results[0],"context_source_asserted")
+    &&result.results[0].context_source_asserted===1);
+}
+function documentJobMemoryClaimCurrent(env:WorkerEnv,claim:DocumentJobMemoryClaim):boolean {
+  try {
+    return claim.env===env&&claim.db===env.DB&&documentJobMemoryClaims.get(claim.row)===claim
+      &&documentJobMemoryRowKey(claim.row)===claim.rowKey&&documentJobMemoryPrincipalKey(claim.user)===claim.principalKey
+      &&claim.row.status==="running"&&liveMemoryEnabled(env,claim.user.userId)
+      &&Date.now()<(documentJobMemoryTimestamp(claim.row.lease_expires_at)??0)
+      &&Date.now()<(documentJobMemoryTimestamp(claim.row.expires_at)??0);
+  }catch{return false;}
+}
+function registerDocumentJobMemoryClaim(env:WorkerEnv,row:DocumentJobRow,user:PilotUser,receipt:unknown,
+  previous:DocumentJobRow,attempt:number,correlationId:string,startedAt:string,leaseExpiresAt:string,inputRef:string,input:unknown,
+  claimDb:WorkerEnv["DB"],claimPrincipalKey:string):void {
+  try {
+    if(row.kind!=="chat"||row.source_surface!=="chat"||!liveMemoryEnabled(env,user.userId))return;
+    if(env.DB!==claimDb||documentJobMemoryPrincipalKey(user)!==claimPrincipalKey)return;
+    const result=receipt as D1Result<DocumentJobMemoryRows> & { readonly error?: unknown };
+    // The ordinary runner's historical Number(changes) check is not a claim
+    // certificate. Contradictory acknowledgments never register authority.
+    if(!result||result.success!==true||result.error!==undefined||result.meta?.changes!==1
+      ||!Array.isArray(result.results)||result.results.length!==0)return;
+    if(row.status!=="running"||row.job_id!==previous.job_id||row.owner_id!==user.userId||row.owner_id!==previous.owner_id
+      ||row.stream_id!==user.streamId||row.stream_id!==previous.stream_id||row.document_id!==previous.document_id
+      ||row.kind!==previous.kind||row.source_surface!==previous.source_surface||row.request_json!==previous.request_json
+      ||row.requested_sequence!==previous.requested_sequence||row.requested_at!==previous.requested_at
+      ||row.expires_at!==previous.expires_at||row.attempt_count!==attempt||attempt!==previous.attempt_count+1
+      ||row.correlation_id!==correlationId||row.lease_expires_at!==leaseExpiresAt
+      ||row.started_at!==(previous.started_at??startedAt)
+      ||row.completed_at!==null||row.error_message!==null||!user.authorizationSnapshot||user.fictional
+      ||typeof input!=="string"||!input.trim()||input.length>4000||!inputRef
+      ||JSON.parse(row.request_json).jobInputRef!==inputRef)return;
+    const claim:DocumentJobMemoryClaim={env,db:env.DB,row,user,rowKey:documentJobMemoryRowKey(row),
+      principalKey:documentJobMemoryPrincipalKey(user),inputRef,input};
+    documentJobMemoryClaims.set(row,claim);
+    if(!documentJobMemoryClaimCurrent(env,claim))documentJobMemoryClaims.delete(row);
+  }catch{documentJobMemoryClaims.delete(row);}
+}
+function documentJobMemoryFrame(env:WorkerEnv,value:DocumentJobMemoryAuthority):DocumentJobMemoryFrame|null {
+  try {
+    const frame=documentJobMemoryFrames.get(value);
+    return frame&&frame.value===value&&documentJobMemoryClaimCurrent(env,frame.claim)
+      &&Date.now()<Date.parse(frame.validUntil)&&nativeMemorySelectionStatements(env,frame.selection)?frame:null;
+  }catch{return null;}
+}
+
+/** Only the exact row object returned to this worker's acknowledged claim and
+ * registered after its private-input reload is eligible. Reading a valid job ID
+ * (or cloning that row) is not evidence of claim ownership. No public route calls
+ * this issuer yet, and absence never changes an ordinary queued chat operation. */
+export async function prepareDocumentJobMemoryAuthority(env:WorkerEnv,claimedJob:unknown):Promise<DocumentJobMemoryAuthority|null> {
+  try {
+    if(!claimedJob||typeof claimedJob!=="object")return null;
+    const claim=documentJobMemoryClaims.get(claimedJob as DocumentJobRow);
+    if(!claim||!documentJobMemoryClaimCurrent(env,claim))return null;
+    const db=claim.db,started=Date.now(),row=claim.row;
+    const fresh=()=>documentJobMemoryClaimCurrent(env,claim);
+    // No supplied/current-principal shortcut: reconstruct native job custody and
+    // access, then require the original claim's unchanged actor/permission epoch.
+    const principal=await documentJobPrincipal(env,row);
+    if(!fresh()||!principal||principal.access.identityPolicyDeniedCustody
+      ||documentJobMemoryPrincipalKey(principal)!==claim.principalKey)return null;
+    const scope=principal.projectExecution??null;
+    const enrollmentQuery:AssistantContextReadDescriptor={sql:`SELECT ${DOCUMENT_JOB_MEMORY_ENROLLMENT_COLUMNS.join(",")}
+      FROM memory_live_enrollments WHERE actor_user_id=? AND owner_user_id=? AND organization_id IS ?
+      AND project_access_id IS ? AND document_id=?${scope?" AND project_id=?":""} ORDER BY enrollment_id LIMIT 2`,
+      bindings:[principal.userId,scope?.ownerUserId??principal.userId,scope?.organizationId??null,
+        scope?.projectAccessId??null,row.document_id,...(scope?[scope.projectId]:[])]};
+    const initial=structuredClone(await db.prepare(enrollmentQuery.sql).bind(...enrollmentQuery.bindings).all<DocumentJobMemoryRows>());
+    if(!fresh()||!documentJobMemoryResults([initial],1)||initial.results.length!==1)return null;
+    const enrollment=structuredClone(initial.results[0]) as unknown as LiveMemoryEnrollment;
+    if(enrollment.actor_user_id!==principal.userId||enrollment.owner_user_id!==(scope?.ownerUserId??principal.userId)
+      ||enrollment.organization_id!==(scope?.organizationId??null)||enrollment.project_access_id!==(scope?.projectAccessId??null)
+      ||enrollment.document_id!==row.document_id||scope&&enrollment.project_id!==scope.projectId
+      ||enrollment.permission_epoch!==principal.access.permissionEpoch||enrollment.policy_version!==LIVE_MEMORY_POLICY)return null;
+    const authority=await liveMemoryAuthority(env,enrollment);
+    if(!fresh()||!authority||documentJobMemoryIdentityKey(authority.principal)!==documentJobMemoryIdentityKey(principal)
+      ||JSON.stringify(authority.binding.scope)!==JSON.stringify(scope)
+      ||authority.binding.actorUserId!==row.owner_id||authority.binding.streamId!==row.stream_id
+      ||authority.binding.documentId!==row.document_id||authority.binding.projectId!==enrollment.project_id
+      ||authority.binding.contextSessionId!==null)return null;
+    // Reuse the registered native enrollment/selection protocol (normal 0032 is
+    // required). It proves the exact persisted tuple; liveMemoryAuthority alone
+    // only derives guards from its supplied enrollment and is insufficient.
+    const selection=await prepareNativeMemorySelection(env,{principal:authority.principal,binding:authority.binding});
+    if(!fresh()||!selection||JSON.stringify(DOCUMENT_JOB_MEMORY_ENROLLMENT_COLUMNS.map(key=>selection.enrollment[key]))
+      !==JSON.stringify(DOCUMENT_JOB_MEMORY_ENROLLMENT_COLUMNS.map(key=>enrollment[key])))return null;
+    const containment=privateContentScopeGuard(principal.userId,principal.projectExecution);
+    const projectGuard=documentJobProjectAuthority(principal,row.document_id,row.job_id);
+    const projectionGuard=scope?projectSourceProjectionCurrentAssertion(scope):null;
+    const allowed:AssistantContextReadDescriptor={sql:`SELECT CASE WHEN (${authority.guard.condition})
+      AND (${projectGuard?.sql??"1"})${projectionGuard?` AND (${projectionGuard.sql})`:""} THEN 1 ELSE 0 END AS allowed`,
+      bindings:[...authority.guard.bindings,...(projectGuard?.bindings??[]),...(projectionGuard?.bindings??[])]};
+    const queries:AssistantContextReadDescriptor[]=[allowed,
+      {sql:`SELECT ${DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS.join(",")} FROM document_jobs WHERE job_id=? AND owner_id=?`,bindings:[row.job_id,row.owner_id]},
+      {sql:`SELECT content_id,owner_id,kind,content,created_at,expires_at,redacted_at FROM private_content
+        WHERE content_id=? AND owner_id=? AND kind='chat-user' AND redacted_at IS NULL
+        AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND length(CAST(content AS BLOB))<=16000
+        AND (${containment.sql})`,bindings:[claim.inputRef,row.owner_id,...containment.bindings]},
+      enrollmentQuery,
+      // H is the owner event head; P is this exact project's separate sequence.
+      // Both are watched in the original read, with active migration H=current
+      // owner H in both allowed bookends. No synchronization or own-write path.
+      {sql:scope?`SELECT COALESCE(MAX(sequence),0) AS source_head,
+        (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes
+          WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?) AS project_source_head
+        FROM events WHERE stream_id=?`:"SELECT COALESCE(MAX(sequence),0) AS source_head FROM events WHERE stream_id=?",
+        bindings:scope?[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,row.stream_id]:[row.stream_id]},
+      {sql:"SELECT organization_id,project_access_id,project_id,owner_user_id,actor_user_id,source_event_id,visibility FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=? ORDER BY project_access_id LIMIT 2",bindings:[row.job_id]},
+      // The legacy chat-user scope predicate checks the sidecar tuple, not its
+      // assigned deadline. Observe the actual complete sidecar separately and
+      // bound this capability by that original assignment; never renew it.
+      {sql:"SELECT * FROM private_content_retention_scopes WHERE content_id=? ORDER BY project_access_id,organization_id,project_id,actor_user_id LIMIT 2",bindings:[claim.inputRef]},
+      allowed];
+    const statements=queries.map(query=>db.prepare(query.sql).bind(...query.bindings));
+    const results=structuredClone(await db.batch<DocumentJobMemoryRows>([
+      db.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS checked_at"),...statements]));
+    if(!fresh()||!documentJobMemoryResults(results,statements.length+1)||results[0].results.length!==1)return null;
+    const checked=documentJobMemoryTimestamp(results[0].results[0].checked_at),captured=results.slice(1);
+    if(checked===null||checked<started-60_000||captured[0].results.length!==1||captured[0].results[0].allowed!==1
+      ||captured[7].results.length!==1||captured[7].results[0].allowed!==1||captured[1].results.length!==1
+      ||documentJobMemoryRowKey(captured[1].results[0] as unknown as DocumentJobRow)!==claim.rowKey
+      ||captured[2].results.length!==1||captured[2].results[0].content!==claim.input
+      ||JSON.stringify(captured[3].results)!==JSON.stringify(initial.results)
+      ||captured[4].results.length!==1||!Number.isSafeInteger(captured[4].results[0].source_head)
+      ||Number(captured[4].results[0].source_head)<row.requested_sequence)return null;
+    const projectSourceHead=scope?captured[4].results[0].project_source_head:null;
+    if(scope&&(!Number.isSafeInteger(projectSourceHead)||Number(projectSourceHead)<0
+      ||Number(projectSourceHead)>Number.MAX_SAFE_INTEGER-2))return null;
+    const resources=captured[5].results;
+    if(scope?resources.length!==1||resources[0].organization_id!==scope.organizationId
+      ||resources[0].project_access_id!==scope.projectAccessId||resources[0].project_id!==scope.projectId
+      ||resources[0].owner_user_id!==scope.ownerUserId||resources[0].actor_user_id!==scope.actorUserId
+      ||typeof resources[0].source_event_id!=="string"||!resources[0].source_event_id
+      :resources.length!==0)return null;
+    const retention=captured[6].results;
+    if(scope?retention.length!==1||retention[0].content_id!==claim.inputRef
+      ||retention[0].organization_id!==scope.organizationId||retention[0].project_access_id!==scope.projectAccessId
+      ||retention[0].project_id!==scope.projectId||retention[0].actor_user_id!==principal.userId
+      ||retention[0].classification!=="transient-private"||!Number.isSafeInteger(retention[0].policy_version)
+      ||Number(retention[0].policy_version)<0||retention[0].created_at!==captured[2].results[0].created_at
+      :retention.length!==0)return null;
+    const inputCreated=documentJobMemoryTimestamp(captured[2].results[0].created_at);
+    if(inputCreated===null||inputCreated>started)return null;
+    const deadlines=[started+60_000,checked+60_000];
+    for(const value of [row.lease_expires_at,row.expires_at,enrollment.expires_at,captured[2].results[0].expires_at]){
+      const at=documentJobMemoryTimestamp(value);if(at===null||at<=started)return null;deadlines.push(at);
+    }
+    if(scope){
+      const assigned=documentJobMemoryTimestamp(retention[0].assigned_expires_at);
+      if(assigned===null||assigned<=started)return null;deadlines.push(assigned);
+    }
+    const validUntil=new Date(Math.min(...deadlines)).toISOString();
+    if(!fresh()||Date.now()>=Date.parse(validUntil))return null;
+    const witness=new AssistantContextReadWitness<null>(env);
+    witness.observe(statements,captured,queries);witness.before(validUntil);witness.seal(null);
+    const value=Object.freeze(Object.create(null)) as DocumentJobMemoryAuthority;
+    const frame:DocumentJobMemoryFrame={claim,value,witness,selection,validUntil,
+      inputExpiresAt:captured[2].results[0].expires_at as string,
+      inputAssignedExpiresAt:scope?retention[0].assigned_expires_at as string:null,
+      projectSourceHead:projectSourceHead as number|null,
+      prepared:{principal:authority.principal,binding:authority.binding,
+        sourceHead:captured[4].results[0].source_head as number}};
+    documentJobMemoryFrames.set(value,frame);
+    // Issuance itself must survive a real native proof replay, not just statement
+    // construction. A concurrent input/claim/enrollment/head change returns null.
+    return await replayDocumentJobMemoryAuthority(env,value);
+  }catch{return null;}
+}
+
+export function documentJobMemoryAuthorityStatements(env:WorkerEnv,value:DocumentJobMemoryAuthority):D1PreparedStatement[]|null {
+  try {
+    const frame=documentJobMemoryFrame(env,value);if(!frame)return null;
+    const selection=nativeMemorySelectionStatements(env,frame.selection);if(!selection)return null;
+    const statements=[...frame.witness.precommitStatements(),...selection,frame.claim.db.prepare(`SELECT CASE WHEN
+      strftime('%Y-%m-%dT%H:%M:%fZ','now')<? THEN 1 ELSE json('document_job_memory_authority_expired') END AS context_source_asserted`)
+      .bind(frame.validUntil)];
+    return documentJobMemoryFrame(env,value)===frame?statements:null;
+  }catch{return null;}
+}
+export function documentJobMemoryAuthorityMatches(env:WorkerEnv,value:DocumentJobMemoryAuthority,
+  results:readonly D1Result<DocumentJobMemoryRows>[]):boolean {
+  try {
+    const frame=documentJobMemoryFrame(env,value),statements=documentJobMemoryAuthorityStatements(env,value);
+    if(!frame||!statements||!documentJobMemoryResults(results,statements.length)||!documentJobMemoryAsserted(results))return false;
+    const ownCount=frame.witness.precommitStatements().length;
+    return nativeMemorySelectionMatches(env,frame.selection,results.slice(ownCount,-1))
+      &&documentJobMemoryFrame(env,value)===frame;
+  }catch{return false;}
+}
+export async function replayDocumentJobMemoryAuthority(env:WorkerEnv,value:DocumentJobMemoryAuthority):Promise<DocumentJobMemoryAuthority|null> {
+  try {
+    const frame=documentJobMemoryFrame(env,value),statements=documentJobMemoryAuthorityStatements(env,value);
+    if(!frame||!statements)return null;
+    const results=structuredClone(await frame.claim.db.batch<DocumentJobMemoryRows>(statements));
+    return documentJobMemoryFrame(env,value)===frame&&documentJobMemoryAuthorityMatches(env,value,results)?value:null;
+  }catch{return null;}
+}
+
+
+// A real certified recall draft, deliberately not a publishable job result. Only
+// this module retains its text and context. A later job-native origin writer must
+// establish its own atomic publication, recovery and GET replay protocol before
+// the runner can consume this candidate. Creator own-write exemptions do not apply.
+const documentJobMemoryCandidateType: unique symbol = Symbol("document-job-memory-candidate");
+export type DocumentJobMemoryCandidate = Readonly<{[documentJobMemoryCandidateType]:true}>;
+type DocumentJobMemoryCandidateSource =
+  | {mode:"extractive"; context:NativeDocumentMemoryContext; witness:AssistantContextReadWitness<NativeDocumentMemoryContext>}
+  | {mode:"structured"; prepared:PreparedNativeStructuredConversationContext};
+type DocumentJobMemoryCandidateFrame = {
+  value:DocumentJobMemoryCandidate; authority:DocumentJobMemoryFrame;
+  source:DocumentJobMemoryCandidateSource; validUntil:string;
+  // No action plan, mutations, billing disposition or provider capability.
+  answer:Readonly<{kind:"answer-only"; text:string; locale:"en"|"fr"|"ar"|"ja"}>;
+};
+const documentJobMemoryCandidates = new WeakMap<DocumentJobMemoryCandidate,DocumentJobMemoryCandidateFrame>();
+function documentJobMemoryCandidateFrame(env:WorkerEnv,value:DocumentJobMemoryCandidate):DocumentJobMemoryCandidateFrame|null {
+  try {
+    const frame=documentJobMemoryCandidates.get(value);
+    return frame&&frame.value===value&&documentJobMemoryFrame(env,frame.authority.value)===frame.authority
+      &&Date.now()<(documentJobMemoryTimestamp(frame.validUntil)??0)?frame:null;
+  }catch{return null;}
+}
+function documentJobMemoryCandidateSourceStatements(env:WorkerEnv,frame:DocumentJobMemoryCandidateFrame):D1PreparedStatement[]|null {
+  return frame.source.mode==="structured"
+    ?nativeStructuredConversationContextPrecommitStatements(env,frame.source.prepared.proof)
+    :frame.source.witness.precommitStatements();
+}
+
+/** Load native history for a genuine queued attempt and render an evidence-only
+ * answer in private server memory. The token exposes neither text nor scope. It
+ * is not a permission to publish, persist, invoke a model or alter the document.
+ * No route or job runner uses this opt-in bridge until job-native publication is
+ * implemented. Unavailable optional memory leaves the ordinary runner unchanged. */
+export async function prepareDocumentJobMemoryCandidate(env:WorkerEnv,authority:DocumentJobMemoryAuthority,
+  locale:unknown="en"):Promise<DocumentJobMemoryCandidate|null> {
+  try {
+    const frame=documentJobMemoryFrame(env,authority);
+    if(!frame)return null;
+    const language=typeof locale==="string"?locale.trim().toLowerCase().split("-")[0]:"en";
+    const selectedLocale=language==="fr"||language==="ar"||language==="ja"?language:"en";
+    const current=()=>documentJobMemoryFrame(env,authority)===frame;
+    if(await replayDocumentJobMemoryAuthority(env,authority)!==authority||!current())return null;
+    let source:DocumentJobMemoryCandidateSource,text:string|null,sourceUntil:string;
+    if(frame.selection.mode==="structured") {
+      // Discovery follows all retained ledger originals, including corrected and
+      // withdrawn declarations. No caller-selected recent tail or mode downgrade.
+      const discovered=await discoverNativeStructuredConversationOriginals(env,frame.prepared,frame.selection);
+      if(!discovered||!current())return null;
+      const prepared=await prepareNativeStructuredConversationContext(env,frame.selection.enrollment,frame.prepared,discovered.captures);
+      if(!prepared||!current())return null;
+      text=nativeStructuredMemoryAssistantReply(prepared.context,selectedLocale);
+      source={mode:"structured",prepared};sourceUntil=prepared.context.lifetime.validUntil;
+    } else {
+      const witness=new AssistantContextReadWitness<NativeDocumentMemoryContext>(env);
+      const context=await readNativeDocumentMemory(env,frame.prepared,{
+        observe(statements,results,descriptors) {
+          // The reader owns the queries; enforce truthful, dense acknowledgements
+          // before recording their exact rows in the enclosing certificate.
+          if(!documentJobMemoryResults(results,statements.length)
+            ||results.some(result=>Array.from(result.results).some((row,index)=>
+              !Object.hasOwn(result.results,index)||!row||typeof row!=="object"||Array.isArray(row)))) {
+            witness.invalidate();return;
+          }
+          witness.observe(statements,results,descriptors);
+        },
+        require:guard=>witness.require(guard),before:deadline=>witness.before(deadline),
+      });
+      if(!context||!current())return null;
+      witness.before(frame.validUntil);witness.seal(context);
+      text=nativeMemoryAssistantReply(context,selectedLocale);
+      source={mode:"extractive",context,witness};sourceUntil=context.lifetime.validUntil;
+    }
+    const sourceDeadline=documentJobMemoryTimestamp(sourceUntil);
+    if(!text||!text.isWellFormed()||new TextEncoder().encode(text).byteLength>8_192
+      ||sourceDeadline===null||!current())return null;
+    const validUntil=new Date(Math.min(Date.parse(frame.validUntil),sourceDeadline)).toISOString();
+    if(Date.now()>=Date.parse(validUntil))return null;
+    const value=Object.freeze(Object.create(null)) as DocumentJobMemoryCandidate;
+    const candidate:DocumentJobMemoryCandidateFrame={value,authority:frame,source,validUntil,
+      answer:Object.freeze({kind:"answer-only",text,locale:selectedLocale})};
+    documentJobMemoryCandidates.set(value,candidate);
+    // Replay both source and original job authority in one native read batch,
+    // after every reader/formatter has finished. Never issue on copied receipts.
+    const replayed=await replayDocumentJobMemoryCandidate(env,value);
+    if(replayed!==value||!current()){documentJobMemoryCandidates.delete(value);return null;}
+    return value;
+  }catch{return null;}
+}
+
+/** Read assertions only. Their receipts are not an own-answer-write exemption;
+ * appending events changes the witnessed head and invalidates this draft. */
+export function documentJobMemoryCandidateStatements(env:WorkerEnv,value:DocumentJobMemoryCandidate):D1PreparedStatement[]|null {
+  try {
+    const frame=documentJobMemoryCandidateFrame(env,value);if(!frame)return null;
+    const authority=documentJobMemoryAuthorityStatements(env,frame.authority.value);
+    const source=documentJobMemoryCandidateSourceStatements(env,frame);
+    if(!authority?.length||!source?.length)return null;
+    const statements=[...authority,...source,...authority];
+    return documentJobMemoryCandidateFrame(env,value)===frame?statements:null;
+  }catch{return null;}
+}
+export function documentJobMemoryCandidateMatches(env:WorkerEnv,value:DocumentJobMemoryCandidate,
+  results:readonly D1Result<DocumentJobMemoryRows>[]):boolean {
+  try {
+    const frame=documentJobMemoryCandidateFrame(env,value),statements=documentJobMemoryCandidateStatements(env,value);
+    if(!frame||!statements||!documentJobMemoryResults(results,statements.length)||!documentJobMemoryAsserted(results))return false;
+    const count=documentJobMemoryAuthorityStatements(env,frame.authority.value)?.length;
+    return !!count&&documentJobMemoryAuthorityMatches(env,frame.authority.value,results.slice(0,count))
+      &&documentJobMemoryAuthorityMatches(env,frame.authority.value,results.slice(-count))
+      &&documentJobMemoryCandidateFrame(env,value)===frame;
+  }catch{return false;}
+}
+export async function replayDocumentJobMemoryCandidate(env:WorkerEnv,value:DocumentJobMemoryCandidate):Promise<DocumentJobMemoryCandidate|null> {
+  try {
+    const frame=documentJobMemoryCandidateFrame(env,value),statements=documentJobMemoryCandidateStatements(env,value);
+    if(!frame||!statements)return null;
+    const results=structuredClone(await frame.authority.claim.db.batch<DocumentJobMemoryRows>(statements));
+    return documentJobMemoryCandidateFrame(env,value)===frame&&documentJobMemoryCandidateMatches(env,value,results)?value:null;
+  }catch{return null;}
+}
+
+
+/** Private comparison-material constructor for the future atomic job publisher.
+ * Called only by the fixed worker publisher below; neither function is routed. No
+ * supplied evidence bag nor decoded manifest can enter this genuine-frame path.
+ * The result grants no publication, GET/recovery access or own-write exemption. */
+async function prepareDocumentJobMemoryOriginManifest(env:WorkerEnv,value:DocumentJobMemoryCandidate,
+  originId:string):Promise<DocumentJobOriginManifestMaterial|null> {
+  try {
+    const frame=documentJobMemoryCandidateFrame(env,value);
+    if(!frame||typeof originId!=="string"||!originId||originId.length>240||!originId.isWellFormed())return null;
+    const authority=frame.authority,claim=authority.claim,db=claim.db,source=frame.source;
+    const current=()=>env.DB===db&&documentJobMemoryCandidateFrame(env,value)===frame;
+    const replay=async()=>current()&&await replayDocumentJobMemoryCandidate(env,value)===value&&current();
+    if(!await replay())return null;
+    // Actual construction time, not a reconstructed lease start. The original
+    // authority/source minimum remains unchanged and can only expire beneath us.
+    const capturedAt=new Date().toISOString();
+    const [claimSha256,requestSha256,inputSha256]=await Promise.all([
+      nativeMemoryAnswerFingerprint(claim.rowKey),nativeMemoryAnswerFingerprint(claim.row.request_json),
+      nativeMemoryAnswerFingerprint(claim.input)]);
+    if(!current())return null;
+    const job={originId,jobId:claim.row.job_id,attemptCount:claim.row.attempt_count,
+      claimSha256,requestSha256,inputContentRef:claim.inputRef,inputSha256,
+      sourceHead:authority.prepared.sourceHead,projectSourceHead:authority.projectSourceHead};
+    // Deliberate allowlist: operational enrollment leases, scheduler fields and
+    // raw ledger body/custody bags must never become durable manifest metadata.
+    const enrollmentValue=(e:NativeMemoryOriginEnrollment):NativeMemoryOriginEnrollment=>({
+      enrollment_id:e.enrollment_id,actor_user_id:e.actor_user_id,owner_user_id:e.owner_user_id,
+      organization_id:e.organization_id,project_access_id:e.project_access_id,project_id:e.project_id,
+      document_id:e.document_id,revision:e.revision,policy_version:e.policy_version,
+      permission_epoch:e.permission_epoch,enrolled_at:e.enrolled_at,expires_at:e.expires_at,
+      retention_days:e.retention_days,cursor_sequence:e.cursor_sequence});
+    const expectedEnrollment=nativeMemoryCanonical(enrollmentValue(authority.selection.enrollment));
+    const renderer={recipe:"document-job-evidence-answer-v1",locale:frame.answer.locale};
+    let manifest:unknown,sourceCurrent:()=>Promise<boolean>;
+    if(source.mode==="extractive") {
+      const capture=await nativeMemoryOriginCapture(source.context);
+      if(!capture||!current()||nativeMemoryCanonical(enrollmentValue(capture.enrollment))!==expectedEnrollment
+        ||Date.parse(capture.freshUntil)<Date.parse(frame.validUntil))return null;
+      const contextJson=nativeMemoryCanonical(source.context),captureKey=nativeMemoryCanonical(capture);
+      manifest={schemaVersion:1,recipeVersion:DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE,mode:"extractive",job,
+        enrollment:enrollmentValue(capture.enrollment),contextJson,consumedValueSha256:capture.consumedValueSha256,
+        renderer,lifetime:{capturedAt,publicationValidUntil:frame.validUntil,sourceRetentionCeiling:capture.sourceRetentionCeiling},
+        dependencies:capture.dependencies.map(row=>({...row}))};
+      sourceCurrent=async()=>{
+        if(!current())return false;
+        const repeated=await nativeMemoryOriginCapture(source.context);
+        return current()&&!!repeated&&nativeMemoryCanonical(repeated)===captureKey
+          &&nativeMemoryCanonical(source.context)===contextJson;
+      };
+    } else {
+      const evidence=await nativeStructuredConversationContextEvidence(env,source.prepared);
+      if(!evidence||!current())return null;
+      const native=evidence.sourceEvidence,originalSource=evidence.source,e=native.enrollment;
+      if(nativeMemoryCanonical(enrollmentValue(e))!==expectedEnrollment
+        ||originalSource.sourceHead!==job.sourceHead||native.sourceHead!==job.sourceHead
+        ||originalSource.scope.streamId!==claim.row.stream_id||originalSource.read.status!=="active"
+        ||Date.parse(native.validUntil)<Date.parse(frame.validUntil)
+        ||originalSource.originals.length<2||originalSource.originals.length>128
+        ||native.ledgerRevisions.length<1||native.ledgerRevisions.length>64)return null;
+      const retained=new Set(originalSource.read.ledger.originals.map(original=>original.eventId));
+      const presented=new Set(evidence.context.recentOriginals.map(original=>original.eventId));
+      const originals:Omit<NativeStructuredMemoryOriginOriginal,"origin_id">[]=[];
+      for(const [ordinal,original] of originalSource.originals.entries()) {
+        const projection=nativeStructuredOriginalProjection(original);
+        const projectionHash=await nativeMemoryFingerprint(projection);
+        if(!current())return null;
+        const sourceCeiling=new Date(Math.min(Date.parse(original.expiresAt),Date.parse(e.expires_at),
+          Date.parse(original.recordedAt)+e.retention_days*86_400_000)).toISOString();
+        originals.push({ordinal,event_stream_id:originalSource.scope.streamId,event_id:original.eventId,
+          source_sequence:original.sequence,event_type:original.role==="user"?"ChatMessageSent":"AssistantReasoned",
+          role:original.role,turn_id:original.turnId,content_id:original.contentRef,content_sha256:original.contentHash,
+          projection_sha256:projectionHash,recorded_at:original.recordedAt,source_retention_ceiling:sourceCeiling,
+          retained_by_ledger:retained.has(original.eventId)?1:0,presented_in_context:presented.has(original.eventId)?1:0});
+      }
+      const ledgerRevisions=native.ledgerRevisions.map((entry,ordinal)=>{
+        const revision=entry.revision as Record<string,unknown>;
+        // Preserve exact validated native values; the closed codec rejects a
+        // shape/type mismatch rather than coercing a different stored value.
+        return {ordinal,ledger_id:revision.ledger_id,storage_revision:revision.revision,
+          predecessor_revision:revision.predecessor_revision,predecessor_hash:revision.predecessor_hash,
+          body_ref:revision.body_ref,body_hash:revision.body_hash,created_at:revision.created_at,expires_at:revision.expires_at};
+      });
+      const consumedValueSha256=await nativeMemoryAnswerFingerprint(evidence.contextJson);
+      if(!current())return null;
+      manifest={schemaVersion:1,recipeVersion:DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE,mode:"structured",job,
+        enrollment:enrollmentValue(e),contextJson:evidence.contextJson,consumedValueSha256,renderer,
+        lifetime:{capturedAt,publicationValidUntil:frame.validUntil,sourceRetentionCeiling:native.sourceRetentionCeiling},
+        projectionOptions:{maxBytes:evidence.projectionOptions.maxBytes,specifiedMaxBytes:evidence.projectionOptions.specifiedMaxBytes},
+        intervals:native.intervals.map(interval=>({afterSequence:interval.afterSequence,throughSequence:interval.throughSequence})),
+        originals,ledgerRevisions,ledgerHead:{ledgerId:originalSource.read.ledgerId,revision:originalSource.read.revision,
+          bodyRef:native.head.current_body_ref,bodyHash:native.head.current_body_hash}};
+      sourceCurrent=async()=>current()
+        &&await nativeStructuredConversationContextEvidence(env,source.prepared)===evidence&&current();
+    }
+    const material=await encodeDocumentJobOriginManifest(manifest);
+    if(!material||!current()||!await sourceCurrent()||!current())return null;
+    // Replaying original reads is required even after the pure codec succeeds.
+    // No rebased head, proof renewal, persisted receipt or output write occurs.
+    return await replay()&&current()?material:null;
+  }catch{return null;}
+}
+
+
+const DOCUMENT_JOB_MEMORY_ORIGIN_COLUMNS = [
+  "origin_id","schema_version","recipe_version","actor_user_id","scope_key","job_id","turn_id",
+  "user_event_id","user_content_id","answer_event_id","answer_content_id","manifest_content_ref",
+  "owner_user_id","stream_id","organization_id","project_access_id","project_id","document_id",
+  "attempt_count","correlation_id","request_sha256","claim_sha256","input_content_ref","input_sha256","input_expires_at",
+  "job_requested_at","job_started_at","job_lease_expires_at","job_expires_at","requested_sequence","source_head","project_source_head",
+  "user_source_sequence","user_sha256","answer_source_sequence","answer_sha256","answer_expires_at","mode","renderer_recipe","locale",
+  "enrollment_id","enrollment_revision","permission_epoch","policy_version","enrolled_at","enrollment_expires_at","retention_days","selection_cursor",
+  "consumed_value_sha256","source_count","ledger_revision_count","selector_count","selector_list_sha256","manifest_sha256","manifest_expires_at",
+  "proof_valid_until","source_retention_ceiling","created_at","status","withdrawn_at","withdrawal_reason",
+] as const;
+export type DocumentJobMemoryPublicationOutcome = Readonly<{
+  status:"committed"|"indeterminate"; jobId:string; originId:string; noAutomaticRetry:true;
+}>|Readonly<{status:"unavailable-before-attempt";noAutomaticRetry:true}>;
+const documentJobMemoryPublicationAttempts = new WeakMap<DocumentJobMemoryCandidate,DocumentJobMemoryPublicationOutcome>();
+
+/** Fixed job-native transaction, not a caller-extensible own-write exemption.
+ * Internal worker API, intentionally unrouted until GET/recovery and lifecycle are ready.
+ * A committed classification contains no text and grants no later read authority;
+ * any ambiguous attempt is recover-only, never an ordinary/provider fallback. */
+export async function publishDocumentJobMemoryCandidate(env:WorkerEnv,value:DocumentJobMemoryCandidate):Promise<DocumentJobMemoryPublicationOutcome> {
+  const unavailable=Object.freeze({status:"unavailable-before-attempt",noAutomaticRetry:true} as const);
+  let attempted:Extract<DocumentJobMemoryPublicationOutcome,{jobId:string}>|null=null;
+  try {
+    const previous=documentJobMemoryPublicationAttempts.get(value);
+    if(previous)return previous;
+    const frame=documentJobMemoryCandidateFrame(env,value);if(!frame)return unavailable;
+    const authority=frame.authority,claim=authority.claim,db=claim.db,row=claim.row;
+    const current=()=>env.DB===db&&documentJobMemoryCandidateFrame(env,value)===frame;
+    const originId=uuidV7(),turnId=uuidV7();
+    const material=await prepareDocumentJobMemoryOriginManifest(env,value,originId);
+    if(!material||!current())return unavailable;
+    // Pure decoded comparison data is used only after genuine private construction.
+    const manifest=JSON.parse(material.text) as DocumentJobOriginManifest,e=manifest.enrollment;
+    const scope=authority.prepared.binding.scope??undefined,head=authority.prepared.sourceHead;
+    if(manifest.job.originId!==originId||manifest.job.jobId!==row.job_id||manifest.job.sourceHead!==head
+      ||manifest.lifetime.publicationValidUntil!==frame.validUntil)return unavailable;
+    const schema=await nativeDocumentJobOriginSchema(env);
+    if(!schema.present||!current())return unavailable;
+    const structuredSchema=await nativeStructuredOriginSchema(env);
+    if(!current())return unavailable;
+    // v1's existing optional-table convention, including its dependency table:
+    // total absence is distinct from partial presence, and the exact choice is
+    // asserted again inside this transaction before cross-protocol conflict reads.
+    const v1Select="SELECT type,name,CASE WHEN length(CAST(sql AS BLOB))<=16384 THEN sql ELSE NULL END AS sql FROM sqlite_schema WHERE name IN('memory_native_answer_origins','memory_native_answer_dependencies') ORDER BY name LIMIT 3";
+    const v1=structuredClone(await db.prepare(v1Select).all<DocumentJobMemoryRows>());
+    if(!current()||!documentJobMemoryResults([v1],1)||![0,2].includes(v1.results.length)
+      ||v1.results.some((entry,index)=>!Object.hasOwn(v1.results,index)||!entry||Object.keys(entry).length!==3
+        ||entry.type!=="table"||typeof entry.sql!=="string"||!entry.sql
+        ||entry.name!==["memory_native_answer_dependencies","memory_native_answer_origins"][index]))return unavailable;
+    const v1Json=JSON.stringify(v1.results.map(entry=>({type:entry.type,name:entry.name,sql:entry.sql})));
+    const v1Guard=`(SELECT json_group_array(json_object('type',type,'name',name,'sql',sql)) FROM(${v1Select})) IS ?`;
+    const ceilingValues=[manifest.lifetime.sourceRetentionCeiling,authority.inputExpiresAt,row.expires_at,
+      ...(authority.inputAssignedExpiresAt?[authority.inputAssignedExpiresAt]:[])];
+    const ceilingTimes=ceilingValues.map(documentJobMemoryTimestamp);
+    if(ceilingTimes.some(at=>at===null))return unavailable;
+    const durableCeiling=new Date(Math.min(...(ceilingTimes as number[]))).toISOString();
+    // Native user copy first, then manifest, then answer: the answer cannot
+    // outlive either retained provenance body, nor the original input/job/source.
+    const userBody=await preparePrivateContent(env,row.owner_id,"chat-user",claim.input,scope,undefined,undefined,undefined,durableCeiling);
+    if(!current())return unavailable;
+    const manifestBody=await preparePrivateContent(env,row.owner_id,"memory-document-job-origin",material.text,scope,
+      undefined,undefined,undefined,userBody.expiresAt);
+    if(!current())return unavailable;
+    const answerBody=await preparePrivateContent(env,row.owner_id,"chat-assistant-memory",frame.answer.text,scope,
+      undefined,undefined,undefined,manifestBody.expiresAt);
+    if(!current())return unavailable;
+    const bodies=[{prepared:userBody,kind:"chat-user",text:claim.input},
+      {prepared:manifestBody,kind:"memory-document-job-origin",text:material.text},
+      {prepared:answerBody,kind:"chat-assistant-memory",text:frame.answer.text}];
+    const required=scope?3:1;
+    if(bodies.some(({prepared})=>prepared.requiredInserts!==required||!Array.isArray(prepared.statements)
+      ||prepared.statements.length<required||Array.from({length:required},(_,index)=>index)
+        .some(index=>!Object.hasOwn(prepared.statements,index)||!prepared.statements[index])))return unavailable;
+    const answerSha256=await nativeMemoryAnswerFingerprint(frame.answer.text);
+    if(!current()||await replayDocumentJobMemoryCandidate(env,value)!==value||!current())return unavailable;
+    const client="server:document-job:chat";
+    const userEvent=makeEvent(row.stream_id,head+1,`user:${row.owner_id}`,client,row.correlation_id,"ChatMessageSent",
+      {operation:"document-job-memory",job_id:row.job_id,turn_id:turnId,project_id:e.project_id,document_id:row.document_id,
+        content_ref:userBody.contentId,content_expires_at:userBody.expiresAt,source_surface:"chat"});
+    const answerEvent=makeEvent(row.stream_id,head+2,"worker:memory",client,row.correlation_id,"AssistantReasoned",
+      {operation:"document-job-memory",job_id:row.job_id,turn_id:turnId,project_id:e.project_id,document_id:row.document_id,
+        content_ref:answerBody.contentId,content_expires_at:answerBody.expiresAt,source_surface:"chat",memory_origin_version:3,
+        answer_only:true,locale:frame.answer.locale},{causationId:userEvent.eventId});
+    const events=[userEvent,answerEvent],eventValues=events.map(eventWriteBindings),createdAt=new Date().toISOString();
+    const outputBodies=[userBody.contentId,answerBody.contentId,manifestBody.contentId],outputEvents=[userEvent.eventId,answerEvent.eventId];
+    const outputIdentities=[...outputBodies,...outputEvents];
+    if(new Set([originId,turnId,row.job_id,claim.inputRef,...outputBodies,...outputEvents]).size!==9
+      ||material.selectors.some(selector=>(selector.resource_kind==="private-content"||selector.resource_kind==="event")
+        &&outputIdentities.includes(selector.resource_id)))return unavailable;
+    const times=[createdAt,manifest.lifetime.capturedAt,frame.validUntil,row.requested_at,row.started_at,row.lease_expires_at,row.expires_at,
+      ...bodies.flatMap(({prepared})=>[prepared.createdAt,prepared.expiresAt])].map(documentJobMemoryTimestamp);
+    if(times.some(at=>at===null)||Date.parse(manifest.lifetime.capturedAt)>Date.parse(createdAt)
+      ||Date.parse(row.requested_at)>Date.parse(row.started_at!)||Date.parse(row.started_at!)>Date.parse(createdAt)
+      ||bodies.some(({prepared})=>Date.parse(prepared.createdAt)>Date.parse(createdAt)||Date.parse(prepared.expiresAt)<=Date.parse(createdAt))
+      ||Date.parse(answerBody.expiresAt)>Date.parse(manifestBody.expiresAt)||Date.parse(manifestBody.expiresAt)>Date.parse(userBody.expiresAt)
+      ||Date.parse(userBody.expiresAt)>Date.parse(durableCeiling)||Date.parse(createdAt)>=Date.parse(frame.validUntil))return unavailable;
+    const header:Record<(typeof DOCUMENT_JOB_MEMORY_ORIGIN_COLUMNS)[number],string|number|null>={
+      origin_id:originId,schema_version:1,recipe_version:"native-document-job-answer-origin-v1",actor_user_id:row.owner_id,
+      scope_key:JSON.stringify([e.organization_id??"",e.project_access_id??"",e.project_id,e.document_id]),job_id:row.job_id,turn_id:turnId,
+      user_event_id:userEvent.eventId,user_content_id:userBody.contentId,answer_event_id:answerEvent.eventId,
+      answer_content_id:answerBody.contentId,manifest_content_ref:manifestBody.contentId,owner_user_id:e.owner_user_id,stream_id:row.stream_id,
+      organization_id:e.organization_id,project_access_id:e.project_access_id,project_id:e.project_id,document_id:row.document_id,
+      attempt_count:row.attempt_count,correlation_id:row.correlation_id,request_sha256:manifest.job.requestSha256,claim_sha256:manifest.job.claimSha256,
+      input_content_ref:claim.inputRef,input_sha256:manifest.job.inputSha256,input_expires_at:authority.inputExpiresAt,
+      job_requested_at:row.requested_at,job_started_at:row.started_at,job_lease_expires_at:row.lease_expires_at,job_expires_at:row.expires_at,
+      requested_sequence:row.requested_sequence,source_head:head,project_source_head:authority.projectSourceHead,user_source_sequence:head+1,
+      user_sha256:manifest.job.inputSha256,answer_source_sequence:head+2,answer_sha256:answerSha256,answer_expires_at:answerBody.expiresAt,
+      mode:manifest.mode,renderer_recipe:manifest.renderer.recipe,locale:manifest.renderer.locale,enrollment_id:e.enrollment_id,
+      enrollment_revision:e.revision,permission_epoch:e.permission_epoch,policy_version:e.policy_version,enrolled_at:e.enrolled_at,
+      enrollment_expires_at:e.expires_at,retention_days:e.retention_days,selection_cursor:e.cursor_sequence,
+      consumed_value_sha256:manifest.consumedValueSha256,source_count:manifest.mode==="extractive"?manifest.dependencies.length:manifest.originals.length,
+      ledger_revision_count:manifest.mode==="extractive"?0:manifest.ledgerRevisions.length,selector_count:material.selectors.length,
+      selector_list_sha256:material.selectorListSha256,manifest_sha256:material.sha256,manifest_expires_at:manifestBody.expiresAt,
+      proof_valid_until:frame.validUntil,source_retention_ceiling:manifest.lifetime.sourceRetentionCeiling,created_at:createdAt,
+      status:"active",withdrawn_at:null,withdrawal_reason:null};
+    const headerValues=DOCUMENT_JOB_MEMORY_ORIGIN_COLUMNS.map(column=>header[column]);
+    const selectorJson=JSON.stringify(material.selectors);
+    const resultJson=JSON.stringify({memoryDocumentJobOrigin:{version:1,originId},stage:"completed",noAutomaticRetry:true});
+    const claimValues=DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS.map(column=>row[column]);
+    const originalStatements=documentJobMemoryCandidateStatements(env,value);
+    if(!originalStatements?.length||!current())return unavailable;
+    type Item={statement:D1PreparedStatement;kind:"source"|"assert"|"write";changes?:number};
+    const items:Item[]=originalStatements.map(statement=>({statement,kind:"source"}));
+    const assertion=(condition:string,bindings:(string|number|null)[]=[])=>{
+      items.push({kind:"assert",statement:db.prepare(`SELECT CASE WHEN (${condition}) THEN 1
+        ELSE json('document_job_memory_publication_failed') END AS document_job_origin_verified`).bind(...bindings)});
+    };
+    const write=(statement:D1PreparedStatement,changes=1)=>{
+      items.push({kind:"write",statement,changes});
+      // Qualification must establish connection-local changes() across the
+      // native batch. A zero-row required write must abort before commit.
+      assertion("changes()=?",[changes]);
+    };
+    const schemas=()=>{
+      assertion(schema.guard.condition,[...schema.guard.bindings]);
+      assertion(structuredSchema.guard.condition,[...structuredSchema.guard.bindings]);
+      assertion(v1Guard,[v1Json]);
+    };
+    const conflicts=()=>{
+      // Both event and body namespaces reject every one of the five published
+      // identities: never rely on UUID probability or same-role uniqueness.
+      assertion(`NOT EXISTS(SELECT 1 FROM memory_document_job_answer_origins other WHERE other.origin_id<>? AND
+        (other.job_id=? OR (other.actor_user_id=? AND other.scope_key=? AND other.turn_id=?)
+        OR other.user_event_id IN(?,?,?,?,?) OR other.answer_event_id IN(?,?,?,?,?)
+        OR other.user_content_id IN(?,?,?,?,?) OR other.answer_content_id IN(?,?,?,?,?) OR other.manifest_content_ref IN(?,?,?,?,?)
+        OR other.input_content_ref IN(?,?,?,?,?)))`,[originId,row.job_id,row.owner_id,header.scope_key,turnId,
+        ...outputIdentities,...outputIdentities,...outputIdentities,...outputIdentities,...outputIdentities,...outputIdentities]);
+      assertion(`NOT EXISTS(SELECT 1 FROM memory_document_job_origin_dependencies dependency WHERE
+        dependency.resource_kind IN('event','private-content') AND dependency.resource_id IN(?,?,?,?,?))`,outputIdentities);
+      if(v1.results.length){
+        assertion(`NOT EXISTS(SELECT 1 FROM memory_native_answer_origins other WHERE
+          (other.actor_user_id=? AND other.scope_key=? AND other.turn_id=?) OR other.user_event_id IN(?,?,?,?,?) OR other.answer_event_id IN(?,?,?,?,?)
+          OR other.user_content_id IN(?,?,?,?,?) OR other.answer_content_id IN(?,?,?,?,?))`,
+          [row.owner_id,header.scope_key,turnId,...outputIdentities,...outputIdentities,...outputIdentities,...outputIdentities]);
+        assertion(`NOT EXISTS(SELECT 1 FROM memory_native_answer_dependencies dependency WHERE dependency.event_id IN(?,?,?,?,?)
+          OR dependency.user_content_id IN(?,?,?,?,?) OR dependency.assistant_content_id IN(?,?,?,?,?))`,[...outputIdentities,...outputIdentities,...outputIdentities]);
+      }
+      if(structuredSchema.present){
+        assertion(`NOT EXISTS(SELECT 1 FROM memory_structured_answer_origins other WHERE
+          (other.actor_user_id=? AND other.scope_key=? AND other.turn_id=?) OR other.user_event_id IN(?,?,?,?,?) OR other.answer_event_id IN(?,?,?,?,?)
+          OR other.user_content_id IN(?,?,?,?,?) OR other.answer_content_id IN(?,?,?,?,?) OR other.manifest_content_ref IN(?,?,?,?,?))`,
+          [row.owner_id,header.scope_key,turnId,...outputIdentities,...outputIdentities,...outputIdentities,...outputIdentities,...outputIdentities]);
+        assertion(`NOT EXISTS(SELECT 1 FROM memory_structured_answer_originals original WHERE original.event_id IN(?,?,?,?,?)
+          OR original.content_id IN(?,?,?,?,?))`,[...outputIdentities,...outputIdentities]);
+        assertion(`NOT EXISTS(SELECT 1 FROM memory_structured_answer_ledger_revisions revision WHERE revision.body_ref IN(?,?,?,?,?))`,outputIdentities);
+      }
+    };
+    // Original source assertions are first. No native event, private row, schema,
+    // cursor, header or completion write can occur before these aborting checks.
+    schemas();
+    assertion(`(SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND tbl_name='event_write_stage')=1
+      AND EXISTS(SELECT 1 FROM sqlite_schema WHERE type='trigger' AND name='event_write_stage_after_insert'
+        AND tbl_name='event_write_stage' AND sql IS ?)`,[EVENT_WRITE_STAGE_TRIGGER_SQL.replace("CREATE TRIGGER IF NOT EXISTS","CREATE TRIGGER")]);
+    assertion("NOT EXISTS(SELECT 1 FROM event_write_stage)");
+    assertion("strftime('%Y-%m-%dT%H:%M:%fZ','now')<?",[frame.validUntil]);
+    assertion("NOT EXISTS(SELECT 1 FROM memory_document_job_answer_origins WHERE origin_id=? OR job_id=?)",[originId,row.job_id]);
+    assertion(`NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND correlation_id=?
+      AND type IN('ChatMessageSent','AssistantReasoned','BudgetReserved','BudgetReleased','BudgetExceeded','GenerationUsageRecorded'))`,[row.stream_id,row.correlation_id]);
+    conflicts();
+    // Cross-role IDs are not protected by either table's own primary key.
+    assertion(`NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(?,?,?,?,?))
+      AND NOT EXISTS(SELECT 1 FROM private_content WHERE content_id IN(?,?,?,?,?))`,[...outputIdentities,...outputIdentities]);
+    // Only required inserts from the native helper enter this transaction.
+    // Its optional expiry cleanup is deliberately excluded, not acknowledged as
+    // publication, and cannot mutate the original source underneath our proof.
+    for(const {prepared} of bodies)for(let index=0;index<required;index++)write(prepared.statements[index]);
+    for(const [index,values] of eventValues.entries())write(db.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS})
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`)
+      .bind(...values,row.stream_id,head+index));
+    if(scope){
+      const projectHead=authority.projectSourceHead!;
+      for(const [index,event] of events.entries())write(db.prepare(`INSERT INTO project_event_scopes
+        (event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at)
+        SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)`)
+        .bind(event.eventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,row.stream_id,event.sequence,
+          projectHead+index+1,row.owner_id,createdAt,event.eventId));
+      // Exact H -> H+2 CAS: neither reactivation nor skipped unrelated events.
+      write(db.prepare(`UPDATE project_migration_states SET last_owner_sequence=?,updated_at=?
+        WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?
+        AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+        AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=?)`)
+        .bind(head+2,createdAt,scope.projectAccessId,scope.organizationId,scope.ownerUserId,head,row.stream_id,head+2,
+          answerEvent.eventId,row.stream_id,head+2));
+    }
+    write(db.prepare(`INSERT INTO memory_document_job_answer_origins(${DOCUMENT_JOB_MEMORY_ORIGIN_COLUMNS.join(",")})
+      VALUES(${DOCUMENT_JOB_MEMORY_ORIGIN_COLUMNS.map(()=>"?").join(",")})`).bind(...headerValues));
+    write(db.prepare(`INSERT INTO memory_document_job_origin_dependencies(origin_id,resource_kind,resource_id)
+      SELECT ?,json_extract(value,'$.resource_kind'),json_extract(value,'$.resource_id') FROM json_each(?)`).bind(originId,selectorJson),material.selectors.length);
+    write(db.prepare(`UPDATE document_jobs SET status='completed',result_json=?,error_message=NULL,completed_at=?,lease_expires_at=NULL,updated_at=?
+      WHERE ${DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS.map(column=>`${column} IS ?`).join(" AND ")}`)
+      .bind(resultJson,createdAt,createdAt,...claimValues));
+    // Tail assertions cover the entire declared footprint inside the same batch.
+    // A suppressed INSERT/UPDATE aborts here; after-commit row-count checks alone
+    // never turn partial publication into a successful operation.
+    schemas();conflicts();
+    assertion(`NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(?,?,?))
+      AND NOT EXISTS(SELECT 1 FROM private_content WHERE content_id IN(?,?))`,[...outputBodies,...outputEvents]);
+    assertion("strftime('%Y-%m-%dT%H:%M:%fZ','now')<?",[frame.validUntil]);
+    assertion("(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?",[row.stream_id,head+2]);
+    assertion("(SELECT COUNT(*) FROM events WHERE stream_id=? AND correlation_id=? AND sequence>?)=2",[row.stream_id,row.correlation_id,head]);
+    assertion("NOT EXISTS(SELECT 1 FROM event_write_stage)");
+    const eventColumns=EVENT_WRITE_COLUMNS.split(",").slice(0,13);
+    for(const values of eventValues){
+      assertion(`(SELECT COUNT(*) FROM events WHERE event_id=?)=1 AND EXISTS(SELECT 1 FROM events WHERE
+        ${eventColumns.map(column=>`${column} IS ?`).join(" AND ")})`,[values[0],...values.slice(0,13)]);
+      if(values[16]===null)assertion("NOT EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=?)",[values[0]]);
+      else assertion(`(SELECT COUNT(*) FROM event_private_payloads WHERE private_event_id=?)=1
+        AND EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND project_id IS ?
+          AND document_id IS ? AND private_json IS ? AND created_at=? AND redacted_at IS NULL)`,
+        [values[0],values[0],values[13],values[14],values[15],values[16],values[4]]);
+    }
+    for(const {prepared,kind,text} of bodies){
+      assertion(`(SELECT COUNT(*) FROM private_content WHERE content_id=?)=1 AND EXISTS(SELECT 1 FROM private_content
+        WHERE content_id=? AND owner_id=? AND kind=? AND content IS ? AND created_at=? AND expires_at=? AND redacted_at IS NULL)`,
+        [prepared.contentId,prepared.contentId,row.owner_id,kind,text,prepared.createdAt,prepared.expiresAt]);
+      if(scope){
+        assertion(`(SELECT COUNT(*) FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?)=1
+          AND EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? AND project_access_id=?
+            AND organization_id=? AND project_id=? AND owner_user_id=? AND actor_user_id=? AND visibility='actor_private'
+            AND source_event_id IS NULL AND created_at=?)`,[prepared.contentId,prepared.contentId,scope.projectAccessId,scope.organizationId,
+              scope.projectId,scope.ownerUserId,row.owner_id,prepared.createdAt]);
+        assertion(`(SELECT COUNT(*) FROM private_content_retention_scopes WHERE content_id=?)=1
+          AND EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=? AND organization_id=? AND project_access_id=?
+            AND project_id=? AND actor_user_id=? AND classification='transient-private' AND assigned_expires_at=? AND created_at=?
+            AND policy_version=COALESCE((SELECT version FROM organization_retention_policies WHERE organization_id=?),0))`,
+          [prepared.contentId,prepared.contentId,scope.organizationId,scope.projectAccessId,scope.projectId,row.owner_id,
+            prepared.expiresAt,prepared.createdAt,scope.organizationId]);
+      }else{
+        assertion("NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?)",[prepared.contentId]);
+        assertion("NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=?)",[prepared.contentId]);
+      }
+    }
+    if(scope){
+      for(const [index,event] of events.entries())assertion(`(SELECT COUNT(*) FROM project_event_scopes WHERE event_id=?)=1
+        AND EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id=? AND project_access_id=? AND organization_id=? AND project_id=?
+          AND owner_user_id=? AND source_stream_id=? AND source_sequence=? AND project_sequence=? AND actor_user_id=? AND created_at=?)`,
+        [event.eventId,event.eventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,row.stream_id,
+          event.sequence,authority.projectSourceHead!+index+1,row.owner_id,createdAt]);
+      assertion(`(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=?
+        AND organization_id=? AND project_id=? AND owner_user_id=?)=?`,[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,authority.projectSourceHead!+2]);
+      assertion(`EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=?
+        AND status='active' AND last_owner_sequence=? AND updated_at=?)`,[scope.projectAccessId,scope.organizationId,scope.ownerUserId,head+2,createdAt]);
+      const finalProject=projectSourceProjectionCurrentAssertion(scope);assertion(finalProject.sql,[...finalProject.bindings]);
+    }else assertion("NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id IN(?,?))",outputEvents);
+    assertion(`(SELECT COUNT(*) FROM memory_document_job_answer_origins WHERE origin_id=?)=1
+      AND EXISTS(SELECT 1 FROM memory_document_job_answer_origins WHERE ${DOCUMENT_JOB_MEMORY_ORIGIN_COLUMNS.map(column=>`${column} IS ?`).join(" AND ")})`,
+      [originId,...headerValues]);
+    assertion(`(SELECT COUNT(*) FROM memory_document_job_origin_dependencies WHERE origin_id=?)=?
+      AND NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(SELECT 1 FROM memory_document_job_origin_dependencies actual
+        WHERE actual.origin_id=? AND actual.resource_kind=json_extract(expected.value,'$.resource_kind')
+          AND actual.resource_id=json_extract(expected.value,'$.resource_id')))`,[originId,material.selectors.length,selectorJson,originId]);
+    const finalClaimValues=DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS.map(column=>column==="status"?"completed"
+      :column==="completed_at"?createdAt:column==="lease_expires_at"||column==="error_message"?null:row[column]);
+    assertion(`(SELECT COUNT(*) FROM document_jobs WHERE job_id=? AND owner_id=?)=1
+      AND EXISTS(SELECT 1 FROM document_jobs WHERE ${DOCUMENT_JOB_MEMORY_CLAIM_COLUMNS.map(column=>`${column} IS ?`).join(" AND ")}
+        AND result_json IS ? AND updated_at=?)`,[row.job_id,row.owner_id,...finalClaimValues,resultJson,createdAt]);
+    if(!current())return unavailable;
+    const raced=documentJobMemoryPublicationAttempts.get(value);if(raced)return raced;
+    attempted=Object.freeze({status:"indeterminate",jobId:row.job_id,originId,noAutomaticRetry:true} as const);
+    documentJobMemoryPublicationAttempts.set(value,attempted);
+    let results:readonly D1Result<DocumentJobMemoryRows>[];
+    try { results=await db.batch<DocumentJobMemoryRows>(items.map(item=>item.statement)); }
+    finally {
+      // Even a thrown/ambiguous response may follow a committed transaction. The
+      // original capability is retired, and no second local publication is tried.
+      documentJobMemoryClaims.delete(row);documentJobMemoryFrames.delete(authority.value);documentJobMemoryCandidates.delete(value);
+    }
+    if(env.DB!==db||documentJobMemoryRowKey(row)!==claim.rowKey||documentJobMemoryPrincipalKey(claim.user)!==claim.principalKey
+      ||!documentJobMemoryResults(results,items.length))return attempted;
+    for(const [index,item] of items.entries()){
+      const receipt=results[index];
+      if(!receipt||typeof receipt!=="object"||Array.isArray(receipt))return attempted;
+      if(item.kind==="write"){
+        if(receipt.results.length!==0||!Object.hasOwn(receipt,"meta")||!receipt.meta||typeof receipt.meta!=="object"
+          ||Array.isArray(receipt.meta)||!Object.hasOwn(receipt.meta,"changes")||receipt.meta.changes!==item.changes)return attempted;
+      }else if(item.kind==="source"){
+        if(!documentJobMemoryAsserted([receipt]))return attempted;
+      }else if(receipt.results.length!==1||!Object.hasOwn(receipt.results,0)||!receipt.results[0]
+        ||typeof receipt.results[0]!=="object"||Array.isArray(receipt.results[0])||Object.keys(receipt.results[0]).length!==1||!Object.hasOwn(receipt.results[0],"document_job_origin_verified")
+        ||receipt.results[0].document_job_origin_verified!==1)return attempted;
+    }
+    const committed=Object.freeze({status:"committed",jobId:row.job_id,originId,noAutomaticRetry:true} as const);
+    documentJobMemoryPublicationAttempts.set(value,committed);return committed;
+  }catch{return attempted??unavailable;}
 }

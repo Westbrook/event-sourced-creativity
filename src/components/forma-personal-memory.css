@@ -1,0 +1,313 @@
+/* Light-DOM styles, scoped to the shared Memory / Account settings component. */
+forma-creative-assistant .personal-memory-disclosure {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+forma-creative-assistant .personal-memory-disclosure > summary {
+  min-block-size: max(44px, var(--forma-control-min-size, 2.75rem));
+  padding-block: var(--forma-space-3, .75rem);
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+forma-creative-assistant .personal-memory-disclosure > summary:focus-visible {
+  outline: 2px solid var(--forma-color-focus, currentColor);
+  outline-offset: 2px;
+}
+
+forma-personal-memory {
+  display: block;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  color: var(--forma-color-text, var(--ink));
+  font-family: var(--forma-font-family, var(--sans));
+  overflow-wrap: anywhere;
+}
+
+forma-personal-memory,
+forma-personal-memory * {
+  box-sizing: border-box;
+}
+
+forma-personal-memory .personal-memory-card {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  gap: var(--forma-space-4, 1rem);
+}
+
+forma-personal-memory :is(form, fieldset, header, article, section, label) {
+  min-inline-size: 0;
+}
+
+forma-personal-memory :is(form, fieldset) {
+  display: grid;
+  gap: var(--forma-space-4, 1rem);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+forma-personal-memory :is(h2, h3, h4, p, ul, ol, dl) {
+  overflow-wrap: anywhere;
+}
+
+forma-personal-memory :is(p, dl) {
+  margin-block: 0;
+}
+
+forma-personal-memory .personal-memory-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  align-items: start;
+  gap: var(--forma-space-4, 1rem);
+}
+
+forma-personal-memory .personal-memory-fields > label:not(.toggle-row) {
+  display: grid;
+  align-content: start;
+  gap: var(--forma-space-2, .5rem);
+}
+
+forma-personal-memory :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  min-block-size: max(44px, var(--forma-control-min-size, 2.75rem));
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding-block: var(--forma-space-2, .5rem);
+  padding-inline: var(--forma-space-3, .75rem);
+  color: var(--forma-color-text, var(--ink));
+  background: var(--forma-color-surface, var(--panel));
+  border: 1px solid var(--forma-color-border-strong, var(--line-strong));
+  border-radius: var(--forma-radius-small, 6px);
+  font: inherit;
+}
+
+forma-personal-memory textarea {
+  resize: vertical;
+}
+
+/* The associated label supplies the target size, not an oversized checkbox. */
+forma-personal-memory .toggle-row {
+  display: flex;
+  min-block-size: max(44px, var(--forma-control-min-size, 2.75rem));
+  min-inline-size: 0;
+  align-items: center;
+  gap: var(--forma-space-3, .75rem);
+  margin: 0;
+  padding-block: var(--forma-space-2, .5rem);
+  cursor: pointer;
+}
+
+forma-personal-memory .toggle-row > :is(input[type="checkbox"], input[type="radio"]) {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--forma-color-accent, var(--accent));
+}
+
+forma-personal-memory .toggle-row > span {
+  min-inline-size: 0;
+}
+
+forma-personal-memory .personal-memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-space-3, .75rem);
+}
+
+forma-personal-memory .personal-memory-actions > :is(button, .button) {
+  align-self: stretch;
+}
+
+forma-personal-memory :is(button, .button) {
+  min-block-size: max(44px, var(--forma-control-min-size, 2.75rem));
+  min-inline-size: min(100%, max(44px, var(--forma-control-min-size, 2.75rem)));
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+forma-personal-memory :is(button, .button) {
+  block-size: auto;
+}
+
+forma-personal-memory :is(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid var(--forma-color-accent, var(--accent));
+  outline-offset: 3px;
+}
+
+forma-personal-memory .personal-memory-enrollments {
+  display: grid;
+  gap: var(--forma-space-4, 1rem);
+  margin: 0;
+  padding: 0;
+}
+
+forma-personal-memory .personal-memory-enrollment {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--forma-space-4, 1rem);
+  padding: var(--forma-space-4, 1rem);
+  border: 1px solid var(--forma-color-border, var(--line));
+  border-radius: var(--forma-radius-small, 6px);
+}
+
+forma-personal-memory :is(.personal-memory-enrollment, .personal-memory-excerpts) > h4 {
+  margin-block: 0;
+}
+
+forma-personal-memory .personal-memory-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--forma-space-2, .5rem) var(--forma-space-4, 1rem);
+  padding-block: var(--forma-space-3, .75rem);
+  border-block: 1px solid var(--forma-color-border, var(--line));
+}
+
+forma-personal-memory .personal-memory-facts :is(dt, dd) {
+  min-inline-size: 0;
+  margin: 0;
+}
+
+forma-personal-memory .personal-memory-facts dt {
+  color: var(--forma-color-text-muted, var(--muted));
+}
+
+forma-personal-memory .personal-memory-facts dd {
+  font-variant-numeric: tabular-nums;
+}
+
+forma-personal-memory :is(.personal-memory-notice, .personal-memory-error, .personal-memory-confirm) {
+  min-inline-size: 0;
+  padding: var(--forma-space-3, .75rem);
+  border: 1px solid var(--forma-color-border, var(--line));
+  border-radius: var(--forma-radius-small, 6px);
+}
+
+forma-personal-memory .personal-memory-notice {
+  color: var(--forma-color-text-muted, var(--muted));
+  border-inline-start-width: 3px;
+}
+
+forma-personal-memory .personal-memory-error {
+  color: var(--danger);
+  border-color: currentColor;
+}
+
+forma-personal-memory .personal-memory-confirm {
+  display: flex;
+  align-items: start;
+  gap: var(--forma-space-3, .75rem);
+  background: var(--forma-color-surface-subtle, var(--panel-2));
+}
+
+forma-personal-memory .personal-memory-status {
+  display: grid;
+  min-inline-size: 0;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  gap: var(--forma-space-1, .25rem);
+  padding-block: var(--forma-space-1, .25rem);
+  padding-inline: var(--forma-space-2, .5rem);
+  border: 1px solid var(--forma-color-border, var(--line));
+  border-radius: var(--forma-radius-small, 6px);
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  font-weight: 600;
+}
+
+forma-personal-memory .personal-memory-status > p {
+  min-inline-size: 0;
+  font-weight: 400;
+}
+
+forma-personal-memory .personal-memory-excerpts {
+  display: grid;
+  gap: var(--forma-space-3, .75rem);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+}
+
+forma-personal-memory :is(.personal-memory-activity, .personal-memory-activity-window, .personal-memory-activity-blocks[open]) {
+  display: grid;
+  gap: var(--forma-space-3, .75rem);
+  min-inline-size: 0;
+}
+
+forma-personal-memory .personal-memory-activity-windows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: var(--forma-space-4, 1rem);
+  align-items: start;
+}
+
+forma-personal-memory .personal-memory-activity :is(h4, h5, h6) {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+forma-personal-memory .personal-memory-activity-blocks summary {
+  min-block-size: 2.75rem;
+  padding-block: var(--forma-space-2, .5rem);
+  cursor: pointer;
+}
+
+forma-personal-memory .personal-memory-activity-blocks summary:focus-visible {
+  outline: 3px solid var(--forma-color-accent, var(--accent));
+  outline-offset: 3px;
+}
+
+forma-personal-memory .personal-memory-activity-blocks article {
+  min-inline-size: 0;
+  padding-block-start: var(--forma-space-3, .75rem);
+}
+
+forma-personal-memory .personal-memory-excerpts > article {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--forma-space-2, .5rem);
+  padding-block: var(--forma-space-3, .75rem);
+  border-block-start: 1px solid var(--forma-color-border, var(--line));
+}
+
+forma-personal-memory .personal-memory-excerpts :is(p, blockquote) {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+forma-personal-memory :is(code, time, bdi) {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+@media (max-width: 40rem) {
+  forma-personal-memory .personal-memory-facts {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--forma-space-1, .25rem);
+  }
+
+  forma-personal-memory .personal-memory-facts dd + dt {
+    margin-block-start: var(--forma-space-3, .75rem);
+  }
+
+  forma-personal-memory .personal-memory-actions > :is(button, .button) {
+    flex: 1 1 100%;
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+@media (forced-colors: active) {
+  forma-personal-memory :is(button, a, input, select, textarea):focus-visible {
+    outline-color: Highlight;
+  }
+
+  forma-personal-memory .personal-memory-error {
+    color: CanvasText;
+  }
+}

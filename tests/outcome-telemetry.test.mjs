@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test, { afterEach } from "node:test";
 import { compileSqliteExpressionDepth } from "./helpers/d1-expression-depth.mjs";
+import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 import { buildOutcomeTelemetry } from "../src/model/outcome-telemetry.ts";
 import { buildAnalyticsReport } from "../src/model/analytics.ts";
 import { handleAnalytics, projectAnalyticsPayload } from "../worker/analytics-api.ts";
@@ -466,7 +467,10 @@ test("old safe analytics snapshots without receipt-binding projection are rebuil
   assert.equal(JSON.parse(saved.content).outcomeBindings, 2);
 });
 
-test("existing traffic cleanup produces no scheduled receipt; explicit scheduled-handler invocation does", async () => {
+test("existing traffic cleanup produces no scheduled receipt; explicit scheduled-handler invocation does", async t => {
+  // The published Memory cleanup loads TypeScript dependencies lazily in this Node fixture.
+  const sourceImports = registerOutputSourceImports();
+  t.after(() => sourceImports.deregister());
   const f = await fixture();
   const pending = [];
   schedulePrivateContentRetention(f.env, { waitUntil(promise) { pending.push(promise); } });

@@ -1939,7 +1939,10 @@ test("explicit personal erasure transactionally scrubs only the exact actor's pr
   const body = { action: "erase-personal-authored-context", confirmation: "ERASE_MY_PERSONAL_AUTHORED_CONTEXT" };
 
   state.controls.failPlatformPrivacyErase = true;
-  await assert.rejects(state.request("/api/privacy/events", json(body, first)), /injected_platform_privacy_erasure_failure/u);
+  const unconfirmedErasure = await state.request("/api/privacy/events", json(body, first));
+  assert.equal(unconfirmedErasure.status, 503);
+  assert.deepEqual(await unconfirmedErasure.json(), { error: "memory_erasure_unconfirmed",
+    authoredContentErasurePending: true, memoryJobCleanupPending: true, continuationRequired: true });
   assert.equal(state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get("platform-erasure-rollback").content, "PRIVATE PERSONAL CONTENT A");
   assert.ok(state.sqlite.prepare("SELECT content_id FROM external_content WHERE content_id=?").get("platform-erasure-external"));
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM platform_assistant_private_content WHERE actor_user_id=? AND redacted_at IS NULL").get("platform-privacy-a").count, 2);
@@ -9418,4 +9421,2686 @@ test("main170 phase8 fourteen-event Output review rolls back the eighth canonica
     assert.equal(saved.approvalHash, preview.approvalHash); assert.equal(JSON.stringify(saved.plan.events), JSON.stringify(preview.events));
     phase8AssertNoPayment(state, paid);
   } finally { await state.cleanup(); }
+});
+
+
+// Accepted queued-job origin coverage. Existing published fixture/helpers above
+// remain authoritative; only the selected origin-family registrations follow.
+async function appendContextReadEvents(state,entries,{firstSequence}={}){
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import("../worker/runtime.ts");
+  const owner=state.owner?.["oai-authenticated-user-id"]??"dev-local-creative",stream="creative:"+owner;
+  let sequence=firstSequence===undefined?Number(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head):firstSequence-1;
+  const events=[];
+  for(const[type,payload]of entries){
+    const event=makeEvent(stream,++sequence,"user:"+owner,"context-read-certification-fixture",crypto.randomUUID(),type,payload),values=eventWriteBindings(event);
+    await state.env.DB.prepare("INSERT INTO event_write_stage("+EVENT_WRITE_COLUMNS+") VALUES("+values.map(()=>"?").join(",")+")").bind(...values).run();
+    events.push(event);
+  }
+  return events;
+}
+
+async function contextReadFixture(state){
+  const route="/document/doc-atmosphere",blockId="context-read-private-block",common={project_id:"project-atmosphere",document_id:"doc-atmosphere"};
+  const[titleEvent,blockEvent]=await appendContextReadEvents(state,[
+    ["DocumentRenamed",{...common,new_title:"PRIVATE_CONTEXT_READ_DOCUMENT_TITLE"}],
+    ["BlockCreated",{...common,block_id:blockId,type:"direction",properties:{text:"PRIVATE_CONTEXT_READ_BLOCK_TEXT",label:"Context read decision"},position:0}],
+  ]);
+  for(const event of[titleEvent,blockEvent])assert.ok(state.sqlite.prepare("SELECT 1 AS present FROM event_private_payloads WHERE private_event_id=?").get(event.eventId),"fixture uses the real modern private envelope");
+  const turn=await ordinaryFeedTurn(state,"context-read-independent-turn",{route},"INDEPENDENT_RETAINED_CONVERSATION");
+  const initial=await assertOrdinaryFeedVisible(state,route,[turn]);
+  assert.equal(initial.contextUnavailable,undefined);
+  assert.equal(initial.context.documentTitle,"PRIVATE_CONTEXT_READ_DOCUMENT_TITLE");
+  assert.equal(initial.context.decisionAtoms.find(item=>item.id===blockId)?.text,"PRIVATE_CONTEXT_READ_BLOCK_TEXT");
+  const owner=state.owner?.["oai-authenticated-user-id"]??"dev-local-creative",stream="creative:"+owner;
+  return{route,blockId,titleEvent,blockEvent,turn,initial,owner,stream,head:state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head};
+}
+
+async function postContextFixture({shared=false,actions=false,short=false}={}){
+  const state=short?await fixture({actions}):shared?await sharedProjectFixture({actions}):await fixture({actions});
+  const originalFetch=globalThis.fetch;state.calls=[];
+  globalThis.fetch=async()=>{state.calls.push("forbidden-outbound");throw new Error("post_context_outbound_forbidden");};
+  state.cleanup=async()=>{globalThis.fetch=originalFetch;};
+  try{
+    if(short){
+      state.owner={"oai-authenticated-user-id":"assistant-owner","oai-authenticated-user-email":"assistant-owner@example.test"};
+      assert.equal((await state.request("/api/session",{headers:state.owner})).status,200);
+      state.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id='assistant-owner'").run("pilot-2026-08-10");
+      await appendContextReadEvents(state,[
+        ["ProjectCreated",{project_id:"project-atmosphere",name:"Short POST project"}],
+        ["DocumentCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",title:"Short POST document"}],
+      ]);
+      if(shared){
+        const organization=await state.request("/api/workspaces",json({name:"Short POST organization"},state.owner));
+        assert.equal(organization.status,201,JSON.stringify(await organization.clone().json()));state.organizationId=(await organization.json()).organizationId;
+        const project=await state.request("/api/workspaces/"+state.organizationId+"/projects",json({projectId:"project-atmosphere"},state.owner));
+        assert.equal(project.status,201,JSON.stringify(await project.clone().json()));state.projectAccessId=(await project.json()).projectAccessId;
+        const opened=await state.request("/api/workspaces/"+state.organizationId+"/projects/"+state.projectAccessId+"/context",{method:"POST",headers:state.owner});
+        assert.equal(opened.status,200,JSON.stringify(await opened.clone().json()));
+        state.owner={...state.owner,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+      }
+    }
+    state.postSource=await contextReadFixture(state);
+    state.postPaid=specialistFeedSnapshot(state);
+    return state;
+  }catch(error){await state.cleanup();state.sqlite.close();throw error;}
+}
+
+async function nativeMemoryPrepare(state) {
+  const { prepareDocumentAuthority } = await import("../worker/context-authoring-authority.ts");
+  const prepared = await prepareDocumentAuthority(new Request("http://localhost/api/context/read", {
+    headers: state.owner ?? {},
+  }), state.env, { projectId: "project-atmosphere", documentId: "doc-atmosphere" }, "read");
+  assert.ok(!(prepared instanceof Response), prepared instanceof Response ? await prepared.text() : undefined);
+  return prepared;
+}
+
+async function nativeMemoryJobFixture(t, { shared = false, beforeEnrollment } = {}) {
+  const state = await postContextFixture({ shared, short: true });
+  t.after(() => finishOrdinaryFeed(state, { failures: [] }));
+  const { readFile } = await import('node:fs/promises');
+  for (const name of ['0025_memory_live_base.sql', '0026_memory_live_conversation.sql'])
+    state.sqlite.exec(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8'));
+  if (beforeEnrollment) await beforeEnrollment(state);
+  const prepared = await nativeMemoryPrepare(state);
+  state.env.FORMA_MEMORY_ENABLED = 'true'; state.env.FORMA_MEMORY_USER_IDS = prepared.principal.userId;
+  // This flag is confined to the in-memory test env; no actual schedule is registered or invoked.
+  state.env.FORMA_MEMORY_SCHEDULING_ENABLED = 'true';
+  const timeZone = Intl.supportedValuesOf('timeZone').find(zone => {
+    const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+    return hour >= 1 && hour < 5;
+  });
+  assert.ok(timeZone);
+  const preferences = { projectId: 'project-atmosphere', documentId: 'doc-atmosphere', learn: true, recall: true, background: true,
+    retentionDays: 30, timeZone, expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(), revision: 0,
+    confirmation: 'ENABLE_PERSONAL_MEMORY', policyVersion: 'personal-memory-v2', reviewTiming: 'daily-with-daytime-catch-up',
+    expectedCustody: prepared.binding.scope ? { kind: 'organization', organizationId: prepared.binding.scope.organizationId,
+      projectAccessId: prepared.binding.scope.projectAccessId, ownerUserId: prepared.binding.scope.ownerUserId } : { kind: 'personal' } };
+  const { handleLiveMemory } = await import('../worker/memory-live-api.ts');
+  const settingsRequest = (body, method = 'PUT') => new Request('http://localhost/api/memory/settings', { ...json(body, state.owner ?? {}), method });
+  const enrolled = await handleLiveMemory(settingsRequest(preferences), state.env, 'settings'), body = await enrolled.json();
+  assert.equal(enrolled.status, 200, JSON.stringify(body) + ' SQL:' + state.controls.lastDatabaseError);
+  const current = () => state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(body.enrollment.id);
+  state.nativePrepared = prepared; state.nativeEnrollment = current();
+  const { runLiveMemoryScheduled } = await import('../worker/memory-live-jobs.ts');
+  const due = () => state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(body.enrollment.id);
+  const run = () => runLiveMemoryScheduled(state.env);
+  const send = async id => {
+    const turn = await specialistFreeTurn(state, id, 'PRIVATE_JOB_QUESTION_' + id);
+    return { ...turn, pointers: ordinaryFeedPointers(state, turn) };
+  };
+  const table = name => {
+    assert.ok(['memory_live_sources', 'memory_live_conversation_segments', 'memory_live_runs'].includes(name));
+    return state.sqlite.prepare('SELECT * FROM ' + name + ' ORDER BY rowid').all();
+  };
+  return Object.assign(state, { preferences, current, run, due, send, table, handleLiveMemory, settingsRequest });
+}
+
+function nativeStructuredCallerNoSpend(state) {
+  return { calls: state.calls.length, seedCalls: state.structuredSeedCalls?.length ?? 0,
+    financial: adaptiveReentryFinancialState(state), jobs: state.sqlite.prepare('SELECT * FROM document_jobs ORDER BY job_id').all() };
+}
+
+// Queued-job memory authority foundation. The existing route, private input and
+// native claim execute in the isolated fixture; the existing compiling progress
+// write is held before handleEvents or any provider dispatch. No memory consumer
+// or generated answer is installed by these tests.
+async function queuedJobMemoryFixture(t, { shared = false, claimFault = null, sourceSurface = 'chat', beforeJob, existingState = null } = {}) {
+  // A second independent claim reuses this exact route/capture/gate in the same
+  // initialized fixture. It does not repeat enrollment, migrations or source seeding.
+  if (existingState) { assert.equal(beforeJob, undefined); assert.equal(claimFault, null); }
+  const state = existingState ?? await nativeMemoryJobFixture(t, { shared, beforeEnrollment: async current => {
+    const { readFile } = await import('node:fs/promises');
+    current.sqlite.exec(await readFile(new URL('../drizzle/0032_memory_structured_conversation_ledger.sql', import.meta.url), 'utf8'));
+  } });
+  if (beforeJob) await beforeJob(state);
+  const db = state.env.DB, prepare = db.prepare;
+  const captured = { queued: null, running: null, claim: null, claimCount: 0, damaged: 0,
+    claimDatabase: db, runningDatabase: null, alternateDatabase: null };
+  const entered = Promise.withResolvers(), released = Promise.withResolvers();
+  const claimSql = /^UPDATE document_jobs SET status='running',attempt_count=attempt_count\+1,/u;
+  const progressSql = /^UPDATE document_jobs SET result_json=.*updated_at=\? WHERE job_id=\? AND owner_id=\? AND status='running' AND correlation_id=\?$/su;
+  // Capture the actual returned object once. Copies or a separately queried row
+  // remain negative inputs; the runner's private registration is not substituted.
+  const wrap = statement => {
+    const bind = statement.bind, first = statement.first, run = statement.run;
+    statement.bind = (...values) => wrap(bind.call(statement, ...values));
+    statement.first = async () => {
+      const result = await first.call(statement);
+      if (/ FROM document_jobs WHERE job_id=\? AND owner_id=\?$/u.test(statement.sql) && result?.kind === 'chat') {
+        if (result.status === 'queued' && !captured.queued) captured.queued = result;
+        if (result.status === 'running' && !captured.running) { captured.running = result; captured.runningDatabase = state.env.DB; }
+      }
+      return result;
+    };
+    statement.run = async () => {
+      const result = await run.call(statement);
+      if (claimSql.test(statement.sql)) {
+        captured.claimCount++; captured.claim = structuredClone(result);
+        if (claimFault && captured.damaged === 0) {
+          captured.damaged++;
+          if (claimFault === 'failed') result.success = false;
+          if (claimFault === 'error') result.error = 'fixture-contradictory-claim';
+          if (claimFault === 'string-changes') result.meta.changes = '1';
+          if (claimFault === 'nonempty-results') result.results = [{ unconfirmed: 1 }];
+          if (claimFault === 'database') {
+            // The actual claim has committed on A. Keep transparent B active
+            // through native row/input reload, registration and the issuer.
+            captured.alternateDatabase = { prepare: (...args) => db.prepare(...args), batch: (...args) => db.batch(...args) };
+            state.env.DB = captured.alternateDatabase;
+          }
+        }
+      }
+      return result;
+    };
+    return statement;
+  };
+  db.prepare = sql => wrap(prepare.call(db, sql));
+  const restoreGate = interceptConsequentialDb(state, 'run', progressSql, async () => {
+    entered.resolve(); await released.promise;
+    throw new Error('fixture-job-memory-stop-before-events');
+  });
+  let work = null, stopped = false, detached = false, releaseCalled = false, settlement = null;
+  const detach = () => {
+    if (detached) return;
+    assert.equal(state.env.DB, db);
+    restoreGate(); db.prepare = prepare; detached = true;
+  };
+  const release = () => { releaseCalled = true; released.resolve(); };
+  const settle = () => {
+    if (settlement) return settlement;
+    settlement = (async () => {
+      // Restore the owned binding before native catch; this is fixture teardown,
+      // not evidence that a production replacement database may be reused.
+      state.env.DB = db; release();
+      try { await (work ?? state.drainBackground()); }
+      finally { detach(); }
+    })();
+    return settlement;
+  };
+  const stop = async () => {
+    if (stopped) return; stopped = true;
+    try { await settle(); }
+    finally {
+      // Only the original fixture owns fetch/SQLite cleanup. Paired claims settle
+      // BOTH native runners before the pair's one fetch cleanup below.
+      if (!existingState) await state.cleanup();
+    }
+  };
+  const control = Object.freeze({ detach, release, settle,
+    get detached() { return detached; }, get released() { return releaseCalled; } });
+  try {
+    const input = 'PRIVATE_NATIVE_JOB_MEMORY_INPUT: review 🧭 é without accepting an instruction.';
+    // Admission checks configuration before the native claim. This synthetic
+    // value is not a credential; remove it before any authority assertions.
+    assert.equal(state.env.OPENAI_API_KEY, undefined);
+    let response;
+    state.env.OPENAI_API_KEY = 'fixture-provider-key';
+    try {
+      response = await state.request('/api/document-jobs', json({ kind: 'chat', documentId: 'doc-atmosphere',
+        sourceSurface, payload: { message: input, livePreview: false } }, state.owner));
+    } finally {
+      delete state.env.OPENAI_API_KEY;
+    }
+    const body = await response.json(); assert.equal(response.status, 202, JSON.stringify(body));
+    work = state.drainBackground();
+    await Promise.race([entered.promise, work.then(() => { throw new Error('native-compiling-gate-not-reached'); })]);
+    // Assertions deliberately run outside the background catch; native failure
+    // handling must not swallow a fixture assertion and create a false positive.
+    assert.equal(captured.claimCount, 1); assert.equal(captured.claim?.success, true); assert.equal(captured.claim?.meta.changes, 1);
+    assert.equal(captured.damaged, claimFault ? 1 : 0); assert.ok(captured.queued); assert.ok(captured.running);
+    assert.equal(captured.running.job_id, body.job.jobId); assert.equal(captured.running.status, 'running');
+    assert.equal(captured.running.attempt_count, 1); assert.equal(captured.running.correlation_id, body.job.jobId + ':attempt:1');
+    const persisted = state.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(body.job.jobId);
+    assert.equal(persisted.status, 'running'); assert.equal(persisted.attempt_count, 1);
+    const request = JSON.parse(persisted.request_json);
+    assert.equal(request.message, undefined); assert.equal(typeof request.jobInputRef, 'string');
+    const retained = state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(request.jobInputRef);
+    assert.ok(retained); assert.equal(retained.owner_id, state.current().actor_user_id); assert.equal(retained.kind, 'chat-user');
+    assert.equal(retained.content, input); assert.equal(retained.redacted_at, null);
+    assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+    const footprint = () => ({ unpaid: nativeStructuredCallerNoSpend(state), tables: Object.fromEntries([
+      'events', 'event_private_payloads', 'private_content', 'project_event_scopes', 'project_resource_scopes',
+      'private_content_retention_scopes', 'memory_live_enrollments', 'memory_live_sources', 'memory_live_runs',
+      'memory_live_conversation_segments', 'assistant_turns', 'assistant_action_proposals', 'assistant_action_commits',
+    ].map(table => [table, state.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all().map(row => ({ ...row }))])) });
+    return Object.assign(state, { jobMemoryInput: input, jobMemoryInputRef: request.jobInputRef, jobMemoryCaptured: captured,
+      jobMemoryJobId: body.job.jobId, jobMemoryStop: stop, jobMemoryControl: control, jobMemoryFootprint: footprint });
+  } catch (error) { await stop(); throw error; }
+}
+
+const queuedJobMemoryApi = await import('../worker/document-jobs-api.ts');
+
+// Certified queued-job recall candidates remain private drafts. All setup below
+// precedes the actual job claim; bridge operations run behind the unchanged
+// compiling-progress gate with the outbound-fetch prohibition restored.
+async function queuedJobMemorySeed(state, { history = true, structured = false } = {}) {
+  const { readFile } = await import('node:fs/promises');
+  for (const name of ['0027_memory_native_origins.sql', '0033_memory_structured_answer_provenance.sql'])
+    state.sqlite.exec(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8'));
+  const sources = [];
+  if (history) {
+    for (let index = 0; index < 2; index++) sources.push(await state.send('queued-bridge-source-' + index));
+    state.due();
+    const run = await state.run();
+    assert.equal(run.status, 'completed', state.controls.lastDatabaseError); assert.equal(run.processed, 2);
+    assert.ok(state.table('memory_live_sources').length >= 2);
+    assert.ok(state.table('memory_live_conversation_segments').length > 0);
+  }
+  state.jobMemorySeedSources = sources;
+  if (!structured) return;
+  // Adapt only the finite native producer setup from the previously selected
+  // caller fixture. No opaque S3/S4 authority or private original is invented.
+  const seed = { message: 'PRIVATE_QUEUED_STRUCTURED_GOAL: preserve the amber palette.',
+    reply: 'The amber palette is a recorded proposal, not an accepted change.' };
+  const head = () => Number(state.sqlite.prepare('SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?')
+    .get('creative:' + state.current().owner_user_id).head);
+  const afterSequence = head(), seedCalls = [], originalFetch = globalThis.fetch;
+  const hadKey = Object.hasOwn(state.env, 'OPENAI_API_KEY'), originalKey = state.env.OPENAI_API_KEY;
+  const hadProviderUsers = Object.hasOwn(state.env, 'FORMA_ASSISTANT_PROVIDER_USER_IDS');
+  const originalProviderUsers = state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+  state.env.OPENAI_API_KEY = 'fixture-structured-legacy-provider-key';
+  state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS = state.current().actor_user_id;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'https://api.openai.com/v1/responses'); assert.equal(init.method, 'POST');
+    assert.equal(seedCalls.length, 0, 'Only this one finite seed may call the in-process fake provider');
+    const request = JSON.parse(init.body); assert.ok(JSON.stringify(request).includes(seed.message)); seedCalls.push(request);
+    return Response.json({ id: 'queued-bridge-structured-seed', model: request.model,
+      output_text: JSON.stringify({ reply: seed.reply, mutations: [], preview_worthy: false, preview_direction: '' }),
+      usage: { input_tokens: 80, output_tokens: 20, total_tokens: 100 } });
+  };
+  try {
+    const response = await state.request('/api/document-jobs', json({ kind: 'chat', documentId: 'doc-atmosphere',
+      sourceSurface: 'chat', payload: { message: seed.message, livePreview: false } }, state.owner));
+    const body = await response.json(); assert.equal(response.status, 202, JSON.stringify(body));
+    await state.drainBackground();
+    const job = state.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(body.job.jobId);
+    assert.ok(job); assert.equal(job.status, 'completed', JSON.stringify(job) + ' SQL:' + state.controls.lastDatabaseError);
+    assert.equal(seedCalls.length, 1); assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs WHERE kind='preview'").get().n, 0);
+  } finally {
+    try { await state.drainBackground(); } finally {
+      globalThis.fetch = originalFetch;
+      if (hadKey) state.env.OPENAI_API_KEY = originalKey; else delete state.env.OPENAI_API_KEY;
+      if (hadProviderUsers) state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS = originalProviderUsers;
+      else delete state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+    }
+  }
+  const interval = { afterSequence, throughSequence: head() }, prepared = await nativeMemoryPrepare(state);
+  const { captureLegacyConversationOriginals, replayLegacyConversationOriginals } = await import('../worker/events-api.ts');
+  const { readStructuredConversationLedger, appendStructuredConversationLedger } = await import('../worker/memory-live-store.ts');
+  const frame = await captureLegacyConversationOriginals(state.env, prepared, interval); assert.ok(frame);
+  const receipt = await replayLegacyConversationOriginals(state.env, prepared, frame); assert.ok(receipt);
+  assert.deepEqual(receipt.interval, interval); assert.equal(receipt.originals.length, 2);
+  assert.deepEqual(receipt.originals.map(row => row.role), ['user', 'assistant']);
+  assert.deepEqual(receipt.originals.map(row => row.text), [seed.message, seed.reply]);
+  for (const row of receipt.originals) assert.ok(Date.parse(row.recordedAt) >= Date.parse(state.current().enrolled_at));
+  const enrollment = state.current(), expected = await readStructuredConversationLedger(state.env, enrollment, prepared, [frame]);
+  assert.ok(expected);
+  const reference = row => Object.fromEntries(['eventId', 'sequence', 'turnId', 'role', 'contentRef', 'contentHash'].map(key => [key, row[key]]));
+  const source = receipt.originals[0], annotation = { itemId: 'queued-bridge-palette', revision: 1, category: 'goal', operation: 'assert',
+    predecessor: null, source: reference(source), start: 0, end: Array.from(source.text).length, text: source.text };
+  const proposed = { schemaVersion: 1, recipeVersion: 'native-declared-ledger-v1', semanticCompleteness: false,
+    annotations: [...expected.ledger.annotations, annotation], originals: receipt.originals.map(reference) };
+  const written = await appendStructuredConversationLedger(state.env, enrollment, prepared, [frame], expected, proposed);
+  assert.ok(written); assert.equal(written.status, 'active'); assert.equal(written.revision, expected.revision + 1);
+  assert.deepEqual(written.ledger, proposed);
+  state.structuredSeedCalls = seedCalls;
+  state.jobMemoryStructuredSeed = { seed, interval, originals: receipt.originals, written };
+  assert.equal(state.env.OPENAI_API_KEY, undefined); assert.equal(state.calls.length, 0);
+}
+
+function queuedJobMemoryCandidateFootprint(state) {
+  return { ...state.jobMemoryFootprint(), ledger: Object.fromEntries([
+    'memory_structured_conversation_heads', 'memory_structured_conversation_revisions',
+  ].map(table => [table, state.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all().map(row => ({ ...row }))])) };
+}
+
+function queuedJobMemoryCandidateOpaque(candidate) {
+  assert.ok(candidate); assert.equal(Object.getPrototypeOf(candidate), null); assert.equal(Object.isFrozen(candidate), true);
+  assert.deepEqual(Reflect.ownKeys(candidate), []); assert.equal(JSON.stringify(candidate), '{}');
+}
+
+function queuedJobMemoryCandidateMutation(state, fault) {
+  let result;
+  if (fault === 'input') result = state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?')
+    .run('A newly changed private queued-job input.', state.jobMemoryInputRef);
+  if (fault === 'source') result = state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?')
+    .run('A newly changed exact remembered source.', state.jobMemorySeedSources[0].pointers.authored);
+  if (fault === 'enrollment') result = state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?')
+    .run(state.current().enrollment_id);
+  if (fault === 'source-deadline') result = state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?')
+    .run(new Date(Date.now() - 1000).toISOString(), state.jobMemorySeedSources[0].pointers.authored);
+  if (fault === 'input-deadline') result = state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?')
+    .run(new Date(Date.now() - 1000).toISOString(), state.jobMemoryInputRef);
+  if (fault === 'retention') result = state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?')
+    .run(new Date(Date.now() - 1000).toISOString(), state.jobMemoryInputRef);
+  return result ? Number(result.changes) : 0;
+}
+
+// Publication tests retain the genuine queued claim and native recall fixture.
+// Only the new publication call is exercised; its route/runner stays unmodified.
+async function documentJobPublicationFixture(t, { shared = false, structured = false } = {}) {
+  const state = await queuedJobMemoryFixture(t, { shared, beforeJob: async current => {
+    await queuedJobMemorySeed(current, { history: true, structured });
+    const { readFile } = await import('node:fs/promises');
+    current.sqlite.exec(await readFile(new URL('../drizzle/0034_memory_document_job_origins.sql', import.meta.url), 'utf8'));
+  } });
+  // Personal ownership makes this an actual optional-cleanup canary. The
+  // publisher must take required inserts only, leaving this expired body intact.
+  const now = Date.now(); state.publicationExpiredControl = crypto.randomUUID();
+  state.sqlite.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+    .run(state.publicationExpiredControl, state.current().actor_user_id, 'condition', 'PUBLICATION_OPTIONAL_CLEANUP_MUST_NOT_RUN',
+      new Date(now - 120_000).toISOString(), new Date(now - 60_000).toISOString());
+  state.publicationShared = shared; state.publicationStructured = structured;
+  return state;
+}
+
+function documentJobPublicationFootprint(state) {
+  return { ...queuedJobMemoryCandidateFootprint(state), publication: Object.fromEntries([
+    'memory_document_job_answer_origins', 'memory_document_job_origin_dependencies',
+    'project_migration_states', 'event_write_stage',
+  ].map(table => [table, state.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all().map(row => ({ ...row }))])) };
+}
+
+async function documentJobPublicationCandidate(state) {
+  const authority = await queuedJobMemoryApi.prepareDocumentJobMemoryAuthority(state.env, state.jobMemoryCaptured.running);
+  assert.ok(authority, 'The real queued claim must issue current native authority');
+  const candidate = await queuedJobMemoryApi.prepareDocumentJobMemoryCandidate(state.env, authority, 'en');
+  queuedJobMemoryCandidateOpaque(candidate);
+  return { authority, candidate };
+}
+
+// Transparent interception delegates every actual batch. The after callback may
+// damage only its returned acknowledgement, never replace SQL or manufacture rows.
+function interceptDocumentJobPublication(state, { before, after } = {}) {
+  const db = state.env.DB, original = db.batch; let attempts = 0, captured = null;
+  db.batch = async statements => {
+    const publication = statements.some(statement => /^INSERT INTO memory_document_job_answer_origins\(/u.test(statement.sql));
+    if (publication) { attempts++; captured = statements; if (before) await before(statements); }
+    const result = await original.call(db, statements);
+    return publication && after ? after(result, statements) : result;
+  };
+  return { get attempts() { return attempts; }, get statements() { return captured; }, restore() { db.batch = original; } };
+}
+
+function documentJobPublicationQuiet(state, before) {
+  const after = documentJobPublicationFootprint(state);
+  assert.deepEqual(after.unpaid.financial, before.unpaid.financial);
+  assert.equal(after.unpaid.calls, before.unpaid.calls); assert.equal(after.unpaid.seedCalls, before.unpaid.seedCalls);
+  assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+  for (const table of ['assistant_turns', 'assistant_action_proposals', 'assistant_action_commits',
+    'memory_live_enrollments', 'memory_live_sources', 'memory_live_runs', 'memory_live_conversation_segments'])
+    assert.deepEqual(after.tables[table], before.tables[table], table + ' cannot be a publication side effect');
+  assert.deepEqual(after.ledger, before.ledger);
+  for (const table of ['events', 'event_private_payloads', 'private_content', 'project_event_scopes',
+    'project_resource_scopes', 'private_content_retention_scopes'])
+    for (const previous of before.tables[table]) assert.ok(after.tables[table].some(value => JSON.stringify(value) === JSON.stringify(previous)),
+      'Every prior native row remains unchanged: ' + table);
+  assert.equal(state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(state.publicationExpiredControl).content,
+    'PUBLICATION_OPTIONAL_CLEANUP_MUST_NOT_RUN');
+  assert.deepEqual(after.unpaid.jobs.filter(row => row.job_id !== state.jobMemoryJobId),
+    before.unpaid.jobs.filter(row => row.job_id !== state.jobMemoryJobId));
+}
+
+async function assertDocumentJobPublication(state, before, outcome) {
+  const { createHash } = await import('node:crypto');
+  const sha = value => createHash('sha256').update(value, 'utf8').digest('hex');
+  const row = state.jobMemoryCaptured.running, e = state.current();
+  assert.equal(outcome.jobId, row.job_id); assert.equal(outcome.noAutomaticRetry, true);
+  assert.ok(['committed', 'indeterminate'].includes(outcome.status));
+  assert.deepEqual(Object.keys(outcome).sort(), ['jobId', 'noAutomaticRetry', 'originId', 'status']);
+  assert.equal(Object.isFrozen(outcome), true);
+  const header = state.sqlite.prepare('SELECT * FROM memory_document_job_answer_origins WHERE origin_id=?').get(outcome.originId);
+  assert.ok(header); assert.equal(Object.keys(header).length, 61);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_answer_origins').get().n,
+    before.publication.memory_document_job_answer_origins.length + 1);
+  assert.equal(header.job_id, row.job_id); assert.equal(header.actor_user_id, e.actor_user_id);
+  assert.equal(header.owner_user_id, e.owner_user_id); assert.equal(header.project_id, e.project_id);
+  assert.equal(header.document_id, e.document_id); assert.equal(header.organization_id, e.organization_id);
+  assert.equal(header.project_access_id, e.project_access_id); assert.equal(header.stream_id, row.stream_id);
+  assert.equal(header.scope_key, JSON.stringify([e.organization_id ?? '', e.project_access_id ?? '', e.project_id, e.document_id]));
+  assert.equal(header.attempt_count, row.attempt_count); assert.equal(header.correlation_id, row.correlation_id);
+  assert.equal(header.requested_sequence, row.requested_sequence); assert.equal(header.input_content_ref, state.jobMemoryInputRef);
+  assert.equal(header.request_sha256, sha(row.request_json)); assert.equal(header.input_sha256, sha(state.jobMemoryInput));
+  const claimFields = ['job_id', 'owner_id', 'stream_id', 'document_id', 'kind', 'status', 'source_surface', 'correlation_id',
+    'requested_sequence', 'request_json', 'error_message', 'attempt_count', 'requested_at', 'started_at', 'completed_at',
+    'lease_expires_at', 'notified_at', 'expires_at'];
+  assert.equal(header.claim_sha256, sha(JSON.stringify(claimFields.map(key => row[key]))));
+  assert.equal(header.user_sha256, sha(state.jobMemoryInput)); assert.equal(header.status, 'active');
+  assert.equal(header.withdrawn_at, null); assert.equal(header.withdrawal_reason, null);
+  assert.equal(header.mode, state.publicationStructured ? 'structured' : 'extractive');
+  const H = Math.max(0, ...before.tables.events.filter(event => event.stream_id === row.stream_id).map(event => event.sequence));
+  assert.equal(header.source_head, H); assert.equal(header.user_source_sequence, H + 1); assert.equal(header.answer_source_sequence, H + 2);
+  const added = (table, key) => state.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all()
+    .filter(value => !before.tables[table].some(old => old[key] === value[key]));
+  const events = added('events', 'event_id'); assert.equal(events.length, 2);
+  assert.deepEqual(events.map(event => event.event_id), [header.user_event_id, header.answer_event_id]);
+  assert.deepEqual(events.map(event => event.sequence), [H + 1, H + 2]);
+  assert.deepEqual(events.map(event => event.type), ['ChatMessageSent', 'AssistantReasoned']);
+  assert.deepEqual(events.map(event => event.actor), ['user:' + row.owner_id, 'worker:memory']);
+  assert.equal(events[1].causation_id, events[0].event_id);
+  const bodies = added('private_content', 'content_id'); assert.equal(bodies.length, 3);
+  assert.deepEqual(bodies.map(body => body.content_id), [header.user_content_id, header.manifest_content_ref, header.answer_content_id]);
+  assert.deepEqual(bodies.map(body => body.kind), ['chat-user', 'memory-document-job-origin', 'chat-assistant-memory']);
+  assert.equal(new Set([...events.map(event => event.event_id), ...bodies.map(body => body.content_id)]).size, 5);
+  assert.equal(bodies[0].content, state.jobMemoryInput); assert.equal(sha(bodies[2].content), header.answer_sha256);
+  assert.equal(sha(bodies[1].content), header.manifest_sha256); assert.ok(bodies[2].content.length > 0);
+  const manifest = JSON.parse(bodies[1].content);
+  assert.equal(manifest.mode, header.mode); assert.equal(manifest.contextJson.includes('PRIVATE_NATIVE_JOB_MEMORY_INPUT'), false);
+  assert.equal(manifest.job.inputContentRef, state.jobMemoryInputRef); assert.equal(manifest.job.sourceHead, H);
+  assert.equal(manifest.consumedValueSha256, sha(manifest.contextJson));
+  assert.ok(Date.parse(manifest.lifetime.capturedAt) <= Date.parse(header.created_at));
+  // Re-render the independently checked saved context with the retained pure
+  // renderer, not an answer field or a new authority supplied by this test.
+  const { nativeMemoryAssistantReply, nativeStructuredMemoryAssistantReply } = await import('../worker/memory-assistant-reply.ts');
+  const expectedAnswer = (state.publicationStructured ? nativeStructuredMemoryAssistantReply : nativeMemoryAssistantReply)(JSON.parse(manifest.contextJson), 'en');
+  assert.ok(expectedAnswer); assert.equal(bodies[2].content, expectedAnswer);
+  for (const [index, event] of events.entries()) {
+    assert.equal(event.stream_id, row.stream_id); assert.equal(event.correlation_id, row.correlation_id);
+    assert.equal(event.client_id, 'server:document-job:chat');
+    const secret = state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(event.event_id);
+    assert.ok(secret); assert.equal(secret.owner_id, e.owner_user_id); assert.equal(secret.redacted_at, null);
+    const payload = JSON.parse(secret.private_json);
+    assert.equal(payload.job_id, row.job_id); assert.equal(payload.turn_id, header.turn_id);
+    assert.equal(payload.document_id, row.document_id); assert.equal(payload.project_id, e.project_id);
+    assert.equal(payload.content_ref, index === 0 ? header.user_content_id : header.answer_content_id);
+    assert.equal(payload.operation, 'document-job-memory'); assert.equal(payload.source_surface, 'chat');
+    if (index === 1) { assert.equal(payload.memory_origin_version, 3); assert.equal(payload.answer_only, true); assert.equal(payload.locale, 'en'); }
+    assert.equal(event.payload.includes(state.jobMemoryInput), false);
+    assert.equal(event.payload.includes(bodies[2].content), false);
+  }
+  assert.equal(added('event_private_payloads', 'private_event_id').length, 2);
+  const input = before.tables.private_content.find(body => body.content_id === state.jobMemoryInputRef);
+  assert.ok(input); assert.equal(header.input_expires_at, input.expires_at);
+  for (const body of bodies) {
+    assert.equal(body.owner_id, row.owner_id); assert.equal(body.redacted_at, null);
+    assert.ok(Date.parse(body.created_at) <= Date.parse(header.created_at));
+    assert.ok(Date.parse(body.expires_at) > Date.parse(body.created_at));
+    assert.ok(Date.parse(body.expires_at) <= Math.min(Date.parse(input.expires_at), Date.parse(row.expires_at), Date.parse(header.source_retention_ceiling)));
+    const resources = state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").all(body.content_id);
+    const retention = state.sqlite.prepare('SELECT * FROM private_content_retention_scopes WHERE content_id=?').all(body.content_id);
+    assert.equal(resources.length, state.publicationShared ? 1 : 0); assert.equal(retention.length, state.publicationShared ? 1 : 0);
+    if (state.publicationShared) {
+      const resource = resources[0], assigned = retention[0];
+      for (const value of [resource, assigned]) {
+        assert.equal(value.actor_user_id, e.actor_user_id); assert.equal(value.project_id, e.project_id);
+        assert.equal(value.project_access_id, e.project_access_id); assert.equal(value.organization_id, e.organization_id);
+        assert.equal(value.created_at, body.created_at);
+      }
+      assert.equal(resource.owner_user_id, e.owner_user_id); assert.equal(resource.visibility, 'actor_private');
+      assert.equal(resource.source_event_id, null); assert.equal(assigned.classification, 'transient-private');
+      assert.equal(assigned.assigned_expires_at, body.expires_at);
+      assert.equal(assigned.policy_version, Number(state.sqlite.prepare('SELECT version FROM organization_retention_policies WHERE organization_id=?').get(e.organization_id)?.version ?? 0));
+    }
+  }
+  assert.equal(bodies[2].expires_at, header.answer_expires_at); assert.equal(bodies[1].expires_at, header.manifest_expires_at);
+  assert.ok(Date.parse(bodies[2].expires_at) <= Date.parse(bodies[1].expires_at));
+  assert.ok(Date.parse(bodies[1].expires_at) <= Date.parse(bodies[0].expires_at));
+  const scopeRows = added('project_event_scopes', 'event_id');
+  assert.equal(scopeRows.length, state.publicationShared ? 2 : 0);
+  if (state.publicationShared) {
+    const old = before.tables.project_event_scopes.filter(value => value.project_access_id === e.project_access_id);
+    const P = Math.max(0, ...old.map(value => value.project_sequence)); assert.equal(header.project_source_head, P);
+    assert.deepEqual(scopeRows.map(value => value.project_sequence), [P + 1, P + 2]);
+    assert.deepEqual(scopeRows.map(value => value.source_sequence), [H + 1, H + 2]);
+    for (const value of scopeRows) { assert.equal(value.actor_user_id, e.actor_user_id); assert.equal(value.source_stream_id, row.stream_id); }
+    const migration = state.sqlite.prepare('SELECT * FROM project_migration_states WHERE project_access_id=?').get(e.project_access_id);
+    assert.equal(migration.last_owner_sequence, H + 2); assert.equal(migration.updated_at, header.created_at);
+  } else assert.equal(header.project_source_head, null);
+  const selectors = state.sqlite.prepare('SELECT * FROM memory_document_job_origin_dependencies WHERE origin_id=? ORDER BY resource_kind,resource_id').all(outcome.originId);
+  assert.equal(selectors.length, header.selector_count); assert.ok(selectors.length > 1);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies').get().n,
+    before.publication.memory_document_job_origin_dependencies.length + selectors.length);
+  const keys = selectors.map(value => JSON.stringify([value.resource_kind, value.resource_id])).sort();
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(keys.includes(JSON.stringify(['enrollment', e.enrollment_id])));
+  const expectedSelectors = new Set([JSON.stringify(['enrollment', e.enrollment_id])]);
+  const addSelector = (kind, id) => { if (id !== null) expectedSelectors.add(JSON.stringify([kind, id])); };
+  if (state.publicationStructured) {
+    for (const value of manifest.originals) { addSelector('event', value.event_id); addSelector('private-content', value.content_id); }
+    for (const value of manifest.ledgerRevisions) { addSelector('ledger', value.ledger_id); addSelector('private-content', value.body_ref); }
+    for (const original of state.jobMemoryStructuredSeed.originals) {
+      assert.ok(keys.includes(JSON.stringify(['event', original.eventId]))); assert.ok(keys.includes(JSON.stringify(['private-content', original.contentRef])));
+      assert.ok(manifest.originals.some(value => value.event_id === original.eventId && value.content_id === original.contentRef && value.content_sha256 === sha(original.text)));
+    }
+    assert.ok(manifest.contextJson.includes(state.jobMemoryStructuredSeed.seed.message));
+  } else {
+    for (const value of manifest.dependencies) { addSelector('event', value.event_id); addSelector('private-content', value.user_content_id); addSelector('private-content', value.assistant_content_id); }
+    for (const id of state.jobMemorySeedSources.flatMap(value => [value.pointers.authored, value.pointers.answer])) {
+      assert.ok(keys.includes(JSON.stringify(['private-content', id])));
+      const original = before.tables.private_content.find(value => value.content_id === id); assert.ok(original);
+      assert.ok(manifest.contextJson.includes(JSON.stringify(original.content).slice(1, -1)), 'Retained fixture text is present exactly in the certified context');
+    }
+  }
+  assert.deepEqual(keys, [...expectedSelectors].sort(), 'Complete selectors include all admitted members, not just rendered quotes');
+  // OR is a closed comparison cross-check only. It neither grants access nor
+  // replaces the independently expected event/body/job/cursor assertions above.
+  const { validateDocumentJobOriginRecord } = await import('../worker/memory-document-job-origin-record.ts');
+  assert.ok(await validateDocumentJobOriginRecord(header, bodies[1].content, selectors));
+  const job = state.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(row.job_id);
+  assert.equal(job.status, 'completed'); assert.equal(job.lease_expires_at, null); assert.equal(job.error_message, null);
+  assert.equal(job.completed_at, header.created_at); assert.equal(job.updated_at, header.created_at);
+  assert.deepEqual(JSON.parse(job.result_json), { memoryDocumentJobOrigin: { version: 1, originId: outcome.originId }, stage: 'completed', noAutomaticRetry: true });
+  const previousJob = before.unpaid.jobs.find(value => value.job_id === row.job_id);
+  assert.ok(previousJob);
+  assert.deepEqual(Object.keys(job).sort(), Object.keys(previousJob).sort());
+  for (const key of Object.keys(previousJob).filter(key => !['status', 'lease_expires_at', 'completed_at', 'updated_at', 'result_json', 'error_message'].includes(key)))
+    assert.deepEqual(job[key], previousJob[key], 'Original persisted job field is preserved: ' + key);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS count FROM output_operation_slots WHERE job_id=?').get(row.job_id).count, 0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM event_write_stage').get().n, 0);
+  assert.equal(state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(row.stream_id).head, H + 2);
+  documentJobPublicationQuiet(state, before);
+  return { header, bodies, events, selectors, manifest };
+}
+
+test('job origin publication: genuine personal and shared extractive and structured candidates commit one complete native footprint', { timeout: 90_000 }, async t => {
+  for (const shared of [false, true]) for (const structured of [false, true]) {
+    const state = await documentJobPublicationFixture(t, { shared, structured }); let hook;
+    try {
+      const { authority, candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+      hook = interceptDocumentJobPublication(state);
+      const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+      assert.equal(outcome.status, 'committed'); assert.equal(hook.attempts, 1);
+      await assertDocumentJobPublication(state, before, outcome);
+      const committed = documentJobPublicationFootprint(state);
+      assert.equal(await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate), outcome);
+      assert.equal(hook.attempts, 1); assert.deepEqual(documentJobPublicationFootprint(state), committed);
+      assert.equal(await queuedJobMemoryApi.replayDocumentJobMemoryCandidate(state.env, candidate), null);
+      assert.equal(await queuedJobMemoryApi.replayDocumentJobMemoryAuthority(state.env, authority), null);
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin publication: last-moment original source authority and head changes abort the whole publication batch', { timeout: 90_000 }, async t => {
+  for (const fault of ['source', 'input', 'enrollment', 'retention', 'owner-head', 'project-head']) {
+    const state = await documentJobPublicationFixture(t, { shared: true }); let hook, changed;
+    try {
+      const { candidate } = await documentJobPublicationCandidate(state);
+      hook = interceptDocumentJobPublication(state, { before: async () => {
+        if (fault === 'owner-head') await appendContextReadEvents(state, [['DocumentRenamed', { project_id: 'project-atmosphere', document_id: 'doc-atmosphere', new_title: 'Late head change' }]]);
+        else if (fault === 'project-head') {
+          const update = state.sqlite.prepare('UPDATE project_migration_states SET last_owner_sequence=last_owner_sequence-1 WHERE project_access_id=?').run(state.current().project_access_id);
+          assert.equal(Number(update.changes), 1);
+        } else assert.equal(queuedJobMemoryCandidateMutation(state, fault), 1);
+        changed = documentJobPublicationFootprint(state);
+      } });
+      const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+      assert.equal(hook.attempts, 1, fault); assert.ok(changed); assert.equal(outcome.status, 'indeterminate', fault);
+      assert.deepEqual(documentJobPublicationFootprint(state), changed, 'Rollback keeps only the independent late mutation: ' + fault);
+      assert.equal(await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate), outcome);
+      assert.equal(hook.attempts, 1);
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+function documentJobPublicationIds(statements) {
+  const bodies = statements.filter(statement => /^INSERT INTO private_content\s*\(/u.test(statement.sql));
+  const events = statements.filter(statement => /^INSERT INTO event_write_stage\s*\(/u.test(statement.sql));
+  const header = statements.find(statement => /^INSERT INTO memory_document_job_answer_origins\(/u.test(statement.sql));
+  assert.equal(bodies.length, 3); assert.equal(events.length, 2); assert.ok(header);
+  return { bodies: bodies.map(statement => statement.values[0]), events: events.map(statement => statement.values[0]), origin: header.values[0] };
+}
+
+const publicationSqlLiteral = value => "'" + String(value).replaceAll("'", "''") + "'";
+
+test('job origin publication: suppressing any required native write aborts and rolls back the complete transaction', { timeout: 180_000 }, async t => {
+  const targets = [
+    ...['private_content', 'project_resource_scopes', 'private_content_retention_scopes'].flatMap(table => [0, 1, 2].map(index => ({ table, index }))),
+    ...['event_write_stage', 'events', 'event_private_payloads', 'project_event_scopes'].flatMap(table => [0, 1].map(index => ({ table, index }))),
+    ...['project_migration_states', 'memory_document_job_answer_origins', 'memory_document_job_origin_dependencies', 'document_jobs'].map(table => ({ table, index: 0 })),
+  ];
+  assert.equal(targets.length, 21);
+  for (const target of targets) {
+    const state = await documentJobPublicationFixture(t, { shared: true }); let hook, suppressed = 0;
+    try {
+      const { candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+      const originalGuard = state.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='event_write_stage_after_insert'").get();
+      assert.ok(originalGuard);
+      // A fixture-local observation survives rollback; only this fault trigger is
+      // temporary. The real stage/append-only triggers are never changed.
+      state.sqlite.function('publication_fault_seen', () => { suppressed++; return 1; });
+      hook = interceptDocumentJobPublication(state, { before: statements => {
+        const ids = documentJobPublicationIds(statements); let predicate;
+        if (target.table === 'private_content') predicate = 'NEW.content_id=' + publicationSqlLiteral(ids.bodies[target.index]);
+        else if (target.table === 'project_resource_scopes') predicate = "NEW.resource_kind='content' AND NEW.resource_id=" + publicationSqlLiteral(ids.bodies[target.index]);
+        else if (target.table === 'private_content_retention_scopes') predicate = 'NEW.content_id=' + publicationSqlLiteral(ids.bodies[target.index]);
+        else if (target.table === 'event_private_payloads') predicate = 'NEW.private_event_id=' + publicationSqlLiteral(ids.events[target.index]);
+        else if (['events', 'event_write_stage', 'project_event_scopes'].includes(target.table)) predicate = 'NEW.event_id=' + publicationSqlLiteral(ids.events[target.index]);
+        else if (target.table === 'project_migration_states') predicate = 'NEW.project_access_id=' + publicationSqlLiteral(state.current().project_access_id);
+        else if (target.table === 'document_jobs') predicate = 'NEW.job_id=' + publicationSqlLiteral(state.jobMemoryJobId) + " AND NEW.status='completed'";
+        else predicate = 'NEW.origin_id=' + publicationSqlLiteral(ids.origin);
+        const operation = ['project_migration_states', 'document_jobs'].includes(target.table) ? 'UPDATE' : 'INSERT';
+        state.sqlite.exec('CREATE TEMP TRIGGER fixture_publication_suppress BEFORE ' + operation + ' ON ' + target.table
+          + ' WHEN (' + predicate + ') AND publication_fault_seen()=1 BEGIN SELECT RAISE(IGNORE); END');
+      } });
+      const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+      assert.equal(hook.attempts, 1, JSON.stringify(target)); assert.ok(suppressed > 0, 'Actual target trigger fired: ' + JSON.stringify(target));
+      assert.equal(outcome.status, 'indeterminate'); assert.equal(outcome.noAutomaticRetry, true);
+      assert.deepEqual(documentJobPublicationFootprint(state), before, 'No partial publication survives: ' + JSON.stringify(target));
+      assert.deepEqual(state.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='event_write_stage_after_insert'").get(), originalGuard);
+      assert.equal(await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate), outcome);
+      assert.equal(hook.attempts, 1);
+    } finally { hook?.restore(); state.sqlite.exec('DROP TRIGGER IF EXISTS temp.fixture_publication_suppress'); await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin publication: a lost post-commit acknowledgement stays indeterminate and cannot retry locally', { timeout: 30_000 }, async t => {
+  const state = await documentJobPublicationFixture(t, { shared: true, structured: true }); let hook;
+  try {
+    const { authority, candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+    hook = interceptDocumentJobPublication(state, { after: () => { throw new Error('fixture_actual_publication_ack_lost'); } });
+    const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+    assert.equal(hook.attempts, 1); assert.equal(outcome.status, 'indeterminate');
+    await assertDocumentJobPublication(state, before, outcome);
+    const committed = documentJobPublicationFootprint(state);
+    assert.equal(await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate), outcome);
+    assert.equal(hook.attempts, 1); assert.deepEqual(documentJobPublicationFootprint(state), committed);
+    assert.equal(await queuedJobMemoryApi.replayDocumentJobMemoryAuthority(state.env, authority), null);
+    assert.equal(await queuedJobMemoryApi.prepareDocumentJobMemoryCandidate(state.env, authority), null);
+    assert.equal(await queuedJobMemoryApi.replayDocumentJobMemoryCandidate(state.env, candidate), null);
+  } finally { hook?.restore(); await state.jobMemoryStop(); }
+});
+
+test('job origin publication: malformed dense or sparse acknowledgements never promote an actual commit to confirmed success', { timeout: 180_000 }, async t => {
+  const variants = ['hole', 'short', 'extra', 'success-false', 'error', 'missing-results', 'array-receipt',
+    'changes-string', 'changes-zero', 'inherited-changes', 'array-meta', 'write-results',
+    'assertion-zero', 'assertion-extra-key', 'array-assertion', 'source-assertion-zero', 'database-swap'];
+  for (const variant of variants) {
+    const state = await documentJobPublicationFixture(t), originalDb = state.env.DB; let hook, damaged = 0, replacementCalls = 0;
+    try {
+      const { candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+      hook = interceptDocumentJobPublication(state, { after: (actual, statements) => {
+        const rows = structuredClone(actual), write = statements.findIndex(statement => /^INSERT INTO memory_document_job_answer_origins\(/u.test(statement.sql));
+        const asserted = rows.findIndex(result => result.results?.[0]?.document_job_origin_verified === 1);
+        const source = rows.findIndex(result => result.results?.[0]?.context_source_asserted === 1);
+        assert.ok(write >= 0 && asserted >= 0 && source >= 0); damaged++;
+        if (variant === 'hole') delete rows[write];
+        else if (variant === 'short') rows.pop();
+        else if (variant === 'extra') rows.push(structuredClone(rows[write]));
+        else if (variant === 'success-false') rows[write].success = false;
+        else if (variant === 'error') rows[write].error = 'real_commit_but_error_envelope';
+        else if (variant === 'missing-results') delete rows[write].results;
+        else if (variant === 'array-receipt') rows[write] = Object.assign([], rows[write]);
+        else if (variant === 'changes-string') rows[write].meta.changes = '1';
+        else if (variant === 'changes-zero') rows[write].meta.changes = 0;
+        else if (variant === 'inherited-changes') rows[write].meta = Object.create({ changes: 1 });
+        else if (variant === 'array-meta') rows[write].meta = Object.assign([], { changes: 1 });
+        else if (variant === 'write-results') rows[write].results = [{ unexpected: 1 }];
+        else if (variant === 'assertion-zero') rows[asserted].results[0].document_job_origin_verified = 0;
+        else if (variant === 'assertion-extra-key') rows[asserted].results[0].unexpected = 1;
+        else if (variant === 'array-assertion') rows[asserted].results[0] = Object.assign([], { document_job_origin_verified: 1 });
+        else if (variant === 'source-assertion-zero') rows[source].results[0].context_source_asserted = 0;
+        else state.env.DB = { prepare() { replacementCalls++; throw new Error('replacement_database_used'); },
+          async batch() { replacementCalls++; throw new Error('replacement_database_used'); } };
+        return rows;
+      } });
+      const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+      assert.equal(damaged, 1, variant); assert.equal(hook.attempts, 1); assert.equal(outcome.status, 'indeterminate', variant);
+      assert.equal(replacementCalls, 0); state.env.DB = originalDb;
+      await assertDocumentJobPublication(state, before, outcome);
+      const committed = documentJobPublicationFootprint(state);
+      assert.equal(await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate), outcome);
+      assert.equal(hook.attempts, 1); assert.deepEqual(documentJobPublicationFootprint(state), committed);
+    } finally { state.env.DB = originalDb; hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+async function documentJobPublicationMarker(state, type) {
+  const { makeEvent, eventWriteBindings, EVENT_WRITE_COLUMNS } = await import('../worker/runtime.ts');
+  const row = state.jobMemoryCaptured.running;
+  const head = state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(row.stream_id).head;
+  // Real immutable insertion, before fresh native authority capture. Negative
+  // chat/budget markers establish prior completion, not positive answer authority.
+  const event = makeEvent(row.stream_id, head + 1, 'user:' + row.owner_id, 'publication-prior-marker', row.correlation_id,
+    type, { project_id: state.current().project_id, document_id: row.document_id, new_title: 'Prior correlated marker', marker: 'PRIOR_CORRELATED_NATIVE_MARKER' });
+  const values = eventWriteBindings(event);
+  await state.env.DB.prepare('INSERT INTO event_write_stage(' + EVENT_WRITE_COLUMNS + ') VALUES(' + values.map(() => '?').join(',') + ')').bind(...values).run();
+  return event;
+}
+
+test('job origin publication: an earlier non-chat correlated marker is allowed but prior chat budget or usage completion is denied', { timeout: 90_000 }, async t => {
+  for (const type of ['DocumentRenamed', 'ChatMessageSent', 'AssistantReasoned', 'BudgetReserved', 'BudgetReleased', 'BudgetExceeded', 'GenerationUsageRecorded']) {
+    const state = await documentJobPublicationFixture(t); let hook;
+    try {
+      const marker = await documentJobPublicationMarker(state, type);
+      const eventBefore = state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(marker.eventId);
+      const { candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+      hook = interceptDocumentJobPublication(state);
+      const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+      assert.equal(hook.attempts, 1, type);
+      if (type === 'DocumentRenamed') {
+        assert.equal(outcome.status, 'committed'); const value = await assertDocumentJobPublication(state, before, outcome);
+        assert.equal(value.header.source_head, marker.sequence);
+        assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND correlation_id=?').get(marker.streamId, marker.correlationId).n, 3);
+      } else {
+        assert.equal(outcome.status, 'indeterminate', type); assert.deepEqual(documentJobPublicationFootprint(state), before);
+      }
+      assert.deepEqual(state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(marker.eventId), eventBefore);
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+// Dedicated-reader cases start from actual AP publication, then obtain a fresh
+// native document preparation. No decoded record becomes a current capability.
+async function documentJobOriginReaderFixture(t, options = {}) {
+  const state = await documentJobPublicationFixture(t, options);
+  try {
+    const { candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+    const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+    assert.equal(outcome.status, 'committed');
+    const published = await assertDocumentJobPublication(state, before, outcome);
+    const prepared = await nativeMemoryPrepare(state);
+    const { readDocumentJobMemoryOrigin } = await import('../worker/memory-document-job-origin-reader.ts');
+    return Object.assign(state, { originReaderPublished: published, originReaderPrepared: prepared,
+      originReaderTarget: { originId: outcome.originId, jobId: outcome.jobId }, readDocumentJobMemoryOrigin });
+  } catch (error) { await state.jobMemoryStop(); throw error; }
+}
+
+function documentJobOriginReaderFootprint(state) {
+  return { ...documentJobPublicationFootprint(state), sessions: state.sqlite.prepare('SELECT * FROM project_context_sessions ORDER BY context_id').all().map(row => ({ ...row })),
+    schema: state.sqlite.prepare(
+    "SELECT name,type,tbl_name,sql FROM sqlite_schema WHERE tbl_name IN('memory_document_job_answer_origins','memory_document_job_origin_dependencies','private_content') ORDER BY type,name")
+    .all().map(row => ({ ...row })) };
+}
+
+const unavailableDocumentJobOrigin = value => {
+  assert.deepEqual(value, { status: 'unavailable', fallbackAllowed: false });
+  assert.equal(Object.isFrozen(value), true); assert.equal(Object.hasOwn(value, 'text'), false);
+};
+
+async function currentDocumentJobOrigin(state, prepared = state.originReaderPrepared, target = state.originReaderTarget) {
+  const before = documentJobOriginReaderFootprint(state);
+  const value = await state.readDocumentJobMemoryOrigin(state.env, prepared, target);
+  assert.equal(value.status, 'current'); assert.equal(value.fallbackAllowed, false); assert.equal(Object.isFrozen(value), true);
+  assert.deepEqual(Object.keys(value).sort(), ['fallbackAllowed', 'jobId', 'locale', 'originId', 'status', 'text', 'turnId', 'validUntil']);
+  assert.equal(value.originId, state.originReaderTarget.originId); assert.equal(value.jobId, state.originReaderTarget.jobId);
+  assert.equal(value.turnId, state.originReaderPublished.header.turn_id); assert.equal(value.locale, 'en');
+  assert.equal(value.text, state.originReaderPublished.bodies[2].content);
+  assert.ok(Date.parse(value.validUntil) > Date.now()); assert.ok(Date.parse(value.validUntil) <= Date.now() + 60_000);
+  const h = state.originReaderPublished.header;
+  assert.ok(Date.parse(value.validUntil) <= Math.min(...[h.input_expires_at, h.job_expires_at, h.enrollment_expires_at,
+    h.answer_expires_at, h.manifest_expires_at, h.source_retention_ceiling].map(Date.parse)));
+  assert.deepEqual(documentJobOriginReaderFootprint(state), before, 'Dedicated reads never mark, repair, publish or clean retained rows');
+  assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+  return value;
+}
+
+// Finite scalar fault helper. All table/column/where literals below are authored
+// fixture SQL; no caller-supplied query or replacement read proof is accepted.
+function documentJobOriginReaderCell(state, table, column, where, bindings, value) {
+  const old = state.sqlite.prepare('SELECT ' + column + ' AS original FROM ' + table + ' WHERE ' + where).get(...bindings);
+  assert.ok(old); const write = next => {
+    const result = state.sqlite.prepare('UPDATE ' + table + ' SET ' + column + '=? WHERE ' + where).run(next, ...bindings);
+    assert.equal(Number(result.changes), 1);
+  };
+  write(value); return () => write(old.original);
+}
+
+const documentJobOriginHeaderRead = /^SELECT origin_id,schema_version,recipe_version,[\s\S]* FROM memory_document_job_answer_origins\b/u;
+
+const documentJobOriginBodyRead = /^SELECT content_id,owner_id,kind,content,created_at,expires_at,redacted_at FROM private_content body\b/u;
+
+function interceptDocumentJobOriginFinal(state, { before, after } = {}) {
+  const db = state.env.DB, original = db.batch; let finalBatches = 0;
+  db.batch = async statements => {
+    const final = statements.some(statement => documentJobOriginHeaderRead.test(statement.sql))
+      && statements.some(statement => documentJobOriginBodyRead.test(statement.sql));
+    if (final) { finalBatches++; if (before) await before(statements); }
+    const results = await original.call(db, statements);
+    return final && after ? after(results, statements) : results;
+  };
+  return { get finalBatches() { return finalBatches; }, restore() { db.batch = original; } };
+}
+
+test('job origin reader: fresh native personal and shared extractive and structured reads return only the genuine published answer', { timeout: 120_000 }, async t => {
+  for (const shared of [false, true]) for (const structured of [false, true]) {
+    const state = await documentJobOriginReaderFixture(t, { shared, structured }); let hook;
+    try {
+      const published = documentJobOriginReaderFootprint(state); hook = interceptDocumentJobOriginFinal(state);
+      const first = await currentDocumentJobOrigin(state); assert.equal(hook.finalBatches, 1);
+      const second = await currentDocumentJobOrigin(state); assert.equal(hook.finalBatches, 2);
+      assert.equal(second.text, first.text); assert.equal(second.originId, first.originId);
+      assert.deepEqual(documentJobOriginReaderFootprint(state), published);
+      assert.equal(state.originReaderPublished.header.mode, structured ? 'structured' : 'extractive');
+      // A fresh request can renew only its own short read lease, never the stored
+      // publication proof, body lifetime, enrollment or durable source ceiling.
+      assert.equal(state.sqlite.prepare('SELECT proof_valid_until FROM memory_document_job_answer_origins WHERE origin_id=?')
+        .get(first.originId).proof_valid_until, state.originReaderPublished.header.proof_valid_until);
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin reader: target scope configuration and current recall or session denial never allow fallback', { timeout: 60_000 }, async t => {
+  const state = await documentJobOriginReaderFixture(t, { shared: true });
+  try {
+    await currentDocumentJobOrigin(state);
+    for (const target of [null, {}, { ...state.originReaderTarget, extra: 'not-accepted' },
+      { ...state.originReaderTarget, originId: crypto.randomUUID() }, { ...state.originReaderTarget, jobId: crypto.randomUUID() }]) {
+      const before = documentJobOriginReaderFootprint(state);
+      unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, target));
+      assert.deepEqual(documentJobOriginReaderFootprint(state), before);
+    }
+    const wrongDocument = structuredClone(state.originReaderPrepared); wrongDocument.binding.documentId = 'reader-unrelated-document';
+    const before = documentJobOriginReaderFootprint(state);
+    unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, wrongDocument, state.originReaderTarget));
+    assert.deepEqual(documentJobOriginReaderFootprint(state), before);
+    for (const setting of ['FORMA_MEMORY_ENABLED', 'FORMA_MEMORY_USER_IDS']) {
+      const old = state.env[setting]; state.env[setting] = setting === 'FORMA_MEMORY_ENABLED' ? 'false' : '';
+      try { unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget)); }
+      finally { state.env[setting] = old; }
+      assert.deepEqual(documentJobOriginReaderFootprint(state), before); await currentDocumentJobOrigin(state);
+    }
+    const session = state.originReaderPrepared.binding.contextSessionId; assert.equal(typeof session, 'string'); assert.ok(session);
+    for (const [table, column, where, bindings, value] of [
+      ['memory_live_enrollments', 'recall_enabled', 'enrollment_id=?', [state.current().enrollment_id], 0],
+      ['project_context_sessions', 'revoked_at', 'context_id=?', [session], new Date().toISOString()],
+    ]) {
+      const restore = documentJobOriginReaderCell(state, table, column, where, bindings, value);
+      try {
+        const changed = documentJobOriginReaderFootprint(state);
+        unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+        assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+      } finally { restore(); }
+      await currentDocumentJobOrigin(state);
+    }
+  } finally { await state.jobMemoryStop(); }
+});
+
+test('job origin reader: changed own bodies header job or complete selector rows are unavailable without any repair', { timeout: 90_000 }, async t => {
+  const state = await documentJobOriginReaderFixture(t);
+  try {
+    await currentDocumentJobOrigin(state);
+    const h = state.originReaderPublished.header;
+    const faults = [
+      ...[h.input_content_ref, h.user_content_id, h.answer_content_id, h.manifest_content_ref]
+        .map(ref => ['private_content', 'content', 'content_id=?', [ref], 'CHANGED_OWN_PRIVATE_BODY']),
+      ['private_content', 'kind', 'content_id=?', [h.answer_content_id], 'condition'],
+      ...['answer_sha256', 'manifest_sha256', 'selector_list_sha256'].map(column => ['memory_document_job_answer_origins', column, 'origin_id=?', [h.origin_id], '0'.repeat(64)]),
+      ['memory_document_job_answer_origins', 'source_count', 'origin_id=?', [h.origin_id], h.source_count + 1],
+      ['document_jobs', 'result_json', 'job_id=?', [h.job_id], '{"stage":"changed"}'],
+      ['document_jobs', 'notified_at', 'job_id=?', [h.job_id], new Date().toISOString()],
+    ];
+    for (const [table, column, where, bindings, value] of faults) {
+      const restore = documentJobOriginReaderCell(state, table, column, where, bindings, value);
+      try {
+        const changed = documentJobOriginReaderFootprint(state);
+        unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+        assert.deepEqual(documentJobOriginReaderFootprint(state), changed, table + '.' + column);
+      } finally { restore(); }
+      await currentDocumentJobOrigin(state);
+    }
+    const dependency = state.sqlite.prepare('SELECT * FROM memory_document_job_origin_dependencies WHERE origin_id=? ORDER BY resource_kind,resource_id LIMIT 1').get(h.origin_id);
+    assert.ok(dependency);
+    for (const extra of [false, true]) {
+      const id = extra ? crypto.randomUUID() : dependency.resource_id, kind = extra ? 'private-content' : dependency.resource_kind;
+      const mutate = state.sqlite.prepare(extra
+        ? 'INSERT INTO memory_document_job_origin_dependencies(origin_id,resource_kind,resource_id) VALUES(?,?,?)'
+        : 'DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=? AND resource_kind=? AND resource_id=?');
+      assert.equal(Number(mutate.run(h.origin_id, kind, id).changes), 1);
+      try {
+        const changed = documentJobOriginReaderFootprint(state);
+        unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+        assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+      } finally {
+        const restore = state.sqlite.prepare(extra
+          ? 'DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=? AND resource_kind=? AND resource_id=?'
+          : 'INSERT INTO memory_document_job_origin_dependencies(origin_id,resource_kind,resource_id) VALUES(?,?,?)');
+        assert.equal(Number(restore.run(h.origin_id, kind, id).changes), 1);
+      }
+      await currentDocumentJobOrigin(state);
+    }
+  } finally { await state.jobMemoryStop(); }
+});
+
+test('job origin reader: every retained original and ledger body remains a current dependency rather than stored-hash authority', { timeout: 90_000 }, async t => {
+  for (const structured of [false, true]) {
+    const state = await documentJobOriginReaderFixture(t, { shared: true, structured });
+    try {
+      await currentDocumentJobOrigin(state);
+      const m = state.originReaderPublished.manifest;
+      const originalRefs = structured ? m.originals.map(value => value.content_id)
+        : m.dependencies.flatMap(value => [value.user_content_id, value.assistant_content_id]).filter(Boolean);
+      assert.ok(originalRefs.length >= 2);
+      const refs = [...new Set([...originalRefs, ...(structured ? m.ledgerRevisions.map(value => value.body_ref) : [])])];
+      if (structured) assert.ok(refs.length > new Set(originalRefs).size);
+      for (const ref of refs) {
+        const restore = documentJobOriginReaderCell(state, 'private_content', 'content', 'content_id=?', [ref], 'CHANGED_RETAINED_ORIGINAL_OR_LEDGER_BODY');
+        try {
+          const changed = documentJobOriginReaderFootprint(state);
+          unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+          assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+        } finally { restore(); }
+        await currentDocumentJobOrigin(state);
+      }
+      const h = state.originReaderPublished.header;
+      const restore = documentJobOriginReaderCell(state, 'private_content_retention_scopes', 'classification', 'content_id=?', [h.answer_content_id], 'governed-evidence');
+      try {
+        const changed = documentJobOriginReaderFootprint(state);
+        unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+        assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+      } finally { restore(); }
+      await currentDocumentJobOrigin(state);
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin reader: expiration withdrawn registrations and actual recall withdrawal stay unavailable without erasure or fallback', { timeout: 120_000 }, async t => {
+  for (const phase of ['expiry', 'withdrawn', 'minimized', 'consent']) {
+    const state = await documentJobOriginReaderFixture(t, { shared: phase === 'expiry' });
+    try {
+      await currentDocumentJobOrigin(state); const h = state.originReaderPublished.header;
+      if (phase === 'expiry') {
+        const past = new Date(Date.now() - 1_000).toISOString();
+        for (const [table, column, where, bindings] of [
+          ['private_content', 'expires_at', 'content_id=?', [h.answer_content_id]],
+          ['private_content', 'expires_at', 'content_id=?', [h.input_content_ref]],
+          ['private_content_retention_scopes', 'assigned_expires_at', 'content_id=?', [h.manifest_content_ref]],
+          ['memory_live_enrollments', 'expires_at', 'enrollment_id=?', [h.enrollment_id]],
+        ]) {
+          const restore = documentJobOriginReaderCell(state, table, column, where, bindings, past);
+          try {
+            const changed = documentJobOriginReaderFootprint(state);
+            unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+            assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+          } finally { restore(); }
+          await currentDocumentJobOrigin(state);
+        }
+      } else if (phase === 'consent') {
+        // Actual existing preference mutation, not a fabricated current guard.
+        // This tests recall denial, not physical job-origin cleanup completion.
+        const e = state.current(), response = await state.handleLiveMemory(state.settingsRequest({ ...state.preferences,
+          learn: false, recall: false, background: false, revision: e.revision }), state.env, 'settings');
+        const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body));
+        assert.equal(state.current().recall_enabled, 0);
+        const changed = documentJobOriginReaderFootprint(state);
+        unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+        assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+      } else {
+        // Negative persisted-state transition only; it mints no new publication
+        // or lifecycle certificate and is never restored to an active record.
+        const now = new Date().toISOString();
+        if (phase === 'withdrawn') assert.equal(Number(state.sqlite.prepare("UPDATE memory_document_job_answer_origins SET status='withdrawn',withdrawn_at=?,withdrawal_reason='manual' WHERE origin_id=?")
+          .run(now, h.origin_id).changes), 1);
+        else {
+          const permanent = new Set(['origin_id', 'schema_version', 'recipe_version', 'actor_user_id', 'scope_key', 'job_id', 'turn_id',
+            'user_event_id', 'user_content_id', 'answer_event_id', 'answer_content_id', 'manifest_content_ref', 'status', 'withdrawn_at', 'withdrawal_reason']);
+          const columns = Object.keys(h).filter(key => !permanent.has(key));
+          assert.equal(Number(state.sqlite.prepare('UPDATE memory_document_job_answer_origins SET ' + columns.map(key => key + '=NULL').join(',')
+            + ",status='minimized',withdrawn_at=?,withdrawal_reason='manual' WHERE origin_id=?").run(now, h.origin_id).changes), 1);
+        }
+        assert.equal(state.current().recall_enabled, 1, 'Registration-state denial is not masked by disabled recall');
+        const changed = documentJobOriginReaderFootprint(state);
+        unavailableDocumentJobOrigin(await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget));
+        assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+      }
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin reader: last-moment own source access dependency and schema changes are denied by the final native batch', { timeout: 120_000 }, async t => {
+  for (const fault of ['answer', 'source', 'header', 'dependency', 'recall', 'assigned-retention', 'schema']) {
+    const state = await documentJobOriginReaderFixture(t, { shared: true }); let hook, changed, mutated = 0;
+    try {
+      await currentDocumentJobOrigin(state); const h = state.originReaderPublished.header;
+      hook = interceptDocumentJobOriginFinal(state, { before: () => {
+        if (fault === 'answer' || fault === 'source') {
+          const ref = fault === 'answer' ? h.answer_content_id : state.jobMemorySeedSources[0].pointers.authored;
+          mutated = Number(state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run('LATE_READER_PRIVATE_CHANGE', ref).changes);
+        } else if (fault === 'header') mutated = Number(state.sqlite.prepare('UPDATE memory_document_job_answer_origins SET answer_sha256=? WHERE origin_id=?').run('f'.repeat(64), h.origin_id).changes);
+        else if (fault === 'dependency') {
+          const row = state.sqlite.prepare('SELECT resource_kind,resource_id FROM memory_document_job_origin_dependencies WHERE origin_id=? ORDER BY resource_kind,resource_id LIMIT 1').get(h.origin_id); assert.ok(row);
+          mutated = Number(state.sqlite.prepare('DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=? AND resource_kind=? AND resource_id=?').run(h.origin_id, row.resource_kind, row.resource_id).changes);
+        } else if (fault === 'recall') mutated = Number(state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(h.enrollment_id).changes);
+        else if (fault === 'assigned-retention') mutated = Number(state.sqlite.prepare('UPDATE private_content_retention_scopes SET assigned_expires_at=? WHERE content_id=?')
+          .run(new Date(Date.now() - 1_000).toISOString(), h.answer_content_id).changes);
+        else {
+          const beforeSchema = state.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='memory_document_job_answer_origins'").get().sql;
+          state.sqlite.exec('ALTER TABLE memory_document_job_answer_origins ADD COLUMN fixture_reader_schema_drift TEXT');
+          assert.notEqual(state.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='memory_document_job_answer_origins'").get().sql, beforeSchema);
+          mutated = 1;
+        }
+        changed = documentJobOriginReaderFootprint(state);
+      } });
+      const result = await state.readDocumentJobMemoryOrigin(state.env, state.originReaderPrepared, state.originReaderTarget);
+      assert.equal(hook.finalBatches, 1, fault); assert.equal(mutated, 1); assert.ok(changed);
+      unavailableDocumentJobOrigin(result); assert.deepEqual(documentJobOriginReaderFootprint(state), changed);
+      assert.equal(state.calls.length, 0);
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin reader: malformed native acknowledgements and mutable inputs never disclose an answer or call a replacement database', { timeout: 120_000 }, async t => {
+  const state = await documentJobOriginReaderFixture(t), db = state.env.DB;
+  try {
+    await currentDocumentJobOrigin(state);
+    for (const variant of ['hole', 'short', 'extra', 'success-false', 'own-error', 'inherited-error', 'inherited-error-getter',
+      'array-receipt', 'missing-results', 'row-getter', 'assertion-zero', 'database', 'prepared', 'target', 'settings']) {
+      let hook, damaged = 0, getterReads = 0, replacementCalls = 0;
+      const prepared = structuredClone(state.originReaderPrepared), target = { ...state.originReaderTarget };
+      const oldSetting = state.env.FORMA_MEMORY_USER_IDS, before = documentJobOriginReaderFootprint(state);
+      try {
+        // An unchanged snapshot of the server-prepared request must be usable;
+        // mutable-input failures below cannot be explained by a fake capability.
+        await currentDocumentJobOrigin(state, prepared, target);
+        hook = interceptDocumentJobOriginFinal(state, { after: (actual, statements) => {
+          const rows = structuredClone(actual), index = statements.findIndex(statement => documentJobOriginHeaderRead.test(statement.sql));
+          const assertion = rows.findIndex(value => value.results?.[0]?.job_origin_read_verified === 1);
+          assert.ok(index >= 0 && assertion >= 0); damaged++;
+          if (variant === 'hole') delete rows[index];
+          else if (variant === 'short') rows.pop();
+          else if (variant === 'extra') rows.push(structuredClone(rows[index]));
+          else if (variant === 'success-false') rows[index].success = false;
+          else if (variant === 'own-error') rows[index].error = 'failed';
+          else if (variant === 'inherited-error' || variant === 'inherited-error-getter') {
+            const prototype = variant === 'inherited-error' ? { error: 'failed' } : Object.defineProperty({}, 'error', {
+              get() { getterReads++; throw new Error('inherited_error_getter_must_not_run'); }, enumerable: true });
+            rows[index] = Object.assign(Object.create(prototype), rows[index]);
+          } else if (variant === 'array-receipt') rows[index] = Object.assign([], rows[index]);
+          else if (variant === 'missing-results') delete rows[index].results;
+          else if (variant === 'row-getter') Object.defineProperty(rows[index].results[0], 'origin_id', {
+            get() { getterReads++; throw new Error('row_getter_must_not_run'); }, enumerable: true });
+          else if (variant === 'assertion-zero') rows[assertion].results[0].job_origin_read_verified = 0;
+          else if (variant === 'database') state.env.DB = { prepare() { replacementCalls++; throw new Error('replacement_database_used'); },
+            async batch() { replacementCalls++; throw new Error('replacement_database_used'); } };
+          else if (variant === 'prepared') prepared.binding.documentId = 'changed-after-captured-read';
+          else if (variant === 'target') target.jobId = crypto.randomUUID();
+          else state.env.FORMA_MEMORY_USER_IDS = '';
+          return rows;
+        } });
+        const result = await state.readDocumentJobMemoryOrigin(state.env, prepared, target);
+        assert.equal(hook.finalBatches, 1, variant); assert.equal(damaged, 1); assert.equal(getterReads, 0); assert.equal(replacementCalls, 0);
+        unavailableDocumentJobOrigin(result); assert.deepEqual(documentJobOriginReaderFootprint(state), before);
+      } finally { state.env.DB = db; state.env.FORMA_MEMORY_USER_IDS = oldSetting; hook?.restore(); }
+      await currentDocumentJobOrigin(state);
+    }
+  } finally { state.env.DB = db; await state.jobMemoryStop(); }
+});
+
+// Negative withdrawal uses actual publication and native inverse owners. Neither
+// synthetic damage nor a negative receipt becomes read or erasure authority.
+async function jobOriginWithdrawalFixture(t, options = {}) {
+  const state = await documentJobPublicationFixture(t, options);
+  try {
+    const { candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+    const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+    assert.equal(outcome.status, 'committed');
+    const published = await assertDocumentJobPublication(state, before, outcome);
+    const native = await import('../worker/memory-native-origin.ts'), store = await import('../worker/memory-live-store.ts');
+    return Object.assign(state, { withdrawalPublished: published, withdrawalNative: native, withdrawalStore: store });
+  } catch (error) { await state.jobMemoryStop(); throw error; }
+}
+
+function jobOriginWithdrawalFootprint(state) {
+  // Normalize SQLite row prototypes at the snapshot boundary; preserve every own value.
+  return structuredClone({ ...documentJobOriginReaderFootprint(state), holds: state.sqlite.prepare('SELECT * FROM organization_legal_holds ORDER BY hold_id').all().map(row => ({ ...row })) });
+}
+
+function jobOriginWithdrawalExpected(before, ids, reason, now) {
+  const expected = structuredClone(before);
+  for (const row of expected.publication.memory_document_job_answer_origins) if (ids.includes(row.origin_id) && row.status === 'active') {
+    row.status = 'withdrawn'; row.withdrawn_at = now; row.withdrawal_reason = reason;
+  }
+  return expected;
+}
+
+function jobOriginWithdrawalHold(state) {
+  const h = state.withdrawalPublished.header, holdId = crypto.randomUUID(); assert.ok(h.organization_id);
+  assert.equal(Number(state.sqlite.prepare(`INSERT INTO organization_legal_holds
+    (hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at,released_at)
+    VALUES(?,?,'content',?,'fixture genuine published evidence hold','active',?,?,NULL)`)
+    .run(holdId, h.organization_id, h.answer_content_id, h.actor_user_id, new Date().toISOString()).changes), 1);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_legal_holds WHERE hold_id=? AND status='active'").get(holdId).n, 1);
+  return holdId;
+}
+
+function jobOriginWithdrawalStatements(state, prepared) {
+  return prepared.statements.map(query => state.env.DB.prepare(query.sql).bind(...query.bindings));
+}
+
+function interceptJobOriginWithdrawal(state, { before, after } = {}) {
+  const db = state.env.DB, original = db.batch; let attempts = 0;
+  db.batch = async statements => {
+    const inverse = statements.some(statement => /^UPDATE memory_document_job_answer_origins SET status='withdrawn'/u.test(statement.sql));
+    if (inverse) { attempts++; if (before) await before(statements); }
+    const results = await original.call(db, statements);
+    return inverse && after ? after(results, statements) : results;
+  };
+  return { get attempts() { return attempts; }, restore() { db.batch = original; } };
+}
+
+test('job origin withdrawal: genuine direct content event and origin inverses preserve all bodies and held evidence', { timeout: 180_000 }, async t => {
+  for (const shared of [false, true]) for (const structured of [false, true]) for (const target of ['input', 'answer', 'original-content', 'own-event', 'original-event', 'origin']) {
+    const state = await jobOriginWithdrawalFixture(t, { shared, structured });
+    try {
+      const { header: h, manifest: m } = state.withdrawalPublished;
+      if (shared) jobOriginWithdrawalHold(state);
+      const originalContent = structured ? m.originals[0].content_id : m.dependencies[0].user_content_id;
+      const originalEvent = structured ? m.originals[0].event_id : m.dependencies[0].event_id;
+      const selector = target === 'input' ? { contentId: h.input_content_ref } : target === 'answer' ? { contentId: h.answer_content_id }
+        : target === 'original-content' ? { contentId: originalContent } : target === 'origin' ? { originId: h.origin_id }
+        : { eventStreamId: h.stream_id, eventId: target === 'own-event' ? h.answer_event_id : originalEvent };
+      const before = jobOriginWithdrawalFootprint(state), now = new Date().toISOString(), reason = 'source-changed';
+      const statements = await state.withdrawalStore.liveMemoryOriginWithdrawalStatements(state.env, selector, reason, now);
+      assert.ok(statements.length > 0);
+      const results = await state.withdrawalStore.memoryAtomic(state.env, [], statements, []);
+      assert.equal(results.length, statements.length);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), jobOriginWithdrawalExpected(before, [h.origin_id], reason, now),
+        'Only the genuine selected origin becomes negative: ' + JSON.stringify({ shared, structured, target }));
+      assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin withdrawal: a genuine native ledger append withdraws the retained structured consumer before writing its next revision', { timeout: 120_000 }, async t => {
+  for (const shared of [false, true]) {
+    const state = await jobOriginWithdrawalFixture(t, { shared, structured: true }); let hook, observed = 0;
+    try {
+      const prepared = await nativeMemoryPrepare(state), enrollment = state.current();
+      const { captureLegacyConversationOriginals, replayLegacyConversationOriginals } = await import('../worker/events-api.ts');
+      const frame = await captureLegacyConversationOriginals(state.env, prepared, state.jobMemoryStructuredSeed.interval); assert.ok(frame);
+      const receipt = await replayLegacyConversationOriginals(state.env, prepared, frame); assert.ok(receipt);
+      const previous = await state.withdrawalStore.readStructuredConversationLedger(state.env, enrollment, prepared, [frame]); assert.ok(previous);
+      const source = receipt.originals.find(value => value.role === 'user'); assert.ok(source);
+      const reference = Object.fromEntries(['eventId', 'sequence', 'turnId', 'role', 'contentRef', 'contentHash'].map(key => [key, source[key]]));
+      const proposed = { ...previous.ledger, annotations: [...previous.ledger.annotations, {
+        itemId: 'withdrawal-second-native-declaration', revision: 1, category: 'goal', operation: 'assert', predecessor: null,
+        source: reference, start: 0, end: Array.from(source.text).length, text: source.text,
+      }] };
+      const before = jobOriginWithdrawalFootprint(state);
+      hook = interceptJobOriginWithdrawal(state, { before: statements => {
+        const inverse = statements.findIndex(statement => /^UPDATE memory_document_job_answer_origins SET status='withdrawn'/u.test(statement.sql));
+        const body = statements.findIndex(statement => /^INSERT INTO private_content\s*\(/u.test(statement.sql) && statement.values[2] === 'memory-structured-ledger');
+        assert.ok(inverse >= 0 && body > inverse); observed++;
+      } });
+      const written = await state.withdrawalStore.appendStructuredConversationLedger(state.env, enrollment, prepared, [frame], previous, proposed);
+      assert.ok(written); assert.equal(written.status, 'active'); assert.equal(written.revision, previous.revision + 1);
+      assert.deepEqual(written.ledger, proposed); assert.equal(observed, 1); assert.equal(hook.attempts, 1);
+      const after = jobOriginWithdrawalFootprint(state), h = after.publication.memory_document_job_answer_origins.find(value => value.origin_id === state.withdrawalPublished.header.origin_id);
+      assert.ok(h); assert.equal(h.status, 'withdrawn'); assert.equal(h.withdrawal_reason, 'source-unavailable');
+      assert.ok(Date.parse(h.withdrawn_at) >= Date.parse(state.withdrawalPublished.header.created_at));
+      const expected = jobOriginWithdrawalExpected(before, [h.origin_id], 'source-unavailable', h.withdrawn_at);
+      for (const table of ['private_content', 'project_resource_scopes', 'private_content_retention_scopes']) {
+        for (const old of before.tables[table]) assert.ok(after.tables[table].some(value => JSON.stringify(value) === JSON.stringify(old)), table + ' retains every prior body and custody row');
+        assert.equal(after.tables[table].length - before.tables[table].length, table === 'private_content' || shared ? 1 : 0);
+        expected.tables[table] = after.tables[table];
+      }
+      const newBodies = after.tables.private_content.filter(value => !before.tables.private_content.some(old => old.content_id === value.content_id));
+      assert.equal(newBodies.length, 1); assert.equal(newBodies[0].kind, 'memory-structured-ledger');
+      expected.ledger = after.ledger;
+      assert.deepEqual(after, expected, 'Only the ordinary native ledger revision and negative origin change; no output body or selector is erased');
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin withdrawal: incomplete corrupt and count-preserving changed dependency inventories never produce an empty inverse', { timeout: 120_000 }, async t => {
+  for (const fault of ['missing-manifest', 'corrupt-manifest', 'redacted-manifest', 'manifest-deadline', 'missing-selector', 'same-count-selector', 'extra-selector', 'header-digest']) {
+    const state = await jobOriginWithdrawalFixture(t, { shared: true, structured: true });
+    try {
+      const h = state.withdrawalPublished.header, selectors = state.withdrawalPublished.selectors;
+      const picked = selectors.find(row => row.resource_kind === 'private-content'); assert.ok(picked);
+      const originalCount = state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n;
+      let result;
+      if (fault === 'missing-manifest') result = state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(h.manifest_content_ref);
+      else if (fault === 'corrupt-manifest') result = state.sqlite.prepare("UPDATE private_content SET content='not a manifest' WHERE content_id=?").run(h.manifest_content_ref);
+      else if (fault === 'redacted-manifest') result = state.sqlite.prepare('UPDATE private_content SET redacted_at=? WHERE content_id=?').run(new Date().toISOString(), h.manifest_content_ref);
+      else if (fault === 'manifest-deadline') result = state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(new Date(Date.now() - 1000).toISOString(), h.manifest_content_ref);
+      else if (fault === 'missing-selector') result = state.sqlite.prepare('DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+        .run(h.origin_id, picked.resource_kind, picked.resource_id);
+      else if (fault === 'same-count-selector') result = state.sqlite.prepare('UPDATE memory_document_job_origin_dependencies SET resource_id=? WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+        .run(crypto.randomUUID(), h.origin_id, picked.resource_kind, picked.resource_id);
+      else if (fault === 'extra-selector') result = state.sqlite.prepare("INSERT INTO memory_document_job_origin_dependencies(origin_id,resource_kind,resource_id) VALUES(?,'private-content',?)")
+        .run(h.origin_id, crypto.randomUUID());
+      else result = state.sqlite.prepare('UPDATE memory_document_job_answer_origins SET selector_list_sha256=? WHERE origin_id=?').run('0'.repeat(64), h.origin_id);
+      assert.equal(Number(result.changes), 1);
+      if (fault === 'same-count-selector') assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n, originalCount);
+      const changed = jobOriginWithdrawalFootprint(state), selector = { originId: h.origin_id }, now = new Date().toISOString();
+      assert.equal(await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env, selector, 'source-unavailable', now), null, fault);
+      await assert.rejects(state.withdrawalStore.liveMemoryOriginWithdrawalStatements(state.env, selector, 'source-unavailable', now), /memory-document-job-origin-withdrawal-unavailable/u);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), changed, 'Damaged evidence is not repaired or silently omitted: ' + fault);
+      assert.equal(changed.publication.memory_document_job_answer_origins.find(value => value.origin_id === h.origin_id).status, 'active');
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin withdrawal: real prior withdrawal stays negative and a minimized own event cannot invent its old stream', { timeout: 90_000 }, async t => {
+  for (const shared of [false, true]) {
+    const state = await jobOriginWithdrawalFixture(t, { shared });
+    try {
+      const h = state.withdrawalPublished.header, now = new Date().toISOString(), before = jobOriginWithdrawalFootprint(state);
+      const first = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env, { originId: h.origin_id }, 'manual', now);
+      assert.ok(first); assert.equal(first.pendingOrigins, 1); assert.equal(Object.isFrozen(first), true);
+      const firstResults = await state.env.DB.batch(jobOriginWithdrawalStatements(state, first));
+      assert.equal(first.acknowledge(firstResults), true); assert.equal(first.acknowledge(firstResults), false);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), jobOriginWithdrawalExpected(before, [h.origin_id], 'manual', now));
+      const negative = jobOriginWithdrawalFootprint(state), again = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(
+        state.env, { originId: h.origin_id }, 'source-changed', new Date().toISOString());
+      assert.ok(again); assert.equal(again.pendingOrigins, 1, 'Already negative does not mean physically erased');
+      const repeated = await state.env.DB.batch(jobOriginWithdrawalStatements(state, again));
+      assert.equal(again.acknowledge(repeated), true); assert.equal(again.acknowledge(repeated), false);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), negative, 'The real original negative timestamp/reason is immutable');
+      // This is an independently damaged/minimized negative fixture, not execution
+      // or qualification of a physical-retirement owner. No active state is restored.
+      const refs = [h.answer_content_id, h.manifest_content_ref];
+      for (const ref of refs) {
+        assert.equal(Number(state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(ref).changes), 1);
+        assert.equal(Number(state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").run(ref).changes), shared ? 1 : 0);
+        assert.equal(Number(state.sqlite.prepare('DELETE FROM private_content_retention_scopes WHERE content_id=?').run(ref).changes), shared ? 1 : 0);
+      }
+      assert.equal(Number(state.sqlite.prepare('DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=?').run(h.origin_id).changes), h.selector_count);
+      const permanent = new Set(['origin_id', 'schema_version', 'recipe_version', 'actor_user_id', 'scope_key', 'job_id', 'turn_id',
+        'user_event_id', 'user_content_id', 'answer_event_id', 'answer_content_id', 'manifest_content_ref', 'status', 'withdrawn_at', 'withdrawal_reason']);
+      const cleared = Object.keys(h).filter(key => !permanent.has(key));
+      assert.equal(Number(state.sqlite.prepare('UPDATE memory_document_job_answer_origins SET ' + cleared.map(key => key + '=NULL').join(',')
+        + ",status='minimized' WHERE origin_id=?").run(h.origin_id).changes), 1);
+      const minimized = jobOriginWithdrawalFootprint(state);
+      const byId = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env, { originId: h.origin_id }, 'manual', new Date().toISOString());
+      assert.ok(byId); assert.equal(byId.pendingOrigins, 0);
+      const checked = await state.env.DB.batch(jobOriginWithdrawalStatements(state, byId)); assert.equal(byId.acknowledge(checked), true);
+      assert.equal(await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env,
+        { eventStreamId: h.stream_id, eventId: h.answer_event_id }, 'manual', new Date().toISOString()), null,
+        'A permanent event ID does not recover the cleared stream; no wrong-stream/no-target success');
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), minimized);
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin withdrawal: late real manifest index header schema and revision drift rolls back every negative update', { timeout: 150_000 }, async t => {
+  for (const fault of ['manifest', 'selector-swap', 'header', 'schema', 'revision']) {
+    const state = await jobOriginWithdrawalFixture(t, { shared: true, structured: true }); let hook, changed, mutations = 0;
+    try {
+      const h = state.withdrawalPublished.header, e = state.current();
+      const selector = fault === 'revision' ? { enrollmentId: e.enrollment_id, currentRevision: e.revision } : { originId: h.origin_id };
+      const prepared = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env, selector, 'source-unavailable', new Date().toISOString());
+      assert.ok(prepared); assert.equal(prepared.pendingOrigins, 1);
+      const statements = jobOriginWithdrawalStatements(state, prepared);
+      hook = interceptJobOriginWithdrawal(state, { before: () => {
+        if (fault === 'schema') state.sqlite.exec('ALTER TABLE memory_document_job_origin_dependencies ADD COLUMN fixture_withdrawal_drift TEXT');
+        else {
+          let result;
+          if (fault === 'manifest') result = state.sqlite.prepare("UPDATE private_content SET content='LATE_CHANGED_MANIFEST' WHERE content_id=?").run(h.manifest_content_ref);
+          else if (fault === 'selector-swap') {
+            const selected = state.withdrawalPublished.selectors.find(value => value.resource_kind === 'private-content'); assert.ok(selected);
+            result = state.sqlite.prepare('UPDATE memory_document_job_origin_dependencies SET resource_id=? WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+              .run(crypto.randomUUID(), h.origin_id, selected.resource_kind, selected.resource_id);
+          } else if (fault === 'header') result = state.sqlite.prepare('UPDATE memory_document_job_answer_origins SET answer_sha256=? WHERE origin_id=?').run('0'.repeat(64), h.origin_id);
+          else result = state.sqlite.prepare('UPDATE memory_live_enrollments SET revision=revision+1 WHERE enrollment_id=?').run(e.enrollment_id);
+          assert.equal(Number(result.changes), 1);
+        }
+        mutations++; changed = jobOriginWithdrawalFootprint(state);
+      } });
+      await assert.rejects(state.env.DB.batch(statements));
+      assert.equal(hook.attempts, 1); assert.equal(mutations, 1); assert.ok(changed);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), changed, 'Rollback preserves only the independent late change: ' + fault);
+      assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status, 'active');
+    } finally { hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin withdrawal: dense one-use acknowledgements cannot turn lost or malformed native receipts into confirmed success', { timeout: 150_000 }, async t => {
+  const variants = ['valid', 'hole', 'short', 'extra', 'false-success', 'error', 'inherited-error', 'array-receipt',
+    'array-assertion', 'assertion-zero', 'changes-string', 'inherited-changes', 'array-meta', 'database-swap', 'selector-alias', 'throw-after-commit'];
+  for (const variant of variants) {
+    const state = await jobOriginWithdrawalFixture(t), db = state.env.DB; let hook, damaged = 0, replacementCalls = 0;
+    try {
+      const h = state.withdrawalPublished.header, selector = { originId: h.origin_id }, now = new Date().toISOString();
+      const prepared = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env, selector, 'manual', now);
+      assert.ok(prepared); assert.equal(prepared.pendingOrigins, 1);
+      const before = jobOriginWithdrawalFootprint(state), statements = jobOriginWithdrawalStatements(state, prepared);
+      const write = prepared.statements.findIndex(query => /^UPDATE memory_document_job_answer_origins SET status='withdrawn'/u.test(query.sql));
+      assert.ok(write >= 0); const assertion = prepared.assertionIndexes[0]; assert.ok(Number.isSafeInteger(assertion));
+      hook = interceptJobOriginWithdrawal(state, { after: actual => {
+        damaged++;
+        if (variant === 'throw-after-commit') throw new Error('fixture_withdrawal_ack_lost_after_commit');
+        const rows = structuredClone(actual);
+        if (variant === 'hole') delete rows[write];
+        else if (variant === 'short') rows.pop();
+        else if (variant === 'extra') rows.push(structuredClone(rows[write]));
+        else if (variant === 'false-success') rows[write].success = false;
+        else if (variant === 'error') rows[write].error = 'committed_but_unconfirmed';
+        else if (variant === 'inherited-error') {
+          delete rows[write].error;
+          rows[write] = Object.assign(Object.create({ error: 'inherited_failure' }), rows[write]);
+          assert.equal(Object.hasOwn(rows[write], 'error'), false);
+        }
+        else if (variant === 'array-receipt') rows[write] = Object.assign([], rows[write]);
+        else if (variant === 'array-assertion') rows[assertion].results[0] = Object.assign([], { verified: 1 });
+        else if (variant === 'assertion-zero') rows[assertion].results[0].verified = 0;
+        else if (variant === 'changes-string') rows[write].meta.changes = '1';
+        else if (variant === 'inherited-changes') rows[write].meta = Object.create({ changes: 1 });
+        else if (variant === 'array-meta') rows[write].meta = Object.assign([], { changes: 1 });
+        else if (variant === 'database-swap') state.env.DB = { prepare() { replacementCalls++; throw new Error('replacement DB used'); }, batch() { replacementCalls++; throw new Error('replacement DB used'); } };
+        else if (variant === 'selector-alias') selector.originId = crypto.randomUUID();
+        return rows;
+      } });
+      if (variant === 'throw-after-commit') await assert.rejects(db.batch(statements), /fixture_withdrawal_ack_lost_after_commit/u);
+      else {
+        const results = await db.batch(statements);
+        assert.equal(prepared.acknowledge(results), variant === 'valid', variant);
+        assert.equal(prepared.acknowledge(results), false, 'The exact negative acknowledgement is one-use: ' + variant);
+      }
+      assert.equal(hook.attempts, 1); assert.equal(damaged, 1); assert.equal(replacementCalls, 0);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), jobOriginWithdrawalExpected(before, [h.origin_id], 'manual', now),
+        'Independent persisted evidence proves only logical withdrawal, despite an unconfirmed or lost receipt: ' + variant);
+    } finally { state.env.DB = db; hook?.restore(); await state.jobMemoryStop(); }
+  }
+});
+
+// Each entry below retains its actual claim object and publication by reference.
+// The shared state is one real SQLite fixture, never a merge or cloned authority.
+async function jobOriginWithdrawalPairFixture(t, { shared = false, structured = false } = {}) {
+  const state = await jobOriginWithdrawalFixture(t, { shared, structured });
+  const db = state.env.DB, controls = [state.jobMemoryControl]; let stopping = null;
+  const stopPair = () => {
+    if (stopping) return stopping;
+    stopping = (async () => {
+      // Release both pending callbacks before awaiting either owned work promise.
+      // Keep the outbound trap installed through both native catch paths.
+      state.env.DB = db;
+      for (const control of controls) control.release();
+      const results = await Promise.allSettled(controls.map(control => control.settle()));
+      const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
+      try { assert.equal(state.calls.length, 0); } catch (error) { failures.push(error); }
+      try { await state.cleanup(); } catch (error) { failures.push(error); }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length) throw new AggregateError(failures, 'Both genuine queued-job runners must settle');
+    })();
+    return stopping;
+  };
+  try {
+    const first = { captured: state.jobMemoryCaptured, jobId: state.jobMemoryJobId,
+      inputRef: state.jobMemoryInputRef, published: state.withdrawalPublished, control: controls[0] };
+    assert.equal(first.control.released, false);
+    first.control.detach();
+    assert.equal(first.control.detached, true); assert.equal(first.control.released, false);
+    // The first job is genuinely published, but its original native runner stays
+    // paused. Reusing the ordinary fixture does not stop or clean up that runner.
+    assert.equal(state.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(first.jobId).status, 'completed');
+    await queuedJobMemoryFixture(t, { shared, existingState: state });
+    controls.push(state.jobMemoryControl);
+    const secondCaptured = state.jobMemoryCaptured;
+    assert.notEqual(secondCaptured, first.captured); assert.notEqual(secondCaptured.running, first.captured.running);
+    assert.notEqual(secondCaptured.queued, first.captured.queued);
+    assert.equal(first.captured.claimCount, 1); assert.equal(secondCaptured.claimCount, 1);
+    assert.equal(first.captured.claim.success, true); assert.equal(first.captured.claim.meta.changes, 1);
+    assert.equal(secondCaptured.claim.success, true); assert.equal(secondCaptured.claim.meta.changes, 1);
+    assert.equal(first.captured.runningDatabase, db); assert.equal(secondCaptured.runningDatabase, db);
+    assert.notEqual(state.jobMemoryJobId, first.jobId); assert.notEqual(state.jobMemoryInputRef, first.inputRef);
+    assert.notEqual(secondCaptured.running.correlation_id, first.captured.running.correlation_id);
+    assert.equal(first.control.released, false); assert.equal(controls[1].released, false);
+    // The ordinary second POST may clean old expired input. Use a fresh independent
+    // canary for this publication; preserve the old canary's actual post-route state.
+    const canaryNow = Date.now(); state.publicationExpiredControl = crypto.randomUUID();
+    state.sqlite.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+      .run(state.publicationExpiredControl, state.current().actor_user_id, 'condition', 'PUBLICATION_OPTIONAL_CLEANUP_MUST_NOT_RUN',
+        new Date(canaryNow - 120_000).toISOString(), new Date(canaryNow - 60_000).toISOString());
+    const { candidate } = await documentJobPublicationCandidate(state), before = documentJobPublicationFootprint(state);
+    const outcome = await queuedJobMemoryApi.publishDocumentJobMemoryCandidate(state.env, candidate);
+    assert.equal(outcome.status, 'committed');
+    const second = { captured: secondCaptured, jobId: state.jobMemoryJobId, inputRef: state.jobMemoryInputRef,
+      published: await assertDocumentJobPublication(state, before, outcome), control: controls[1] };
+    assert.equal(state.env.DB, db); assert.notEqual(second.published.header.origin_id, first.published.header.origin_id);
+    assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_document_job_answer_origins WHERE origin_id=?').get(first.published.header.origin_id), first.published.header);
+    assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_document_job_origin_dependencies WHERE origin_id=? ORDER BY resource_kind,resource_id')
+      .all(first.published.header.origin_id).map(row => ({ ...row })), first.published.selectors.map(row => ({ ...row })));
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_answer_origins').get().n, 2);
+    const outputFields = ['user_event_id', 'answer_event_id', 'user_content_id', 'answer_content_id', 'manifest_content_ref'];
+    const outputIds = [first, second].flatMap(entry => outputFields.map(key => entry.published.header[key]));
+    assert.equal(new Set(outputIds).size, 10);
+    for (const entry of [first, second]) {
+      assert.equal(entry.published.header.job_id, entry.jobId);
+      assert.equal(entry.published.header.input_content_ref, entry.inputRef);
+      assert.equal(entry.control.released, false);
+      assert.equal(state.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(entry.jobId).status, 'completed');
+      // These are independent consumers of old native originals. Neither is a
+      // synthetic transitive consumer of either publication's excluded outputs.
+      for (const selector of entry.published.selectors) assert.equal(outputIds.includes(selector.resource_id), false);
+    }
+    const original = structured ? first.published.manifest.originals[0].content_id
+      : first.published.manifest.dependencies[0].user_content_id;
+    const event = structured ? first.published.manifest.originals[0].event_id
+      : first.published.manifest.dependencies[0].event_id;
+    for (const entry of [first, second]) for (const [kind, id] of [['private-content', original], ['event', event]])
+      assert.equal(entry.published.selectors.filter(row => row.resource_kind === kind && row.resource_id === id).length, 1);
+    // Every actual header, selector and original body is left in place. A common
+    // selector is established from the two published manifests, not injected.
+    return Object.assign(state, { withdrawalPair: [first, second], withdrawalPairOriginal: original,
+      withdrawalPairEvent: event, withdrawalPairStop: stopPair });
+  } catch (error) {
+    try { await stopPair(); } catch (teardown) { throw new AggregateError([error, teardown], 'Genuine pair setup and owned teardown failed'); }
+    throw error;
+  }
+}
+
+test('job origin withdrawal: two independently claimed native jobs sharing an original are withdrawn exactly once by direct and ledger fanout', { timeout: 180_000 }, async t => {
+  for (const shared of [false, true]) for (const variant of ['extractive-content', 'structured-content', 'structured-ledger']) {
+    const structured = variant !== 'extractive-content', state = await jobOriginWithdrawalPairFixture(t, { shared, structured });
+    let hook, observed = 0;
+    try {
+      const ids = state.withdrawalPair.map(entry => entry.published.header.origin_id);
+      if (shared) jobOriginWithdrawalHold(state);
+      const before = jobOriginWithdrawalFootprint(state);
+      assert.equal(before.publication.memory_document_job_answer_origins.length, 2);
+      assert.ok(before.publication.memory_document_job_answer_origins.every(row => row.status === 'active'));
+      if (variant !== 'structured-ledger') {
+        const now = new Date().toISOString(), reason = 'source-changed', selector = { contentId: state.withdrawalPairOriginal };
+        const prepared = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env, selector, reason, now);
+        assert.ok(prepared); assert.equal(prepared.pendingOrigins, 2, 'The shared original selects two distinct genuine origins, not duplicate selector hits');
+        const statements = await state.withdrawalStore.liveMemoryOriginWithdrawalStatements(state.env, selector, reason, now);
+        assert.ok(statements.length > 0);
+        const results = await state.withdrawalStore.memoryAtomic(state.env, [], statements, []);
+        assert.equal(results.length, statements.length);
+        assert.deepEqual(jobOriginWithdrawalFootprint(state), jobOriginWithdrawalExpected(before, ids, reason, now));
+        const negative = jobOriginWithdrawalFootprint(state);
+        const repeated = await state.withdrawalNative.prepareNativeDocumentJobOriginWithdrawal(state.env,
+          { eventStreamId: state.withdrawalPair[0].published.header.stream_id, eventId: state.withdrawalPairEvent }, 'manual', new Date().toISOString());
+        assert.ok(repeated); assert.equal(repeated.pendingOrigins, 2);
+        const acknowledged = await state.env.DB.batch(jobOriginWithdrawalStatements(state, repeated));
+        assert.equal(repeated.acknowledge(acknowledged), true); assert.equal(repeated.acknowledge(acknowledged), false);
+        assert.deepEqual(jobOriginWithdrawalFootprint(state), negative, 'An independently repeated original-event inverse does not replace either original negative timestamp');
+      } else {
+        const prepared = await nativeMemoryPrepare(state), enrollment = state.current();
+        const { captureLegacyConversationOriginals, replayLegacyConversationOriginals } = await import('../worker/events-api.ts');
+        const frame = await captureLegacyConversationOriginals(state.env, prepared, state.jobMemoryStructuredSeed.interval); assert.ok(frame);
+        const receipt = await replayLegacyConversationOriginals(state.env, prepared, frame); assert.ok(receipt);
+        const previous = await state.withdrawalStore.readStructuredConversationLedger(state.env, enrollment, prepared, [frame]); assert.ok(previous);
+        const source = receipt.originals.find(row => row.role === 'user'); assert.ok(source);
+        const reference = Object.fromEntries(['eventId', 'sequence', 'turnId', 'role', 'contentRef', 'contentHash'].map(key => [key, source[key]]));
+        const proposed = { ...previous.ledger, annotations: [...previous.ledger.annotations, {
+          itemId: 'withdrawal-shared-original-native-declaration', revision: 1, category: 'goal', operation: 'assert', predecessor: null,
+          source: reference, start: 0, end: Array.from(source.text).length, text: source.text,
+        }] };
+        for (const entry of state.withdrawalPair)
+          assert.ok(entry.published.selectors.some(row => row.resource_kind === 'ledger' && row.resource_id === previous.ledgerId));
+        hook = interceptJobOriginWithdrawal(state, { before: statements => {
+          const inverse = statements.findIndex(statement => /^UPDATE memory_document_job_answer_origins SET status='withdrawn'/u.test(statement.sql));
+          const body = statements.findIndex(statement => /^INSERT INTO private_content\s*\(/u.test(statement.sql) && statement.values[2] === 'memory-structured-ledger');
+          assert.ok(inverse >= 0 && body > inverse); observed++;
+        } });
+        const written = await state.withdrawalStore.appendStructuredConversationLedger(state.env, enrollment, prepared, [frame], previous, proposed);
+        assert.ok(written); assert.equal(written.status, 'active'); assert.equal(written.revision, previous.revision + 1);
+        assert.deepEqual(written.ledger, proposed); assert.equal(observed, 1); assert.equal(hook.attempts, 1);
+        const after = jobOriginWithdrawalFootprint(state), origins = after.publication.memory_document_job_answer_origins;
+        assert.deepEqual(origins.map(row => row.origin_id).sort(), [...ids].sort());
+        for (const origin of origins) {
+          assert.equal(origin.status, 'withdrawn'); assert.equal(origin.withdrawal_reason, 'source-unavailable');
+          assert.ok(Date.parse(origin.withdrawn_at) >= Date.parse(origin.created_at));
+        }
+        assert.equal(origins[0].withdrawn_at, origins[1].withdrawn_at);
+        const expected = jobOriginWithdrawalExpected(before, ids, 'source-unavailable', origins[0].withdrawn_at);
+        for (const table of ['private_content', 'project_resource_scopes', 'private_content_retention_scopes']) {
+          for (const old of before.tables[table]) assert.ok(after.tables[table].some(row => JSON.stringify(row) === JSON.stringify(old)));
+          assert.equal(after.tables[table].length - before.tables[table].length, table === 'private_content' || shared ? 1 : 0);
+          expected.tables[table] = after.tables[table];
+        }
+        const newBodies = after.tables.private_content.filter(row => !before.tables.private_content.some(old => old.content_id === row.content_id));
+        assert.equal(newBodies.length, 1); assert.equal(newBodies[0].kind, 'memory-structured-ledger'); expected.ledger = after.ledger;
+        assert.deepEqual(after, expected, 'Two origin withdrawals and the one native ledger revision are the complete transaction footprint');
+      }
+      assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+      for (const entry of state.withdrawalPair) assert.equal(entry.control.released, false);
+    } finally { hook?.restore(); await state.withdrawalPairStop(); }
+  }
+});
+
+// Isolated retirement contract tests: this asset is not a numbered migration.
+// Every origin below comes from the real native queued claim + publisher. The
+// existing owned gate stays pending until the fixture's awaited finally block.
+const jobRetirementNegativeColumnsForTest = new Set(['origin_id', 'schema_version', 'recipe_version', 'actor_user_id', 'scope_key',
+  'job_id', 'turn_id', 'user_event_id', 'user_content_id', 'answer_event_id', 'answer_content_id', 'manifest_content_ref',
+  'status', 'withdrawn_at', 'withdrawal_reason']);
+
+const jobRetirementCanonicalForTest = value => JSON.stringify((function ordered(item) {
+  return Array.isArray(item) ? item.map(ordered) : item !== null && typeof item === 'object'
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, ordered(item[key])])) : item;
+})(value));
+
+const jobRetirementHashForTest = async text => (await import('node:crypto')).createHash('sha256').update(text, 'utf8').digest('hex');
+
+function jobRetirementFootprint(state) {
+  return { ...jobOriginWithdrawalFootprint(state), progress: state.sqlite.prepare(
+    'SELECT * FROM memory_document_job_origin_retirement_progress ORDER BY origin_id').all().map(row => ({ ...row })),
+    retirementSchema: state.sqlite.prepare(`SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_name IN
+      ('memory_document_job_origin_retirement_progress','organization_legal_holds','organization_retention_policies',
+       'project_resource_scopes','private_content_retention_scopes') ORDER BY type,name`).all().map(row => ({ ...row })) };
+
+}
+
+async function jobRetirementFixture(t, options = {}) {
+  const state = options.pair ? await jobOriginWithdrawalPairFixture(t, options) : await jobOriginWithdrawalFixture(t, options);
+  state.retirementStop = options.pair ? state.withdrawalPairStop : state.jobMemoryStop;
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const asset = await readFile(new URL('./fixtures/memory-document-job-origin-retirement-progress.sql', import.meta.url), 'utf8');
+    assert.equal(Buffer.byteLength(asset), 5667);
+    assert.equal(await jobRetirementHashForTest(asset), '276d6390711ce5181234505190ae650648373dbeb7356468bfd793114cbb4702');
+    state.sqlite.exec(asset);
+    state.retirementPublications = options.pair ? state.withdrawalPair.map(item => item.published) : [state.withdrawalPublished];
+    state.retirementNow = new Date().toISOString();
+    if (!options.keepActive) {
+      const before = jobRetirementFootprint(state), reason = 'source-changed';
+      const selector = options.pair ? { contentId: state.withdrawalPairOriginal } : { originId: state.withdrawalPublished.header.origin_id };
+      const statements = await state.withdrawalStore.liveMemoryOriginWithdrawalStatements(state.env, selector, reason, state.retirementNow);
+      assert.ok(statements.length > 0);
+      await state.withdrawalStore.memoryAtomic(state.env, [], statements, []);
+      assert.deepEqual(jobRetirementFootprint(state), jobOriginWithdrawalExpected(before,
+        state.retirementPublications.map(item => item.header.origin_id), reason, state.retirementNow));
+    }
+    return state;
+  } catch (error) { await state.retirementStop(); throw error; }
+}
+
+async function jobRetirementExpected(state, before, plan, now) {
+  const expected = structuredClone(before), id = plan.selectionKey;
+  const header = expected.publication.memory_document_job_answer_origins.find(row => row.origin_id === id);
+  assert.ok(header);
+  let row = expected.progress.find(item => item.origin_id === id);
+  if (plan.phase === 'mark') {
+    Object.assign(header, { status: 'withdrawn', withdrawn_at: now, withdrawal_reason: 'source-expired' });
+  } else if (plan.phase === 'initialize') {
+    assert.equal(row, undefined);
+    const published = state.retirementPublications.find(item => item.header.origin_id === id); assert.ok(published);
+    const selectors = before.publication.memory_document_job_origin_dependencies.filter(item => item.origin_id === id)
+      .map(item => ({ resource_kind: item.resource_kind, resource_id: item.resource_id }))
+      .sort((a, b) => JSON.stringify([a.resource_kind, a.resource_id]) < JSON.stringify([b.resource_kind, b.resource_id]) ? -1 : 1);
+    assert.equal(selectors.length, header.selector_count);
+    // MF's digest uses this explicit property order, unlike sorted-key progress JSON.
+    assert.equal(await jobRetirementHashForTest(JSON.stringify(selectors)), header.selector_list_sha256);
+    const refs = [...new Set([header.input_content_ref, header.user_content_id, header.answer_content_id, header.manifest_content_ref,
+      ...selectors.filter(item => item.resource_kind === 'private-content').map(item => item.resource_id)])].sort();
+    const evidence = { header: structuredClone(header), header_sha256: await jobRetirementHashForTest(jobRetirementCanonicalForTest(header)), selectors,
+      ledgerHead: published.manifest.mode === 'structured' ? published.manifest.ledgerHead : null,
+      derived: [header.answer_content_id, header.manifest_content_ref].map(ref => {
+        const body = before.tables.private_content.find(item => item.content_id === ref); assert.ok(body);
+        return Object.fromEntries(['content_id', 'owner_id', 'kind', 'created_at', 'expires_at', 'redacted_at'].map(key => [key, body[key]]));
+      }), custody: refs.map(ref => ({ content_id: ref,
+        resource: before.tables.project_resource_scopes.filter(item => item.resource_kind === 'content' && item.resource_id === ref)
+          .map(item => Object.fromEntries(['project_access_id', 'resource_kind', 'resource_id', 'organization_id', 'project_id',
+            'owner_user_id', 'actor_user_id', 'visibility', 'source_event_id', 'created_at'].map(key => [key, item[key]]))),
+        retention: before.tables.private_content_retention_scopes.filter(item => item.content_id === ref)
+          .map(item => Object.fromEntries(['content_id', 'organization_id', 'project_access_id', 'project_id', 'actor_user_id',
+            'classification', 'policy_version', 'assigned_expires_at', 'created_at'].map(key => [key, item[key]]))) })) };
+    const text = jobRetirementCanonicalForTest(evidence);
+    row = { origin_id: id, schema_version: 1, evidence_json: text, evidence_sha256: await jobRetirementHashForTest(text),
+      selector_count: selectors.length, selector_cursor: 0, phase: 'answer', revision: 0,
+      answer_redacted_at: null, manifest_redacted_at: null, created_at: now, updated_at: now };
+    expected.progress.push(row); expected.progress.sort((a, b) => a.origin_id < b.origin_id ? -1 : 1);
+  } else {
+    assert.ok(row); const evidence = JSON.parse(row.evidence_json);
+    if (plan.phase === 'answer' || plan.phase === 'manifest') {
+      const index = plan.phase === 'answer' ? 0 : 1, ref = evidence.derived[index].content_id;
+      const body = expected.tables.private_content.find(item => item.content_id === ref); assert.ok(body);
+      body.content = ''; body.redacted_at = now;
+      expected.tables.project_resource_scopes = expected.tables.project_resource_scopes.filter(item => item.resource_kind !== 'content' || item.resource_id !== ref);
+      expected.tables.private_content_retention_scopes = expected.tables.private_content_retention_scopes.filter(item => item.content_id !== ref);
+      row[index ? 'manifest_redacted_at' : 'answer_redacted_at'] = now;
+      row.phase = index ? 'selectors' : 'manifest';
+    } else if (plan.phase === 'selectors') {
+      const next = evidence.selectors[row.selector_cursor]; assert.ok(next);
+      expected.publication.memory_document_job_origin_dependencies = expected.publication.memory_document_job_origin_dependencies
+        .filter(item => !(item.origin_id === id && item.resource_kind === next.resource_kind && item.resource_id === next.resource_id));
+      row.selector_cursor++; row.phase = row.selector_cursor === row.selector_count ? 'answer-delete' : 'selectors';
+    } else if (plan.phase === 'answer-delete' || plan.phase === 'manifest-delete') {
+      const ref = evidence.derived[plan.phase === 'answer-delete' ? 0 : 1].content_id;
+      const body = expected.tables.private_content.find(item => item.content_id === ref); assert.equal(body.content, ''); assert.ok(body.redacted_at);
+      expected.tables.private_content = expected.tables.private_content.filter(item => item.content_id !== ref);
+      row.phase = plan.phase === 'answer-delete' ? 'manifest-delete' : 'finalize';
+    } else {
+      assert.equal(plan.phase, 'finalize'); assert.equal(row.phase, 'finalize'); assert.equal(row.selector_cursor, row.selector_count);
+      for (const key of Object.keys(header)) if (!jobRetirementNegativeColumnsForTest.has(key)) header[key] = null;
+      header.status = 'minimized'; expected.progress = expected.progress.filter(item => item.origin_id !== id);
+    }
+    if (plan.phase !== 'finalize') { row.revision++; row.updated_at = now; }
+  }
+  return expected;
+}
+
+async function jobRetirementPlan(state, input = { now: state.retirementNow }) {
+  return state.withdrawalNative.prepareNativeDocumentJobOriginRetentionStep(state.env, input);
+}
+
+function jobRetirementAccounting(plan, before) {
+  const counts = { mark: [0, 1], initialize: [0, 1], answer: [3, 1], manifest: [3, 1], selectors: [1, 1],
+    'answer-delete': [1, 1], 'manifest-delete': [1, 1], finalize: [0, 2] };
+  assert.equal(plan.workUnits, 1); assert.deepEqual([plan.physicalWrites, plan.bookkeepingWrites], counts[plan.phase]);
+  const writes = plan.statements.map((query, index) => ({ query, index })).filter(item => !plan.assertionIndexes.includes(item.index));
+  assert.equal(writes.length, plan.physicalWrites + plan.bookkeepingWrites);
+  for (const { index } of writes) {
+    assert.ok(plan.assertionIndexes.includes(index + 1)); assert.match(plan.statements[index + 1].sql, /changes\(\)=\?/u);
+  }
+  if (plan.phase === 'answer' || plan.phase === 'manifest') {
+    const h = before.publication.memory_document_job_answer_origins.find(item => item.origin_id === plan.selectionKey);
+    const ref = plan.phase === 'answer' ? h.answer_content_id : h.manifest_content_ref;
+    const expected = [1, before.tables.project_resource_scopes.filter(item => item.resource_kind === 'content' && item.resource_id === ref).length,
+      before.tables.private_content_retention_scopes.filter(item => item.content_id === ref).length, 1];
+    assert.deepEqual(writes.map(item => plan.statements[item.index + 1].bindings), expected.map(value => [value]));
+  } else assert.deepEqual(writes.map(item => plan.statements[item.index + 1].bindings), writes.map(() => [1]));
+  return writes;
+}
+
+async function jobRetirementUnit(state, expectedPhase, input = { now: state.retirementNow }, prepared = null, before = jobRetirementFootprint(state)) {
+  const plan = prepared ?? await jobRetirementPlan(state, input); assert.ok(plan);
+  if (expectedPhase !== undefined) assert.equal(plan.phase, expectedPhase);
+  jobRetirementAccounting(plan, before);
+  const expected = await jobRetirementExpected(state, before, plan, input.now);
+  const receipts = await state.env.DB.batch(jobOriginWithdrawalStatements(state, plan));
+  assert.equal(plan.acknowledge(receipts), true); assert.equal(plan.acknowledge(receipts), false);
+  assert.deepEqual(jobRetirementFootprint(state), expected, 'Only this bounded phase changes its exact physical/progress footprint');
+  assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+  return plan;
+}
+
+async function jobRetirementFinish(state) {
+  const bound = state.retirementPublications.reduce((sum, item) => sum + item.header.selector_count + 7, 0), phases = [];
+  for (let index = 0; index < bound; index++) {
+    const input = { now: state.retirementNow }, before = jobRetirementFootprint(state);
+    const plan = await jobRetirementPlan(state, input); if (!plan) return phases;
+    phases.push((await jobRetirementUnit(state, undefined, input, plan, before)).phase);
+  }
+  assert.equal(await jobRetirementPlan(state), null, 'The finite genuine selector bound must close'); return phases;
+}
+
+function jobRetirementHoldForRef(state, header, ref) {
+  const holdId = crypto.randomUUID(); assert.ok(header.organization_id);
+  assert.equal(Number(state.sqlite.prepare(`INSERT INTO organization_legal_holds
+    (hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at,released_at)
+    VALUES(?,?,'content',?,'retirement original or derived content hold','active',?,?,NULL)`)
+    .run(holdId, header.organization_id, ref, header.actor_user_id, state.retirementNow).changes), 1);
+  return holdId;
+}
+
+function jobRetirementReleaseHold(state, holdId) {
+  assert.equal(Number(state.sqlite.prepare("UPDATE organization_legal_holds SET status='released',released_at=? WHERE hold_id=? AND status='active'")
+    .run(state.retirementNow, holdId).changes), 1);
+}
+
+test('job origin retirement: genuine four-mode withdrawal completes one bounded phase at a time and retains original identities', { timeout: 180_000 }, async t => {
+  for (const shared of [false, true]) for (const structured of [false, true]) {
+    const state = await jobRetirementFixture(t, { shared, structured });
+    try {
+      const before = jobRetirementFootprint(state), h = state.withdrawalPublished.header;
+      const phases = await jobRetirementFinish(state);
+      assert.deepEqual(phases, ['initialize', 'answer', 'manifest', ...Array(h.selector_count).fill('selectors'), 'answer-delete', 'manifest-delete', 'finalize']);
+      const after = jobRetirementFootprint(state), negative = after.publication.memory_document_job_answer_origins[0];
+      assert.equal(negative.status, 'minimized'); assert.deepEqual(after.progress, []);
+      assert.deepEqual(after.publication.memory_document_job_origin_dependencies, []);
+      assert.deepEqual(after.tables.private_content, before.tables.private_content.filter(row => ![h.answer_content_id, h.manifest_content_ref].includes(row.content_id)));
+      assert.deepEqual(after.tables.events, before.tables.events); assert.deepEqual(after.tables.event_private_payloads, before.tables.event_private_payloads);
+      for (const ref of [h.input_content_ref, h.user_content_id]) assert.deepEqual(after.tables.private_content.find(row => row.content_id === ref), before.tables.private_content.find(row => row.content_id === ref));
+      for (const key of jobRetirementNegativeColumnsForTest) assert.equal(negative[key], key === 'status' ? 'minimized' : before.publication.memory_document_job_answer_origins[0][key]);
+      assert.deepEqual(await state.withdrawalNative.nativeDocumentJobOriginRetentionBacklog(state.env, { now: state.retirementNow }), { count: 0, oldest: null });
+    } finally { await state.retirementStop(); }
+  }
+  // This only tests the supplied-time expiry predicate, not actual elapsed time,
+  // a renewed claim lease or present read authority. No immutable row is edited.
+  const state = await jobRetirementFixture(t, { keepActive: true });
+  try {
+    const h = state.withdrawalPublished.header, input = { now: h.answer_expires_at };
+    assert.equal(await jobRetirementPlan(state), null);
+    await jobRetirementUnit(state, 'mark', input);
+    assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status, 'withdrawn');
+  } finally { await state.retirementStop(); }
+});
+
+test('job origin retirement: intact manifest and complete selector custody are required before durable initialization', { timeout: 120_000 }, async t => {
+  for (const fault of ['missing-manifest', 'malformed-manifest', 'changed-answer', 'missing-selector', 'missing-original-custody']) {
+    const state = await jobRetirementFixture(t, { shared: true, structured: true });
+    try {
+      assert.equal((await jobRetirementPlan(state)).phase, 'initialize');
+      const h = state.withdrawalPublished.header, original = state.withdrawalPublished.manifest.originals[0].content_id;
+      if (fault === 'missing-manifest') state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(h.manifest_content_ref);
+      else if (fault === 'malformed-manifest') state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run('{broken', h.manifest_content_ref);
+      else if (fault === 'changed-answer') state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run('not the genuine published answer', h.answer_content_id);
+      else if (fault === 'missing-selector') {
+        const row = state.sqlite.prepare('SELECT * FROM memory_document_job_origin_dependencies WHERE origin_id=? ORDER BY resource_kind,resource_id LIMIT 1').get(h.origin_id);
+        assert.equal(Number(state.sqlite.prepare('DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=? AND resource_kind=? AND resource_id=?').run(h.origin_id, row.resource_kind, row.resource_id).changes), 1);
+      } else state.sqlite.prepare('DELETE FROM project_resource_scopes WHERE resource_kind=? AND resource_id=?').run('content', original);
+      const before = jobRetirementFootprint(state);
+      await assert.rejects(jobRetirementPlan(state), /memory[-_]document[-_]job|memory[-_]structured|malformed JSON/iu);
+      assert.deepEqual(jobRetirementFootprint(state), before); assert.deepEqual(before.progress, []);
+      assert.equal(state.calls.length, 0);
+    } finally { await state.retirementStop(); }
+  }
+});
+
+test('job origin retirement: saved original holds survive manifest redaction and a held older origin does not starve an independent origin', { timeout: 180_000 }, async t => {
+  const state = await jobRetirementFixture(t, { shared: true, structured: true });
+  try {
+    await jobRetirementUnit(state, 'initialize'); await jobRetirementUnit(state, 'answer'); await jobRetirementUnit(state, 'manifest');
+    const h = state.withdrawalPublished.header, original = state.withdrawalPublished.manifest.originals[0].content_id;
+    const holdId = jobRetirementHoldForRef(state, h, original), before = jobRetirementFootprint(state);
+    assert.equal(before.tables.private_content.find(row => row.content_id === h.manifest_content_ref).content, '');
+    assert.equal(await jobRetirementPlan(state), null);
+    assert.deepEqual(await state.withdrawalNative.nativeDocumentJobOriginRetentionBacklog(state.env, { now: state.retirementNow }), { count: 0, oldest: null });
+    assert.deepEqual(jobRetirementFootprint(state), before, 'Zero eligible backlog is not zero pending evidence or successful erasure');
+    assert.equal(before.progress.length, 1); assert.equal(before.publication.memory_document_job_answer_origins[0].status, 'withdrawn');
+    jobRetirementReleaseHold(state, holdId); await jobRetirementFinish(state);
+  } finally { await state.retirementStop(); }
+  const pair = await jobRetirementFixture(t, { pair: true, shared: true, structured: true });
+  try {
+    const older = [...pair.retirementPublications].sort((a, b) => a.header.created_at < b.header.created_at ? -1
+      : a.header.created_at > b.header.created_at ? 1 : a.header.origin_id < b.header.origin_id ? -1 : 1)[0];
+    for (const phase of ['initialize', 'answer', 'manifest']) assert.equal((await jobRetirementUnit(pair, phase)).selectionKey, older.header.origin_id);
+    const holdId = jobRetirementHoldForRef(pair, older.header, older.header.answer_content_id);
+    const held = jobRetirementFootprint(pair), heldProgress = held.progress.find(row => row.origin_id === older.header.origin_id);
+    const other = pair.retirementPublications.find(item => item.header.origin_id !== older.header.origin_id);
+    const phases = await jobRetirementFinish(pair);
+    assert.deepEqual(phases, ['initialize', 'answer', 'manifest', ...Array(other.header.selector_count).fill('selectors'), 'answer-delete', 'manifest-delete', 'finalize']);
+    const after = jobRetirementFootprint(pair);
+    assert.deepEqual(after.progress, [heldProgress]);
+    assert.deepEqual(after.publication.memory_document_job_answer_origins.find(row => row.origin_id === older.header.origin_id),
+      held.publication.memory_document_job_answer_origins.find(row => row.origin_id === older.header.origin_id));
+    assert.deepEqual(after.publication.memory_document_job_origin_dependencies.filter(row => row.origin_id === older.header.origin_id),
+      held.publication.memory_document_job_origin_dependencies.filter(row => row.origin_id === older.header.origin_id));
+    for (const ref of [older.header.answer_content_id, older.header.manifest_content_ref]) assert.deepEqual(after.tables.private_content.find(row => row.content_id === ref), held.tables.private_content.find(row => row.content_id === ref));
+    jobRetirementReleaseHold(pair, holdId); await jobRetirementFinish(pair);
+    assert.deepEqual(jobRetirementFootprint(pair).progress, []);
+    assert.ok(jobRetirementFootprint(pair).publication.memory_document_job_answer_origins.every(row => row.status === 'minimized'));
+  } finally { await pair.retirementStop(); }
+});
+
+test('job origin retirement: each dropped physical write or progress CAS rolls back the entire native bounded batch', { timeout: 180_000 }, async t => {
+  const state = await jobRetirementFixture(t, { shared: true, structured: true });
+  try {
+    const seen = new Set(), bound = state.withdrawalPublished.header.selector_count + 6;
+    for (let unit = 0; unit < bound; unit++) {
+      const preview = await jobRetirementPlan(state); assert.ok(preview);
+      if (!seen.has(preview.phase)) {
+        const before = jobRetirementFootprint(state), writes = jobRetirementAccounting(preview, before);
+        for (let ordinal = 0; ordinal < writes.length; ordinal++) {
+          const plan = await jobRetirementPlan(state), statements = jobOriginWithdrawalStatements(state, plan);
+          const target = statements[writes[ordinal].index], originalExecute = target.execute;
+          let fired = 0, actualChanges = null;
+          // Explicit dropped-write transport fault. The selected product SQL is
+          // NOT executed; a real same-connection no-op sets changes() to zero.
+          // The next untouched native abort assertion must roll back all prior
+          // product writes. Neither SQL nor a receipt's changes value is forged.
+          target.execute = function () {
+            fired++; const result = state.sqlite.prepare('UPDATE memory_document_job_origin_retirement_progress SET updated_at=updated_at WHERE 0').run();
+            actualChanges = Number(result.changes); return { success: true, results: [], meta: { changes: actualChanges } };
+          };
+          try { await assert.rejects(state.env.DB.batch(statements), /malformed JSON/iu); }
+          finally { target.execute = originalExecute; }
+          assert.equal(fired, 1, plan.phase + ':' + ordinal); assert.equal(actualChanges, 0);
+          assert.deepEqual(jobRetirementFootprint(state), before, 'Dropped write/CAS must not advance evidence or retain earlier changes');
+        }
+        seen.add(preview.phase);
+      }
+      await jobRetirementUnit(state, preview.phase);
+    }
+    assert.deepEqual([...seen], ['initialize', 'answer', 'manifest', 'selectors', 'answer-delete', 'manifest-delete', 'finalize']);
+    assert.equal(await jobRetirementPlan(state), null);
+  } finally { await state.retirementStop(); }
+});
+
+test('job origin retirement: malformed or lost acknowledgements recover only through fresh persisted-state preparation', { timeout: 180_000 }, async t => {
+  for (const fault of ['missing', 'hole', 'assertion-hole', 'assertion-array', 'meta-array', 'inherited-changes', 'getter', 'descriptor-proxy', 'database', 'input-now', 'thrown-after-commit']) {
+    const state = await jobRetirementFixture(t);
+    try {
+      const input = { now: state.retirementNow }, db = state.env.DB, before = jobRetirementFootprint(state);
+      const plan = await jobRetirementPlan(state, input); assert.equal(plan.phase, 'initialize');
+      const writes = jobRetirementAccounting(plan, before), expected = await jobRetirementExpected(state, before, plan, input.now);
+      let actual, thrown = 0;
+      if (fault === 'thrown-after-commit') {
+        const batch = db.batch;
+        db.batch = async statements => { actual = await batch.call(db, statements); thrown++; throw new Error('retirement-fixture-postcommit-ack-loss'); };
+        try { await assert.rejects(db.batch(jobOriginWithdrawalStatements(state, plan)), /retirement-fixture-postcommit-ack-loss/u); }
+        finally { db.batch = batch; }
+        assert.equal(thrown, 1); assert.ok(Array.isArray(actual));
+      } else actual = await db.batch(jobOriginWithdrawalStatements(state, plan));
+      assert.deepEqual(jobRetirementFootprint(state), expected, 'The real batch committed before acknowledgement damage');
+      const damaged = fault === 'thrown-after-commit' ? [] : structuredClone(actual); let getters = 0, descriptorTraps = 0;
+      if (fault === 'missing') damaged.pop();
+      else if (fault === 'hole') delete damaged[writes[0].index];
+      else if (fault === 'assertion-hole') delete damaged[plan.assertionIndexes[0]].results[0];
+      else if (fault === 'assertion-array') damaged[plan.assertionIndexes[0]].results[0] = Object.assign([], { verified: 1 });
+      else if (fault === 'meta-array') damaged[writes[0].index].meta = Object.assign([], { changes: 1 });
+      else if (fault === 'inherited-changes') damaged[writes[0].index].meta = Object.create({ changes: 1 });
+      else if (fault === 'getter') Object.defineProperty(damaged[writes[0].index].meta, 'changes', { enumerable: true, get() { getters++; state.env.DB = {}; return 1; } });
+      else if (fault === 'descriptor-proxy') damaged[writes[0].index].meta = new Proxy({ changes: actual[writes[0].index].meta.changes }, {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === 'changes') { descriptorTraps++; state.env.DB = { prepare: db.prepare, batch: db.batch }; }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      else if (fault === 'database') state.env.DB = { prepare: db.prepare, batch: db.batch };
+      else if (fault === 'input-now') input.now = new Date(Date.parse(input.now) + 1).toISOString();
+      try {
+        assert.equal(plan.acknowledge(damaged), false); assert.equal(plan.acknowledge(actual), false); assert.equal(getters, 0);
+        assert.equal(descriptorTraps, fault === 'descriptor-proxy' ? 1 : 0, 'Reflection may preserve genuine changes yet must not bypass final database currentness');
+      }
+      finally { state.env.DB = db; input.now = state.retirementNow; }
+      assert.deepEqual(jobRetirementFootprint(state), expected);
+      const freshInput = { now: state.retirementNow }, freshBefore = jobRetirementFootprint(state);
+      const fresh = await jobRetirementPlan(state, freshInput); assert.equal(fresh.phase, 'answer');
+      assert.equal(fresh.selectionKey, plan.selectionKey);
+      await jobRetirementUnit(state, 'answer', freshInput, fresh, freshBefore);
+      assert.equal(state.sqlite.prepare('SELECT revision FROM memory_document_job_origin_retirement_progress').get().revision, 1);
+      assert.equal(state.calls.length, 0);
+    } finally { await state.retirementStop(); }
+  }
+});
+
+test('job origin retirement: schema drift and illegal early progress cannot turn hidden holds or missing evidence into completion', { timeout: 120_000 }, async t => {
+  const state = await jobRetirementFixture(t, { shared: true, structured: true });
+  try {
+    await jobRetirementUnit(state, 'initialize');
+    const before = jobRetirementFootprint(state), h = state.withdrawalPublished.header;
+    assert.throws(() => state.sqlite.prepare('DELETE FROM memory_document_job_origin_retirement_progress WHERE origin_id=?').run(h.origin_id));
+    assert.throws(() => state.sqlite.prepare("UPDATE memory_document_job_origin_retirement_progress SET phase='finalize',revision=selector_count+4,selector_cursor=selector_count WHERE origin_id=?").run(h.origin_id));
+    assert.throws(() => state.sqlite.prepare("UPDATE memory_document_job_origin_retirement_progress SET evidence_sha256=? WHERE origin_id=?").run('0'.repeat(64), h.origin_id));
+    assert.deepEqual(jobRetirementFootprint(state), before);
+    const plan = await jobRetirementPlan(state); assert.equal(plan.phase, 'answer');
+    let fired = 0, changed = null, holdId = null;
+    const restore = interceptConsequentialDb(state, 'batch', /^UPDATE private_content SET content=''/u, () => {
+      fired++; holdId = jobRetirementHoldForRef(state, h, h.answer_content_id);
+      state.sqlite.exec(`ALTER TABLE organization_legal_holds RENAME TO retirement_fixture_actual_holds;
+        CREATE VIEW organization_legal_holds AS SELECT * FROM retirement_fixture_actual_holds WHERE 0;`);
+      changed = jobRetirementFootprint(state);
+    });
+    try { await assert.rejects(state.env.DB.batch(jobOriginWithdrawalStatements(state, plan)), /malformed JSON/iu); }
+    finally { restore(); }
+    assert.equal(fired, 1); assert.ok(changed); assert.deepEqual(jobRetirementFootprint(state), changed);
+    assert.equal(state.sqlite.prepare("SELECT status FROM retirement_fixture_actual_holds WHERE hold_id=?").get(holdId).status, 'active');
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM organization_legal_holds').get().n, 0);
+    assert.deepEqual(changed.progress, before.progress); assert.deepEqual(changed.tables.private_content, before.tables.private_content);
+    await assert.rejects(jobRetirementPlan(state), /memory-document-job-retirement-schema-unavailable/u);
+    assert.equal(state.calls.length, 0);
+  } finally { await state.retirementStop(); }
+  const missing = await jobRetirementFixture(t, { structured: true });
+  try {
+    for (const phase of ['initialize', 'answer', 'manifest', 'selectors']) await jobRetirementUnit(missing, phase);
+    const before = jobRetirementFootprint(missing), row = before.progress[0];
+    assert.equal(row.selector_cursor, 1); assert.ok(row.selector_count > 1);
+    assert.throws(() => missing.sqlite.prepare('UPDATE memory_document_job_origin_retirement_progress SET selector_cursor=selector_cursor+2,revision=revision+2 WHERE origin_id=?').run(row.origin_id));
+    assert.deepEqual(jobRetirementFootprint(missing), before);
+    const next = JSON.parse(row.evidence_json).selectors[row.selector_cursor];
+    assert.equal(Number(missing.sqlite.prepare('DELETE FROM memory_document_job_origin_dependencies WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+      .run(row.origin_id, next.resource_kind, next.resource_id).changes), 1);
+    const damaged = jobRetirementFootprint(missing);
+    await assert.rejects(jobRetirementPlan(missing), /memory-document-job-retirement/iu);
+    await assert.rejects(missing.withdrawalNative.nativeDocumentJobOriginRetentionBacklog(missing.env, { now: missing.retirementNow }), /memory-document-job-retirement/iu);
+    assert.deepEqual(jobRetirementFootprint(missing), damaged, 'Missing remaining selectors are unavailable, never an empty backlog or implicit cursor advancement');
+  } finally { await missing.retirementStop(); }
+});
+
+// Cleanup-coverage regressions. All positive rows come from the genuine native
+// queued-job publisher and existing bounded retirement owner. Corruption below
+// is negative persisted data only: no copied row or marker grants authority.
+async function jobCleanupCoverageStatus(state, expected, rows = [state.current()], actor = state.nativePrepared.principal) {
+  const before = jobOriginWithdrawalFootprint(state);
+  const result = await state.withdrawalStore.readStructuredConversationCleanupStatuses(state.env, actor, rows);
+  assert.deepEqual(jobOriginWithdrawalFootprint(state), before, 'Privacy metadata must not mutate bodies, jobs, consent or provenance');
+  if (expected === null) { assert.equal(result, null); return result; }
+  assert.ok(Array.isArray(result)); assert.equal(result.length, 1);
+  assert.deepEqual(Object.keys(result[0]).sort(), ['scopeKey', 'state']);
+  assert.equal(result[0].state, expected); assert.match(result[0].scopeKey, /^[0-9a-f]{64}$/u);
+  assert.equal(Object.isFrozen(result), true); assert.equal(Object.isFrozen(result[0]), true);
+  return result[0];
+}
+
+function jobCleanupCoverageRetiredLedger(before, now, held) {
+  const expected = structuredClone(before), revisions = before.ledger.memory_structured_conversation_revisions;
+  const removed = held ? [] : revisions.map(row => row.body_ref);
+  expected.ledger.memory_structured_conversation_heads = expected.ledger.memory_structured_conversation_heads.map(head => ({ ...head,
+    enrollment_id: null, enrollment_revision: null, permission_epoch: null, policy_version: null,
+    current_body_ref: null, current_body_hash: null, annotation_count: null, coverage_after_sequence: null,
+    coverage_through_sequence: null, expires_at: null, state: held ? 'retiring' : 'retired',
+    cleanup_turn: held ? head.cleanup_turn : 0, first_terminal_at: head.first_terminal_at ?? now, updated_at: now }));
+  expected.ledger.memory_structured_conversation_revisions = expected.ledger.memory_structured_conversation_revisions.filter(row => !removed.includes(row.body_ref));
+  for (const body of expected.tables.private_content) if (removed.includes(body.content_id)) {
+    body.content = ''; body.redacted_at ??= now;
+  }
+  expected.tables.project_resource_scopes = expected.tables.project_resource_scopes.filter(row => row.resource_kind !== 'content' || !removed.includes(row.resource_id));
+  expected.tables.private_content_retention_scopes = expected.tables.private_content_retention_scopes.filter(row => !removed.includes(row.content_id));
+  return expected;
+}
+
+async function jobCleanupCoverageDenied(state, selector = { enrollment: state.current() }) {
+  const before = jobOriginWithdrawalFootprint(state);
+  await jobCleanupCoverageStatus(state, null);
+  await assert.rejects(state.withdrawalStore.prepareStructuredConversationWithdrawal(state.env, selector, new Date().toISOString()),
+    /memory-(?:structured|document-job)-origin-withdrawal-unavailable/u);
+  assert.deepEqual(jobOriginWithdrawalFootprint(state), before, 'Unknown evidence is neither repaired nor silently omitted');
+}
+
+function interceptJobCleanupStatusFinal(state, effect) {
+  const db = state.env.DB, original = db.batch; let fired = 0;
+  db.batch = async statements => {
+    const final = statements.some(statement => statement.sql.includes('privacy_status_authorized') && statement.sql.includes('context_source_asserted'));
+    if (final) { fired++; await effect(statements); }
+    return original.call(db, statements);
+  };
+  return { get fired() { return fired; }, restore() { db.batch = original; } };
+}
+
+test('job origin cleanup coverage: genuine scoped withdrawal preserves job bodies and reports retained pending state', { timeout: 180_000 }, async t => {
+  for (const shared of [false, true]) for (const structured of [false, true]) {
+    const state = await jobOriginWithdrawalFixture(t, { shared, structured });
+    try {
+      const h = state.withdrawalPublished.header, enrollment = state.current();
+      assert.equal(h.enrollment_id, enrollment.enrollment_id); assert.equal(h.enrollment_revision, enrollment.revision);
+      assert.equal(enrollment.recall_enabled, 1);
+      assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_structured_answer_origins').get().n, 0);
+      const first = await jobCleanupCoverageStatus(state, structured ? 'active' : 'absent');
+      if (shared) {
+        jobOriginWithdrawalHold(state);
+        // This is a real hold creation timestamp, not a retirement lease or proof.
+        state.retirementNow = new Date().toISOString();
+        if (structured) for (const row of state.sqlite.prepare('SELECT body_ref FROM memory_structured_conversation_revisions').all())
+          jobRetirementHoldForRef(state, h, row.body_ref);
+      }
+      const before = jobOriginWithdrawalFootprint(state), now = new Date().toISOString();
+      assert.equal(before.ledger.memory_structured_conversation_heads.length, structured ? 1 : 0);
+      if (structured) assert.ok(before.ledger.memory_structured_conversation_revisions.length > 0);
+      const plan = await state.withdrawalStore.prepareStructuredConversationWithdrawal(state.env, { enrollment }, now);
+      assert.equal(plan.pendingOrigins, 1); assert.equal(plan.pendingRevisions, shared && structured ? before.ledger.memory_structured_conversation_revisions.length : 0);
+      assert.equal(plan.statements.filter(statement => /^UPDATE memory_document_job_answer_origins SET status='withdrawn'/u.test(statement.sql)).length, 1,
+        'The scoped wrapper owns one job inverse, not an independently duplicated active-header plan');
+      const receipts = await state.env.DB.batch(plan.statements);
+      assert.equal(plan.acknowledge(receipts), true); assert.equal(plan.acknowledge(receipts), false);
+      const expected = jobCleanupCoverageRetiredLedger(jobOriginWithdrawalExpected(before, [h.origin_id], 'erased', now), now, shared && structured);
+      assert.deepEqual(jobOriginWithdrawalFootprint(state), expected, 'Only the existing ledger owner may redact its unheld ledger; job bodies, original bodies and held custody survive');
+      for (const ref of [h.answer_content_id, h.manifest_content_ref, h.input_content_ref, h.user_content_id])
+        assert.deepEqual(expected.tables.private_content.find(row => row.content_id === ref), before.tables.private_content.find(row => row.content_id === ref));
+      assert.deepEqual(state.current(), enrollment, 'The isolated inverse is not an invented enrollment mutation');
+      const pending = await jobCleanupCoverageStatus(state, 'pending'); assert.equal(pending.scopeKey, first.scopeKey);
+      assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin cleanup coverage: unregistered markers and damaged native registrations never become absent or complete', { timeout: 180_000 }, async t => {
+  for (const fault of ['manifest', 'selector', 'answer-hash', 'answer-kind', 'answer-owner', 'header-event', 'unregistered-marker', 'unknown-marker', 'unregistered-sidecar-only']) {
+    const state = await jobOriginWithdrawalFixture(t, { shared: true });
+    try {
+      await jobCleanupCoverageStatus(state, 'absent');
+      const h = state.withdrawalPublished.header;
+      if (fault === 'manifest') {
+        assert.equal(Number(state.sqlite.prepare("UPDATE private_content SET content='not the certified manifest' WHERE content_id=?").run(h.manifest_content_ref).changes), 1);
+      } else if (fault === 'selector') {
+        const selector = state.withdrawalPublished.selectors[0];
+        assert.equal(Number(state.sqlite.prepare('UPDATE memory_document_job_origin_dependencies SET resource_id=? WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+          .run(crypto.randomUUID(), h.origin_id, selector.resource_kind, selector.resource_id).changes), 1);
+        assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n, h.selector_count);
+      } else if (fault === 'answer-hash') {
+        assert.equal(Number(state.sqlite.prepare("UPDATE private_content SET content=content||' altered' WHERE content_id=?").run(h.answer_content_id).changes), 1);
+      } else if (fault === 'answer-kind' || fault === 'answer-owner') {
+        const column = fault === 'answer-kind' ? 'kind' : 'owner_id', value = fault === 'answer-kind' ? 'condition' : crypto.randomUUID();
+        assert.equal(Number(state.sqlite.prepare('UPDATE private_content SET ' + column + '=? WHERE content_id=?').run(value, h.answer_content_id).changes), 1);
+      } else if (fault === 'header-event') {
+        assert.equal(Number(state.sqlite.prepare('UPDATE memory_document_job_answer_origins SET answer_event_id=? WHERE origin_id=?').run(crypto.randomUUID(), h.origin_id).changes), 1);
+      } else {
+        // A new immutable native event is deliberately UNREGISTERED negative data.
+        // Its scalar marker is not a publication or a native read capability.
+        const ref = crypto.randomUUID(), now = new Date().toISOString(), expiry = new Date(Date.now() + 60_000).toISOString();
+        assert.equal(Number(state.sqlite.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+          .run(ref, h.actor_user_id, 'chat-assistant-memory', 'UNREGISTERED_JOB_MARKER_CANARY', now, expiry).changes), 1);
+        const [event] = await appendContextReadEvents(state, [['AssistantReasoned', { content_ref: ref,
+          memory_origin_version: fault === 'unknown-marker' ? '3' : 3, job_id: crypto.randomUUID(), turn_id: crypto.randomUUID() }]]);
+        const immutable = { ...state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(event.eventId) };
+        assert.equal(JSON.parse(immutable.payload).content_ref, ref);
+        assert.equal(JSON.parse(immutable.payload).memory_origin_version, fault === 'unknown-marker' ? '3' : 3);
+        assert.notEqual(immutable.actor, 'worker:memory', 'This is deliberately unregistered wrong-actor residue, not an isolated registered-event mutation');
+        assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_answer_origins WHERE answer_content_id=? OR answer_event_id=?').get(ref, event.eventId).n, 0);
+        if (fault === 'unregistered-sidecar-only') {
+          const old = state.sqlite.prepare('SELECT * FROM private_content_retention_scopes WHERE content_id=?').get(h.answer_content_id); assert.ok(old);
+          // Clone only a negative custody row's physical shape, never a claim,
+          // registration or selector proof. Its actor is the genuine fixture actor.
+          const row = { ...old, content_id: ref, created_at: now, assigned_expires_at: expiry }, keys = Object.keys(row);
+          assert.equal(Number(state.sqlite.prepare('INSERT INTO private_content_retention_scopes(' + keys.join(',') + ') VALUES(' + keys.map(() => '?').join(',') + ')')
+            .run(...keys.map(key => row[key])).changes), 1);
+          assert.equal(Number(state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(ref).changes), 1);
+          assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content WHERE content_id=?').get(ref).n, 0);
+          assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?').get(ref).n, 1);
+        }
+        await jobCleanupCoverageDenied(state);
+        assert.deepEqual({ ...state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(event.eventId) }, immutable,
+          'No event UPDATE/DELETE or append-only guard bypass is used');
+        continue;
+      }
+      await jobCleanupCoverageDenied(state);
+    } finally { await state.jobMemoryStop(); }
+  }
+});
+
+test('job origin cleanup coverage: stale enrollment and late native snapshot changes deny status and roll back withdrawal', { timeout: 180_000 }, async t => {
+  const state = await jobOriginWithdrawalFixture(t, { shared: true });
+  try {
+    const first = await jobCleanupCoverageStatus(state, 'absent'), original = state.current();
+    const restore = documentJobOriginReaderCell(state, 'memory_live_enrollments', 'revision', 'enrollment_id=?', [original.enrollment_id], original.revision + 1);
+    try {
+      await jobCleanupCoverageStatus(state, null, [original]);
+      const changed = await jobCleanupCoverageStatus(state, 'pending'); assert.equal(changed.scopeKey, first.scopeKey);
+      // Contradictory caller rows are negative inputs, never new scope authority.
+      await jobCleanupCoverageStatus(state, null, [{ ...state.current(), document_id: crypto.randomUUID() }]);
+    } finally { restore(); }
+  } finally { await state.jobMemoryStop(); }
+  for (const fault of ['enrollment', 'answer', 'database']) {
+    const current = await jobOriginWithdrawalFixture(t, { shared: true });
+    const db = current.env.DB; let hook, changed, replacementCalls = 0;
+    try {
+      await jobCleanupCoverageStatus(current, 'absent');
+      const enrollment = current.current(), actor = current.nativePrepared.principal, h = current.withdrawalPublished.header;
+      hook = interceptJobCleanupStatusFinal(current, () => {
+        if (fault === 'database') current.env.DB = { prepare() { replacementCalls++; throw new Error('replacement DB must not be used'); }, batch() { replacementCalls++; throw new Error('replacement DB must not be used'); } };
+        else if (fault === 'enrollment') assert.equal(Number(current.sqlite.prepare('UPDATE memory_live_enrollments SET revision=revision+1 WHERE enrollment_id=?').run(enrollment.enrollment_id).changes), 1);
+        else assert.equal(Number(current.sqlite.prepare("UPDATE private_content SET content=content||' late change' WHERE content_id=?").run(h.answer_content_id).changes), 1);
+        changed = jobOriginWithdrawalFootprint(current);
+      });
+      const result = await current.withdrawalStore.readStructuredConversationCleanupStatuses(current.env, actor, [enrollment]);
+      assert.equal(hook.fired, 1); assert.equal(result, null); assert.equal(replacementCalls, 0);
+      assert.deepEqual(jobOriginWithdrawalFootprint(current), changed);
+    } finally { current.env.DB = db; hook?.restore(); await current.jobMemoryStop(); }
+  }
+  const late = await jobOriginWithdrawalFixture(t, { shared: true, structured: true }); let hook;
+  try {
+    const plan = await late.withdrawalStore.prepareStructuredConversationWithdrawal(late.env, { enrollment: late.current() }, new Date().toISOString());
+    assert.equal(plan.pendingOrigins, 1); let changed;
+    hook = interceptJobOriginWithdrawal(late, { before: () => {
+      const h = late.withdrawalPublished.header, picked = late.withdrawalPublished.selectors[0];
+      assert.equal(Number(late.sqlite.prepare('UPDATE memory_document_job_origin_dependencies SET resource_id=? WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+        .run(crypto.randomUUID(), h.origin_id, picked.resource_kind, picked.resource_id).changes), 1);
+      assert.equal(late.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n, h.selector_count);
+      changed = jobOriginWithdrawalFootprint(late);
+    } });
+    await assert.rejects(late.env.DB.batch(plan.statements));
+    assert.equal(hook.attempts, 1); assert.ok(changed);
+    assert.deepEqual(jobOriginWithdrawalFootprint(late), changed, 'Late native evidence drift aborts every negative job and ledger write');
+    assert.equal(changed.publication.memory_document_job_answer_origins[0].status, 'active');
+    assert.equal(changed.ledger.memory_structured_conversation_heads[0].state, 'active');
+  } finally { hook?.restore(); await late.jobMemoryStop(); }
+});
+
+test('job origin cleanup coverage: real bounded retirement clears only completed job pending state and rejects resurrected residue', { timeout: 180_000 }, async t => {
+  for (const shared of [false, true]) {
+    const state = await jobRetirementFixture(t, { shared, keepActive: true });
+    try {
+      const h = state.withdrawalPublished.header, first = await jobCleanupCoverageStatus(state, 'absent');
+      const before = jobRetirementFootprint(state), reason = 'source-changed';
+      const writes = await state.withdrawalStore.liveMemoryOriginWithdrawalStatements(state.env, { originId: h.origin_id }, reason, state.retirementNow);
+      await state.withdrawalStore.memoryAtomic(state.env, [], writes, []);
+      assert.deepEqual(jobRetirementFootprint(state), jobOriginWithdrawalExpected(before, [h.origin_id], reason, state.retirementNow));
+      assert.equal((await jobCleanupCoverageStatus(state, 'pending')).scopeKey, first.scopeKey);
+      await jobRetirementUnit(state, 'initialize'); await jobRetirementUnit(state, 'answer'); await jobRetirementUnit(state, 'manifest');
+      assert.equal((await jobCleanupCoverageStatus(state, 'pending')).scopeKey, first.scopeKey);
+      if (shared) {
+        const original = state.withdrawalPublished.manifest.dependencies[0].user_content_id;
+        const hold = jobRetirementHoldForRef(state, h, original);
+        assert.equal(await jobRetirementPlan(state), null);
+        assert.deepEqual(await state.withdrawalNative.nativeDocumentJobOriginRetentionBacklog(state.env, { now: state.retirementNow }), { count: 0, oldest: null });
+        await jobCleanupCoverageStatus(state, 'pending');
+        jobRetirementReleaseHold(state, hold);
+      }
+      await jobRetirementFinish(state);
+      assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status, 'minimized');
+      assert.deepEqual(jobRetirementFootprint(state).progress, []);
+      assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n, 0);
+      for (const ref of [h.answer_content_id, h.manifest_content_ref]) {
+        assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content WHERE content_id=?').get(ref).n, 0);
+        assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref).n, 0);
+        assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?').get(ref).n, 0);
+      }
+      // No ledger was created: exact job completion removes the pending overlay
+      // but must not invent a ledger 'complete' state or account-wide erasure.
+      assert.equal((await jobCleanupCoverageStatus(state, 'absent')).scopeKey, first.scopeKey);
+      const negative = jobRetirementFootprint(state), now = new Date().toISOString();
+      assert.equal(Number(state.sqlite.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+        .run(h.answer_content_id, h.actor_user_id, 'condition', 'RESURRECTED_NEGATIVE_RESIDUE', now, new Date(Date.now() + 60_000).toISOString()).changes), 1);
+      assert.deepEqual(jobRetirementFootprint(state).publication, negative.publication, 'The minimized header and empty index are not restored or forged');
+      await jobCleanupCoverageDenied(state);
+    } finally { await state.retirementStop(); }
+  }
+});
+
+// Existing explicit personal-erasure request only. These canaries are ordinary
+// isolated data to erase, never platform authorizations, memories or job claims.
+const jobPersonalErasureBody = Object.freeze({ action: 'erase-personal-authored-context', confirmation: 'ERASE_MY_PERSONAL_AUTHORED_CONTEXT' });
+
+async function jobPersonalErasureFixture(t, options = {}) {
+  const state = await jobRetirementFixture(t, { ...options, keepActive: true });
+  try {
+    const { handleEventPrivacy } = await import('../worker/privacy-api.ts');
+    state.postPersonalErasure = (body = jobPersonalErasureBody, headers = state.owner) => handleEventPrivacy(
+      new Request('http://localhost/api/privacy/events', json(body, { origin: 'http://localhost', ...headers })), state.env);
+    const current = await handleEventPrivacy(new Request('http://localhost/api/privacy/events', { headers: state.owner }), state.env);
+    const status = await current.json(); assert.equal(current.status, 200, JSON.stringify(status));
+    if (!options.shared) assert.equal(status.legacyAuthoredEvents, 0, 'The real personal historical-migration gate must be satisfied');
+    assert.ok(status.governedAuthoredEvents > 0);
+    const actor = state.current().actor_user_id, now = new Date().toISOString(), expiry = new Date(Date.now() + 3_600_000).toISOString();
+    const canaries = { private: crypto.randomUUID(), external: crypto.randomUUID(), platform: crypto.randomUUID() };
+    state.sqlite.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+      .run(canaries.private, actor, 'condition', 'PERSONAL_ERASURE_ORDINARY_BODY', now, expiry);
+    state.sqlite.prepare('INSERT INTO external_content(content_id,owner_id,content,created_at) VALUES(?,?,?,?)')
+      .run(canaries.external, actor, 'PERSONAL_ERASURE_DERIVED_CONTENT', now);
+    // Exact retained platform-assistant schema statement. A canary row is not a
+    // fabricated platform conversation, policy snapshot or execution capability.
+    state.sqlite.exec("CREATE TABLE IF NOT EXISTS platform_assistant_private_content(content_id TEXT PRIMARY KEY NOT NULL,actor_user_id TEXT NOT NULL,audience TEXT NOT NULL,route_family TEXT NOT NULL,permission_epoch TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN('platform-chat-user','platform-chat-assistant')),content TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,redacted_at TEXT)");
+    state.sqlite.prepare(`INSERT INTO platform_assistant_private_content
+      (content_id,actor_user_id,audience,route_family,permission_epoch,kind,content,created_at,expires_at,redacted_at)
+      VALUES(?,?,?,?,?,'platform-chat-user',?,?,?,NULL)`)
+      .run(canaries.platform, actor, 'creator', '/document/:documentId', 'isolated-erasure-canary-not-authority', 'PERSONAL_ERASURE_PLATFORM_BODY', now, expiry);
+    state.personalErasureCanaries = canaries;
+    return state;
+  } catch (error) { await state.retirementStop(); throw error; }
+}
+
+function jobPersonalErasureFootprint(state) {
+  return structuredClone({ ...jobRetirementFootprint(state), external: state.sqlite.prepare('SELECT * FROM external_content ORDER BY content_id').all(),
+    platform: state.sqlite.prepare('SELECT * FROM platform_assistant_private_content ORDER BY content_id').all() });
+}
+
+function jobPersonalErasureSources(state) {
+  const h = state.withdrawalPublished.header, actor = h.actor_user_id;
+  return structuredClone({ bodies: state.sqlite.prepare('SELECT * FROM private_content WHERE owner_id=? AND content_id NOT IN(?,?) ORDER BY content_id')
+    .all(actor, h.answer_content_id, h.manifest_content_ref),
+    envelopes: state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE owner_id=? ORDER BY private_event_id').all(actor),
+    external: state.sqlite.prepare('SELECT * FROM external_content WHERE owner_id=? ORDER BY content_id').all(actor),
+    platform: state.sqlite.prepare('SELECT * FROM platform_assistant_private_content WHERE actor_user_id=? ORDER BY content_id').all(actor) });
+}
+
+async function jobPersonalErasurePending(response) {
+  const body = await response.json(); assert.equal(response.status, 202, JSON.stringify(body));
+  assert.equal(body.authoredContentErasurePending, true); assert.equal(body.memoryJobCleanupPending, true); assert.equal(body.continuationRequired, true);
+  assert.equal(body.heldAuthoredEventBodies, null); assert.equal(body.heldTemporaryContent, null);
+  assert.ok(Number.isSafeInteger(body.memoryJobOriginsPendingAtStart) && body.memoryJobOriginsPendingAtStart > 0);
+  assert.ok(Number.isSafeInteger(body.initializedMemoryJobOrigins) && body.initializedMemoryJobOrigins >= 0);
+  assert.ok(Number.isSafeInteger(body.advancedMemoryCleanupWorkUnits) && body.advancedMemoryCleanupWorkUnits >= 0 && body.advancedMemoryCleanupWorkUnits <= 16);
+  for (const key of ['erasedAuthoredEventBodies', 'erasedTemporaryContent', 'erasedPlatformConversations', 'clearedDerivedContent', 'erasedLegacyPresentationJobs']) assert.equal(body[key], 0);
+  assert.equal(body.otherDevicesAndBackupsPurged, false); return body;
+}
+
+function interceptJobPersonalErasure(state, { match, before, after }) {
+  const db = state.env.DB, original = db.batch; let fired = 0;
+  db.batch = async statements => {
+    const selected = match(statements);
+    if (selected) { fired++; if (before) await before(statements); }
+    const results = await original.call(db, statements);
+    return selected && after ? after(results, statements) : results;
+  };
+  return { get fired() { return fired; }, restore() { db.batch = original; } };
+}
+
+async function jobPersonalErasureControlProject(state) {
+  const projectId = 'erasure-hold-control-' + crypto.randomUUID();
+  await appendContextReadEvents(state, [['ProjectCreated', { project_id: projectId, name: 'Separate erasure hold control project' }]]);
+  const organization = await state.request('/api/workspaces', json({ name: 'Erasure hold control organization' }, state.owner));
+  const organizationBody = await organization.json(); assert.equal(organization.status, 201, JSON.stringify(organizationBody));
+  const project = await state.request('/api/workspaces/' + organizationBody.organizationId + '/projects', json({ projectId }, state.owner));
+  const projectBody = await project.json(); assert.equal(project.status, 201, JSON.stringify(projectBody));
+  // Do not enter this control project's shared context or relabel the original
+  // personal job. Only these genuinely created IDs identify a later negative hold.
+  assert.equal(state.owner.cookie, undefined); assert.equal(state.withdrawalPublished.header.organization_id, null);
+  return { organizationId: organizationBody.organizationId, projectAccessId: projectBody.projectAccessId, projectId };
+}
+
+const jobPersonalBarrierBatch = statements => statements.some(statement => /^INSERT INTO memory_document_job_origin_retirement_progress\b/u.test(statement.sql));
+
+const jobPersonalGenericBatch = statements => statements.some(statement => /^UPDATE event_private_payloads SET private_json=''/u.test(statement.sql));
+
+async function jobPersonalErasureReady(state, sources = jobPersonalErasureSources(state)) {
+  const h = state.withdrawalPublished.header, limit = Math.ceil((h.selector_count + 7) / 16) + 2;
+  const responses = [];
+  for (let index = 0; index < limit; index++) {
+    if (state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status === 'minimized') {
+      assert.deepEqual(jobPersonalErasureSources(state), sources); return responses;
+    }
+    responses.push(await jobPersonalErasurePending(await state.postPersonalErasure()));
+    assert.deepEqual(jobPersonalErasureSources(state), sources, 'Every pending request preserves all non-derived job sources and generic erasure canaries');
+  }
+  assert.fail('The finite unheld published-selector inventory must finish before generic personal erasure');
+}
+
+async function jobPersonalErasureUnconfirmed(response) {
+  const body = await response.json(); assert.equal(response.status, 503, JSON.stringify(body));
+  assert.deepEqual(body, { error: 'memory_erasure_unconfirmed', authoredContentErasurePending: true, memoryJobCleanupPending: true, continuationRequired: true });
+}
+
+function jobPersonalErasureCanariesGone(state) {
+  const ids = state.personalErasureCanaries;
+  for (const [table, id] of [['private_content', ids.private], ['platform_assistant_private_content', ids.platform]]) {
+    const row = state.sqlite.prepare('SELECT content,redacted_at FROM ' + table + ' WHERE content_id=?').get(id);
+    assert.ok(row); assert.equal(row.content, ''); assert.ok(row.redacted_at);
+  }
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM external_content WHERE content_id=?').get(ids.external).n, 0);
+}
+
+test('job origin personal erasure: confirmed personal requests capture evidence before bounded cleanup and erase ordinary sources only after fresh completion', { timeout: 180_000 }, async t => {
+  for (const structured of [false, true]) {
+    const state = await jobPersonalErasureFixture(t, { structured }); let hook;
+    try {
+      const h = state.withdrawalPublished.header, sources = jobPersonalErasureSources(state);
+      assert.ok(sources.bodies.some(row => row.content)); assert.ok(sources.envelopes.some(row => row.private_json));
+      const events = jobPersonalErasureFootprint(state).tables.events;
+      let initialized;
+      hook = interceptJobPersonalErasure(state, { match: jobPersonalBarrierBatch, after: receipts => {
+        const progress = state.sqlite.prepare('SELECT * FROM memory_document_job_origin_retirement_progress WHERE origin_id=?').get(h.origin_id);
+        assert.ok(progress); assert.equal(progress.selector_count, h.selector_count); assert.equal(progress.selector_cursor, 0);
+        assert.ok(progress.evidence_json.includes(h.manifest_content_ref)); assert.ok(progress.evidence_json.includes(h.answer_content_id));
+        const original = structured ? state.withdrawalPublished.manifest.originals[0].content_id : state.withdrawalPublished.manifest.dependencies[0].user_content_id;
+        assert.ok(progress.evidence_json.includes(original)); initialized = { ...progress };
+        assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status, 'withdrawn');
+        for (const key of ['learn_enabled', 'recall_enabled', 'background_enabled']) assert.equal(state.current()[key], 0);
+        assert.deepEqual(jobPersonalErasureSources(state), sources, 'Durable complete evidence and consent withdrawal precede generic source destruction');
+        return receipts;
+      } });
+      const pending = await jobPersonalErasureReady(state, sources);
+      assert.ok(pending.length > 0); assert.equal(pending[0].initializedMemoryJobOrigins, 1);
+      assert.equal(hook.fired, 1); assert.ok(initialized); hook.restore(); hook = null;
+      assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_document_job_origin_retirement_progress').all(), []);
+      assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n, 0);
+      // Even if the first request finished all physical phases, its response was
+      // pending. This separate explicit request proves readiness, then erases.
+      const response = await state.postPersonalErasure(), body = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(body));
+      for (const key of ['authoredContentErasurePending', 'memoryJobCleanupPending', 'continuationRequired']) assert.equal(body[key], false);
+      assert.equal(body.memoryJobOriginsPendingAtStart, 0); assert.equal(body.advancedMemoryCleanupWorkUnits, 0);
+      assert.ok(body.erasedAuthoredEventBodies > 0); assert.ok(body.erasedTemporaryContent > 0);
+      assert.equal(body.erasedPlatformConversations, 1); assert.equal(body.clearedDerivedContent, 1);
+      jobPersonalErasureCanariesGone(state);
+      const original = structured ? state.withdrawalPublished.manifest.originals[0].content_id : state.withdrawalPublished.manifest.dependencies[0].user_content_id;
+      const erased = state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(original);
+      assert.ok(erased); assert.equal(erased.content, ''); assert.ok(erased.redacted_at);
+      assert.deepEqual(jobPersonalErasureFootprint(state).tables.events, events, 'Immutable event rows are not rewritten by authored-body erasure');
+      assert.equal(body.sharedOrganizationContextRetained, true); assert.equal(body.otherDevicesAndBackupsPurged, false);
+      assert.equal(state.calls.length, 0); assert.equal(state.env.OPENAI_API_KEY, undefined);
+    } finally { hook?.restore(); await state.retirementStop(); }
+  }
+});
+
+test('job origin personal erasure: existing confirmation origin and shared-context gates cannot dispatch the destructive workflow', { timeout: 120_000 }, async t => {
+  const state = await jobPersonalErasureFixture(t); let hook;
+  try {
+    const before = jobPersonalErasureFootprint(state);
+    hook = interceptJobPersonalErasure(state, { match: statements => jobPersonalBarrierBatch(statements) || jobPersonalGenericBatch(statements) });
+    for (const [request, status, error] of [
+      [() => state.postPersonalErasure({ ...jobPersonalErasureBody, confirmation: 'not confirmed' }), 400, 'explicit_erasure_confirmation_required'],
+      [() => state.postPersonalErasure({ ...jobPersonalErasureBody, action: 'erase-everything' }), 400, 'unsupported_privacy_action'],
+      [() => state.postPersonalErasure(jobPersonalErasureBody, { ...state.owner, origin: 'https://untrusted.example' }), 403, 'same_origin_required'],
+    ]) {
+      const response = await request(), body = await response.json(); assert.equal(response.status, status, JSON.stringify(body)); assert.equal(body.error, error);
+      assert.deepEqual(jobPersonalErasureFootprint(state), before);
+    }
+    assert.equal(hook.fired, 0);
+  } finally { hook?.restore(); await state.retirementStop(); }
+  const shared = await jobPersonalErasureFixture(t, { shared: true });
+  try {
+    assert.ok(shared.owner.cookie); assert.ok(shared.withdrawalPublished.header.organization_id);
+    const before = jobPersonalErasureFootprint(shared), response = await shared.postPersonalErasure(), body = await response.json();
+    assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.error, 'personal_privacy_context_required');
+    assert.deepEqual(jobPersonalErasureFootprint(shared), before, 'The real selected organization context is not relabeled personal to bypass erasure exclusions');
+    assert.equal(shared.current().recall_enabled, 1);
+  } finally { await shared.retirementStop(); }
+});
+
+test('job origin personal erasure: late custody and content hold on a genuine personal original preserves sources while repeated requests stay pending', { timeout: 120_000 }, async t => {
+  const state = await jobPersonalErasureFixture(t); let hook;
+  try {
+    const control = await jobPersonalErasureControlProject(state), h = state.withdrawalPublished.header;
+    const original = state.withdrawalPublished.manifest.dependencies[0].user_content_id, sources = jobPersonalErasureSources(state);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(original).n, 0);
+    const holdId = crypto.randomUUID(); let progressBeforeHold;
+    hook = interceptJobPersonalErasure(state, { match: jobPersonalBarrierBatch, after: receipts => {
+      const progress = state.sqlite.prepare('SELECT * FROM memory_document_job_origin_retirement_progress WHERE origin_id=?').get(h.origin_id);
+      assert.ok(progress); progressBeforeHold = { ...progress }; assert.ok(progress.evidence_json.includes(original));
+      const now = new Date().toISOString();
+      // Deliberately adversarial LATE custody, not positive source reassignment:
+      // keep the genuine personal header/claim unchanged and use real control IDs.
+      assert.equal(Number(state.sqlite.prepare(`INSERT INTO project_resource_scopes
+        (resource_kind,resource_id,project_access_id,organization_id,project_id,owner_user_id,actor_user_id,visibility,created_at)
+        VALUES('content',?,?,?,?,?,?,'actor_private',?)`).run(original, control.projectAccessId, control.organizationId, control.projectId, h.actor_user_id, h.actor_user_id, now).changes), 1);
+      assert.equal(Number(state.sqlite.prepare(`INSERT INTO organization_legal_holds
+        (hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at,released_at)
+        VALUES(?,?,'content',?,'late original hold negative fixture','active',?,?,NULL)`)
+        .run(holdId, control.organizationId, original, h.actor_user_id, now).changes), 1);
+      return receipts;
+    } });
+    const first = await jobPersonalErasurePending(await state.postPersonalErasure());
+    assert.equal(hook.fired, 1); assert.ok(progressBeforeHold); assert.equal(first.advancedMemoryCleanupWorkUnits, 0);
+    hook.restore(); hook = null;
+    const held = jobPersonalErasureFootprint(state);
+    const second = await jobPersonalErasurePending(await state.postPersonalErasure());
+    assert.equal(second.initializedMemoryJobOrigins, 0); assert.equal(second.advancedMemoryCleanupWorkUnits, 0);
+    assert.deepEqual(jobPersonalErasureSources(state), sources, 'No generic event/private/external/platform wipe may run under the retained original hold');
+    assert.deepEqual(jobPersonalErasureFootprint(state).progress, held.progress);
+    assert.deepEqual(jobPersonalErasureFootprint(state).holds, held.holds);
+    assert.equal(state.sqlite.prepare('SELECT organization_id FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).organization_id, null);
+    assert.equal(state.sqlite.prepare('SELECT status FROM organization_legal_holds WHERE hold_id=?').get(holdId).status, 'active');
+  } finally { hook?.restore(); await state.retirementStop(); }
+  const completed = await jobPersonalErasureFixture(t);
+  try {
+    await jobPersonalErasureReady(completed);
+    const h = completed.withdrawalPublished.header, original = completed.withdrawalPublished.manifest.dependencies[0].user_content_id;
+    assert.equal(completed.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status, 'minimized');
+    const control = await jobPersonalErasureControlProject(completed);
+    const bodyBefore = { ...completed.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(original) };
+    assert.ok(bodyBefore.content); assert.equal(bodyBefore.redacted_at, null);
+    assert.equal(completed.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(original).n, 0);
+    assert.equal(completed.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?').get(original).n, 0);
+    const policy = completed.sqlite.prepare('SELECT version FROM organization_retention_policies WHERE organization_id=?').get(control.organizationId);
+    // A late negative retention assignment, not a shared resource assignment or
+    // positive authorization. This personal row must remain in held erasure counts.
+    assert.equal(Number(completed.sqlite.prepare(`INSERT INTO private_content_retention_scopes
+      (content_id,organization_id,project_access_id,project_id,actor_user_id,classification,created_at,policy_version,assigned_expires_at)
+      VALUES(?,?,?,?,?,'transient-private',?,?,?)`).run(original, control.organizationId, control.projectAccessId, control.projectId,
+      h.actor_user_id, bodyBefore.created_at, Number(policy?.version ?? 0), bodyBefore.expires_at).changes), 1);
+    const holdId = crypto.randomUUID(), now = new Date().toISOString();
+    assert.equal(Number(completed.sqlite.prepare(`INSERT INTO organization_legal_holds
+      (hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at,released_at)
+      VALUES(?,?,'content',?,'late completed-job personal original hold','active',?,?,NULL)`)
+      .run(holdId, control.organizationId, original, h.actor_user_id, now).changes), 1);
+    const envelopesBefore = completed.sqlite.prepare(`SELECT * FROM event_private_payloads WHERE owner_id=? AND redacted_at IS NULL
+      AND json_valid(private_json) AND json_extract(private_json,'$.content_ref')=? ORDER BY private_event_id`).all(h.actor_user_id, original).map(row => ({ ...row }));
+    assert.ok(envelopesBefore.length > 0, 'The genuine original must have a nonempty authored envelope protected by this exact content hold');
+    for (const row of envelopesBefore) {
+      assert.ok(row.private_json);
+      assert.equal(completed.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?').get(row.private_event_id).n, 0);
+    }
+    const verifyHeld = async response => {
+      const body = await response.json(); assert.equal(response.status, 202, JSON.stringify(body));
+      assert.equal(body.authoredContentErasurePending, true); assert.equal(body.memoryJobCleanupPending, false); assert.equal(body.continuationRequired, true);
+      assert.equal(body.memoryJobOriginsPendingAtStart, 0); assert.equal(body.advancedMemoryCleanupWorkUnits, 0);
+      assert.equal(body.heldTemporaryContent, 1); assert.equal(body.heldAuthoredEventBodies, envelopesBefore.length);
+      assert.deepEqual({ ...completed.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(original) }, bodyBefore);
+      assert.deepEqual(completed.sqlite.prepare(`SELECT * FROM event_private_payloads WHERE owner_id=? AND redacted_at IS NULL
+        AND json_valid(private_json) AND json_extract(private_json,'$.content_ref')=? ORDER BY private_event_id`).all(h.actor_user_id, original).map(row => ({ ...row })), envelopesBefore);
+      assert.equal(body.otherDevicesAndBackupsPurged, false); return body;
+    };
+    const first = await verifyHeld(await completed.postPersonalErasure());
+    assert.ok(first.erasedTemporaryContent > 0); assert.equal(first.clearedDerivedContent, 1); assert.equal(first.erasedPlatformConversations, 1);
+    jobPersonalErasureCanariesGone(completed);
+    await verifyHeld(await completed.postPersonalErasure());
+    completed.retirementNow = new Date().toISOString(); jobRetirementReleaseHold(completed, holdId);
+    const final = await completed.postPersonalErasure(), result = await final.json();
+    assert.equal(final.status, 200, JSON.stringify(result));
+    assert.equal(result.authoredContentErasurePending, false); assert.equal(result.memoryJobCleanupPending, false); assert.equal(result.continuationRequired, false);
+    assert.equal(result.heldTemporaryContent, 0); assert.equal(result.heldAuthoredEventBodies, 0);
+    const erased = completed.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(original);
+    assert.equal(erased.content, ''); assert.ok(erased.redacted_at);
+    for (const row of envelopesBefore) {
+      const erasedEnvelope = completed.sqlite.prepare('SELECT private_json,redacted_at FROM event_private_payloads WHERE private_event_id=?').get(row.private_event_id);
+      assert.equal(erasedEnvelope.private_json, ''); assert.ok(erasedEnvelope.redacted_at);
+    }
+  } finally { await completed.retirementStop(); }
+});
+
+test('job origin personal erasure: corrupt evidence and late transaction drift never authorize generic body destruction', { timeout: 180_000 }, async t => {
+  for (const fault of ['manifest-before', 'selector-at-barrier', 'final-generic-abort', 'final-generic-noop', 'final-reactivation']) {
+    const state = await jobPersonalErasureFixture(t); let hook;
+    try {
+      const h = state.withdrawalPublished.header; let changed, dropped = 0, reactivated = 0;
+      if (fault === 'manifest-before') {
+        assert.equal(Number(state.sqlite.prepare("UPDATE private_content SET content='invalid erasure evidence' WHERE content_id=?").run(h.manifest_content_ref).changes), 1);
+        changed = jobPersonalErasureFootprint(state);
+      } else if (fault === 'selector-at-barrier') {
+        hook = interceptJobPersonalErasure(state, { match: jobPersonalBarrierBatch, before: () => {
+          const row = state.withdrawalPublished.selectors[0];
+          assert.equal(Number(state.sqlite.prepare('UPDATE memory_document_job_origin_dependencies SET resource_id=? WHERE origin_id=? AND resource_kind=? AND resource_id=?')
+            .run(crypto.randomUUID(), h.origin_id, row.resource_kind, row.resource_id).changes), 1);
+          assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_origin_dependencies WHERE origin_id=?').get(h.origin_id).n, h.selector_count);
+          changed = jobPersonalErasureFootprint(state);
+        } });
+      } else {
+        await jobPersonalErasureReady(state); changed = jobPersonalErasureFootprint(state);
+        // The inherited real Statement failure occurs during the actual generic
+        // transaction, after earlier writes; native rollback must preserve them all.
+        state.controls.failPlatformPrivacyErase = fault === 'final-generic-abort';
+        hook = interceptJobPersonalErasure(state, { match: jobPersonalGenericBatch, before: statements => {
+          if (fault === 'final-reactivation') {
+            const target = statements.find(statement => /^UPDATE event_private_payloads SET private_json=''/u.test(statement.sql)); assert.ok(target);
+            const original = target.execute.bind(target);
+            target.execute = kind => {
+              reactivated++;
+              assert.equal(state.env.DB.prepare('UPDATE memory_live_enrollments SET recall_enabled=1 WHERE enrollment_id=?').bind(h.enrollment_id).execute('run').meta.changes, 1);
+              assert.equal(state.current().recall_enabled, 1);
+              return original(kind);
+            };
+            return;
+          }
+          if (fault !== 'final-generic-noop') return;
+          const target = statements.find(statement => /^DELETE FROM external_content WHERE owner_id=/u.test(statement.sql)); assert.ok(target);
+          assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM external_content WHERE content_id=?').get(state.personalErasureCanaries.external).n, 1);
+          // Execute a real same-connection no-op, not a forged successful result.
+          // The final no-eligible-residue proof must abort every earlier erasure.
+          target.execute = kind => { dropped++; return state.env.DB.prepare('DELETE FROM external_content WHERE 0').execute(kind); };
+        } });
+      }
+      await jobPersonalErasureUnconfirmed(await state.postPersonalErasure());
+      if (hook) assert.equal(hook.fired, 1); assert.ok(changed);
+      assert.deepEqual(jobPersonalErasureFootprint(state), changed, 'Preparation denial or known native transaction abort leaves all effects outside that attempt intact');
+      if (fault === 'final-generic-abort') assert.equal(state.controls.failPlatformPrivacyErase, false);
+      else if (fault === 'final-generic-noop') assert.equal(dropped, 1);
+      else if (fault === 'final-reactivation') assert.equal(reactivated, 1);
+      else { assert.equal(state.current().recall_enabled, 1); assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status, 'active'); }
+    } finally { hook?.restore(); await state.retirementStop(); }
+  }
+});
+
+test('job origin personal erasure: lost or malformed real acknowledgements remain unconfirmed and only a fresh explicit request can continue', { timeout: 180_000 }, async t => {
+  for (const fault of ['barrier-throw', 'barrier-inherited-error', 'final-throw', 'final-array-receipt']) {
+    const state = await jobPersonalErasureFixture(t); let hook; let getterCalls = 0;
+    try {
+      const final = fault.startsWith('final-'), sources = jobPersonalErasureSources(state);
+      if (final) await jobPersonalErasureReady(state, sources);
+      let committed;
+      hook = interceptJobPersonalErasure(state, { match: final ? jobPersonalGenericBatch : jobPersonalBarrierBatch, after: receipts => {
+        committed = jobPersonalErasureFootprint(state);
+        if (fault.endsWith('throw')) throw new Error('lost acknowledgement after real committed privacy batch');
+        const result = [...receipts];
+        if (fault === 'barrier-inherited-error') {
+          const prototype = {}; Object.defineProperty(prototype, 'error', { get() { getterCalls++; throw new Error('inherited error accessor must not execute'); } });
+          result[0] = Object.assign(Object.create(prototype), receipts[0]); delete result[0].error;
+        } else result[0] = Object.assign([], receipts[0]);
+        return result;
+      } });
+      await jobPersonalErasureUnconfirmed(await state.postPersonalErasure());
+      assert.equal(hook.fired, 1); assert.equal(getterCalls, 0); assert.ok(committed);
+      assert.deepEqual(jobPersonalErasureFootprint(state), committed, 'A lost receipt is not evidence that the committed batch rolled back');
+      if (final) jobPersonalErasureCanariesGone(state);
+      else {
+        assert.deepEqual(jobPersonalErasureSources(state), sources);
+        assert.equal(committed.progress.length, 1); assert.equal(state.current().recall_enabled, 0);
+        assert.equal(committed.publication.memory_document_job_answer_origins[0].status, 'withdrawn');
+      }
+      hook.restore(); hook = null;
+      if (!final) await jobPersonalErasureReady(state, sources);
+      const fresh = await state.postPersonalErasure(), body = await fresh.json();
+      assert.equal(fresh.status, 200, JSON.stringify(body)); assert.equal(body.authoredContentErasurePending, false); assert.equal(body.memoryJobCleanupPending, false);
+      jobPersonalErasureCanariesGone(state);
+      assert.equal(body.otherDevicesAndBackupsPurged, false); assert.equal(state.calls.length, 0);
+    } finally { hook?.restore(); await state.retirementStop(); }
+  }
+});
+
+// The retained native Output journey supplies this real save/confirm/preflight/
+// authorize sequence. No grant, slot, queue event or budget row is manufactured;
+// the genuine bridge admits one job, but neither Start nor a provider is called.
+async function jobPersonalErasureOutputGrant(state) {
+  const [{ parseOutputRequirement }, { handleOutputRequirements }, { outputDocumentExecutionBridge }] = await Promise.all([
+    import('../src/model/output-requirements.ts'), import('../worker/output-requirements-api.ts'), import('../worker/output-document-execution.ts'),
+  ]);
+  const h = state.withdrawalPublished.header, actor = h.actor_user_id, stream = 'creative:' + actor;
+  assert.equal(state.owner.cookie, undefined); assert.equal(h.organization_id, null);
+  const suffix = crypto.randomUUID(), projectId = 'erasure-output-project-' + suffix, documentId = 'erasure-output-document-' + suffix;
+  // Deterministic authored block content from the existing presentation fixture;
+  // no licensed source/package, current proof, native answer or grant is imitated.
+  const facts = [
+    ['Orchard irrigation', 'The north orchard uses drip irrigation around the mature pear trees. Water reaches the roots.'],
+    ['Archive indexing', 'The town archive indexes handwritten maps by their original shelf marks. Provenance stays legible.'],
+    ['Harbor maintenance', 'The harbor workshop inspects wooden hulls before the fishing season. Care protects the fleet.'],
+    ['Library access', 'The library lends tactile atlases through its neighborhood reading rooms. Readers explore by touch.'],
+    ['Meadow restoration', 'The eastern meadow shelters native grasses beside the old stone wall. Habitat regains continuity.'],
+    ['Mountain observatory', 'The observatory shields its windows during nocturnal bird migration. Darkness supports safe passage.'],
+    ['Ceramic workshop', 'The ceramic workshop dries unfinished bowls on sheltered timber racks. Patient preparation prevents cracks.'],
+    ['River crossing', 'The footbridge connects the river trail to the community vegetable garden. Walking links shared places.'],
+    ['Station repair', 'The station team restores the clock mechanism with replaceable brass gears. Repair extends useful life.'],
+  ];
+  await appendContextReadEvents(state, [
+    ['ProjectCreated', { project_id: projectId, name: 'Personal undispatched Output erasure control' }],
+    ['DocumentCreated', { project_id: projectId, document_id: documentId, title: 'Authored stewardship briefing' }],
+    ...facts.map(([label, text], index) => ['BlockCreated', { project_id: projectId, document_id: documentId,
+      block_id: suffix + '-fact-' + index, type: 'message', scope: 'document', position: String(index).padStart(3, '0'),
+      handle: 'source-' + index, properties: { label, text, weight: 1 } }]),
+  ]);
+  let sequence = 0;
+  const execution = { waitUntil() { throw new Error('Output erasure fixture must not detach execution'); } };
+  const send = async body => {
+    const request = new Request('http://localhost/api/output-requirements', json({ documentId,
+      expectedRevision: 'output:' + state.sqlite.prepare('SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').get(stream).n,
+      clientMutationId: 'personal-erasure-output-' + suffix + '-' + (++sequence), ...body }, { origin: 'http://localhost', ...state.owner }));
+    const response = await handleOutputRequirements(request, state.env, '/api/output-requirements', execution, outputDocumentExecutionBridge);
+    const value = await response.json(); assert.equal(response.status, 200, JSON.stringify(value)); return value;
+  };
+  const parsed = parseOutputRequirement({ id: 'output-assignment-' + suffix, type: 'Output', subtype: 'Executive summary',
+    content: '1 slideshow with 5-15 slides, one podcast episode outlining the document, a series of TikTok style videos outlining the various parts of the document.' });
+  assert.ok(parsed.spec); const deck = parsed.spec.deliverables.find(value => value.media_kind === 'slides'); assert.ok(deck);
+  assert.equal(state.env.OPENAI_API_KEY, undefined);
+  const oldModel = state.env.OPENAI_MODEL;
+  state.env.OPENAI_API_KEY = 'fixture-provider-key'; state.env.OPENAI_MODEL = 'gpt-5.6-terra';
+  let authorized;
+  try {
+    await send({ action: 'save', blockId: parsed.spec.id, spec: parsed.spec });
+    const confirmed = await send({ action: 'confirm', options: { count_policies: { [deck.id]: { kind: 'flexible', unit: 'slide', min: 5, max: 15, aim: 8 } }, suggested_counts: { [deck.id]: 8 } } });
+    const plan = confirmed.snapshot.confirmedPlan, target = plan.plan.targets.find(value => value.media_kind === 'slides');
+    assert.ok(target); assert.equal(target.blocking_issues.length, 0);
+    const preflight = await send({ action: 'preflight', planRevisionId: confirmed.command.planRevisionId, targetIds: [target.id] });
+    const terms = preflight.command.preflight; assert.equal(terms.targets.length, 1); assert.equal(terms.targets[0].available, true);
+    authorized = await send({ action: 'authorize', preflightId: terms.id, termsDigest: terms.termsDigest,
+      maximumMicrousd: terms.maximumMicrousd, explicitAuthorization: true });
+  } finally {
+    delete state.env.OPENAI_API_KEY;
+    if (oldModel === undefined) delete state.env.OPENAI_MODEL; else state.env.OPENAI_MODEL = oldModel;
+  }
+  const grant = { ...state.sqlite.prepare('SELECT * FROM output_execution_grants WHERE grant_id=?').get(authorized.command.grantId) };
+  assert.equal(grant.status, 'authorized'); assert.equal(grant.actor_user_id, actor); assert.equal(grant.payer_user_id, actor);
+  const plan = state.sqlite.prepare('SELECT * FROM output_plan_revisions WHERE scope_key=? AND plan_revision_id=?').get(grant.scope_key, grant.plan_revision_id);
+  assert.equal(plan.scope_kind, 'personal'); assert.equal(plan.owner_user_id, actor); assert.equal(plan.organization_id, null); assert.equal(plan.project_access_id, null);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?').get(plan.confirmed_event_id).n, 0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_projects WHERE owner_user_id=? AND project_id=? AND status='active'").get(actor, projectId).n, 0);
+  const slots = state.sqlite.prepare('SELECT * FROM output_operation_slots WHERE scope_key=? AND grant_id=?').all(grant.scope_key, grant.grant_id).map(row => ({ ...row }));
+  assert.equal(slots.length, 1); const slot = slots[0]; assert.equal(slot.status, 'authorized');
+  const job = state.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(slot.job_id);
+  assert.ok(job); assert.equal(job.status, 'queued'); assert.equal(job.attempt_count, 0); assert.equal(job.owner_id, actor);
+  assert.equal(state.sqlite.prepare('SELECT status FROM budget_reservations WHERE reservation_id=?').get(slot.token_reservation_id).status, 'active');
+  assert.equal(state.sqlite.prepare('SELECT status FROM cost_budget_reservations WHERE reservation_id=?').get(slot.cost_reservation_id).status, 'active');
+  const event = state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(grant.authorization_event_id);
+  assert.equal(event.type, 'OutputExecutionAuthorized'); assert.equal(event.stream_id, stream);
+  assert.ok(state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND redacted_at IS NULL').get(event.event_id)?.private_json);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM output_provider_calls WHERE scope_key=? AND slot_id=?').get(slot.scope_key, slot.slot_id).n, 0);
+  assert.equal(state.calls.length, 0); return { grant, slot, projectId, documentId };
+}
+
+const jobPersonalOutputTables = ['output_commands', 'output_plan_revisions', 'output_plan_targets', 'output_preflights', 'output_execution_grants',
+  'output_operation_slots', 'output_operation_routes', 'output_provider_calls', 'output_native_storage_writes', 'output_asset_storage_writes',
+  'output_assets', 'output_results', 'output_target_acceptances', 'output_plan_fulfillments', 'output_delivery_manifests'];
+
+function jobPersonalOutputFootprint(state) {
+  return structuredClone({ erasure: jobPersonalErasureFootprint(state), output: Object.fromEntries(jobPersonalOutputTables.map(table =>
+    [table, state.sqlite.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all()])) });
+}
+
+function jobPersonalOutputSourcesPreserved(state, sources) {
+  // Output reservation reconciliation may append its own real accounting events.
+  // Every pre-existing generic/source row must still be byte-for-byte intact.
+  for (const [key, table, id] of [['bodies', 'private_content', 'content_id'], ['envelopes', 'event_private_payloads', 'private_event_id'],
+    ['external', 'external_content', 'content_id'], ['platform', 'platform_assistant_private_content', 'content_id']]) {
+    for (const row of sources[key]) assert.deepEqual({ ...state.sqlite.prepare('SELECT * FROM ' + table + ' WHERE ' + id + '=?').get(row[id]) }, row);
+  }
+}
+
+const jobPersonalOutputRevocation = statement => /^UPDATE output_execution_grants SET status='revoked'/u.test(statement.sql);
+
+function jobPersonalOutputRevoked(state, output) {
+  assert.equal(state.sqlite.prepare('SELECT status FROM output_execution_grants WHERE grant_id=?').get(output.grant.grant_id).status, 'revoked');
+  assert.equal(state.sqlite.prepare('SELECT status FROM output_operation_slots WHERE scope_key=? AND slot_id=?').get(output.slot.scope_key, output.slot.slot_id).status, 'cancelled');
+  const job = state.sqlite.prepare('SELECT status,attempt_count FROM document_jobs WHERE job_id=?').get(output.slot.job_id);
+  assert.equal(job.status, 'canceled'); assert.equal(job.attempt_count, 0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM output_provider_calls WHERE scope_key=? AND slot_id=?').get(output.slot.scope_key, output.slot.slot_id).n, 0);
+  assert.equal(state.calls.length, 0);
+}
+
+test('job origin personal erasure Output: genuine undispatched grant is revoked once before held pending cleanup and stays revoked through explicit completion', { timeout: 120_000 }, async t => {
+  const state = await jobPersonalErasureFixture(t); let hook;
+  try {
+    const control = await jobPersonalErasureControlProject(state), output = await jobPersonalErasureOutputGrant(state);
+    const h = state.withdrawalPublished.header, original = state.withdrawalPublished.manifest.dependencies[0].user_content_id;
+    const originalBody = { ...state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(original) };
+    const sources = jobPersonalErasureSources(state), holdId = crypto.randomUUID(); let pendingWrites = null;
+    hook = interceptJobPersonalErasure(state, { match: jobPersonalBarrierBatch, before: statements => {
+      const revoke = statements.findIndex(jobPersonalOutputRevocation); assert.ok(revoke > 0);
+      assert.equal(statements.filter(jobPersonalOutputRevocation).length, 1); assert.equal(jobPersonalGenericBatch(statements), false);
+      assert.ok(statements.slice(0, revoke).some(statement => /^INSERT INTO memory_document_job_origin_retirement_progress\b/u.test(statement.sql)));
+    }, after: receipts => {
+      jobPersonalOutputRevoked(state, output); jobPersonalOutputSourcesPreserved(state, sources);
+      const progress = state.sqlite.prepare('SELECT * FROM memory_document_job_origin_retirement_progress WHERE origin_id=?').get(h.origin_id);
+      assert.ok(progress); assert.ok(progress.evidence_json.includes(original)); pendingWrites = { ...progress };
+      // Actual control organization, but explicitly adversarial late retention-only
+      // custody: this does not relabel the personal origin or mint read authority.
+      assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?').get(original).n, 0);
+      const policy = state.sqlite.prepare('SELECT version FROM organization_retention_policies WHERE organization_id=?').get(control.organizationId);
+      assert.equal(Number(state.sqlite.prepare(`INSERT INTO private_content_retention_scopes
+        (content_id,organization_id,project_access_id,project_id,actor_user_id,classification,created_at,policy_version,assigned_expires_at)
+        VALUES(?,?,?,?,?,'transient-private',?,?,?)`).run(original, control.organizationId, control.projectAccessId, control.projectId,
+        h.actor_user_id, originalBody.created_at, Number(policy?.version ?? 0), originalBody.expires_at).changes), 1);
+      assert.equal(Number(state.sqlite.prepare(`INSERT INTO organization_legal_holds
+        (hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at,released_at)
+        VALUES(?,?,'content',?,'late personal original hold with real Output grant','active',?,?,NULL)`)
+        .run(holdId, control.organizationId, original, h.actor_user_id, new Date().toISOString()).changes), 1);
+      return receipts;
+    } });
+    const first = await jobPersonalErasurePending(await state.postPersonalErasure());
+    assert.equal(hook.fired, 1); assert.ok(pendingWrites); assert.equal(first.revokedOutputGrantCount, 1); assert.equal(first.advancedMemoryCleanupWorkUnits, 0);
+    hook.restore(); hook = null;
+    jobPersonalOutputRevoked(state, output); jobPersonalOutputSourcesPreserved(state, sources);
+    const second = await jobPersonalErasurePending(await state.postPersonalErasure());
+    assert.equal(second.revokedOutputGrantCount, 0); assert.equal(second.initializedMemoryJobOrigins, 0); assert.equal(second.advancedMemoryCleanupWorkUnits, 0);
+    jobPersonalOutputRevoked(state, output); jobPersonalOutputSourcesPreserved(state, sources);
+    assert.deepEqual({ ...state.sqlite.prepare('SELECT * FROM memory_document_job_origin_retirement_progress WHERE origin_id=?').get(h.origin_id) }, pendingWrites);
+    state.retirementNow = new Date().toISOString(); jobRetirementReleaseHold(state, holdId);
+    const limit = Math.ceil((h.selector_count + 7) / 16) + 2;
+    for (let index = 0; state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(h.origin_id).status !== 'minimized'; index++) {
+      assert.ok(index < limit); const response = await jobPersonalErasurePending(await state.postPersonalErasure());
+      assert.equal(response.revokedOutputGrantCount, 0); jobPersonalOutputRevoked(state, output); jobPersonalOutputSourcesPreserved(state, sources);
+    }
+    const final = await state.postPersonalErasure(), complete = await final.json(); assert.equal(final.status, 200, JSON.stringify(complete));
+    assert.equal(complete.authoredContentErasurePending, false); assert.equal(complete.memoryJobCleanupPending, false); assert.equal(complete.continuationRequired, false);
+    assert.equal(complete.revokedOutputGrantCount, 0); assert.equal(complete.heldAuthoredEventBodies, 0); assert.equal(complete.heldTemporaryContent, 0);
+    assert.ok(complete.erasedAuthoredEventBodies > 0); assert.ok(complete.erasedTemporaryContent > 0); assert.equal(complete.clearedDerivedContent, 1); assert.equal(complete.erasedPlatformConversations, 1);
+    jobPersonalErasureCanariesGone(state); jobPersonalOutputRevoked(state, output);
+    const erased = state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(original);
+    assert.equal(erased.content, ''); assert.ok(erased.redacted_at); assert.equal(complete.otherDevicesAndBackupsPurged, false);
+  } finally { hook?.restore(); await state.retirementStop(); }
+});
+
+test('job origin personal erasure Output: actual final batch abort rolls back source destruction and nonempty grant revocation before fresh explicit recovery', { timeout: 120_000 }, async t => {
+  const state = await jobPersonalErasureFixture(t); let hook;
+  try {
+    await jobPersonalErasureReady(state);
+    const output = await jobPersonalErasureOutputGrant(state), before = jobPersonalOutputFootprint(state);
+    let witnessed = null;
+    hook = interceptJobPersonalErasure(state, { match: jobPersonalGenericBatch, before: statements => {
+      const revoke = statements.findIndex(jobPersonalOutputRevocation), guard = statements.findIndex(statement => /AS privacy_erasure_verified\b/u.test(statement.sql));
+      assert.ok(revoke >= 0); assert.ok(guard > revoke);
+      const statement = statements[guard], execute = statement.execute;
+      statement.execute = function(kind) {
+        const result = execute.call(statement, kind);
+        // The real generic writes AND revocation have already happened inside the
+        // original transaction. Throwing now must roll back that whole attempt.
+        witnessed = { grant: state.sqlite.prepare('SELECT status FROM output_execution_grants WHERE grant_id=?').get(output.grant.grant_id).status,
+          private: state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(state.personalErasureCanaries.private),
+          external: state.sqlite.prepare('SELECT COUNT(*) AS n FROM external_content WHERE content_id=?').get(state.personalErasureCanaries.external).n,
+          guard: structuredClone(result) };
+        throw new Error('fixture-personal-output-final-transaction-abort');
+      };
+    } });
+    await jobPersonalErasureUnconfirmed(await state.postPersonalErasure());
+    assert.equal(hook.fired, 1); assert.ok(witnessed); assert.equal(witnessed.grant, 'revoked'); assert.equal(witnessed.private.content, '');
+    assert.ok(witnessed.private.redacted_at); assert.equal(witnessed.external, 0); assert.equal(witnessed.guard.results[0].privacy_erasure_verified, 1);
+    assert.deepEqual(jobPersonalOutputFootprint(state), before, 'The real SQLite rollback must restore both prior source bytes and every Output ledger row');
+    assert.equal(state.sqlite.prepare('SELECT status FROM output_execution_grants WHERE grant_id=?').get(output.grant.grant_id).status, 'authorized');
+    assert.equal(state.calls.length, 0); hook.restore(); hook = null;
+    const retry = await state.postPersonalErasure(), complete = await retry.json(); assert.equal(retry.status, 200, JSON.stringify(complete));
+    assert.equal(complete.authoredContentErasurePending, false); assert.equal(complete.memoryJobCleanupPending, false); assert.equal(complete.continuationRequired, false);
+    assert.equal(complete.revokedOutputGrantCount, 1); assert.ok(complete.erasedAuthoredEventBodies > 0); assert.ok(complete.erasedTemporaryContent > 0);
+    assert.equal(complete.clearedDerivedContent, 1); assert.equal(complete.erasedPlatformConversations, 1);
+    jobPersonalErasureCanariesGone(state); jobPersonalOutputRevoked(state, output); assert.equal(complete.otherDevicesAndBackupsPurged, false);
+  } finally { hook?.restore(); await state.retirementStop(); }
 });
