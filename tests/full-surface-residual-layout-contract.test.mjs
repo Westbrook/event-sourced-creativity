@@ -149,9 +149,9 @@ test("E residual layout: ordinary prose and storyboard viewer sections use one l
 
 test("E residual layout: viewer scrolling, media fit, focus posture and icon-end reservations remain separate", () => {
   assert.equal(unconditional(canvas, ".canvas-artifact-viewer-card > header")["padding-inline-end"],
-    "calc((var(--forma-control-min-size,2.75rem) * 2) + 2rem)");
+    "calc((var(--forma-control-min-size,2.75rem) * 2) + 3rem)");
   assert.equal(unconditional(canvas, ".canvas-output-viewer-card > header")["padding-inline-end"],
-    "calc((var(--forma-control-min-size,2.75rem) * 2) + 1rem)");
+    "calc((var(--forma-control-min-size,2.75rem) * 2) + 3rem)");
   assert.equal(unconditional(canvas, ".canvas-artifact-viewer-content").overflow, "auto");
   assert.equal(unconditional(canvas, ".canvas-artifact-viewer-content--slides").padding, "0");
   assert.equal(unconditional(canvas, ".canvas-artifact-viewer-content--slides>forma-presentation-deck").height, "100%");
@@ -161,7 +161,7 @@ test("E residual layout: viewer scrolling, media fit, focus posture and icon-end
   assert.equal(unconditional(canvas, ".canvas-output-viewer-stage forma-output-visual")["object-fit"], "contain");
   assert.equal(unconditional(canvas, focused + " > .modal-card > header")["padding-inline-start"], ".8rem");
   assert.equal(unconditional(canvas, focused + " > .modal-card > header")["padding-inline-end"],
-    "calc((var(--forma-control-min-size,2.75rem) * 2) + 1.35rem)");
+    "calc((var(--forma-control-min-size,2.75rem) * 2) + 2.5rem)");
   assert.equal(unconditional(canvas, focused + " > .modal-card > footer").display, "none");
   assert.equal(unconditional(canvas, '.canvas-artifact-viewer[data-output-focus="true"] .presentation-deck-viewport > .presentation-deck-frame')["inline-size"],
     "min(100cqi,calc(100cqb * 1.7778))");

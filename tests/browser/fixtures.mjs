@@ -16,7 +16,12 @@ export const test = base.extend({
   geometry: [{ viewport: { width: 1280, height: 900 }, zoom: 1 }, { option: true }],
   publicMarketing: [false, { option: true }],
   publicJavaScript: [true, { option: true }],
-  context: async ({ geometry, baseURL, publicMarketing, publicJavaScript }, use, testInfo) => {
+  acceptDownloads: [false, { option: true }],
+  context: async ({ geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads }, use, testInfo) => {
+    const admittedDownloadCase = testInfo.project.name === "story-revision-download"
+      && testInfo.title === "Story revision one: approved synthetic source downloads the exact Markdown file";
+    if (acceptDownloads === true && !admittedDownloadCase)
+      throw new Error("Downloads require the exact admitted project and positive test title");
     const synthetic = syntheticNetworkEnabled(baseURL);
     const profile = await mkdtemp(resolve(tmpdir(), "forma-a11y-"));
     let context;
@@ -30,7 +35,7 @@ export const test = base.extend({
         ...(publicMarketing ? { javaScriptEnabled: publicJavaScript } : {}),
         ...(geometry.hasTouch === true ? { hasTouch: true } : {}),
         serviceWorkers: "block",
-        acceptDownloads: false,
+        acceptDownloads: acceptDownloads === true,
         args: [
           `--disable-extensions-except=${extensionPath}`,
           `--load-extension=${extensionPath}`,
