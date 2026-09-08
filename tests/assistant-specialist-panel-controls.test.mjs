@@ -1138,6 +1138,15 @@ for (const paint of ["bounded", "unsupported"]) test(
     assert.equal(x.overlap(initial, [...x.controls.map(control => control.getBoundingClientRect()), paintedEntry]).length, 0);
 
     popupOpen = true; x.f.document.activeElement = popupButton;
+    const completed = x.run();
+    assert.equal(completed.top, 740.5); assert.equal(completed.width, 44); assert.equal(completed.height, 44);
+    assert.equal(x.f.panel.dataset.tightLauncher, "true");
+    assert.equal(x.overlap(completed, [...x.controls.map(control => control.getBoundingClientRect()), paintedEntry]).length, 0,
+      "the exhaustive search now uses the previously unexamined clear lower gap");
+    // Explicit synthetic extension: occupy that lower gap so the original
+    // hovered Account recovery and unsupported-paint refusal remain reachable.
+    // Placement still runs normally; no offset, focus or marker is forced.
+    x.controls.push(x.control(d411Rect(266, 733, 44, 59), { tagName: "BUTTON" }));
     const fallback = x.run();
     assert.equal(fallback.top, 15.5); assert.equal(fallback.width, 44); assert.equal(fallback.height, 44);
     assert.equal(x.f.panel.dataset.compactLauncher, "true"); assert.equal(x.f.panel.dataset.tightLauncher, undefined);
@@ -2001,6 +2010,7 @@ const e11LibraryCopySelectors = [
   e11LibraryContentPrefix + ' > h3#library-block-content',
   e11LibraryContentPrefix + ' > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
   '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
+  '.library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child',
 ];
 const e11LibraryLabelBox = d411Rect(88.7578125, 147, 313.484375, 22.3984375);
 const e11LibraryLabelRange = d411Rect(88.7578125, 148.5, 157.640625, 19);

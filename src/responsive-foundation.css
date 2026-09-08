@@ -1536,8 +1536,8 @@ html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][d
   }
 }
 
-/* In these long editors, mobile task navigation is an early native row.
- * Retain the existing short-landscape side rail and Library landing policy. */
+/* Library landing and long editors keep mobile task navigation in an early native row,
+ * so browsing controls do not pass behind the dock. Retain the short-landscape side rail. */
 @media not all and (max-height: 37.5rem) and (orientation: landscape) {
   /* Native text editing retains a bounded authoring inset in the root view.
    * It does not reserve a fixed dock: navigation is already in natural flow. */
@@ -1545,26 +1545,26 @@ html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][d
     scroll-padding-block-end: min(50dvb, 12rem);
   }
 
-  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
     position: relative;
     inset: auto;
     inline-size: auto;
     padding-block-end: 0;
   }
 
-  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
     padding-block-end: 0;
   }
 
   @media (max-width: 47.99rem) {
-    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
+    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
       position: relative;
       inset: auto;
       inline-size: auto;
       padding-block-end: 0;
     }
 
-    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor, > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
+    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
       padding-block-end: 0;
     }
   }
