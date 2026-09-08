@@ -342,6 +342,21 @@ button.canvas-document-output-preview .canvas-artifact-slide-preview .presentati
     order: -1;
   }
 
+  .canvas-artifact-viewer[data-artifact-kind="short_story"]:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > .canvas-artifact-viewer-content {
+    scroll-padding-block: var(--forma-focus-clearance,.5rem);
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="short_story"]:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > footer > .artifact-viewer-actions-body {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="short_story"]:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > footer > .artifact-viewer-actions-body > .button {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .canvas-artifact-viewer .presentation-deck-toolbar {
     flex-direction: row;
     gap: .55rem;
