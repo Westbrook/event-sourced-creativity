@@ -336,7 +336,7 @@ export class FormaShell extends FormaElement {
     if(!this.store.ui.accountOpen&&accountPopover?.matches(":popover-open"))accountPopover.hidePopover();
     for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);
     this.#raiseToast();
-    if(!this.store.loading.get()&&this.store.events.get().length&&this.store.routeDataReady()){
+    if(!this.store.loading.get()&&this.store.session.get()&&this.store.routeDataReady()){
       const path=this.store.route.get(),pathname=path.split(/[?#]/)[0]??"",parts=pathname.split("/").filter(Boolean);
       const organization=parts[0]==="settings"&&parts[1]==="workspaces"&&parts[2]!=="invitations"?this.store.session.get()?.organizations?.find((item)=>item.organizationId===parts[2]):undefined;
       const key=`${path}:${this.i18n.locale}:${organization?.name??""}`;
@@ -355,7 +355,7 @@ export class FormaShell extends FormaElement {
             try{
               const target=this.querySelector<HTMLElement>("#main-content");
               if(this.#routeFocus!==focus||!focus.scopeCurrent()||this.#accessibleRoute!==key
-                ||this.store.loading.get()||!this.store.events.get().length||!this.store.routeDataReady()||!target?.isConnected)return;
+                ||this.store.loading.get()||!this.store.session.get()||!this.store.routeDataReady()||!target?.isConnected)return;
               focus.focus.run(target,()=>{target.focus({preventScroll:true});return true;});
             }finally{focus.dispose();if(this.#routeFocus===focus)this.#routeFocus=null;}
           });
