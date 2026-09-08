@@ -1,6 +1,7 @@
 import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
 import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import { organizationOutputAssetInventory, organizationOutputDeletionStatements, organizationOutputSubmissionBlockers, outputAssetCustodyMatches, outputOrganizationDeletionGuard, outputRecoveryRecordIsInert, outputRequirementRecoveryRecords } from "./output-requirement-retention.ts";
+import { liveMemoryErasureStatements } from "./memory-live-store.ts";
 import { cancelProjectActorJobs, projectProviderSubmissionBlockers } from "./document-jobs-api.ts";
 import { failConsequentialExecution, reconcileConsequentialUsage } from "./consequential-consent.ts";
 import { unsettledProviderSubmissionSql } from "../src/model/provider-submission";
@@ -1074,6 +1075,7 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
       OR EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.legal_hold=1)
       THEN json('active organization legal hold') ELSE 1 END AS hold_guard`).bind(organizationId,organizationId),
     ...await organizationOutputDeletionStatements(env,organizationId,now,jobId),
+    ...await liveMemoryErasureStatements(env,{organizationId},now),
     ...["assistant_action_proposals","assistant_specialist_tasks","assistant_turns"].filter((table)=>assistantTables.has(table))
       .map((table)=>env.DB.prepare(`DELETE FROM ${table} WHERE organization_id=?`).bind(organizationId)),
     env.DB.prepare(`DELETE FROM event_private_payloads WHERE EXISTS(SELECT 1 FROM project_event_scopes scoped

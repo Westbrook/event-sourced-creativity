@@ -1,5 +1,5 @@
 import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
-import { claimCostBudgetReservation, POLICY_VERSION, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { claimCostBudgetReservation, POLICY_VERSION, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 
 export type ExecutionStepLimit={name:string;provider:string;model:string;inputTokens:number;outputTokens:number;maximumMicrousd:number;toolCalls:number};
@@ -74,9 +74,9 @@ export function executionContentCustodyGuard(binding:ConsequentialBinding,alias:
       =('content',${alias}.content_id,'actor_private',?,?,?,?,?))`,bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,binding.actorUserId]};
 }
 
-export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,privateInput:unknown,sourceHead:number,availableMicrousd:number){
+export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,privateInput:unknown,sourceHead:number,availableMicrousd:number,additional?:BudgetReservationGuard){
   const executionId=uuidV7(),bindingHash=await consentHash(binding),now=new Date().toISOString(),expiresAt=new Date(Date.now()+10*60_000).toISOString();
-  const guard=executionAdmissionGuard(user,binding,sourceHead),contentCustody=executionContentCustodyGuard(binding,"content");
+  const admission=executionAdmissionGuard(user,binding,sourceHead),guard=additional?{sql:`(${admission.sql}) AND (${additional.sql})`,bindings:[...admission.bindings,...additional.bindings]}:admission,contentCustody=executionContentCustodyGuard(binding,"content");
   const existing=await env.DB.prepare(`SELECT execution.status,content.content FROM consequential_executions execution JOIN private_content content
     ON content.content_id=execution.consent_ref AND content.owner_id=execution.actor_user_id AND content.kind='execution-consent' AND content.redacted_at IS NULL AND content.expires_at>? AND ${contentCustody.sql}
     WHERE execution.actor_user_id=? AND((execution.intent_hash=? AND ${reusableExecutionSql("execution")})
@@ -91,13 +91,26 @@ export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,b
   if(unresolved)throw new Error("context_existing_request_unavailable");
   if(preview.maximumMicrousd>availableMicrousd)throw new Error("context_budget_unavailable");
   if(!await executionAuthorityCurrent(env,user,binding,sourceHead))throw new Error("context_authorization_changed");
-  const content=await storePrivateContent(env,user.userId,"execution-consent",JSON.stringify({binding,preview}),binding.scope??undefined);
-  await env.DB.batch([
+  const publication=(content:{contentId:string})=>[
     env.DB.prepare("INSERT INTO consequential_executions(execution_id,actor_user_id,stream_id,project_id,document_id,organization_id,project_access_id,operation,intent_hash,binding_hash,consent_ref,status,created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'quoted',?,?,?)")
       .bind(executionId,user.userId,binding.streamId,binding.projectId,binding.documentId,binding.scope?.organizationId??null,binding.scope?.projectAccessId??null,binding.operation,binding.intentHash,bindingHash,content.contentId,now,expiresAt,now),
     ...binding.steps.map((step,index)=>env.DB.prepare("INSERT INTO consequential_execution_steps(execution_id,step_index,token_reservation_id,cost_reservation_id,maximum_tokens,maximum_microusd,status,updated_at) VALUES(?,?,?,?,?,?,'quoted',?)")
       .bind(executionId,index,`${executionId}:tokens:${index}`,`${executionId}:usd:${index}`,step.inputTokens+step.outputTokens,step.maximumMicrousd,now)),
-  ]);
+  ];
+  if(additional){
+    // Native guarded quote: private input, execution and planned steps either
+    // publish together or roll back before retaining any copied provider bytes.
+    const content=await preparePrivateContent(env,user.userId,"execution-consent",JSON.stringify({binding,preview}),binding.scope??undefined,undefined,guard);
+    const rows=await env.DB.batch([
+      env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN 1 ELSE json('context_quote_source_changed') END AS verified`).bind(...guard.bindings),
+      ...content.statements,...publication(content),
+      env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN CASE WHEN EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?) THEN 1 ELSE json('context_quote_source_changed') END ELSE json('context_quote_source_changed') END AS verified`).bind(...guard.bindings,content.contentId,user.userId),
+    ]);
+    if(rows.some(row=>!row.success))throw new Error("context_quote_source_changed");
+  }else{
+    const content=await storePrivateContent(env,user.userId,"execution-consent",JSON.stringify({binding,preview}),binding.scope??undefined);
+    await env.DB.batch(publication(content));
+  }
   return preview;
 }
 

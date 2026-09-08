@@ -4,6 +4,7 @@ import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import { foldEvents, type CreativeBlock, type CreativeEvent } from "../src/model/events.ts";
 import { serializeEvent, type WorkerEnv } from "./runtime.ts";
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
+import { assistantOwnSendGuard, assistantStructuredOwnSendGuard, type AssistantOwnSendFootprint, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
 
 // Output ledgers do not feed the native block/document/rights fold used below.
 const sourceRightsEventSql = ASSISTANT_STATE_EVENT_TYPES.filter((type) => !isOutputRequirementEvent(type)).map((type) => "'" + type + "'").join(",");
@@ -51,16 +52,48 @@ function distinctSourceRightsDependencies(dependencies:readonly SourceRightsDepe
 
 /** Bind the rights read to purchase or human authorship with one bounded proof parameter. */
 export function sourceRightsDispatchGuard(validity:Pick<SourceRightsValidity,"dispatchDependencies">,ownAuthoring?:SourceRightsAuthoringSuffix):BudgetReservationGuard{
+  return sourceRightsDispatchGuardInternal(validity,ownAuthoring);
+}
+
+/** Ordinary free sends have a different exact writer contract from approved
+ * authoring. Keep that exception separate; paid/default guards are unchanged. */
+export function sourceRightsDispatchGuardForAssistant(validity:Pick<SourceRightsValidity,"dispatchDependencies">,own:AssistantOwnSendFootprint):BudgetReservationGuard{
+  const suffix=assistantOwnSendGuard(own);
+  const guard=sourceRightsDispatchGuardInternal(validity,undefined,{streamId:own.streamId,sourceHead:own.sourceHead,
+    endHead:own.sourceHead+own.eventWrites.length,eventIds:own.eventWrites.map(event=>String(event[0]))});
+  return{sql:`(${guard.sql}) AND (${suffix.sql})`,bindings:[...guard.bindings,...suffix.bindings]};
+}
+
+/** Structured free sends retain every original rights dependency, but prove
+ * their own distinct v2 writer footprint instead of inheriting the v1 exception. */
+export function sourceRightsDispatchGuardForStructuredAssistant(validity:Pick<SourceRightsValidity,"dispatchDependencies">,own:AssistantStructuredOwnSendFootprint):BudgetReservationGuard{
+  const suffix=assistantStructuredOwnSendGuard(own);
+  const guard=sourceRightsDispatchGuardInternal(validity,undefined,{streamId:own.streamId,sourceHead:own.sourceHead,
+    endHead:own.sourceHead+own.eventWrites.length,eventIds:own.eventWrites.map(event=>String(event[0]))});
+  return{sql:`(${guard.sql}) AND (${suffix.sql})`,bindings:[...guard.bindings,...suffix.bindings]};
+}
+
+function sourceRightsDispatchGuardInternal(validity:Pick<SourceRightsValidity,"dispatchDependencies">,ownAuthoring?:SourceRightsAuthoringSuffix,
+  ownAssistant?:{streamId:string;sourceHead:number;endHead:number;eventIds:string[]}):BudgetReservationGuard{
   if(!validity.dispatchDependencies?.length)return{sql:"1",bindings:[]};
   if(ownAuthoring&&(!ownAuthoring.streamId.startsWith("creative:")||!ownAuthoring.actorUserId||!ownAuthoring.correlationId
     ||!ownAuthoring.eventIds.length||ownAuthoring.eventIds.length>512||new Set(ownAuthoring.eventIds).size!==ownAuthoring.eventIds.length
     ||ownAuthoring.eventIds.some(id=>typeof id!=="string"||!id||id.length>120)))throw new Error("authoring_source_suffix_invalid");
-  const input=JSON.stringify({dependencies:distinctSourceRightsDependencies(validity.dispatchDependencies),...(ownAuthoring?{ownAuthoring}:{})});
+  const input=JSON.stringify({dependencies:distinctSourceRightsDependencies(validity.dispatchDependencies),...(ownAuthoring?{ownAuthoring}:{}),...(ownAssistant?{ownAssistant}:{})});
   if(new TextEncoder().encode(input).byteLength>1_800_000)throw new Error("context_source_rights_too_large");
   const ownSuffix=ownAuthoring?` AND NOT(event.sequence>json_extract(dependency.value,'$.sourceHead')
     AND(event.stream_id,event.actor,event.client_id,event.correlation_id)
       =(json_extract(source_rights.value,'$.ownAuthoring.streamId'),'user:'||json_extract(source_rights.value,'$.ownAuthoring.actorUserId'),'web:context-approval',json_extract(source_rights.value,'$.ownAuthoring.correlationId'))
-    AND event.event_id IN(SELECT value FROM json_each(source_rights.value,'$.ownAuthoring.eventIds')))`:"";
+    AND event.event_id IN(SELECT value FROM json_each(source_rights.value,'$.ownAuthoring.eventIds')))`:ownAssistant?` AND NOT(
+      event.stream_id=json_extract(source_rights.value,'$.ownAssistant.streamId')
+      AND json_extract(dependency.value,'$.sourceHead')=json_extract(source_rights.value,'$.ownAssistant.sourceHead')
+      AND event.sequence>json_extract(dependency.value,'$.sourceHead')
+      AND event.event_id IN(SELECT value FROM json_each(source_rights.value,'$.ownAssistant.eventIds')))`:"";
+  const indexed=ownAssistant?`(migration.last_owner_sequence=json_extract(dependency.value,'$.sourceHead')
+    OR 'creative:'||project.owner_user_id=json_extract(source_rights.value,'$.ownAssistant.streamId')
+      AND json_extract(dependency.value,'$.sourceHead')=json_extract(source_rights.value,'$.ownAssistant.sourceHead')
+      AND migration.last_owner_sequence=json_extract(source_rights.value,'$.ownAssistant.endHead'))`
+    :"migration.last_owner_sequence=json_extract(dependency.value,'$.sourceHead')";
   return{sql:`NOT EXISTS(SELECT 1 FROM(SELECT ? AS value) source_rights,json_each(source_rights.value,'$.dependencies') dependency WHERE CASE json_extract(dependency.value,'$.kind')
     WHEN 'source' THEN NOT EXISTS(SELECT 1 FROM organization_projects project
       JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -71,7 +104,7 @@ export function sourceRightsDispatchGuard(validity:Pick<SourceRightsValidity,"di
       WHERE(project.project_access_id,project.organization_id,project.project_id,project.owner_user_id,project.status)
         =(json_extract(dependency.value,'$.projectAccessId'),json_extract(dependency.value,'$.organizationId'),json_extract(dependency.value,'$.projectId'),json_extract(dependency.value,'$.ownerUserId'),'active')
         AND json_extract(dependency.value,'$.indexedHead')=json_extract(dependency.value,'$.sourceHead')
-        AND migration.last_owner_sequence=json_extract(dependency.value,'$.sourceHead')
+        AND ${indexed}
         AND (SELECT COALESCE(MAX(event.sequence),0) FROM events event WHERE event.stream_id='creative:'||project.owner_user_id${ownSuffix})=json_extract(dependency.value,'$.sourceHead')
         AND NOT EXISTS(SELECT 1 FROM json_each(dependency.value,'$.events') expected WHERE NOT EXISTS(SELECT 1 FROM events event
           LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id

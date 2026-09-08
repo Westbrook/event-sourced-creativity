@@ -169,6 +169,62 @@
       "when": 1788192000000,
       "tag": "0022_output_model3d",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1788870605392,
+      "tag": "0025_memory_live_base",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1788870605981,
+      "tag": "0026_memory_live_conversation",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1788870606619,
+      "tag": "0027_memory_native_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1788870607227,
+      "tag": "0028_memory_document_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1788870607788,
+      "tag": "0032_memory_structured_conversation_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1788870608316,
+      "tag": "0033_memory_structured_answer_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1788870608920,
+      "tag": "0034_memory_document_job_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1788870609575,
+      "tag": "0035_memory_document_job_origin_retirement_progress",
+      "breakpoints": true
     }
   ]
 }

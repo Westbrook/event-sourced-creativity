@@ -7,6 +7,14 @@ import { publicEventPayload } from "./event-privacy.ts";
 export { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
 
 export interface WorkerEnv {
+  /** Default-off native memory read rollout; explicit enrollment and authority are still required. */
+  FORMA_MEMORY_ENABLED?: string;
+  FORMA_MEMORY_USER_IDS?: string;
+  /** Separate default-off document-profile purpose; no implicit reference-memory upgrade. */
+  FORMA_MEMORY_PROFILE_ENABLED?: string;
+  FORMA_MEMORY_PROFILE_USER_IDS?: string;
+  /** Separate exact-true admission for the existing scheduled memory job; unset stays disabled. */
+  FORMA_MEMORY_SCHEDULING_ENABLED?: string;
   ASSETS: Fetcher;
   DB: D1Database;
   MEDIA: R2Bucket;
@@ -490,69 +498,255 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
   return initialization;
 }
 
-/** Physically redact eligible private evidence and revision bodies within one shared bounded allowance. */
-export async function sweepExpiredPrivateContent(env: WorkerEnv, limit = 250): Promise<number> {
-  await ensureSchema(env);
-  const now = new Date().toISOString();
-  const maximum = Math.max(1, Math.min(1_000, Math.floor(limit) || 250));
-  const unheld=`NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1 WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
-    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold ON hold.organization_id=scope.organization_id AND hold.status='active'
-      WHERE scope.content_id=private_content.content_id AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=scope.project_access_id OR hold.scope_kind='content' AND hold.resource_id=scope.content_id))`;
-  const revisionUnheld=`NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
-    AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
-      AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))`;
-  const candidate = await env.DB.prepare(`SELECT content_id FROM private_content WHERE redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=? AND ${unheld} ORDER BY expires_at LIMIT 1`).bind(now).first<{content_id:string}>();
-  let processed=0;
-  if(candidate){
-    const result=await env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE rowid IN (
-      SELECT rowid FROM private_content WHERE redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=? AND ${unheld} ORDER BY expires_at LIMIT ?
-    )`).bind(now,now,maximum).run();
-    processed=Number(result.meta.changes??0);
+const ordinaryPrivateRetentionUnheld = `NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1 WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
+  AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold ON hold.organization_id=scope.organization_id AND hold.status='active'
+    WHERE scope.content_id=private_content.content_id AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=scope.project_access_id OR hold.scope_kind='content' AND hold.resource_id=scope.content_id))`;
+const ordinaryRevisionRetentionUnheld = `NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
+  AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
+    AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))`;
+
+/** Dedicated answer/origin retirement owns its bodies even after consent or ledger rows disappear. */
+async function ordinaryStructuredOriginExclusion(env: WorkerEnv): Promise<{sql:string;bindings:(string|number|null)[]}> {
+  const db=env.DB;
+  try {
+    const { nativeStructuredOriginSchema, nativeStructuredMemoryOriginAnswerExclusion } = await import("./memory-native-origin.ts");
+    const schema=await nativeStructuredOriginSchema(env),answer=nativeStructuredMemoryOriginAnswerExclusion(schema.present,"private_content");
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+    return{sql:"("+schema.guard.condition+") AND ("+answer.sql+")",bindings:[...schema.guard.bindings,...answer.bindings]};
+  } catch(error) {
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed",{cause:error});
+    if(!(error instanceof Error)||error.message!=="native_structured_origin_schema_unavailable")throw error;
+    // Only this optional ordinary class is withheld. The dedicated preparation
+    // and backlog still report unavailable provenance; they cannot certify empty.
+    return{sql:"0",bindings:[]};
   }
-  const remaining=maximum-processed;
-  if(remaining>0){
-    const expiredRevision=await env.DB.prepare(`SELECT revision_id FROM artifact_revisions WHERE redacted_at IS NULL AND expires_at<=?
-      AND ${revisionUnheld}
-      ORDER BY expires_at LIMIT 1`).bind(now).first<{revision_id:string}>();
-    if(expiredRevision){
-      const revisions=await env.DB.prepare(`UPDATE artifact_revisions SET content_json='',redacted_at=? WHERE rowid IN(
-        SELECT rowid FROM artifact_revisions WHERE redacted_at IS NULL AND expires_at<=?
-          AND ${revisionUnheld}
-        ORDER BY expires_at LIMIT ?)`)
-        .bind(now,now,remaining).run();
-      processed+=Number(revisions.meta.changes??0);
-    }
+}
+
+async function ordinaryRetentionShape(env:WorkerEnv,now:string,workClass:number){
+  const db=env.DB;
+  if(workClass===0){
+    const origin=await ordinaryStructuredOriginExclusion(env);
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+    return{table:"private_content",identity:"content_id",body:"content",
+      eligible:"redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND expires_at<=? AND "+ordinaryPrivateRetentionUnheld+" AND "+origin.sql,
+      bindings:[now,...origin.bindings]};
   }
-  if(processed<maximum){
-    const platform=await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
-      .first<{available:number}>();
-    if(platform){
-      const expired=await env.DB.prepare("SELECT content_id FROM platform_assistant_private_content WHERE redacted_at IS NULL AND expires_at<=? ORDER BY expires_at LIMIT 1")
-        .bind(now).first<{content_id:string}>();
-      if(expired){
-        const redacted=await env.DB.prepare(`UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE rowid IN(
-          SELECT rowid FROM platform_assistant_private_content WHERE redacted_at IS NULL AND expires_at<=? ORDER BY expires_at LIMIT ?)`)
-          .bind(now,now,maximum-processed).run();
-        processed+=Number(redacted.meta.changes??0);
+  if(workClass===1)return{table:"artifact_revisions",identity:"revision_id",body:"content_json",
+    eligible:"redacted_at IS NULL AND expires_at<=? AND "+ordinaryRevisionRetentionUnheld,bindings:[now]};
+  if(workClass===2){
+    const platform=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1").first();
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+    return platform?{table:"platform_assistant_private_content",identity:"content_id",body:"content",eligible:"redacted_at IS NULL AND expires_at<=?",bindings:[now]}:null;
+  }
+  throw new Error("retention-cleanup-class-invalid");
+}
+
+/** Existing ordinary cleanup excludes every dedicated structured body. */
+async function ordinaryRetentionStatement(env: WorkerEnv, now: string, workClass: number, maximum: number): Promise<D1PreparedStatement | null> {
+  const db=env.DB,shape=await ordinaryRetentionShape(env,now,workClass);
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!shape)return null;
+  const candidate=await db.prepare("SELECT "+shape.identity+" FROM "+shape.table+" WHERE "+shape.eligible+" ORDER BY expires_at LIMIT 1").bind(...shape.bindings).first();
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!candidate)return null;
+  return db.prepare("UPDATE "+shape.table+" SET "+shape.body+"='',redacted_at=? WHERE rowid IN (SELECT rowid FROM "+shape.table+" WHERE "+shape.eligible+" ORDER BY expires_at LIMIT ?)").bind(now,...shape.bindings,maximum);
+}
+
+/** A FIFO candidate is a one-use exact snapshot, not a reusable cleanup capability. */
+async function ordinaryRetentionCandidate(env:WorkerEnv,now:string,workClass:number){
+  const db=env.DB,shape=await ordinaryRetentionShape(env,now,workClass);
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!shape)return null;
+  const selection="SELECT "+shape.identity+" AS identity,expires_at FROM "+shape.table+" WHERE "+shape.eligible+" ORDER BY expires_at,"+shape.identity+" LIMIT 1";
+  const row=await db.prepare(selection).bind(...shape.bindings).first<{identity:string;expires_at:string}>();
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!row)return null;
+  if(typeof row.identity!=="string"||!row.identity||row.identity.length>1024||typeof row.expires_at!=="string"
+    ||row.expires_at.length!==24||!Number.isFinite(Date.parse(row.expires_at))||new Date(row.expires_at).toISOString()!==row.expires_at||row.expires_at>now)
+    throw new Error("retention-cleanup-unavailable");
+  const assertion=(condition:string,bindings:(string|number|null)[])=>db.prepare("SELECT CASE WHEN ("+condition+") THEN 1 ELSE json('retention_cleanup_changed') END AS verified").bind(...bindings);
+  const statements=[
+    assertion("EXISTS(SELECT 1 FROM ("+selection+") selected WHERE selected.identity=? AND selected.expires_at=?)",[...shape.bindings,row.identity,row.expires_at]),
+    db.prepare("UPDATE "+shape.table+" SET "+shape.body+"='',redacted_at=? WHERE "+shape.identity+"=? AND expires_at=? AND "+shape.eligible).bind(now,row.identity,row.expires_at,...shape.bindings),
+    assertion("changes()=1",[]),
+    assertion("EXISTS(SELECT 1 FROM "+shape.table+" WHERE "+shape.identity+"=? AND expires_at=? AND "+shape.body+"='' AND redacted_at=?)",[row.identity,row.expires_at,now]),
+  ];
+  let consumed=false;
+  return{oldest:row.expires_at,selectionKey:String(workClass)+":"+row.identity,async commit():Promise<1>{
+    if(consumed||env.DB!==db)throw new Error("retention-cleanup-stale");consumed=true;
+    try{
+      const results=await db.batch(statements);
+      if(env.DB!==db||!Array.isArray(results)||results.length!==statements.length||results.some(result=>!result||typeof result!=="object"||Array.isArray(result)
+        ||!Object.hasOwn(result,"success")||result.success!==true||(result as typeof result & {error?:unknown}).error!==undefined||!Object.hasOwn(result,"results")||!Array.isArray(result.results)))throw new Error("retention-cleanup-unconfirmed");
+      for(const index of [0,2,3]){
+        const rows=results[index]!.results;
+        if(rows.length!==1||!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])||Object.keys(rows[0]).length!==1
+          ||Object.keys(rows[0])[0]!=="verified"||(rows[0] as Record<string,unknown>).verified!==1)throw new Error("retention-cleanup-unconfirmed");
       }
+      if(!Object.hasOwn(results[1]!,"meta")||!results[1]!.meta||typeof results[1]!.meta!=="object"||Array.isArray(results[1]!.meta)||!Object.hasOwn(results[1]!.meta,"changes")||results[1]!.meta.changes!==1)throw new Error("retention-cleanup-unconfirmed");
+      return 1;
+    }catch(error){throw new Error("retention-cleanup-unconfirmed",{cause:error});}
+  }};
+}
+
+function ordinaryRetentionCommitted(result: D1Result, maximum: number): number {
+  const changes = result?.meta?.changes;
+  if (!result || result.success !== true || ("error" in result && result.error !== undefined)
+    || typeof changes !== "number" || !Number.isSafeInteger(changes) || changes < 0 || changes > maximum) throw new Error("retention-cleanup-unconfirmed");
+  return changes;
+}
+
+async function sweepOrdinaryExpiredPrivateContent(env: WorkerEnv, now: string, maximum: number): Promise<number> {
+  const db = env.DB;
+  let processed = 0;
+  for (let workClass = 0; workClass < 3 && processed < maximum; workClass++) {
+    const statement = await ordinaryRetentionStatement(env, now, workClass, maximum - processed);
+    if (env.DB !== db) throw new Error("retention-cleanup-binding-changed");
+    if (statement) {
+      const result = await statement.run();
+      if (env.DB !== db) throw new Error("retention-cleanup-binding-changed");
+      processed += ordinaryRetentionCommitted(result, maximum - processed);
     }
   }
   return processed;
 }
 
+/** Retire eligible private data within the existing shared work-unit allowance.
+ * Ordinary units still redact one body, plus at most one anchor cursor row.
+ * A ledger unit changes at most one body, revision, exact custody resource,
+ * retention row and head/cursor (five rows);
+ * a head-only transition costs its own unit. A dedicated origin operation costs
+ * one unit, with an anchor cursor update in the same transaction when present.
+ * This return value is NOT a count of physically erased rows or a claim that
+ * held/pending data is gone. */
+export async function sweepExpiredPrivateContent(env: WorkerEnv, limit = 250): Promise<number> {
+  const db = env.DB;
+  const bindingCurrent = () => { if (env.DB !== db) throw new Error("retention-cleanup-binding-changed"); };
+  await ensureSchema(env);
+  bindingCurrent();
+  const now = new Date().toISOString();
+  const maximum = Math.max(1, Math.min(1_000, Math.floor(limit) || 250));
+  // Import only when the existing retention path runs. No schema installation,
+  // consumer activation, enrollment or additional scheduling is introduced.
+  const { prepareStructuredConversationRetentionStep } = await import("./memory-live-store.ts");
+  const { prepareNativeStructuredOriginRetentionStep } = await import("./memory-native-origin.ts");
+  bindingCurrent();
+  let processed = 0;
+  const preparationErrors: unknown[] = [];
+  let ledgerUnavailable = false, originUnavailable = false;
+  while (processed < maximum) {
+    let step: Awaited<ReturnType<typeof prepareStructuredConversationRetentionStep>> = null;
+    let origin: Awaited<ReturnType<typeof prepareNativeStructuredOriginRetentionStep>> = null;
+    // Each preparation is read-only and independent. Withhold an unavailable
+    // class for this invocation, but let other genuine plans use the remaining
+    // shared allowance. Fresh plans are still required after every committed unit.
+    if (!ledgerUnavailable) {
+      try {
+        step = await prepareStructuredConversationRetentionStep(env, { now });
+        bindingCurrent();
+        if (step && (!Number.isInteger(step.nextClass) || step.nextClass < 0 || step.nextClass > 3)) throw new Error("retention-cleanup-class-invalid");
+        if (step && (typeof step.oldest!=="string"||step.oldest.length!==24||!Number.isFinite(Date.parse(step.oldest))
+          ||new Date(step.oldest).toISOString()!==step.oldest||step.oldest>now)) throw new Error("retention-cleanup-unavailable");
+      } catch (error) {
+        bindingCurrent();
+        step = null; ledgerUnavailable = true; preparationErrors.push(error);
+      }
+    }
+    if (!originUnavailable) {
+      try {
+        origin = await prepareNativeStructuredOriginRetentionStep(env, { now });
+        bindingCurrent();
+        if(origin&&(origin.workUnits!==1||typeof origin.oldest!=="string"||origin.oldest.length!==24
+          ||!Number.isFinite(Date.parse(origin.oldest))||new Date(origin.oldest).toISOString()!==origin.oldest||origin.oldest>now
+          ||typeof origin.selectionKey!=="string"||!origin.selectionKey||origin.selectionKey.length>1024))throw new Error("retention-cleanup-unavailable");
+      } catch (error) {
+        bindingCurrent();
+        origin = null; originUnavailable = true; preparationErrors.push(error);
+      }
+    }
+    if (!step) {
+      bindingCurrent();
+      if(!origin){
+        processed += await sweepOrdinaryExpiredPrivateContent(env, now, maximum - processed);
+        bindingCurrent();
+        break;
+      }
+      const selectedOrigin=origin;
+      const candidates:{oldest:string;selectionKey:string;commit:()=>Promise<1>}[]=[{oldest:origin.oldest,selectionKey:"3:"+origin.selectionKey,commit:async()=>{
+        bindingCurrent();
+        try{
+          const statements=selectedOrigin.statements.map(query=>db.prepare(query.sql).bind(...query.bindings));
+          const results=await db.batch(statements);
+          bindingCurrent();
+          if(!selectedOrigin.acknowledge(results))throw new Error("retention-cleanup-unconfirmed");
+          return 1;
+        }catch(error){throw new Error("retention-cleanup-unconfirmed",{cause:error});}
+      }}];
+      for(let workClass=0;workClass<3;workClass++){
+        const candidate=await ordinaryRetentionCandidate(env,now,workClass);
+        bindingCurrent();if(candidate)candidates.push(candidate);
+      }
+      // With no ledger anchor, use exact global FIFO candidates. Newer traffic
+      // cannot continually jump ahead of an older durable origin cleanup unit.
+      candidates.sort((left,right)=>left.oldest<right.oldest?-1:left.oldest>right.oldest?1:left.selectionKey<right.selectionKey?-1:left.selectionKey>right.selectionKey?1:0);
+      if(await candidates[0]!.commit()!==1)throw new Error("retention-cleanup-unconfirmed");
+      bindingCurrent();processed++;continue;
+    }
+    let committed = false;
+    // The native head's persisted cursor rotates all four classes while an
+    // executable ledger target exists, including across fresh limit-one calls.
+    // Empty/held classes cost no writes and are skipped in this finite scan.
+    for (let offset = 0; offset < 4; offset++) {
+      const workClass = (step.nextClass + offset) % 4;
+      bindingCurrent();
+      if (workClass === 3) {
+        // The existing anchor cursor still rotates ordinary classes. Dedicated
+        // origins and ledger work share this slot in immutable timestamp order.
+        const committed=origin&&origin.oldest<step.oldest?await step.commitOrigin(origin):await step.commitLedger();
+        if (committed !== 1) throw new Error("retention-cleanup-unconfirmed");
+      } else {
+        const statement = await ordinaryRetentionStatement(env, now, workClass, 1);
+        bindingCurrent();
+        if (!statement) continue;
+        if (await step.commitOrdinary(workClass, statement) !== 1) throw new Error("retention-cleanup-unconfirmed");
+      }
+      bindingCurrent();
+      // Each commit also CAS-advances the exact anchor cursor to this slot's
+      // successor. An unconfirmed commit throws without retrying or reusing its
+      // attempted allowance; the next invocation reads persisted progress.
+      processed++;
+      committed = true;
+      break;
+    }
+    if (!committed) throw new Error("retention-cleanup-unavailable");
+  }
+  // Confirmed progress does not turn unavailable provenance into a completed
+  // sweep. Commit/ACK failures bypass this deferred error and stop immediately.
+  if (preparationErrors.length) throw preparationErrors[0];
+  return processed;
+}
+
 /** Only an actual scheduled invocation creates an auditable, content-free run receipt. */
 export async function observeScheduledRetention(env: WorkerEnv, limit = 1_000): Promise<number> {
+  const db = env.DB;
+  const bindingCurrent = () => { if (env.DB !== db) throw new Error("retention-cleanup-binding-changed"); };
   await ensureSchema(env);
+  bindingCurrent();
   const runId=uuidV7(),startedAt=new Date().toISOString();
-  await env.DB.prepare("INSERT INTO retention_sweep_runs(run_id,trigger_kind,status,started_at,finished_at,processed_count,remaining_count,oldest_expired_at,error_code) VALUES(?,'scheduled','running',?,NULL,0,0,NULL,NULL)").bind(runId,startedAt).run();
+  await db.prepare("INSERT INTO retention_sweep_runs(run_id,trigger_kind,status,started_at,finished_at,processed_count,remaining_count,oldest_expired_at,error_code) VALUES(?,'scheduled','running',?,NULL,0,0,NULL,NULL)").bind(runId,startedAt).run();
   try{
+    bindingCurrent();
     const processed=await sweepExpiredPrivateContent(env,limit);
+    bindingCurrent();
     const now=new Date().toISOString();
-    const platform=await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
+    const platform=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
       .first<{available:number}>();
+    bindingCurrent();
     const platformBacklog=platform?" UNION ALL SELECT platform.expires_at FROM platform_assistant_private_content platform WHERE platform.redacted_at IS NULL AND platform.expires_at<=?":"";
-    const backlog=await env.DB.prepare(`SELECT COUNT(*) AS count,MIN(expires_at) AS oldest FROM(
-      SELECT private_content.expires_at FROM private_content WHERE private_content.redacted_at IS NULL AND private_content.kind!='document-artifact' AND private_content.expires_at<=?
+    const ordinaryOrigin=await ordinaryStructuredOriginExclusion(env);
+    bindingCurrent();
+    const backlog=await db.prepare(`SELECT COUNT(*) AS count,MIN(expires_at) AS oldest FROM(
+      SELECT private_content.expires_at FROM private_content WHERE private_content.redacted_at IS NULL AND private_content.kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND private_content.expires_at<=? AND (${ordinaryOrigin.sql})
         AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1
           WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
         AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold ON hold.organization_id=scope.organization_id AND hold.status='active'
@@ -561,13 +755,30 @@ export async function observeScheduledRetention(env: WorkerEnv, limit = 1_000): 
         AND NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
         AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
           AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))${platformBacklog})`)
-      .bind(now,now,...(platform?[now]:[])).first<{count:number;oldest:string|null}>();
-    await env.DB.prepare("UPDATE retention_sweep_runs SET status='completed',finished_at=?,processed_count=?,remaining_count=?,oldest_expired_at=? WHERE run_id=?")
-      .bind(now,processed,Number(backlog?.count??0),backlog?.oldest??null,runId).run();
-    await env.DB.prepare("DELETE FROM retention_sweep_runs WHERE run_id NOT IN(SELECT run_id FROM retention_sweep_runs ORDER BY started_at DESC,run_id DESC LIMIT 500)").run();
+      .bind(now,...ordinaryOrigin.bindings,now,...(platform?[now]:[])).first<{count:number;oldest:string|null}>();
+    bindingCurrent();
+    // Count eligible work units, not physical rows; held or unavailable data is
+    // never represented as erased. Absent/partial ledger schema is checked by
+    // the native helper, including stray dedicated-kind bodies.
+    const { structuredConversationRetentionBacklog } = await import("./memory-live-store.ts");
+    bindingCurrent();
+    const ledgerBacklog = await structuredConversationRetentionBacklog(env, { now });
+    bindingCurrent();
+    const { nativeStructuredOriginRetentionBacklog } = await import("./memory-native-origin.ts");
+    const originBacklog=await nativeStructuredOriginRetentionBacklog(env,{now});
+    bindingCurrent();
+    const oldest = [backlog?.oldest, ledgerBacklog.oldest, originBacklog.oldest].filter((value): value is string => typeof value === "string").sort()[0] ?? null;
+    await db.prepare("UPDATE retention_sweep_runs SET status='completed',finished_at=?,processed_count=?,remaining_count=?,oldest_expired_at=? WHERE run_id=?")
+      .bind(now,processed,Number(backlog?.count??0)+ledgerBacklog.count+originBacklog.count,oldest,runId).run();
+    bindingCurrent();
+    await db.prepare("DELETE FROM retention_sweep_runs WHERE run_id NOT IN(SELECT run_id FROM retention_sweep_runs ORDER BY started_at DESC,run_id DESC LIMIT 500)").run();
+    bindingCurrent();
     return processed;
   }catch(error){
-    await env.DB.prepare("UPDATE retention_sweep_runs SET status='failed',finished_at=?,error_code='retention_cleanup_failed' WHERE run_id=?")
+    // Failed-run counts were not finalized and are incomplete/unknown, not
+    // evidence that no cleanup committed before the failure or lost receipt.
+    // Record failure only on the original binding, never a replacement target.
+    await db.prepare("UPDATE retention_sweep_runs SET status='failed',finished_at=?,error_code='retention_cleanup_failed' WHERE run_id=?")
       .bind(new Date().toISOString(),runId).run();
     throw error;
   }

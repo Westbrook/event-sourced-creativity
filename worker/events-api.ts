@@ -1,4 +1,5 @@
 import { outputAssertionStatements } from "./output-requirements-ledger.ts";
+import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
 import { presentationProviderLabels } from "../src/model/generation-execution-evidence.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { handleProjectIntake } from "./project-intake.ts";
@@ -468,6 +469,22 @@ export function creativeChatMutationEvents(input:{mutations:CreativeChatMutation
 
 export type EventExecutionControl = { output?: OutputEventExecution; signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> };
 
+/** Legacy chat must inspect its selected native references before missing or
+ * excluded bodies could silently pull older history into the provider window. */
+export async function legacyChatMemoryProof(env:WorkerEnv,streamId:string,selected:readonly {eventId:string;contentRef:string}[]){
+  if(selected.length>12)throw new Error("assistant_memory_paid_ancestry_unsupported");
+  const exclusion=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
+  return{sql:`NOT EXISTS(WITH selected AS(SELECT value FROM json_each(?)), refs AS(
+      SELECT json_extract(value,'$.contentRef') AS content_id FROM selected UNION
+      SELECT json_extract(event.payload,'$.content_ref') FROM selected JOIN events event
+        ON event.event_id=json_extract(selected.value,'$.eventId') AND event.stream_id=?),
+      contents AS(SELECT refs.content_id,COALESCE(private.kind,'') AS kind FROM refs LEFT JOIN private_content private ON private.content_id=refs.content_id)
+    SELECT 1 FROM contents content WHERE NOT (${exclusion.sql}))
+    AND NOT EXISTS(SELECT 1 FROM json_each(?) selected JOIN events event ON event.event_id=json_extract(selected.value,'$.eventId')
+      AND event.stream_id=? WHERE event.type='AssistantReasoned' AND json_type(event.payload,'$.memory_origin_version') IS NOT NULL)`,
+    bindings:[JSON.stringify(selected),streamId,...exclusion.bindings,JSON.stringify(selected),streamId]};
+}
+
 export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userOverride?:PilotUser,execution?:EventExecutionControl):Promise<Response>{
   try{
     await ensureSchema(env);if(execution?.output)env=execution.output.guardedEnvironment;
@@ -860,7 +877,18 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     }
     if(body.action==="chat"){
       if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});const message=body.message?.trim();if(!message||message.length>4000)return Response.json({error:"chat_message_required"},{status:400});
-      const livePreview=body.livePreview!==false;const sourceEvents=await readEvents(env,streamId);const projection=foldEvents(sourceEvents,Number.POSITIVE_INFINITY,body.documentId);const privateContent=await loadPrivateContent(env,ownerId,"chat",executionScope);const reserved=12_000;const reservation=await reserveBudget(env,billingOwnerId,reserved,{streamId,correlationId:corr,operation:"creative-chat",projectScope:projectBudgetScope});
+      const livePreview=body.livePreview!==false;const sourceEvents=await readEvents(env,streamId);const projection=foldEvents(sourceEvents,Number.POSITIVE_INFINITY,body.documentId);
+      const selectedTurns=new Map<string,{eventId:string;contentRef:string;role:"user"|"assistant"}>();
+      for(const event of sourceEvents){
+        if(String(event.payload.document_id??"")!==projection.documentId)continue;
+        const user=event.type==="ChatMessageSent";if(!user&&!(event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat"))continue;
+        const role=user?"user":"assistant";selectedTurns.set(`${String(event.payload.turn_id??event.eventId)}:${role}`,{eventId:event.eventId,contentRef:String(event.payload.content_ref??""),role});
+      }
+      const selectedHistory=[...selectedTurns.values()].slice(-12),memoryProof=await legacyChatMemoryProof(env,streamId,selectedHistory);
+      const requireOrdinaryHistory=async()=>{if(!await env.DB.prepare("SELECT 1 AS no_memory_ancestry WHERE "+memoryProof.sql).bind(...memoryProof.bindings).first())throw new Error("assistant_memory_paid_ancestry_unsupported");};
+      try{await requireOrdinaryHistory();}catch{return Response.json({error:"assistant_memory_paid_ancestry_unsupported",noAutomaticRetry:true},{status:409});}
+      const privateContent=await loadPrivateContent(env,ownerId,"chat",executionScope);const history=selectedHistory.map(row=>({role:row.role,text:String(privateContent[row.contentRef]??"")})).filter(row=>row.text);
+      const reserved=12_000;const reservation=await reserveBudget(env,billingOwnerId,reserved,{streamId,correlationId:corr,operation:"creative-chat",projectScope:projectBudgetScope});
       if(!reservation.ok){const denied=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"hard_cap_reached",scope:reservation.scope,reserved_tokens:0,operation:"creative-chat"});await insertEvent(env,denied).run();const detail=applicationFailureDetail("budget_hard_cap_reached",reservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:reservation.scope},{status:429});}
       const estimatedChatCost=priceTextUsageBreakdownMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",{inputTokens:10_400,outputTokens:1_600,totalTokens:reserved}).totalMicrousd;
       const chatCostReservation=await reserveCostBudget(env,billingOwnerId,estimatedChatCost,{maximumMicrousd:estimatedChatCost,allowUserOverage:false,streamId,correlationId:corr,operation:"creative-chat",period:reservation.period,projectScope:projectBudgetScope});
@@ -868,26 +896,17 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       let userStored:Awaited<ReturnType<typeof storePrivateContent>>|null=null;let budgeted:EventRow|null=null;let userTurn:EventRow|null=null;const turnId=uuidV7();
       try{
         userStored=await storePrivateContent(env,ownerId,"chat-user",message,executionScope);budgeted=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetReserved",{operation:"creative-chat",reservation_id:reservation.reservationId,cost_reservation_id:chatCostReservation.reservationId,reserved_tokens:reserved,reserved_microusd:chatCostReservation.reservedMicrousd,period:reservation.period,live_preview:livePreview});userTurn=makeEvent(streamId,current+2,userActor,client,corr,"ChatMessageSent",{turn_id:turnId,document_id:projection.documentId,content_ref:userStored.contentId,content_expires_at:userStored.expiresAt,source_surface:"chat",live_preview:livePreview},{causationId:budgeted.eventId});await env.DB.batch([budgeted,userTurn].map((event)=>insertEvent(env,event)));
-        const conversation=new Map<string,{role:"user"|"assistant";text:string}>();
-        for(const event of sourceEvents){
-          if(String(event.payload.document_id??"")!==projection.documentId)continue;
-          const user=event.type==="ChatMessageSent";
-          if(!user&&!(event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat"))continue;
-          const text=String(privateContent[String(event.payload.content_ref??"")]??"");
-          if(!text)continue;
-          const role=user?"user":"assistant";
-          conversation.set(`${String(event.payload.turn_id??event.eventId)}:${role}`,{role,text});
-        }
-        const history=[...conversation.values()].slice(-12);
-        await execution?.progress("planning","Preparing your private creative conversation.");if(!await claimCostBudgetReservation(env,billingOwnerId,chatCostReservation.reservationId))return refuseProviderClaim({operation:"creative-chat",tokenReservationId:reservation.reservationId,costReservationId:chatCostReservation.reservationId,reservedTokens:reserved,reservedMicrousd:chatCostReservation.reservedMicrousd,causationId:userTurn.eventId});const generated=await respondToCreativeChat(env,ownerId,{documentTitle:projection.documentTitle,blocks:projection.blocks.map((block)=>({id:block.id,type:block.type,handle:block.handle,locked:block.locked,properties:block.properties})),relationships:projection.blockRelations.map((relation)=>({from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties})),history,message,locale:typeof (body as {locale?:unknown}).locale==="string"?(body as {locale:string}).locale:"en",signal:execution?.signal});await execution?.beginCommit();
+        await execution?.progress("planning","Preparing your private creative conversation.");if(!await claimCostBudgetReservation(env,billingOwnerId,chatCostReservation.reservationId))return refuseProviderClaim({operation:"creative-chat",tokenReservationId:reservation.reservationId,costReservationId:chatCostReservation.reservationId,reservedTokens:reserved,reservedMicrousd:chatCostReservation.reservedMicrousd,causationId:userTurn.eventId});const generated=await respondToCreativeChat(env,ownerId,{documentTitle:projection.documentTitle,blocks:projection.blocks.map((block)=>({id:block.id,type:block.type,handle:block.handle,locked:block.locked,properties:block.properties})),relationships:projection.blockRelations.map((relation)=>({from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties})),history,message,locale:typeof (body as {locale?:unknown}).locale==="string"?(body as {locale:string}).locale:"en",signal:execution?.signal,beforeDispatch:requireOrdinaryHistory});await execution?.beginCommit();
+        // A submitted call still settles its actual usage if ancestry is withdrawn before materialization.
+        try{await requireOrdinaryHistory();}catch(error){const charged=priceTextUsageBreakdownMicrousd(generated.model,generated.usage);await Promise.all([settleBudget(env,billingOwnerId,reservation.reservationId,generated.usage.totalTokens),settleCostBudget(env,billingOwnerId,chatCostReservation.reservationId,charged.totalMicrousd)]);throw error;}
         const outputRequirementMutations=generated.output.mutations.filter((mutation)=>mutation.operation==="create"?isOutputContextType(mutation.type):projection.blocks.some((block)=>block.id===mutation.target_block_id&&isOutputContextType(block.type)));
         const outputRequirementsUnchanged=outputRequirementMutations.some((mutation)=>mutation.operation!=="create");
         const assistantReply=outputRequirementMutations.length?`${generated.output.reply}\n\n${outputRequirementChatNotice(body.locale,outputRequirementsUnchanged)}`:generated.output.reply;
-        const assistantStored=await storePrivateContent(env,ownerId,"chat-assistant",assistantReply,executionScope);
+        const assistantStored=await storePrivateContent(env,ownerId,"chat-assistant",assistantReply,executionScope,memoryProof);
         const previewSuppressed=generated.output.preview_worthy&&(!livePreview||outputRequirementMutations.length>0);const previewQueued=livePreview&&generated.output.preview_worthy&&outputRequirementMutations.length===0;let directionStored:null|Awaited<ReturnType<typeof storePrivateContent>>=null;if(previewQueued){const direction={title:projection.documentTitle,rationale:generated.output.reply,scene:generated.output.preview_direction,palette:[],next_moves:[]};directionStored=await storePrivateContent(env,ownerId,"provider-output",JSON.stringify(direction),executionScope);}const next=await streamHead(env,streamId);const referencePixelMutationCount=generated.output.mutations.filter((mutation)=>mutation.reference_pixel_mode!=="unchanged").length;const reasoned=makeEvent(streamId,next+1,"model:forma-chat",client,corr,"AssistantReasoned",{operation:"creative-chat",turn_id:turnId,document_id:projection.documentId,content_ref:assistantStored.contentId,content_expires_at:assistantStored.expiresAt,provider:"openai",provider_response_id:generated.responseId,model_id:generated.model,latency_ms:generated.latencyMs,mutation_count:generated.output.mutations.length,reference_pixel_mutation_count:referencePixelMutationCount,preview_worthy:generated.output.preview_worthy,live_preview_requested:livePreview,preview_queued:previewQueued,preview_direction_ref:directionStored?.contentId??null,preview_suppressed:previewSuppressed},{causationId:userTurn.eventId});
         const mutationResult=creativeChatMutationEvents({mutations:generated.output.mutations,projection,streamId,startSequence:reasoned.sequence,client,corr,causationId:reasoned.eventId,turnId,actor:userActor});const appended:EventRow[]=[reasoned,...mutationResult.events];let sequence=mutationResult.sequence;
         const chatCosts=providerCostReceipt([priceTextUsageBreakdownMicrousd(generated.model,generated.usage)]);await Promise.all([settleBudget(env,billingOwnerId,reservation.reservationId,generated.usage.totalTokens),settleCostBudget(env,billingOwnerId,chatCostReservation.reservationId,chatCosts.cost_microusd)]);const usage=makeEvent(streamId,++sequence,"worker:policy",client,corr,"GenerationUsageRecorded",{operation:"creative-chat",document_id:projection.documentId,reservation_id:reservation.reservationId,cost_reservation_id:chatCostReservation.reservationId,input_tokens:generated.usage.inputTokens,output_tokens:generated.usage.outputTokens,total_tokens:generated.usage.totalTokens,chat_tokens:generated.usage.totalTokens,preview_tokens:0,reserved_tokens:reserved,reserved_microusd:chatCostReservation.reservedMicrousd,model_ids:[generated.model],live_preview_requested:livePreview,preview_generated:false,preview_queued:previewQueued,preview_suppressed:previewSuppressed,...chatCosts},{causationId:reasoned.eventId});appended.push(usage);await env.DB.batch(appended.map((event)=>insertEvent(env,event)));return Response.json({appended:[budgeted,userTurn,...appended],content:{[userStored.contentId]:message,[assistantStored.contentId]:assistantReply},rejected:[],head:usage.sequence,previewed:false,previewQueued,previewSuppressed,followupJob:directionStored?{kind:"preview",documentId:projection.documentId,sourceSurface:"chat",payload:{directionRef:directionStored.contentId,directionModel:generated.model,sourceChatTurnId:turnId,locale:body.locale??"en",promptTechnique:normalizePromptTechnique(body.promptTechnique)}}:null});
-      }catch(error){if(execution?.signal.aborted||error instanceof Error&&error.message==="document_job_canceled")throw error;const detail=classifyProviderFailure(error);await Promise.all([releaseBudget(env,billingOwnerId,reservation.reservationId,{reason:"creative_chat_failed"}),releaseCostBudget(env,billingOwnerId,chatCostReservation.reservationId)]);if(!budgeted||!userTurn||!userStored)return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail)},{status:detail.httpStatus===429?429:502});const next=await streamHead(env,streamId);const released=makeEvent(streamId,next+1,"worker:policy",client,corr,"BudgetReleased",{operation:"creative-chat",reservation_id:reservation.reservationId,cost_reservation_id:chatCostReservation.reservationId,reserved_tokens:reserved,released_microusd:chatCostReservation.reservedMicrousd,reason:"creative_chat_failed"},{causationId:userTurn.eventId});await insertEvent(env,released).run();return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),appended:[budgeted,userTurn,released],content:{[userStored.contentId]:message},head:released.sequence},{status:detail.httpStatus===429?429:502});}
+      }catch(error){if(execution?.signal.aborted||error instanceof Error&&error.message==="document_job_canceled")throw error;const memoryDenied=error instanceof Error&&error.message==="assistant_memory_paid_ancestry_unsupported";const detail=classifyProviderFailure(error);await Promise.all([releaseBudget(env,billingOwnerId,reservation.reservationId,{reason:"creative_chat_failed"}),releaseCostBudget(env,billingOwnerId,chatCostReservation.reservationId)]);if(memoryDenied)return Response.json({error:"assistant_memory_paid_ancestry_unsupported",noAutomaticRetry:true},{status:409});if(!budgeted||!userTurn||!userStored)return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail)},{status:detail.httpStatus===429?429:502});const next=await streamHead(env,streamId);const released=makeEvent(streamId,next+1,"worker:policy",client,corr,"BudgetReleased",{operation:"creative-chat",reservation_id:reservation.reservationId,cost_reservation_id:chatCostReservation.reservationId,reserved_tokens:reserved,released_microusd:chatCostReservation.reservedMicrousd,reason:"creative_chat_failed"},{causationId:userTurn.eventId});await insertEvent(env,released).run();return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),appended:[budgeted,userTurn,released],content:{[userStored.contentId]:message},head:released.sequence},{status:detail.httpStatus===429?429:502});}
     }
     if(body.action==="structure_adaptive")return Response.json({error:"adaptive_consent_required",submission:"not-submitted"},{status:428});
     if(body.action==="render_document"&&body.artifactKind==="model3d"){
@@ -1676,4 +1695,595 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     }
     let sequence=current;const appended=valid.map(({item})=>makeEvent(streamId,++sequence,userActor,client,corr,item.type!,item.payload!,{compensatesEventId:item.compensatesEventId}));if(rejected.length)appended.push(makeEvent(streamId,++sequence,"worker:validator",client,corr,"ValidationFailed",{attempted_type:"emit_events",attempted_by:"user",permission_schema_version:PERMISSION_SCHEMA_VERSION,errors:rejected}));if(appended.length)await appendOperationEvents(env,appended,{...(commutative?{}:{expectedHead:current})});return Response.json({appended,rejected,head:appended.at(-1)?.sequence??current});
   }catch(error){if(execution?.output?.dispatchStop(error))throw error;if(error instanceof StaleSequenceError)return Response.json({error:"stale_sequence",expected:error.expected,head:error.head},{status:409});return Response.json({error:error instanceof Error?error.message:"event_api_failed"},{status:500});}
+}
+
+import { AssistantContextReadWitness, assistantStructuredOwnSendOwnerHeadGuard, copyAssistantStructuredOwnSendFootprint,
+  type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
+import { canonicalConsent, executionAdmissionGuard, executionContentCustodyGuard, type ConsequentialBinding } from "./consequential-consent.ts";
+import { liveMemoryPrincipal } from "./memory-live-authority.ts";
+import { configuredPilotAdmissionGuard, type BudgetReservationGuard } from "./pilot-policy.ts";
+import { projectSourceProjectionCurrentAssertion, projectStructuredSourceProjectionCurrentAssertion } from "./project-access.ts";
+import { publicEventPayload } from "./event-privacy.ts";
+import { memoryDigest } from "../src/model/scoped-memory.ts";
+import { nativeMemoryDescriptor, nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery,
+  nativeMemoryTimestamp, type NativeMemoryQuery } from "./memory-native-deadlines.ts";
+
+/** Trusted server output of document read preparation, not a browser credential or branded authority. */
+export type LegacyConversationOriginalPrepared = { principal: PilotUser; binding: ConsequentialBinding; sourceHead: number };
+export type LegacyConversationOriginalInterval = { afterSequence: number; throughSequence: number };
+export type LegacyConversationOriginalCapture = { readonly method: "native-legacy-originals-v1"; readonly validUntil: string };
+export type LegacyConversationOriginalReceipt = {
+  method: "native-legacy-originals-v1"; treatment: "untrusted-historical-evidence";
+  scope: { actorUserId: string; ownerUserId: string; streamId: string; projectId: string; documentId: string;
+    organizationId: string | null; projectAccessId: string | null };
+  interval: LegacyConversationOriginalInterval; completeFromStart: false;
+  originals: { eventId: string; sequence: number; turnId: string; role: "user" | "assistant"; actor: string;
+    correlationId: string; causationId: string; contentRef: string; text: string; contentHash: string;
+    occurredAt: string; recordedAt: string; expiresAt: string }[];
+  /** Original database capture clock, not a refreshed TTL on subsequent replay. */
+  checkedAt: string; validUntil: string;
+};
+type LegacyOriginalRow = Record<string, unknown>;
+type LegacyOriginalFrame = { env: WorkerEnv; db: WorkerEnv["DB"]; preparedKey: string; settings: string;
+  witness: AssistantContextReadWitness<LegacyConversationOriginalReceipt> };
+const legacyOriginalFrames = new WeakMap<LegacyConversationOriginalCapture, LegacyOriginalFrame>();
+const legacyOriginalClock = "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS checked_at";
+const legacyOriginalEventColumns = "event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,"
+  + "causation_id,compensates_event_id,schema_version,type,CASE WHEN length(CAST(payload AS BLOB))<=65536 THEN payload ELSE NULL END AS payload";
+const legacyOriginalId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 240 && value.isWellFormed();
+const legacyOriginalSettings = (env: WorkerEnv) => canonicalConsent([env.FORMA_PILOT_COHORT_ID ?? "", env.FORMA_ADMIN_EMAILS ?? ""]);
+const legacyOriginalGuardQuery = (guard: BudgetReservationGuard) => nativeMemoryDescriptor(
+  "SELECT CASE WHEN (" + guard.sql + ") THEN 1 ELSE 0 END AS allowed", guard.bindings);
+
+function legacyOriginalJson(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "string" || value.length > 65_536 || !value.isWellFormed()
+    || new TextEncoder().encode(value).byteLength > 65_536) return null;
+  try { const parsed: unknown = JSON.parse(value); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; }
+  catch { return null; }
+}
+function legacyOriginalNative(row: LegacyOriginalRow, payload: Record<string, unknown>): boolean {
+  const origin = payload.origin && typeof payload.origin === "object" && !Array.isArray(payload.origin)
+    ? payload.origin as Record<string, unknown> : null;
+  return typeof row.event_id === "string" && !/^optimistic:/i.test(row.event_id)
+    && typeof row.client_id === "string" && !/optimistic/i.test(row.client_id)
+    && [payload.simulation, payload.synthetic, origin?.synthetic].every(value => value === undefined || value === null || value === false || value === 0)
+    && [payload.mock_data_source, payload.replay_session_id, payload.fictional_user_id].every(value => value === undefined || value === null);
+}
+function legacyOriginalHistorical(row: LegacyOriginalRow, checked: number): boolean {
+  const recorded = nativeMemoryTimestamp(row.recorded_at);
+  return recorded !== null && row.occurred_at === row.recorded_at && recorded <= checked;
+}
+function legacyOriginalEnvelope(row: LegacyOriginalRow, secret: LegacyOriginalRow, owner: string): Record<string, unknown> | null {
+  const payload = legacyOriginalJson(secret.private_json);
+  if (!payload || !legacyOriginalId(row.event_id) || secret.private_event_id !== row.event_id
+    || secret.owner_id !== owner || secret.redacted_at !== null || secret.created_at !== row.recorded_at
+    || nativeMemoryTimestamp(secret.created_at) === null || !legacyOriginalNative(row, payload)) return null;
+  // Match the actual forced eventWriteBindings producer. A duplicate key or conflicting
+  // public/private spelling cannot pass this exact reconstruction after JSON.parse.
+  const generated = publicEventPayload(row.event_id, payload, true);
+  if (generated.privateJson !== secret.private_json || JSON.stringify(generated.payload) !== row.payload
+    || secret.project_id !== (typeof payload.project_id === "string" && payload.project_id ? payload.project_id : null)
+    || secret.document_id !== (typeof payload.document_id === "string" && payload.document_id ? payload.document_id : null)) return null;
+  return payload;
+}
+type LegacyOriginalOwnGuard = { guard: BudgetReservationGuard;
+  successor: (own: AssistantStructuredOwnSendFootprint) => BudgetReservationGuard;
+  ownerHead?: { streamId: string; sourceHead: number } };
+async function legacyOriginalRead(env: WorkerEnv, witness: AssistantContextReadWitness<LegacyConversationOriginalReceipt>, queries: NativeMemoryQuery[],
+  ownGuards?: readonly (LegacyOriginalOwnGuard | null)[]) {
+  const statements = queries.map(query => env.DB.prepare(query.sql).bind(...query.bindings));
+  const results = structuredClone(await env.DB.batch<LegacyOriginalRow>(statements));
+  if (results.length !== queries.length || results.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results)))
+    throw new Error("legacy_original_read_unavailable");
+  if (ownGuards && ownGuards.length !== queries.length) throw new Error("legacy_original_guard_shape");
+  for (const [index, query] of queries.entries()) {
+    const own = ownGuards?.[index];
+    // Metadata is declared alongside the actual source guard, never inferred
+    // from an opaque statement or by changing an SQL substring. The original
+    // certificate retains the identical admission predicate and expected true row.
+    if (own) witness.requireStructuredOwnGuard(own.guard, own.successor, own.ownerHead);
+    else witness.observe([statements[index]!], [results[index]!], [query]);
+  }
+  return results.map(result => result.results);
+}
+function legacyOriginalDocumentGuard(prepared: LegacyConversationOriginalPrepared): BudgetReservationGuard {
+  const { principal, binding } = prepared, scope = binding.scope;
+  // Existing native document containment/current-boundary proof; no hydration, repair,
+  // author/output capability, fabricated enrollment or removed-document-history fallback.
+  return { sql: `EXISTS(SELECT 1 FROM events created LEFT JOIN event_private_payloads created_scope
+      ON created_scope.private_event_id=created.event_id AND created_scope.owner_id=substr(created.stream_id,10)
+      WHERE created.stream_id=? AND created.type IN('DocumentCreated','DocumentForked')
+      AND created.sequence=(SELECT MAX(origin.sequence) FROM events origin WHERE origin.stream_id=created.stream_id
+        AND origin.type IN('DocumentCreated','DocumentForked') AND json_extract(origin.payload,'$.document_id')=json_extract(created.payload,'$.document_id'))
+      AND json_extract(created.payload,'$.document_id')=? AND COALESCE(json_extract(created.payload,'$.project_id'),created_scope.project_id,
+        (SELECT json_extract(previous.payload,'$.project_id') FROM events previous WHERE previous.stream_id=created.stream_id
+          AND previous.sequence<=created.sequence AND previous.type IN('ProjectCreated','ProjectOpened') ORDER BY previous.sequence DESC LIMIT 1))=?)
+      AND COALESCE((SELECT boundary.type FROM events boundary WHERE boundary.stream_id=?
+        AND json_extract(boundary.payload,'$.document_id')=? AND boundary.type IN('DocumentCreated','DocumentForked','DocumentRemoved','DocumentRestored')
+        ORDER BY boundary.sequence DESC LIMIT 1),'DocumentRestored')!='DocumentRemoved'
+      ${scope ? `AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='document'
+        AND (resource.resource_id,resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id)=(?,?,?,?,?)
+        AND (resource.visibility='collaborative_output' OR resource.visibility='actor_private' AND resource.actor_user_id=?))` : ""}`,
+    bindings: [binding.streamId, binding.documentId, binding.projectId, binding.streamId, binding.documentId,
+      ...(scope ? [binding.documentId, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, principal.userId] : [])] };
+}
+
+/**
+ * Inert read-only capture of an explicit ORIGINAL stream interval. Call only with the
+ * actual server-prepared document principal/binding/head; that provenance precondition
+ * is not established by this structural type. Current native guards independently close
+ * authority. Never call a preparation/synchronization helper here: those may write.
+ * All chat events in the interval count toward twelve refs (at most six complete pairs).
+ * Mixed-document, ineligible or incomplete intervals deny wholesale, never skip or clip.
+ * Persisted native sidecars are current custody authority; this reader does not reconstruct
+ * historical job attribution. It checks ordinary ancestry, redaction and native access,
+ * not memory enrollment, claim suppression, a semantic ledger or permission to publish.
+ */
+export async function captureLegacyConversationOriginals(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
+  interval: LegacyConversationOriginalInterval): Promise<LegacyConversationOriginalCapture | null> {
+  try {
+    const captured = structuredClone(prepared), selected = structuredClone(interval), db = env.DB;
+    const preparedKey = canonicalConsent(prepared), intervalKey = canonicalConsent(interval), settings = legacyOriginalSettings(env);
+    const started = Date.now(), deadlines = [started + 60_000], { principal, binding } = captured, scope = binding.scope;
+    if (!principal || !binding || principal.fictional || !principal.authorizationSnapshot || !legacyOriginalId(principal.userId)
+      || principal.userId !== binding.actorUserId || principal.access.permissionEpoch !== binding.permissionEpoch
+      || !legacyOriginalId(binding.projectId) || !legacyOriginalId(binding.documentId) || binding.canvasId !== null || binding.blockId !== ""
+      || binding.streamId !== "creative:" + (scope?.ownerUserId ?? principal.userId)
+      || scope && (scope.actorUserId !== principal.userId || scope.projectId !== binding.projectId)
+      || !Number.isSafeInteger(captured.sourceHead) || captured.sourceHead < 1
+      || !Number.isSafeInteger(selected.afterSequence) || selected.afterSequence < 0
+      || !Number.isSafeInteger(selected.throughSequence) || selected.throughSequence <= selected.afterSequence
+      || selected.throughSequence > captured.sourceHead) return null;
+    const fresh = () => env.DB === db && canonicalConsent(prepared) === preparedKey && canonicalConsent(interval) === intervalKey
+      && legacyOriginalSettings(env) === settings && Date.now() < Math.min(...deadlines);
+    const bound = (value: string | null | undefined) => {
+      if (value === null) return;
+      const time = nativeMemoryTimestamp(value);
+      if (time === null || time <= started) throw new Error("legacy_original_deadline");
+      deadlines.push(time);
+    };
+    bound(nativeMemoryGrantDeadline(principal, started));
+    const current = await liveMemoryPrincipal(env, principal.userId);
+    if (!fresh() || !current || canonicalConsent([current.role, current.access, current.authorizationSnapshot])
+      !== canonicalConsent([principal.role, principal.access, principal.authorizationSnapshot])
+      || !(scope ? hasCapability(current, "project.read", scope) : current.access.capabilities.includes("project.read"))) return null;
+    bound(nativeMemoryGrantDeadline(current, started));
+    const witness = new AssistantContextReadWitness<LegacyConversationOriginalReceipt>(env);
+    const guards = [executionAdmissionGuard(principal, binding, captured.sourceHead), executionAdmissionGuard(current, binding, captured.sourceHead),
+      configuredPilotAdmissionGuard(env, current), legacyOriginalDocumentGuard(captured),
+      ...(scope ? [projectSourceProjectionCurrentAssertion(scope)] : [])];
+    const ownAdmission = (user: PilotUser) => (own: AssistantStructuredOwnSendFootprint): BudgetReservationGuard => {
+      const authority = executionAdmissionGuard(user, binding, null);
+      const head = assistantStructuredOwnSendOwnerHeadGuard(own, binding.streamId, captured.sourceHead);
+      return { sql: `(${authority.sql}) AND (${head.sql})`, bindings: [...authority.bindings, ...head.bindings] };
+    };
+    const ownHead = { streamId: binding.streamId, sourceHead: captured.sourceHead };
+    const ownGuards: (LegacyOriginalOwnGuard | null)[] = [
+      { guard: guards[0]!, successor: ownAdmission(principal), ownerHead: ownHead },
+      { guard: guards[1]!, successor: ownAdmission(current), ownerHead: ownHead }, null,
+      ...(scope ? [{ guard: guards[4]!, successor: (own: AssistantStructuredOwnSendFootprint) =>
+        projectStructuredSourceProjectionCurrentAssertion(scope, own) }] : []),
+    ];
+    // These ordinary guards retain independent results in one observed row; neither gains an own-send exemption.
+    const ordinaryAuthorityQuery = nativeMemoryDescriptor("SELECT CASE WHEN (" + guards[2]!.sql + ") THEN 1 ELSE 0 END AS pilot_allowed,"
+      + " CASE WHEN (" + guards[3]!.sql + ") THEN 1 ELSE 0 END AS document_allowed", [...guards[2]!.bindings, ...guards[3]!.bindings]);
+    const authorityQueries = [legacyOriginalGuardQuery(guards[0]!), legacyOriginalGuardQuery(guards[1]!), ordinaryAuthorityQuery,
+      ...(scope ? [legacyOriginalGuardQuery(guards[4]!)] : [])];
+    const authorityRows = await legacyOriginalRead(env, witness, authorityQueries, ownGuards);
+    if (!fresh() || authorityRows.some((rows, index) => rows.length !== 1 || (index === 2
+      ? Object.keys(rows[0]).length !== 2 || !Object.hasOwn(rows[0], "pilot_allowed") || !Object.hasOwn(rows[0], "document_allowed")
+        || rows[0].pilot_allowed !== 1 || rows[0].document_allowed !== 1
+      : rows[0].allowed !== 1))) return null;
+    const clock = structuredClone(await env.DB.prepare(legacyOriginalClock).first<{ checked_at: string }>());
+    const checked = nativeMemoryTimestamp(clock?.checked_at);
+    if (!fresh() || checked === null) return null;
+    deadlines.push(checked + 60_000);
+    const configured = env.FORMA_PILOT_COHORT_ID?.trim() ?? "";
+    const breakglass = (env.FORMA_ADMIN_EMAILS ?? "").split(",").map(value => value.trim().toLowerCase()).includes(current.email.toLowerCase());
+    if (configured && !breakglass) {
+      const [rows] = await legacyOriginalRead(env, witness, [nativeMemoryPilotQuery(configured)]);
+      bound(nativeMemoryPilotDeadline(rows, configured, checked));
+      if (!fresh()) return null;
+    }
+    if (binding.contextSessionId) {
+      const [rows] = await legacyOriginalRead(env, witness, [nativeMemoryDescriptor(
+        "SELECT context_id,principal_user_id,organization_id,project_access_id,expires_at,revoked_at FROM project_context_sessions WHERE context_id=?",
+        [binding.contextSessionId])]);
+      if (!fresh() || rows.length !== 1 || rows[0].principal_user_id !== principal.userId || rows[0].revoked_at !== null
+        || rows[0].organization_id !== scope?.organizationId || rows[0].project_access_id !== scope?.projectAccessId) return null;
+      bound(typeof rows[0].expires_at === "string" ? rows[0].expires_at : undefined);
+    }
+    // The exclusion helper's absent-table branches must not survive additive schema arrival.
+    const [schema, events] = await legacyOriginalRead(env, witness, [nativeMemoryDescriptor(
+      "SELECT name,sql FROM sqlite_schema WHERE type='table' AND name IN('memory_native_answer_origins','assistant_turns') ORDER BY name", []),
+      nativeMemoryDescriptor("SELECT " + legacyOriginalEventColumns + " FROM events WHERE stream_id=? AND sequence>? AND sequence<=?"
+        + " AND type IN('ChatMessageSent','AssistantReasoned') ORDER BY sequence LIMIT 13",
+      [binding.streamId, selected.afterSequence, selected.throughSequence])]);
+    if (!fresh() || schema.length > 2 || events.length < 2 || events.length > 12 || events.length % 2 !== 0) return null;
+    const seenIds = new Set<string>(), seenSequences = new Set<number>(), seenRoles = new Set<string>();
+    const selectedEvents: { row: LegacyOriginalRow; payload: Record<string, unknown>; role: "user" | "assistant" }[] = [];
+    for (const row of events) {
+      const payload = legacyOriginalJson(row.payload), role = row.type === "ChatMessageSent" ? "user" : "assistant";
+      if (!payload || !legacyOriginalId(row.event_id) || seenIds.has(row.event_id) || row.stream_id !== binding.streamId
+        || typeof row.sequence !== "number" || !Number.isSafeInteger(row.sequence) || seenSequences.has(row.sequence)
+        || row.sequence <= selected.afterSequence || row.sequence > selected.throughSequence
+        || row.schema_version !== 1 || row.compensates_event_id !== null || !legacyOriginalId(row.client_id)
+        || !legacyOriginalId(row.correlation_id) || !legacyOriginalId(row.causation_id)
+        || !legacyOriginalHistorical(row, checked) || !legacyOriginalNative(row, payload)
+        || payload.document_id !== binding.documentId || !legacyOriginalId(payload.turn_id) || !legacyOriginalId(payload.content_ref)
+        || payload._private_ref !== row.event_id || Object.hasOwn(payload, "memory_origin_version")
+        || row.actor !== (role === "user" ? scope ? `user:${principal.userId}` : "user" : "model:forma-chat")
+        || role === "assistant" && payload.operation !== "creative-chat" || role === "user" && payload.source_surface !== "chat") return null;
+      const roleKey = canonicalConsent([payload.turn_id, role]);
+      if (seenRoles.has(roleKey)) return null;
+      seenRoles.add(roleKey); seenIds.add(row.event_id); seenSequences.add(row.sequence); selectedEvents.push({ row, payload, role });
+      bound(typeof payload.content_expires_at === "string" ? payload.content_expires_at : undefined);
+    }
+    for (const entry of selectedEvents) {
+      const pair = selectedEvents.filter(other => other.payload.turn_id === entry.payload.turn_id);
+      if (pair.length !== 2) return null;
+      const user = pair.find(value => value.role === "user"), answer = pair.find(value => value.role === "assistant");
+      if (!user || !answer || answer.row.causation_id !== user.row.event_id || answer.row.correlation_id !== user.row.correlation_id
+        || answer.row.client_id !== user.row.client_id
+        || Number(answer.row.sequence) <= Number(user.row.sequence)
+        || Date.parse(String(answer.row.recorded_at)) < Date.parse(String(user.row.recorded_at))) return null;
+    }
+    const eventIds = selectedEvents.map(entry => String(entry.row.event_id));
+    const causeIds = selectedEvents.filter(entry => entry.role === "user").map(entry => String(entry.row.causation_id));
+    if (new Set(causeIds).size !== causeIds.length) return null;
+    const contentIds = selectedEvents.map(entry => String(entry.payload.content_ref));
+    if (new Set(contentIds).size !== contentIds.length) return null;
+    const owner = scope?.ownerUserId ?? principal.userId, custody = executionContentCustodyGuard(binding, "private_content");
+    const [causes, secrets, contents, eventScopes, resources, retentions] = await legacyOriginalRead(env, witness, [
+      nativeMemoryDescriptor("SELECT " + legacyOriginalEventColumns + " FROM events WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY sequence LIMIT 7", [JSON.stringify(causeIds)]),
+      nativeMemoryDescriptor("SELECT private_event_id,owner_id,project_id,document_id,CASE WHEN length(CAST(private_json AS BLOB))<=65536 THEN private_json ELSE NULL END AS private_json,created_at,redacted_at"
+        + " FROM event_private_payloads WHERE owner_id=? AND private_event_id IN(SELECT value FROM json_each(?)) ORDER BY private_event_id LIMIT 19", [owner, JSON.stringify([...eventIds, ...causeIds])]),
+      nativeMemoryDescriptor("SELECT content_id,owner_id,kind,CASE WHEN length(CAST(content AS BLOB))<=16384 THEN content ELSE NULL END AS content,"
+        + "created_at,expires_at,redacted_at FROM private_content WHERE content_id IN(SELECT value FROM json_each(?)) AND owner_id=? AND (" + custody.sql + ") ORDER BY content_id LIMIT 13", [JSON.stringify(contentIds), principal.userId, ...custody.bindings]),
+      nativeMemoryDescriptor("SELECT * FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY event_id LIMIT 13", [JSON.stringify(eventIds)]),
+      nativeMemoryDescriptor("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id IN(SELECT value FROM json_each(?)) ORDER BY project_access_id,resource_id LIMIT 129", [JSON.stringify(contentIds)]),
+      nativeMemoryDescriptor("SELECT * FROM private_content_retention_scopes WHERE content_id IN(SELECT value FROM json_each(?)) ORDER BY content_id LIMIT 13", [JSON.stringify(contentIds)]),
+    ]);
+    if (!fresh() || causes.length !== causeIds.length || secrets.length !== eventIds.length + causeIds.length
+      || contents.length !== contentIds.length || resources.length > 128 || retentions.length > 12
+      || (scope ? eventScopes.length !== eventIds.length || retentions.length !== contentIds.length || resources.length !== contentIds.length
+        : eventScopes.length !== 0 || retentions.length !== 0 || resources.length !== 0)) return null;
+    const bySecret = new Map(secrets.map(row => [row.private_event_id, row])), byContent = new Map(contents.map(row => [row.content_id, row]));
+    if (bySecret.size !== secrets.length || byContent.size !== contents.length) return null;
+    for (const entry of selectedEvents.filter(value => value.role === "user")) {
+      const cause = causes.find(row => row.event_id === entry.row.causation_id), secret = cause && bySecret.get(cause.event_id);
+      const payload = cause && secret && legacyOriginalEnvelope(cause, secret, owner);
+      if (!cause || !payload || cause.type !== "BudgetReserved" || cause.actor !== "worker:policy" || cause.stream_id !== binding.streamId
+        || cause.schema_version !== 1 || cause.causation_id !== null || cause.compensates_event_id !== null || cause.client_id !== entry.row.client_id
+        || !legacyOriginalHistorical(cause, checked) || Date.parse(String(cause.recorded_at)) > Date.parse(String(entry.row.recorded_at))
+        || cause.correlation_id !== entry.row.correlation_id || payload.operation !== "creative-chat"
+        || typeof cause.sequence !== "number" || !Number.isSafeInteger(cause.sequence) || cause.sequence < 1 || cause.sequence + 1 !== entry.row.sequence
+        || !legacyOriginalId(payload.reservation_id) || !legacyOriginalId(payload.cost_reservation_id)) return null;
+    }
+    const originals: LegacyConversationOriginalReceipt["originals"] = [];
+    let textBytes = 0;
+    for (const entry of selectedEvents) {
+      const { row, role } = entry, secret = bySecret.get(row.event_id), content = byContent.get(entry.payload.content_ref);
+      const payload = secret && legacyOriginalEnvelope(row, secret, owner);
+      if (!payload || !content || payload.document_id !== binding.documentId || payload.turn_id !== entry.payload.turn_id
+        || payload.content_ref !== entry.payload.content_ref || payload.content_expires_at !== entry.payload.content_expires_at
+        || Object.hasOwn(payload, "memory_origin_version") || content.owner_id !== principal.userId
+        || content.kind !== (role === "user" ? "chat-user" : "chat-assistant") || content.redacted_at !== null
+        || typeof content.content !== "string" || !content.content.trim() || !content.content.isWellFormed()
+        || nativeMemoryTimestamp(content.created_at) === null
+        || Date.parse(String(content.created_at)) > Date.parse(String(row.recorded_at))) return null;
+      const sourceDeadlines = [Date.parse(String(content.expires_at)), Date.parse(String(payload.content_expires_at))];
+      if (scope) {
+        const rows = eventScopes.filter(value => value.event_id === row.event_id);
+        if (rows.length !== 1 || rows[0].project_access_id !== scope.projectAccessId || rows[0].organization_id !== scope.organizationId
+          || rows[0].project_id !== scope.projectId || rows[0].owner_user_id !== scope.ownerUserId || rows[0].actor_user_id !== principal.userId
+          || rows[0].source_stream_id !== binding.streamId || rows[0].source_sequence !== row.sequence
+          || typeof rows[0].project_sequence !== "number" || !Number.isSafeInteger(rows[0].project_sequence) || rows[0].project_sequence < 1) return null;
+        const contentResources = resources.filter(value => value.resource_id === content.content_id);
+        const assigned = retentions.filter(value => value.content_id === content.content_id);
+        if (contentResources.length !== 1 || assigned.length !== 1) return null;
+        const resource = contentResources[0], retention = assigned[0];
+        if (resource.resource_kind !== "content" || resource.project_access_id !== scope.projectAccessId
+          || resource.organization_id !== scope.organizationId || resource.project_id !== scope.projectId
+          || resource.owner_user_id !== scope.ownerUserId || resource.actor_user_id !== principal.userId || resource.visibility !== "actor_private"
+          || retention.project_access_id !== scope.projectAccessId || retention.organization_id !== scope.organizationId
+          || retention.project_id !== scope.projectId || retention.actor_user_id !== principal.userId || retention.classification !== "transient-private"
+          || typeof retention.policy_version !== "number" || !Number.isSafeInteger(retention.policy_version) || retention.policy_version < 0
+          || retention.created_at !== content.created_at) return null;
+        // Zero is the actual producer's no-organization-policy version. Existing
+        // assignment/body/event deadlines may shorten one another, never renew them.
+        bound(typeof retention.assigned_expires_at === "string" ? retention.assigned_expires_at : undefined);
+        sourceDeadlines.push(Date.parse(String(retention.assigned_expires_at)));
+      }
+      textBytes += new TextEncoder().encode(content.content).byteLength;
+      if (textBytes > 65_536) return null;
+      bound(typeof content.expires_at === "string" ? content.expires_at : undefined);
+      const contentHash = await memoryDigest(content.content);
+      if (!fresh()) return null;
+      originals.push({ eventId: String(row.event_id), sequence: Number(row.sequence), turnId: String(payload.turn_id), role,
+        actor: String(row.actor), correlationId: String(row.correlation_id), causationId: String(row.causation_id),
+        contentRef: String(payload.content_ref), text: content.content, contentHash, occurredAt: String(row.occurred_at), recordedAt: String(row.recorded_at),
+        expiresAt: new Date(Math.min(...sourceDeadlines)).toISOString() });
+    }
+    const ordinary = await legacyChatMemoryProof(env, binding.streamId, originals.map(value => ({ eventId: value.eventId, contentRef: value.contentRef })));
+    if (!fresh()) return null;
+    witness.require(ordinary);
+    const validUntil = new Date(Math.min(...deadlines)).toISOString();
+    witness.before(validUntil);
+    const receipt: LegacyConversationOriginalReceipt = { method: "native-legacy-originals-v1", treatment: "untrusted-historical-evidence",
+      scope: { actorUserId: principal.userId, ownerUserId: owner, streamId: binding.streamId, projectId: binding.projectId,
+        documentId: binding.documentId, organizationId: scope?.organizationId ?? null, projectAccessId: scope?.projectAccessId ?? null },
+      interval: selected, completeFromStart: false, originals, checkedAt: clock!.checked_at, validUntil };
+    witness.seal(receipt);
+    const statements = witness.statements();
+    if (!statements.length || !fresh()) return null;
+    const final = structuredClone(await env.DB.batch<LegacyOriginalRow>(statements));
+    if (!fresh() || final.length !== statements.length
+      || final.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results)) || !witness.matches(final)) return null;
+    const handle: LegacyConversationOriginalCapture = Object.freeze({ method: "native-legacy-originals-v1", validUntil });
+    legacyOriginalFrames.set(handle, { env, db, preparedKey, settings, witness });
+    return handle;
+  } catch { return null; }
+}
+
+/** Repeated read-only replay is allowed within the original ceiling; it never creates a new lease.
+ * No text is returned until every captured native read/guard and current SQL deadline matches.
+ * The result grants neither memory enrollment/persistence nor provider/publication authority. */
+export async function replayLegacyConversationOriginals(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
+  capture: LegacyConversationOriginalCapture): Promise<LegacyConversationOriginalReceipt | null> {
+  const frame = legacyOriginalFrames.get(capture);
+  if (!frame || frame.env !== env || frame.db !== env.DB) return null;
+  try {
+    const preparedKey = canonicalConsent(structuredClone(prepared)), settings = legacyOriginalSettings(env);
+    if (preparedKey !== frame.preparedKey || settings !== frame.settings || Date.now() >= Date.parse(capture.validUntil)) return null;
+    const statements = frame.witness.statements();
+    if (!statements.length) return null;
+    const results = structuredClone(await env.DB.batch<LegacyOriginalRow>(statements));
+    if (env.DB !== frame.db || canonicalConsent(prepared) !== preparedKey || legacyOriginalSettings(env) !== settings || results.length !== statements.length
+      || results.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results)) || !frame.witness.matches(results)) return null;
+    return frame.witness.context();
+  } catch { return null; }
+}
+// S4: an inert server-only bridge from original read receipts to the existing
+// atomic assertion helper. This neither persists a ledger nor grants learning.
+export type LegacyConversationOriginalsReadBudget = Readonly<{ statements: number; rows: number; bytes: number }>;
+export type LegacyConversationOriginalsCommit = Readonly<{
+  method: "native-legacy-originals-commit-v1";
+  treatment: "untrusted-historical-evidence";
+  scope: Readonly<LegacyConversationOriginalReceipt["scope"]>;
+  sourceHead: number;
+  completeFromStart: false;
+  originals: readonly Readonly<LegacyConversationOriginalReceipt["originals"][number]>[];
+  validUntil: string;
+  /** Complete source read evidence, including guard/deadline rows. The caller's
+   * separately measured ledger budget is admitted alongside this, not replaced. */
+  budget: LegacyConversationOriginalsReadBudget;
+  frameCount: number;
+  /** Host-input/deadline check only. Database currentness requires the authentic
+   * assertions in the SAME transaction as every consuming read or mutation. */
+  isCurrent: () => boolean;
+  precommitStatements: () => D1PreparedStatement[];
+}>;
+const legacyOriginalAggregateLimit: LegacyConversationOriginalsReadBudget = Object.freeze({ statements: 32, rows: 8192, bytes: 2 * 1024 * 1024 });
+function legacyOriginalBudgetValid(value: LegacyConversationOriginalsReadBudget): boolean {
+  return !!value && ["statements", "rows", "bytes"].every(key => {
+    const count = value[key as keyof LegacyConversationOriginalsReadBudget];
+    return Number.isSafeInteger(count) && count >= 0 && count <= legacyOriginalAggregateLimit[key as keyof LegacyConversationOriginalsReadBudget];
+  });
+}
+
+/**
+ * Prepare a bounded union of genuinely issued S3 captures for this exact server
+ * principal, scope and current source head. A persisted digest, caller-supplied
+ * receipt or newest interval is never substituted for a retained original.
+ *
+ * The native store must supply its ACTUAL additional captured-read budget and
+ * require this union to cover EVERY retained original dependency in its complete
+ * ledger. Coverage of that ledger and current enrollment/learning authority are
+ * separate store responsibilities; this bridge cannot certify omitted history.
+ * The 32-statement/8192-row/2MiB admission is for the combined evidence read set,
+ * not permission to execute an unbounded number of repeated transaction writes.
+ *
+ * Each frame is replayed here and every original assertion remains tied to that
+ * same private witness. Only repetition of the identical issued handle is elided.
+ * Independently issued frames keep all proofs, including their earlier deadlines;
+ * only exact identical original values are deduplicated in the returned union.
+ * Nothing inspects opaque statements, exposes descriptors or grants an own-write
+ * exemption. The consuming store runs precommitStatements() before each own
+ * INSERT and after its final mutation in the SAME atomic batch, and checks
+ * isCurrent() immediately before submitting and after the batch resolves.
+ */
+export async function prepareLegacyConversationOriginalsCommit(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
+  captures: readonly LegacyConversationOriginalCapture[], additionalReadBudget: LegacyConversationOriginalsReadBudget): Promise<LegacyConversationOriginalsCommit | null> {
+  try {
+    if (!Array.isArray(captures) || captures.length < 1 || captures.length > 32 || !legacyOriginalBudgetValid(additionalReadBudget)) return null;
+    const inputCaptures = [...captures], inputBudget = structuredClone(additionalReadBudget), capturedPrepared = structuredClone(prepared), db = env.DB;
+    const budgetKey = canonicalConsent(inputBudget), preparedKey = canonicalConsent(capturedPrepared);
+    const settings = legacyOriginalSettings(env), sourceHead = capturedPrepared.sourceHead;
+    const frames: { capture: LegacyConversationOriginalCapture; frame: LegacyOriginalFrame; statements: D1PreparedStatement[] }[] = [];
+    const seenHandles = new Set<LegacyConversationOriginalCapture>();
+    let deadline = Number.POSITIVE_INFINITY;
+    const budget = { statements: 0, rows: 0, bytes: 0 };
+    const fits = () => (Object.keys(budget) as (keyof typeof budget)[]).every(key =>
+      budget[key] + inputBudget[key] <= legacyOriginalAggregateLimit[key]);
+    const current = () => {
+      try {
+        return env.DB === db && captures.length === inputCaptures.length && inputCaptures.every((capture, index) => captures[index] === capture)
+          && canonicalConsent(prepared) === preparedKey && canonicalConsent(additionalReadBudget) === budgetKey
+          && legacyOriginalSettings(env) === settings && Date.now() < deadline
+          && frames.every(({ capture, frame }) => legacyOriginalFrames.get(capture) === frame && frame.env === env && frame.db === db
+            && frame.preparedKey === preparedKey && frame.settings === settings && Date.now() < Date.parse(capture.validUntil));
+      } catch { return false; }
+    };
+    for (const capture of inputCaptures) {
+      if (seenHandles.has(capture)) continue;
+      seenHandles.add(capture);
+      const frame = legacyOriginalFrames.get(capture);
+      if (!frame || frame.env !== env || frame.db !== db || frame.preparedKey !== preparedKey || frame.settings !== settings) return null;
+      const expires = nativeMemoryTimestamp(capture.validUntil), statements = frame.witness.statements();
+      if (expires === null || !statements.length) return null;
+      deadline = Math.min(deadline, expires);
+      budget.statements += statements.length;
+      frames.push({ capture, frame, statements });
+      if (!current() || !fits()) return null;
+    }
+    let scope: LegacyConversationOriginalReceipt["scope"] | null = null;
+    const originals = new Map<string, LegacyConversationOriginalReceipt["originals"][number]>();
+    const identities = new Map<string, string>();
+    for (const { capture, frame, statements } of frames) {
+      const results = structuredClone(await env.DB.batch<LegacyOriginalRow>(statements));
+      if (!current() || results.length !== statements.length
+        || results.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results))
+        || !frame.witness.matches(results)) return null;
+      for (const result of results) {
+        budget.rows += result.results.length;
+        for (const row of result.results) budget.bytes += new TextEncoder().encode(canonicalConsent(row)).byteLength;
+        if (!fits()) return null;
+      }
+      const receipt = frame.witness.context();
+      if (!receipt || receipt.method !== "native-legacy-originals-v1" || receipt.treatment !== "untrusted-historical-evidence"
+        || receipt.completeFromStart !== false || receipt.validUntil !== capture.validUntil || receipt.originals.length < 2 || receipt.originals.length > 12) return null;
+      if (scope === null) scope = receipt.scope;
+      else if (canonicalConsent(scope) !== canonicalConsent(receipt.scope)) return null;
+      for (const original of receipt.originals) {
+        const encoded = canonicalConsent(original);
+        // Distinct event, content, position and per-turn role identities must all
+        // agree; equality of one identifier alone is not equality of originals.
+        const keys = ["event:" + original.eventId, "content:" + original.contentRef, "sequence:" + original.sequence,
+          "role:" + canonicalConsent([original.turnId, original.role])];
+        if (keys.some(key => identities.has(key) && identities.get(key) !== encoded)) return null;
+        for (const key of keys) identities.set(key, encoded);
+        if (!originals.has(original.eventId)) originals.set(original.eventId, original);
+      }
+    }
+    if (!scope || !originals.size || !current() || !fits()) return null;
+    // Materialize once now so unsupported descriptor values fail before an issued
+    // bridge is returned; later calls re-materialize only from the SAME witnesses.
+    const precommitStatements = () => {
+      if (!current() || !fits()) throw new Error("legacy_original_commit_unavailable");
+      const statements = frames.flatMap(({ frame }) => frame.witness.precommitStatements());
+      if (statements.length !== budget.statements || !current()) throw new Error("legacy_original_commit_unavailable");
+      return statements;
+    };
+    precommitStatements();
+    const immutableOriginals = Object.freeze([...originals.values()].sort((left, right) => left.sequence - right.sequence)
+      .map(original => Object.freeze({ ...original })));
+    const commit: LegacyConversationOriginalsCommit = Object.freeze({ method: "native-legacy-originals-commit-v1", treatment: "untrusted-historical-evidence",
+      scope: Object.freeze({ ...scope }), sourceHead, completeFromStart: false, originals: immutableOriginals,
+      validUntil: new Date(deadline).toISOString(), budget: Object.freeze({ ...budget }), frameCount: frames.length,
+      isCurrent: current, precommitStatements });
+    legacyOriginalCommitFrames.set(commit, { env, db, commit, current, witnesses: frames.map(({ frame }) => frame.witness),
+      additionalBudget: Object.freeze({ ...inputBudget }),
+      intervals: Object.freeze(frames.map(({ frame }) => Object.freeze({ ...frame.witness.context()!.interval }))) });
+    return commit;
+  } catch { return null; }
+}
+
+// R6: original commits stay strict. A separate private issuance registry permits
+// only their genuine captured witnesses to derive an exact own-send successor.
+type LegacyOriginalCommitFrame = {
+  env: WorkerEnv; db: WorkerEnv["DB"]; commit: LegacyConversationOriginalsCommit; current: () => boolean;
+  witnesses: readonly AssistantContextReadWitness<LegacyConversationOriginalReceipt>[];
+  additionalBudget: LegacyConversationOriginalsReadBudget;
+  intervals: readonly Readonly<LegacyConversationOriginalInterval>[];
+};
+const legacyOriginalCommitFrames = new WeakMap<LegacyConversationOriginalsCommit, LegacyOriginalCommitFrame>();
+export type LegacyConversationOriginalsOwnSend = Readonly<{ method: "native-legacy-originals-own-send-v2"; validUntil: string }>;
+type LegacyOriginalOwnSendFrame = {
+  source: LegacyOriginalCommitFrame; own: AssistantStructuredOwnSendFootprint; ownKey: string;
+  witnesses: readonly AssistantContextReadWitness<LegacyConversationOriginalReceipt>[];
+  statementCount: number; current: () => boolean;
+};
+const legacyOriginalOwnSendFrames = new WeakMap<LegacyConversationOriginalsOwnSend, LegacyOriginalOwnSendFrame>();
+
+/** Genuine interval metadata for the private manifest. This is not a transferable
+ * source proof, a fresh read lease, or permission to omit an original dependency. */
+export function legacyConversationOriginalsEvidence(env: WorkerEnv, commit: LegacyConversationOriginalsCommit):
+  Readonly<{ intervals: readonly Readonly<LegacyConversationOriginalInterval>[] }> | null {
+  const frame = legacyOriginalCommitFrames.get(commit);
+  if (!frame || frame.env !== env || frame.db !== env.DB || !frame.current()) return null;
+  return Object.freeze({ intervals: Object.freeze(frame.intervals.map(interval => Object.freeze({ ...interval }))) });
+}
+
+/** Bind one exactly owned two-event send to genuine, still-current S3 captures.
+ * Original certificates retain their original guards. Only explicitly registered
+ * head callbacks may change in the distinct successor; every other source read,
+ * input identity, scope and SQL/host deadline survives unchanged. */
+export async function prepareLegacyConversationOriginalsOwnSend(env: WorkerEnv, commit: LegacyConversationOriginalsCommit,
+  own: AssistantStructuredOwnSendFootprint): Promise<LegacyConversationOriginalsOwnSend | null> {
+  try {
+    const source = legacyOriginalCommitFrames.get(commit);
+    if (!source || source.env !== env || source.db !== env.DB || !source.current()) return null;
+    const selected = copyAssistantStructuredOwnSendFootprint(own), ownKey = canonicalConsent(selected), scope = commit.scope;
+    if (selected.streamId !== scope.streamId || selected.sourceHead !== commit.sourceHead || selected.actorUserId !== scope.actorUserId
+      || selected.projectId !== scope.projectId || selected.documentId !== scope.documentId
+      || canonicalConsent(selected.scope) !== canonicalConsent(scope.organizationId === null ? null : {
+        organizationId: scope.organizationId, projectAccessId: scope.projectAccessId,
+        projectId: scope.projectId, ownerUserId: scope.ownerUserId })) return null;
+    const current = () => {
+      try { return source.env === env && source.db === env.DB && legacyOriginalCommitFrames.get(commit) === source
+        && source.current() && canonicalConsent(copyAssistantStructuredOwnSendFootprint(own)) === ownKey; }
+      catch { return false; }
+    };
+    // Replay the original statements, not recapture/reprepare. No new original
+    // deadline or a caller-provided receipt can renew the consumed evidence.
+    for (const witness of source.witnesses) {
+      const statements = witness.statements();
+      if (!statements.length || !current()) return null;
+      const results = structuredClone(await source.db.batch<LegacyOriginalRow>(statements));
+      if (!current() || results.length !== statements.length
+        || results.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results))
+        || !witness.matches(results)) return null;
+    }
+    const witnesses = source.witnesses.map(witness => witness.bindStructuredOwnSend(selected));
+    let statementCount = 0;
+    for (const witness of witnesses) {
+      const statements = witness.structuredOwnPrecommitStatements();
+      if (!statements.length) return null;
+      statementCount += statements.length;
+    }
+    // The new complete-footprint assertion rows and their bound value are part
+    // of admission, alongside the store's original measured additional reads.
+    const added = statementCount - commit.budget.statements;
+    if (added < witnesses.length || statementCount + source.additionalBudget.statements > legacyOriginalAggregateLimit.statements
+      || commit.budget.rows + added + source.additionalBudget.rows > legacyOriginalAggregateLimit.rows
+      || commit.budget.bytes + source.additionalBudget.bytes
+        + witnesses.length * new TextEncoder().encode(ownKey).byteLength > legacyOriginalAggregateLimit.bytes || !current()) return null;
+    const proof: LegacyConversationOriginalsOwnSend = Object.freeze({ method: "native-legacy-originals-own-send-v2", validUntil: commit.validUntil });
+    legacyOriginalOwnSendFrames.set(proof, { source, own, ownKey, witnesses, statementCount, current });
+    return proof;
+  } catch { return null; }
+}
+
+/** Complete own-final SQL assertions only. Run after all exact two-event suffix,
+ * three bodies, event/private receipts and custody rows in the SAME atomic batch.
+ * These abort on mismatch; raw successful SELECT envelopes are not write proof. */
+export function legacyConversationOriginalsOwnSendStatements(env: WorkerEnv, proof: LegacyConversationOriginalsOwnSend): D1PreparedStatement[] | null {
+  try {
+    const frame = legacyOriginalOwnSendFrames.get(proof);
+    if (!frame || frame.source.env !== env || frame.source.db !== env.DB || !frame.current()) return null;
+    const statements = frame.witnesses.flatMap(witness => witness.structuredOwnPrecommitStatements());
+    return statements.length === frame.statementCount && frame.current() ? statements : null;
+  } catch { return null; }
+}
+
+/** Independent final response certification observes the same consumed proof.
+ * Partial insertion, foreign rows or a missing third manifest never certify. */
+export async function replayLegacyConversationOriginalsOwnSend(env: WorkerEnv, proof: LegacyConversationOriginalsOwnSend): Promise<boolean> {
+  try {
+    const frame = legacyOriginalOwnSendFrames.get(proof);
+    if (!frame || frame.source.env !== env || frame.source.db !== env.DB || !frame.current()) return false;
+    const sets = frame.witnesses.map(witness => witness.statements()), statements = sets.flat();
+    if (statements.length !== frame.statementCount || !statements.length) return false;
+    const results = structuredClone(await frame.source.db.batch<LegacyOriginalRow>(statements));
+    if (!frame.current() || results.length !== statements.length
+      || results.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results))) return false;
+    let offset = 0;
+    for (const [index, witness] of frame.witnesses.entries()) {
+      const count = sets[index]!.length;
+      if (!witness.matches(results.slice(offset, offset + count))) return false;
+      offset += count;
+    }
+    return offset === results.length && frame.current();
+  } catch { return false; }
 }
