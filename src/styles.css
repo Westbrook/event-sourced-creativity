@@ -2943,7 +2943,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 /* Audio remains quiet until its native, keyboard-accessible controls are used. */
 .forma-audio-player { display: grid; min-inline-size: 0; gap: .625rem; }
 .forma-audio-player audio { inline-size: 100%; max-inline-size: 100%; min-block-size: 2.75rem; }
-.forma-audio-player--compact { gap: .35rem; }
+.forma-audio-player--compact { gap: .5rem; }
 .forma-audio-description,.forma-audio-transcript p,.forma-soundtrack-notice,.artifact-audio-watermark { margin: 0; color: var(--muted); font-size: var(--type-small); line-height: 1.5; overflow-wrap: anywhere; }
 .forma-audio-transcript summary,.forma-audio-cues summary,.presentation-deck-soundtrack summary { min-block-size: 2.75rem; align-content: center; cursor: pointer; }
 .context-audio { display: grid; gap: 1rem; margin-block: .75rem; padding: .9rem; background: color-mix(in srgb,var(--accent) 4%,var(--paper)); border: 1px solid var(--line); border-radius: .7rem; }

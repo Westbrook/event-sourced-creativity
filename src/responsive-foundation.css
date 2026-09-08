@@ -1407,6 +1407,13 @@ html:has(.application-creative[data-layout-intent="browse"] > #main-content > .p
   }
 }
 
+/* The shared Library keeps its sticky account context. Native focus on its
+ * near-start navigation must expose that complete context, including a wrapped
+ * banner, without guessing its height or moving keyboard focus in script. */
+html:not([data-document-focus]) .application-creative[data-nav-posture="expanded"][data-short-height="false"][data-layout-intent="browse"]:has(> .workspace-shared-banner):not(:has(> .impersonation-banner:not(.workspace-shared-banner))):has(> #main-content > forma-creative-application > forma-library > .library-page) > .application-task-navigation[data-primary-navigation="true"] .ui-audience-navigation a {
+  scroll-margin-block-start: 100dvb;
+}
+
 /* Library output history keeps complete peers in its own wrapping heading. */
 .application-creative forma-library .library-content > section > .section-heading:has(> forma-ui-segmented-control.compact-segmented) {
   flex-wrap: wrap;
