@@ -1,5 +1,6 @@
 /* Shared native panel; only the image-card action surface is scoped here. */
 forma-output-card > .output-card > .output-info > .output-actions { gap:max(var(--forma-cluster-gap,.5rem),var(--forma-focus-clearance,.5rem)); }
+.output-actions > .output-open { scroll-margin-block:var(--forma-focus-clearance,.5rem); }
 .output-actions-popover { display:flex; align-self:stretch; min-inline-size:0; max-inline-size:100%; }
 .output-actions-popover > .ui-popover { display:flex; flex:1 1 auto; min-inline-size:0; }
 .output-actions-popover > .ui-popover > .ui-popover-trigger { flex:1 1 auto; align-self:stretch; }
