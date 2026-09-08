@@ -2777,8 +2777,9 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .generation-queue-card > footer p { max-width: 560px; margin: 0; color: var(--muted); font-size: var(--type-caption); }
 .generation-queue-card > footer .button { flex: none; }
 .generation-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
-.generation-filter button { padding: 7px 11px; color: var(--muted); background: color-mix(in srgb,var(--panel) 80%,transparent); border: 1px solid var(--line); border-radius: 999px; font: 600 var(--type-micro) var(--sans); }
+.generation-filter button { min-width: max(44px, var(--forma-hit-target, 44px)); min-height: max(44px, var(--forma-hit-target, 44px)); padding: 7px 11px; color: var(--muted); background: color-mix(in srgb,var(--panel) 80%,transparent); border: 1px solid var(--line); border-radius: 999px; font: 600 var(--type-micro) var(--sans); }
 .generation-filter button[aria-pressed="true"] { color: var(--forest); background: var(--panel); border-color: var(--forest); }
+@media (pointer: coarse) { .generation-filter button { min-width: max(48px, var(--forma-hit-target-coarse, 48px)); min-height: max(48px, var(--forma-hit-target-coarse, 48px)); } }
 .generation-filter-empty { padding: 26px; text-align: center; }
 .output-quality { display: inline-flex; width: max-content; margin-bottom: 4px; padding: 3px 7px; border: 1px solid currentColor; border-radius: 999px; font: 700 var(--type-micro) var(--sans); letter-spacing: .03em; text-transform: uppercase; }
 .output-quality.draft { color: #8a542d; background: #fff2e5; }
