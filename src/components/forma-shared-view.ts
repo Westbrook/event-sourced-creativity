@@ -348,18 +348,22 @@ export class FormaSharedView extends FormaPresentationalElement {
   }
 
   override render() {
-    if (this.#loading) return html`<main id="main-content" tabindex="-1" class="shared-view"><div class="shared-status" role="status">${this.#i18n.t("shared.loading", "Opening this shared creative document…")}</div></main>`;
+    return html`<main id="main-content" tabindex="-1" class="shared-view">${this.#renderContent()}</main>`;
+  }
+
+  #renderContent() {
+    if (this.#loading) return html`<div class="shared-status" role="status">${this.#i18n.t("shared.loading", "Opening this shared creative document…")}</div>`;
     if (this.#error || !this.#projection) {
       const expired = this.#error === "expired", revision = this.#loadRevision;
       const route = location.pathname + location.search;
-      return html`<main id="main-content" tabindex="-1" class="shared-view"><div class="shared-status">
+      return html`<div class="shared-status">
         <span>${expired ? this.#i18n.t("shared.unavailable", "Link unavailable") : this.#i18n.t("shared.review", "Shared review")}</span>
         <h1>${expired ? this.#i18n.t("shared.expired", "This view has expired or been revoked.") : this.#i18n.t("shared.unavailable", "Link unavailable")}</h1>
         <p>${expired ? this.#i18n.t("shared.noData", "No project data was returned.") : this.#i18n.t("shared.readFailed", "This shared review could not be loaded. Try again.")}</p>
         ${expired ? nothing : html`<button type="button" class="button secondary" @click=${() => {
           if (!this.#loading && revision === this.#loadRevision && route === location.pathname + location.search) void this.#load();
         }}>${this.#i18n.t("action.retry", "Retry")}</button>`}
-      </div></main>`;
+      </div>`;
     }
     const p = this.#projection;
     const results = this.#results(p);
@@ -367,7 +371,7 @@ export class FormaSharedView extends FormaPresentationalElement {
     const selected=experience?.artifacts.some((artifact)=>artifact.kind===this.#selectedExperienceKind)?this.#selectedExperienceKind:"";
     const visibleResults=selected&&experience?results.filter((result)=>result.kind==="artifact"&&result.artifact.contextRevision===experience.revision&&result.artifact.kind===selected):results;
     const expires = this.#expiresAt ? this.#i18n.date(new Date(this.#expiresAt), { dateStyle: "medium", timeStyle: "short" }) : "";
-    return html`<main id="main-content" tabindex="-1" class="shared-view">
+    return html`
       <header><div class="brand"><span class="brand-mark">F</span><span>Forma</span></div><span>${this.#i18n.t("shared.expires", "Private · view only · expires {date}", { date: expires })}</span></header>
       <section class="shared-hero"><h1 dir="auto">${p.documentTitle}</h1><p><bdi dir="auto">${p.projectName}</bdi> · ${this.#i18n.t("shared.description", "A private, read-only view of this document and its creative results.")}</p></section>
       <section class="shared-grid">${results.length?html`<section class="shared-results" aria-labelledby="shared-results-heading"><h2 id="shared-results-heading">${this.#i18n.t("shared.results", "Creative results")}</h2>${this.#experienceSelector(experience)}${visibleResults.map((result)=>this.#result(result))}</section><aside class="shared-direction" aria-labelledby="shared-direction-heading"><h2 id="shared-direction-heading">${this.#i18n.t("shared.direction", "Creative direction")}</h2>${p.blocks.map((block)=>this.#directionBlock(block))}</aside>`:html`<aside class="shared-direction" aria-labelledby="shared-direction-heading"><h2 id="shared-direction-heading">${this.#i18n.t("shared.direction", "Creative direction")}</h2>${p.blocks.map((block)=>this.#directionBlock(block))}</aside><section class="shared-results" aria-labelledby="shared-results-heading"><h2 id="shared-results-heading">${this.#i18n.t("shared.results", "Creative results")}</h2><p data-forma-empty-state>${this.#i18n.t("shared.noResults", "No results have been shared yet.")}</p></section>`}</section>
@@ -382,7 +386,7 @@ export class FormaSharedView extends FormaPresentationalElement {
           <img src=${this.#activeImage.url} alt=${this.#activeImage.label}>
           ${this.#activeImage.fan.length>1?html`<nav class="shared-image-navigation" aria-label=${this.#i18n.t("output.navigation","Use the Left and Right Arrow keys to move through all {count} images without closing this dialog.",{count:this.#i18n.number(this.#activeImage.fan.length)})}><button class="button secondary compact" type="button" aria-keyshortcuts=${this.matches(":dir(rtl)")?"ArrowRight":"ArrowLeft"} @click=${()=>this.#navigateImage(-1)}>${this.#i18n.t("output.previous","Previous fan image")}</button><span aria-live="polite">${this.#i18n.t("output.positionOnly","{index} of {total}",{index:this.#i18n.number(this.#activeImage.index+1),total:this.#i18n.number(this.#activeImage.fan.length)})}</span><button class="button secondary compact" type="button" aria-keyshortcuts=${this.matches(":dir(rtl)")?"ArrowLeft":"ArrowRight"} @click=${()=>this.#navigateImage(1)}>${this.#i18n.t("output.next","Next fan image")}</button></nav>`:nothing}
         </div></dialog>`:nothing}
-    </main>`;
+    `;
   }
 }
 if (!customElements.get("forma-shared-view")) customElements.define("forma-shared-view", FormaSharedView);
