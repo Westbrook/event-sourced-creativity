@@ -6153,4 +6153,6 @@ Object.assign(messages, {
   "system.auto.1tbmd5n.136": "واجهة أصلية للصوت المحفوظ، مستقلة عن مخزن الحالة. افحص سماتها الفعلية وخصائص JavaScript وأحداثها قبل دمجها.",
 });
 
+Object.assign(messages, { "system.auto.xi82c4.15": "مدة التوليد" });
+
 export default messages;

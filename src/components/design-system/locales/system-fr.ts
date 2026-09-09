@@ -6153,4 +6153,6 @@ Object.assign(messages, {
   "system.auto.1tbmd5n.136": "Interface native de contenu audio conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
 });
 
+Object.assign(messages, { "system.auto.xi82c4.15": "Temps de génération" });
+
 export default messages;

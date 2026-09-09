@@ -6153,4 +6153,6 @@ Object.assign(messages, {
   "system.auto.1tbmd5n.136": "ストアに依存しない保存済みネイティブ音声のインターフェース。組み込む前に、実際の属性、JavaScript プロパティ、イベントを確認してください。",
 });
 
+Object.assign(messages, { "system.auto.xi82c4.15": "生成時間" });
+
 export default messages;

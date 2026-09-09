@@ -6184,4 +6184,6 @@ Object.assign(messages, {
   "system.auto.1tbmd5n.136": "Store-independent native retained audio interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
 });
 
+Object.assign(messages, { "system.auto.xi82c4.15": "Generation time" });
+
 export default messages;
