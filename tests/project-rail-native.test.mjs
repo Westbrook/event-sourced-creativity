@@ -190,7 +190,7 @@ test("desktop inline rail preserves preference and Escape focus without borrowin
  await f.open();assert.equal(f.panel(),null);assert.equal(f.store.ui.projectRailCollapsed,false);
 });
 
-test("same synthetic full hierarchy at934/847 exposes real Results contributors;790/718 remains a separate narrow posture",async t=>{
+test("same synthetic full hierarchy at1100/1013 exposes real Results contributors;790/718 remains a separate narrow posture",async t=>{
  const f=await fixture(t,{width:790,height:882,studioWidth:718}),narrow=f.dom;
  const results=narrow.nodes.find(node=>node.attributes.id==="document-results-panel");assert.equal(results.hiddenBy,"document-results-panel");
  // E3 replaced the direct view links with one actual native View trigger.
@@ -237,20 +237,23 @@ test("same synthetic full hierarchy at934/847 exposes real Results contributors;
  ],"Every actual narrow native control retains its owner and identity; the View trigger is not a duplicate or substitute");
  assert.deepEqual(narrow.visible("select").map(node=>node.owner.tag),["forma-ui-language-picker"]);
  const before=narrow.controls();assert.deepEqual(before,{button:23,select:1});
- f.measure({width:934,shellWidth:934,studioWidth:847});await f.settle();const wider=f.dom;
+ f.measure({width:1100,shellWidth:1100,studioWidth:1013});await f.settle();const wider=f.dom;
  assert.equal(f.shell.getAttribute("data-nav-posture"),"rail");
  assert.equal(wider.nodes.find(node=>node.attributes.id==="document-results-panel").hiddenBy,null,"actual Workspace width ownership removes hidden attribute");
  assert.ok(wider.visible("button").some(node=>node.owner.tag==="forma-document-artifacts"));
  assert.ok(wider.controls().button>before.button);
  assert.equal(f.store.projection.get().blocks.length,14);
  assert.equal(wider.visible("dialog").length,0);
- t.diagnostic("Same synthetic14 data;790/718="+JSON.stringify(before)+";934/847="+JSON.stringify(wider.controls())+". Actual renderer/ResizeObserver ports, not native CSS geometry or production study counts.");
+ t.diagnostic("Same synthetic14 data;790/718="+JSON.stringify(before)+";1100/1013="+JSON.stringify(wider.controls())+". Actual renderer/ResizeObserver ports, not native CSS geometry or production study counts.");
 });
 
 test("Document rendered posture and hidden panes agree across scrollbar and rem breakpoints",async t=>{
  const f=await fixture(t,{width:745,height:883,studioWidth:730});
- for(const [studioWidth,rootFont,narrow] of [[730,16,true],[735.99,16,true],[736,16,false],[745,16,false],[730,16,true],[760,16,false],[761,16,false],[768,16,false],[919.99,20,true],[920,20,false]]){
+ for(const [studioWidth,rootFont,narrow] of [[730,16,true],[735.99,16,true],[736,16,true],[745,16,true],[793,16,true],[808,16,true],[847,16,true],[991,16,true],[991.99,16,true],[992,16,false],[993,16,false],[977,16,true],[993,16,false],[793,16,true],[1239.99,20,true],[1240,20,false]]){
+  const before={route:f.store.route.get(),events:f.store.events.get(),requests:f.storeHost.requests.length,focus:f.trace.filter(item=>item.startsWith("focus:")).length};
   f.measure({studioWidth,rootFont});await f.settle();
+  assert.equal(f.store.route.get(),before.route);assert.equal(f.store.events.get(),before.events);assert.equal(f.storeHost.requests.length,before.requests);
+  assert.equal(f.trace.filter(item=>item.startsWith("focus:")).length,before.focus,"measuring a different reading width must not move focus");
   const section=f.dom.nodes.find(node=>node.attributes["data-workbench"]==="document");
   assert.equal(section.attributes["data-workbench-narrow"],String(narrow),`posture at ${studioWidth}px / ${rootFont}px rem`);
   const context=f.dom.nodes.find(node=>node.attributes.id==="document-context-panel");

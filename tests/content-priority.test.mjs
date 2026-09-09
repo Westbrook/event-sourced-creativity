@@ -127,19 +127,19 @@ function winning(selectors, property, viewport, container) {
 
 test("document pane tracks and switcher share rendered posture across fractional and scrollbar boundaries", () => {
   const narrow='.workspace-page[data-workbench="document"][data-workbench-narrow="true"]';
-  for (const width of [730, 735.84, 735.85, 735.9, 735.99, 736, 745, 760, 761, 768]) {
+  for (const width of [730, 735.84, 735.85, 735.9, 735.99, 736, 745, 760, 761, 768, 793, 808, 847, 977, 991, 991.99]) {
     const container = { name: "studio", width };
     assert.equal(winning([".document-workbench-tasks", narrow+" .document-workbench-tasks"], "display", portrait, container)?.value, "flex", `${width}px exposes the same rendered narrow selector`);
     assert.equal(winning([".studio-grid", '.workspace-page[data-workbench="document"] .studio-grid',narrow+" .studio-grid"], "grid-template-columns", portrait, container)?.value, "minmax(0, 1fr)", `${width}px cannot reserve a hidden pane's track`);
   }
 
-  const expanded = { name: "studio", width: 736 };
+  const expanded = { name: "studio", width: 992 };
   assert.equal(winning(".document-workbench-tasks", "display", portrait, expanded)?.value, "none");
   assert.match(winning(".studio-grid", "grid-template-columns", portrait, expanded)?.value ?? "", /minmax\(18rem,\s*\.72fr\).*minmax\(25rem,\s*1fr\)/);
 
   const zoomed = { ...portrait, rootRem: 20 };
-  assert.equal(winning([".document-workbench-tasks",narrow+" .document-workbench-tasks"], "display", zoomed, { name: "studio", width: 919.99 })?.value, "flex");
-  assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 920 })?.value, "none");
+  assert.equal(winning([".document-workbench-tasks",narrow+" .document-workbench-tasks"], "display", zoomed, { name: "studio", width: 1239.99 })?.value, "flex");
+  assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 1240 })?.value, "none");
   assert.equal(winning(['.studio-grid', '.workspace-page[data-workbench="document"] .studio-grid'], "display", portrait, { name: "studio", width: 320 })?.value, "grid");
   assert.match(workspace,/data-workbench-narrow=\$\{String\(this\.#narrowWorkbench\)\}/);
   assert.equal(winning(".studio-mode-nav","grid-template-columns",portrait,{name:"studio",width:390})?.value,"minmax(0, 1fr) max-content max-content");
@@ -152,7 +152,7 @@ test("document pane tracks and switcher share rendered posture across fractional
 test("document-only containment preserves neutral writing intent and exact result-directed project navigation", () => {
   assert.match(shell, /data-layout-intent=\$\{isCreative&&\(documentViewFromRoute\(path\)==="document"\|\|pathname==="\/creative\/create"\|\|pathname\.startsWith\("\/creative\/create\/"\)\)\?"workbench":"browse"\}/);
   assert.match(workspace, /#workbenchPane:"write"\|"result"\|"review"="write"/);
-  assert.match(workspace, /#syncInspectorPosture=\(entries:ResizeObserverEntry\[\]\)=>\{[\s\S]*?const narrow=width<46\*rootSize/);
+  assert.match(workspace, /#syncInspectorPosture=\(entries:ResizeObserverEntry\[\]\)=>\{[\s\S]*?const narrow=width<62\*rootSize/);
   const resize = workspace.split("#syncInspectorPosture=")[1].split("\n  #toggleWorkbenchInspector")[0];
   assert.doesNotMatch(resize, /#selectWorkbenchPane|setRoute\(|append\(|renderDocumentArtifact/);
   assert.match(projects, /displayArtifact\?\.documentId\?\?latest\?\.documentId/);
@@ -203,7 +203,7 @@ test("retained work leads failures and retains explicit, scoped, paid-once recov
   assert.match(artifacts, /documentJobCanRecoverPresentation\(job\)/,"only validated or safely repairable paid slideshow responses advertise free recovery");
   assert.match(artifacts, /documentJobCanRecoverProviderRender/);
   assert.match(artifacts, /session&&!session\.impersonation/);
-  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\|\|artifact\.kind==="short_story"\|\|artifact\.kind==="scene"\)/, "settled generation costs remain owner-only across all six artifact families, including Story and Scene");
+  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\|\|artifact\.kind==="short_story"\|\|artifact\.kind==="scene"\|\|artifact\.kind==="model3d"\)/, "settled generation costs remain owner-only across all seven artifact families, including Story, Scene and 3D");
 });
 
 test("independent approval freshness resolves the exact artifact source document, not an identically named block elsewhere", () => {

@@ -135,7 +135,9 @@ export class FormaWorkspace extends FormaElement {
     if(!width)return;
     const rootSize=Number.parseFloat(getComputedStyle(document.documentElement).fontSize)||16;
     const compact=width<70*rootSize;
-    const narrow=width<46*rootSize;
+    // Reuse the document's readable two-pane boundary; the rendered posture
+    // owns both pane visibility and its switcher, including collapsed rails.
+    const narrow=width<62*rootSize;
     if(compact===this.#compactInspector&&narrow===this.#narrowWorkbench)return;
     const inspectorChanged=compact!==this.#compactInspector;
     const restoreFocus=this.querySelector("#document-workbench-inspector")?.contains(document.activeElement)??false;
