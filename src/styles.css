@@ -1253,6 +1253,9 @@ forma-library .page-header--library > .page-header-actions > form > .file-button
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 
 @media (max-width: 1050px) {
+  /* The switcher already names the current workspace. At tight rail widths,
+     reuse that identity instead of allowing its duplicate to paint over Language. */
+  html:not([data-document-focus]) .application-creative[data-nav-posture="rail"] > .topbar:has(> forma-ui-workspace-switcher > .ui-workspace-switcher a[aria-current="page"]) > .application-context > b { display: none; }
   .global-nav a { padding: 0 6px; font-size: var(--type-caption); }
   .command-trigger { min-width: 42px; width: 42px; justify-content: center; }
   .command-trigger .command-label, .command-trigger kbd { display: none; }
@@ -2035,6 +2038,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .document-artifacts.compact > header h2 { font-size: var(--type-body); }
 .document-artifacts.compact .eyebrow { display: none; }
 .document-artifacts.compact .document-artifact-list { grid-template-columns: repeat(auto-fit,minmax(min(100%,10rem),1fr)); margin-block-start: .75rem; }
+/* A split Document pane is compact chrome, not a thumbnail-only gallery.
+   Keep the normal card reading floor and let the actual pane choose columns. */
+.workspace-page[data-workbench="document"] #document-results-panel .document-artifacts.compact .document-artifact-list { grid-template-columns: repeat(auto-fit,minmax(min(100%,15rem),1fr)); }
 .document-artifacts.compact .artifact-text-preview,.document-artifacts.compact .artifact-slide-preview,.document-artifacts.compact .artifact-storyboard-strip,.document-artifacts.compact .document-artifact-list video { min-height: 7rem; height: 7rem; }
 .document-artifact-create,.document-artifact-view { width: min(calc(100vw - 2rem),72rem); max-width: none; max-height: calc(100dvh - 2rem); padding: 0; overflow: hidden; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 14px; background: var(--paper); box-shadow: 0 2rem 6rem rgb(0 0 0 / .3); }
 .document-artifact-view { --artifact-viewer-edge: clamp(.5rem,1.5vi,1rem); width: min(calc(100dvi - (var(--artifact-viewer-edge) * 2)),104rem); max-height: calc(100dvb - (var(--artifact-viewer-edge) * 2)); }

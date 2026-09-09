@@ -92,6 +92,25 @@ test("output action remains visible, focusable, and usable with long translated 
   assert.match(source, /:focus-visible\s*\{[^}]*outline:\s*2px/u);
 });
 
+test("split Document results keep the normal readable card floor at intermediate widths", () => {
+  const selector = '.workspace-page[data-workbench="document"] #document-results-panel .document-artifacts.compact .document-artifact-list';
+  assert.equal(declaration(selector, "grid-template-columns"), "repeat(auto-fit,minmax(min(100%,15rem),1fr))");
+  assert.equal(declaration(".document-artifacts.compact .document-artifact-list", "grid-template-columns"), "repeat(auto-fit,minmax(min(100%,10rem),1fr))", "other compact consumers retain their existing layout");
+  for (const width of [308, 413, 428, 446, 461]) assert.ok(width < 2 * 15 * 16 + 16);
+  assert.equal(2 * 15 * 16 + 16, 496, "two cards require their reading floors plus the existing one-rem gap");
+});
+
+test("tight rail headers omit only the duplicate workspace identity when the switcher carries it", () => {
+  const selector = 'html:not([data-document-focus]) .application-creative[data-nav-posture="rail"] > .topbar:has(> forma-ui-workspace-switcher > .ui-workspace-switcher a[aria-current="page"]) > .application-context > b';
+  const rules = [];
+  stylesheet.walkRules(rule => { if (rule.selector === selector) rules.push(rule); });
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0].parent.name, "media");
+  assert.equal(rules[0].parent.params, "(max-width: 1050px)");
+  assert.deepEqual(rules[0].nodes.map(item => [item.prop, item.value]), [["display", "none"]]);
+  assert.doesNotMatch(selector, /top-actions|locale-switcher|avatar/u, "language and actor controls are not hidden");
+});
+
 // E residual contracts reuse the existing PostCSS dependency. These inspect
 // emitted selectors/declarations, not a browser's cascade or text geometry.
 const eResponsiveSource = await readFile(new URL("../src/responsive-foundation.css", import.meta.url), "utf8");
@@ -191,7 +210,7 @@ test("E layout: unchanged contain-fit slide artwork and navigation remain scoped
   assert.match(artifacts, /data-output-focus=\$\{String\(this\.#viewerFocused\)\}/u);
   assert.match(canvas, /class="modal canvas-artifact-viewer" data-output-focus=\$\{String\(this\.#viewerFocused\)\} data-artifact-kind=\$\{artifact\.kind\}/u);
   const appended = eResponsiveSource.slice(eResponsiveSource.indexOf("/* Public share chrome follows"));
-  assert.doesNotMatch(appended, /(?:aspect-ratio|scale|width:\s*960px|height:\s*540px|\.presentation-slide\b|:root|\.welcome|\.app-shell)/u);
+  assert.doesNotMatch(appended, /(?:aspect-ratio|scale|width:\s*960px|height:\s*540px|\.presentation-slide(?![\w-])|:root|\.welcome|\.app-shell)/u);
 });
 
 test("E5 source policy: the narrow stacked shared Slides identity uses its content height", async () => {
@@ -666,7 +685,7 @@ test("E5 source policy: Canvas Slides Close shares native Focus paint priority a
   assert.ok(begin >= 0 && end > begin);
   const viewer = canvas.slice(begin, end);
   assert.ok(viewer.includes('data-output-focus=${String(this.#viewerFocused)}'));
-  assert.ok(viewer.includes('<article class="modal-card canvas-artifact-viewer-card"><button type="button" class="icon-button canvas-viewer-focus-toggle"'));
+  assert.ok(viewer.includes('<article class="modal-card canvas-artifact-viewer-card"><button type="button" autofocus class="icon-button canvas-viewer-focus-toggle"'));
   assert.ok(viewer.includes('@click=${()=>this.#setViewerFocus(!this.#viewerFocused)}'));
   assert.ok(viewer.includes('class="icon-button modal-close" aria-label="Close document output" @click=${()=>this.#closeCanvasArtifact()}'));
   assert.ok(viewer.includes('<header><span class="canvas-dialog-step">'));
@@ -897,7 +916,7 @@ test("E5 source policy: focused Canvas Slides peers retain logical native cleara
   assert.ok(begin >= 0 && end > begin);
   const viewer = canvas.slice(begin, end);
   assert.ok(viewer.includes('data-output-focus=${String(this.#viewerFocused)}'));
-  assert.ok(viewer.includes('<article class="modal-card canvas-artifact-viewer-card"><button type="button" class="icon-button canvas-viewer-focus-toggle"'));
+  assert.ok(viewer.includes('<article class="modal-card canvas-artifact-viewer-card"><button type="button" autofocus class="icon-button canvas-viewer-focus-toggle"'));
   assert.ok(viewer.includes('@click=${()=>this.#setViewerFocus(!this.#viewerFocused)}'));
   assert.ok(viewer.includes('class="icon-button modal-close" aria-label="Close document output" @click=${()=>this.#closeCanvasArtifact()}'));
   assert.ok(viewer.includes('<header><span class="canvas-dialog-step">'));
@@ -906,9 +925,9 @@ test("E5 source policy: focused Canvas Slides peers retain logical native cleara
   assert.equal(declaration(".modal-close", "position"), "absolute");
   assert.equal(eDeclaration(":root", "--forma-hit-target"), "var(--forma-control-min-size, 2.75rem)");
   assert.equal(eDeclaration(":root", "--forma-focus-clearance"), ".5rem");
-  assert.match(canvasCss, /\.canvas-viewer-focus-toggle\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*2;[^}]*inset-inline-end:\s*calc\(1rem \+ var\(--forma-control-min-size,2\.75rem\) \+ \.35rem\);/u);
+  assert.match(canvasCss, /\.canvas-viewer-focus-toggle\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*2;[^}]*inset-inline-end:\s*calc\(1rem \+ var\(--forma-control-min-size,2\.75rem\) \+ 1rem\);/u);
   assert.match(canvasCss, /:is\(\.canvas-artifact-viewer,\.canvas-output-viewer\)\[data-output-focus="true"\] > \.modal-card\s*\{[^}]*inline-size:\s*100dvi;[^}]*block-size:\s*100dvb;[^}]*border:\s*0;[^}]*border-radius:\s*0;/u);
-  assert.match(canvasCss, /:is\(\.canvas-artifact-viewer,\.canvas-output-viewer\)\[data-output-focus="true"\] :is\(\.canvas-viewer-focus-toggle,\.modal-close\)\s*\{[^}]*inset-block-start:\s*max\(\.25rem,env\(safe-area-inset-top,0px\)\);/u);
+  assert.match(canvasCss, /:is\(\.canvas-artifact-viewer,\.canvas-output-viewer\)\[data-output-focus="true"\] :is\(\.canvas-viewer-focus-toggle,\.modal-close\)\s*\{[^}]*inset-block-start:\s*max\(\.5rem,env\(safe-area-inset-top,0px\)\);/u);
   assert.match(designCss, /dialog\.modal\[data-output-focus="true"\]\s*\{[^}]*padding:\s*0;/u);
   const legacy = '.canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"]';
   assert.equal(eDeclaration(legacy + " .canvas-viewer-focus-toggle", "inset-block-start", eLandscape),
@@ -972,7 +991,7 @@ test("E5 source policy: normal Canvas Slides header reserves its absolute native
   assert.ok(begin >= 0 && end > begin);
   const viewer = canvas.slice(begin, end);
   assert.ok(viewer.includes('data-output-focus=${String(this.#viewerFocused)}'));
-  assert.ok(viewer.includes('<article class="modal-card canvas-artifact-viewer-card"><button type="button" class="icon-button canvas-viewer-focus-toggle"'));
+  assert.ok(viewer.includes('<article class="modal-card canvas-artifact-viewer-card"><button type="button" autofocus class="icon-button canvas-viewer-focus-toggle"'));
   assert.ok(viewer.includes('class="icon-button modal-close" aria-label="Close document output" @click=${()=>this.#closeCanvasArtifact()}'));
   assert.ok(viewer.includes('<header><span class="canvas-dialog-step">'));
   assert.ok(viewer.includes("this.store.authorizationScopeActive(viewerMenuAuthorization)"));
@@ -2016,7 +2035,7 @@ test("E5 source policy: normal Canvas Slides keep readable context beyond their 
   assert.match(canvasCss, /\.canvas-artifact-viewer-card\{display:grid;box-sizing:border-box;/u);
   assert.match(canvasCss, /:is\(\.canvas-artifact-viewer,\.canvas-output-viewer\) > \.modal-card\s*\{[^}]*block-size:\s*calc\(100dvb - 1rem\);[^}]*max-block-size:\s*calc\(100dvb - 1rem\);/u);
   assert.match(canvasCss, /\.canvas-viewer-focus-toggle\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*2;[^}]*inset-block-start:\s*1rem;/u);
-  assert.match(canvasCss, /\.canvas-artifact-viewer-card > header\s*\{[^}]*padding-inline-end:\s*calc\(\(var\(--forma-control-min-size,2\.75rem\) \* 2\) \+ 2rem\);/u);
+  assert.match(canvasCss, /\.canvas-artifact-viewer-card > header\s*\{[^}]*padding-inline-end:\s*calc\(\(var\(--forma-control-min-size,2\.75rem\) \* 2\) \+ 3rem\);/u);
   assert.match(canvasCss, /:is\(\.canvas-artifact-viewer,\.canvas-output-viewer\)\[data-output-focus="true"\] > \.modal-card\s*\{[^}]*block-size:\s*100dvb;[^}]*border:\s*0;[^}]*border-radius:\s*0;/u);
 
   const base = '.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card';
