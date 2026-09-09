@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.16xo8jp.15": "اكتمل الفيديو",
+  "system.auto.1leryqb.19": "فتح الفيديو الأصلي",
+  "system.auto.rxov0k.85": "تعذّر التحقق من الفيديو المكتمل المحدد. حاول فتح هذا الطلب نفسه مرة أخرى.",
+  "system.auto.183p1yg.83": "تتوفر نتائج فيديو مكتملة أخرى. افتحها من نتائج هذا المستند.",
   "system.auto.1nnfzqo.15": "اكتمل الصوت",
   "system.auto.eo9qdm.19": "فتح الصوت الأصلي",
   "system.auto.6otw8x.85": "تعذّر التحقق من هذا الصوت المكتمل تحديدًا. حاول فتح الطلب نفسه مرة أخرى.",

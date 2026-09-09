@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.16xo8jp.15": "Vidéo terminée",
+  "system.auto.1leryqb.19": "Ouvrir la vidéo d’origine",
+  "system.auto.rxov0k.85": "La vidéo terminée exacte n’a pas pu être vérifiée. Réessayez d’ouvrir cette même demande.",
+  "system.auto.183p1yg.83": "D’autres vidéos terminées sont disponibles. Ouvrez-les depuis les résultats de ce document.",
   "system.auto.1nnfzqo.15": "Audio terminé",
   "system.auto.eo9qdm.19": "Ouvrir l’audio original",
   "system.auto.6otw8x.85": "Impossible de vérifier cet audio terminé précis. Réessayez d’ouvrir cette même demande.",

@@ -1,3 +1,4 @@
+import { captureNativeVideoHandle, nativeVideoCompletionPath, validateNativeVideoCompletion, NATIVE_VIDEO_COMPLETION_MAX_BYTES, type NativeVideoHandle, type NativeVideoCompletion } from "./native-video-completion.ts";
 import { captureNativeAudioHandle, nativeAudioCompletionPath, validateNativeAudioCompletion, NATIVE_AUDIO_COMPLETION_MAX_BYTES, type NativeAudioHandle, type NativeAudioCompletion } from "./native-audio-completion.ts";
 import { captureNativeStoryboardHandle, nativeStoryboardCompletionPath, validateNativeStoryboardCompletion, NATIVE_STORYBOARD_COMPLETION_MAX_BYTES, type NativeStoryboardHandle, type NativeStoryboardCompletion } from "./native-storyboard-completion.ts";
 import { captureNativeSlidesHandle, nativeSlidesCompletionPath, validateNativeSlidesCompletion, NATIVE_SLIDES_COMPLETION_MAX_BYTES, type NativeSlidesHandle, type NativeSlidesCompletion } from "./native-slides-completion.ts";
@@ -153,4 +154,14 @@ export async function readNativeAudioCompletion(
   if (!handle) throw new Error("invalid_native_audio_handle");
   return readNativeJson(nativeAudioCompletionPath(handle), controls, NATIVE_AUDIO_COMPLETION_MAX_BYTES,
     candidate => validateNativeAudioCompletion(candidate, handle));
+}
+
+/* Read only the exact original Video completion handle. */
+export async function readNativeVideoCompletion(
+  value: NativeVideoHandle, controls: RetainedStoryReadControls,
+): Promise<NativeVideoCompletion> {
+  const handle = captureNativeVideoHandle(value);
+  if (!handle) throw new Error("invalid_native_video_handle");
+  return readNativeJson(nativeVideoCompletionPath(handle), controls, NATIVE_VIDEO_COMPLETION_MAX_BYTES,
+    candidate => validateNativeVideoCompletion(candidate, handle));
 }

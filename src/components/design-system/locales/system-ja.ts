@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.16xo8jp.15": "動画の作成が完了しました",
+  "system.auto.1leryqb.19": "元の動画を開く",
+  "system.auto.rxov0k.85": "このリクエストで完成した動画を確認できませんでした。同じリクエストをもう一度開いてください。",
+  "system.auto.183p1yg.83": "ほかにも完成した動画があります。このドキュメントの結果から開いてください。",
   "system.auto.1nnfzqo.15": "音声が完成しました",
   "system.auto.eo9qdm.19": "元の音声を開く",
   "system.auto.6otw8x.85": "この完成済み音声を確認できませんでした。同じリクエストをもう一度開いてください。",
