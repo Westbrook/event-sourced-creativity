@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.w8oxqo.18": "اكتمل النموذج ثلاثي الأبعاد",
+  "system.auto.ka9gxm.22": "فتح النموذج ثلاثي الأبعاد الأصلي",
+  "system.auto.1qxha0x.88": "تعذّر التحقق من النموذج ثلاثي الأبعاد المكتمل المحدد. حاول فتح هذا الطلب نفسه مرة أخرى.",
+  "system.auto.1q8qav6.79": "تتوفر نماذج ثلاثية الأبعاد مكتملة أخرى. افتحها من نتائج هذا المستند.",
   "system.auto.16xo8jp.15": "اكتمل الفيديو",
   "system.auto.1leryqb.19": "فتح الفيديو الأصلي",
   "system.auto.rxov0k.85": "تعذّر التحقق من الفيديو المكتمل المحدد. حاول فتح هذا الطلب نفسه مرة أخرى.",

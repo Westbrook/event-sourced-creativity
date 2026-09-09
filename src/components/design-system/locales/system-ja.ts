@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.w8oxqo.18": "3Dモデルの作成が完了しました",
+  "system.auto.ka9gxm.22": "元の3Dモデルを開く",
+  "system.auto.1qxha0x.88": "このリクエストで完成した3Dモデルを確認できませんでした。同じリクエストをもう一度開いてください。",
+  "system.auto.1q8qav6.79": "ほかにも完成した3Dモデルがあります。このドキュメントの結果から開いてください。",
   "system.auto.16xo8jp.15": "動画の作成が完了しました",
   "system.auto.1leryqb.19": "元の動画を開く",
   "system.auto.rxov0k.85": "このリクエストで完成した動画を確認できませんでした。同じリクエストをもう一度開いてください。",

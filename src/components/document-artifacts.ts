@@ -8,7 +8,8 @@ import { captureNativeSlidesHandle, nativeSlidesRetainedRoute } from "../model/n
 import { captureNativeStoryboardHandle, nativeStoryboardRetainedRoute } from "../model/native-storyboard-completion.ts";
 import { captureNativeAudioHandle, nativeAudioRetainedRoute } from "../model/native-audio-completion.ts";
 import { captureNativeVideoHandle, nativeVideoRetainedRoute } from "../model/native-video-completion.ts";
-import { readNativeSceneCompletion, readNativeSlidesCompletion, readNativeStoryboardCompletion, readNativeAudioCompletion, readNativeVideoCompletion } from "../model/retained-short-story-client.ts";
+import { captureNativeModel3dHandle, nativeModel3dRetainedRoute } from "../model/native-model3d-completion.ts";
+import { readNativeSceneCompletion, readNativeSlidesCompletion, readNativeStoryboardCompletion, readNativeAudioCompletion, readNativeVideoCompletion, readNativeModel3dCompletion } from "../model/retained-short-story-client.ts";
 import "./native-short-story-dialog.css";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -182,8 +183,91 @@ export class DocumentArtifacts extends FormaElement {
   #videoResultError:string|null=null;
   #videoCompletedJobs=new Map<string,{job:DocumentJob;current:()=>boolean;retired?:true}>();
   #videoOverflow:{documentId:string;current:()=>boolean}|null=null;
-  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();this.#audioResultRead?.abort.abort();this.#videoResultRead?.abort.abort();}};
-  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();this.#audioResultRead?.abort.abort();this.#videoResultRead?.abort.abort();};
+  #model3dResultRead:{jobId:string;abort:AbortController}|null=null;
+  #model3dResultError:string|null=null;
+  #model3dCompletedJobs=new Map<string,{job:DocumentJob;current:()=>boolean;retired?:true}>();
+  #model3dOverflow:{documentId:string;current:()=>boolean}|null=null;
+  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();this.#audioResultRead?.abort.abort();this.#videoResultRead?.abort.abort();this.#model3dResultRead?.abort.abort();}};
+  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();this.#audioResultRead?.abort.abort();this.#videoResultRead?.abort.abort();this.#model3dResultRead?.abort.abort();};
+  #nativeModel3dJob(job:DocumentJob){
+    return this.#nativeStoryEligible(job.documentId)&&job.kind==="render_document"&&job.status==="completed"
+      &&job.sourceSurface==="document"&&job.productionMode==="manual"&&job.result?.artifactKind==="model3d";
+  }
+  #nativeModel3dJobIdentity(job:DocumentJob){
+    return JSON.stringify([job.jobId,job.documentId,job.kind,job.status,job.sourceSurface,job.productionMode,
+      job.documentRevision,job.requestKey,job.requestedAt,job.completedAt,job.attemptCount,job.result?.artifactKind,job.result?.artifactId]);
+  }
+  async #openOriginalModel3d(job:DocumentJob,event:MouseEvent,renderedCurrent:()=>boolean){
+    const trigger=event.currentTarget;
+    if(!(trigger instanceof HTMLButtonElement)||!this.contains(trigger)||this.#model3dResultRead
+      ||!renderedCurrent()||!this.#nativeModel3dJob(job)||!this.#readonlyReuseView()||this.#activeId||this.#convertingId)return false;
+    const handle=captureNativeModel3dHandle({documentId:job.documentId,jobId:job.jobId});if(!handle)return false;
+    const store=this.store,source=this.#privateSourceCurrent(),authorization=store.captureAuthorizationScope(),route=store.route.get();
+    const identity=this.#nativeModel3dJobIdentity(job),artifactId=job.result?.artifactId,read={jobId:job.jobId,abort:new AbortController()};
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    const current=()=>this.#model3dResultRead===read&&!read.abort.signal.aborted&&renderedCurrent()&&source()
+      &&this.store===store&&store.authorizationScopeActive(authorization)&&store.route.get()===route
+      &&this.ownerDocument.visibilityState!=="hidden"&&!this.closest("[hidden],[inert]")
+      &&trigger.isConnected&&this.contains(trigger)&&trigger.dataset.nativeModel3dJob===handle.jobId&&focus.current()
+      &&this.#readonlyReuseView()&&!this.#activeId&&!this.#convertingId&&!this.#model3dCompletedJobs.get(handle.jobId)?.retired
+      &&(()=>{
+        const live=store.documentJobs.get().find(value=>value.jobId===handle.jobId);
+        if(live)return this.#nativeModel3dJob(live)&&this.#nativeModel3dJobIdentity(live)===identity;
+        const retained=this.#model3dCompletedJobs.get(handle.jobId);
+        return Boolean(retained?.current()&&this.#nativeModel3dJob(retained.job)&&this.#nativeModel3dJobIdentity(retained.job)===identity);
+      })();
+    this.#model3dResultRead=read;this.#model3dResultError=null;this.requestUpdate();
+    try{
+      const completion=await readNativeModel3dCompletion(handle,{origin:location.origin,signal:read.abort.signal,current,
+        request:(path,init)=>fetch(path,init)});
+      if(!current())return false;
+      const path=nativeModel3dRetainedRoute(completion,handle);if(!path)return false;
+      await store.refreshEvents({readOnly:true,current});if(!current())return false;
+      const selected=completion.selection,artifact=store.projection.get().libraryArtifacts.find(value=>value.id===selected.artifactId);
+      if(selected.documentId!==handle.documentId||selected.artifactId!==artifactId
+        ||!artifact||artifact.kind!=="model3d"||artifact.documentId!==selected.documentId
+        ||documentArtifactRevision(store.events.get(),artifact.id)!==selected.revision)return false;
+      const original={id:artifact.id,sourceEventId:artifact.sourceEventId,contentRef:artifact.contentRef,sequence:artifact.sequence,
+        inputRef:artifact.inputRef??null,mediaUrl:artifact.mediaUrl,mediaType:artifact.mediaType,itemCount:artifact.itemCount,files:JSON.stringify(artifact.settings.model3d_files??null)};
+      const exact=()=>Date.parse(completion.expiresAt)>Date.now()&&nativeModel3dRetainedRoute(completion,handle)===path
+        &&store.projection.get().libraryArtifacts.some(value=>value.id===original.id&&value.kind==="model3d"
+          &&value.documentId===selected.documentId&&value.sourceEventId===original.sourceEventId
+          &&value.contentRef===original.contentRef&&value.sequence===original.sequence
+          &&(value.inputRef??null)===original.inputRef&&value.mediaUrl===original.mediaUrl
+          &&value.mediaType===original.mediaType&&value.itemCount===original.itemCount
+          &&JSON.stringify(value.settings.model3d_files??null)===original.files)
+        &&documentArtifactRevision(store.events.get(),original.id)===selected.revision;
+      return await navigateInApp(this,navigation=>current()&&exact()&&navigation.current()
+        ?navigation.route(path,{documentFocus:false}):false);
+    }catch{
+      if(current())this.#model3dResultError=handle.jobId;
+      return false;
+    }finally{
+      focus.dispose();read.abort.abort();if(this.#model3dResultRead===read)this.#model3dResultRead=null;
+      this.requestUpdate();
+    }
+  }
+  #nativeModel3dCompletions(){
+    const source=this.#privateSourceCurrent(),live=this.store.documentJobs.get();
+    for(const [id,retained] of this.#model3dCompletedJobs){
+      const current=live.find(job=>job.jobId===id);
+      if(!retained.current()||!this.#nativeModel3dJob(retained.job))this.#model3dCompletedJobs.delete(id);
+      else if(current&&(!this.#nativeModel3dJob(current)||this.#nativeModel3dJobIdentity(current)!==this.#nativeModel3dJobIdentity(retained.job)))retained.retired=true;
+    }
+    if(this.#model3dOverflow&&(!this.#model3dOverflow.current()||!this.#nativeStoryEligible(this.#model3dOverflow.documentId)))this.#model3dOverflow=null;
+    let capacity=Boolean(this.#model3dOverflow);
+    for(const job of live.filter(value=>this.#nativeModel3dJob(value))){
+      if(this.#model3dCompletedJobs.has(job.jobId))continue;
+      if(this.#model3dCompletedJobs.size>=120){this.#model3dOverflow??={documentId:job.documentId,current:source};capacity=true;continue;}
+      // Keep an observed exact completion across the ordinary feed ACK. Its
+      // authority is still re-read before Open; it is never a cached receipt.
+      const captured=Object.freeze({...job,result:job.result?Object.freeze({...job.result}):job.result});
+      this.#model3dCompletedJobs.set(job.jobId,{job:captured,current:source});
+    }
+    const jobs=[...this.#model3dCompletedJobs.values()].filter(value=>!value.retired).map(value=>value.job);
+    if(!jobs.length&&!capacity)return nothing;
+    return html`<div class="document-artifact-jobs native-model3d-completions">${jobs.map(job=>html`<span><b>${this.i18n.system("Completed 3D model")}</b><small>${this.i18n.date(new Date(job.completedAt??job.updatedAt),{dateStyle:"medium",timeStyle:"short"})}</small><button type="button" class="button secondary compact" data-native-model3d-job=${job.jobId} aria-busy=${String(this.#model3dResultRead?.jobId===job.jobId)} @click=${(event:MouseEvent)=>void this.#openOriginalModel3d(job,event,source)}>${this.i18n.system("Open original 3D model")}</button>${this.#model3dResultError===job.jobId?html`<small role="status">${this.i18n.system("The exact completed 3D model could not be verified. Try opening this same request again.")}</small>`:nothing}</span>`)}${capacity?html`<p role="status">${this.i18n.system("More completed 3D models are available. Open them from this Document’s results.")}</p>`:nothing}</div>`;
+  }
   #nativeStoryEligible(documentId:string){
     const session=this.store.session.get(),projection=this.store.projection.get();
     return Boolean(this.isConnected&&this.source==="document"&&this.closest("forma-workspace")
@@ -347,6 +431,7 @@ export class DocumentArtifacts extends FormaElement {
     this.#storyboardResultRead?.abort.abort();this.#storyboardResultRead=null;this.#storyboardResultError=null;this.#storyboardCompletedJobs.clear();this.#storyboardOverflow=null;
     this.#audioResultRead?.abort.abort();this.#audioResultRead=null;this.#audioResultError=null;this.#audioCompletedJobs.clear();this.#audioOverflow=null;
     this.#videoResultRead?.abort.abort();this.#videoResultRead=null;this.#videoResultError=null;this.#videoCompletedJobs.clear();this.#videoOverflow=null;
+    this.#model3dResultRead?.abort.abort();this.#model3dResultRead=null;this.#model3dResultError=null;this.#model3dCompletedJobs.clear();this.#model3dOverflow=null;
     this.#privateSourceRevision++;this.#presentationReceiptCheck=null;this.#model3dSubmitBasis=new WeakMap();
     this.#closeViewerPopovers();this.#sceneInputCurrent=null;this.#clearSceneCost();
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;
@@ -2412,6 +2497,7 @@ export class DocumentArtifacts extends FormaElement {
       ${this.#nativeStoryboardCompletions()}
       ${this.#nativeAudioCompletions()}
       ${this.#nativeVideoCompletions()}
+      ${this.#nativeModel3dCompletions()}
       ${artifacts.length?html`<div class="document-artifact-list">${artifacts.slice(0,this.compact&&!this.#showAll?3:Math.max(12,artifacts.length)).map((artifact)=>{const review=artifactReviewState(artifact,this.#artifactSourceBlocks(artifact),this.store.events.get()),sceneConfiguration=this.#artifactSceneConfiguration(artifact),identity=artifactIdentities.get(artifact.id);return html`<button type="button" data-forma-content="primary" @click=${()=>this.#openArtifact(artifact)}>${this.#preview(artifact)}<span><b dir="auto">${artifact.title}</b><small>${identity?.disambiguator?`${identity.disambiguator} · `:""}${sceneConfiguration?this.#sceneVariantLabel(sceneConfiguration.medium):this.i18n.system(documentArtifactDefinition(artifact.kind).label)} · ${artifact.itemCount} ${artifact.kind==="slides"?this.i18n.system("slides"):artifact.kind==="storyboard"?this.i18n.system("frames"):this.i18n.system(artifact.itemCount===1 ? "part" : "parts")} · ${this.#reviewLabel(review)}${outdatedWorkflowOutputs.has(artifact.id)?html` · ${this.i18n.t("workflow.inputsChangedLabel","Production inputs changed")}`:nothing}</small>${this.#createdTime(artifact)}</span></button>`;})}</div>${this.compact&&artifacts.length>3?html`<button type="button" class="button ghost compact artifact-show-all" @click=${()=>{this.#showAll=!this.#showAll;this.requestUpdate();}}>${this.#showAll?this.i18n.system("Show fewer"):this.i18n.system("View all {count} outputs", { count: this.i18n.number(artifacts.length) })}</button>`:nothing}`:nothing}
       ${recoverablePresentationJob&&artifacts.length?html`<aside class="document-artifact-recovery" role="status"><button type="button" class="button primary compact" @click=${()=>this.#recoverPresentation(recoverablePresentationJob.jobId)}>${this.i18n.system("Recover saved render")}</button><small>${this.i18n.system("Paid once · replay without another provider call")}</small></aside>`:nothing}
       ${jobs.length?html`<div class="document-artifact-jobs" aria-live="polite">${jobs.map((job)=>html`<span><i></i><b>${DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?this.i18n.system(documentArtifactDefinition(job.result!.artifactKind as DocumentArtifactKind).label):this.i18n.system("Artifact")}</b><small>${job.progressMessage?localizedDocumentJobProgress(job,this.i18n):this.i18n.system(job.stage)}</small>${job.result?.artifactKind==="slides"?html`<button type="button" class="button ghost compact" @click=${()=>this.#inspectRunningInputs(job)}>Inspect inputs</button>`:nothing}<button type="button" class="button ghost compact" ?disabled=${job.status==="committing"} title=${job.status==="committing"?this.i18n.system("This result is already being saved"):this.i18n.t("generation.stopUncertainty","Stopping does not guarantee that provider work stops or that reserved budget is released. Incurred costs remain; uncertain holds stay reserved until verified. Check the original receipt.")} @click=${()=>this.#stop(job.jobId)}>${job.status==="committing"?this.i18n.system("Saving…"):this.i18n.system("Stop")}</button></span>`)}</div>`:nothing}

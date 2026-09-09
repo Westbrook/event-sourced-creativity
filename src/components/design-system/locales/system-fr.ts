@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.w8oxqo.18": "Modèle 3D terminé",
+  "system.auto.ka9gxm.22": "Ouvrir le modèle 3D d’origine",
+  "system.auto.1qxha0x.88": "Le modèle 3D terminé exact n’a pas pu être vérifié. Réessayez d’ouvrir cette même demande.",
+  "system.auto.1q8qav6.79": "D’autres modèles 3D terminés sont disponibles. Ouvrez-les depuis les résultats de ce document.",
   "system.auto.16xo8jp.15": "Vidéo terminée",
   "system.auto.1leryqb.19": "Ouvrir la vidéo d’origine",
   "system.auto.rxov0k.85": "La vidéo terminée exacte n’a pas pu être vérifiée. Réessayez d’ouvrir cette même demande.",

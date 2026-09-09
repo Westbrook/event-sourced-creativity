@@ -1,5 +1,7 @@
 import { parseNativeAudioCompletionUrl, validateNativeAudioCompletion, type NativeAudioHandle } from "../src/model/native-audio-completion.ts";
 import { parseNativeVideoCompletionUrl, validateNativeVideoCompletion, type NativeVideoHandle } from "../src/model/native-video-completion.ts";
+import { parseNativeModel3dCompletionUrl, validateNativeModel3dCompletion, type NativeModel3dHandle } from "../src/model/native-model3d-completion.ts";
+import { RODIN_ADAPTER_VERSION, serializeRodinInput, validateModel3dRequest } from "../src/model/model3d.ts";
 import { isVideoAudioMode, isVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { documentRenderGuidance } from "../src/model/document-render-guidance.ts";
 import { parseNativeStoryboardCompletionUrl, validateNativeStoryboardCompletion, type NativeStoryboardHandle } from "../src/model/native-storyboard-completion.ts";
@@ -22,7 +24,7 @@ import { configuredPilotAdmissionGuard, POLICY_VERSION } from "./pilot-policy.ts
 import type { WorkerEnv } from "./runtime.ts";
 
 const AUTH_BYTES = 128 * 1024;
-// Audio and Video additionally witness complete bounded original request bytes.
+// Audio, Video and Model3D additionally witness complete bounded original request bytes.
 const MEDIA_JOB_BYTES = AUTH_BYTES * 6 + 16384;
 const MAX_NATIVE_COMPLETION_ATTEMPTS = documentJobMaxAttempts("render_document");
 const EVENT_COUNT = 512;
@@ -382,8 +384,13 @@ const jobCte = `story_job AS (
 // Scene retains its one-item consent. Manual Slides and Storyboard bind their
 // exact numeric counts; Storyboard additionally requires explicit paid-media consent.
 // These completed-only reads share the same attempt and final ownership witness.
-function nativeCompletionJobCte(output: "scene" | "slides" | "storyboard" | "audio" | "video") {
-  const requestGuard = output === "video" ? `
+function nativeCompletionJobCte(output: "scene" | "slides" | "storyboard" | "audio" | "video" | "model3d") {
+  const requestGuard = output === "model3d" ? `
+    AND length(CAST(job.request_json AS BLOB))<=${AUTH_BYTES}
+    AND json_type(job.request_json,'$.itemCount')='integer' AND json_extract(job.request_json,'$.itemCount')=1
+    AND json_type(job.request_json,'$.paidMediaConfirmed')='true'
+    AND json_type(job.request_json,'$.sceneRequestId') IS NULL AND json_type(job.request_json,'$.sceneCostConsent') IS NULL
+    AND json_type(job.request_json,'$.requestedSlideCount') IS NULL AND json_type(job.request_json,'$.slideCountPolicy') IS NULL` : output === "video" ? `
     AND length(CAST(job.request_json AS BLOB))<=${AUTH_BYTES}
     AND json_type(job.request_json,'$.paidMediaConfirmed')='true'
     AND json_type(job.request_json,'$.sceneRequestId') IS NULL AND json_type(job.request_json,'$.sceneCostConsent') IS NULL
@@ -438,11 +445,11 @@ ${requestGuard}
 ), story_job_json AS (
   SELECT json_object('jobId',job_id,'documentId',document_id,'correlationId',correlation_id,'attemptCount',attempt_count,'artifactId',json_extract(result_json,'$.artifactId'),
     'appendedEventIds',json_extract(result_json,'$.appendedEventIds'),'expiresAt',expires_at,
-    ${output === "audio" || output === "video" ? "'requestSnapshot',request_json,'providerJobId',json_extract(result_json,'$.providerJobId'),'provider',json_extract(result_json,'$.provider')," : output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : output === "storyboard" ? "'requestedFrameCount',json_extract(request_json,'$.itemCount')," : ""}
+    ${output === "audio" || output === "video" || output === "model3d" ? "'requestSnapshot',request_json,'providerJobId',json_extract(result_json,'$.providerJobId'),'provider',json_extract(result_json,'$.provider')," : output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : output === "storyboard" ? "'requestedFrameCount',json_extract(request_json,'$.itemCount')," : ""}
     'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.correlation_id
       AND type='DocumentRenderCompleted' AND actor='worker:renderer' AND client_id='server:document-job:render_document')) AS job_json
   FROM story_job
-), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=${output === "audio" || output === "video" ? MEDIA_JOB_BYTES : 16384})`;
+), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=${output === "audio" || output === "video" || output === "model3d" ? MEDIA_JOB_BYTES : 16384})`;
 }
 
 type NativeOutputCompletion =
@@ -450,12 +457,13 @@ type NativeOutputCompletion =
   | { output: "slides"; handle: NativeSlidesHandle }
   | { output: "storyboard"; handle: NativeStoryboardHandle }
   | { output: "audio"; handle: NativeAudioHandle }
-  | { output: "video"; handle: NativeVideoHandle };
+  | { output: "video"; handle: NativeVideoHandle }
+  | { output: "model3d"; handle: NativeModel3dHandle };
 
-async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle | NativeStoryboardHandle | NativeAudioHandle | NativeVideoHandle, ownerId:string, streamId:string, output:"scene" | "slides" | "storyboard" | "audio" | "video" | null=null) {
+async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle | NativeStoryboardHandle | NativeAudioHandle | NativeVideoHandle | NativeModel3dHandle, ownerId:string, streamId:string, output:"scene" | "slides" | "storyboard" | "audio" | "video" | "model3d" | null=null) {
   const bindings=[handle.jobId,handle.documentId,ownerId,streamId];
   const raw=await env.DB.prepare(`WITH ${output ? nativeCompletionJobCte(output) : jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
-  if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>(output === "audio" || output === "video" ? MEDIA_JOB_BYTES : 16384))throw unavailable();
+  if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>(output === "audio" || output === "video" || output === "model3d" ? MEDIA_JOB_BYTES : 16384))throw unavailable();
   const row=record(JSON.parse(raw.job_json));
   if(!row||row.jobId!==handle.jobId||row.documentId!==handle.documentId
     ||typeof row.attemptCount!=="number"||!Number.isSafeInteger(row.attemptCount)||row.attemptCount<1||row.attemptCount>MAX_NATIVE_COMPLETION_ATTEMPTS
@@ -467,7 +475,7 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
     ||new Set(row.appendedEventIds).size!==row.appendedEventIds.length||!row.appendedEventIds.includes(row.completionId)
     ||typeof row.expiresAt!=="string"||!(Date.parse(row.expiresAt)>Date.now())
     ||new Date(row.expiresAt).toISOString()!==row.expiresAt)throw unavailable();
-  if ((output === "audio" || output === "video") && (typeof row.requestSnapshot !== "string" || bytes(row.requestSnapshot) > AUTH_BYTES
+  if ((output === "audio" || output === "video" || output === "model3d") && (typeof row.requestSnapshot !== "string" || bytes(row.requestSnapshot) > AUTH_BYTES
     || !record(JSON.parse(row.requestSnapshot)) || typeof row.providerJobId !== "string"
     || !opaque.test(row.providerJobId) || typeof row.provider !== "string" || !opaque.test(row.provider))) throw unavailable();
   const requestedSlideCount = output === "slides" && typeof row.requestedSlideCount === "number" ? row.requestedSlideCount : undefined;
@@ -483,7 +491,10 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
     audioProvider: output === "audio" ? row.provider as string : null,
     videoRequest: output === "video" ? record(JSON.parse(row.requestSnapshot as string)) : null,
     videoProviderJobId: output === "video" ? row.providerJobId as string : null,
-    videoProvider: output === "video" ? row.provider as string : null};
+    videoProvider: output === "video" ? row.provider as string : null,
+    model3dRequest: output === "model3d" ? record(JSON.parse(row.requestSnapshot as string)) : null,
+    model3dProviderJobId: output === "model3d" ? row.providerJobId as string : null,
+    model3dProvider: output === "model3d" ? row.provider as string : null};
 }
 
 // The admission generationReceipt.input_ref is a different row. Bind the selected
@@ -607,6 +618,92 @@ async function videoCompletionInput(env: WorkerEnv, job: Awaited<ReturnType<type
   return { bindings, raw: row.content, expiresAt: row.expires_at, itemCount };
 }
 
+
+// Model3D saves one requested model as files and an empty authored item list.
+// Rebuild only the pure Rodin input description; this read neither retrieves
+// reference bytes nor imports the provider adapter or its recovery operations.
+async function model3dCompletionInput(env: WorkerEnv, job: Awaited<ReturnType<typeof completedStoryJob>>,
+  model3d: NonNullable<Awaited<ReturnType<typeof model3dReceipt>>>, native: ReturnType<typeof selectNative>,
+  ownerId: string, target: { documentId: string; artifactId: string }) {
+  const original = job.model3dRequest, snapshot = record(original?.snapshot), payload = model3d.payload;
+  if (!original || original.documentId !== target.documentId || !snapshot || !Array.isArray(snapshot.facts)
+    || original.itemCount !== 1 || typeof original.documentRevision !== "string" || !original.documentRevision
+    || typeof original.requestKey !== "string" || !original.requestKey || !Array.isArray(original.sourceBlockVersions)
+    || original.sourceBlockVersions.some(value => {
+      const version = record(value);
+      return !version || Object.keys(version).length !== 2 || typeof version.block_id !== "string" || !opaque.test(version.block_id)
+        || typeof version.version !== "number" || !Number.isSafeInteger(version.version) || version.version < 0;
+    }) || new Set(original.sourceBlockVersions.map(value => (value as Record<string, unknown>).block_id)).size !== original.sourceBlockVersions.length
+    || JSON.stringify(original.sourceBlockVersions) !== JSON.stringify(payload.source_block_versions)
+    || typeof native.completionInputRef !== "string" || !opaque.test(native.completionInputRef)
+    || payload.input_ref !== native.completionInputRef || native.completionItemCount !== 0 || payload.item_count !== 0
+    || !Array.isArray(payload.items) || payload.items.length !== 0 || payload.presentation !== null) throw unavailable();
+  const ids = original.model3dReferenceBlockIds;
+  if (!Array.isArray(ids) || ids.length > 5 || ids.some(id => typeof id !== "string" || !opaque.test(id))
+    || new Set(ids).size !== ids.length || original.model3dPromptSource !== undefined
+      && original.model3dPromptSource !== "exact" && original.model3dPromptSource !== "document"
+    || original.model3dPromptSource !== "document" && original.model3dAdaptation !== undefined) throw unavailable();
+  const checked = validateModel3dRequest({ prompt: original.model3dPrompt, settings: original.model3dSettings, referenceCount: ids.length });
+  if (!checked.valid) throw unavailable();
+  // Match the adapter's canonical input digest without importing provider code.
+  const stableJson = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) return Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)));
+    return item;
+  });
+  const bindings = [payload.input_ref as string, ownerId, native.projectId, target.documentId, target.artifactId];
+  const row = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${audioInputGuard()}`)
+    .bind(...bindings).first<{ content: string; expires_at: string }>();
+  if (!row || typeof row.content !== "string" || bytes(row.content) > RETAINED_STORY_JSON_MAX_BYTES
+    || typeof row.expires_at !== "string" || !Number.isFinite(Date.parse(row.expires_at)) || new Date(row.expires_at).toISOString() !== row.expires_at) throw unavailable();
+  const input = record(JSON.parse(row.content)), request = record(input?.request), render = record(input?.render), settings = record(payload.settings);
+  if (!input || input.schema_version !== 1 || input.artifact_id !== target.artifactId || input.artifact_kind !== "model3d"
+    || input.document_id !== target.documentId || input.project_id !== native.projectId || !request || !render || !settings
+    || input.planner !== null || JSON.stringify(input.document_snapshot) !== JSON.stringify(snapshot)
+    || JSON.stringify(input.source_block_versions) !== JSON.stringify(original.sourceBlockVersions)
+    || request.source_surface !== "document" || payload.source_surface !== "document"
+    || request.model3d_prompt !== original.model3dPrompt || JSON.stringify(request.model3d_reference_block_ids) !== JSON.stringify(ids)
+    || stableJson(request.model3d_settings) !== stableJson(checked.settings)
+    || stableJson(settings.model3d) !== stableJson(checked.settings) || stableJson(settings.model3d_settings) !== stableJson(checked.settings)
+    || stableJson(render.settings) !== stableJson(checked.settings)
+    || render.provider !== "fal" || job.model3dProvider !== "fal" || payload.provider !== "fal"
+    || render.providerJobId !== job.model3dProviderJobId || payload.provider_job_id !== job.model3dProviderJobId
+    || render.model !== checked.model || payload.model_id !== checked.model
+    || render.adapterVersion !== RODIN_ADAPTER_VERSION || settings.adapter_version !== RODIN_ADAPTER_VERSION
+    || render.submittedPrompt !== original.model3dPrompt || render.submitted_prompt !== original.model3dPrompt
+    || render.usedReferencePixels !== (ids.length > 0) || render.used_reference_pixels !== render.usedReferencePixels
+    || payload.used_reference_pixels !== render.usedReferencePixels
+    || !Array.isArray(render.referenceInputs) || render.referenceInputs.length !== ids.length
+    || stableJson(render.reference_inputs) !== stableJson(render.referenceInputs)
+    || stableJson(payload.reference_inputs) !== stableJson(render.referenceInputs)
+    || render.estimatedCostMicrousd !== checked.estimatedCostMicrousd || request.estimated_cost_microusd !== checked.estimatedCostMicrousd
+    || typeof request.reserved_cost_microusd !== "number" || !Number.isSafeInteger(request.reserved_cost_microusd)
+    || request.reserved_cost_microusd < checked.estimatedCostMicrousd || settings.reserved_cost_microusd !== request.reserved_cost_microusd
+    || settings.settled_cost_microusd !== checked.estimatedCostMicrousd
+    || typeof render.seed !== "number" || !Number.isSafeInteger(render.seed) || render.seed < 0 || render.seed > 65535
+    || settings.seed !== render.seed) throw unavailable();
+  if (original.model3dPromptSource === "document") {
+    if (!record(original.model3dAdaptation) || request.model3d_prompt_source !== "document"
+      || JSON.stringify(request.model3d_adaptation) !== JSON.stringify(original.model3dAdaptation)) throw unavailable();
+  } else if (request.model3d_prompt_source !== undefined || request.model3d_adaptation !== undefined) throw unavailable();
+  for (const [index, value] of render.referenceInputs.entries()) {
+    const reference = record(value);
+    if (!reference || reference.index !== index || reference.blockId !== ids[index]
+      || typeof reference.byteLength !== "number" || !Number.isSafeInteger(reference.byteLength) || reference.byteLength <= 0
+      || typeof reference.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(reference.sha256)
+      || !["image/jpeg", "image/png", "image/webp"].includes(String(reference.mimeType)) || reference.transport !== "fal-storage-upload"
+      || [reference.referenceId, reference.label].some(value => value !== null && typeof value !== "string")) throw unavailable();
+  }
+  const serialized = serializeRodinInput(original.model3dPrompt as string, checked.settings, ids.map((_, index) => `https://fal.media/reference-${index + 1}`)).input;
+  const parameters = Object.fromEntries(Object.entries(serialized).filter(([key]) => key !== "image_urls"));
+  if (stableJson(render.parameters) !== stableJson(parameters) || !Array.isArray(render.acceptedFields)
+    || stableJson([...render.acceptedFields].sort()) !== stableJson(Object.keys(serialized).sort())
+    || render.requestDigest !== await hash(stableJson({ model: checked.model, parameters, referenceInputs: render.referenceInputs }))) throw unavailable();
+  const primary = Array.isArray(settings.model3d_files) ? record(settings.model3d_files[0]) : null;
+  if (!primary || primary.role !== "mesh" || payload.media_url !== primary.url || payload.media_type !== primary.mimeType
+    || settings.source_media_sha256 !== primary.sha256) throw unavailable();
+  return { bindings, raw: row.content, expiresAt: row.expires_at, prompt: original.model3dPrompt };
+}
+
 /**
  * Authenticated CURRENT personal native revision only. This is neither an
  * Experience result nor generation/custody authority. All database operations
@@ -643,16 +740,18 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const events = await env.DB.prepare(`WITH ${eventCte} SELECT * FROM event_rows ORDER BY sequence`)
       .bind(streamId).all<EventRow>();
     const snapshot = eventSnapshot(events.results);
-    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount ?? job?.requestedFrameCount ?? (nativeCompletion?.output === "audio" ? 1 : undefined));
+    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount ?? job?.requestedFrameCount ?? (nativeCompletion?.output === "audio" ? 1 : nativeCompletion?.output === "model3d" ? 0 : undefined));
     const storyboard = (nativeCompletion?.output ?? nativeOutput?.output) === "storyboard" ? await storyboardReceipt(env, native, identity.userId, target) : null;
-    const model3d = nativeOutput?.output === "model3d" ? await model3dReceipt(env, native, identity.userId, target) : null;
+    const model3d = (nativeCompletion?.output ?? nativeOutput?.output) === "model3d" ? await model3dReceipt(env, native, identity.userId, target) : null;
     const video = (nativeCompletion?.output ?? nativeOutput?.output) === "video" ? await videoReceipt(env, native, identity.userId, target) : null;
     const audio = (nativeCompletion?.output ?? nativeOutput?.output) === "audio" ? await audioReceipt(env, native, identity.userId, target) : null;
     const audioInput = nativeCompletion?.output === "audio" && job && audio
       ? await audioCompletionInput(env, job, audio, native, identity.userId, target) : null;
     const videoInput = nativeCompletion?.output === "video" && job && video
       ? await videoCompletionInput(env, job, video, native, identity.userId, target) : null;
-    const completionInput = audioInput ?? videoInput;
+    const model3dInput = nativeCompletion?.output === "model3d" && job && model3d
+      ? await model3dCompletionInput(env, job, model3d, native, identity.userId, target) : null;
+    const completionInput = audioInput ?? videoInput ?? model3dInput;
     const contentBindings = [native.contentId, identity.userId, native.projectId, target.documentId, target.artifactId];
     const source = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${personalContentGuard()}`)
       .bind(...contentBindings).first<{ content: string; expires_at: string }>();
@@ -676,11 +775,17 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         || !dto.content.media || record(audio?.payload.settings)?.item_count !== 1
         || record(audio?.payload.settings)?.production_mode !== "manual")
       || nativeCompletion?.output === "video" && (body.items.length !== videoInput?.itemCount
-        || dto.kind !== "native-retained-output" || dto.output !== "video" || !dto.content.primaryMedia)) throw unavailable();
+        || dto.kind !== "native-retained-output" || dto.output !== "video" || !dto.content.primaryMedia)
+      || nativeCompletion?.output === "model3d" && (body.items.length !== 0 || body.presentation !== null
+        || body.content_markdown !== model3dInput?.prompt || dto.kind !== "native-retained-output" || dto.output !== "model3d"
+        || dto.content.files.length === 0)) throw unavailable();
     const sourceCompletionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
     const completionExpiry = completionInput && Date.parse(completionInput.expiresAt) < Date.parse(sourceCompletionExpiry)
       ? completionInput.expiresAt : sourceCompletionExpiry;
-    const completion = job && handle ? nativeCompletion?.output === "video"
+    const completion = job && handle ? nativeCompletion?.output === "model3d"
+      ? validateNativeModel3dCompletion({schemaVersion:1,kind:"native-model3d-completion",handle,
+        selection,expiresAt:completionExpiry},handle)
+      : nativeCompletion?.output === "video"
       ? validateNativeVideoCompletion({schemaVersion:1,kind:"native-video-completion",handle,
         selection,expiresAt:completionExpiry},handle)
       : nativeCompletion?.output === "audio"
@@ -748,6 +853,8 @@ export function handleNativeRetainedOutputRead(request: Request, env: WorkerEnv)
   if (storyboardHandle) return readCurrentRetainedNative(request, env, null, { output: "storyboard", handle: storyboardHandle });
   const audioHandle = parseNativeAudioCompletionUrl(request.url);
   if (audioHandle) return readCurrentRetainedNative(request, env, null, { output: "audio", handle: audioHandle });
+  const model3dHandle = parseNativeModel3dCompletionUrl(request.url);
+  if (model3dHandle) return readCurrentRetainedNative(request, env, null, { output: "model3d", handle: model3dHandle });
   const videoHandle = parseNativeVideoCompletionUrl(request.url);
   if (videoHandle) return readCurrentRetainedNative(request, env, null, { output: "video", handle: videoHandle });
   const target = parseNativeRetainedOutputRequestUrl(request.url);

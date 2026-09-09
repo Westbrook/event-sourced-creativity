@@ -1,3 +1,4 @@
+import { captureNativeModel3dHandle, nativeModel3dCompletionPath, validateNativeModel3dCompletion, NATIVE_MODEL3D_COMPLETION_MAX_BYTES, type NativeModel3dHandle, type NativeModel3dCompletion } from "./native-model3d-completion.ts";
 import { captureNativeVideoHandle, nativeVideoCompletionPath, validateNativeVideoCompletion, NATIVE_VIDEO_COMPLETION_MAX_BYTES, type NativeVideoHandle, type NativeVideoCompletion } from "./native-video-completion.ts";
 import { captureNativeAudioHandle, nativeAudioCompletionPath, validateNativeAudioCompletion, NATIVE_AUDIO_COMPLETION_MAX_BYTES, type NativeAudioHandle, type NativeAudioCompletion } from "./native-audio-completion.ts";
 import { captureNativeStoryboardHandle, nativeStoryboardCompletionPath, validateNativeStoryboardCompletion, NATIVE_STORYBOARD_COMPLETION_MAX_BYTES, type NativeStoryboardHandle, type NativeStoryboardCompletion } from "./native-storyboard-completion.ts";
@@ -164,4 +165,14 @@ export async function readNativeVideoCompletion(
   if (!handle) throw new Error("invalid_native_video_handle");
   return readNativeJson(nativeVideoCompletionPath(handle), controls, NATIVE_VIDEO_COMPLETION_MAX_BYTES,
     candidate => validateNativeVideoCompletion(candidate, handle));
+}
+
+/* Read only the exact original Model3d completion handle. */
+export async function readNativeModel3dCompletion(
+  value: NativeModel3dHandle, controls: RetainedStoryReadControls,
+): Promise<NativeModel3dCompletion> {
+  const handle = captureNativeModel3dHandle(value);
+  if (!handle) throw new Error("invalid_native_model3d_handle");
+  return readNativeJson(nativeModel3dCompletionPath(handle), controls, NATIVE_MODEL3D_COMPLETION_MAX_BYTES,
+    candidate => validateNativeModel3dCompletion(candidate, handle));
 }

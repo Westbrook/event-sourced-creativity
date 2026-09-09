@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.w8oxqo.18": "Completed 3D model",
+  "system.auto.ka9gxm.22": "Open original 3D model",
+  "system.auto.1qxha0x.88": "The exact completed 3D model could not be verified. Try opening this same request again.",
+  "system.auto.1q8qav6.79": "More completed 3D models are available. Open them from this Document’s results.",
   "system.auto.16xo8jp.15": "Completed video",
   "system.auto.1leryqb.19": "Open original video",
   "system.auto.rxov0k.85": "The exact completed video could not be verified. Try opening this same request again.",
