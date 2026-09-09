@@ -1,4 +1,5 @@
 import { captureNativeStorySetup, acknowledgedNativeStoryHandle, type NativeStorySetup, type NativeStorySubmission, type NativeStoryHandle, type NativeStoryFailureReason } from "../model/native-short-story-generation.ts";
+import { captureNativeImageSetup, captureNativeImageHandle, captureNativeImageSubmission, captureNativeImageRead, joinNativeImageCompletion, nativeImageInspectionPath, NATIVE_IMAGE_LIMITS, type NativeImageSetup, type NativeImageHandle, type NativeImageSubmission, type NativeImageRead } from "../model/native-image-generation.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, savedPresentationReceiptCheckResponse, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../model/document-render-guidance.ts";
 import { validateModel3dRequest, estimateModel3dCostMicrousd, type Model3dSettings } from "../model/model3d";
@@ -66,7 +67,8 @@ import { workspaceTransitionAuthorized } from "../platform/workspace-transitions
 import type { PresentationCandidateRevisionRequest, PresentationCandidateRevisionResult, PresentationCandidateValidationIssue, PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
 
 // State-only cleanup may preserve focus; this never bypasses action/current guards.
-type WorkspaceNavigationOptions = { replace?:boolean; preserveFocus?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string; onOriginHandoff?:()=>boolean; onDestinationSource?:(source:CapturedSourceOwnership)=>boolean };
+type WorkspaceNavigationOptions = { replace?:boolean; preserveFocus?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string; onOriginHandoff?:()=>boolean; onDestinationSource?:(source:CapturedSourceOwnership)=>boolean; nativeImageStartup?:NativeImageWorkspaceStartup };
+type WorkspaceNavigationOwner = {options:WorkspaceNavigationOptions;handedOff:boolean;revision:number;route:string;browserRoute:string;session:PilotSession|null;sessionRevision:number;sourceGeneration:number;sourceRetired:boolean;authorization:string;shared:boolean;cookieGeneration:number;cookieSessionGeneration:number;startup:NativeImageWorkspaceStartupDispatcher|null};
 const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options.current||options.current())&&(!options.focus||options.focus.current());
 type DocumentArtifactRenderOptions = {model3dPrompt?:string;model3dPromptSource?:"document";model3dAdaptation?:ReturnType<typeof model3dAdaptationReceipt>;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void};
 // Internal classification only; legacy callers still receive the same localized Error.message.
@@ -77,6 +79,81 @@ type NativeStoryObserver = { current:()=>boolean; onDispatch:()=>void; acknowled
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
 export type CapturedSourceOwnership = Readonly<{ authorization:CapturedAuthorizationScope; generation:number }>;
+export type NativeImageLifetime = Readonly<{
+  current:()=>boolean;
+  subscribe:(onRetire:()=>void)=>()=>void;
+  dispose:()=>void;
+}>;
+export type NativeImageInitialListReadReceipt = Readonly<{
+  /** This read claim's identity, not a navigation commit or authority token. */
+  status:"published";intent:Readonly<object>;scope:string;
+}> | Readonly<{status:"not-started";reason:"ineligible"}>
+  | Readonly<{status:"superseded";dispatched:boolean}>;
+/** A single list read, not an I2 operation or a background-job lifetime.
+ * Both channels must be observed. Publication does not imply tail success.
+ * Notification POSTs, runner/recovery work and later polls are excluded. */
+export type NativeImageInitialListReadOperation = Readonly<{
+  initial:Promise<NativeImageInitialListReadReceipt>;
+  settled:Promise<void>;
+}>;
+type NativeImageWorkspaceStartupSlot="history"|"private-hydration"|"initial-visible-job-read";
+type NativeImageWorkspaceStartupTicketSlot="component-load"|"document-sync"|NativeImageWorkspaceStartupSlot;
+type NativeImageWorkspaceStartupEndReason="navigation-ended-before-start"|"host-disconnected";
+type NativeImageWorkspaceCommit=Readonly<{intent:Readonly<object>;path:string}>;
+/** Opt-in observation only. Neither this frozen observer nor its id grants
+ * navigation, source, read or publication authority. The concrete host binds
+ * a fresh observer/id per navigation to one accepted startup ticket, without
+ * terminal recipients. Reusing a ticket observer across navigations is invalid. */
+export type NativeImageWorkspaceStartup=Readonly<{
+  id:Readonly<object>;
+  commit:(receipt:NativeImageWorkspaceCommit)=>void;
+  start:(slot:NativeImageWorkspaceStartupTicketSlot,work:()=>unknown)=>void;
+  unnecessary:(slot:NativeImageWorkspaceStartupTicketSlot,reason:string)=>void;
+  superseded:(slot:NativeImageWorkspaceStartupTicketSlot)=>void;
+  /** Supplemental failure even if this slot was already superseded. The host
+   * stores it before its own notification outcome; it never replaces a slot. */
+  failed:(slot:NativeImageWorkspaceStartupSlot,reason:unknown)=>void;
+  /** Stores both original channels and synchronously installs their observers.
+   * No external recipient is invoked before the exact settled channel returns. */
+  initial:(operation:NativeImageInitialListReadOperation)=>void;
+}>;
+type NativeImageWorkspaceStartupFrame={id:number|null};
+type NativeImageWorkspaceStartupDispatcher={
+  startup:NativeImageWorkspaceStartup;owner:WorkspaceNavigationOwner;armed:boolean;
+  commit:NativeImageWorkspaceCommit|null;
+  unstarted:Record<NativeImageWorkspaceStartupSlot,boolean>;
+  frames:Record<NativeImageWorkspaceStartupSlot,NativeImageWorkspaceStartupFrame|null>;
+};
+type NativeImageListReadOwner = {
+  intent:Readonly<object>;navigation:number;feedRevision:number;route:string;scope:string;
+  source:CapturedSourceOwnership|null;session:PilotSession|null;sessionRevision:number;
+  cookieGeneration:number;cookieSessionGeneration:number;
+};
+type NativeImageListReadClaim = {
+  owner:NativeImageListReadOwner;operation:NativeImageInitialListReadOperation;
+  dispatched:boolean;initialDone:boolean;automatic:boolean;admissionFailed:boolean;
+  resolveInitial:(receipt:NativeImageInitialListReadReceipt)=>void;rejectInitial:(reason:unknown)=>void;
+  resolveSettled:()=>void;rejectSettled:(reason:unknown)=>void;
+  legacyFailure:{reason:unknown}|null;legacy:Promise<void>|null;
+  observation:Promise<PromiseSettledResult<unknown>[]>|null;
+};
+type NativeImageSemanticCohort = {epoch:object;users:number;current:()=>boolean};
+type NativeImageLifetimeRecord = {retired:boolean;listeners:Set<()=>void>;release:()=>void};
+class NativeImageRetirementError extends AggregateError {
+  readonly #originals:readonly unknown[];
+  constructor(failures:unknown[]){
+    if(failures.length===0)throw new TypeError("native_image_lifetime_failure_required");
+    const originals=Object.freeze([...failures]);
+    super([...originals],"native_image_lifetime_retirement_failed",{cause:originals[0]});
+    this.#originals=originals;
+  }
+  static is(value:unknown):value is NativeImageRetirementError{return typeof value==="object"&&value!==null&&#originals in value;}
+  static originals(error:NativeImageRetirementError):readonly unknown[]{return error.#originals;}
+}
+function combineNativeImageRetirementFailures(failures:unknown[]):NativeImageRetirementError|null{
+  if(!failures.some(error=>NativeImageRetirementError.is(error)))return null;
+  return new NativeImageRetirementError(failures.flatMap(error=>NativeImageRetirementError.is(error)?[...NativeImageRetirementError.originals(error)]:[error]));
+}
 type OwnedDocumentCopyReview = DocumentCopyReview & { sourceOwner:CapturedSourceOwnership|null; commitSubmitted:boolean;
   /** A known refusal is provenance, not permission to edit after a failed read. */
   refusedRevision?:Readonly<{intent:NonNullable<DocumentCopyReview["intent"]>;revisedIntent:NonNullable<DocumentCopyReview["revisedIntent"]>;
@@ -281,6 +358,10 @@ export class FormaStore {
   readonly replayEvents = new Signal.State<CreativeEvent[]>([]);
   readonly replayAsOf = new Signal.State(0);
   readonly route = new Signal.State(`${location.pathname}${location.search}${location.hash}`);
+  // This directly constructed State uses its default string comparator. Keep
+  // its genuine identity/methods for the narrow post-write exception witness;
+  // a replaced Signal or method supplies no such evidence.
+  #nativeImageRouteSignal=Object.freeze({signal:this.route,get:this.route.get,set:this.route.set});
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
@@ -337,11 +418,19 @@ export class FormaStore {
   #sourcePausedJobs=new Map<string,string>();
   #eventWriteObservations=new Map<string,EventWriteObservation>();
   #listeners = new Set<Listener>();
+  #nativeImageEpoch:object=Object.freeze({});
+  #nativeImageAdmissionHolds=0;
+  #nativeImageCohort:NativeImageSemanticCohort|null=null;
+  #nativeImageLifetimes=new Set<NativeImageLifetimeRecord>();
+  #nativeImageRetirements:NativeImageLifetimeRecord[]=[];
+  #nativeImageNotificationHolds=0;
   #undo: HistoryGroup[] = [];
   #redo: HistoryGroup[] = [];
   #rememberedClientEventIds = new Set<string>();
   #appendPipeline:Promise<void> = Promise.resolve();
   #navigationCommit:Promise<boolean>|null=null;
+  #workspaceNavigationOwners=new WeakMap<WorkspaceNavigationOptions,WorkspaceNavigationOwner>();
+  #nativeImageWorkspaceStartup:NativeImageWorkspaceStartupDispatcher|null=null;
   #workspaceTransition=0;
   #projectContextHandshake:Promise<void>|null=null;
   #projectContextLatest:ProjectContextCookieRequest|null=null;
@@ -365,11 +454,10 @@ export class FormaStore {
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
   #collaborationPollTimer = 0;
-  #jobsSyncing = false;
-  #jobSyncScope = "";
   #jobFeedRevision = 0;
-  #jobSyncRevision = 0;
-  #jobResyncRequested = false;
+  #initialListReadActive:NativeImageListReadClaim|null=null;
+  #initialListReadPending:NativeImageListReadClaim|null=null;
+  #initialListReadPump:object|null=null;
   #jobPollFailures = 0;
   #jobPollIssueNotified = false;
   #pendingJobEventRefresh = false;
@@ -426,10 +514,15 @@ export class FormaStore {
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() {
+    return this.#nativeImageMutation(()=>{
+    this.#reconcileNativeImageScopes();
     if(this.planningConsent.get()&&(!this.#scopeStillActive(this.#planningConsentScope)||this.route.get()!==this.#planningConsentRoute))this.#finishPlanningConsent(false);
     this.#listeners.forEach((listener) => listener());
+    });
   }
   #publishAppended(events:CreativeEvent[],read?:EventSourceRead,readOnly=false){
+    return this.#nativeImageMutation(()=>{
+    this.#reconcileNativeImageScopes();
     if(!events.length)return;
     if(this.#sourceRetired)return;
     if(!read)this.#sourcePublishedRead=++this.#sourceReadSequence;
@@ -444,6 +537,7 @@ export class FormaStore {
       window.clearTimeout(this.#focalBackfillTimer);
       this.#focalBackfillTimer=window.setTimeout(()=>this.#backfillImageFocalPoints(),3_000);
     }
+    });
   }
   #hasFocalPoint(targetKind:"generation"|"reference"|"artifact",targetId:string){const projection=this.projection.get();const point=targetKind==="generation"?(projection.libraryOutputs.find((output)=>output.id===targetId)?.focalPoint??projection.outputs.find((output)=>output.id===targetId)?.focalPoint):targetKind==="artifact"?projection.libraryArtifacts.flatMap((artifact)=>artifact.items).find((item)=>item.id===targetId)?.focalPoint:normalizeImageFocalPoint(projection.libraryBlocks.find((block)=>block.id===targetId)?.properties.focal_point??projection.blocks.find((block)=>block.id===targetId)?.properties.focal_point);return point?.method===CURRENT_FOCAL_POINT_METHOD;}
   #backfillImageFocalPoints(){
@@ -459,8 +553,7 @@ export class FormaStore {
     const canonicalRoute = withDocumentInRoute(currentRoute, projection.documentId, projection.documentTitle);
     if (projection.documentId && canonicalRoute !== currentRoute) this.setRoute(canonicalRoute, { replace: true });
   }
-  #generationContext(documentId=this.projection.get().documentId,contextRootBlockId="",characterOutputKind:"headshot"|"character_sheet"="headshot") {
-    const projection=this.projection.get();
+  #generationContext(documentId=this.projection.get().documentId,contextRootBlockId="",characterOutputKind:"headshot"|"character_sheet"="headshot",projection=this.projection.get()) {
     const documentBlocks=projection.libraryBlocks.filter((block)=>block.documentId===documentId);
     let blocks=documentBlocks;
     if(contextRootBlockId){
@@ -872,7 +965,9 @@ export class FormaStore {
     }
     return t(`job.notice.ready.${job.kind}`,"",{title});
   }
-  async #ackJob(jobId:string){if(!this.#canRequestProjectOutputs())return;try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
+  // Check and Edit have no notification-acknowledgment contract. Retained
+  // Image notices remain unacknowledged until a separately qualified action.
+  async #ackJob(jobId:string,original:DocumentJob){if(original.jobId!==jobId||original.sourceSurface==="native-image"||!this.#canRequestProjectOutputs())return;try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
   async #hydrateDocumentJobGenerationReceipt(job:DocumentJob,authorization:string){
     const sourceOwner=this.captureSourceOwnership();this.#assertSourceOwnership(sourceOwner);
     const receipt=job.result?.generationReceipt;this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
@@ -1312,12 +1407,14 @@ export class FormaStore {
   #flushPendingJobNotices(){
     if(!this.#jobFeedCurrent()||document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;
     const feedRevision=this.#jobFeedRevision,sourceOwner=this.captureSourceOwnership();
-    const jobs=this.#pendingJobNotices.splice(0),locale=currentFormaLocale(),source="{count} background document operations finished.";
+    const jobs=this.#pendingJobNotices.splice(0).filter(job=>job.sourceSurface!=="native-image");
+    if(!jobs.length)return;
+    const locale=currentFormaLocale(),source="{count} background document operations finished.";
     const combined=(locale.messages[formaSystemMessageId(source)]??source).replace("{count}",new Intl.NumberFormat(locale.formatLocale).format(jobs.length));
     this.toast(jobs.length===1?this.#jobNotice(jobs[0]):combined);
     if(!this.sourceOwnershipActive(sourceOwner))return;
     if(!this.#jobFeedCurrent(feedRevision)){this.#pendingJobNotices.unshift(...jobs);return;}
-    for(const job of jobs)if(!job.canvasId||this.#jobResultVisible(job))void this.#ackJob(job.jobId);
+    for(const job of jobs)if(!job.canvasId||this.#jobResultVisible(job))void this.#ackJob(job.jobId,job);
   }
   #outputSourceProjectId(){return this.#sourceRetired?this.#retiredSourceProjectId:this.projection.get().projectId||null;}
   captureSourceOwnership():CapturedSourceOwnership|null{
@@ -1421,6 +1518,7 @@ export class FormaStore {
     if(!this.#sourceReadOwned(read))return false;
     const newer=[...this.#sourceCertifiedCoverage].some(([profile,proof])=>proof.id>read.id&&eventProfileRank(profile)>=eventProfileRank(read.profile)&&this.sourceOwnershipActive(proof.source));
     if(newer)return false;
+    return this.#nativeImageMutation(()=>{
     const source=read.source,projectId=this.#outputSourceProjectId(),scope=source.authorization.key;
     this.#sourceRetired=true;this.#retiredSourceProjectId=projectId;this.#sourceGeneration+=1;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
     this.#retireDocumentCopySource(source);
@@ -1458,10 +1556,18 @@ export class FormaStore {
     const detail:EventSourceRetirement=Object.freeze({source,generation:this.#sourceGeneration,status});
     window.dispatchEvent(new CustomEvent<EventSourceRetirement>("forma-event-source-retired",{detail}));
     this.notify();return true;
+    },{fence:true,holdAdmissions:true});
   }
   #observeSourceHeaders(read:EventSourceRead,response:Response,label:string){
     if(!this.#sourceReadOwned(read))throw new Error("The source read no longer belongs to this workspace.");
-    if(response.status===401||response.status===403||response.status===404)this.#retireOwnedSource(read,response.status);
+    if(response.status===401||response.status===403||response.status===404){
+      try{this.#retireOwnedSource(read,response.status);}
+      catch(error){
+        if(NativeImageRetirementError.is(error))
+          throw combineNativeImageRetirementFailures([new Error(label+" returned "+response.status),error]);
+        throw error;
+      }
+    }
     if(!response.ok)throw new Error(label+" returned "+response.status);
     this.#assertSourceRead(read);
     if(read.id<this.#sourcePublishedRead)throw new Error("A newer complete source read already owns the current view.");
@@ -1500,9 +1606,11 @@ export class FormaStore {
   }
 
   #publishSourceContent(read:EventSourceRead,publish:()=>void){
+    return this.#nativeImageMutation(()=>{
     this.#assertSourceRead(read);this.#assertSourceOwnership(read.source);
     if(read.id<this.#sourcePublishedRead)throw new Error("A newer current source result already owns the private view.");
     publish();this.#assertSourceRead(read);
+    });
   }
   #sourceContent(value:unknown):Record<string,string>{
     if(value===undefined)return{};
@@ -1510,6 +1618,7 @@ export class FormaStore {
     return value as Record<string,string>;
   }
   #publishSourceRead(page:EventSourcePage,publish:()=>void,coverage:AccountSnapshotProfile=page.read.profile){
+    return this.#nativeImageMutation(()=>{
     const read=page.read;this.#assertSourceRead(read);
     if(!read.complete||read.id<this.#sourcePublishedRead)throw new Error("A newer complete source read already owns the current view.");
     if(this.#sourceRetired){this.events.set(page.events);this.#mergeSourceContent(read,page.content,true);this.head.set(page.head);this.#historyProfile=read.profile;this.error.set("");}
@@ -1517,6 +1626,7 @@ export class FormaStore {
     this.#assertSourceRead(read);
     this.#sourcePublishedRead=read.id;this.#sourceCertifiedCoverage.set(coverage,{id:read.id,source:read.source});
     this.#sourceRetired=false;this.#retiredSourceProjectId=null;
+    });
   }
   async #readEventPages(after=0,read?:EventSourceRead){return this.#readEventStream(after,"full",after===0,read);}
   async replayAuthoritativeHistory(sequence:number){
@@ -1735,12 +1845,14 @@ export class FormaStore {
     return result;
   }
 
-  async #upgradeHistory(profile:AccountSnapshotProfile){
+  async #upgradeHistory(profile:AccountSnapshotProfile,navigation?:WorkspaceNavigationOwner){
+    if(navigation&&!this.#workspaceNavigationStable(navigation))return;
     const source=this.captureSourceOwnership();
     if(!this.#sourceRetired&&eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
-    if(this.#historyUpgrade){await this.#historyUpgrade;this.#assertSourceOwnership(source);if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
+    if(this.#historyUpgrade){await this.#historyUpgrade;this.#assertSourceOwnership(source);if(navigation&&!this.#workspaceNavigationStable(navigation)||eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
     const upgrade=(async()=>{
       const incoming=await this.#readEventStream(0,profile,profile==="full"&&routeCapabilities(this.route.get()).privateContent);
+      if(navigation&&!this.#workspaceNavigationStable(navigation))return;
       this.#publishSourceRead(incoming,()=>{
         const merged=new Map(incoming.events.map(event=>[event.eventId,event]));
         // Local known events can only be carried forward by this same owned read.
@@ -1749,47 +1861,59 @@ export class FormaStore {
         this.#mergeSourceContent(incoming.read,incoming.content);this.head.set(Math.max(this.head.get(),incoming.head));
         this.#historyProfile=incoming.read.profile;
       });
+      if(navigation&&!this.#workspaceNavigationStable(navigation))return;
       recordRouteHistoryProfile(this.#historyProfile);
+      if(navigation&&!this.#workspaceNavigationStable(navigation))return;
       if(this.#historyProfile!=="projects")completeBackgroundHydration(this.events.get().length,this.#historyProfile);
+      if(navigation&&!this.#workspaceNavigationStable(navigation))return;
       this.notify();
+      if(navigation&&!this.#workspaceNavigationStable(navigation))return;
       void writeAccountSnapshot(incoming.read.identity,this.events.get(),this.head.get(),this.#historyProfile,this.#sourceCacheGuard(incoming.read,true));
     })();
     this.#historyUpgrade=upgrade;
     try{await upgrade;}finally{if(this.#historyUpgrade===upgrade)this.#historyUpgrade=undefined;}
   }
 
-  async #hydrateVisiblePrivateContent():Promise<void>{
+  async #hydrateVisiblePrivateContent(navigation?:WorkspaceNavigationOwner):Promise<void>{
+    if(navigation&&!this.#workspaceNavigationStable(navigation))return;
     const source=this.captureSourceOwnership();this.#assertSourceOwnership(source);
     const required:"chat"|"memory"|"all"=routeCapabilities(this.route.get()).profile==="memory"?"memory":documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
     if(this.#privateContentScope==="all"||this.#privateContentScope===required){recordPrivateContentState("ready",required);return;}
     const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
     if(this.#contentHydration){
       try{await this.#contentHydration;this.#assertSourceOwnership(source);
-        if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent();
+        if(navigation&&!this.#workspaceNavigationStable(navigation))return;
+        if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent(navigation);
         if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);
-      }catch(error){if(this.sourceOwnershipActive(source)&&(this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;
+      }catch(error){if((!navigation||this.#workspaceNavigationStable(navigation))&&this.sourceOwnershipActive(source)&&(this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;
     }
     recordPrivateContentState("pending",required);const read=this.#beginSourceRead("full");
     const hydration=(async()=>{
       const response=await fetch("/api/events?after="+this.head.get()+"&limit=1&content=1"+(required!=="all"?"&contentScope="+required:""));
       this.#observeSourceHeaders(read,response,"Private content");
       const body=await response.json() as {content?:Record<string,string>};this.#assertSourceRead(read);this.#assertSourceOwnership(source);
+      if(navigation&&!this.#workspaceNavigationStable(navigation))return;
       const content=this.#sourceContent(body?.content);
       // A hydration-only response is not a complete event-source certificate.
       this.#publishSourceContent(read,()=>{this.#privateContentScope=required;if(Object.keys(content).length)this.#mergeSourceContent(read,content);});
       if(Object.keys(content).length)this.notify();
     })();this.#contentHydration=hydration;
-    let state:"ready"|"unavailable"="unavailable";
-    try{await hydration;state="ready";}finally{
-      if(this.sourceOwnershipActive(source)&&(this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);
+    let state:"ready"|"unavailable"="unavailable",primary:{error:unknown}|null=null;
+    try{await hydration;state="ready";}catch(error){primary={error};throw error;}finally{
       if(this.#contentHydration===hydration)this.#contentHydration=undefined;
+      try{if((!navigation||this.#workspaceNavigationStable(navigation))&&this.sourceOwnershipActive(source)&&(this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);}
+      catch(cleanup){
+        const combined=primary?combineNativeImageRetirementFailures([primary.error,cleanup]):null;
+        // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+        if(combined)throw combined;throw cleanup;
+      }
     }
   }
 
   async ensurePrivateContent(reference:string,options:{force?:boolean;validate?:(value:string)=>boolean}={}){
     if(!reference)return null;const source=this.captureSourceOwnership();if(!this.sourceOwnershipActive(source))return null;
     const existing=this.content.get()[reference];if(typeof existing==="string"&&!options.force&&(!options.validate||options.validate(existing)))return existing;
-    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* Only a still-owned targeted read may follow. */}
+    if(this.#contentHydration){try{await this.#contentHydration;}catch(error){if(NativeImageRetirementError.is(error))throw error;/* Only a still-owned targeted read may follow. */}
       if(!this.sourceOwnershipActive(source))return null;const hydrated=this.content.get()[reference];
       if(typeof hydrated==="string"&&!options.force&&(!options.validate||options.validate(hydrated)))return hydrated;
     }
@@ -1802,7 +1926,7 @@ export class FormaStore {
       this.#publishSourceContent(read,()=>{this.#privateContentScope="all";if(Object.keys(content).length)this.#mergeSourceContent(read,content);});
       if(Object.keys(content).length)this.notify();
       return this.sourceOwnershipActive(source)?this.content.get()[reference]??null:null;
-    }catch{return null;}
+    }catch(error){if(NativeImageRetirementError.is(error))throw error;return null;}
   }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #principalEventActor(){const session=this.session.get();return session?.projectContext?`user:${session.user.userId}`:"user";}
@@ -2264,37 +2388,160 @@ export class FormaStore {
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){
     if(!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canRequestProjectOutputs())return;
-    const originalScope=this.#activeAuthorizationScope();jobs=jobs.filter(job=>this.#sourcePausedJobs.get(job.jobId)!==originalScope);
+    const originalScope=this.#activeAuthorizationScope();jobs=jobs.filter(job=>job.sourceSurface==="native-image"||this.#sourcePausedJobs.get(job.jobId)!==originalScope);
     const projection=this.projection.get(),projectDocuments=new Set(projection.documents
       .filter((document)=>document.projectId===projection.projectId).map((document)=>document.id));
     const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")
       &&(!projectDocuments.size||projectDocuments.has(job.documentId)))
       .sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];
-    if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);
-    const recoverable=jobs.find((job)=>!this.#presentationRecoveryAttempts.has(job.jobId)&&documentJobCanRecoverPresentation(job));
+    if(next&&next.sourceSurface!=="native-image"&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);
+    const recoverable=jobs.find((job)=>job.sourceSurface!=="native-image"&&!this.#presentationRecoveryAttempts.has(job.jobId)&&documentJobCanRecoverPresentation(job));
     if(recoverable&&this.session.get()){this.#presentationRecoveryAttempts.add(recoverable.jobId);void this.recoverDocumentPresentation(recoverable.jobId);}
   }
-  async #driveDocumentJob(job:DocumentJob){const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();if(!this.sourceOwnershipActive(sourceOwner)||this.#sourcePausedJobs.get(job.jobId)===authorization)return;this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
-async syncDocumentJobs(){
-    const sourceOwner=this.captureSourceOwnership(),feedRevision=this.#jobFeedRevision;
-    if(!this.#jobFeedCurrent(feedRevision)||!this.sourceOwnershipActive(sourceOwner)||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}
-    const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";
-    if(this.#jobsSyncing){if(scope!==this.#jobSyncScope||feedRevision!==this.#jobSyncRevision)this.#jobResyncRequested=true;return;}
-    this.#jobsSyncing=true;this.#jobSyncScope=scope;this.#jobSyncRevision=feedRevision;
-    const readCurrent=()=>this.#jobFeedCurrent(feedRevision)&&this.sourceOwnershipActive(sourceOwner)
-      &&this.#scopeStillActive(authorization)&&this.#canReadProjectJobs()&&this.#jobScope()===scope;
+  async #driveDocumentJob(job:DocumentJob){if(job.sourceSurface==="native-image")return;const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();if(!this.sourceOwnershipActive(sourceOwner)||this.#sourcePausedJobs.get(job.jobId)===authorization)return;this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
+  #captureInitialListReadOwner():NativeImageListReadOwner{
+    return{intent:Object.freeze({}),navigation:this.#workspaceTransition,feedRevision:this.#jobFeedRevision,route:this.route.get(),scope:this.#jobScope(),
+      source:this.captureSourceOwnership(),session:this.session.get(),sessionRevision:this.#sessionRevision,
+      cookieGeneration:this.#projectContextCookieGeneration,cookieSessionGeneration:this.#projectContextSessionGeneration};
+  }
+  #initialListReadOwnerCurrent(owner:NativeImageListReadOwner){
+    return this.#jobFeedCurrent(owner.feedRevision)&&this.sourceOwnershipActive(owner.source)&&this.#canReadProjectJobs()
+      &&this.#workspaceTransition===owner.navigation&&this.route.get()===owner.route&&this.#jobScope()===owner.scope
+      &&this.session.get()===owner.session&&this.#sessionRevision===owner.sessionRevision
+      &&this.#projectContextCookieGeneration===owner.cookieGeneration&&this.#projectContextSessionGeneration===owner.cookieSessionGeneration
+      &&owner.cookieGeneration===owner.cookieSessionGeneration;
+  }
+  #sameInitialListReadOwner(left:NativeImageListReadOwner,right:NativeImageListReadOwner){
+    return left.navigation===right.navigation&&left.feedRevision===right.feedRevision&&left.route===right.route&&left.scope===right.scope
+      &&left.session===right.session&&left.sessionRevision===right.sessionRevision
+      &&left.source?.generation===right.source?.generation&&left.source?.authorization.key===right.source?.authorization.key
+      &&left.source?.authorization.shared===right.source?.authorization.shared
+      &&left.cookieGeneration===right.cookieGeneration&&left.cookieSessionGeneration===right.cookieSessionGeneration;
+  }
+  #newInitialListReadClaim(owner:NativeImageListReadOwner,automatic=false):NativeImageListReadClaim{
+    let resolveInitial!:(receipt:NativeImageInitialListReadReceipt)=>void,rejectInitial!:(reason:unknown)=>void;
+    let resolveSettled!:()=>void,rejectSettled!:(reason:unknown)=>void;
+    const initial=new Promise<NativeImageInitialListReadReceipt>((resolve,reject)=>{resolveInitial=resolve;rejectInitial=reject;});
+    const settled=new Promise<void>((resolve,reject)=>{resolveSettled=resolve;rejectSettled=reject;});
+    return{owner,operation:Object.freeze({initial,settled}),dispatched:false,initialDone:false,automatic,admissionFailed:false,
+      resolveInitial,rejectInitial,resolveSettled,rejectSettled,legacyFailure:null,legacy:null,observation:null};
+  }
+  #finishInitialListRead(claim:NativeImageListReadClaim,receipt:NativeImageInitialListReadReceipt){
+    if(claim.initialDone)return;claim.initialDone=true;claim.resolveInitial(Object.freeze(receipt));
+  }
+  #failInitialListRead(claim:NativeImageListReadClaim,reason:unknown){
+    if(claim.initialDone)return;claim.initialDone=true;claim.rejectInitial(reason);
+  }
+  #supersedePendingInitialListRead(claim:NativeImageListReadClaim){
+    this.#finishInitialListRead(claim,{status:"superseded",dispatched:false});claim.resolveSettled();
+  }
+  #observeInitialListRead(claim:NativeImageListReadClaim){
+    // Fixed, invocation-local observation only. This does not change either
+    // original channel or turn a busy compatibility caller into its owner.
+    return claim.observation??=Promise.allSettled([claim.operation.initial,claim.operation.settled]);
+  }
+  #legacyInitialListRead(claim:NativeImageListReadClaim):Promise<void>{
+    // The legacy facade consumes both channels, including the duplicate early
+    // failure. Its historical retry/escaping-finalizer policy is independent
+    // from the explicit producer's complete original failure evidence.
+    return claim.legacy??=this.#observeInitialListRead(claim).then(()=>{
+      if(claim.legacyFailure!==null)throw claim.legacyFailure.reason;
+    });
+  }
+  #claimInitialListRead(owner=this.#captureInitialListReadOwner()):NativeImageListReadClaim{
+    const active=this.#initialListReadActive,pending=this.#initialListReadPending;
+    if(this.#initialListReadOwnerCurrent(owner)){
+      if(active&&this.#sameInitialListReadOwner(active.owner,owner)&&this.#initialListReadOwnerCurrent(active.owner))return active;
+      if(pending&&this.#sameInitialListReadOwner(pending.owner,owner)&&this.#initialListReadOwnerCurrent(pending.owner))return pending;
+    }
+    const claim=this.#newInitialListReadClaim(owner);
+    // Install/detach the complete pending state before resolving a displaced
+    // caller. Neither an old finalizer nor route ABA can reclaim this handle.
+    this.#initialListReadPending=null;
+    if(pending)this.#supersedePendingInitialListRead(pending);
+    if(!this.#initialListReadOwnerCurrent(owner)){
+      try{window.clearTimeout(this.#jobPollTimer);
+        this.#finishInitialListRead(claim,{status:"not-started",reason:"ineligible"});claim.resolveSettled();
+      }catch(error){claim.admissionFailed=true;this.#failInitialListRead(claim,error);claim.legacyFailure={reason:error};claim.rejectSettled(error);}
+      return claim;
+    }
+    if(active||this.#initialListReadPump){this.#initialListReadPending=claim;return claim;}
+    this.#initialListReadActive=claim;
+    this.#startInitialListRead(claim);
+    return claim;
+  }
+  #startInitialListRead(claim:NativeImageListReadClaim){
+    // This cell is reserved before the worker reaches fetch or a callback.
+    // The internal worker's two terminal handlers own its original rejection;
+    // the public channels remain independently observable by the caller.
+    void this.#runInitialListRead(claim).then(()=>claim.resolveSettled(),reason=>{
+      this.#failInitialListRead(claim,reason);claim.rejectSettled(reason);
+    });
+  }
+  #pumpInitialListRead(){
+    if(this.#initialListReadActive||this.#initialListReadPump||!this.#initialListReadPending)return;
+    const pump={};this.#initialListReadPump=pump;
+    try{queueMicrotask(()=>{
+      if(this.#initialListReadPump!==pump)return;
+      this.#initialListReadPump=null;
+      if(this.#initialListReadActive)return;
+      const claim=this.#initialListReadPending;this.#initialListReadPending=null;
+      if(!claim)return;
+      this.#initialListReadActive=claim;this.#startInitialListRead(claim);
+    });}catch(error){
+      if(this.#initialListReadPump===pump){
+        this.#initialListReadPump=null;
+        const pending=this.#initialListReadPending;this.#initialListReadPending=null;
+        if(pending){
+          this.#failInitialListRead(pending,error);
+          // A failed pump never dispatched the automatic follow-up. Its
+          // scheduling failure escapes through the initiating physical pass,
+          // not a second unowned legacy rejection for nonexistent work.
+          if(!pending.automatic)pending.legacyFailure={reason:error};
+          pending.rejectSettled(error);
+        }
+      }
+      throw error;
+    }
+  }
+  /** Explicitly requests one eligible read. The later startup bridge marks a
+   * passive/deferred slot unnecessary before calling; this is not a scheduler. */
+  beginNativeImageInitialListRead():NativeImageInitialListReadOperation{return this.#claimInitialListRead().operation;}
+  async syncDocumentJobs():Promise<void>{
+    const busy=Boolean(this.#initialListReadActive||this.#initialListReadPump||this.#initialListReadPending);
+    const claim=this.#claimInitialListRead();
+    // Admission cleanup preceded the legacy busy check. Its caller-local
+    // failure still rejects immediately; this never waits on the active pass.
+    if(busy&&!claim.admissionFailed){this.#observeInitialListRead(claim);return;}
+    return this.#legacyInitialListRead(claim);
+  }
+  async #runInitialListRead(claim:NativeImageListReadClaim){
+    const {owner}=claim,sourceOwner=owner.source,scope=owner.scope,authorization=owner.source?.authorization.key??"";
+    const readCurrent=()=>this.#jobFeedCurrent(owner.feedRevision)&&this.sourceOwnershipActive(sourceOwner)
+      &&this.#scopeStillActive(authorization)&&this.#canReadProjectJobs()&&this.#jobScope()===scope
+      &&this.#workspaceTransition===owner.navigation&&this.route.get()===owner.route
+      &&this.#projectContextCookieGeneration===owner.cookieGeneration&&this.#projectContextSessionGeneration===owner.cookieSessionGeneration;
     const assertReadCurrent=()=>{if(!readCurrent())throw new Error("job_feed_retired");};
-    const feedBeforeRead=this.documentJobs.get();
-    const planningReadSequence=this.#planningRecoverySequence;
+    const failures:unknown[]=[];let resync=false;
     try{
+      if(!this.#initialListReadOwnerCurrent(owner)){
+        this.#finishInitialListRead(claim,{status:"superseded",dispatched:false});return;
+      }
+      const feedBeforeRead=this.documentJobs.get(),planningReadSequence=this.#planningRecoverySequence;
+      claim.dispatched=true;
       const response=await fetch(`/api/document-jobs${scope}`);
-      if(!readCurrent()){this.#jobResyncRequested=true;void response.body?.cancel().catch(()=>{});return;}
+      if(!readCurrent()){
+        resync=true;this.#finishInitialListRead(claim,{status:"superseded",dispatched:true});
+        await response.body?.cancel();return;
+      }
       if(!response.ok)throw new Error(`Job status returned ${response.status}`);
       const body=await response.json() as {jobs?:DocumentJob[]},currentSession=this.session.get();
-      if(!readCurrent()||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}
+      if(!this.#initialListReadOwnerCurrent(owner)||!currentSession||this.#authorizationScope(currentSession)!==authorization){
+        resync=true;this.#finishInitialListRead(claim,{status:"superseded",dispatched:true});return;
+      }
       // A newer explicit action may have completed while this list was in transit.
       // Discard that older page; a free resync can observe the new canonical state.
-      if(this.documentJobs.get()!==feedBeforeRead){this.#jobResyncRequested=true;return;}
+      if(this.documentJobs.get()!==feedBeforeRead){resync=true;this.#finishInitialListRead(claim,{status:"superseded",dispatched:true});return;}
       const previous=new Map(feedBeforeRead.map(job=>[job.jobId,job]));
       const jobs=(body.jobs??[]).map(job=>{
         const detail=this.#jobDetails.get(job.jobId);
@@ -2305,23 +2552,33 @@ async syncDocumentJobs(){
         }
         return job;
       });
+      if(!this.#initialListReadOwnerCurrent(owner)||this.documentJobs.get()!==feedBeforeRead){
+        resync=true;this.#finishInitialListRead(claim,{status:"superseded",dispatched:true});return;
+      }
       this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
+      this.#finishInitialListRead(claim,{status:"published",intent:owner.intent,scope});
       for(const job of jobs){assertReadCurrent();this.#observeAdaptivePlanningJob(job);}
       assertReadCurrent();this.notify();assertReadCurrent();
       const terminalChanges=jobs.filter(job=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));
       const fanProgress=jobs.some(job=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);
       const disappearedActive=[...previous.values()].some(job=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some(current=>current.jobId===job.jobId));
-      const completed=terminalChanges.filter(job=>!job.notifiedAt&&!job.parentJobId);
+      const completed=terminalChanges.filter(job=>job.sourceSurface!=="native-image"&&!job.notifiedAt&&!job.parentJobId);
       if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}
       if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);assertReadCurrent();this.#pendingJobEventRefresh=false;}
       if(this.#pendingJobSessionRefresh){
         try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);assertReadCurrent();this.#pendingJobSessionRefresh=false;}
-        catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently of creative recovery. */}
+        catch(error){
+          let active:boolean;
+          try{active=this.#scopeStillActive(authorization);}catch(guard){failures.push(error);throw guard;}
+          if(!active)throw error;
+          failures.push(error);/* Retry account totals independently of creative recovery. */
+        }
       }
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       assertReadCurrent();
       const inspected=await this.#revalidateMissingAdaptivePlans(jobs,authorization,previous,readCurrent);
-      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);assertReadCurrent();
+      assertReadCurrent();
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       // Exact inspections may overlap a newer completion, dismissal, or withdrawal.
       // Reconcile from the current authorized page, never the pre-await snapshot.
       const currentJobs=this.documentJobs.get(),currentIds=new Set(currentJobs.map(job=>job.jobId));
@@ -2348,26 +2605,48 @@ async syncDocumentJobs(){
             this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});
           }
         }
-        if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}
-        if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));assertReadCurrent();if(!job.canvasId)void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);
+        if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId,job);continue;}
+        if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));assertReadCurrent();if(!job.canvasId)void this.#ackJob(job.jobId,job);}else this.#pendingJobNotices.push(job);
       }
       const latest=this.documentJobs.get();this.notify();assertReadCurrent();this.#driveDocumentJobs(latest);
       this.#scheduleJobPoll(latest.some(job=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
-    }catch{
-      if(readCurrent()){
-        this.#jobPollFailures+=1;
-        if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}
-        this.#scheduleJobPoll(5_000);
-      }
+    }catch(error){
+      failures.push(error);this.#failInitialListRead(claim,error);
+      try{
+        if(readCurrent()){
+          this.#jobPollFailures+=1;
+          try{
+            if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){
+              this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");
+            }
+          }catch(reporting){failures.push(reporting);claim.legacyFailure={reason:reporting};}
+          // Reporting cannot abandon the already required scheduling attempt.
+          // Preserve the legacy catch's first escaping failure independently.
+          try{this.#scheduleJobPoll(5_000);}
+          catch(scheduling){failures.push(scheduling);claim.legacyFailure??={reason:scheduling};}
+        }
+      }catch(recovery){failures.push(recovery);claim.legacyFailure??={reason:recovery};}
     }finally{
-      this.#jobsSyncing=false;
-      const resumedAfterReader=feedRevision!==this.#jobFeedRevision;
-      const resync=this.#jobResyncRequested||this.#jobScope()!==scope||resumedAfterReader;
-      this.#jobResyncRequested=false;
-      // An original request releases only its single-flight lock. A return from
-      // a retained reader may request a fresh page for the current source/actor.
-      if(resync&&this.#jobFeedCurrent()&&this.sourceOwnershipActive(this.captureSourceOwnership())
-        &&(resumedAfterReader||this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)))queueMicrotask(()=>void this.syncDocumentJobs());
+      try{
+        if(this.#initialListReadActive===claim){
+          this.#initialListReadActive=null;
+          const resumedAfterReader=owner.feedRevision!==this.#jobFeedRevision;
+          if(!this.#initialListReadPending&&this.#jobFeedCurrent()&&this.sourceOwnershipActive(this.captureSourceOwnership())
+            &&(resumedAfterReader||this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization))
+            &&(resync||this.#jobScope()!==scope||resumedAfterReader)){
+            const next=this.#newInitialListReadClaim(this.#captureInitialListReadOwner(),true);
+            this.#initialListReadPending=next;
+            // Existing automatic resynchronization has the legacy consumer;
+            // its later work is not part of this pass's finite settlement.
+            void this.#legacyInitialListRead(next);
+          }
+          this.#pumpInitialListRead();
+        }
+      }catch(cleanup){failures.push(cleanup);claim.legacyFailure={reason:cleanup};}
+      // eslint-disable-next-line no-unsafe-finally -- Claim settlement must reject recorded failures after all original cleanup completes.
+      if(failures.length===1)throw failures[0];
+      // eslint-disable-next-line no-unsafe-finally -- Claim settlement must reject recorded failures after all original cleanup completes.
+      if(failures.length>1)throw new AggregateError(failures,"native_image_initial_list_read_failed",{cause:failures[0]});
     }
   }
 
@@ -2488,10 +2767,10 @@ async syncDocumentJobs(){
     if(!accepted)throw new GenerationBudgetAdmissionError("user-canceled",localize("Generation canceled before any provider work was started."));
     payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
   }
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{nativeShortStory?:true}={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{nativeShortStory?:true;nativeImage?:NativeImageSetup;onInvoke?:()=>void;onAcknowledgment?:(acknowledgment:Extract<NativeImageSubmission,{disposition:"acknowledged"}>)=>void}={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
     const sourceOwner=this.captureSourceOwnership(),sourceProjectId=this.projection.get().projectId;
     const scene=kind==="render_document"&&payload.artifactKind==="scene";
-    const guarded=scene||kind==="render_document"&&payload.artifactKind==="model3d"||controls.nativeShortStory===true;
+    const guarded=scene||kind==="render_document"&&payload.artifactKind==="model3d"||controls.nativeShortStory===true||Boolean(controls.nativeImage);
     const check=()=>{this.#assertSourceOwnership(sourceOwner);if(guarded&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     if(!payload.locale&&["preview","generate","prompt_fan","render_document"].includes(kind))payload={...payload,locale:typeof document==="undefined"?"en":document.documentElement.lang||"en"};
     const authorization=this.#activeAuthorizationScope();
@@ -2501,7 +2780,14 @@ async syncDocumentJobs(){
     const requestKey=String(payload.requestKey??"");
     if(requestKey){
       const active=this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&job.requestKey===requestKey&&["queued","running","committing"].includes(job.status));
-      if(active&&kind!=="structure_adaptive"&&!scene)return{job:active,reused:true};
+      if(active&&kind!=="structure_adaptive"&&!scene){
+        if(controls.nativeImage){
+          const exact=this.#nativeImageJob(active,controls.nativeImage,true);
+          if(!exact)throw new Error("native_image_job_identity_mismatch");
+          check();controls.onAcknowledgment?.(exact.acknowledgment);
+        }
+        return{job:active,reused:true};
+      }
       if(kind==="render_document"&&payload.artifactKind==="slides"&&payload.paidRetryConfirmed!==true){
         const failed=this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&job.requestKey===requestKey&&job.status==="failed"&&job.result?.artifactKind==="slides");
         if(failed&&documentJobCanRecoverPresentation(failed)){
@@ -2511,12 +2797,13 @@ async syncDocumentJobs(){
       }
     }
     if(requestKey&&this.#jobStarts.has(requestKey))throw new Error(kind==="render_document"?"This exact output request is already being queued.":"This exact image request is already being queued.");
-    if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);check();
+    let imagePrimary:{error:unknown}|null=null;
+    if(requestKey){this.#jobStarts.add(requestKey);if(!controls.nativeImage)this.notify();}try{if(controls.nativeImage&&requestKey)this.notify();const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);check();
       if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");
       this.#assertAuthorizationScope(authorization);check();await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);check();
       const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;
       let dispatched=false;
-      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,{current:()=>dispatched||this.sourceOwnershipActive(sourceOwner)&&(!guarded||!controls.current||controls.current()),onDispatch:()=>{dispatched=true;controls.onDispatch?.();}});
+      const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action,{current:()=>dispatched||this.sourceOwnershipActive(sourceOwner)&&(!guarded||!controls.current||controls.current()),onInvoke:controls.nativeImage?controls.onInvoke:undefined,onDispatch:()=>{dispatched=true;controls.onDispatch?.();}});
       this.#assertAuthorizationScope(authorization);
       const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness;attemptSubmission?:string;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}};
       this.#assertAuthorizationScope(authorization);
@@ -2530,8 +2817,27 @@ async syncDocumentJobs(){
       }
       if(kind==="structure_adaptive"&&!adaptiveJobMatchesRequest(body.job,{documentId,canvasId:typeof payload.canvasId==="string"?payload.canvasId:null,sourceSurface,requestKey}))throw new Error(currentFormaLocale().messages["next.exact.unavailable"]??"The exact planning request changed.");
       if(controls.nativeShortStory&&!acknowledgedNativeStoryHandle(body.job,{documentId,documentRevision:payload.documentRevision,requestKey:payload.requestKey}))throw new Error("native_story_job_identity_mismatch");
+      if(controls.nativeImage){
+        // Fresh Worker ACKs carry accepted:true and omit reused; a present
+        // malformed reuse marker remains inadmissible.
+        const reused=Object.hasOwn(body,"reused")?body.reused:false;
+        const exact=this.#nativeImageJob(body.job,controls.nativeImage,reused);
+        if(!exact)throw new Error("native_image_job_identity_mismatch");
+        body.job=exact.job;
+        // Preserve the exact original ACK before UI/source notification.
+        // A callback failure cannot retroactively make this an unused request.
+        controls.onAcknowledgment?.(exact.acknowledgment);
+      }
       const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");
-      if(!this.sourceOwnershipActive(sourceOwner)||guarded&&controls.current&&!controls.current()){
+      let imageCurrent=true;
+      if(controls.nativeImage){
+        imageCurrent=!controls.current||controls.current();
+        // An opening predicate is reentrant. Its answer cannot authorize a write
+        // into a session/cookie context it replaced while answering.
+        this.#assertAuthorizationScope(authorization);
+        if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)throw new Error("native_image_source_changed");
+      }
+      if(!this.sourceOwnershipActive(sourceOwner)||(controls.nativeImage?!imageCurrent:guarded&&controls.current&&!controls.current())){
         this.#sourcePausedJobs.set(body.job.jobId,authorization);
         const reference=this.#privateJobReference(body.job);
         this.documentJobs.set([reference,...this.documentJobs.get().filter(job=>job.jobId!==reference.jobId)]);this.notify();
@@ -2539,27 +2845,74 @@ async syncDocumentJobs(){
       }
       if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});
       const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];
-      this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);
+      this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);
+      if(!controls.nativeImage){this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);}
+      else{
+        // This is an immediate post-notification check, never a durable I2
+        // operation predicate handed to the inherited background driver.
+        const owned=()=>this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)
+          &&this.#projectContextCookieGeneration===this.#projectContextSessionGeneration;
+        const active=()=>owned()&&(!controls.current||controls.current())&&owned();
+        const original=body.job;
+        const pauseOriginal=()=>{
+          if(!owned())return;
+          // The immutable acknowledged job ID owns the pause even if a newer
+          // poll/read replaced its row. Never overwrite that newer presentation.
+          this.#sourcePausedJobs.set(original.jobId,authorization);
+          const latest=this.documentJobs.get();
+          if(latest.includes(original)){
+            const reference=this.#privateJobReference(original);
+            this.documentJobs.set(latest.map(job=>job===original?reference:job));this.notify();
+          }
+        };
+        try{
+          this.notify();
+          if(!active())pauseOriginal();
+        }catch(error){
+          // A throwing listener cannot bypass the pause for a received job.
+          // Keep the original failure even when withdrawal notification fails.
+          try{pauseOriginal();}catch(cleanup){
+            const retirementFailure=combineNativeImageRetirementFailures([error,cleanup]);
+            if(retirementFailure)throw retirementFailure;
+            throw new AggregateError([error,cleanup],"native_image_notification_cleanup_failed",{cause:error});
+          }
+          throw error;
+        }
+      }
       return{job:body.job,reused:Boolean(body.reused),...(scene&&body.sceneCostExisting?{sceneCostExisting:body.sceneCostExisting}:{})};
-    }finally{if(requestKey&&this.#scopeStillActive(authorization)){this.#jobStarts.delete(requestKey);this.notify();}}
+    }catch(error){imagePrimary={error};throw error;}
+    finally{
+      try{if(requestKey&&this.#scopeStillActive(authorization)){this.#jobStarts.delete(requestKey);this.notify();}}
+      catch(cleanup){
+        const retirementFailure=imagePrimary?combineNativeImageRetirementFailures([imagePrimary.error,cleanup]):null;
+        // eslint-disable-next-line no-unsafe-finally -- A retirement aggregate retains primary and cleanup failures after the original operation.
+        if(retirementFailure)throw retirementFailure;
+        // eslint-disable-next-line no-unsafe-finally -- This native submission aggregate retains both original work and cleanup failures.
+        if(controls.nativeImage&&imagePrimary)throw new AggregateError([imagePrimary.error,cleanup],"native_image_submission_cleanup_failed",{cause:imagePrimary.error});
+        // eslint-disable-next-line no-unsafe-finally -- Keep existing cleanup failure precedence when there is no retained Image aggregate.
+        throw cleanup;
+      }
+    }
   }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   #systemNotice(source:string,values:Record<string,string|number>={}){const locale=currentFormaLocale();const automatic=formaSystemMessageId(source);const fallback=Object.entries(FORMA_DEFAULT_MESSAGES).find(([,value])=>value===source)?.[0];const message=locale.messages[automatic]??(fallback?locale.messages[fallback]:undefined)??source;return Object.keys(values).length?message.replace(/\{(\w+)\}/g,(_,key:string)=>{const value=values[key];return typeof value==="number"?new Intl.NumberFormat(locale.formatLocale).format(value):String(value??"");}):message;}
   toast(message: string) {
+    return this.#nativeImageMutation(()=>{
     const localized=this.#systemNotice(message);
     this.ui.toast=localized;
     this.notify();
     window.setTimeout(()=>{if(this.ui.toast===localized){this.ui.toast="";this.notify();}},2800);
+    });
   }
   async confirmImpersonatedInteraction(action="change this fictional account"){
     if(!this.session.get()?.impersonation)return true;if(this.#impersonationConfirmation)return false;this.patchUi({impersonationConfirmOpen:true,impersonationAction:action});return new Promise<boolean>((resolve)=>{this.#impersonationConfirmation=resolve;});
   }
   resolveImpersonatedInteraction(confirmed:boolean){const resolve=this.#impersonationConfirmation;this.#impersonationConfirmation=undefined;this.patchUi({impersonationConfirmOpen:false,impersonationAction:""});resolve?.(confirmed);if(!confirmed)this.toast("Canceled. The fictional account was not changed.");}
-  async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account",controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{onNotDispatchedAtConfirmation?:()=>void}={}){
+  async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account",controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{onNotDispatchedAtConfirmation?:()=>void;onInvoke?:()=>void}={}){
     const check=()=>{if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)throw new Error("The project context session must be reconciled before continuing.");if(controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     const authorization=this.#activeAuthorizationScope(),method=String(init.method??(input instanceof Request?input.method:"GET")).toUpperCase();
-    if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){check();const pending=fetch(input,init);try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();if(authorization)this.#assertAuthorizationScope(authorization);return response;}
-    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);check();if(!confirmed){try{controls.onNotDispatchedAtConfirmation?.();}catch{/* A presentation callback cannot dispatch this unapproved attempt. */}return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});}const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");check();const pending=fetch(input,{...init,headers});try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();this.#assertAuthorizationScope(authorization);return response;
+    if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){check();controls.onInvoke?.();const pending=fetch(input,init);try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();if(authorization)this.#assertAuthorizationScope(authorization);return response;}
+    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);check();if(!confirmed){try{controls.onNotDispatchedAtConfirmation?.();}catch{/* A presentation callback cannot dispatch this unapproved attempt. */}return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});}const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");check();controls.onInvoke?.();const pending=fetch(input,{...init,headers});try{controls.onDispatch?.();}catch{/* A presentation callback cannot abandon an already-dispatched request. */}const response=await pending;check();this.#assertAuthorizationScope(authorization);return response;
   }
   async startImpersonating(personaId:string,route="/projects"){
     const response=await fetch("/api/impersonation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({personaId,confirmation:"I understand, continue"})});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"The fictional account could not be opened");window.location.assign(body.route??route);
@@ -2602,105 +2955,385 @@ async syncDocumentJobs(){
       : withProjectTaskDocumentInRoute(path, options.documentId ?? this.projection.get().documentId, options.documentId === undefined ? this.route.get() : undefined);
   }
 
-  setRoute(path: string, options: WorkspaceNavigationOptions = {}) {
-    if(!workspaceNavigationCurrent(options))return;
-    path = this.#projectTaskRoute(path, options);
-    const current=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
-    if(current!==destination){
-      if(!["creative","canvas"].includes(current)||!["creative","canvas"].includes(destination)){
-        if(options.onOriginHandoff&&!options.onOriginHandoff())return;
-        location.assign(path);return;
-      }
-      void this.transitionWorkspace(path,options);
-      return;
+  #stopNativeImageWorkspaceStartup(dispatcher:NativeImageWorkspaceStartupDispatcher,disposition:"superseded"|"startup-dispatch-failed"|NativeImageWorkspaceStartupEndReason,retainedFailures?:unknown[]):NativeImageWorkspaceStartupSlot|null{
+    if(!dispatcher.armed)return null;
+    // Detach every callback and reserve every disposition before cancellation
+    // or a ticket method can reenter. Failed cancellation cannot rearm work.
+    dispatcher.armed=false;
+    if(this.#nativeImageWorkspaceStartup===dispatcher)this.#nativeImageWorkspaceStartup=null;
+    const slots:NativeImageWorkspaceStartupSlot[]=["history","private-hydration","initial-visible-job-read"];
+    const pending=slots.filter(slot=>dispatcher.unstarted[slot]);
+    const frames=slots.map(slot=>({slot,frame:dispatcher.frames[slot]}));
+    for(const slot of slots){dispatcher.unstarted[slot]=false;dispatcher.frames[slot]=null;}
+    const failures=retainedFailures??[];let firstFailure:NativeImageWorkspaceStartupSlot|null=null;
+    for(const {slot,frame} of frames)if(frame&&frame.id!==null){
+      try{cancelAnimationFrame(frame.id);}catch(error){firstFailure??=slot;failures.push(error);}
     }
-    this.#commitRoute(path,options);
+    for(const slot of pending){
+      try{
+        if(disposition==="superseded")dispatcher.startup.superseded(slot);
+        else dispatcher.startup.unnecessary(slot,disposition);
+      }catch(error){firstFailure??=slot;failures.push(error);}
+    }
+    if(!retainedFailures)this.#throwWorkspaceNavigationFailures(failures);
+    return firstFailure;
+  }
+
+  #failNativeImageWorkspaceStartup(dispatcher:NativeImageWorkspaceStartupDispatcher,slot:NativeImageWorkspaceStartupSlot,primary:unknown){
+    const failures:unknown[]=[primary];
+    // Stop only this captured dispatcher before cancellation, classification
+    // or failure delivery. A successor is never detached by this cleanup.
+    this.#stopNativeImageWorkspaceStartup(dispatcher,"startup-dispatch-failed",failures);
+    const reason=combineNativeImageRetirementFailures(failures)
+      ??(failures.length===1?failures[0]:new AggregateError(failures,"workspace_navigation_failed",{cause:failures[0]}));
+    // A current predicate may start B and then throw. Preserve A's error even
+    // when B has already superseded A's slots; no slot is replaced or faked.
+    dispatcher.startup.failed(slot,reason);
+  }
+
+  /** Called after the original Image navigation returned false/rejected, or
+   * when its actual host disconnects. Child replacement is not host departure.
+   * A pre-admission or already-superseded caller cannot touch another record.
+   * The host fills any still-unclaimed ticket slots after this exact cleanup. */
+  finishNativeImageStartup(startup:NativeImageWorkspaceStartup,reason:NativeImageWorkspaceStartupEndReason="navigation-ended-before-start"):boolean{
+    const dispatcher=this.#nativeImageWorkspaceStartup;
+    if(!dispatcher||dispatcher.startup!==startup)return false;
+    this.#stopNativeImageWorkspaceStartup(dispatcher,reason);
+    return true;
+  }
+
+  #startNativeImageWorkspaceSlot(dispatcher:NativeImageWorkspaceStartupDispatcher,slot:NativeImageWorkspaceStartupSlot,work:()=>unknown){
+    if(!dispatcher.armed||this.#nativeImageWorkspaceStartup!==dispatcher||!dispatcher.unstarted[slot])return;
+    const current=this.#workspaceNavigationCurrent(dispatcher.owner);
+    if(!dispatcher.armed||this.#nativeImageWorkspaceStartup!==dispatcher||!dispatcher.unstarted[slot])return;
+    if(!current){this.#stopNativeImageWorkspaceStartup(dispatcher,"superseded");return;}
+    dispatcher.unstarted[slot]=false;
+    // Concrete host start is callback-free until it invokes this exact work.
+    // Guard failures are not fabricated helper invocations or read receipts.
+    dispatcher.startup.start(slot,work);
+  }
+
+  #unnecessaryNativeImageWorkspaceSlot(dispatcher:NativeImageWorkspaceStartupDispatcher,slot:NativeImageWorkspaceStartupSlot,reason:string){
+    if(!dispatcher.armed||this.#nativeImageWorkspaceStartup!==dispatcher||!dispatcher.unstarted[slot])return;
+    dispatcher.unstarted[slot]=false;
+    dispatcher.startup.unnecessary(slot,reason);
+  }
+
+  #deferNativeImageWorkspaceSlot(dispatcher:NativeImageWorkspaceStartupDispatcher,slot:NativeImageWorkspaceStartupSlot,work:()=>unknown){
+    if(!dispatcher.armed||this.#nativeImageWorkspaceStartup!==dispatcher
+      ||!dispatcher.unstarted[slot]||dispatcher.frames[slot])return;
+    const frame:NativeImageWorkspaceStartupFrame={id:null};
+    dispatcher.frames[slot]=frame;
+    try{
+      frame.id=requestAnimationFrame(()=>{
+        if(dispatcher.frames[slot]!==frame)return;
+        dispatcher.frames[slot]=null;
+        if(!dispatcher.armed||this.#nativeImageWorkspaceStartup!==dispatcher)return;
+        try{this.#startNativeImageWorkspaceSlot(dispatcher,slot,work);}
+        catch(reason){this.#failNativeImageWorkspaceStartup(dispatcher,slot,reason);}
+      });
+    }catch(error){
+      // A scheduler may have queued before throwing. This exact callback is
+      // permanently inert even when no cancellation id was returned.
+      if(dispatcher.frames[slot]===frame)dispatcher.frames[slot]=null;
+      throw error;
+    }
+  }
+
+  #captureWorkspaceNavigation(options:WorkspaceNavigationOptions):WorkspaceNavigationOwner{
+    const session=this.session.get();
+    const owner:WorkspaceNavigationOwner={options:{},handedOff:false,revision:this.#workspaceTransition,
+      route:this.route.get(),browserRoute:`${location.pathname}${location.search}${location.hash}`,
+      session,sessionRevision:this.#sessionRevision,sourceGeneration:this.#sourceGeneration,sourceRetired:this.#sourceRetired,
+      authorization:session?this.#authorizationScope(session):"",shared:Boolean(session?.projectContext),
+      cookieGeneration:this.#projectContextCookieGeneration,cookieSessionGeneration:this.#projectContextSessionGeneration,startup:null};
+    owner.options={...options};
+    const startup=owner.options.nativeImageStartup;
+    if(startup){
+      if(!Object.isFrozen(startup)||!startup.id||typeof startup.id!=="object"||!Object.isFrozen(startup.id))
+        throw new TypeError("native_image_startup_observer_required");
+      owner.startup={startup,owner,armed:true,commit:null,
+        unstarted:{history:true,"private-hydration":true,"initial-visible-job-read":true},
+        frames:{history:null,"private-hydration":null,"initial-visible-job-read":null}};
+    }
+    return owner;
+  }
+  #workspaceNavigationOptions(owner:WorkspaceNavigationOwner):WorkspaceNavigationOptions{
+    // Only a fresh Store-created copy may carry this operation through a public
+    // navigation port. Reusing the caller's original object starts a new owner.
+    const options={...owner.options};this.#workspaceNavigationOwners.set(options,owner);return options;
+  }
+  #takeWorkspaceNavigation(options:WorkspaceNavigationOptions){
+    const owner=this.#workspaceNavigationOwners.get(options);
+    if(owner){this.#workspaceNavigationOwners.delete(options);return owner;}
+    return this.#captureWorkspaceNavigation(options);
+  }
+  #workspaceNavigationStable(owner:WorkspaceNavigationOwner){
+    const session=this.session.get();
+    return owner.revision===this.#workspaceTransition&&owner.route===this.route.get()
+      &&owner.browserRoute===`${location.pathname}${location.search}${location.hash}`
+      &&owner.session===session&&owner.sessionRevision===this.#sessionRevision
+      &&owner.sourceGeneration===this.#sourceGeneration&&owner.sourceRetired===this.#sourceRetired
+      &&owner.authorization===(session?this.#authorizationScope(session):"")&&owner.shared===Boolean(session?.projectContext)
+      &&owner.cookieGeneration===this.#projectContextCookieGeneration&&owner.cookieSessionGeneration===this.#projectContextSessionGeneration;
+  }
+  #workspaceNavigationCurrent(owner:WorkspaceNavigationOwner){
+    if(!this.#workspaceNavigationStable(owner))return false;
+    if(!owner.handedOff&&owner.options.current&&(!owner.options.current()||!this.#workspaceNavigationStable(owner)))return false;
+    if(owner.options.focus&&(!owner.options.focus.current()||!this.#workspaceNavigationStable(owner)))return false;
+    return this.#workspaceNavigationStable(owner);
+  }
+  #handoffWorkspaceNavigation(owner:WorkspaceNavigationOwner){
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(owner.handedOff||!owner.options.onOriginHandoff)return true;
+    if(!owner.options.onOriginHandoff())return false;
+    owner.handedOff=true;return this.#workspaceNavigationCurrent(owner);
+  }
+  #advanceWorkspaceNavigation(owner:WorkspaceNavigationOwner){
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    owner.revision=++this.#workspaceTransition;
+    const previous=this.#nativeImageWorkspaceStartup;
+    const next=owner.startup?.armed&&owner.startup.owner===owner?owner.startup:null;
+    if(previous!==next){
+      this.#nativeImageWorkspaceStartup=next;
+      if(previous){
+        const failures:unknown[]=[];
+        const anchor=this.#stopNativeImageWorkspaceStartup(previous,"superseded",failures);
+        if(anchor!==null){
+          const reason=combineNativeImageRetirementFailures(failures)
+            ??(failures.length===1?failures[0]:new AggregateError(failures,"workspace_navigation_failed",{cause:failures[0]}));
+          // The first actual cleanup failure anchors this supplemental record;
+          // it does not attribute every aggregate member to that slot. A owns
+          // the record before B receives this same original failure object.
+          try{previous.startup.failed(anchor,reason);}
+          catch(deliveryFailure){this.#throwWorkspaceNavigationFailures([reason,deliveryFailure]);}
+          throw reason;
+        }
+        return this.#workspaceNavigationCurrent(owner);
+      }
+    }
+    return true;
+  }
+  #assignWorkspaceNavigation(path:string,owner:WorkspaceNavigationOwner){
+    if(!this.#handoffWorkspaceNavigation(owner)||!this.#advanceWorkspaceNavigation(owner))return false;
+    owner.handedOff=true;
+    this.#nativeImageAdmissionHolds+=1;
+    try{
+      this.#advanceNativeImageFence();
+      // A nested half-applied mutation cannot safely deliver its cleanup yet.
+      // Cancel this page transfer rather than assign before that cleanup.
+      if(this.#nativeImageNotificationHolds!==0)return false;
+      this.#finishNativeImageWork(undefined,null,this.#drainNativeImageRetirements());
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      location.assign(path);return true;
+    }finally{this.#nativeImageAdmissionHolds-=1;}
+  }
+  setRoute(path:string,options:WorkspaceNavigationOptions={}):boolean|Promise<boolean>{
+    const owner=this.#takeWorkspaceNavigation(options);
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    path=this.#projectTaskRoute(path,owner.options);
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    const source=applicationIdFromRoute(owner.route),destination=applicationIdFromRoute(path);
+    if(source!==destination)return !["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)
+      ?this.#assignWorkspaceNavigation(path,owner):this.transitionWorkspace(path,this.#workspaceNavigationOptions(owner));
+    return this.#commitRoute(path,owner);
   }
 
   async transitionWorkspace(path:string,options:WorkspaceNavigationOptions={}){
-    if(!workspaceNavigationCurrent(options))return false;
-    path = this.#projectTaskRoute(path, options);
-    const navigationScope = this.captureAuthorizationScope(), sourceRoute = this.route.get(), sessionRevision = this.#sessionRevision;
-    const source=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
-    if(source===destination){
-      if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
-      if(options.onOriginHandoff)options={...options,onOriginHandoff:undefined};
-      this.#commitRoute(path,options);return true;
-    }
-    if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)){
-      if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
-      location.assign(path);return true;
-    }
-    const previous=this.session.get(),attempt=++this.#workspaceTransition;
+    const owner=this.#takeWorkspaceNavigation(options),navigationScope=this.captureAuthorizationScope();options=owner.options;
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    path=this.#projectTaskRoute(path,options);
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    const source=applicationIdFromRoute(owner.route),destination=applicationIdFromRoute(path);
+    if(source===destination)return this.#commitRoute(path,owner);
+    if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination))return this.#assignWorkspaceNavigation(path,owner);
+    const previous=owner.session;
+    if(!this.#advanceWorkspaceNavigation(owner))return false;
+    const attempt=owner.revision;
+    const expectedSession=(session:PilotSession):WorkspaceNavigationOwner=>{
+      const authorization=this.#authorizationScope(session),changed=!owner.session||owner.authorization!==authorization;
+      return{...owner,session,sessionRevision:owner.sessionRevision+1,sourceGeneration:owner.sourceGeneration+Number(changed),
+        sourceRetired:changed?false:owner.sourceRetired,authorization,shared:Boolean(session.projectContext)};
+    };
     try{
       const response=await fetch(`/api/session?audience=${encodeURIComponent(destination)}`,{cache:"no-store",credentials:"same-origin"});
-      const ownsHeaders=workspaceNavigationCurrent(options);
+      const ownsHeaders=owner.revision===attempt&&this.#workspaceNavigationCurrent(owner);
       const current=await response.json() as PilotSession&{error?:string};
-      const ownsBody=workspaceNavigationCurrent(options);
+      const ownsBody=owner.revision===attempt&&this.#workspaceNavigationCurrent(owner);
       if(!response.ok)throw new Error(current.error??"The selected workspace is no longer available.");
-      if(attempt!==this.#workspaceTransition||this.route.get()!==sourceRoute||sessionRevision!==this.#sessionRevision)return false;
-      // A stale navigation may still retire permissions for its original actor,
-      // but must never restore another account or silently move a newer view.
+      if(owner.revision!==attempt||!this.#workspaceNavigationStable(owner))return false;
       if(!this.authorizationScopeActive(navigationScope))return false;
       if(!workspaceTransitionAuthorized(previous,current,destination)){
-        if(previous&&previous.user.userId===current.user.userId)this.#applySession({...current,audience:previous.audience});
-        this.toast(destination==="canvas"?"Canvas is no longer available for this account or project.":"Your workspace authorization has changed. Reload your current project.");
+        // A negative response may retire the original actor's permissions, but
+        // cannot release the original view or adopt a positive navigation.
+        if(previous&&previous.user.userId===current.user.userId){
+          const next={...current,audience:previous.audience},expected=expectedSession(next);
+          this.#applySession(next);
+          if(!this.#workspaceNavigationStable(expected))return false;
+        }
+        if(!owner.options.nativeImageStartup)this.toast(destination==="canvas"?"Canvas is no longer available for this account or project.":"Your workspace authorization has changed. Reload your current project.");
         return false;
       }
-      // Negative authorization above still retires permissions. Only a positive
-      // adoption asks the original view to release its current raw-work owner.
-      if(options.onOriginHandoff){
-        if(!ownsHeaders||!ownsBody||!workspaceNavigationCurrent(options)||!options.onOriginHandoff())return false;
-        options={...options,onOriginHandoff:undefined};
-      }
-      this.#applySession({...current,audience:previous?.audience});
+      if(!ownsHeaders||!ownsBody||owner.revision!==attempt||!this.#handoffWorkspaceNavigation(owner))return false;
+      const next={...current,audience:previous?.audience},expected=expectedSession(next);
+      if(owner.revision!==attempt||!this.#workspaceNavigationCurrent(owner))return false;
+      this.#applySession(next);
+      if(owner.revision!==attempt||!this.#workspaceNavigationStable(expected))return false;
+      // Only this predicted adoption may refresh snapshots. An extra adoption,
+      // source retirement, or away-and-back navigation cannot be recaptured.
+      owner.session=expected.session;owner.sessionRevision=expected.sessionRevision;
+      owner.sourceGeneration=expected.sourceGeneration;owner.sourceRetired=expected.sourceRetired;
+      owner.authorization=expected.authorization;owner.shared=expected.shared;
+      if(!this.#workspaceNavigationCurrent(owner))return false;
       if(options.onDestinationSource){
         const adopted=this.captureSourceOwnership();
-        if(attempt!==this.#workspaceTransition||this.route.get()!==sourceRoute||this.#sessionRevision!==sessionRevision+1
-          ||!adopted||!this.sourceOwnershipActive(adopted)||!options.onDestinationSource(adopted))return false;
+        if(!adopted||!this.sourceOwnershipActive(adopted)||!this.#workspaceNavigationCurrent(owner))return false;
+        if(!options.onDestinationSource(adopted)||!this.#workspaceNavigationCurrent(owner)||!this.sourceOwnershipActive(adopted))return false;
       }
-      if(!ownsHeaders||!ownsBody||!workspaceNavigationCurrent(options))return false;
-      this.#commitRoute(path,options);
-      return true;
-    }catch(error){if(attempt===this.#workspaceTransition&&this.route.get()===sourceRoute&&sessionRevision===this.#sessionRevision&&this.authorizationScopeActive(navigationScope)&&workspaceNavigationCurrent(options))this.toast(error instanceof Error?error.message:"The selected workspace could not be authorized.");return false;}
+      return this.#commitRoute(path,owner);
+    }catch(error){
+      if(owner.options.nativeImageStartup||NativeImageRetirementError.is(error))throw error;
+      try{
+        if(owner.revision===attempt&&this.#workspaceNavigationCurrent(owner))this.toast(error instanceof Error?error.message:"The selected workspace could not be authorized.");
+      }catch(cleanup){const combined=combineNativeImageRetirementFailures([error,cleanup]);if(combined)throw combined;throw cleanup;}
+      return false;
+    }
   }
 
-  #commitRoute(path:string,options:WorkspaceNavigationOptions={}){
-    if(!workspaceNavigationCurrent(options))return;
-    path = this.#projectTaskRoute(path, options);
-    if(options.onOriginHandoff&&!options.onOriginHandoff())return;
-    this.#workspaceTransition += 1;
-    const projection = this.projection.get();
-    const requestedFocus = options.documentFocus ?? (documentFocusFromRoute(path) || documentFocusFromRoute(this.route.get()));
-    const focusAwarePath = isDocumentViewRoute(path) ? withDocumentFocusInRoute(path, requestedFocus) : path;
-    const requestedDocumentId = documentIdFromRoute(focusAwarePath);
-    const routeDocumentId = requestedDocumentId || (options.documentId ?? projection.documentId);
-    const routeDocumentTitle = projection.documents.find((document) => document.id === routeDocumentId)?.title ?? (routeDocumentId === projection.documentId ? projection.documentTitle : "");
-    const routedPath = isDocumentViewRoute(focusAwarePath) && routeDocumentId ? withDocumentInRoute(focusAwarePath, routeDocumentId, routeDocumentTitle) : focusAwarePath;
-    const current = `${location.pathname}${location.search}${location.hash}`;
-    if (current !== routedPath) {
-      if (options.replace) history.replaceState({}, "", routedPath);
-      else history.pushState({}, "", routedPath);
-      if(!this.loading.get()){
-        beginRoutePopulation(routedPath);
-        recordRouteHistoryProfile(this.#historyProfile);
-        const contentScope=routeCapabilities(routedPath).profile==="memory"?"memory":documentViewFromRoute(routedPath)==="chat"?"chat":"all";recordPrivateContentState(routeCapabilities(routedPath).privateContent?(this.#privateContentScope==="all"||this.#privateContentScope===contentScope?"ready":"pending"):"not-required",routeCapabilities(routedPath).privateContent?contentScope:undefined);
-        recordPopulationSource("memory",this.events.get().length);
+  #commitRoute(path:string,owner:WorkspaceNavigationOwner):boolean{
+    const options=owner.options,startup=owner.startup?.owner===owner?owner.startup:null;
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    path=this.#projectTaskRoute(path,options);
+    const projection=this.projection.get();
+    const requestedFocus=options.documentFocus??(documentFocusFromRoute(path)||documentFocusFromRoute(owner.route));
+    const focusAwarePath=isDocumentViewRoute(path)?withDocumentFocusInRoute(path,requestedFocus):path;
+    const requestedDocumentId=documentIdFromRoute(focusAwarePath);
+    const routeDocumentId=requestedDocumentId||(options.documentId??projection.documentId);
+    const routeDocumentTitle=projection.documents.find(document=>document.id===routeDocumentId)?.title??(routeDocumentId===projection.documentId?projection.documentTitle:"");
+    const routedPath=isDocumentViewRoute(focusAwarePath)&&routeDocumentId?withDocumentInRoute(focusAwarePath,routeDocumentId,routeDocumentTitle):focusAwarePath;
+    const before=owner.browserRoute,target=new URL(routedPath,location.origin+before);
+    const expectedBrowserRoute=target.pathname+target.search+target.hash;
+    if(!this.#handoffWorkspaceNavigation(owner)||!this.#advanceWorkspaceNavigation(owner))return false;
+    // Final route admission has completed even without an explicit handoff
+    // hook. Its own fence/route write must not re-test the departed predicate.
+    owner.handedOff=true;
+    const changed=owner.route!==routedPath||before!==expectedBrowserRoute;
+    const committed=this.#nativeImageMutation(()=>{
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      if(before!==expectedBrowserRoute){
+        if(options.replace)history.replaceState({},"",routedPath);else history.pushState({},"",routedPath);
+        owner.browserRoute=expectedBrowserRoute;
+        if(!this.#workspaceNavigationCurrent(owner))return false;
+        if(!this.loading.get()){
+          beginRoutePopulation(routedPath);
+          if(!this.#workspaceNavigationCurrent(owner))return false;
+          recordRouteHistoryProfile(this.#historyProfile);
+          if(!this.#workspaceNavigationCurrent(owner))return false;
+          const contentScope=routeCapabilities(routedPath).profile==="memory"?"memory":documentViewFromRoute(routedPath)==="chat"?"chat":"all";
+          recordPrivateContentState(routeCapabilities(routedPath).privateContent?(this.#privateContentScope==="all"||this.#privateContentScope===contentScope?"ready":"pending"):"not-required",routeCapabilities(routedPath).privateContent?contentScope:undefined);
+          if(!this.#workspaceNavigationCurrent(owner))return false;
+          recordPopulationSource("memory",this.events.get().length);
+          if(!this.#workspaceNavigationCurrent(owner))return false;
+        }
       }
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:owner.revision}:null;
+      // Retire the feed before route publication, including reentrant native-reader returns.
+      if(isRetainedOutputReaderRoute(routedPath)){
+        this.#jobFeedRevision+=1;window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";
+      }
+      if(!startup){this.route.set(routedPath);owner.route=routedPath;return this.#workspaceNavigationCurrent(owner);}
+      const recordCommit=()=>{
+        owner.route=routedPath;
+        // Save historical evidence before delivery. Delivery failure never
+        // retries this receipt or retargets its already-captured intent.
+        const receipt=Object.freeze({intent:startup.startup.id,path:routedPath});
+        startup.commit=receipt;
+        startup.startup.commit(receipt);
+      };
+      const routeSignal=this.route,routeGet=routeSignal.get,routeSet=routeSignal.set;
+      const genuine=routeSignal===this.#nativeImageRouteSignal.signal
+        &&routeGet===this.#nativeImageRouteSignal.get&&routeSet===this.#nativeImageRouteSignal.set;
+      // The qualified State setter may write, then synchronously notify a
+      // Watcher that throws. Watcher notification forbids intervening Signal
+      // reads/writes. This is not evidence for replaced setters or node hooks.
+      const beforeWrite=genuine?routeGet.call(routeSignal):undefined;
+      try{routeSet.call(routeSignal,routedPath);}
+      catch(error){
+        const failures:unknown[]=[error];
+        if(genuine){
+          try{
+            const afterWrite=routeGet.call(routeSignal);
+            if(beforeWrite!==routedPath&&afterWrite===routedPath
+              &&this.route===routeSignal&&routeSignal.get===routeGet&&routeSignal.set===routeSet)recordCommit();
+          }catch(readOrDeliveryFailure){failures.push(readOrDeliveryFailure);}
+        }
+        // Keep the setter's original Error or undefined before read/delivery
+        // failures and the mutation's mandatory cleanup. No success tail runs.
+        this.#throwWorkspaceNavigationFailures(failures);throw error;
+      }
+      recordCommit();
+      return this.#workspaceNavigationCurrent(owner);
+    },{fence:changed,holdAdmissions:changed});
+    if(!committed||!this.#workspaceNavigationCurrent(owner))return false;
+    if(!isRetainedOutputReaderRoute(routedPath)&&!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some(job=>job.status==="queued"||job.status==="running"||job.status==="committing")){
+      window.clearTimeout(this.#jobPollTimer);
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      this.#pendingPassiveJobPath=routedPath;
     }
-    // Retire before publishing the route: synchronous subscribers can commit
-    // a return to an eligible surface while the original signal is changing.
-    if(isRetainedOutputReaderRoute(routedPath)){
-      this.#jobFeedRevision+=1;window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";this.#jobResyncRequested=false;
-    }
-    this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:this.#workspaceTransition}:null;
-    this.route.set(routedPath);this.#scheduleProjectTaskExpiry();
-    if(!isRetainedOutputReaderRoute(routedPath)&&!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}
-    this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath, ...(options.preserveFocus===true?{preserveFocus:true}:{}) } }));
+    this.notify();
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    window.dispatchEvent(new CustomEvent("forma-route-changed",{detail:{path:routedPath,...(options.preserveFocus===true?{preserveFocus:true}:{}),
+      ...(startup?.commit?{nativeImageStartup:startup.startup,nativeImageCommit:startup.commit}:{})}}));
+    if(!this.#workspaceNavigationCurrent(owner))return false;
     const required=this.#profileForRoute(routedPath);
-    if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
-    if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
-    if(!this.loading.get()&&(this.#jobScope(current)!==this.#jobScope(routedPath)||!routeCapabilities(routedPath).jobHistory))requestAnimationFrame(()=>this.#syncVisibleJobs(routedPath));
+    if(startup){
+      const dispatcher=startup;
+      if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))
+        this.#startNativeImageWorkspaceSlot(dispatcher,"history",()=>this.#upgradeHistory(required,owner));
+      else this.#unnecessaryNativeImageWorkspaceSlot(dispatcher,"history","history-ready");
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      if(routeCapabilities(routedPath).privateContent&&!this.loading.get())
+        this.#deferNativeImageWorkspaceSlot(dispatcher,"private-hydration",()=>this.#hydrateVisiblePrivateContent(owner));
+      else this.#unnecessaryNativeImageWorkspaceSlot(dispatcher,"private-hydration",
+        this.loading.get()?"route-loading":"private-content-not-required");
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      const immediateRead=!this.loading.get()&&(routeCapabilities(routedPath).jobHistory
+        ||this.documentJobs.get().some(job=>job.status==="queued"||job.status==="running"||job.status==="committing"));
+      if(immediateRead)this.#deferNativeImageWorkspaceSlot(dispatcher,"initial-visible-job-read",()=>{
+        const operation=this.beginNativeImageInitialListRead();
+        // The concrete host first stores and observes both originals, without
+        // recipients; the ticket then receives this exact settled Promise.
+        dispatcher.startup.initial(operation);
+        return operation.settled;
+      });
+      else this.#unnecessaryNativeImageWorkspaceSlot(dispatcher,"initial-visible-job-read",
+        this.loading.get()?"route-loading":"passive-job-read");
+      if(!this.#workspaceNavigationCurrent(owner))return false;
+      if(!immediateRead&&!this.loading.get()&&document.documentElement.dataset.formaPhase==="populated"){
+        // Preserve passive background polling without adding it to the finite
+        // startup read or implying that recurring polling has settled.
+        this.#pendingPassiveJobPath="";
+        this.#scheduleJobPoll(1_200);
+        if(!this.#workspaceNavigationCurrent(owner))return false;
+      }
+      this.#scheduleProjectTaskExpiry();
+      return this.#workspaceNavigationCurrent(owner);
+    }
+    if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required,owner).catch(error=>{
+      if(this.#workspaceNavigationStable(owner))console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));
+    });
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>{
+      if(this.#workspaceNavigationStable(owner))void this.#hydrateVisiblePrivateContent(owner).catch(()=>undefined);
+    });
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(!this.loading.get()&&(this.#jobScope(before)!==this.#jobScope(routedPath)||!routeCapabilities(routedPath).jobHistory))requestAnimationFrame(()=>{
+      if(this.#workspaceNavigationStable(owner))this.#syncVisibleJobs(routedPath);
+    });
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    this.#scheduleProjectTaskExpiry();
+    return this.#workspaceNavigationCurrent(owner);
   }
 
   async syncDocumentFromRoute(path = this.route.get()) {
@@ -2708,7 +3341,7 @@ async syncDocumentJobs(){
     const pending=this.#cachedHistoryRevalidation;
     if(pending){
       const authorization=this.captureAuthorizationScope(),revision=this.#workspaceTransition,loadRevision=this.#loadRevision;
-      try{await pending;}catch{return;}
+      try{await pending;}catch(error){if(NativeImageRetirementError.is(error))throw error;return;}
       if(path!==this.route.get()||this.loading.get()||this.#workspaceTransition!==revision||this.#loadRevision!==loadRevision
         ||!this.authorizationScopeActive(authorization)||!this.routeDataReady(path))return;
     }
@@ -2746,18 +3379,45 @@ async syncDocumentJobs(){
   setAttentionCapture(enabled:boolean){if(this.session.get()?.impersonation){this.patchUi({attentionCapture:false,attentionPaused:true});this.toast("Attention capture stays off while you experience a fictional account.");return;}writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
   async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const session=this.session.get();let appended:CreativeEvent[]=[];if(session?.projectContext){const authorization=this.#authorizationScope(session),response=await fetch("/api/privacy/attention",{method:"POST"}),body=await response.json() as {appended?:CreativeEvent[];error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok){this.toast(body.error??"Your personal attention data could not be forgotten.");return[];}appended=body.appended??[];}else appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const active=this.session.get();if(active)await clearAnalyticsSnapshots(this.#snapshotIdentity(active),true);this.toast("Your personal attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
-  async erasePersonalAuthoredContext(){const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number;outputReservationReconciliationPending?:boolean;outputProviderReconciliationPending?:number;outputStorageCleanupPending?:number;outputReconciliationCheckFailed?:boolean};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);this.#assertAuthorizationScope(authorization);this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);await this.#refreshEvents();this.#assertAuthorizationScope(authorization);const outputPending=Boolean(result.outputReservationReconciliationPending||result.outputProviderReconciliationPending||result.outputStorageCleanupPending||result.outputReconciliationCheckFailed);this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0})+(outputPending?" "+this.#systemNotice("Some Output file cleanup or provider accounting is still pending. No new generation was authorized."):""));this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");return false;}}
+  async erasePersonalAuthoredContext(){
+    const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;
+    const authorization=this.#authorizationScope(session);
+    try{
+      const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");
+      this.#assertAuthorizationScope(authorization);
+      const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number;outputReservationReconciliationPending?:boolean;outputProviderReconciliationPending?:number;outputStorageCleanupPending?:number;outputReconciliationCheckFailed?:boolean};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");
+      // Erasure is already acknowledged. Retire before asynchronous local
+      // cleanup; the old authored view cannot admit another Image meanwhile.
+      return await this.#nativeImageHeldMutation(async()=>{
+        await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);
+        this.#assertAuthorizationScope(authorization);
+        this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);
+        await this.#refreshEvents();this.#assertAuthorizationScope(authorization);
+        const outputPending=Boolean(result.outputReservationReconciliationPending||result.outputProviderReconciliationPending||result.outputStorageCleanupPending||result.outputReconciliationCheckFailed);
+        this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0})+(outputPending?" "+this.#systemNotice("Some Output file cleanup or provider accounting is still pending. No new generation was authorized."):""));
+        this.notify();return true;
+      });
+    }catch(error){
+      if(NativeImageRetirementError.is(error))throw error;
+      if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");
+      return false;
+    }
+  }
   async migrateHistoricalEventPrivacy(){const session=this.session.get();if(!session||session.user.role!=="admin"||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"migrate-historical-events",confirmation:"MIGRATE_HISTORICAL_EVENT_CONTENT"})},"migrate historical event privacy");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;migratedEvents?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Historical event migration failed.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session))]);this.#assertAuthorizationScope(authorization);this.toast(this.#systemNotice("{count} historical event bodies moved into erasable owner-scoped storage. Existing backups and other devices still require separate handling.",{count:result.migratedEvents??0}));return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Historical event migration failed.");return false;}}
 
   async load(options:{routeHandoff?:Promise<void>}={}) {
     const loadRevision=++this.#loadRevision;let loadAuthorization="",loadRead:EventSourceRead|undefined;
+    let loadPrimary:{error:unknown}|null=null;
     this.#cachedHistoryRevalidation=undefined;
     const ownsLoad=()=>loadRevision===this.#loadRevision&&(!loadAuthorization||this.#scopeStillActive(loadAuthorization))&&(!loadRead||this.#sourceReadOwned(loadRead));
     const path=this.route.get(),profile=this.#profileForRoute(path),started=performance.now();
     beginRoutePopulation(path);recordRouteHistoryProfile(profile);
     recordPrivateContentState(routeCapabilities(path).privateContent?"pending":"not-required");
-    this.loading.set(true);this.notify();
+    this.loading.set(true);
     try{
+      this.notify();
       const bootstrap=consumeSessionBootstrap(),prefetched=consumeSessionPrefetch();
       const sessionPromise=bootstrap&&!this.#projectContextLatest?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
       const snapshotsPromise=sessionPromise.then(verified=>{
@@ -2786,6 +3446,7 @@ async syncDocumentJobs(){
         this.#assertSourceRead(read);
         if(this.#sourceRetired||read.id<this.#sourcePublishedRead)throw new Error("A newer source read owns the current workspace.");
         // A cache is a provisional view, never a certificate that supersedes another read.
+        this.#nativeImageMutation(()=>{
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
         const revalidation=live.then(async current=>{
@@ -2807,6 +3468,7 @@ async syncDocumentJobs(){
         void revalidation.catch(error=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"}))).finally(()=>{
           if(this.#cachedHistoryRevalidation===revalidation){this.#cachedHistoryRevalidation=undefined;this.notify();}
         });
+        },{fence:true,holdAdmissions:true});
       }else{
         const body=await live;if(!ownsLoad())throw new Error("The source load was superseded.");
         this.#publishSourceRead(body,()=>{
@@ -2827,13 +3489,29 @@ async syncDocumentJobs(){
         void this.syncDocumentFromRoute(this.route.get());this.#syncVisibleJobs(this.route.get());
         if(routeCapabilities(this.route.get()).privateContent)void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
       });
-    }catch(error){if(ownsLoad())this.error.set(error instanceof Error?error.message:"Unable to load event stream");}
-    finally{if(ownsLoad()){this.loading.set(false);this.notify();}}
+    }catch(error){
+      loadPrimary={error};
+      if(ownsLoad())this.error.set(error instanceof Error?error.message:"Unable to load event stream");
+      if(NativeImageRetirementError.is(error))throw error;
+    }
+    finally{
+      try{if(ownsLoad()){this.loading.set(false);this.notify();}}
+      catch(cleanup){
+        const combined=loadPrimary?combineNativeImageRetirementFailures([loadPrimary.error,cleanup]):null;
+        // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+        if(combined)throw combined;throw cleanup;
+      }
+    }
   }
 
   #applySession(body:PilotSession,revision?:number){
     if(revision===undefined)this.#sessionRevision+=1;
     const previous=this.session.get(),previousUserId=previous?.user.userId;
+    const imageAuthorizationChanges=!previous||this.#authorizationScope(previous)!==this.#authorizationScope(body);
+    const applicationRevision=this.#sessionRevision,applicationSource=this.#sourceGeneration+(imageAuthorizationChanges?1:0);
+    const ownsApplication=(session:PilotSession|null)=>this.#sessionRevision===applicationRevision&&this.#sourceGeneration===applicationSource&&this.session.get()===session;
+    const superseded=()=>this.session.get()??body;
+    return this.#nativeImageMutation(()=>{
     if(!previous||this.#authorizationScope(previous)!==this.#authorizationScope(body)){
       this.#sourceGeneration+=1;this.#sourceRetired=false;this.#retiredSourceProjectId=null;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
     }
@@ -2841,7 +3519,7 @@ async syncDocumentJobs(){
       this.#cachedHistoryRevalidation=undefined;
       this.documentCopyReviews.set({});this.#documentCopyRequest+=1;
       this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.#resetReviewInbox();this.optimisticEvents.set([]);
-      this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
+      this.documentJobs.set([]);this.generationReadiness.set({});this.outputRequirements.clear();if(!ownsApplication(previous))return superseded();this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
       this.#adaptiveStructureJobIds.clear();this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
       this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#readinessAcknowledgements.clear();this.#dismissedAdaptiveSuggestions.clear();this.#readinessInFlight.clear();this.#jobStarts.clear();this.#jobsDriving.clear();this.#presentationRecoveryAttempts.clear();this.#focalInFlight.clear();
       this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";this.#historyProfile="full";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
@@ -2849,13 +3527,21 @@ async syncDocumentJobs(){
       this.#undo=[];this.#redo=[];this.#rememberedClientEventIds.clear();window.clearTimeout(this.#jobPollTimer);window.clearTimeout(this.#collaborationPollTimer);window.clearTimeout(this.#focalBackfillTimer);
       window.dispatchEvent(new CustomEvent("forma-authorization-changed",{detail:{previous:this.#authorizationScope(previous),current:this.#authorizationScope(body)}}));
     }
-    this.session.set(body);this.#scheduleProjectTaskExpiry();
+    // A pre-publication listener may complete a newer adoption. Never overwrite
+    // that session, including an away-and-back adoption with the same principal.
+    if(!ownsApplication(previous))return superseded();
+    this.session.set(body);this.#reconcileNativeImageScopes();this.#scheduleProjectTaskExpiry();
+    if(!ownsApplication(body))return superseded();
     if(body.projectContext){void this.syncProjectNotifications();void this.syncOrganizationContextPackages();}else{this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});}
+    if(!ownsApplication(body))return superseded();
     void this.syncReviewInbox();
+    if(!ownsApplication(body))return superseded();
     this.#scheduleCollaborationPoll();
+    if(!ownsApplication(body))return superseded();
     if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}
     else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}
     this.notify();return body;
+    },{fence:imageAuthorizationChanges,holdAdmissions:imageAuthorizationChanges});
   }
 
   async refreshSession(prefetched:Promise<Response>|null=null) {
@@ -2874,8 +3560,12 @@ async syncDocumentJobs(){
       &&(!owner.settled||owner.current()&&!owner.admitted)){
       const active=this.session.get();if(active)return active;throw new Error("A newer project context is already loading.");
     }
-    const applied=this.#applySession(body,revision);
-    if(current())this.#projectContextSessionGeneration=cookieGeneration;return applied;
+    let applied!:PilotSession,retirementFailure:NativeImageRetirementError|null=null;
+    try{applied=this.#applySession(body,revision);}
+    catch(error){if(!NativeImageRetirementError.is(error))throw error;retirementFailure=error;}
+    if(current()&&this.session.get()===body)this.#projectContextSessionGeneration=cookieGeneration;
+    if(retirementFailure)throw retirementFailure;
+    return applied;
   }
 
   async #reconcileProjectContextCookie(){
@@ -2897,8 +3587,11 @@ async syncDocumentJobs(){
           if(!owner.matches(body))throw new Error("The original project context belongs to a different account.");
           // This read certifies only the actual current cookie/Source, never the
           // original context command, its abandoned route, or its focus lease.
-          this.#applySession(body,revision);
-          if(current())this.#projectContextSessionGeneration=cookieGeneration;
+          let retirementFailure:NativeImageRetirementError|null=null;
+          try{this.#applySession(body,revision);}
+          catch(error){if(!NativeImageRetirementError.is(error))throw error;retirementFailure=error;}
+          if(current()&&this.session.get()===body)this.#projectContextSessionGeneration=cookieGeneration;
+          if(retirementFailure)throw retirementFailure;
         })();
         const reconciliation:Promise<void>=pending.finally(()=>{if(owner.reconciliation===reconciliation)owner.reconciliation=null;});
         owner.reconciliation=reconciliation;
@@ -3126,7 +3819,8 @@ async syncDocumentJobs(){
     const reconcile=async()=>{
       const latest=this.#projectContextLatest;
       if(latest?.settled&&!latest.current()&&latest.matches(this.session.get())&&!this.#sourceRetired)
-        try{await this.#reconcileProjectContextCookie();}catch{/* A later explicit session/source read may recover; never retry the context write. */}
+        try{await this.#reconcileProjectContextCookie();}
+        catch(error){if(NativeImageRetirementError.is(error))throw error;/* A later explicit session/source read may recover; never retry the context write. */}
     };
     return {current,sourceCurrent,refreshSession:async(onDestinationSource?:(source:CapturedSourceOwnership)=>boolean)=>{
       const owner=requestedOwner;if(!owner||owner!==this.#projectContextLatest||!owner.settled||!sourceCurrent())return null;
@@ -3148,10 +3842,17 @@ async syncDocumentJobs(){
       let ready!:()=>void;
       const owner:ProjectContextCookieRequest={ready:new Promise<void>(resolve=>{ready=resolve;}),settled:false,admitted:false,current:()=>!finished&&sourceCurrent(),matches,reconciliation:null};
       requestedOwner=owner;this.#projectContextLatest=owner;this.#sessionRevision+=1;
-      let cookieMayHaveChanged=false;
+      let cookieMayHaveChanged=false,held=false,requestPrimary:{error:unknown}|null=null;
       try{
         // A newer waiter cannot overtake a response which can still install Set-Cookie.
         while(this.#projectContextHandshake){await this.#projectContextHandshake;if(!sourceCurrent())return null;}
+        if(!sourceCurrent())return null;
+        held=true;
+        const heldFailureHistory:unknown[]=[];
+        return await this.#nativeImageHeldMutation(async()=>{
+        let primary:{error:unknown}|null=null;
+        try{
+        // Retirement callbacks are outside code; they cannot grant dispatch.
         if(!sourceCurrent())return null;
         const pending=fetch(project?"/api/workspaces/"+encodeURIComponent(project.organizationId)+"/projects/"+encodeURIComponent(project.projectAccessId)+"/context":"/api/workspaces/context",
           {method:project?"POST":"DELETE",credentials:"same-origin"});
@@ -3159,9 +3860,24 @@ async syncDocumentJobs(){
         try{const response=await pending;cookieMayHaveChanged=response.ok;return sourceCurrent()?response:null;}
         catch(error){cookieMayHaveChanged=true;throw error;}
         finally{if(this.#projectContextHandshake===settled)this.#projectContextHandshake=null;}
-      }finally{
-        if(cookieMayHaveChanged){this.#projectContextCookieGeneration+=1;this.#sessionRevision+=1;}
-        owner.settled=true;ready();await reconcile();
+        }catch(error){heldFailureHistory.push(error);primary={error};throw error;}
+        finally{
+          try{
+            if(cookieMayHaveChanged){this.#projectContextCookieGeneration+=1;this.#sessionRevision+=1;}
+            owner.settled=true;ready();await reconcile();
+          }catch(cleanup){
+            heldFailureHistory.push(cleanup);
+            const combined=primary?combineNativeImageRetirementFailures([primary.error,cleanup]):null;
+            // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+            if(combined)throw combined;throw cleanup;
+          }
+        }
+        },heldFailureHistory);
+      }catch(error){requestPrimary={error};throw error;}
+      finally{
+        if(!held)try{owner.settled=true;ready();await reconcile();}
+        // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+        catch(cleanup){const combined=requestPrimary&&combineNativeImageRetirementFailures([requestPrimary.error,cleanup]);if(combined)throw combined;throw cleanup;}
       }
     }};
   }
@@ -3246,13 +3962,20 @@ async syncDocumentJobs(){
   }
 
   async acceptTerms() {
-    this.busy.set("consent"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("consent"); this.notify();
       const response = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "accept_terms", ownershipConfirmed: true, providerProcessingConfirmed: true }) });
       const body = await response.json() as PilotSession & { error?: string }; if (!response.ok) throw new Error(body.error ?? "Consent could not be recorded");
-      this.session.set(body); await this.load(); this.toast("Pilot terms accepted and witnessed in the event stream.");
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Consent failed"); }
-    finally { this.busy.set(""); this.notify(); }
+      this.session.set(body);
+      const retirementFailures:unknown[]=[];
+      try{this.#nativeImageCheckpoint();}catch(error){if(!NativeImageRetirementError.is(error))throw error;retirementFailures.push(error);}
+      // The existing source/cache load is mandatory after consent publication.
+      // A listener failure is surfaced only after that continuation settles.
+      let primary:{error:unknown}|null=null;
+      try{await this.load();}catch(error){primary={error};}
+      this.#finishNativeImageWork(undefined,primary,retirementFailures);
+      this.toast("Pilot terms accepted and witnessed in the event stream.");
+    },()=>{this.busy.set("");this.notify();},error=>{this.toast(error instanceof Error ? error.message : "Consent failed");});
   }
 
 
@@ -3333,8 +4056,10 @@ async syncDocumentJobs(){
   #finishEventWrite(observation:EventWriteObservation,patch:Partial<EventWriteAcknowledgment>,appended:CreativeEvent[],publication:EventWriteResult["publication"],options:AppendOptions={}):EventWriteResult{
     observation.pending=false;observation.receipt=this.#eventWriteReceipt(observation,patch);observation.delivered=true;
     const receipt=observation.receipt;
+    const failures:unknown[]=[];let primary:{error:unknown}|null=null;
+    try{
     if(this.sourceOwnershipScopeActive(observation.source)){
-      try{options.onAcknowledgment?.(receipt);}catch{/* The already-observed commit is independent of its UI owner. */}
+      try{options.onAcknowledgment?.(receipt);}catch(error){if(NativeImageRetirementError.is(error))failures.push(error);/* The already-observed commit is independent of its UI owner. */}
       if(publication==="withheld"){
         this.appendFailure.set("");
         if(!options.silent)this.toast(this.#systemNotice(receipt.committed.length
@@ -3343,9 +4068,13 @@ async syncDocumentJobs(){
           :"This invocation was not sent because the source is unavailable."));
       }
     }
+    }catch(error){primary={error};}
+    finally{
     if(receipt.outcome==="not-attempted"||publication==="published"&&receipt.outcome==="observed")
       this.#eventWriteObservations.delete(receipt.observationId);
-    return{appended,acknowledgment:receipt,publication};
+    }
+    if(primary&&failures.length){failures.push(primary.error);primary=null;}
+    return this.#finishNativeImageWork({appended,acknowledgment:receipt,publication},primary,failures);
   }
 
   #requestedEventObserved(input:EventInput,event:CreativeEvent){
@@ -3624,10 +4353,11 @@ async syncDocumentJobs(){
       current=()=>sourceCurrent()&&(!controls.current||controls.current());
     const finish=(patch:Partial<EventWriteAcknowledgment>,appended:CreativeEvent[]=[],publication:EventWriteResult["publication"]="none")=>
       this.#finishEventWrite(observation,patch,appended,publication,{silent:true});
-    if(!current())return finish({outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!sourceCurrent()},[],"withheld");
     const busy=mode==="check"?"check-project-intake":"project-intake";
-    this.busy.set(busy);this.notify();
+    let began=false,knownReceipt:Partial<EventWriteAcknowledgment>|null=null;const failureHistory:unknown[]=[];
     try{
+      if(!current())return finish({outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!sourceCurrent()},[],"withheld");
+      began=true;this.busy.set(busy);this.notify();
       const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},
         body:JSON.stringify({action:"project_intake",intakeAction:mode,events:intake.events})},
         mode==="check"?"check the original project creation":"create this original project",
@@ -3645,14 +4375,23 @@ async syncDocumentJobs(){
       const patch:Partial<EventWriteAcknowledgment>={outcome:complete?"observed":"unconfirmed",
         committed:receipt?.committed??[],rejectedIndices:receipt?.rejectedIndices??[],observedHead:receipt?.head??null,
         privateUnavailable:!sourceCurrent()};
+      knownReceipt=patch;
       if(!current())return finish(patch,[],"withheld");
       if(!complete||!receipt)return finish(patch);
       this.#mergeConfirmed(receipt.appended,receipt.head,true);this.#reflectDocumentInRoute();
       return finish(patch,receipt.appended,"published");
-    }catch{
-      return finish({outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!sourceCurrent()},[],sourceCurrent()?"none":"withheld");
+    }catch(error){
+      failureHistory.push(error);
+      let result:EventWriteResult|undefined;
+      try{
+        if(observation.pending||!observation.delivered)result=finish(knownReceipt??{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!sourceCurrent()},[],sourceCurrent()?"none":"withheld");
+      }catch(cleanup){failureHistory.push(cleanup);throw combineNativeImageRetirementFailures(failureHistory)??cleanup;}
+      if(NativeImageRetirementError.is(error))throw error;
+      return result??this.#withheldEventWrite(observation);
     }finally{
-      if(this.sourceOwnershipScopeActive(source)&&this.busy.get()===busy){this.busy.set("");this.notify();}
+      try{if(began&&this.sourceOwnershipScopeActive(source)&&this.busy.get()===busy){this.busy.set("");this.notify();}}
+      // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+      catch(cleanup){throw combineNativeImageRetirementFailures([...failureHistory,cleanup])??cleanup;}
     }
   }
 
@@ -3675,9 +4414,10 @@ async syncDocumentJobs(){
 
   async #appendBatchNow(events:EventInput[],options:AppendOptions,observation:EventWriteObservation):Promise<EventWriteResult>{
     const source=observation.source,active=()=>this.sourceOwnershipActive(source)&&!observation.paused&&(!options.current||options.current());
-    if(!active())return this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld",options);
-    if(!options.background)this.busy.set(events[0]?.type??"append");this.appendFailure.set("");this.notify();
+    let began=false,knownReceipt:Partial<EventWriteAcknowledgment>|null=null;const failureHistory:unknown[]=[];
     try{
+      if(!active())return this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld",options);
+      began=true;if(!options.background)this.busy.set(events[0]?.type??"append");this.appendFailure.set("");this.notify();
       let response:Response|undefined,body:unknown;
       const attempts=options.expected===undefined?Math.max(1,Math.min(6,options.rebaseAttempts??2)):1;
       for(let attempt=0;attempt<attempts;attempt+=1){
@@ -3710,8 +4450,10 @@ async syncDocumentJobs(){
       }
       const receipt=response?.ok?this.#validateEventWriteBody(body,events,observation):null;
       if(!receipt)throw new Error("The original change returned no verifiable acknowledgment. Its outcome is unconfirmed; it has not been resubmitted.");
-      const patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,
-        observedHead:receipt.head,outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!active()};
+      knownReceipt={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,
+        observedHead:receipt.head,outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!this.sourceOwnershipActive(source)||observation.paused};
+      const patch:Partial<EventWriteAcknowledgment>={...knownReceipt,privateUnavailable:!active()};
+      knownReceipt=patch;
       if(!active())return this.#finishEventWrite(observation,patch,[],"withheld",options);
       if(!receipt.complete){
         this.appendFailure.set("");
@@ -3732,10 +4474,24 @@ async syncDocumentJobs(){
       }
       return this.#finishEventWrite(observation,patch,receipt.appended,"published",options);
     }catch(error){
-      const unavailable=!active(),message=error instanceof Error?error.message:"The original change is unconfirmed.";
-      if(!unavailable){this.appendFailure.set(message);if(!options.silent)this.toast(message);}
-      return this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:unavailable},[],unavailable?"withheld":"none",options);
-    }finally{if(this.sourceOwnershipScopeActive(source)){if(!options.background)this.busy.set("");this.notify();}}
+      const failures=failureHistory;failures.push(error);let secondary:{error:unknown}|null=null;
+      let unavailable=true,result:EventWriteResult|undefined;
+      try{unavailable=!active();}catch(cleanup){failures.push(cleanup);secondary={error:cleanup};}
+      try{if(!unavailable&&!NativeImageRetirementError.is(error)){const message=error instanceof Error?error.message:"The original change is unconfirmed.";this.appendFailure.set(message);if(!options.silent)this.toast(message);}}
+      catch(cleanup){failures.push(cleanup);secondary={error:cleanup};}
+      // A retirement callback cannot leave the admitted receipt pending, or
+      // erase a server acknowledgment that was validated before publication.
+      try{if(observation.pending||!observation.delivered)result=this.#finishEventWrite(observation,knownReceipt??{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:unavailable},[],unavailable?"withheld":"none",options);}
+      catch(cleanup){failures.push(cleanup);secondary={error:cleanup};}
+      const combined=combineNativeImageRetirementFailures(failures);
+      if(combined)throw combined;
+      if(secondary)throw secondary.error;
+      return result??this.#withheldEventWrite(observation);
+    }finally{
+      try{if(began&&this.sourceOwnershipScopeActive(source)){if(!options.background)this.busy.set("");this.notify();}}
+      // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+      catch(cleanup){throw combineNativeImageRetirementFailures([...failureHistory,cleanup])??cleanup;}
+    }
   }
 
   async copyLibraryBlockSet(rootBlockId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="library"){
@@ -4125,14 +4881,31 @@ async syncDocumentJobs(){
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const appended=body.appended??[];this.events.set([...this.events.get(), ...appended].sort((left,right)=>left.sequence-right.sequence)); this.head.set(Math.max(this.head.get(),body.head??0)); this.#publishAppended(appended);this.notify();
-    } catch { /* Engagement instrumentation never blocks the creative action. */ }
+    } catch(error) {if(NativeImageRetirementError.is(error))throw error;/* Engagement instrumentation never blocks the creative action. */ }
+  }
+
+  async #nativeImagePublisherWork<T>(work:()=>Promise<T>,settle:()=>void,ordinaryFailure?:(error:unknown)=>T):Promise<T>{
+    const failures:unknown[]=[];
+    try{
+      try{return await work();}
+      catch(error){
+        failures.push(error);
+        if(NativeImageRetirementError.is(error)||!ordinaryFailure)throw error;
+        try{return ordinaryFailure(error);}
+        catch(recovery){failures.push(recovery);throw combineNativeImageRetirementFailures(failures)??recovery;}
+      }
+    }finally{
+      try{settle();}
+      // eslint-disable-next-line no-unsafe-finally -- Cleanup rejection preserves combined Image failures and existing legacy cleanup precedence.
+      catch(cleanup){failures.push(cleanup);throw combineNativeImageRetirementFailures(failures)??cleanup;}
+    }
   }
 
   async propose(prompt: string, events: EventInput[], exemplarRefs: Array<Record<string, unknown>> = []) {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("proposal"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("proposal"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "propose", prompt, events, exemplarRefs, expectedSequence: this.head.get(), clientId: "web:lit" }) },"ask the assistant to propose document changes");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error("Proposal could not be recorded");
@@ -4140,7 +4913,433 @@ async syncDocumentJobs(){
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head); this.toast("Proposal recorded — review it before applying.");
       return body.appended[0];
-    } finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}});
+  }
+
+  #nativeImageJob(value:unknown,setup:NativeImageSetup,reused:unknown){
+    if(typeof reused!=="boolean"||!value||typeof value!=="object"||Array.isArray(value))return null;
+    if(Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)return null;
+    // Internal stripped job references have optional undefined fields. Omit only
+    // those data values; never execute/strip an accessor to make a job admissible.
+    const input:Record<string,unknown>={};
+    for(const key of Reflect.ownKeys(value)){
+      const field=Object.getOwnPropertyDescriptor(value,key);
+      if(typeof key!=="string"||!field||!("value"in field)||!field.enumerable)return null;
+      if(field.value!==undefined)Object.defineProperty(input,key,{value:field.value,enumerable:true});
+    }
+    const captured=captureNativeImageRead({status:"data",data:{inspection:{job:input},events:[],outputs:[]}},()=>true);
+    if(captured.status!=="data")return null;
+    const job=(captured.data.inspection as {job:DocumentJob}).job;
+    if(!["queued","running","committing","completed","partial","failed","canceled"].includes(job.status))return null;
+    const acknowledgment=captureNativeImageSubmission({disposition:"acknowledged",handle:job,reused},setup);
+    return acknowledgment.disposition==="acknowledged"?{job,acknowledgment}:null;
+  }
+
+  #advanceNativeImageFence(){
+    // This fence also owns independent submit/inspection scopes. It advances
+    // with no UI leases; old operation finalizers cannot touch the new cohort.
+    this.#nativeImageEpoch=Object.freeze({});this.#nativeImageCohort=null;
+    const retired=[...this.#nativeImageLifetimes];this.#nativeImageLifetimes.clear();
+    for(const lifetime of retired){lifetime.retired=true;lifetime.release();}
+    this.#nativeImageRetirements.push(...retired);
+  }
+
+  #retireNativeImageLifetime(lifetime:NativeImageLifetimeRecord){
+    if(lifetime.retired)return;
+    lifetime.retired=true;this.#nativeImageLifetimes.delete(lifetime);lifetime.release();
+    this.#nativeImageRetirements.push(lifetime);
+  }
+
+  #drainNativeImageRetirements(){
+    const failures:unknown[]=[];
+    if(this.#nativeImageNotificationHolds!==0)return failures;
+    while(this.#nativeImageRetirements.length){
+      const retired=this.#nativeImageRetirements.splice(0);
+      // Detach the complete batch before calling outside code. A new opening
+      // created by a callback is not part of the retired opening's cleanup.
+      const batches=retired.map(lifetime=>{
+        const listeners=[...lifetime.listeners];lifetime.listeners.clear();return listeners;
+      });
+      for(const listeners of batches)for(const listener of listeners){
+        try{listener();}catch(error){failures.push(error);}
+      }
+    }
+    return failures;
+  }
+
+  #finishNativeImageWork<T>(value:T,primary:{error:unknown}|null,failures:unknown[]):T{
+    const originals=(error:unknown):unknown[]=>NativeImageRetirementError.is(error)?[...NativeImageRetirementError.originals(error)]:[error];
+    if(failures.length)throw new NativeImageRetirementError([
+      ...(primary?originals(primary.error):[]),...failures.flatMap(originals),
+    ]);
+    if(primary)throw primary.error;
+    return value;
+  }
+
+  #nativeImageMutation<T>(work:()=>T,options:{fence?:boolean;holdAdmissions?:boolean}={}):T{
+    this.#nativeImageNotificationHolds+=1;
+    if(options.holdAdmissions)this.#nativeImageAdmissionHolds+=1;
+    if(options.fence)this.#advanceNativeImageFence();
+    let value!:T,primary:{error:unknown}|null=null;
+    try{value=work();}catch(error){primary={error};}
+    finally{
+      this.#reconcileNativeImageScopes();this.#nativeImageNotificationHolds-=1;
+    }
+    let failures:unknown[]=[];
+    try{failures=this.#drainNativeImageRetirements();}
+    finally{if(options.holdAdmissions)this.#nativeImageAdmissionHolds-=1;}
+    return this.#finishNativeImageWork(value,primary,failures);
+  }
+
+  async #nativeImageHeldMutation<T>(work:()=>Promise<T>,workFailureHistory?:readonly unknown[]):Promise<T>{
+    // Hold new Image admission through an existing cross-await source change.
+    // The epoch changes even without UI leases or registered operation users.
+    this.#nativeImageAdmissionHolds+=1;this.#advanceNativeImageFence();
+    const failures=this.#drainNativeImageRetirements();
+    let value!:T,primary:{error:unknown}|null=null;
+    try{value=await work();}catch(error){primary={error};}
+    finally{this.#nativeImageAdmissionHolds-=1;}
+    failures.push(...this.#drainNativeImageRetirements());
+    // Nested ordinary cleanup keeps its previous winning error unless a
+    // retirement failure makes the complete original work history observable.
+    if(failures.length&&workFailureHistory?.length)return this.#finishNativeImageWork(value,null,[...workFailureHistory,...failures]);
+    return this.#finishNativeImageWork(value,primary,failures);
+  }
+
+  #reconcileNativeImageScopes(){
+    const cohort=this.#nativeImageCohort;
+    if(!cohort)return;
+    let current=false;
+    try{current=cohort.epoch===this.#nativeImageEpoch&&cohort.current();}catch{/* A failed semantic read retires this epoch. */}
+    if(!current)this.#advanceNativeImageFence();
+  }
+
+  #nativeImageCheckpoint(){
+    this.#reconcileNativeImageScopes();
+    this.#finishNativeImageWork(undefined,null,this.#drainNativeImageRetirements());
+  }
+
+  #nativeImageCapture<T>(capture:(current:()=>boolean)=>T,current:()=>boolean):T{
+    // I1 correctly treats arbitrary throwing current predicates as stale. Keep
+    // that contract, but do not lose our already-completed cleanup failures.
+    const failures:NativeImageRetirementError[]=[];
+    const guarded=()=>{
+      try{return current();}
+      catch(error){if(NativeImageRetirementError.is(error))failures.push(error);throw error;}
+    };
+    let value!:T,primary:{error:unknown}|null=null;
+    try{value=capture(guarded);}catch(error){primary={error};}
+    if(primary&&failures.some(error=>error===primary!.error))primary=null;
+    return this.#finishNativeImageWork(value,primary,failures);
+  }
+
+  captureNativeImageLifetime(input:NativeImageSetup):NativeImageLifetime|null{
+    const setup=captureNativeImageSetup(input);
+    if(!setup||this.#nativeImageAdmissionHolds!==0)return null;
+    const scope=this.#nativeImageScope(setup,()=>true);
+    // Capture the candidate before draining an older retirement. A callback
+    // cannot silently give this same capture a different route or source.
+    try{this.#nativeImageCheckpoint();}
+    catch(error){scope.dispose();throw error;}
+    if(!scope.current()){scope.dispose();this.#nativeImageCheckpoint();return null;}
+    const lifetime:NativeImageLifetimeRecord={retired:false,listeners:new Set(),release:scope.dispose};
+    this.#nativeImageLifetimes.add(lifetime);
+    const current=()=>{
+      this.#reconcileNativeImageScopes();
+      let value=!lifetime.retired&&scope.current();
+      if(!value)this.#retireNativeImageLifetime(lifetime);
+      const failures=this.#drainNativeImageRetirements();
+      // Retirement listeners can reenter Store before this boolean is returned.
+      this.#reconcileNativeImageScopes();
+      value=value&&!lifetime.retired&&scope.current();
+      if(!value)this.#retireNativeImageLifetime(lifetime);
+      failures.push(...this.#drainNativeImageRetirements());
+      return this.#finishNativeImageWork(value&&!lifetime.retired,null,failures);
+    };
+    const dispose=()=>{
+      this.#retireNativeImageLifetime(lifetime);
+      this.#finishNativeImageWork(undefined,null,this.#drainNativeImageRetirements());
+    };
+    const subscribe=(onRetire:()=>void)=>{
+      if(typeof onRetire!=="function")throw new TypeError("native_image_lifetime_subscriber_required");
+      if(lifetime.retired){
+        const failures:unknown[]=[];try{onRetire();}catch(error){failures.push(error);}
+        this.#finishNativeImageWork(undefined,null,failures);return()=>{};
+      }
+      lifetime.listeners.add(onRetire);
+      try{current();}catch(error){lifetime.listeners.delete(onRetire);throw error;}
+      return()=>{lifetime.listeners.delete(onRetire);};
+    };
+    return Object.freeze({current,subscribe,dispose});
+  }
+
+  #nativeImageSemanticScope(setup:NativeImageSetup){
+    const epoch=this.#nativeImageEpoch;
+    const source=this.captureSourceOwnership(),authorization=this.captureAuthorizationScope(),route=this.route.get();
+    const owner=this.session.get()?.user.userId;
+    const owned=()=>{
+      if(this.#nativeImageAdmissionHolds!==0||this.#nativeImageEpoch!==epoch)return false;
+      const session=this.session.get();
+      if(!session||!owner||owner==="anonymous"||session.user.userId!==owner||session.projectContext||session.impersonation
+        ||!["creator","admin"].includes(session.user.role)||session.policy.accepted!==true||!this.#canRequestProjectOutputs()
+        ||this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration||!this.authorizationScopeActive(authorization)
+        ||!this.sourceOwnershipActive(source)||this.route.get()!==route||this.documentRouteState(route)!=="ready"
+        ||this.#cachedHistoryRevalidation||this.asOf.get()!==Number.POSITIVE_INFINITY||this.projection.get().documentId!==setup.documentId)return false;
+      const events=this.events.get();
+      if(!events.every(event=>event.streamId===`creative:${owner}`))return false;
+      const confirmed=foldEvents(events,Number.POSITIVE_INFINITY,setup.documentId);
+      if(!confirmed.documents.some(document=>document.id===setup.documentId&&!document.removed)
+        ||confirmed.documentId!==setup.documentId||confirmed.projectId!==this.projection.get().projectId)return false;
+      // Saved input identity, not the changing job/event head. Normal unpinned
+      // completion hydration leaves this revision unchanged; optimistic inputs do not.
+      return this.#generationContext(setup.documentId,"","headshot",confirmed).documentRevision===setup.documentRevision
+        &&this.#generationContext(setup.documentId).documentRevision===setup.documentRevision;
+    };
+    return {epoch,source,authorization,owned};
+  }
+
+  #nativeImageScope(setup:NativeImageSetup,openingCurrent:()=>boolean){
+    this.#reconcileNativeImageScopes();
+    const {epoch,source,authorization,owned}=this.#nativeImageSemanticScope(setup);
+    let retired=false,released=false,cohort:NativeImageSemanticCohort|null=null;
+    try{
+      if(owned()){
+        cohort=this.#nativeImageCohort;
+        if(!cohort){cohort={epoch,users:0,current:owned};this.#nativeImageCohort=cohort;}
+        // Every member passed the original personal source/route/Document and
+        // both revision checks in this same epoch. The witness owns no caller
+        // predicate or pending operation; it is not a cached revision verdict.
+        cohort.users+=1;
+      }else retired=true;
+    }catch{retired=true;}
+    const dispose=()=>{
+      if(released)return;released=true;retired=true;
+      if(cohort&&this.#nativeImageCohort===cohort&&this.#nativeImageEpoch===epoch){
+        cohort.users-=1;
+        if(cohort.users===0)this.#nativeImageCohort=null;
+      }
+      cohort=null;
+    };
+    return {source,authorization,current:()=>{
+      if(retired)return false;
+      try{if(!owned()||openingCurrent()!==true||!owned())retired=true;}
+      catch(error){retired=true;if(NativeImageRetirementError.is(error)){dispose();throw error;}}
+      return!retired;
+    },dispose};
+  }
+
+  /** One saved-personal Image request, not a new grant, Document, or retry policy. */
+  async submitNativeImage(input:NativeImageSetup,controls:{current:()=>boolean;signal?:AbortSignal;onAcknowledgment?:(acknowledgment:Extract<NativeImageSubmission,{disposition:"acknowledged"}>)=>void}):Promise<NativeImageSubmission>{
+    const unavailable=()=>Object.freeze({disposition:"not-dispatched",handle:null,reason:"unavailable"} as const);
+    const setup=captureNativeImageSetup(input);
+    if(!setup)return unavailable();
+    const scope=this.#nativeImageScope(setup,controls.current);
+    try{
+      this.#nativeImageCheckpoint();
+      let invoked=false,received:Extract<NativeImageSubmission,{disposition:"acknowledged"}>|null=null;
+      try{
+        if(!scope.current())return unavailable();
+        const confirmed=foldEvents(this.events.get(),Number.POSITIVE_INFINITY,setup.documentId);
+        const context=this.#generationContext(setup.documentId,"","headshot",confirmed);
+        if(!scope.current())return unavailable();
+        const result=await this.#startDocumentJob("generate",{...context,requestKey:setup.requestKey,promptTechnique:setup.promptTechnique,
+          productionMode:"manual",sourcePreviewId:null,preflightAcknowledged:this.generationRiskAcknowledged(setup.requestKey)},
+          setup.sourceSurface,setup.documentId,{nativeImage:setup,current:scope.current,onInvoke:()=>{invoked=true;},
+            onAcknowledgment:acknowledgment=>{received=acknowledgment;controls.onAcknowledgment?.(acknowledgment);},
+          });
+        // Same-authorization late ACK is historical identity only. The shared start
+        // path strips/pauses its job on retirement; it cannot publish private result.
+        if(!this.authorizationScopeActive(scope.authorization))throw new Error("native_image_authorization_changed");
+        const exact=this.#nativeImageJob(result.job,setup,result.reused);
+        if(exact){
+          // Capture the immutable original ACK before any reentrant recipient.
+          // A later run failure rejects physical settlement, not this identity.
+          if(!received||JSON.stringify(received)!==JSON.stringify(exact.acknowledgment))throw new Error("native_image_acknowledgment_changed");
+          if(!result.reused&&scope.current()&&exact.job.status==="queued")
+            await this.#runNativeImageInitial(exact.job,exact.acknowledgment.handle,scope,controls.signal);
+          return exact.acknowledgment;
+        }
+      }catch(error){
+        if(received||NativeImageRetirementError.is(error))throw error;
+        try{
+          if(!invoked&&scope.current()&&error instanceof GenerationBudgetAdmissionError)
+            return Object.freeze({disposition:"not-dispatched",handle:null,reason:error.reason});
+        }catch(cleanup){const combined=combineNativeImageRetirementFailures([error,cleanup]);if(combined)throw combined;throw cleanup;}
+      }
+      return invoked?Object.freeze({disposition:"dispatched-unconfirmed",handle:null}):unavailable();
+    }finally{scope.dispose();}
+  }
+
+  #nativeImageQueueTurn(original:DocumentJob,handle:NativeImageHandle,current:()=>boolean,deadline:number):"ready"|"waiting"|"retired"{
+    if(!current())return "retired";
+    if(Date.now()>=deadline)throw new Error("native_image_initial_queue_wait_expired");
+    const jobs=this.documentJobs.get(),rows=jobs.filter(job=>job.jobId===handle.jobId);
+    if(rows.length>1)throw new Error("native_image_initial_queue_identity_mismatch");
+    if(!rows.length)return "waiting";
+    const row=rows[0]!,captured=captureNativeImageHandle(row);
+    if(!captured||JSON.stringify(captured)!==JSON.stringify(handle)||row.requestedAt!==original.requestedAt)
+      throw new Error("native_image_initial_queue_identity_mismatch");
+    if(!current())return "retired";
+    if(row.status!=="queued")return "retired";
+    if(row.attemptCount!==0||row.startedAt!==null||!Number.isFinite(Date.parse(original.requestedAt)))
+      throw new Error("native_image_initial_queue_not_unused");
+    // Personal Document lists include every active personal job. Saturation or
+    // omission cannot prove a turn; only this still-live Create retains intent.
+    // Queued Slides are explicitly exempt in the existing server queue query.
+    const blocked=jobs.length>=120||jobs.some(job=>job.jobId!==handle.jobId&&job.kind!=="prompt_fan"
+      &&(job.status==="running"||job.status==="committing"||job.status==="queued"
+        &&!(job.kind==="render_document"&&job.result?.artifactKind==="slides")
+        &&(job.requestedAt<original.requestedAt||job.requestedAt===original.requestedAt&&job.jobId<handle.jobId)));
+    if(!current())return "retired";
+    return blocked||this.documentJobs.get()!==jobs?"waiting":"ready";
+  }
+
+  async #waitNativeImageQueueTurn(original:DocumentJob,handle:NativeImageHandle,scope:{current:()=>boolean},deadline:number,signal?:AbortSignal){
+    const current=()=>!signal?.aborted&&scope.current();
+    const initial=this.#nativeImageQueueTurn(original,handle,current,deadline);
+    if(initial!=="waiting")return initial==="ready";
+    // This local subscription cannot be recreated by a list/visibility event.
+    // It expires instead of retaining a provider-start intent indefinitely.
+    return await new Promise<boolean>((resolve,reject)=>{
+      // eslint-disable-next-line prefer-const -- Forward cleanup handles stay unset until their subscription and timer registrations complete.
+      let done=false,timer:number|undefined,release:(()=>void)|undefined;
+      const finish=(ready:boolean,failure?:{error:unknown})=>{
+        if(done)return;done=true;
+        release?.();if(timer!==undefined)window.clearTimeout(timer);
+        signal?.removeEventListener("abort",check);
+        if(failure)reject(failure.error);else resolve(ready);
+      };
+      const check=()=>{
+        if(done)return;
+        try{const next=this.#nativeImageQueueTurn(original,handle,current,deadline);if(next!=="waiting")finish(next==="ready");}
+        catch(error){finish(false,{error});}
+      };
+      release=this.subscribe(check);signal?.addEventListener("abort",check,{once:true});
+      timer=window.setTimeout(()=>{
+        check();if(!done)finish(false,{error:new Error("native_image_initial_queue_wait_expired")});
+      },Math.max(0,deadline-Date.now()));
+      check();
+      try{if(!done)this.#scheduleJobPoll(800);}catch(error){finish(false,{error});}
+    });
+  }
+
+  async #runNativeImageInitial(original:DocumentJob,handle:NativeImageHandle,scope:{authorization:CapturedAuthorizationScope|null;current:()=>boolean},signal?:AbortSignal){
+    // Only this fresh acknowledged invocation may start once. Passive reads,
+    // visibility changes and a replayed/reused ACK never enter this method.
+    const deadline=Date.now()+300_000;
+    if(!await this.#waitNativeImageQueueTurn(original,handle,scope,deadline,signal))return;
+    const current=()=>!signal?.aborted&&this.#nativeImageQueueTurn(original,handle,scope.current,deadline)==="ready";
+    if(!current())return;
+    let invoked=false;
+    const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(handle.jobId)}/run`,
+      {method:"POST"},"start the acknowledged Image request",{
+        current:()=>invoked||current(),onInvoke:()=>{invoked=true;},
+      });
+    // The caller's signal ends only the pre-run wait. Once invoked, the exact
+    // physical response stays observed; neither retirement nor abort retries it.
+    const body=await this.#nativeImageInspectionBody(response,()=>this.authorizationScopeActive(scope.authorization));
+    if(!response.ok||!body||typeof body!=="object")throw new Error("native_image_initial_run_unconfirmed");
+    const row=Object.getOwnPropertyDescriptor(body,"job");
+    const returned=row&&"value"in row?captureNativeImageHandle(row.value):null;
+    if(!returned||JSON.stringify(returned)!==JSON.stringify(handle))throw new Error("native_image_initial_run_identity_mismatch");
+    const status=Object.getOwnPropertyDescriptor(row!.value,"status");
+    if(!status||!("value"in status)||!["running","committing","completed","partial","failed","canceled"].includes(status.value))
+      throw new Error("native_image_initial_run_not_started");
+    // Immediate completion must be available to the first explicit Check.
+    // Read-only publication excludes action dispatch, focal maintenance and ACK.
+    if(status.value==="completed"&&scope.current())await this.refreshEvents({readOnly:true,current:scope.current});
+    if(scope.current())this.#scheduleJobPoll(350);
+  }
+
+  async #nativeImageInspectionBody(response:Response,current:()=>boolean):Promise<unknown>{
+    if(!response.body)return null;
+    const reader=response.body.getReader(),chunks:Uint8Array[]=[];
+    const failures:unknown[]=[];let length=0,finished=false,discard=false;
+    try{
+      while(true){
+        if(!response.ok||!current()){discard=true;break;}
+        const next=await reader.read();
+        if(next.done){finished=true;break;}
+        if(!(next.value instanceof Uint8Array))throw new Error("native_image_inspection_chunk");
+        length+=next.value.byteLength;
+        // Consumer byte policy, not a native allocation or wall-clock guarantee.
+        if(length>1_048_576||!current()){discard=true;break;}
+        if(next.value.byteLength)chunks.push(next.value.slice());
+      }
+    }catch(error){failures.push(error);}
+    let cancellation:Promise<{failed:false}|{failed:true;error:unknown}>|null=null;
+    if(!finished){
+      try{cancellation=reader.cancel().then(()=>({failed:false as const}),error=>({failed:true as const,error}));}
+      catch(error){failures.push(error);}
+    }
+    let releaseFailure:{error:unknown}|null=null;
+    try{reader.releaseLock();}catch(error){releaseFailure={error};}
+    // Available lock cleanup is attempted independently before waiting for an
+    // uncooperative cancellation. Both original cleanup outcomes are retained.
+    if(cancellation){const canceled=await cancellation;if(canceled.failed)failures.push(canceled.error);}
+    if(releaseFailure)failures.push(releaseFailure.error);
+    const retirementFailure=combineNativeImageRetirementFailures(failures);
+    if(retirementFailure)throw retirementFailure;
+    if(failures.length===1)throw failures[0];
+    if(failures.length>1)throw new AggregateError(failures,"Image inspection read/cleanup failed",{cause:failures[0]});
+    if(discard||!current())return null;
+    const bytes=new Uint8Array(length);let offset=0;
+    for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+    try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));}catch{return null;}
+  }
+
+  /** Passive personal job inspection plus already-confirmed Store evidence only. */
+  async inspectNativeImage(input:NativeImageHandle,controls:{current:()=>boolean;signal:AbortSignal}):Promise<NativeImageRead>{
+    const unavailable=()=>Object.freeze({status:"unavailable"} as const),superseded=()=>Object.freeze({status:"superseded"} as const);
+    const handle=captureNativeImageHandle(input),path=nativeImageInspectionPath(handle);
+    if(!handle||!path)return unavailable();
+    const {jobId,requestedSequence,promptFanId,parentJobId,fanKind,members,...setup}=handle;
+    const scope=this.#nativeImageScope(setup,controls.current);
+    try{
+    this.#nativeImageCheckpoint();
+    const current=()=>!controls.signal.aborted&&scope.current();
+    if(!current())return superseded();
+    const response=await fetch(path,{method:"GET",credentials:"same-origin",cache:"no-store",signal:controls.signal});
+    const body=await this.#nativeImageInspectionBody(response,current);
+    if(!current())return superseded();
+    if(!response.ok)return unavailable();
+    // Workspace retains the Image receipt/alias/output-state evidence. It is
+    // not a census of excluded telemetry or proof of global stream uniqueness.
+    if(eventProfileRank(this.#historyProfile)<eventProfileRank("workspace"))return unavailable();
+    const captured=this.#nativeImageCapture(guard=>captureNativeImageRead({status:"data",data:{inspection:body,events:[],outputs:[]}},guard),current);
+    if(captured.status!=="data")return captured;
+    const inspection=captured.data.inspection as {job:DocumentJob},job=inspection.job;
+    const preliminary=this.#nativeImageCapture(guard=>joinNativeImageCompletion(handle,captured.data,guard),current);
+    if(preliminary.status==="pending"||preliminary.status==="terminal")return captured;
+    if(job.status!=="completed")return unavailable();
+    const references=job.result?.appendedEventIds;
+    if(!Array.isArray(references)||references.length===0||references.length>NATIVE_IMAGE_LIMITS.candidates
+      ||!references.every(id=>typeof id==="string")||new Set(references).size!==references.length)return unavailable();
+    const confirmed=this.events.get(),referenceIds=new Set(references);
+    const snapshotCurrent=()=>this.events.get()===confirmed&&current()&&this.events.get()===confirmed;
+    const selected=confirmed.filter(event=>referenceIds.has(event.eventId));
+    const generations=new Set(selected.filter(event=>event.type==="GenerationCompleted").map(event=>event.payload.generation_id));
+    const objects=new Set(selected.filter(event=>event.type==="GenerationCompleted").flatMap(event=>Array.isArray(event.payload.object_ids)?event.payload.object_ids:[]));
+    const produces=(event:CreativeEvent)=>event.type==="GenerationCompleted"||event.type==="IdeationPreviewCompleted";
+    const outputIds=(event:CreativeEvent)=>event.type==="GenerationCompleted"?(Array.isArray(event.payload.object_ids)?event.payload.object_ids:[]):[event.payload.object_id];
+    const related=confirmed.filter(event=>referenceIds.has(event.eventId)||produces(event)
+      &&(generations.has(event.payload.generation_id)||outputIds(event).some(id=>objects.has(id))));
+    // Preserve aliases outside appendedEventIds and collisions a Map-based fold
+    // could otherwise hide. Never deduplicate records or truncate to the cap.
+    const relatedIds=new Set(related.map(event=>event.eventId)),sequences=new Set(related.map(event=>event.sequence));
+    const events=confirmed.filter(event=>relatedIds.has(event.eventId)||sequences.has(event.sequence));
+    if(events.length>NATIVE_IMAGE_LIMITS.candidates)return unavailable();
+    const rawOutputIds=events.filter(produces).flatMap(outputIds);
+    if(new Set(rawOutputIds).size!==rawOutputIds.length)return unavailable();
+    const outputs=foldEvents(confirmed,Number.POSITIVE_INFINITY,handle.documentId).libraryOutputs
+      .filter(output=>generations.has(output.generationId)||objects.has(output.id));
+    if(outputs.length>NATIVE_IMAGE_LIMITS.candidates)return unavailable();
+    const result=this.#nativeImageCapture(guard=>captureNativeImageRead({status:"data",data:{inspection,events,outputs}},guard),snapshotCurrent);
+    if(result.status!=="data")return result;
+    const joined=this.#nativeImageCapture(guard=>joinNativeImageCompletion(handle,result.data,guard),snapshotCurrent);
+    if(joined.status==="superseded")return superseded();
+    return joined.status==="matched"?result:unavailable();
+    }finally{scope.dispose();}
   }
 
   async preview(sourceSurface?: string,promptTechnique?:PromptTechnique,productionMode:ProductionMode="manual") {
@@ -4597,94 +5796,170 @@ async syncDocumentJobs(){
       if(!nativeStory)this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){if(nativeStory)nativeStory.failed(error instanceof GenerationBudgetAdmissionError?error.reason:"unavailable");else this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
-  async openProject(projectId: string, destination = "/", options: WorkspaceNavigationOptions = {}) {
-    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
-    if (!workspaceNavigationCurrent(options)) return false;
-    const projection = this.projection.get(), authorization = this.captureAuthorizationScope();
-    const target = projection.projects.find((project) => project.id === projectId);
-    if (!projectId || !target) { this.toast("That project is no longer available."); return false; }
-    const selected = foldEvents(this.eventView.get(), this.asOf.get(), "", projectId);
-    const requestedDocumentId = documentIdFromRoute(destination);
-    if (requestedDocumentId !== null && (!requestedDocumentId || !selected.documents.some((document) => document.id === requestedDocumentId))) {
-      this.toast("That document is no longer available."); return false;
-    }
-    const documentId = requestedDocumentId ?? (projectId === projection.projectId ? projection.documentId : selected.documentId);
-    const documentTitle = selected.documents.find((document) => document.id === documentId)?.title ?? "";
-    const routedDestination = isDocumentViewRoute(destination) && documentId
-      ? withDocumentInRoute(destination, documentId, documentTitle) : withProjectTaskDocumentInRoute(destination, documentId);
-    const routeOptions = { ...options, documentId }, ownsHandoff = Boolean(options.onOriginHandoff);
-    if(routeOptions.onOriginHandoff){
-      if(!workspaceNavigationCurrent(routeOptions)||!routeOptions.onOriginHandoff())return false;
-      // This local copy carries the same current/focus through optimistic
-      // publication and setRoute, without asking the departed owner twice.
-      routeOptions.onOriginHandoff=undefined;
-    }
-    if (projectId === projection.projectId) {
-      // As in openDocument, a guarded caller keeps its original lease until
-      // the existing cross-workspace session/route transition has finished.
-      if (ownsHandoff && applicationIdFromRoute(this.route.get()) !== applicationIdFromRoute(routedDestination))
-        return await this.transitionWorkspace(routedDestination, routeOptions);
-      this.setRoute(routedDestination, routeOptions); return true;
-    }
-    const previousRoute = this.#projectTaskRoute(this.route.get()), clientEventId = crypto.randomUUID(), now = new Date().toISOString();
-    const canvasDestination = destination === "/canvas" || destination.startsWith("/canvas/");
-    const input: EventInput = { type: "ProjectOpened", payload: { project_id: projectId, previous_project_id: projection.projectId, source_surface: canvasDestination ? "canvas-projects" : "projects", client_event_id: clientEventId } };
-    const optimistic: CreativeEvent = { eventId: `optimistic:${clientEventId}`, streamId: "optimistic:project", sequence: this.head.get() + 1, occurredAt: now, recordedAt: now, actor: "user", clientId: "web:project-optimistic", correlationId: clientEventId, causationId: null, compensatesEventId: null, schemaVersion: 1, type: input.type, payload: input.payload };
-    this.optimisticEvents.set([...this.optimisticEvents.get(), optimistic]);
-    this.patchUi({ focusBlockId: "", focusCollectionId: "", selectedOutputId: "", compareOpen: false });
-    const persisted = this.appendWithReceipt(input, { rebaseAttempts: 6, silent: true, background: true });
-    const committed = persisted.then((result) => result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId), () => false);
-    this.#navigationCommit = committed;
-    // The original event/rollback bookkeeping below settles first. A guarded
-    // cross-workspace success then joins this same transition and focus lease.
-    const opening = ownsHandoff && applicationIdFromRoute(this.route.get()) !== applicationIdFromRoute(routedDestination)
-      ? this.transitionWorkspace(routedDestination, routeOptions) : null;
-    if (!opening) this.setRoute(routedDestination, routeOptions);
-    const revision = this.#workspaceTransition, route = this.route.get();
-    const current = () => this.sourceOwnershipActive(sourceOwner) && this.authorizationScopeActive(authorization) && this.#workspaceTransition === revision && this.route.get() === route && workspaceNavigationCurrent(options);
-    const result = await persisted;
-    if (this.#navigationCommit === committed) this.#navigationCommit = null;
-    this.optimisticEvents.set(this.optimisticEvents.get().filter((event) => event.eventId !== optimistic.eventId));
-    if(result.publication!=="published"){
-      const observed=result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId);
-      if(!observed&&(result.acknowledgment.outcome==="unconfirmed"||result.acknowledgment.outcome==="not-attempted")&&current()){
-        // Only the local view returns. The original receipt and history remain unchanged.
-        this.setRoute(previousRoute,{replace:true});
-        if(result.acknowledgment.outcome==="unconfirmed")this.toast(this.#systemNotice("The original change is unconfirmed. It has not been resubmitted."));
-      }
-      return observed && (opening ? await opening : true);
-    }
-    if (!result.appended.length) {
-      if (current()) { this.setRoute(previousRoute, { replace: true }); this.toast("That project could not be opened. Your current workspace was restored."); }
-      return false;
-    }
-    const arrived = opening ? await opening : true;
-    if (arrived && current()) { this.notify(); this.toast(this.#systemNotice("{name} opened in {workspace}.", { name: target.name, workspace: this.#systemNotice(canvasDestination ? "Canvas" : "Creator Workspace") })); }
-    return arrived;
+  #observeWorkspaceNavigation<T>(pending:Promise<T>):Promise<PromiseSettledResult<T>>{
+    return pending.then(value=>({status:"fulfilled" as const,value}),reason=>({status:"rejected" as const,reason}));
+  }
+  #observeWorkspaceOpening(pending:boolean|Promise<boolean>):Promise<PromiseSettledResult<boolean>>{
+    return typeof pending==="boolean"?Promise.resolve({status:"fulfilled" as const,value:pending}):this.#observeWorkspaceNavigation(pending);
+  }
+  #throwWorkspaceNavigationFailures(failures:unknown[]):void{
+    if(!failures.length)return;
+    const combined=combineNativeImageRetirementFailures(failures);if(combined)throw combined;
+    if(failures.length===1)throw failures[0];
+    throw new AggregateError(failures,"workspace_navigation_failed",{cause:failures[0]});
   }
 
-  async openDocument(documentId: string, destination="/", sourceSurface?: string, options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff">={}) {
-    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return false;
-    if(!workspaceNavigationCurrent(options))return false;
-    const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withProjectTaskDocumentInRoute(withDocumentInRoute(destination, documentId, target?.title ?? ""), documentId);
-    if(!documentId||!target){this.toast("That document is no longer available.");return false;}
-    const ownsHandoff=Boolean(options.onOriginHandoff);
-    if(options.onOriginHandoff&&(!workspaceNavigationCurrent(options)||!options.onOriginHandoff()))return false;
-    if(options.onOriginHandoff)options={...options,onOriginHandoff:undefined};
-    const navigate=()=>{
-      // A guarded caller keeps its same lease until this existing cross-audience
-      // route finishes. Omitted-hook calls retain their original setRoute path.
-      if(ownsHandoff&&applicationIdFromRoute(this.route.get())!==applicationIdFromRoute(routedDestination))
-        return this.transitionWorkspace(routedDestination,options);
-      this.setRoute(routedDestination,options);return null;
-    };
-    if(documentId===projection.documentId){const opened=navigate();return opened?await opened:true;}
-    if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});const opened=navigate();return opened?await opened:true;}
-    const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
-    const persisted=this.appendWithReceipt({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then(result=>result.acknowledgment.outcome==="observed"&&result.acknowledgment.committed.some(event=>event.type==="DocumentOpened"),()=>false);this.#navigationCommit=committed;const opened=navigate();
-    const revision=this.#workspaceTransition,authorization=this.captureAuthorizationScope();
-    const result=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
-    if(result.publication==="published"&&this.sourceOwnershipActive(sourceOwner)&&result.appended.length&&revision===this.#workspaceTransition&&this.authorizationScopeActive(authorization))this.toast("Document opened.");return opened?await opened:true;
+  async openProject(projectId:string,destination="/",options:WorkspaceNavigationOptions={}){
+    const owner=this.#takeWorkspaceNavigation(options),sourceOwner=this.captureSourceOwnership();
+    if(!this.sourceOwnershipActive(sourceOwner)||!this.#workspaceNavigationCurrent(owner))return false;
+    const projection=this.projection.get(),target=projection.projects.find(project=>project.id===projectId);
+    if(!projectId||!target){this.toast("That project is no longer available.");return false;}
+    const selected=foldEvents(this.eventView.get(),this.asOf.get(),"",projectId),requestedDocumentId=documentIdFromRoute(destination);
+    if(requestedDocumentId!==null&&(!requestedDocumentId||!selected.documents.some(document=>document.id===requestedDocumentId))){
+      this.toast("That document is no longer available.");return false;
+    }
+    const documentId=requestedDocumentId??(projectId===projection.projectId?projection.documentId:selected.documentId);
+    const documentTitle=selected.documents.find(document=>document.id===documentId)?.title??"";
+    const routedDestination=isDocumentViewRoute(destination)&&documentId
+      ?withDocumentInRoute(destination,documentId,documentTitle):withProjectTaskDocumentInRoute(destination,documentId);
+    owner.options={...owner.options,documentId};
+    if(!this.#handoffWorkspaceNavigation(owner))return false;
+    if(projectId===projection.projectId){
+      const opening=this.#observeWorkspaceOpening(this.setRoute(routedDestination,this.#workspaceNavigationOptions(owner)));
+      const arrived=await opening;if(arrived.status==="rejected")throw arrived.reason;
+      return arrived.value&&this.#workspaceNavigationCurrent(owner);
+    }
+    const previousRoute=this.#projectTaskRoute(owner.route),clientEventId=crypto.randomUUID(),now=new Date().toISOString();
+    const canvasDestination=destination==="/canvas"||destination.startsWith("/canvas/");
+    const input:EventInput={type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,
+      source_surface:canvasDestination?"canvas-projects":"projects",client_event_id:clientEventId}};
+    const optimistic:CreativeEvent={eventId:`optimistic:${clientEventId}`,streamId:"optimistic:project",sequence:this.head.get()+1,
+      occurredAt:now,recordedAt:now,actor:"user",clientId:"web:project-optimistic",correlationId:clientEventId,
+      causationId:null,compensatesEventId:null,schemaVersion:1,type:input.type,payload:input.payload};
+    let optimisticPublished=false,written:Promise<PromiseSettledResult<EventWriteResult>>|null=null;
+    let result:PromiseSettledResult<EventWriteResult>|null=null,committed:Promise<boolean>|null=null;
+    let opening:Promise<PromiseSettledResult<boolean>>|null=null,arrival:PromiseSettledResult<boolean>|null=null;
+    let preparationFailure:{reason:unknown}|null=null;const cleanupFailures:unknown[]=[];
+    try{
+      // The value is installed before retirement callbacks can throw. Its exact
+      // row still belongs to this operation's unconditional cleanup below.
+      optimisticPublished=true;
+      this.#nativeImageMutation(()=>{this.optimisticEvents.set([...this.optimisticEvents.get(),optimistic]);});
+      if(this.#workspaceNavigationCurrent(owner)){
+        this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});
+        if(this.#workspaceNavigationCurrent(owner)){
+          written=this.#observeWorkspaceNavigation(this.appendWithReceipt(input,{rebaseAttempts:6,silent:true,background:true}));
+          committed=written.then(outcome=>outcome.status==="fulfilled"&&outcome.value.acknowledgment.outcome==="observed"
+            &&outcome.value.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId));
+          try{
+            if(this.#workspaceNavigationCurrent(owner)){
+              this.#navigationCommit=committed;
+              opening=this.#observeWorkspaceOpening(this.setRoute(routedDestination,this.#workspaceNavigationOptions(owner)));
+            }
+          }catch(reason){arrival={status:"rejected",reason};}
+        }
+      }
+    }catch(reason){preparationFailure={reason};}
+    try{if(written)result=await written;}catch(reason){result={status:"rejected",reason};}
+    finally{
+      if(committed&&this.#navigationCommit===committed)this.#navigationCommit=null;
+      if(optimisticPublished)try{
+        this.#nativeImageMutation(()=>{this.optimisticEvents.set(this.optimisticEvents.get().filter(event=>event.eventId!==optimistic.eventId));});
+      }catch(error){cleanupFailures.push(error);}
+    }
+    let observed=false,restorationOwner:WorkspaceNavigationOwner|null=null;
+    let restoration:Promise<PromiseSettledResult<boolean>>|null=null,restored:PromiseSettledResult<boolean>|null=null,restorationNotice="";
+    try{
+      if(!preparationFailure&&!cleanupFailures.length&&arrival?.status!=="rejected"&&result?.status==="fulfilled"){
+        const receipt=result.value;
+        observed=receipt.acknowledgment.outcome==="observed"
+          &&receipt.acknowledgment.committed.some(event=>event.type==="ProjectOpened"&&event.clientEventId===clientEventId);
+        let restore=false;
+        if(receipt.publication!=="published"){
+          restore=!observed&&(receipt.acknowledgment.outcome==="unconfirmed"||receipt.acknowledgment.outcome==="not-attempted");
+          if(receipt.acknowledgment.outcome==="unconfirmed")restorationNotice=this.#systemNotice("The original change is unconfirmed. It has not been resubmitted.");
+        }else if(!receipt.appended.length){
+          restore=true;restorationNotice="That project could not be opened. Your current workspace was restored.";
+        }
+        if(restore&&this.sourceOwnershipActive(sourceOwner)&&this.#workspaceNavigationCurrent(owner)){
+          // A separate rollback owner invalidates, rather than rebases, an
+          // older cross-audience request still awaiting its original response.
+          restorationOwner={...owner,startup:null,options:{replace:true,current:owner.options.current,focus:owner.options.focus}};
+          restoration=this.#observeWorkspaceOpening(this.setRoute(previousRoute,this.#workspaceNavigationOptions(restorationOwner)));
+        }
+      }
+    }catch(reason){restored={status:"rejected",reason};}
+    finally{
+      // Join both original operations even for a false receipt, empty append,
+      // rollback, or cleanup failure. Rejected undefined remains an outcome.
+      if(opening)arrival=await opening;
+      if(restoration)restored=await restoration;
+    }
+    const failures:unknown[]=[];
+    if(result?.status==="rejected")failures.push(result.reason);
+    if(preparationFailure)failures.push(preparationFailure.reason);
+    if(arrival?.status==="rejected")failures.push(arrival.reason);
+    if(restored?.status==="rejected")failures.push(restored.reason);
+    failures.push(...cleanupFailures);this.#throwWorkspaceNavigationFailures(failures);
+    if(restorationOwner&&restored?.status==="fulfilled"&&restored.value&&restorationNotice&&this.#workspaceNavigationCurrent(restorationOwner))this.toast(restorationNotice);
+    if(result?.status!=="fulfilled"||arrival?.status!=="fulfilled")return false;
+    const receipt=result.value,arrived=arrival.value&&this.#workspaceNavigationCurrent(owner);
+    if(receipt.publication!=="published")return observed&&arrived;
+    if(!receipt.appended.length)return false;
+    if(arrived&&this.sourceOwnershipActive(sourceOwner)){
+      this.notify();
+      if(this.#workspaceNavigationCurrent(owner)&&this.sourceOwnershipActive(sourceOwner))
+        this.toast(this.#systemNotice("{name} opened in {workspace}.",{name:target.name,workspace:this.#systemNotice(canvasDestination?"Canvas":"Creator Workspace")}));
+    }
+    return arrived&&this.#workspaceNavigationCurrent(owner);
+  }
+
+  async openDocument(documentId:string,destination="/",sourceSurface?:string,options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff"|"nativeImageStartup">={}){
+    const owner=this.#takeWorkspaceNavigation(options),sourceOwner=this.captureSourceOwnership();
+    if(!this.sourceOwnershipActive(sourceOwner)||!this.#workspaceNavigationCurrent(owner))return false;
+    const projection=this.projection.get(),target=projection.documents.find(document=>document.id===documentId);
+    const routedDestination=withProjectTaskDocumentInRoute(withDocumentInRoute(destination,documentId,target?.title??""),documentId);
+    if(!documentId||!target){if(!owner.options.nativeImageStartup)this.toast("That document is no longer available.");return false;}
+    if(!this.#handoffWorkspaceNavigation(owner))return false;
+    if(documentId===projection.documentId){
+      const opening=this.#observeWorkspaceOpening(this.setRoute(routedDestination,this.#workspaceNavigationOptions(owner)));
+      const arrived=await opening;if(arrived.status==="rejected")throw arrived.reason;
+      return arrived.value&&this.#workspaceNavigationCurrent(owner);
+    }
+    this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(this.session.get()?.projectContext){
+      const opening=this.#observeWorkspaceOpening(this.setRoute(routedDestination,this.#workspaceNavigationOptions(owner)));
+      const arrived=await opening;if(arrived.status==="rejected")throw arrived.reason;
+      return arrived.value&&this.#workspaceNavigationCurrent(owner);
+    }
+    const written=this.#observeWorkspaceNavigation(this.appendWithReceipt({type:"DocumentOpened",payload:{
+      document_id:documentId,previous_document_id:projection.documentId,
+      source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative"),
+    }},{rebaseAttempts:6,silent:true,background:true}));
+    const committed=written.then(result=>result.status==="fulfilled"&&result.value.acknowledgment.outcome==="observed"
+      &&result.value.acknowledgment.committed.some(event=>event.type==="DocumentOpened"));
+    let opening:Promise<PromiseSettledResult<boolean>>|null=null,arrival:PromiseSettledResult<boolean>|null=null;
+    let result:PromiseSettledResult<EventWriteResult>|null=null;
+    try{
+      if(this.#workspaceNavigationCurrent(owner)){
+        this.#navigationCommit=committed;
+        opening=this.#observeWorkspaceOpening(this.setRoute(routedDestination,this.#workspaceNavigationOptions(owner)));
+      }
+    }catch(reason){arrival={status:"rejected",reason};}
+    // Clear this exact write marker before joining its separately observed
+    // navigation. Neither operation can escape through an early return.
+    try{result=await written;}catch(reason){result={status:"rejected",reason};}
+    finally{if(this.#navigationCommit===committed)this.#navigationCommit=null;}
+    if(opening)arrival=await opening;
+    const failures:unknown[]=[];
+    if(result?.status==="rejected")failures.push(result.reason);
+    if(arrival?.status==="rejected")failures.push(arrival.reason);
+    this.#throwWorkspaceNavigationFailures(failures);
+    if(result?.status!=="fulfilled"||arrival?.status!=="fulfilled")return false;
+    const arrived=arrival.value&&this.#workspaceNavigationCurrent(owner);
+    if(arrived&&result.value.publication==="published"&&result.value.appended.length&&this.sourceOwnershipActive(sourceOwner)&&!owner.options.nativeImageStartup)this.toast("Document opened.");
+    return arrived&&this.#workspaceNavigationCurrent(owner);
   }
 
   async removeDocument(documentId: string) {
@@ -4699,23 +5974,23 @@ async syncDocumentJobs(){
   async evaluateExtractors() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("extractor-eval"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("extractor-eval"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "evaluate_extractors", expectedSequence: this.head.get(), clientId: "web:system" }) },"run reference extraction");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must witness the quality-gate rerun." : body.error ?? "Extractor evaluation failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Extractor gate passed and the result was appended to the event stream.");
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Extractor evaluation failed");}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Extractor evaluation failed");});
   }
 
   async rebuildIndex() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("phase7-index"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("phase7-index"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "rebuild_index", expectedSequence: this.head.get(), clientId: "web:library" }) },"rebuild the fictional account’s library index");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; report?: { indexedItems?: number; exemplars?: number; families?: number } };
@@ -4723,8 +5998,8 @@ async syncDocumentJobs(){
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must run the derived index." : body.error ?? "Index rebuild failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get());
       this.toast(body.appended?.length ? this.#systemNotice("Indexed {objects} objects, {exemplars} exemplars, and {families} families.",{objects:body.report?.indexedItems??0,exemplars:body.report?.exemplars??0,families:body.report?.families??0}) : "The Phase 7 index is already fresh.");
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Index rebuild failed");}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Index rebuild failed");});
   }
 
   async extractReference(blockId: string, referenceId: string, sample: ImageSample, findingKinds: ReferenceFindingKind[] = []) {
@@ -4742,52 +6017,52 @@ async syncDocumentJobs(){
       let resolved:unknown=null;
       const append=async()=>{this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(this.#hasFocalPoint(input.targetKind,input.targetId))return;const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"calculate_focal_point",clientId:"web:focal-extractor",targetKind:input.targetKind,targetId:input.targetId,referenceId:input.referenceId,mediaUrl:input.mediaUrl,sample})},"calculate and save this image’s focal point");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];head?:number;focalPoint?:unknown;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"focal_point_calculation_failed");const appended=body.appended??[];if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);this.notify();}resolved=body.focalPoint??null;};
       const task=this.#focalAppendQueue.then(append);this.#focalAppendQueue=task.catch(()=>{});await task;this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);return normalizeImageFocalPoint(resolved);
-    }catch{return null;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.#focalInFlight.delete(key);}
+    }catch(error){if(NativeImageRetirementError.is(error))throw error;return null;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.#focalInFlight.delete(key);}
   }
 
   async closeSession() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("close-session"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("close-session"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "close_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"close this fictional work session");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { closedSessions?: number; requiredClosedSessions?: number } };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "no_open_session" ? "Open a session before closing it." : body.error ?? "Session could not be closed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(this.#systemNotice("Session closed with a state receipt · {closed}/{required} toward brief eligibility.",{closed:body.eligibility?.closedSessions??0,required:body.eligibility?.requiredClosedSessions??3}));
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Session could not be closed");}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Session could not be closed");});
   }
 
   async openSession() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("open-session"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("open-session"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "open_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"open a fictional work session");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; briefComposed?: boolean };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "session_already_open" ? "The current session is already open." : body.error ?? "Session could not be opened");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(body.briefComposed ? "Session opened with an eligible re-entry brief; every impression was witnessed." : "Session opened. More history is needed before composing a valid brief.");
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Session could not be opened");}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Session could not be opened");});
   }
 
   async composeBrief() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("compose-brief"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("compose-brief"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "compose_brief", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"compose a re-entry brief for this fictional account");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { reasons?: string[] } };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) throw new Error(body.error === "brief_not_eligible" ? `Brief is not eligible: ${body.eligibility?.reasons?.join(" and ") ?? "more history required"}.` : body.error === "open_session_required" ? "Open a session before composing a brief." : body.error ?? "Brief could not be composed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Re-entry brief composed from the event stream; impressions were witnessed in the same batch.");
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Brief could not be composed");}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Brief could not be composed");});
   }
 
   async declareIntent(statement: string, deadline: string | null = null): Promise<boolean> {
@@ -4796,8 +6071,8 @@ async syncDocumentJobs(){
     const expectedSequence=this.head.get(),documentId=this.projection.get().documentId;
     const streamId=session?.projectContext?"project:"+session.projectContext.projectAccessId:"creative:"+(session?.user.userId??"");
     const actor=session?.projectContext?"user:"+session.user.userId:"user";
-    this.busy.set("declare-intent"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork<boolean>(async()=>{
+      this.busy.set("declare-intent"); this.notify();
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "declare_intent", expectedSequence, clientId: "web:sessions", statement, deadline }) },"record this intent in the fictional account");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as { appended?: CreativeEvent[]; rejected?: unknown[]; head?: number; error?: string };
@@ -4814,57 +6089,66 @@ async syncDocumentJobs(){
         throw new Error(this.#systemNotice("The original change is unconfirmed. It has not been resubmitted."));
       this.#mergeConfirmed([event], event.sequence); this.toast("Intent recorded privately; the immutable event keeps only its expiring reference.");
       return true;
-    } catch (error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");return false;}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");return false;});
   }
 
   async runScout(maxObservations: number) {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("run-scout"); this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("run-scout"); this.notify();
       const response = await this.guardedFetch("/api/events", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({action:"run_scout",expectedSequence:this.head.get(),clientId:"web:scout",maxObservations}) },"run Scout against the fictional account");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body = await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if(!response.ok) throw new Error(body.error === "phase6_advance_required" ? "Record the Phase 6 advance-with-monitoring decision first." : body.error ?? "Scout run failed");
       this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast("Scout report completed inside its hard planning envelope.");
-    } catch(error) {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Scout run failed");}
-    finally {if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Scout run failed");});
   }
 
   async refreshTasteModel() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("taste-model");this.notify();
-    try {
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("taste-model");this.notify();
       const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"refresh_taste_model",expectedSequence:this.head.get(),clientId:"web:memory"})},"refresh the fictional account’s taste model");
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string;beliefs?:number};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error === "phase6_advance_required"?"Record the Phase 6 advance-with-monitoring decision first.":body.error??"Taste model refresh failed");
       this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast((body.beliefs??0)===1?this.#systemNotice("Taste model versioned with {count} ranking-only belief.",{count:body.beliefs??0}):this.#systemNotice("Taste model versioned with {count} ranking-only beliefs.",{count:body.beliefs??0}));
-    } catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Taste model refresh failed");}
-    finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Taste model refresh failed");});
   }
 
   async setCondition(condition:string,triggerKind:"generation_count"|"on_date",threshold:number,onDate:string|null){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("set-condition");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"set_condition",expectedSequence:this.head.get(),clientId:"web:memory",condition,triggerKind,threshold,onDate})},"set a time condition in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Condition could not be set");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Time policy recorded privately.");return true;}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Condition could not be set");return false;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    return this.#nativeImagePublisherWork<boolean>(async()=>{
+      this.busy.set("set-condition");this.notify();
+      const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"set_condition",expectedSequence:this.head.get(),clientId:"web:memory",condition,triggerKind,threshold,onDate})},"set a time condition in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Condition could not be set");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Time policy recorded privately.");return true;
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Condition could not be set");return false;});
   }
 
   async checkConditions(){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("check-conditions");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?body.appended.length===2?this.#systemNotice("{count} condition resurfaced.",{count:Math.floor(body.appended.length/2)}):this.#systemNotice("{count} conditions resurfaced.",{count:Math.floor(body.appended.length/2)}):"No time policies are due yet.");}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Policy check failed");}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    return this.#nativeImagePublisherWork(async()=>{
+      this.busy.set("check-conditions");this.notify();
+      const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?body.appended.length===2?this.#systemNotice("{count} condition resurfaced.",{count:Math.floor(body.appended.length/2)}):this.#systemNotice("{count} conditions resurfaced.",{count:Math.floor(body.appended.length/2)}):"No time policies are due yet.");
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Policy check failed");});
   }
 
   async critiqueObject(objectId:string,axis:string,polarity:"positive"|"negative",value:string,note:string){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope();
-    this.busy.set("critique-object");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"critique_object",expectedSequence:this.head.get(),clientId:"web:studio",objectId,axis,polarity,value,note})},"record this critique in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Critique could not be recorded");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Axis-specific critique recorded for the taste ledger.");return true;}catch(error){if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Critique could not be recorded");return false;}finally{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}}
+    return this.#nativeImagePublisherWork<boolean>(async()=>{
+      this.busy.set("critique-object");this.notify();
+      const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"critique_object",expectedSequence:this.head.get(),clientId:"web:studio",objectId,axis,polarity,value,note})},"record this critique in the fictional account");this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok)throw new Error(body.error??"Critique could not be recorded");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Axis-specific critique recorded for the taste ledger.");return true;
+    },()=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))){this.busy.set("");this.notify();}},
+    error=>{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner)))this.toast(error instanceof Error?error.message:"Critique could not be recorded");return false;});
   }
 
   canManageProjectShares(){const session=this.session.get(),context=session?.projectContext;return Boolean(session)&&(!context||context.role==="owner"&&context.ownerUserId===session.user.userId);}

@@ -13028,6 +13028,22 @@
           "members": [
             {
               "kind": "method",
+              "name": "adoptedCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "nativeImageAvailable",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "method",
               "name": "navigateFrom",
               "parameters": [
                 {
@@ -13055,6 +13071,35 @@
                 }
               },
               "description": "Deliberate UI navigation only; internal save, recovery and permission retirement do not call this."
+            },
+            {
+              "kind": "method",
+              "name": "openNativeImage",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "setup",
+                  "type": {
+                    "text": "unknown"
+                  }
+                },
+                {
+                  "name": "presentation",
+                  "type": {
+                    "text": "Readonly<{ current: () => boolean; subscribe: (recheck: () => void) => () => void; }>"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Readonly<{ id: number; documentId: string; }> | null"
+                }
+              }
             },
             {
               "kind": "method",
@@ -13106,6 +13151,52 @@
               "return": {
                 "type": {
                   "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderNativeImage",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "unique symbol | TemplateResult<1>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "retireNativeImage",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "presentation",
+                  "type": {
+                    "text": "Readonly<{ current: () => boolean; subscribe: (recheck: () => void) => () => void; }> | undefined"
+                  }
+                },
+                {
+                  "name": "notify",
+                  "type": {
+                    "text": "(() => void) | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "PromiseSettledResult<void>"
                 }
               }
             }
@@ -13468,6 +13559,15 @@
           "members": [
             {
               "kind": "method",
+              "name": "adoptedCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "captureCommandDeparture",
               "return": {
                 "type": {
@@ -13617,6 +13717,30 @@
               "default": "false",
               "attribute": "compact",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "nativeImageAvailable",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "kind": "field",
+              "name": "onNativeImage",
+              "type": {
+                "text": "((actions: GenerationActions) => void) | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "onNativeImageDisconnect",
+              "type": {
+                "text": "((actions: GenerationActions) => void) | null"
+              },
+              "default": "null"
             },
             {
               "kind": "method",

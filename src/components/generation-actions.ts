@@ -34,7 +34,10 @@ const surfaceLabel = (surface: string) => ({
 const providerSettings=(status:GenerationReadiness["provider"]["status"])=>["credits_blocked","authentication_failed","project_limit","organization_limit","rate_limited","model_access"].includes(status)?{label:"Review your spending or contact your administrator",url:"/settings"}:null;
 
 export class GenerationActions extends FormaElement {
-  static properties={source:{type:String},selected:{attribute:false},compact:{type:Boolean}};
+  static properties={source:{type:String},selected:{attribute:false},compact:{type:Boolean},onNativeImage:{attribute:false},nativeImageAvailable:{type:Boolean,attribute:false},onNativeImageDisconnect:{attribute:false}};
+  onNativeImage:((actions:GenerationActions)=>void)|null=null;
+  nativeImageAvailable=false;
+  onNativeImageDisconnect:((actions:GenerationActions)=>void)|null=null;
   source="studio";selected:CreativeOutput|null=null;compact=false;#productionMode:ProductionMode="manual";#queueOpen=false;#detailsOpen=false;#failuresOpen=false;#failureInputJob:DocumentJob|null=null;#actorInputContent:Record<string,string>={};#returnToFailures=false;#queueConfirm:{jobId:string;force:boolean}|null=null;#queueBusy:string|null=null;#promptCopy:{key:string;ok:boolean}|null=null;#receiptCopy:{key:string;ok:boolean}|null=null;#budgetNoteId=`generation-budget-capacity-${crypto.randomUUID()}`;#dismissedBudgetNotes=new Set<string>();#readinessTimer=0;#readinessSignature="";#readinessWarmup:Promise<void>=Promise.resolve();#safetyDiagnosticOpen=false;#safetyDiagnosticLoading=false;#safetyDiagnosticError="";#safetyDiagnostic:PromptTechniqueSafetyComparison|null=null;#safetyDiagnosticJob:DocumentJob|null=null;
   #failuresOpener?:HTMLElement;#safetyDiagnosticOpener?:HTMLElement;
   #clearPrivateFailureInputs=()=>{this.#actorInputContent={};this.#failureInputJob=null;this.#returnToFailures=false;this.requestUpdate();};
@@ -69,7 +72,7 @@ export class GenerationActions extends FormaElement {
   }
 
   override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivateFailureInputs);}
-  override disconnectedCallback(){this.#outputReuse.cancel?.();window.removeEventListener("forma-authorization-changed",this.#clearPrivateFailureInputs);this.#actorInputContent={};this.#failureInputJob=null;window.clearTimeout(this.#readinessTimer);super.disconnectedCallback();}
+  override disconnectedCallback(){this.onNativeImageDisconnect?.(this);this.#outputReuse.cancel?.();window.removeEventListener("forma-authorization-changed",this.#clearPrivateFailureInputs);this.#actorInputContent={};this.#failureInputJob=null;window.clearTimeout(this.#readinessTimer);super.disconnectedCallback();}
 
   #warmReadiness(sourcePreviewId:string|null,promptTechnique:PromptTechnique){
     const signature=this.#readinessSignature;
@@ -264,6 +267,7 @@ export class GenerationActions extends FormaElement {
     const session=this.store.session.get();
     if(session?.projectContext&&!session.projectContext.permissions.includes("project.output.request"))return html`<p class="generation-shared-unavailable" role="status">${this.i18n.t("workspace.admin.readOnlyGeneration","Your project role allows reviewing outputs but not creating them.")}</p>`;
     const providerReady=Boolean(session?.provider.configured);
+    const nativeImageControl=this.onNativeImage?html`<button type="button" class="button secondary native-image-entry" style="min-block-size:44px;min-inline-size:44px;touch-action:manipulation" ?disabled=${!this.nativeImageAvailable} @click=${()=>{if(this.nativeImageAvailable)this.onNativeImage?.(this);}}>${icon("image")} ${this.i18n.system("Image")}</button>`:nothing;
     const busy=this.store.busy.get();
     const projection=this.store.projection.get();
     const selected=this.selected??projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;
@@ -302,7 +306,7 @@ export class GenerationActions extends FormaElement {
     </dialog>`:nothing;
     const failureDialog=this.#failuresOpen&&allFailures.length?html`<dialog class="modal generation-failures-dialog" closedby="any" aria-labelledby="generation-failures-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeFailures();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeFailures();}} @close=${()=>{if(this.#failuresOpen){this.#failuresOpen=false;this.requestUpdate();}}}><section class="modal-card generation-failures-card"><button class="icon-button modal-close" aria-label="Close failed generation history" @click=${()=>this.#closeFailures()}>${icon("close")}</button><header><h2 id="generation-failures-title">Failed generation attempts</h2><p>${this.store.session.get()?.projectContext?this.i18n.t("generation.sharedFailurePrivacy","Failure details remain available; generation inputs stay private to their author."):this.i18n.system("Every retained image and document-output failure for this document. Inspect the immutable prompt, frozen context, reference receipt, and technical error that belonged to each attempt.")}</p></header><div class="generation-failures-body">${allFailures.map((job)=>this.#failureCard(job))}</div><footer><span>${unreadFailures?this.i18n.system("{unreadFailures} unread ·", { unreadFailures: this.i18n.number(unreadFailures) }) + " ":""}${allFailures.length} retained attempt${allFailures.length===1?"":"s"}</span><button type="button" class="button secondary" @click=${()=>this.#closeFailures()}>Done</button></footer></section></dialog>`:nothing;
     const failureInput=this.#failureInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${failedGenerationInputInspection(this.#failureInputJob,this.store.events.get(),this.store.session.get()?.projectContext?this.#actorInputContent:this.store.content.get())} @generation-input-close=${()=>this.#closeFailureInputs()}></forma-generation-input-dialog>`:nothing;
-    return html`<div class=${`generation-actions-shell ${this.compact?"compact":""}`}>${this.compact?html`${budgetNoteVisible?html`<span id=${this.#budgetNoteId} class="sr-only">${budgetMessage}</span>`:nothing}${compactControls}${detailsDialog}`:html`<forma-image-format-editor compact surface=${this.source}></forma-image-format-editor>${productionControl}${expandedControls}${readiness()}${budgetNote()}${failures()}<forma-prompt-fan-review></forma-prompt-fan-review>`}${queueDialog}${failureDialog}${failureInput}${this.#safetyDiagnosticDialog()}</div>`;
+    return html`<div class=${`generation-actions-shell ${this.compact?"compact":""}`}>${nativeImageControl}${this.compact?html`${budgetNoteVisible?html`<span id=${this.#budgetNoteId} class="sr-only">${budgetMessage}</span>`:nothing}${compactControls}${detailsDialog}`:html`<forma-image-format-editor compact surface=${this.source}></forma-image-format-editor>${productionControl}${expandedControls}${readiness()}${budgetNote()}${failures()}<forma-prompt-fan-review></forma-prompt-fan-review>`}${queueDialog}${failureDialog}${failureInput}${this.#safetyDiagnosticDialog()}</div>`;
   }
 }
 if (!customElements.get("forma-generation-actions")) customElements.define("forma-generation-actions",GenerationActions);

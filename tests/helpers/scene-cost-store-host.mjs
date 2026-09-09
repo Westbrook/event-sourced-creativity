@@ -32,7 +32,7 @@ class ElementPort {
 }
 const allElements=element=>[element,...element.children.flatMap(child=>child instanceof ElementPort?allElements(child):[])];
 /** Full production class/modules; only native DOM, HTTP, timers and private gate state are deterministic ports. */
-export async function createSceneStoreHost({count=9,medium="visual",shared=false,workerFixture=null,exposeSceneTestAccessors=true}={}){
+export async function createSceneStoreHost({count=9,medium="visual",shared=false,workerFixture=null,exposeSceneTestAccessors=true,beforeFetch=null}={}){
   const worker=workerFixture??await createSceneCostFixture(count,medium,{shared});
   const host={worker,requests:[],timers:new Map(),domReads:[],transport:null,intercept:null,closed:false};
   const documentPort=new ElementPort("document");documentPort.documentElement={lang:"en",dir:"ltr",dataset:{}};documentPort.body=new ElementPort("body");documentPort.visibilityState="hidden";
@@ -42,14 +42,17 @@ export async function createSceneStoreHost({count=9,medium="visual",shared=false
   const locationPort={origin:"http://localhost",pathname:"/studio",search:"?document="+encodeURIComponent(worker.documentId),hash:""};
   windowPort.location=locationPort;const storage=new Map(),localStoragePort={getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value)),removeItem:key=>storage.delete(key)};
   host.document=documentPort;host.window=windowPort;host.location=locationPort;host.storage=storage;
-  host.fetch=async(input,init={})=>{
-    const url=String(input),request={url,init,body:typeof init.body==="string"?JSON.parse(init.body):null};host.requests.push(request);
-    if(host.intercept){const handled=await host.intercept(request);if(handled!==undefined)return handled;}
-    // The existing foreground driver is a transport port, never a real provider call in these tests.
-    if(/^\/api\/document-jobs\/[^/]+\/run$/u.test(url))return Response.json({job:{jobId:decodeURIComponent(url.split("/")[3]),status:"queued"}});
-    assert.ok(url.startsWith("/api/"),"Only an in-memory application HTTP path is permitted");
-    const response=await (host.transport?host.transport(request):worker.request(url,init));
-    return response;
+  host.fetch=(input,init={})=>{
+    beforeFetch?.(input,init);
+    return (async()=>{
+      const url=String(input),request={url,init,body:typeof init.body==="string"?JSON.parse(init.body):null};host.requests.push(request);
+      if(host.intercept){const handled=await host.intercept(request);if(handled!==undefined)return handled;}
+      // The existing foreground driver is a transport port, never a real provider call in these tests.
+      if(/^\/api\/document-jobs\/[^/]+\/run$/u.test(url))return Response.json({job:{jobId:decodeURIComponent(url.split("/")[3]),status:"queued"}});
+      assert.ok(url.startsWith("/api/"),"Only an in-memory application HTTP path is permitted");
+      const response=await (host.transport?host.transport(request):worker.request(url,init));
+      return response;
+    })();
   };
   const cache=new Map();
   const load=async relative=>{

@@ -89,6 +89,12 @@ forma-generation-actions,
   max-inline-size: 100%;
 }
 
+/* The inline Image entry precedes the compact action row. Keep its native
+ * focus ring inside the independently scrolling result pane. */
+.document-result-generation .generation-actions-shell > .native-image-entry {
+  margin-inline: var(--forma-focus-clearance);
+}
+
 /* Output-pane controls wrap by their own available width. Keep the composer
  * and expanded configuration/dialog rows on their existing contracts. */
 .document-result-generation .generation-actions.compact {
@@ -3417,6 +3423,13 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scroll-padding-block: var(--forma-focus-clearance);
+}
+
+/* Keep the centered empty-state copy above the collapsed floating assistant.
+ * Padding belongs inside this existing border-box reading area, so it moves
+ * the text as well as retaining scrollable room below it. */
+.application-creative[data-layout-intent="workbench"]:has(> forma-creative-assistant > forma-assistant-panel:not([data-studio-launcher="true"]) > .forma-assistant-launcher) #document-results-panel > .empty-output[data-forma-empty-state] {
+  padding-block-end: calc(max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem)) + max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-focus-clearance, .5rem));
 }
 
 .workspace-page[data-workbench="document"]:has(> .composer-dock) .studio-grid > :is(.context-column, .output-column) {

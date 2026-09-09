@@ -52,6 +52,20 @@ import { openCreativeNextActionDestination } from "./creative-next-action-naviga
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 
 type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[]; imageFormat: ImageFormat; outputKind: ReturnType<typeof inferDocumentArtifactKind>; documentId: string; documentTitle: string };
+type NativeImageWorkspacePresentation = {
+  shell: HTMLElementTagNameMap["forma-shell"];
+  actions: HTMLElementTagNameMap["forma-generation-actions"];
+  presentation: Readonly<{ current:()=>boolean; subscribe:(recheck:()=>void)=>()=>void }>;
+  listeners: Set<()=>void>;
+};
+type NativeImageWorkspacePage = {
+  document: Document;
+  view: Window;
+  shell: HTMLElementTagNameMap["forma-shell"];
+  active: boolean;
+  failed: boolean;
+  detach: ()=>void;
+};
 
 export class FormaWorkspace extends FormaElement {
   #prompt = "";
@@ -90,6 +104,10 @@ export class FormaWorkspace extends FormaElement {
   #narrowWorkbench=false;
   #artifactViewerOpen=false;
   #workbenchPane:"write"|"result"|"review"="write";
+  #nativeImagePresentationEpoch=0;
+  #nativeImagePresentationTransition=0;
+  #nativeImagePresentation:NativeImageWorkspacePresentation|null=null;
+  #nativeImagePage:NativeImageWorkspacePage|null=null;
   #inspectorObserver?:ResizeObserver;
   #inspectorObserved?:Element;
   #assistantTool=(event:Event)=>{
@@ -122,7 +140,8 @@ export class FormaWorkspace extends FormaElement {
     const inspectorChanged=compact!==this.#compactInspector;
     const restoreFocus=this.querySelector("#document-workbench-inspector")?.contains(document.activeElement)??false;
     if(narrow&&this.#workbenchPane==="write"&&!this.#artifactViewerOpen)this.#retireHiddenNativeStory();
-    this.#narrowWorkbench=narrow;
+    if(!this.#nativeImageVisible(this.#workbenchPane,narrow))this.#retireNativeImage(()=>{this.#narrowWorkbench=narrow;});
+    else this.#narrowWorkbench=narrow;
     if(inspectorChanged){
       this.#compactInspector=compact;
       this.#workbenchInspectorOpen=compact?this.#drawerInspectorOpen:this.#inlineInspectorOpen;
@@ -157,20 +176,163 @@ export class FormaWorkspace extends FormaElement {
   #retireHiddenNativeStory(){this.querySelector("forma-document-artifacts")?.retireNativeShortStory();}
   #selectWorkbenchPane(pane:"write"|"result"|"review"){
     if(this.#narrowWorkbench&&pane==="write"&&!this.#artifactViewerOpen)this.#retireHiddenNativeStory();
-    this.#workbenchPane=pane;
+    if(!this.#nativeImageVisible(pane))this.#retireNativeImage(()=>{this.#workbenchPane=pane;});
+    else this.#workbenchPane=pane;
     this.requestUpdate();
   }
 
   #setArtifactViewerOpen(open:boolean){
     if(this.#artifactViewerOpen===open)return;
     if(!open&&this.#narrowWorkbench&&this.#workbenchPane==="write")this.#retireHiddenNativeStory();
-    this.#artifactViewerOpen=open;
+    this.#retireNativeImage(()=>{this.#artifactViewerOpen=open;});
     if(open&&this.#workbenchPane==="write"){
       this.#selectWorkbenchPane("result");
       return;
     }
     this.requestUpdate();
   }
+
+  #nativeImageVisible(pane=this.#workbenchPane,narrow=this.#narrowWorkbench){
+    const page=this.#nativeImagePage;
+    return this.#nativeImagePresentationTransition===0&&Boolean(page&&!page.failed&&page.active&&this.ownerDocument===page.document
+      &&page.document.defaultView===page.view&&page.document.visibilityState==="visible")
+      &&!this.#artifactViewerOpen&&(!narrow||pane!=="write");
+  }
+
+  #syncNativeImagePage(){
+    const ownerDocument=this.ownerDocument,view=ownerDocument.defaultView,shell=this.closest("forma-shell");
+    const previous=this.#nativeImagePage;
+    if(previous&&previous.document===ownerDocument&&previous.view===view&&previous.shell===shell)return;
+    this.#nativeImagePresentationTransition++;
+    try{
+      const retiredEpoch=this.#nativeImagePresentationEpoch+1;
+      this.#detachNativeImagePage();
+      if(this.#nativeImagePresentationEpoch!==retiredEpoch||this.#nativeImagePage||!this.isConnected||!view||!shell||!shell.isConnected
+        ||this.ownerDocument!==ownerDocument||ownerDocument.defaultView!==view||this.closest("forma-shell")!==shell)return;
+      // Reconnection has a fresh page binding, not evidence of a missed
+      // pageshow. The current owner document must still be visible to open.
+      const page:NativeImageWorkspacePage={document:ownerDocument,view,shell,active:true,failed:false,detach:()=>{
+        const errors:unknown[]=[];
+        const removals=[()=>ownerDocument.removeEventListener("visibilitychange",visibility),
+          ()=>view.removeEventListener("pagehide",pagehide),()=>view.removeEventListener("pageshow",pageshow)];
+        for(const remove of removals){try{remove();}catch(error){errors.push(error);}}
+        if(errors.length===1)throw errors[0];
+        if(errors.length>1)throw new AggregateError(errors,"Native Image page listener cleanup failed");
+      }};
+      const current=()=>!page.failed&&this.#nativeImagePage===page&&this.isConnected&&this.ownerDocument===ownerDocument
+        &&ownerDocument.defaultView===view&&shell.isConnected&&this.closest("forma-shell")===shell;
+      const visibility=(event:Event)=>{
+        if(event.currentTarget!==ownerDocument||!current())return;
+        if(ownerDocument.visibilityState!=="visible")this.#retireNativeImage();
+        // Visibility restores admission only. The old opening remains retired.
+        this.requestUpdate();
+      };
+      const pagehide=(event:Event)=>{
+        if(event.currentTarget!==view||!current())return;
+        page.active=false;
+        this.#retireNativeImage();
+        this.requestUpdate();
+      };
+      const pageshow=(event:Event)=>{
+        if(event.currentTarget!==view||!current())return;
+        page.active=true;
+        this.requestUpdate();
+      };
+      const rollback=(failure?:PromiseRejectedResult)=>{
+        // Leave a failed-install marker for this exact page rather than retrying
+        // on each render. Never erase a newer reentrant page binding.
+        page.failed=true;page.active=false;
+        shell.retireNativeImage(this,undefined,()=>{
+          if(!failure){page.detach();return;}
+          try{page.detach();}catch(cleanup){throw new AggregateError([failure.reason,cleanup],"Native Image page listener installation failed");}
+          throw failure.reason;
+        });
+      };
+      this.#nativeImagePage=page;
+      try{
+        ownerDocument.addEventListener("visibilitychange",visibility);
+        if(!current()){rollback();return;}
+        view.addEventListener("pagehide",pagehide);
+        if(!current()){rollback();return;}
+        view.addEventListener("pageshow",pageshow);
+        if(!current()){rollback();return;}
+      }catch(error){
+        rollback({status:"rejected",reason:error});
+      }
+    }finally{this.#nativeImagePresentationTransition--;}
+  }
+
+  #detachNativeImagePage(){
+    const page=this.#nativeImagePage;
+    // Old document/window callbacks cannot act while their listeners detach.
+    this.#nativeImagePage=null;
+    this.#retireNativeImage(undefined,page?{shell:page.shell,run:page.detach}:undefined);
+  }
+
+  #retireNativeImage(change?:()=>void,cleanup?:{shell:HTMLElementTagNameMap["forma-shell"];run:()=>void}):PromiseSettledResult<void>{
+    this.#nativeImagePresentationTransition++;
+    const binding=this.#nativeImagePresentation;
+    // Invalidate and detach the complete old presentation before any callback
+    // can reenter. A later opening on this Workspace owns a different token.
+    this.#nativeImagePresentation=null;
+    this.#nativeImagePresentationEpoch++;
+    try{
+      const shell=binding?.shell??cleanup?.shell;
+      if(!shell)return {status:"fulfilled",value:undefined};
+      const listeners=binding?[...binding.listeners]:[];binding?.listeners.clear();
+      if(cleanup)listeners.push(cleanup.run);
+      return shell.retireNativeImage(this,binding?.presentation,()=>{
+        const errors:unknown[]=[];
+        for(const recheck of listeners){try{recheck();}catch(error){errors.push(error);}}
+        if(errors.length===1)throw errors[0];
+        if(errors.length>1)throw new AggregateError(errors,"Native Image presentation retirement failed");
+      });
+    }finally{
+      // Retirement cannot reopen a replacement before this visibility change.
+      // The Shell retains failure receipts; the local UI mutation still runs.
+      try{change?.();}finally{this.#nativeImagePresentationTransition--;}
+    }
+  }
+
+  #nativeImageActionsDisconnected=(actions:HTMLElementTagNameMap["forma-generation-actions"])=>{
+    if(this.#nativeImagePresentation?.actions===actions)this.#retireNativeImage();
+  };
+
+  #openNativeImage=(actions:HTMLElementTagNameMap["forma-generation-actions"])=>{
+    const shell=this.closest("forma-shell"),projection=this.store.projection.get(),session=this.store.session.get();
+    if(!shell||!this.isConnected||!shell.isConnected||!shell.nativeImageAvailable||!this.#nativeImageVisible()
+      ||!actions.isConnected||this.querySelector("forma-generation-actions")!==actions||!session||session.projectContext
+      ||!projection.documentId||!projection.documents.some(value=>value.id===projection.documentId&&value.projectId===projection.projectId&&!value.removed))return;
+    const source=this.store.captureSourceOwnership(),route=this.store.route.get(),technique=this.store.promptTechniquePreference().technique;
+    const setup=Object.freeze({documentId:projection.documentId,documentRevision:this.store.documentGenerationRevision(),
+      sourceSurface:"native-image",promptTechnique:technique,kind:"generate",productionMode:"manual",sourcePreviewId:null,
+      requestKey:this.store.documentGenerationRequestKey("generate",null,technique)});
+    const entryCurrent=()=>this.isConnected&&shell.isConnected&&this.closest("forma-shell")===shell
+      &&actions.isConnected&&this.querySelector("forma-generation-actions")===actions&&this.#nativeImageVisible()
+      &&this.store.sourceOwnershipActive(source)&&this.store.route.get()===route&&this.store.session.get()===session
+      &&this.store.projection.get().documentId===setup.documentId&&this.store.projection.get().projectId===projection.projectId
+      &&this.store.documentGenerationRevision()===setup.documentRevision&&this.store.promptTechniquePreference().technique===technique
+      &&this.store.documentGenerationRequestKey("generate",null,technique)===setup.requestKey;
+    const retiredEpoch=this.#nativeImagePresentationEpoch+1;
+    this.#retireNativeImage();
+    if(this.#nativeImagePresentationEpoch!==retiredEpoch||this.#nativeImagePresentation||!entryCurrent()||!shell.nativeImageAvailable)return;
+    const epoch=++this.#nativeImagePresentationEpoch,listeners=new Set<()=>void>();
+    const presentation:NativeImageWorkspacePresentation["presentation"]=Object.freeze({
+      current:()=>this.isConnected&&shell.isConnected&&this.closest("forma-shell")===shell
+        &&this.#nativeImagePresentation?.presentation===presentation&&this.#nativeImagePresentationEpoch===epoch
+        &&actions.isConnected&&this.querySelector("forma-generation-actions")===actions&&this.#nativeImageVisible(),
+      subscribe:(recheck:()=>void)=>{
+        if(!presentation.current()){recheck();return ()=>{};}
+        listeners.add(recheck);
+        return ()=>{listeners.delete(recheck);};
+      },
+    });
+    this.#nativeImagePresentation={shell,actions,presentation,listeners};
+    let opened=false;
+    try{if(entryCurrent()&&presentation.current())opened=shell.openNativeImage(this,setup,presentation)!==null;}
+    finally{if(!opened&&this.#nativeImagePresentation?.presentation===presentation)this.#retireNativeImage();}
+    this.requestUpdate();
+  };
 
   #revealDocumentActionFocus(event: FocusEvent, current: () => boolean, group: "actions" | "panes" = "actions") {
     const path = event.composedPath(), target = path[0], toolbar = event.currentTarget, container = path[2];
@@ -211,10 +373,12 @@ export class FormaWorkspace extends FormaElement {
 
   override connectedCallback(){
     super.connectedCallback();
+    this.#syncNativeImagePage();
     window.addEventListener("forma-assistant-tool-request",this.#assistantTool);
   }
 
   override disconnectedCallback(){
+    this.#detachNativeImagePage();
     window.removeEventListener("forma-assistant-tool-request",this.#assistantTool);
     this.#localProposal.reset();this.#proposalResumeKey="";
     this.#inspectorObserver?.disconnect();
@@ -222,7 +386,13 @@ export class FormaWorkspace extends FormaElement {
     super.disconnectedCallback();
   }
 
+  adoptedCallback(){
+    this.#detachNativeImagePage();
+    this.#syncNativeImagePage();
+  }
+
   protected override updated() {
+    this.#syncNativeImagePage();
     this.#syncQuickEditReview();
     if(this.#referenceComposition&&!this.#referenceComposition.current()){this.#referenceComposition=null;this.#compositionSaving=false;this.requestUpdate();}
     const opening=this.#nextOpening;
@@ -848,7 +1018,7 @@ export class FormaWorkspace extends FormaElement {
     const documentTasks=scopedActivity.jobs.filter((job)=>job.documentId===p.documentId&&["queued","running","committing","failed","partial"].includes(job.status)&&!job.dismissedAt);
     const failedTasks=documentTasks.filter((job)=>["failed","partial"].includes(job.status));
     if(this.#inspectorDocumentId!==p.documentId){
-      this.#inspectorDocumentId=p.documentId;
+      this.#retireNativeImage(()=>{this.#inspectorDocumentId=p.documentId;});
       const usefulOverview=Boolean(p.blocks.length||p.artifacts.length||history.length||documentReviews.length||documentTasks.length);
       this.#inlineInspectorOpen=this.#inlineInspectorPreference??usefulOverview;
       if(!this.#compactInspector)this.#workbenchInspectorOpen=this.#inlineInspectorOpen;
@@ -884,7 +1054,8 @@ export class FormaWorkspace extends FormaElement {
             <details class="context-provenance"><summary>How these decisions are preserved</summary><div class="compile-bridge"><span>${icon("branch")}</span><div><b>Traceable creative history</b><small>${p.latestCompile ? this.i18n.system("The latest result retains its exact creative inputs") : this.i18n.system("Every decision will remain available with its next result")}</small></div><button @click=${() => {this.#quickEditReferenceInspection=null;this.store.patchUi({ inspectorOpen:true,selectedEventId:"" });}}>Inspect</button></div></details>
           </section>
           <section id="document-results-panel" class="output-column" aria-labelledby="output-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane==="write"&&!this.#artifactViewerOpen}><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `${this.i18n.system("Images, stories, presentations & motion")} · ${this.i18n.t("artifact.audio.label", "Audio")}` : this.store.session.get()?.provider.model3dConfigured ? this.i18n.t("model3d.label","3D model") : this.store.session.get()?.provider.plannerConfigured ? this.i18n.t("assistant.previewUnavailable") : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>this.#toggleWorkbenchInspector()}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
-            ${canAuthor&&canGenerate?html`<section class="document-result-generation" aria-label=${this.i18n.system("Generation choices")}><forma-generation-actions source="document" .selected=${output??null} compact></forma-generation-actions></section>`:nothing}
+            ${canAuthor&&canGenerate?html`<section class="document-result-generation" aria-label=${this.i18n.system("Generation choices")}><forma-generation-actions source="document" .selected=${output??null} .onNativeImage=${!projectContext&&p.documentId?this.#openNativeImage:null} .nativeImageAvailable=${Boolean(this.closest("forma-shell")?.nativeImageAvailable)&&this.#nativeImageVisible()} .onNativeImageDisconnect=${this.#nativeImageActionsDisconnected} compact></forma-generation-actions></section>`:nothing}
+            ${this.closest("forma-shell")?.renderNativeImage(this)??nothing}
             ${this.#workbenchPane==="review"?html`<section class="document-workbench-review" aria-label=${this.i18n.t("workbench.reviewQueue","Review queue")}>${documentReviews.length?documentReviews.map((review)=>html`<article data-forma-content="primary"><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void navigateInApp(this,navigation=>navigation.openAssignedReview(review))}>${this.i18n.t("activity.openReview","Open assigned review")}</button></article>`):html`<p data-forma-empty-state>${this.i18n.t("workbench.noTasks","No active tasks")}</p>`}</section>`:nothing}
             ${artifactFirst?nothing:visualResult}
             ${artifactGallery}

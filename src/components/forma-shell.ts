@@ -9,10 +9,12 @@ import { commandDiscoveryCopy } from "./design-system/locales/command-discovery-
 import { documentArtifactDefinition } from "../model/document-artifacts";
 import { creativePreparationTargetAvailable, type CreativePreparationStage } from "../model/workspace-intelligence";
 import { nextActionFacts } from "../state/next-action-context";
-import type { AssignedReviewTask, CapturedSourceOwnership, EventSourceRetirement } from "../state/store";
+import type { AssignedReviewTask, CapturedSourceOwnership, EventSourceRetirement, NativeImageWorkspaceStartup } from "../state/store";
 import type { FormaLibrary } from "./forma-library";
 import { joinNativeDialogClose, navigationPresentationClosing, navigationPresentationCurrent, type CommandDeparture, type CommandDepartureOwner, type InAppNavigationAction, type LocalNavigation, type NavigationClosingPresentation, type NavigationPresentationContext, type NavigationRefusal } from "./command-departure";
 import type { FormaWorkspace } from "./forma-workspace";
+import { NativeImageHost, type NativeImageHostPresentation, type NativeImageShellNavigationReceipt } from "./native-image-host";
+import type { NativeImageEditTarget } from "./native-image-controller";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { APPLICATIONS, applicationAccessible, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, creativeCreationHref, navigationItemAccessible, navigationItemActive } from "../platform/applications";
 import { formaActivityAttention, scopedFormaActivity } from "../model/activity";
@@ -40,8 +42,144 @@ type CommandNavigation = {
   adoptSource(source:CapturedSourceOwnership):boolean;
   bind(focus:OutputNavigationFocusLease,ownedRouteFocus:(element:Element)=>boolean):void;
 };
+type NativeImageNavigationAttempt = {
+  current:()=>boolean;
+  scopeCurrent:()=>boolean;
+  retire:()=>PromiseSettledResult<void>;
+  startup:NativeImageWorkspaceStartup;
+  accepted:boolean;
+  navigation:PromiseSettledResult<boolean>|null;
+  reporting:PromiseSettledResult<void>[];
+  cleanups:NativeImageShellNavigationReceipt["cleanups"][number][];
+  cleanup:(()=>void)|null;
+};
+type ShellRouteDetail = {
+  path?:string;
+  preserveFocus?:boolean;
+  nativeImageStartup?:NativeImageWorkspaceStartup;
+  nativeImageCommit?:Parameters<NativeImageWorkspaceStartup["commit"]>[0];
+};
+type NativeImageLocaleBinding = {
+  readonly document:Document;
+  readonly host:NativeImageHost;
+  readonly listener:(event:Event)=>void;
+  phase:"installing"|"active"|"failed";
+};
 
 export class FormaShell extends FormaElement {
+  // The controller and its terminal receipts outlive permission-dependent
+  // children, hidden mobile panes and replacement Workspace elements.
+  #nativeImageHostInstance:NativeImageHost|null=null;
+  #nativeImageLocaleBinding:NativeImageLocaleBinding|null=null;
+  #reportNativeImageLocaleFailures(host:NativeImageHost,errors:unknown[]){
+    if(!errors.length)return;
+    // Shell is not a Workspace presentation origin. This records the listener
+    // failure without letting late A cleanup retire a successor B presentation.
+    host.retire(this,undefined,()=>{
+      if(errors.length===1)throw errors[0];
+      throw new AggregateError(errors,"native_image_locale_listener_failed",{cause:errors[0]});
+    });
+  }
+  #takeNativeImageLocaleBinding(){
+    const binding=this.#nativeImageLocaleBinding;
+    this.#nativeImageLocaleBinding=null;
+    if(binding)binding.phase="failed";
+    return binding;
+  }
+  #removeNativeImageLocaleBinding(binding:NativeImageLocaleBinding|null){
+    if(!binding)return;
+    try{binding.document.removeEventListener("forma-locale-change",binding.listener);}
+    catch(reason){this.#reportNativeImageLocaleFailures(binding.host,[reason]);}
+  }
+  #detachNativeImageLocaleDocument(){this.#removeNativeImageLocaleBinding(this.#takeNativeImageLocaleBinding());}
+  #syncNativeImageLocaleDocument(){
+    const host=this.#nativeImageHostInstance;
+    if(!host)return;
+    const requested=this.isConnected?this.ownerDocument:null;
+    if(this.#nativeImageLocaleBinding?.document===requested)return;
+    this.#detachNativeImageLocaleDocument();
+    // Removal and error reporting may reenter. Never overwrite their successor.
+    if(this.#nativeImageLocaleBinding)return;
+    const document=this.isConnected?this.ownerDocument:null;
+    if(!document)return;
+    const binding:NativeImageLocaleBinding={document,host,phase:"installing",listener:event=>{
+      if(binding.phase!=="active"||this.#nativeImageLocaleBinding!==binding||this.#nativeImageHostInstance!==host
+        ||!this.isConnected||this.ownerDocument!==document||event.currentTarget!==document)return;
+      host.refreshLocale();
+    }};
+    this.#nativeImageLocaleBinding=binding;
+    const errors:unknown[]=[];
+    try{
+      document.addEventListener("forma-locale-change",binding.listener);
+      if(this.#nativeImageLocaleBinding===binding&&this.isConnected&&this.ownerDocument===document){binding.phase="active";return;}
+    }catch(reason){errors.push(reason);}
+    // A throwing installation may already have attached the callback; even a
+    // successful add can finish after a reentrant detach. Roll back only A. A
+    // failed live A stays inactive until detach/adoption, never a render retry.
+    binding.phase="failed";
+    try{document.removeEventListener("forma-locale-change",binding.listener);}
+    catch(reason){errors.push(reason);}
+    this.#reportNativeImageLocaleFailures(host,errors);
+  }
+  get #nativeImageHost():NativeImageHost{
+    const host=this.#nativeImageHostInstance??=new NativeImageHost({
+      store:()=>this.store,
+      changed:()=>{
+        // Capacity belongs to this Shell, including after the old Image pane
+        // closes. Its current Workspace must read the new availability too.
+        const errors:unknown[]=[];
+        try{this.requestUpdate();}catch(reason){errors.push(reason);}
+        try{
+          const store=this.store,workspace=this.querySelector<FormaElement>("forma-workspace");
+          if(this.isConnected&&workspace?.isConnected&&workspace.closest("forma-shell")===this
+            &&FormaElement.hasStoreIdentity(workspace,store)&&this.store===store
+            &&this.querySelector("forma-workspace")===workspace)workspace.requestUpdate();
+        }catch(reason){errors.push(reason);}
+        if(errors.length===1)throw errors[0];
+        if(errors.length>1)throw new AggregateError(errors,"native_image_notification_failed",{cause:errors[0]});
+      },
+      text:(key,fallback)=>this.i18n.t(key,fallback),
+      locale:()=>{const i18n=this.i18n;return{locale:i18n.locale,messages:i18n.messages,direction:i18n.direction};},
+      navigate:(origin,target,current,retire,startup)=>this.#navigateNativeImageFrom(origin,target,current,retire,startup),
+    });
+    // Publish the concrete error owner before any listener installation.
+    this.#syncNativeImageLocaleDocument();
+    // Scoped providers do not emit an initial change event. Refresh the same
+    // effective controller on entry too; failure remains owned by the Host.
+    host.refreshLocale();
+    return host;
+  }
+  #nativeImageLocaleReady(host:NativeImageHost):boolean{
+    const binding=this.#nativeImageLocaleBinding;
+    return this.isConnected&&binding?.phase==="active"&&binding.document===this.ownerDocument
+      &&binding.host===host&&this.#nativeImageHostInstance===host;
+  }
+  get nativeImageAvailable():boolean{
+    const host=this.#nativeImageHost;
+    return this.#nativeImageLocaleReady(host)&&host.available;
+  }
+  openNativeImage(origin:FormaElement,setup:Parameters<NativeImageHost["open"]>[1],presentation:NativeImageHostPresentation):ReturnType<NativeImageHost["open"]>{
+    const store=this.store,document=this.ownerDocument;
+    if(!this.isConnected||!origin.isConnected||!this.contains(origin)
+      ||origin.closest("forma-shell")!==this||!FormaElement.hasStoreIdentity(origin,store))return null;
+    const host=this.#nativeImageHost;
+    // Dismissing an error does not repair a failed listener. Getter callbacks
+    // may also retire the original origin or replace its Store/document.
+    if(this.store!==store||this.ownerDocument!==document||!origin.isConnected||!this.contains(origin)
+      ||origin.closest("forma-shell")!==this||!FormaElement.hasStoreIdentity(origin,store)
+      ||!this.#nativeImageLocaleReady(host))return null;
+    return host.open(origin,setup,presentation);
+  }
+  renderNativeImage(origin:FormaElement){
+    if(!this.isConnected||!origin.isConnected||!this.contains(origin)
+      ||origin.closest("forma-shell")!==this||!FormaElement.hasStoreIdentity(origin,this.store))return nothing;
+    return this.#nativeImageHost.render(origin);
+  }
+  retireNativeImage(origin:FormaElement,presentation?:NativeImageHostPresentation,notify?:()=>void):PromiseSettledResult<void>{
+    // Retirement is identity-scoped inside the stable owner; a detached origin
+    // must still be able to release its original presentation.
+    return this.#nativeImageHost.retire(origin,presentation,notify);
+  }
   #commandActiveKey:string|null=null;
   #commandChooseFirst=true;
   #commandSelectionChanged=false;
@@ -58,7 +196,7 @@ export class FormaShell extends FormaElement {
   #localeAnnouncement = "";
   #accessibleRoute = "";
   #routeAnnouncement = "";
-  #focusNextRoute = false;
+  #focusNextRoute: boolean | "native-image" = false;
   #routeFocus:ShellFocus|null=null;
   #sourceRetirementFocus:ShellFocus|null=null;
   #sourceRetirementSeen:CapturedSourceOwnership|null=null;
@@ -239,11 +377,32 @@ export class FormaShell extends FormaElement {
     }
   };
   #routeChanged = (event: Event) => {
+    const detail=(event as CustomEvent<ShellRouteDetail>).detail;
+    const startup=detail?.nativeImageStartup,commit=detail?.nativeImageCommit,host=this.#nativeImageHostInstance;
+    if(startup||commit){
+      // An old or another Shell's ticket cannot fall through into unobserved
+      // ordinary startup work after its fixed Image owner has withdrawn.
+      if(!startup||!commit||!host?.ownsStartup(startup,commit))return;
+      try{
+        const store=this.store,path=detail?.path??`${location.pathname}${location.search}${location.hash}`;
+        // Capture before focus preparation can invoke an owner callback. The
+        // exact arrival cannot revive after an intervening A-to-B-to-A route.
+        const arrival=store.captureWorkspaceNavigationFocus(path);
+        const current=()=>this.isConnected&&this.store===store&&Boolean(arrival?.routeCurrent()&&arrival.current());
+        this.#applyRouteChanged(detail,startup,current);
+      }catch(reason){host.routeEventFailed(startup,reason);}
+      return;
+    }
+    this.#applyRouteChanged(detail);
+  };
+  #applyRouteChanged(detail:ShellRouteDetail|undefined,startup?:NativeImageWorkspaceStartup,startupCurrent:()=>boolean=()=>false){
+    if(startup&&!startupCurrent()){
+      startup.superseded("component-load");startup.superseded("document-sync");return;
+    }
     this.#retireSourceRetirementFocus();
     if(this.store.ui.commandOpen)void this.#closeCommands(false);
     if(this.#commandRouteFocus&&this.#commandRouteFocus.route!==this.store.route.get()){this.#commandRouteFocus.focus.dispose();this.#commandRouteFocus=null;}
     this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;
-    const detail = (event as CustomEvent<{ path?: string; preserveFocus?:boolean }>).detail;
     const path = detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
     this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();
     if(detail?.preserveFocus!==true&&path===this.store.route.get()&&!path.includes("#")){
@@ -258,12 +417,26 @@ export class FormaShell extends FormaElement {
         this.#routeFocus=this.#captureShellFocus(()=>!arrival||arrival.routeCurrent(),
           element=>element===invoker&&Boolean(invoker?.isConnected&&popover?.isConnected
             &&!popover.matches(":popover-open")));
-        this.#focusNextRoute=true;
+        this.#focusNextRoute=startup?"native-image":true;
       }
     }
-    void loadRouteComponent(path);
-    if (!this.store.loading.get()) void this.store.syncDocumentFromRoute(path);
-  };
+    if(startup){
+      // Start observes the original invocation and promise. Route commitment
+      // alone is not an acknowledgment from either startup operation.
+      if(startupCurrent())startup.start("component-load",()=>loadRouteComponent(path));
+      else startup.superseded("component-load");
+      if(!startupCurrent())startup.superseded("document-sync");
+      else{
+        const loading=this.store.loading.get();
+        if(!startupCurrent())startup.superseded("document-sync");
+        else if(loading)startup.unnecessary("document-sync","document-loading");
+        else startup.start("document-sync",()=>this.store.syncDocumentFromRoute(path));
+      }
+    }else{
+      void loadRouteComponent(path);
+      if(!this.store.loading.get())void this.store.syncDocumentFromRoute(path);
+    }
+  }
   #populated = () => {
     const path = this.store.route.get();
     window.setTimeout(() => {
@@ -296,7 +469,7 @@ export class FormaShell extends FormaElement {
   }
 
   override connectedCallback() {
-    super.connectedCallback();window.addEventListener("keydown",this.#keydown);window.addEventListener("popstate",this.#pop);window.addEventListener("forma-route-changed",this.#routeChanged);window.addEventListener("forma-performance",this.#populated);window.addEventListener("forma-authorization-changed",this.#clearShareSecret);
+    super.connectedCallback();this.#syncNativeImageLocaleDocument();this.#nativeImageHostInstance?.refreshLocale();window.addEventListener("keydown",this.#keydown);window.addEventListener("popstate",this.#pop);window.addEventListener("forma-route-changed",this.#routeChanged);window.addEventListener("forma-performance",this.#populated);window.addEventListener("forma-authorization-changed",this.#clearShareSecret);
     window.addEventListener("forma-event-source-retired",this.#sourceRetired,true);
     window.visualViewport?.addEventListener("resize", this.#syncLayout);
     window.visualViewport?.addEventListener("scroll", this.#syncLayout);
@@ -312,7 +485,16 @@ export class FormaShell extends FormaElement {
     if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
     else if(!this.store.events.get().length)void this.store.load();
   }
-  override disconnectedCallback(){this.#retireSourceRetirementFocus();window.removeEventListener("forma-event-source-retired",this.#sourceRetired,true);this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#commandEpoch++;this.#commandOpening=null;this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
+  override disconnectedCallback(){
+    const localeBinding=this.#takeNativeImageLocaleBinding();
+    try{this.#nativeImageHostInstance?.disconnect();this.#retireSourceRetirementFocus();window.removeEventListener("forma-event-source-retired",this.#sourceRetired,true);this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#commandEpoch++;this.#commandOpening=null;this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
+    finally{this.#removeNativeImageLocaleBinding(localeBinding);}
+  }
+  adoptedCallback(){
+    this.#detachNativeImageLocaleDocument();
+    this.#syncNativeImageLocaleDocument();
+    this.#nativeImageHostInstance?.refreshLocale();
+  }
 
   #raiseToast() {
     const toast = this.querySelector<HTMLElement>(".toast[popover]");
@@ -340,7 +522,8 @@ export class FormaShell extends FormaElement {
       const path=this.store.route.get(),pathname=path.split(/[?#]/)[0]??"",parts=pathname.split("/").filter(Boolean);
       const organization=parts[0]==="settings"&&parts[1]==="workspaces"&&parts[2]!=="invitations"?this.store.session.get()?.organizations?.find((item)=>item.organizationId===parts[2]):undefined;
       const key=`${path}:${this.i18n.locale}:${organization?.name??""}`;
-      if(this.#accessibleRoute!==key){
+      const routeChanged=this.#accessibleRoute!==key;
+      if(routeChanged){
         this.#accessibleRoute=key;
         const id=applicationIdFromRoute(path),application=applicationDefinition(id),task=application.navigation.find((item)=>navigationItemActive(id,item.id,path));
         const workspaceSection=parts[0]==="settings"&&parts[1]==="workspaces"?(parts[2]==="invitations"?this.i18n.t("workspace.admin.invitations","Your invitations"):parts[2]?this.i18n.t(`workspace.admin.section.${parts[3]??"overview"}`,parts[3]??"Overview"):this.i18n.t("workspace.admin.heading","Workspaces & collaboration")):"";
@@ -348,6 +531,10 @@ export class FormaShell extends FormaElement {
         const workspace=this.i18n.t(`shell.${id}`,application.label);
         document.title=page===workspace?`${workspace} — Forma`:`${page} — ${workspace} — Forma`;
         this.#routeAnnouncement=document.title.replace(/\s— Forma$/,"");
+      }
+      // An admitted Image Edit returns to its already-open Document. Its exact
+      // route event still owns main focus even when the accessible key is unchanged.
+      if(routeChanged||this.#focusNextRoute==="native-image"){
         if(this.#focusNextRoute&&!path.includes("#")){
           this.#focusNextRoute=false;
           const focus=this.#routeFocus;
@@ -613,7 +800,7 @@ export class FormaShell extends FormaElement {
     const next=index<0?(delta>0?0:choices.length-1):Math.min(choices.length-1,Math.max(0,index+delta));
     this.#commandActiveKey=choices[next]?.key??null;this.#commandChooseFirst=false;this.#commandSelectionChanged=false;this.requestUpdate();
   }
-  #captureNavigation(owner:CommandOpening,replaces:boolean,context?:NavigationPresentationContext,presentationCurrent:()=>boolean=()=>true,originRoute:()=>string=()=>owner.route){
+  #captureNavigation(owner:CommandOpening,replaces:boolean,context?:NavigationPresentationContext,presentationCurrent:()=>boolean=()=>true,originRoute:()=>string=()=>owner.route,setupFailureCleanup?:(work:()=>void)=>void,scopeCurrent?:()=>boolean){
     let allowedRouteFocus:(element:Element)=>boolean=()=>false;
     const focus=captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>allowedRouteFocus(element)});
     let expectedFocus=focus,retired:"blocked"|"identity"|null=null,handedOff=false,retained=false;
@@ -623,6 +810,7 @@ export class FormaShell extends FormaElement {
     const blocked=()=>replaces&&this.#commandOriginsCurrent(owner,context)?owner.origins.find(origin=>origin.blocked(context)):undefined;
     const navigation:CommandNavigation={focus,
       current:()=>{
+        if(scopeCurrent&&!scopeCurrent()){retired="identity";return false;}
         const routeHandoff=!handedOff&&Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),expectedFocus));
         // Keep observing identity even after a dirty refusal. Equality after an
         // intervening route/owner change must not revive its toast or focus.
@@ -648,7 +836,9 @@ export class FormaShell extends FormaElement {
       bind:(lease,allowed)=>{expectedFocus=lease;allowedRouteFocus=allowed;},
       retain:()=>{retained=true;},
     };
-    const unsubscribe=this.store.subscribe(()=>{navigation.current();});
+    let unsubscribe:()=>void;
+    try{unsubscribe=this.store.subscribe(()=>{navigation.current();});}
+    catch(reason){if(setupFailureCleanup)setupFailureCleanup(()=>focus.dispose());throw reason;}
     const reportUnavailable=():NavigationRefusal|undefined=>{
       if(retired==="identity"||!this.#commandContextCurrent(owner))return;
       const refusal=originScope()?blocked():undefined;
@@ -659,7 +849,10 @@ export class FormaShell extends FormaElement {
       sourceCurrent:()=>navigation.current()&&(destinationSource!==null||this.#commandContextCurrent(owner)),
       destinationSourceCurrent:()=>navigation.current()&&this.store.sourceOwnershipActive(destinationSource??owner.source),
       refusalCurrent:()=>retired!=="identity"&&originScope(),
-      dispose:()=>{unsubscribe();if(!retained)focus.dispose();}};
+      dispose:(observe?:(work:()=>void)=>void)=>{
+        if(observe){observe(unsubscribe);if(!retained)observe(()=>focus.dispose());}
+        else{unsubscribe();if(!retained)focus.dispose();}
+      }};
   }
   // Only this retained route owner releases the exact supplied lease.
   // Assigned-review borrowers keep their caller's post-arrival validation.
@@ -729,16 +922,46 @@ export class FormaShell extends FormaElement {
 
   /** Deliberate UI navigation only; internal save, recovery and permission retirement do not call this. */
   async navigateFrom(origin:FormaElement,run:InAppNavigationAction,preferences:NavigationPresentationContext={}):Promise<boolean>{
+    return this.#navigateFrom(origin,run,preferences);
+  }
+  #recordNativeImageCleanup(image:NativeImageNavigationAttempt,phase:NativeImageShellNavigationReceipt["cleanups"][number]["phase"],work:()=>void){
+    let outcome:PromiseSettledResult<void>;
+    try{work();outcome=Object.freeze({status:"fulfilled",value:undefined});}
+    catch(reason){outcome=Object.freeze({status:"rejected",reason});}
+    image.cleanups.push(Object.freeze({phase,outcome}));
+  }
+  async #navigateNativeImageFrom(origin:FormaElement,target:NativeImageEditTarget,current:()=>boolean,
+    retire:()=>PromiseSettledResult<void>,startup:NativeImageWorkspaceStartup):Promise<NativeImageShellNavigationReceipt>{
+    const image:NativeImageNavigationAttempt={current,scopeCurrent:()=>false,retire,startup,accepted:false,navigation:null,reporting:[],cleanups:[],cleanup:null};
+    try{
+      const store=this.store,document=this.ownerDocument;
+      let scopeRetired=false;
+      image.scopeCurrent=()=>{
+        if(!this.isConnected||this.store!==store||this.ownerDocument!==document)scopeRetired=true;
+        return !scopeRetired;
+      };
+      const opened=await this.#navigateFrom(origin,options=>{
+        return store.openDocument(target.documentId,withDocumentInRoute("/",target.documentId,store.projection.get().documentTitle),
+          "native-image",{...options,nativeImageStartup:startup});
+      },{},image);
+      // The shared core may have converted a thrown original to its legacy
+      // boolean. Keep that original rejection, including a reason of undefined.
+      image.navigation??=Object.freeze({status:"fulfilled",value:opened});
+    }catch(reason){image.navigation??=Object.freeze({status:"rejected",reason});}
+    finally{image.cleanup?.();}
+    return Object.freeze({navigation:image.navigation!,reporting:Object.freeze(image.reporting),cleanups:Object.freeze(image.cleanups)});
+  }
+  async #navigateFrom(origin:FormaElement,run:InAppNavigationAction,preferences:NavigationPresentationContext={},image?:NativeImageNavigationAttempt):Promise<boolean>{
     if(!this.isConnected||!origin.isConnected||!this.contains(origin)||!FormaElement.hasStoreIdentity(origin,this.store)
       ||this.store.ui.commandOpen)return false;
     const presentation=preferences.presentation,opener=presentation?.opener;
     let presentationClosed=false,nativeClosed=false,nativeCloseEvent=false;
     let nativeClosing:NavigationClosingPresentation|null=null,cancelNativeClose:(()=>void)|null=null;
     let nativeAfterCloseRoute:string|undefined,nativeDestination:string|undefined;
-    const presentationCurrent=()=>!presentation||presentation.owner===origin&&origin.isConnected
+    const presentationCurrent=()=>(!image||image.scopeCurrent()&&(image.accepted||image.current()))&&(!presentation||presentation.owner===origin&&origin.isConnected
       &&origin.closest("forma-shell")===this&&FormaElement.hasStoreIdentity(origin,this.store)
       &&(presentationClosed?(!nativeClosing||navigationPresentationClosing({closingPresentation:nativeClosing},origin))
-        :navigationPresentationCurrent(presentation));
+        :navigationPresentationCurrent(presentation)));
     if(!presentationCurrent()||opener&&(!opener.isConnected||opener.ownerDocument!==this.ownerDocument
       ||!this.contains(opener)||opener.closest("forma-shell")!==this))return false;
     const context:NavigationPresentationContext|undefined=presentation?{
@@ -770,7 +993,15 @@ export class FormaShell extends FormaElement {
       if(nativeCloseEvent&&expectedOriginRoute===owner.route&&nativeAfterCloseRoute===path)expectedOriginRoute=path;
       return expectedOriginRoute;
     };
-    const captured=this.#captureNavigation(owner,true,context,presentationCurrent,originRoute),navigation=captured.navigation,focus=navigation.focus;
+    const captured=this.#captureNavigation(owner,true,context,presentationCurrent,originRoute,
+      image?work=>this.#recordNativeImageCleanup(image,"navigation-dispose",work):undefined,image?.scopeCurrent),navigation=captured.navigation,focus=navigation.focus;
+    if(image)image.cleanup=()=>{
+      // Even a failure during the setup below still reaches this owner. Cancel
+      // and navigation release do not mask one another or the original result.
+      this.#recordNativeImageCleanup(image,"cancel-native-close",()=>{cancelNativeClose?.();});
+      nativeClosing=null;
+      captured.dispose(work=>this.#recordNativeImageCleanup(image,"navigation-dispose",work));
+    };
     const current=()=>captured.sourceCurrent()&&focus.current();
     const active=this.ownerDocument.activeElement,popover=active?.closest<HTMLElement>("[popover]:popover-open");
     const popoverId=popover?.getAttribute("id");
@@ -803,8 +1034,24 @@ export class FormaShell extends FormaElement {
           ||nativeClosed&&nativeDestination===this.store.route.get()
             &&Boolean(this.store.captureWorkspaceNavigationFocus(this.store.route.get(),focus)?.routeCurrent())
             &&captured.destinationSourceCurrent()));
-    const options={current,focus,onOriginHandoff:()=>navigation.handoff(),onDestinationSource:(source:CapturedSourceOwnership)=>navigation.adoptSource(source)};
-    const reportUnavailable=()=>{const reason=captured.reportUnavailable();if(reason)preferences.onRefusal?.(reason);};
+    const options={current,focus,onOriginHandoff:()=>{
+      if(!image)return navigation.handoff();
+      if(image.accepted)return navigation.current()&&focus.current();
+      if(!image.current()||!navigation.handoff())return false;
+      // This latch precedes retirement: Store's accepted navigation must not
+      // consult the origin lifetime that the handoff intentionally retires.
+      image.accepted=true;
+      try{
+        this.#nativeImageHost.retainStartupFocus(image.startup,()=>focus.dispose());
+        navigation.retain();
+      }finally{
+        let outcome:PromiseSettledResult<void>;
+        try{outcome=image.retire();}catch(reason){outcome=Object.freeze({status:"rejected",reason});}
+        image.cleanups.push(Object.freeze({phase:"origin-retire",outcome}));
+      }
+      return true;
+    },onDestinationSource:(source:CapturedSourceOwnership)=>navigation.adoptSource(source)};
+    const reportUnavailable=()=>{if(image)return;const reason=captured.reportUnavailable();if(reason)preferences.onRefusal?.(reason);};
     const retainArtifactOpening=(opened:boolean,sameRoute=false)=>{
       const route=this.store.route.get(),linked=libraryFocusFromRoute(route);
       if(!opened||linked?.kind!=="artifact"||route===owner.route&&!sameRoute)return opened;
@@ -858,7 +1105,7 @@ export class FormaShell extends FormaElement {
     };
     try{
       if(!current()){
-        if(captured.refusalCurrent()&&captured.blocked())reportUnavailable();
+        if(!image&&captured.refusalCurrent()&&captured.blocked())reportUnavailable();
         return false;
       }
       const result=typeof run==="function"?await run({...options,
@@ -908,10 +1155,11 @@ export class FormaShell extends FormaElement {
           const opened=this.#route(path,{...options,...preferences},false);
           return typeof opened==="boolean"?retainArtifactOpening(opened):opened.then(retainArtifactOpening);
         }}):await runLocal();
-      if(result===false&&focus.current())reportUnavailable();
+      if(image)image.navigation=Object.freeze({status:"fulfilled",value:result!==false});
+      if(!image&&result===false&&focus.current())reportUnavailable();
       return result!==false;
-    }catch{if(focus.current())reportUnavailable();return false;}
-    finally{(cancelNativeClose as (()=>void)|null)?.();nativeClosing=null;captured.dispose();}
+    }catch(reason){if(image)image.navigation=Object.freeze({status:"rejected",reason});else if(focus.current())reportUnavailable();return false;}
+    finally{if(!image){(cancelNativeClose as (()=>void)|null)?.();nativeClosing=null;captured.dispose();}}
   }
   async #runCommand(key:string|null,owner:CommandOpening){
     if(!key||this.#commandComposing||this.#commandOpening!==owner||!this.#commandContextCurrent(owner)||this.store.route.get()!==owner.route)return;
@@ -1297,6 +1545,7 @@ export class FormaShell extends FormaElement {
       ${shared?html`<aside class="impersonation-banner workspace-shared-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</b>${canAuthor?nothing:html`<span>${this.i18n.t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")}</span>`}</div><button type="button" class="button secondary compact" @click=${()=>void this.#leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${errorMessage} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
+      ${this.#nativeImageHost.renderStatus()}
       <main id="main-content" tabindex="-1" aria-busy=${sourceReady||documentRouteState==="unavailable"?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourcePlaceholder}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourcePlaceholder}</main>
       ${session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
