@@ -373,7 +373,17 @@ export class PresentationSlide extends FormaPresentationalElement {
 
     if (kind === "hero-type" || kind === "metric") {
       const value = visual.displayValue ?? visual.value;
-      const size = value.length > 48 ? "4.2cqi" : value.length > 24 ? "6.4cqi" : "10cqi";
+      let size = value.length > 48 ? "4.2cqi" : value.length > 24 ? "6.4cqi" : "10cqi";
+      if (kind === "hero-type" && size === "10cqi") {
+        const locale = this.#audienceLocale();
+        const graphemes = new Intl.Segmenter(locale, { granularity: "grapheme" });
+        const length = (text: string) => Array.from(graphemes.segment(text)).length;
+        const longWord = Array.from(new Intl.Segmenter(locale, { granularity: "word" }).segment(value))
+          .some((word) => word.isWordLike && length(word.segment) > 8);
+        // Short prose can still contain a wide word in the evidence column.
+        // Use the existing middle tier without splitting or replacing its text.
+        if (longWord) size = "6.4cqi";
+      }
       return html`<div class="presentation-visual-type" style=${`--slide-visual-size:${size}`}>
         <strong dir="auto">${value}</strong>
         ${visual.label ? html`<span dir="auto">${visual.label}</span>` : nothing}

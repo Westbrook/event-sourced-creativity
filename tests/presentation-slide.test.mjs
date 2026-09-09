@@ -584,6 +584,107 @@ test("native slide rendering preserves a safe authored brand typeface",()=>{
   assert.match(markup,/--slide-font:(?:&quot;|")Helvetica Neue(?:&quot;|"),sans-serif/);
 });
 
+test("Safe departures receives the hero word cap in full and compact rendering",()=>{
+  for(const compact of [false,true]){
+    const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Travel promise",value:"Safe departures",data:[]}},{compact});
+    assert.match(markup,/--slide-visual-size:6\.4cqi/);
+    assert.ok(markup.includes('<strong dir="auto">Safe departures</strong>'));
+    assert.ok(markup.includes('<span dir="auto">Travel promise</span>'));
+  }
+});
+
+for(const [name,value,size,sourceValue=value] of [
+  ["brief two-word hero","Set sail","10cqi"],
+  ["eight-grapheme word","departed","10cqi"],
+  ["nine-grapheme word","departure","6.4cqi"],
+  ["eight decomposed graphemes","e\u0301".repeat(8),"10cqi"],
+  ["nine decomposed graphemes","e\u0301".repeat(9),"6.4cqi"],
+  ["nonword punctuation",".........","10cqi","Intentional punctuation"],
+  ["short nonword emoji sequence","👩🏽‍💻".repeat(3),"10cqi"],
+  ["emoji already in the middle legacy tier","👩🏽‍💻".repeat(4),"6.4cqi"],
+  ["emoji already in the smallest legacy tier","👩🏽‍💻".repeat(8),"4.2cqi"],
+  ["long unbroken word below the total-length cutoff","x".repeat(24),"6.4cqi"],
+  ["long unbroken word at the final legacy boundary","x".repeat(48),"6.4cqi"],
+  ["long unbroken word beyond the final legacy boundary","x".repeat(49),"4.2cqi"],
+])test(`real hero rendering preserves ${name} and its bounded size`,()=>{
+  // A punctuation-only source is intentionally incomplete; its authored
+  // display value still reaches hero sizing through a meaningful source value.
+  const slide={layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Authored message",
+    value:sourceValue,...(sourceValue!==value?{displayValue:value}:{}),data:[]}};
+  const original=structuredClone(slide),markup=renderSlide(slide);
+  assert.ok(markup.includes(`--slide-visual-size:${size}`));
+  assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`),"the exact authored Unicode value remains complete");
+  assert.deepEqual(slide,original,"sizing does not rewrite the authored visual");
+});
+
+for(const [name,locale,value,size] of [
+  ["Japanese words without spaces","ja-JP","猫と犬と鳥と花と月","10cqi"],
+  ["Arabic short words","ar","السفر الآمن للجميع","10cqi"],
+  ["Arabic long word","ar","الاستقلال","6.4cqi"],
+  ["Arabic combining marks","ar","مَرْحَبًا","10cqi"],
+])test(`hero word segmentation preserves ${name}`,()=>{
+  const language={locale,t:(_key,fallback)=>fallback,system:source=>source,number:value=>String(value)};
+  // Distinct same-language context keeps audience-locale inference without
+  // asking normalization to repeat the title as the hero value.
+  const title=locale==="ja-JP"?"短いことばの紹介":"رسالة للقراء";
+  const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"",value,data:[]}},
+    {item:{title,body:"",notes:""},locale:language});
+  assert.ok(markup.includes(`--slide-visual-size:${size}`));
+  assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`));
+});
+
+for(const kind of ["hero-type","metric"]){
+  for(const [length,value,size] of [
+    [24,"a ".repeat(11)+"ab","10cqi"],
+    [25,"a ".repeat(12)+"a","6.4cqi"],
+    [48,"e\u0301 ".repeat(15)+"abc","6.4cqi"],
+    [49,"e\u0301 ".repeat(15)+"abcd","4.2cqi"],
+  ])test(`${kind} preserves the existing ${length}-unit total-length tier`,()=>{
+    assert.equal(value.length,length,"fixture straddles the original UTF-16 boundary");
+    const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind,label:"",value,data:[]}});
+    assert.ok(markup.includes(`--slide-visual-size:${size}`));
+    assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`));
+  });
+}
+
+for(const [name,value,size] of [
+  ["Safe departures","Safe departures","10cqi"],
+  ["nine-grapheme decomposed word","e\u0301".repeat(9),"10cqi"],
+  ["long UTF-16 emoji sequence","👩🏽‍💻".repeat(8),"4.2cqi"],
+])test(`metric rendering keeps its existing size for ${name}`,()=>{
+  const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind:"metric",label:"",value,data:[]}});
+  assert.ok(markup.includes(`--slide-visual-size:${size}`));
+  assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`));
+});
+
+test("displayValue drives the hero cap while exact precision, label and supplemental data remain intact",()=>{
+  const slide={layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Measured outcome",
+    value:"Go",displayValue:"Safe departures",exactValue:"61.125",unit:"/ 100",
+    data:[{label:"Authorized sample",value:"1500",displayValue:"1,500",weight:.5}]}};
+  const original=structuredClone(slide),markup=renderSlide(slide);
+  assert.match(markup,/--slide-visual-size:6\.4cqi/);
+  assert.ok(markup.includes('<strong dir="auto">Safe departures</strong>'));
+  assert.ok(!markup.includes('<strong dir="auto">Go</strong>'));
+  assert.ok(markup.includes('<span dir="auto">Measured outcome</span>'));
+  assert.match(markup,/<dt>Exact<\/dt>\s*<dd><data value=61\.125>61\.125 \/ 100<\/data><\/dd>/);
+  assert.match(markup,/<dt>Displayed<\/dt>\s*<dd><data value=Safe departures>Safe departures<\/data><\/dd>/);
+  assert.ok(markup.includes('<dt class="presentation-slide__datum-label" dir="auto">Authorized sample</dt>'));
+  assert.ok(markup.includes('<dd class="presentation-slide__datum-value" dir="auto">1,500</dd>'));
+  assert.deepEqual(slide,original);
+});
+
+test("a short numeric displayValue retains its large tier despite a long underlying hero value",()=>{
+  const value="x".repeat(49),slide={layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Precision",
+    value,displayValue:"61.13",exactValue:"61.125",unit:"/ 100",data:[]}};
+  const original=structuredClone(slide),markup=renderSlide(slide);
+  assert.match(markup,/--slide-visual-size:10cqi/);
+  assert.ok(markup.includes('<strong dir="auto">61.13</strong>'));
+  assert.ok(!markup.includes(`<strong dir="auto">${value}</strong>`));
+  assert.match(markup,/<data value=61\.125>61\.125 \/ 100<\/data>/);
+  assert.match(markup,/<data value=61\.13>61\.13 \/ 100<\/data>/);
+  assert.deepEqual(slide,original);
+});
+
 function fitHarness(context) {
   const descriptors = Object.fromEntries(["document", "requestAnimationFrame", "cancelAnimationFrame"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const frames = new Map(), events = [], fonts = new EventTarget();
