@@ -565,8 +565,8 @@ button.canvas-document-output-preview .canvas-artifact-slide-preview .presentati
     scroll-margin-block: 1rem;
   }
 
-  /* Ordinary prose scrolls complete content and chrome in the existing card. */
-  .application-canvas dialog.canvas-artifact-viewer[data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content > pre) {
+  /* Ordinary prose and storyboards scroll complete content and chrome in the existing card. */
+  .application-canvas dialog.canvas-artifact-viewer[data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content > :is(pre, ol.canvas-artifact-storyboard)) {
     grid-template-rows: max-content max-content max-content;
     align-content: start;
     overflow-x: hidden;
@@ -574,7 +574,7 @@ button.canvas-document-output-preview .canvas-artifact-slide-preview .presentati
     overscroll-behavior: contain;
     scroll-padding-block: 1rem;
   }
-  .application-canvas dialog.canvas-artifact-viewer[data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content > pre) > .canvas-artifact-viewer-content {
+  .application-canvas dialog.canvas-artifact-viewer[data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content > :is(pre, ol.canvas-artifact-storyboard)) > .canvas-artifact-viewer-content {
     min-block-size: auto;
     overflow: visible;
   }
