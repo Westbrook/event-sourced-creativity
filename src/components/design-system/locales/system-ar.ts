@@ -1,5 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1nnfzqo.15": "اكتمل الصوت",
+  "system.auto.eo9qdm.19": "فتح الصوت الأصلي",
+  "system.auto.6otw8x.85": "تعذّر التحقق من هذا الصوت المكتمل تحديدًا. حاول فتح الطلب نفسه مرة أخرى.",
+  "system.auto.4h6snz.83": "تتوفر نتائج صوتية مكتملة أخرى. افتحها من نتائج هذا المستند.",
+  "system.auto.swxdvr.10": "تحميل الصوت",
+  "system.auto.18mtyu5.14": "جارٍ تحميل الصوت…",
+  "system.auto.89gsst.40": "تحرير الصوت غير متاح في Forma.",
   "system.auto.1nn949p.38": "واجهة تطبيق الذاكرة الشخصية.",
   "system.auto.1iw06ox.82": "عناصر تحكم بالموافقة فقط. لا يؤدي تركيب هذا المكوّن أبدًا إلى التسجيل في الذاكرة أو التقاط أي نشاط.",
   "system.auto.1ebefvb.101": "عند إغلاق المكوّن المضيف الذي يضم هذا المكوّن، يُبطَل العمل الجاري قبل تحديث DOM التالي له. تتطلب إعادة الفتح تركيبًا جديدًا.",
@@ -6131,6 +6138,11 @@ Object.assign(messages, {
 Object.assign(messages, {
   "system.auto.12n9acm.49": "واجهة تطبيق أصلية للوحة القصة المحفوظة.",
   "system.auto.16gltqk.141": "واجهة أصلية للوحة القصة المحفوظة، مستقلة عن مخزن الحالة. افحص سماتها الفعلية وخصائص JavaScript وأحداثها قبل دمجها.",
+});
+
+Object.assign(messages, {
+  "system.auto.j0hvzh.44": "واجهة تطبيق أصلية للصوت المحفوظ.",
+  "system.auto.1tbmd5n.136": "واجهة أصلية للصوت المحفوظ، مستقلة عن مخزن الحالة. افحص سماتها الفعلية وخصائص JavaScript وأحداثها قبل دمجها.",
 });
 
 export default messages;

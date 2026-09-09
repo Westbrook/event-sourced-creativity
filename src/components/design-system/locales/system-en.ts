@@ -1,5 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1nnfzqo.15": "Completed audio",
+  "system.auto.eo9qdm.19": "Open original audio",
+  "system.auto.6otw8x.85": "The exact completed audio could not be verified. Try opening this same request again.",
+  "system.auto.4h6snz.83": "More completed audio results are available. Open them from this Document’s results.",
+  "system.auto.swxdvr.10": "Load audio",
+  "system.auto.18mtyu5.14": "Loading audio…",
+  "system.auto.89gsst.40": "Audio editing is not available in Forma.",
   "system.auto.1nn949p.38": "Personal memory application interface.",
   "system.auto.1iw06ox.82": "Consent controls only. Mounting this component never enrolls or captures activity.",
   "system.auto.1ebefvb.101": "Closing the composing host retires work before its next DOM update. Reopening requires a fresh mount.",
@@ -6162,6 +6169,11 @@ Object.assign(messages, {
 Object.assign(messages, {
   "system.auto.12n9acm.49": "Native retained storyboard application interface.",
   "system.auto.16gltqk.141": "Store-independent native retained storyboard interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+});
+
+Object.assign(messages, {
+  "system.auto.j0hvzh.44": "Native retained audio application interface.",
+  "system.auto.1tbmd5n.136": "Store-independent native retained audio interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
 });
 
 export default messages;

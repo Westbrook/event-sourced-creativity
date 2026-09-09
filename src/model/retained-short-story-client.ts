@@ -1,3 +1,4 @@
+import { captureNativeAudioHandle, nativeAudioCompletionPath, validateNativeAudioCompletion, NATIVE_AUDIO_COMPLETION_MAX_BYTES, type NativeAudioHandle, type NativeAudioCompletion } from "./native-audio-completion.ts";
 import { captureNativeStoryboardHandle, nativeStoryboardCompletionPath, validateNativeStoryboardCompletion, NATIVE_STORYBOARD_COMPLETION_MAX_BYTES, type NativeStoryboardHandle, type NativeStoryboardCompletion } from "./native-storyboard-completion.ts";
 import { captureNativeSlidesHandle, nativeSlidesCompletionPath, validateNativeSlidesCompletion, NATIVE_SLIDES_COMPLETION_MAX_BYTES, type NativeSlidesHandle, type NativeSlidesCompletion } from "./native-slides-completion.ts";
 import { captureNativeSceneHandle, nativeSceneCompletionPath, validateNativeSceneCompletion, NATIVE_SCENE_COMPLETION_MAX_BYTES, type NativeSceneHandle, type NativeSceneCompletion } from "./native-scene-completion.ts";
@@ -142,4 +143,14 @@ export async function readNativeStoryboardCompletion(
   if (!handle) throw new Error("invalid_native_storyboard_handle");
   return readNativeJson(nativeStoryboardCompletionPath(handle), controls, NATIVE_STORYBOARD_COMPLETION_MAX_BYTES,
     candidate => validateNativeStoryboardCompletion(candidate, handle));
+}
+
+/* Read only the exact original Audio completion handle. */
+export async function readNativeAudioCompletion(
+  value: NativeAudioHandle, controls: RetainedStoryReadControls,
+): Promise<NativeAudioCompletion> {
+  const handle = captureNativeAudioHandle(value);
+  if (!handle) throw new Error("invalid_native_audio_handle");
+  return readNativeJson(nativeAudioCompletionPath(handle), controls, NATIVE_AUDIO_COMPLETION_MAX_BYTES,
+    candidate => validateNativeAudioCompletion(candidate, handle));
 }

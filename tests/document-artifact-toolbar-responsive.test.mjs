@@ -1389,6 +1389,37 @@ test("E5 source policy: compact Slides navigation keeps native focus paint and w
   assert.equal(declaration(".presentation-deck-viewport", "overflow"), "hidden");
   assert.equal(eDeclaration(".presentation-deck-reading", "overflow-y"), "auto");
   assert.equal(eDeclaration(".presentation-deck-reading", "overscroll-behavior"), "contain");
+  // The measured portrait return toggle had only 4px to its stage clip for a
+  // 6px outward ring. Keep that clipped owner and give both native peers room.
+  const portraitStage = 'dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture]';
+  assert.equal(eDeclaration(portraitStage, "padding-inline", "(max-width: 720px) and (orientation: portrait)"), "var(--forma-focus-clearance)");
+  assert.equal(eDeclaration(portraitStage, "padding-inline"), undefined,
+    "the normal portrait correction does not replace desktop or focused-stage sizing");
+  assert.equal(eDeclaration(":root", "--forma-focus-clearance"), ".5rem");
+  assert.ok(deck.includes('!reading&&this.#visualOverflow?html`<p class="presentation-slide-fit-warning" role="status">'),
+    "returning to visual mode can add the real complete-content warning beside the same reading toggle");
+  const portrait = "(max-width: 720px) and (orientation: portrait)";
+  assert.equal(eDeclaration(portraitStage, "grid-template-columns", portrait), "minmax(0,1fr)",
+    "the supporting warning cannot consume a competing auto-width column and collapse navigation");
+  assert.equal(eDeclaration(portraitStage, "grid-template-rows", portrait), "minmax(0,1fr) auto auto");
+  const portraitSupporting = portraitStage + " > .presentation-deck-supporting";
+  for (const [property, value] of [["grid-column", "1"], ["grid-row", "3"], ["display", "grid"],
+    ["grid-template-columns", "minmax(0,1fr) auto"], ["justify-self", "stretch"],
+    ["align-items", "center"], ["gap", "var(--forma-focus-clearance)"]])
+    assert.equal(eDeclaration(portraitSupporting, property, portrait), value,
+      "supporting copy and the existing native toggle share their own bounded row");
+  assert.equal(eDeclaration(portraitSupporting + " > .presentation-deck-reading-toggle", "grid-column", portrait), "2",
+    "the same intrinsic toggle keeps its own track with or without the warning");
+  assert.equal(eDeclaration(portraitSupporting + " > .presentation-slide-fit-warning", "min-inline-size", portrait), "0",
+    "the full warning wraps within its track instead of overflowing onto sibling navigation");
+  assert.equal(eDeclaration(portraitSupporting + " > .presentation-slide-fit-warning", "overflow-wrap", portrait), "anywhere");
+  const coarseControls = portraitStage + " > :is(nav, .presentation-deck-supporting) > button";
+  for (const property of ["min-inline-size", "min-block-size"])
+    assert.equal(eDeclaration(coarseControls, property, "(pointer: coarse)"), "var(--forma-hit-target-coarse)",
+      "both navigation and the reading toggle honor the existing 48px coarse floor");
+  assert.equal(eDeclaration(":root", "--forma-hit-target-coarse"), "3rem");
+  assert.equal(eDeclaration(coarseControls, "min-block-size"), undefined,
+    "fine pointers retain the existing 44px minimum");
   const open = ':is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"])';
   assert.equal(eDeclaration(open, "overflow-y", eLandscape), "auto");
   assert.equal(eDeclaration(open + " > .presentation-deck-stage[data-slide-posture]", "margin", eLandscape), "var(--forma-focus-clearance)");
@@ -1565,6 +1596,20 @@ test("E5 source policy: closed Slides Tools retain a complete native reading sta
   assert.equal(eDeclaration(".presentation-deck-reading", "block-size"), "100%");
   assert.equal(eDeclaration(".presentation-deck-reading", "min-block-size"), "0");
   assert.equal(eDeclaration(".presentation-deck-reading", "overflow-y"), "auto");
+  // R8 mixed-direction bullets retained readable words while the Arabic
+  // outside marker escaped the one-sided list gutter. Keep hanging list
+  // semantics and reserve the same space on either marker side.
+  assert.ok(deck.includes('<ul>${slide.bullets.map((bullet)=>html`<li dir="auto">${bullet}</li>`)}</ul>'));
+  const audienceList = ".presentation-deck-reader-content > ul";
+  const markerGutter = declaration(".presentation-deck-reader-content :is(ul,ol)", "padding-inline-start");
+  assert.equal(markerGutter, "1.35rem");
+  assert.equal(declaration(audienceList, "padding-inline-end"), markerGutter,
+    "mixed LTR/RTL list items retain equal outside-marker gutters and hanging wrapped text");
+  const audienceRules = matchingRules(audienceList);
+  assert.equal(audienceRules.length, 1);
+  assert.deepEqual(audienceRules[0].rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]),
+    [["padding-inline-end", markerGutter]],
+    "only the direct audience list gains its missing gutter; list position, markers and typography stay native");
   const viewport = owners + ' .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport';
   assert.equal(eDeclaration(viewport, "padding", eLandscape), "var(--forma-focus-clearance)");
   assert.equal(eDeclaration(viewport + " > .presentation-deck-reading", "padding-block-end", eLandscape), "var(--forma-focus-clearance)");
@@ -1656,6 +1701,24 @@ test("E5 source policy: normal Slides identity, source status and evidence label
   assert.equal(declaration(".artifact-viewer-kicker .artifact-review-status", "overflow-wrap"), "anywhere");
   assert.equal(declaration(".artifact-viewer-details > summary", "min-block-size"), "var(--forma-control-min-size,2.75rem)");
   assert.equal(declaration(".artifact-viewer-details > div", "display"), "grid", "expanded evidence already lives in normal flow");
+  // The normal reader shares this title/disclosure structure across kinds
+  // and keeps it when direct Edit swaps only the content below the header.
+  const spacedEvidence = 'dialog.document-artifact-view[data-output-focus="false"] > .document-artifact-reader > .artifact-viewer-header > .artifact-viewer-identity > h2 + .artifact-viewer-details';
+  const evidenceSpacing = matchingRules(spacedEvidence);
+  assert.equal(evidenceSpacing.length, 1);
+  assert.deepEqual(evidenceSpacing[0].rule.selectors, [spacedEvidence]);
+  assert.deepEqual(evidenceSpacing[0].rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]),
+    [["margin-block-start", "calc(var(--forma-focus-clearance) + .25rem)"]],
+    "reserve title font overhang beyond the line box as well as the outside-ring clearance");
+  const bodySelector = spacedEvidence + "[open] > div";
+  const evidenceBodySpacing = matchingRules(bodySelector);
+  assert.equal(evidenceBodySpacing.length, 1);
+  assert.deepEqual(evidenceBodySpacing[0].rule.selectors, [bodySelector]);
+  assert.deepEqual(evidenceBodySpacing[0].rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]),
+    [["padding-block-start", "var(--forma-focus-clearance)"]],
+    "the lower ring also needs clearance from the first opened evidence paragraph");
+  assert.equal(declaration(".artifact-viewer-details > div", "padding-block-end"), ".7rem");
+  assert.equal(eDeclaration(":root", "--forma-focus-clearance"), ".5rem");
   assert.equal(declaration('.document-artifact-view[data-output-focus="true"] .artifact-viewer-details', "display"), "none");
   assert.equal(eDeclaration(eHeader, "block-size", eLandscape), "auto");
   assert.equal(eDeclaration(eHeader, "flex-wrap", eLandscape), "wrap");
@@ -1771,6 +1834,142 @@ test("E5 source policy: a growing normal Slides header cannot consume its whole 
   assert.deepEqual(targetRules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]),
     [["scroll-margin-block", "var(--forma-focus-clearance)"]],
     "same native controls and popover exclusion; complete physical rings remain a real browser gate");
+
+  // The saved 320x800 native handoff exposed the same competition for inline
+  // room in portrait: keep identity above the existing action row.
+  const portrait = "(max-width: 720px) and (orientation: portrait)";
+  // Edit swaps only the direct content child; the same header and open
+  // evidence disclosure must retain their portrait layout until Cancel.
+  const portraitCard = 'dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor)';
+  const header = portraitCard + " > .artifact-viewer-header";
+  const actions = header + " > .document-artifact-reader-actions";
+  const portraitRules = [
+    [header, [["flex-direction", "column"], ["align-items", "stretch"]]],
+    [actions, [["flex-wrap", "wrap"]]],
+    [actions + " > .button", [["max-inline-size", "100%"], ["white-space", "normal"], ["overflow-wrap", "anywhere"]]],
+  ];
+  for (const [selector, declarations] of portraitRules) {
+    const matches = [];
+    eResponsiveStyles.walkRules(rule => {
+      if (rule.selectors?.includes(selector) && rule.parent.type === "atrule" && rule.parent.name === "media" && rule.parent.params === portrait) matches.push(rule);
+    });
+    assert.equal(matches.length, 1, selector);
+    assert.deepEqual(matches[0].selectors, [selector]);
+    assert.deepEqual(matches[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]), declarations);
+    for (const [property, value] of declarations) assert.equal(eDeclaration(selector, property, portrait), value);
+  }
+  for (const owner of [card, portraitCard])
+    assert.equal(eDeclaration(owner, "grid-template-rows", portrait), undefined,
+      "portrait stacks only existing chrome in read and edit; no new content sizing, artboard or scrolling policy");
+  assert.equal(eDeclaration(header, "flex-direction", eLandscape), undefined,
+    "the accepted short-landscape header policy is unchanged");
+  assert.equal(declaration(".document-artifact-reader-actions > .icon-button", "min-inline-size"), "var(--forma-hit-target,var(--forma-control-min-size,2.75rem))");
+  assert.equal(declaration(".document-artifact-reader-actions > .icon-button", "min-block-size"), "var(--forma-hit-target,var(--forma-control-min-size,2.75rem))");
+  // Edit replaces the deck with a long form. Its natural-height row and static
+  // wrapping actions must scroll together, preserving each native field's size.
+  const editorPolicies = [
+    [
+      "dialog.document-artifact-view[data-artifact-kind=\"slides\"][data-output-focus=\"false\"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor)",
+      [
+        [
+          "grid-template-rows",
+          "auto max-content"
+        ],
+        [
+          "overflow-y",
+          "auto"
+        ],
+        [
+          "scroll-padding-block",
+          "var(--forma-focus-clearance)"
+        ]
+      ]
+    ],
+    [
+      "dialog.document-artifact-view[data-artifact-kind=\"slides\"][data-output-focus=\"false\"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer",
+      [
+        [
+          "position",
+          "static"
+        ],
+        [
+          "flex-direction",
+          "column"
+        ],
+        [
+          "align-items",
+          "stretch"
+        ],
+        [
+          "padding-block-end",
+          "calc(.65rem + var(--forma-focus-clearance))"
+        ]
+      ]
+    ],
+    [
+      "dialog.document-artifact-view[data-artifact-kind=\"slides\"][data-output-focus=\"false\"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body",
+      [
+        [
+          "flex-wrap",
+          "wrap"
+        ],
+        [
+          "padding",
+          "var(--forma-focus-clearance)"
+        ]
+      ]
+    ],
+    [
+      "dialog.document-artifact-view[data-artifact-kind=\"slides\"][data-output-focus=\"false\"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body > button.button",
+      [
+        [
+          "flex",
+          "1 1 auto"
+        ],
+        [
+          "max-inline-size",
+          "100%"
+        ],
+        [
+          "white-space",
+          "normal"
+        ],
+        [
+          "overflow-wrap",
+          "anywhere"
+        ],
+        [
+          "scroll-margin-block",
+          "var(--forma-focus-clearance)"
+        ]
+      ]
+    ],
+    [
+      "dialog.document-artifact-view[data-artifact-kind=\"slides\"][data-output-focus=\"false\"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > .document-artifact-reader-content > .artifact-direct-editor :is(input,textarea)",
+      [
+        [
+          "scroll-margin-block",
+          "var(--forma-focus-clearance)"
+        ]
+      ]
+    ]
+  ];
+  for (const [selector, declarations] of editorPolicies) {
+    const matches = [];
+    eResponsiveStyles.walkRules(rule => { if (rule.selectors?.includes(selector)) matches.push(rule); });
+    assert.equal(matches.length, 1, selector);
+    assert.deepEqual(matches[0].selectors, [selector]);
+    assert.equal(matches[0].parent.type, "atrule");
+    assert.equal(matches[0].parent.name, "media");
+    assert.equal(matches[0].parent.params, portrait);
+    assert.deepEqual(matches[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]), declarations);
+    for (const [property, value] of declarations) assert.equal(eDeclaration(selector, property, portrait), value);
+  }
+  assert.equal(declaration(".artifact-direct-editor textarea", "min-height"), "6rem");
+  assert.equal(declaration(".artifact-direct-editor textarea", "resize"), "vertical");
+  assert.ok(viewer.includes('Finished output<textarea rows="12"'));
+  assert.ok(viewer.includes('class="artifact-direct-editor-items"'));
+
 });
 
 test("E5 source policy: normal Canvas Slides keep readable context beyond their complete header", async () => {

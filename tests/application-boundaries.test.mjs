@@ -4,7 +4,7 @@ import test from "node:test";
 import { APPLICATIONS, CREATE_ROUTE_PREFIX, SITE_ROUTE_ENTRIES, applicationEntryPath, applicationIdFromRoute, navigationItemActive, resolveServerRoute } from "../src/platform/applications.ts";
 
 test("retained output routes use the existing Creative entry without accepting sibling paths", () => {
-  for (const path of ["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d"]) {
+  for (const path of ["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio"]) {
     for (const route of [path, path + "/?document=doc-a&artifact=artifact-a&revision=0&sha256=" + "a".repeat(64)]) {
       assert.deepEqual(resolveServerRoute(route), { application: "creative", entryPath: "/creative/", canonicalFamily: path });
       assert.equal(applicationIdFromRoute(route), "creative");

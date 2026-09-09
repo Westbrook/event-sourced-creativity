@@ -1,3 +1,4 @@
+import { parseNativeAudioCompletionUrl, validateNativeAudioCompletion, type NativeAudioHandle } from "../src/model/native-audio-completion.ts";
 import { parseNativeStoryboardCompletionUrl, validateNativeStoryboardCompletion, type NativeStoryboardHandle } from "../src/model/native-storyboard-completion.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
 import { parseNativeSlidesCompletionUrl, validateNativeSlidesCompletion, type NativeSlidesHandle } from "../src/model/native-slides-completion.ts";
@@ -18,6 +19,8 @@ import { configuredPilotAdmissionGuard, POLICY_VERSION } from "./pilot-policy.ts
 import type { WorkerEnv } from "./runtime.ts";
 
 const AUTH_BYTES = 128 * 1024;
+// Audio additionally witnesses the complete bounded original request bytes.
+const AUDIO_JOB_BYTES = AUTH_BYTES * 6 + 16384;
 const MAX_NATIVE_COMPLETION_ATTEMPTS = documentJobMaxAttempts("render_document");
 const EVENT_COUNT = 512;
 const EVENT_BYTES = 1024 * 1024;
@@ -204,7 +207,7 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
   // private. Bind the actual public count without reading private_json.
   if (requestedItemCount !== undefined && payload.item_count !== requestedItemCount) throw unavailable();
   return Object.freeze({ projectId, contentId, sceneMedium,
-    completionId: completion.row.event_id, completionItemCount: payload.item_count });
+    completionId: completion.row.event_id, completionItemCount: payload.item_count, completionInputRef: payload.input_ref });
 }
 
 const storyboardReceiptGuard = () => `private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
@@ -268,6 +271,32 @@ async function model3dReceipt(env: WorkerEnv, native: ReturnType<typeof selectNa
   return { bindings, raw: row.private_json, payload };
 }
 
+const audioReceiptGuard = () => `private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
+  AND redacted_at IS NULL AND length(CAST(private_json AS BLOB))<=${EVENT_BYTES}`;
+
+// Bind the selected private Audio media and original input receipt. The raw
+// content is authored text; it does not identify or replace playable bytes.
+async function audioReceipt(env: WorkerEnv, native: ReturnType<typeof selectNative>, ownerId: string,
+  selection: { documentId: string; artifactId: string }) {
+  const bindings = [native.completionId, ownerId, selection.documentId, native.projectId];
+  const row = await env.DB.prepare(`SELECT private_json FROM event_private_payloads WHERE ${audioReceiptGuard()}`)
+    .bind(...bindings).first<{ private_json: string }>();
+  if (!row || typeof row.private_json !== "string" || bytes(row.private_json) > EVENT_BYTES) throw unavailable();
+  const payload = record(JSON.parse(row.private_json));
+  if (!payload || payload.document_id !== selection.documentId || payload.project_id !== native.projectId
+    || payload.artifact_id !== selection.artifactId || payload.artifact_kind !== "audio"
+    || payload.content_ref !== native.contentId || payload.requested_by_user_id !== ownerId
+    || typeof native.completionInputRef !== "string" || !opaque.test(native.completionInputRef)
+    || payload.input_ref !== native.completionInputRef) throw unavailable();
+  if (payload.media_url !== null) {
+    if (typeof payload.media_url !== "string" || !payload.media_url.startsWith("/api/media/")) throw unavailable();
+    let key: string;
+    try { key = decodeURIComponent(payload.media_url.slice("/api/media/".length)); } catch { throw unavailable(); }
+    if (!key.startsWith(`${ownerMediaNamespace(ownerId)}/generated/`)) throw unavailable();
+  }
+  return { bindings, raw: row.private_json, payload };
+}
+
 function personalContentGuard() {
   return `content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL
     AND typeof(content)='text' AND length(CAST(content AS BLOB)) BETWEEN 1 AND ${RETAINED_STORY_JSON_MAX_BYTES}
@@ -312,8 +341,14 @@ const jobCte = `story_job AS (
 // Scene retains its one-item consent. Manual Slides and Storyboard bind their
 // exact numeric counts; Storyboard additionally requires explicit paid-media consent.
 // These completed-only reads share the same attempt and final ownership witness.
-function nativeCompletionJobCte(output: "scene" | "slides" | "storyboard") {
-  const requestGuard = output === "scene" ? `    AND (json_type(job.request_json,'$.itemCount') IS NULL
+function nativeCompletionJobCte(output: "scene" | "slides" | "storyboard" | "audio") {
+  const requestGuard = output === "audio" ? `
+    AND length(CAST(job.request_json AS BLOB))<=${AUTH_BYTES}
+    AND (json_type(job.request_json,'$.itemCount') IS NULL
+      OR (json_type(job.request_json,'$.itemCount')='integer' AND json_extract(job.request_json,'$.itemCount')=1))
+    AND json_type(job.request_json,'$.paidMediaConfirmed')='true'
+    AND json_type(job.request_json,'$.sceneRequestId') IS NULL AND json_type(job.request_json,'$.sceneCostConsent') IS NULL
+    AND json_type(job.request_json,'$.requestedSlideCount') IS NULL AND json_type(job.request_json,'$.slideCountPolicy') IS NULL` : output === "scene" ? `    AND (json_type(job.request_json,'$.itemCount') IS NULL
       OR (json_type(job.request_json,'$.itemCount')='integer' AND json_extract(job.request_json,'$.itemCount')=1))
     AND json_extract(job.request_json,'$.sceneRequestId')=job.job_id
     AND json_extract(job.request_json,'$.sceneCostConsent.version')='scene-cost-v1'
@@ -358,22 +393,23 @@ ${requestGuard}
 ), story_job_json AS (
   SELECT json_object('jobId',job_id,'documentId',document_id,'correlationId',correlation_id,'attemptCount',attempt_count,'artifactId',json_extract(result_json,'$.artifactId'),
     'appendedEventIds',json_extract(result_json,'$.appendedEventIds'),'expiresAt',expires_at,
-    ${output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : output === "storyboard" ? "'requestedFrameCount',json_extract(request_json,'$.itemCount')," : ""}
+    ${output === "audio" ? "'requestSnapshot',request_json,'providerJobId',json_extract(result_json,'$.providerJobId'),'provider',json_extract(result_json,'$.provider')," : output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : output === "storyboard" ? "'requestedFrameCount',json_extract(request_json,'$.itemCount')," : ""}
     'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.correlation_id
       AND type='DocumentRenderCompleted' AND actor='worker:renderer' AND client_id='server:document-job:render_document')) AS job_json
   FROM story_job
-), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=16384)`;
+), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=${output === "audio" ? AUDIO_JOB_BYTES : 16384})`;
 }
 
 type NativeOutputCompletion =
   | { output: "scene"; handle: NativeSceneHandle }
   | { output: "slides"; handle: NativeSlidesHandle }
-  | { output: "storyboard"; handle: NativeStoryboardHandle };
+  | { output: "storyboard"; handle: NativeStoryboardHandle }
+  | { output: "audio"; handle: NativeAudioHandle };
 
-async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle | NativeStoryboardHandle, ownerId:string, streamId:string, output:"scene" | "slides" | "storyboard" | null=null) {
+async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle | NativeStoryboardHandle | NativeAudioHandle, ownerId:string, streamId:string, output:"scene" | "slides" | "storyboard" | "audio" | null=null) {
   const bindings=[handle.jobId,handle.documentId,ownerId,streamId];
   const raw=await env.DB.prepare(`WITH ${output ? nativeCompletionJobCte(output) : jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
-  if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>16384)throw unavailable();
+  if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>(output === "audio" ? AUDIO_JOB_BYTES : 16384))throw unavailable();
   const row=record(JSON.parse(raw.job_json));
   if(!row||row.jobId!==handle.jobId||row.documentId!==handle.documentId
     ||typeof row.attemptCount!=="number"||!Number.isSafeInteger(row.attemptCount)||row.attemptCount<1||row.attemptCount>MAX_NATIVE_COMPLETION_ATTEMPTS
@@ -385,6 +421,9 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
     ||new Set(row.appendedEventIds).size!==row.appendedEventIds.length||!row.appendedEventIds.includes(row.completionId)
     ||typeof row.expiresAt!=="string"||!(Date.parse(row.expiresAt)>Date.now())
     ||new Date(row.expiresAt).toISOString()!==row.expiresAt)throw unavailable();
+  if (output === "audio" && (typeof row.requestSnapshot !== "string" || bytes(row.requestSnapshot) > AUTH_BYTES
+    || !record(JSON.parse(row.requestSnapshot)) || typeof row.providerJobId !== "string"
+    || !opaque.test(row.providerJobId) || typeof row.provider !== "string" || !opaque.test(row.provider))) throw unavailable();
   const requestedSlideCount = output === "slides" && typeof row.requestedSlideCount === "number" ? row.requestedSlideCount : undefined;
   if (output === "slides" && (typeof requestedSlideCount !== "number" || !Number.isSafeInteger(requestedSlideCount)
     || requestedSlideCount < 1 || requestedSlideCount > MAX_MANUAL_PRESENTATION_SLIDES)) throw unavailable();
@@ -392,7 +431,63 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
   if (output === "storyboard" && (typeof requestedFrameCount !== "number" || !Number.isSafeInteger(requestedFrameCount)
     || requestedFrameCount < 1 || requestedFrameCount > 12)) throw unavailable();
   return {bindings,snapshot:raw.job_json,artifactId:row.artifactId,completionId:row.completionId,expiresAt:row.expiresAt,
-    requestedSlideCount, requestedFrameCount};
+    requestedSlideCount, requestedFrameCount,
+    audioRequest: output === "audio" ? record(JSON.parse(row.requestSnapshot as string)) : null,
+    audioProviderJobId: output === "audio" ? row.providerJobId as string : null,
+    audioProvider: output === "audio" ? row.provider as string : null};
+}
+
+// The admission generationReceipt.input_ref is a different row. Bind the selected
+// completion's private input through the actual artifact and provider invocation.
+function audioInputGuard() {
+  return personalContentGuard().replace("kind='document-artifact'", "kind='document-artifact-input'") + " AND json_valid(content) AND json_type(content)='object'";
+}
+async function audioCompletionInput(env: WorkerEnv, job: Awaited<ReturnType<typeof completedStoryJob>>,
+  audio: NonNullable<Awaited<ReturnType<typeof audioReceipt>>>, native: ReturnType<typeof selectNative>,
+  ownerId: string, target: { documentId: string; artifactId: string }) {
+  const original = job.audioRequest, snapshot = record(original?.snapshot);
+  if (!original || original.documentId !== target.documentId || !snapshot || !Array.isArray(snapshot.facts)
+    || typeof original.documentRevision !== "string" || !original.documentRevision
+    || typeof original.requestKey !== "string" || !original.requestKey
+    || !Array.isArray(original.sourceBlockVersions)
+    || original.sourceBlockVersions.some(value => {
+      const version = record(value);
+      return !version || Object.keys(version).length !== 2 || typeof version.block_id !== "string" || !opaque.test(version.block_id)
+        || typeof version.version !== "number" || !Number.isSafeInteger(version.version) || version.version < 0;
+    }) || new Set(original.sourceBlockVersions.map(value => (value as Record<string, unknown>).block_id)).size !== original.sourceBlockVersions.length
+    || JSON.stringify(original.sourceBlockVersions) !== JSON.stringify(audio.payload.source_block_versions)) throw unavailable();
+  const bindings = [audio.payload.input_ref as string, ownerId, native.projectId, target.documentId, target.artifactId];
+  const row = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${audioInputGuard()}`)
+    .bind(...bindings).first<{ content: string; expires_at: string }>();
+  if (!row || typeof row.content !== "string" || bytes(row.content) > RETAINED_STORY_JSON_MAX_BYTES
+    || typeof row.expires_at !== "string" || !Number.isFinite(Date.parse(row.expires_at)) || new Date(row.expires_at).toISOString() !== row.expires_at) throw unavailable();
+  const input = record(JSON.parse(row.content)), request = record(input?.request), render = record(input?.render);
+  const selectedSnapshot = record(input?.document_snapshot);
+  if (!input || input.schema_version !== 1 || input.artifact_id !== target.artifactId || input.artifact_kind !== "audio"
+    || input.document_id !== target.documentId || input.project_id !== native.projectId || !request || !render || !selectedSnapshot
+    || record(selectedSnapshot.document)?.id !== target.documentId
+    || request.item_count !== 1 || request.production_mode !== "manual" || request.source_surface !== "document"
+    || render.provider_job_id !== job.audioProviderJobId || render.provider !== job.audioProvider
+    || audio.payload.provider_job_id !== job.audioProviderJobId || audio.payload.provider !== job.audioProvider
+    || typeof render.model !== "string" || render.model !== audio.payload.model_id
+    || (original.audioProviderModel !== undefined && original.audioProviderModel !== render.model)
+    || (original.audioProfile !== undefined && JSON.stringify(original.audioProfile) !== JSON.stringify(request.audio_profile))) throw unavailable();
+  // The producer copies these fields verbatim, then adds current document metadata
+  // and merges standing constraints. Preserve every original normalized constraint.
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (key !== "document" && key !== "standing_constraints"
+      && JSON.stringify(selectedSnapshot[key]) !== JSON.stringify(value)) throw unavailable();
+  }
+  const constraints = (value: unknown) => (Array.isArray(value) ? value : []).filter((item): item is Record<string, unknown> => Boolean(record(item)));
+  const constraintKey = (item: Record<string, unknown>) => String(item.preference_id ?? `${item.polarity}:${item.axis}:${item.value}`);
+  const originalConstraints = new Map(constraints(snapshot.standing_constraints).map(item => [constraintKey(item), item]));
+  const selectedConstraints = constraints(selectedSnapshot.standing_constraints);
+  const byKey = new Map(selectedConstraints.map(item => [constraintKey(item), item]));
+  if (byKey.size !== selectedConstraints.length) throw unavailable();
+  for (const [key, value] of originalConstraints) {
+    if (JSON.stringify(byKey.get(key)) !== JSON.stringify(value)) throw unavailable();
+  }
+  return { bindings, raw: row.content, expiresAt: row.expires_at };
 }
 
 /**
@@ -431,9 +526,12 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const events = await env.DB.prepare(`WITH ${eventCte} SELECT * FROM event_rows ORDER BY sequence`)
       .bind(streamId).all<EventRow>();
     const snapshot = eventSnapshot(events.results);
-    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount ?? job?.requestedFrameCount);
+    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount ?? job?.requestedFrameCount ?? (nativeCompletion?.output === "audio" ? 1 : undefined));
     const storyboard = (nativeCompletion?.output ?? nativeOutput?.output) === "storyboard" ? await storyboardReceipt(env, native, identity.userId, target) : null;
     const model3d = nativeOutput?.output === "model3d" ? await model3dReceipt(env, native, identity.userId, target) : null;
+    const audio = (nativeCompletion?.output ?? nativeOutput?.output) === "audio" ? await audioReceipt(env, native, identity.userId, target) : null;
+    const audioInput = nativeCompletion?.output === "audio" && job && audio
+      ? await audioCompletionInput(env, job, audio, native, identity.userId, target) : null;
     const contentBindings = [native.contentId, identity.userId, native.projectId, target.documentId, target.artifactId];
     const source = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${personalContentGuard()}`)
       .bind(...contentBindings).first<{ content: string; expires_at: string }>();
@@ -447,14 +545,22 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
       ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium, {
-        storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null })
+        storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null, audioReceipt: audio?.payload ?? null })
       : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
         selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
     if (!dto || nativeCompletion?.output === "scene" && body.items.length !== 1
       || nativeCompletion?.output === "slides" && body.items.length !== job?.requestedSlideCount
-      || nativeCompletion?.output === "storyboard" && body.items.length !== job?.requestedFrameCount) throw unavailable();
-    const completionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
-    const completion = job && handle ? nativeCompletion?.output === "storyboard"
+      || nativeCompletion?.output === "storyboard" && body.items.length !== job?.requestedFrameCount
+      || nativeCompletion?.output === "audio" && (body.items.length !== 1 || dto.kind !== "native-retained-output" || dto.output !== "audio"
+        || !dto.content.media || record(audio?.payload.settings)?.item_count !== 1
+        || record(audio?.payload.settings)?.production_mode !== "manual")) throw unavailable();
+    const sourceCompletionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
+    const completionExpiry = audioInput && Date.parse(audioInput.expiresAt) < Date.parse(sourceCompletionExpiry)
+      ? audioInput.expiresAt : sourceCompletionExpiry;
+    const completion = job && handle ? nativeCompletion?.output === "audio"
+      ? validateNativeAudioCompletion({schemaVersion:1,kind:"native-audio-completion",handle,
+        selection,expiresAt:completionExpiry},handle)
+      : nativeCompletion?.output === "storyboard"
       ? validateNativeStoryboardCompletion({schemaVersion:1,kind:"native-storyboard-completion",handle,
         selection,expiresAt:completionExpiry},handle)
       : nativeCompletion?.output === "slides"
@@ -482,10 +588,13 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
           ON actual.event_id=json_extract(expected.value,'$[0]') WHERE actual.event_id IS NULL OR ${comparisons})
         ${job?"AND EXISTS(SELECT 1 FROM bounded_story_job WHERE CAST(job_json AS BLOB)=CAST(? AS BLOB))":""}
         ${storyboard?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${storyboardReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
-        ${model3d?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}`)
-      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]))
+        ${model3d?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${audio?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${audioReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${audioInput?`AND EXISTS(SELECT 1 FROM private_content WHERE ${audioInputGuard()} AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}`)
+      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioInput?[...audioInput.bindings,audioInput.raw,audioInput.expiresAt]:[]))
       .first<{ admitted: number }>();
-    if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()) throw unavailable();
+    if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()
+      || audioInput && Date.parse(audioInput.expiresAt) <= Date.now()) throw unavailable();
     // No asynchronous work occurs between the final read and literal response.
     return new Response(serialized, { status: 200, headers });
   } catch (failure) {
@@ -510,6 +619,8 @@ export function handleNativeRetainedOutputRead(request: Request, env: WorkerEnv)
   if (slidesHandle) return readCurrentRetainedNative(request, env, null, { output: "slides", handle: slidesHandle });
   const storyboardHandle = parseNativeStoryboardCompletionUrl(request.url);
   if (storyboardHandle) return readCurrentRetainedNative(request, env, null, { output: "storyboard", handle: storyboardHandle });
+  const audioHandle = parseNativeAudioCompletionUrl(request.url);
+  if (audioHandle) return readCurrentRetainedNative(request, env, null, { output: "audio", handle: audioHandle });
   const target = parseNativeRetainedOutputRequestUrl(request.url);
   if (!target) return Promise.resolve(error("invalid_native_retained_output_selection", 400));
   return readCurrentRetainedNative(request, env, target);

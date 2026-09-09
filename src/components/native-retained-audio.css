@@ -1,0 +1,9 @@
+forma-native-retained-audio .artifact-audio-result {
+  min-inline-size: 0;
+}
+forma-native-retained-audio pre {
+  max-inline-size: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}

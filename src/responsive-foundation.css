@@ -5398,6 +5398,91 @@ dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-st
   }
 }
 
+/* Normal portrait decks give navigation and supporting copy separate rows. */
+@media (max-width: 720px) and (orientation: portrait) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] {
+    padding-inline: var(--forma-focus-clearance);
+    grid-template-columns: minmax(0,1fr);
+    grid-template-rows: minmax(0,1fr) auto auto;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting {
+    grid-column: 1;
+    grid-row: 3;
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    justify-self: stretch;
+    align-items: center;
+    gap: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting > .presentation-deck-reading-toggle {
+    grid-column: 2;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting > .presentation-slide-fit-warning {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Coarse pointers keep the existing 48px floor on both deck navigation peers. */
+@media (pointer: coarse) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > :is(nav, .presentation-deck-supporting) > button {
+    min-inline-size: var(--forma-hit-target-coarse);
+    min-block-size: var(--forma-hit-target-coarse);
+  }
+}
+
+/* Narrow portrait Slides and their direct editor keep their identity above the existing action row. */
+@media (max-width: 720px) and (orientation: portrait) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor) > .artifact-viewer-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor) > .artifact-viewer-header > .document-artifact-reader-actions {
+    flex-wrap: wrap;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor) > .artifact-viewer-header > .document-artifact-reader-actions > .button {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep the complete edit form and its wrapping actions in one scrolling reader. */
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) {
+    grid-template-rows: auto max-content;
+    overflow-y: auto;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer {
+    position: static;
+    flex-direction: column;
+    align-items: stretch;
+    padding-block-end: calc(.65rem + var(--forma-focus-clearance));
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body {
+    flex-wrap: wrap;
+    padding: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body > button.button {
+    flex: 1 1 auto;
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > .document-artifact-reader-content > .artifact-direct-editor :is(input,textarea) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
 /* Normal Document Slides keep full identity and evidence in ordinary flow.
  * The existing card scrolls past a growing header to a complete content track;
  * focused and direct-editor owners keep their independent policies. */

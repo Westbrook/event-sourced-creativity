@@ -3,7 +3,7 @@ import type { RetainedStorySelection } from "./retained-short-story.ts";
 
 /** Exact original native job identity; never a newer artifact or current draft. */
 export type NativeOutputHandle = Readonly<{ documentId: string; jobId: string }>;
-export type NativeCompletionOutput = "scene" | "slides" | "storyboard";
+export type NativeCompletionOutput = "scene" | "slides" | "storyboard" | "audio";
 export type NativeOutputCompletion<Output extends NativeCompletionOutput> = Readonly<{
   schemaVersion: 1; kind: `native-${Output}-completion`; handle: NativeOutputHandle;
   selection: RetainedStorySelection; expiresAt: string;
@@ -36,14 +36,14 @@ export function captureNativeOutputHandle(value: unknown): NativeOutputHandle | 
 }
 
 export function nativeOutputCompletionPath(output: NativeCompletionOutput, value: NativeOutputHandle): string {
-  if (output !== "scene" && output !== "slides" && output !== "storyboard") throw new TypeError("invalid_native_completion_output");
+  if (output !== "scene" && output !== "slides" && output !== "storyboard" && output !== "audio") throw new TypeError("invalid_native_completion_output");
   const handle = captureNativeOutputHandle(value);
   if (!handle) throw new TypeError(`invalid_native_${output}_handle`);
   return `/api/retained-output/${output}/jobs/${encodeURIComponent(handle.documentId)}/${encodeURIComponent(handle.jobId)}`;
 }
 
 export function parseNativeOutputCompletionUrl(output: NativeCompletionOutput, value: string): NativeOutputHandle | null {
-  if (output !== "scene" && output !== "slides" && output !== "storyboard") return null;
+  if (output !== "scene" && output !== "slides" && output !== "storyboard" && output !== "audio") return null;
   if (typeof value !== "string" || value.length > 4096) return null;
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index);
@@ -61,7 +61,7 @@ export function parseNativeOutputCompletionUrl(output: NativeCompletionOutput, v
 
 /** A current bounded selection from the literal output's read-only completion endpoint. */
 export function validateNativeOutputCompletion<Output extends NativeCompletionOutput>(output: Output, value: unknown, expected: NativeOutputHandle, now = Date.now()): NativeOutputCompletion<Output> | null {
-  if (output !== "scene" && output !== "slides" && output !== "storyboard") return null;
+  if (output !== "scene" && output !== "slides" && output !== "storyboard" && output !== "audio") return null;
   const expectedHandle = captureNativeOutputHandle(expected);
   if (!expectedHandle) return null;
   const row = own(value, ["schemaVersion", "kind", "handle", "selection", "expiresAt"]);

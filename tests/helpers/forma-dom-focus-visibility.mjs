@@ -110,16 +110,38 @@ export function measureFormaFocusVisibility(target, options = {}) {
             const scrollbar = win.getComputedStyle(node, "::-webkit-scrollbar");
             const nativeScrollbar = style.scrollbarWidth === "none" || (["auto", "thin"].includes(style.scrollbarWidth)
               && scrollbar.width === "auto" && scrollbar.height === "auto");
+            const nativeRects = node.getClientRects();
+            const singleRect = nativeRects.length === 1 ? nativeRects[0] : null;
             const ordinaryChromiumBox = /(?:Chrome|Chromium)\//.test(win.navigator.userAgent)
               && node instanceof win.HTMLElement && node !== doc.documentElement && node !== doc.body
-              && !/table/.test(style.display) && node.getClientRects().length === 1;
+              && !/table/.test(style.display) && nativeRects.length === 1;
+            const borderPixels = borders.map(Number.parseFloat);
+            const [left, right, top, bottom] = borderPixels;
+            const metrics = { clientLeft:node.clientLeft, clientTop:node.clientTop,
+              clientWidth:node.clientWidth, clientHeight:node.clientHeight,
+              offsetWidth:node.offsetWidth, offsetHeight:node.offsetHeight };
+            const matchingRect = singleRect && Object.keys(r).every(key => Number.isFinite(r[key]) && singleRect[key] === r[key]);
+            const exactPaddingBox = ordinaryChromiumBox && nativeScrollbar && !unsupported.length && !unknown.length
+              && cornerShapes.every(value => value === "round")
+              && style.overflowX === "hidden" && style.overflowY === "hidden" && style.scrollbarGutter === "auto"
+              && borders.every(finitePx) && borderPixels.every(value => Number.isInteger(value) && value >= 0)
+              && Object.values(metrics).every(value => Number.isInteger(value) && value >= 0) && Boolean(matchingRect)
+              && r.width === r.right - r.left && r.height === r.bottom - r.top
+              && r.width === metrics.offsetWidth && r.height === metrics.offsetHeight
+              && metrics.clientLeft === left && metrics.clientTop === top
+              && r.width === metrics.clientWidth + left + right && r.height === metrics.clientHeight + top + bottom;
+            const paddingWitness = { exact:exactPaddingBox, raw:r, borders, borderPixels, metrics,
+              rectCount:nativeRects.length, singleRect:singleRect ? Object.fromEntries(Object.keys(r).map(key => [key,singleRect[key]])) : null,
+              overflowX:style.overflowX, overflowY:style.overflowY, scrollbarGutter:style.scrollbarGutter,
+              scrollbarWidth:style.scrollbarWidth, scrollbar:{ width:scrollbar.width, height:scrollbar.height },
+              ordinaryChromiumBox, nativeScrollbar, supportedChain:!unsupported.length && !unknown.length };
+            roundedProof.paddingWitness = paddingWitness;
             if (x && y && ordinaryChromiumBox && cornerShapes.every(value => value === "round")
               && borders.every(finitePx) && nativeScrollbar && !unsupported.length && !unknown.length) {
-              // Chromium's ordinary client* values round independently. Inset
-              // the integer box by one CSS px (never enlarge reported clips),
-              // then intersect the actual padding box to exclude any overshoot.
-              const integerInset = clientBasis === "integer-client" ? 1 : 0;
-              const [left, right, top, bottom] = borders.map(Number.parseFloat);
+              // Hidden overflow without a reserved gutter has exact padding
+              // edges only when the native border/client/offset boxes agree.
+              // Otherwise retain the one-pixel bound for independent rounding.
+              const integerInset = clientBasis === "integer-client" && !exactPaddingBox ? 1 : 0;
               const proof = rectFromEdges({ left:Math.max(client.left + integerInset, r.left + left),
                 right:Math.min(client.right - integerInset, r.right - right),
                 top:Math.max(client.top + integerInset, r.top + top),
@@ -134,7 +156,7 @@ export function measureFormaFocusVisibility(target, options = {}) {
                   const dy = Math.max(proof.top + radius - py, 0, py - (proof.bottom - radius));
                   return dx * dx + dy * dy <= radius * radius;
                 });
-              roundedProof = { radii, cornerShapes, radius, client:proof, integerInset, inside };
+              roundedProof = { radii, cornerShapes, radius, client:proof, integerInset, paddingWitness, inside };
             }
             if (!roundedProof.inside) unsupported.push("rounded clipping near envelope");
           }

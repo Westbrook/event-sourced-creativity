@@ -4,6 +4,7 @@ import { createHash, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import * as modelView from "../src/model/model3d-view.ts";
+import { model3dArtifactFiles, model3dPreviewFile } from "../src/components/model3d-output.ts";
 import {
   MAX_MODEL3D_UPLOAD_BYTES,
   model3dMimeType,
@@ -354,4 +355,75 @@ test("a hash mismatch never reaches Three, and changing hash or source synchrono
   assert.equal(digests, 3);
   assert.deepEqual(f.imports, [], "different valid GLB bytes cannot load Three");
   assert.match(JSON.stringify(viewer.render()), /This model is not available as private Forma media/u);
+});
+
+// Reuse the actual-render/actual-reader controls for the Document inspector's
+// selected retained mesh. No Document component or application is registered.
+const documentSource = ts.createSourceFile("document-artifacts.ts", readFileSync(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const documentClass = documentSource.statements.find(node => ts.isClassDeclaration(node) && node.members.some(member => member.name?.getText(documentSource) === "#model3dOutput"));
+const documentMethods = documentClass?.members.filter(member => member.name?.getText(documentSource) === "#model3dOutput") ?? [];
+assert.equal(documentMethods.length, 1, "use the actual Document model preview rendering method");
+const compiledDocumentPreview = ts.transpileModule(`class DocumentPreview {
+  i18n={t:(_key,fallback)=>fallback,number:String};
+  #downloadModel3dFile(){throw Error("downloads are outside preview controls");}
+  render(artifact){return this.#model3dOutput(artifact,false,"No release");}
+  ${documentMethods[0].getText(documentSource)}
+}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+const DocumentPreview = new Function("ports", `
+  const {html,nothing,icon,model3dArtifactFiles,model3dPreviewFile,model3dArtifactContextReadiness}=ports;
+  ${compiledDocumentPreview}
+  return DocumentPreview;
+`)({html:(strings,...values)=>({strings,values}),nothing:null,icon:()=>null,
+  model3dArtifactFiles,model3dPreviewFile,model3dArtifactContextReadiness:()=>({supported:true})});
+function previewProperties(artifact) {
+  const visit=value=>Array.isArray(value)?value.flatMap(visit):value?.strings?[value,...value.values.flatMap(visit)]:[];
+  const templates=visit(new DocumentPreview().render(artifact));
+  const previews=templates.filter(value=>value.strings[0].includes("<forma-model3d-viewer "));
+  assert.equal(previews.length,1);
+  const properties={};
+  previews[0].strings.forEach((part,index)=>{const property=part.match(/\.([A-Za-z][A-Za-z0-9]*)=$/u)?.[1];if(property)properties[property]=previews[0].values[index];});
+  return properties;
+}
+const previewArtifact=hash=>({id:"artifact-a",kind:"model3d",title:"Retained model",settings:{model3d_files:[
+  {url:"/api/media/original-obj",mimeType:"model/obj",format:"obj",role:"mesh",sha256:"b".repeat(64)},
+  {url:"/api/media/original-glb",mimeType:GLB_MIME,format:"glb",role:"mesh",sha256:hash},
+]}});
+
+test("Document preview passes the selected retained mesh hash into the actual byte reader", async () => {
+  const bytes=glb(),expected=sha256(bytes),artifact=previewArtifact(expected),before=structuredClone(artifact);
+  const properties=previewProperties(artifact);
+  assert.deepEqual(properties,{src:"/api/media/original-glb",expectedSha256:expected,readonly:true});
+  assert.deepEqual(artifact,before,"rendering cannot replace retained metadata");
+  const calls=[],f=previewFixture(async (source,options)=>{calls.push({source,options});return modelResponse(bytes);});
+  const controller=new AbortController();
+  assert.deepEqual(Buffer.from(await f.readModelBytes(properties.src,controller.signal,properties.expectedSha256)),bytes);
+  assert.equal(calls.length,1);assert.equal(calls[0].source,properties.src);assert.equal(calls[0].options.signal,controller.signal);
+});
+
+test("Document preview refuses different valid GLB bytes before Three using the retained hash", async () => {
+  const original=glb(),changed=glb({...triangleJson(),extras:{substitution:true}});
+  const properties=previewProperties(previewArtifact(sha256(original)));let reads=0;
+  const f=previewFixture(async ()=>{reads++;return modelResponse(changed);},{
+    randomUUID:()=>webcrypto.randomUUID(),
+    subtle:{digest:async (algorithm,input)=>{assert.equal(algorithm,"SHA-256");return Uint8Array.from(createHash("sha256").update(input).digest()).buffer;}},
+  }),viewer=new f.FormaModel3dViewer();
+  Object.assign(viewer,properties);viewer.updated(new Map([["src",""],["expectedSha256",""]]));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(reads,1);assert.deepEqual(f.imports,[]);
+  assert.match(JSON.stringify(viewer.render()),/This model is not available as private Forma media/u);
+});
+
+test("Document preview passes malformed retained hashes to the existing prefetch refusal", async () => {
+  for(const hash of ["A".repeat(64),"short"," "+"a".repeat(64)]){
+    const properties=previewProperties(previewArtifact(hash));let reads=0;
+    assert.equal(properties.expectedSha256,hash,"a malformed recorded hash must not become optional");
+    const f=previewFixture(async ()=>{reads++;return modelResponse(glb());});
+    await assert.rejects(f.readModelBytes(properties.src,new AbortController().signal,properties.expectedSha256),error=>error.kind==="source");
+    assert.equal(reads,0);
+  }
+});
+
+test("legacy Document preview does not manufacture a hash absent from retained metadata", () => {
+  const properties=previewProperties({id:"legacy",kind:"model3d",title:"Legacy",settings:{},mediaUrl:"/api/media/legacy-glb",mediaType:GLB_MIME});
+  assert.deepEqual(properties,{src:"/api/media/legacy-glb",expectedSha256:"",readonly:true});
 });

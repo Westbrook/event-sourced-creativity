@@ -1048,9 +1048,9 @@ for (const [artifactKind, focused] of [["short_story", false], ["short_story", t
     assert.equal(arrival.scrollCount, beforeScroll, "the actual focus call precedes any editor reveal");
     assert.equal(native.nativeFocus.slice(beforeFocus).filter(row => row.node.owner === f.host && row.node.tag === "textarea" && row.node.attributes.rows === "12").length, 1);
     const reveal = native.nativeScroll.slice(beforeScroll);
-    if (artifactKind === "short_story" && !focused) {
-      assert.deepEqual(arrival.focus.args, [{ preventScroll: true }], "normal Story acquires focus without the browser's default focus scroll");
-      assert.equal(reveal.length, 1, "one owned native reveal completes normal Story arrival");
+    if (["short_story", "slides"].includes(artifactKind) && !focused) {
+      assert.deepEqual(arrival.focus.args, [{ preventScroll: true }], "normal Story or Slides acquires focus without the browser's default focus scroll");
+      assert.equal(reveal.length, 1, "one owned native reveal completes normal Story or Slides arrival");
       assert.equal(reveal[0].node, arrival.target);
       assert.deepEqual(reveal[0].args, [{ block: "nearest", inline: "nearest", behavior: "instant" }]);
     } else {
@@ -1078,15 +1078,15 @@ test("Story programmatic Edit without an event retains no focus or reveal lease"
   unchanged(x);
   await cancelUnsubmittedOwnedEdit(x, "  No-event raw draft remains local.\n");
 });
-for (const boundary of ["source-retirement-event", "authorization", "native-close", "target-replacement", "newer-draft", "focus-transfer"]) {
-  test("Story post-focus reveal yields synchronously / " + boundary, async t => {
-    const x = await currentHost(t, { locale: "en", artifactKind: "short_story" }, true), { f, h, native } = x;
+for (const artifactKind of ["short_story", "slides"]) for (const boundary of ["source-retirement-event", "authorization", "native-close", "target-replacement", "newer-draft", "focus-transfer"]) {
+  test("Story and Slides post-focus reveal yields synchronously / " + artifactKind + "/" + boundary, async t => {
+    const x = await currentHost(t, { locale: "en", artifactKind }, true), { f, h, native } = x;
     await openMore(x);
     const beforeScroll = native.nativeScroll.length, source = h.store.captureSourceOwnership();
     assert.ok(source && h.store.sourceOwnershipActive(source));
     let mutation = null;
     const observed = observeOwnedEditArrival(t, x, ({ target, dialog, scrollCount }) => {
-      assert.equal(dialog.getAttribute("data-artifact-kind"), "short_story");
+      assert.equal(dialog.getAttribute("data-artifact-kind"), artifactKind);
       assert.equal(dialog.getAttribute("data-output-focus"), "false");
       assert.equal(scrollCount, beforeScroll);
       if (boundary === "source-retirement-event") {

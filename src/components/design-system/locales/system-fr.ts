@@ -1,5 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1nnfzqo.15": "Audio terminé",
+  "system.auto.eo9qdm.19": "Ouvrir l’audio original",
+  "system.auto.6otw8x.85": "Impossible de vérifier cet audio terminé précis. Réessayez d’ouvrir cette même demande.",
+  "system.auto.4h6snz.83": "D’autres résultats audio terminés sont disponibles. Ouvrez-les depuis les résultats de ce document.",
+  "system.auto.swxdvr.10": "Charger l’audio",
+  "system.auto.18mtyu5.14": "Chargement de l’audio…",
+  "system.auto.89gsst.40": "La modification audio n’est pas disponible dans Forma.",
   "system.auto.1nn949p.38": "Interface de l’application de mémoire personnelle.",
   "system.auto.1iw06ox.82": "Contrôles de consentement uniquement. Le montage de ce composant ne déclenche jamais d’inscription à la mémoire ni de capture d’activité.",
   "system.auto.1ebefvb.101": "Fermer le composant hôte qui l’intègre invalide le travail en cours avant sa prochaine mise à jour du DOM. Une réouverture nécessite un nouveau montage.",
@@ -6131,6 +6138,11 @@ Object.assign(messages, {
 Object.assign(messages, {
   "system.auto.12n9acm.49": "Interface applicative native de storyboard conservé.",
   "system.auto.16gltqk.141": "Interface native de storyboard conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
+});
+
+Object.assign(messages, {
+  "system.auto.j0hvzh.44": "Interface applicative native de contenu audio conservé.",
+  "system.auto.1tbmd5n.136": "Interface native de contenu audio conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
 });
 
 export default messages;

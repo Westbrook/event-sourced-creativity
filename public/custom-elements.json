@@ -14287,6 +14287,64 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/native-retained-audio.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "NativeRetainedAudio",
+          "tagName": "forma-native-retained-audio",
+          "customElement": true,
+          "summary": "Native retained audio application interface.",
+          "description": "Store-independent native retained audio interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "locale",
+              "type": {
+                "text": "AudioLocale | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "result",
+              "type": {
+                "text": "(Readonly<{ schemaVersion: 1; kind: \"native-retained-output\"; selection: import(\"./src/model/retained-short-story\").RetainedStorySelection; title: string; expiresAt: string; }> & Readonly<{ output: \"audio\"; content: import(\"./src/model/native-retained-audio\").NativeRetainedAudioContent; }>) | null"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-native-retained-audio",
+          "declaration": {
+            "name": "NativeRetainedAudio",
+            "module": "src/components/native-retained-audio.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "NativeRetainedAudio",
+          "declaration": {
+            "name": "NativeRetainedAudio",
+            "module": "src/components/native-retained-audio.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/native-retained-storyboard.ts",
       "declarations": [
         {

@@ -6,7 +6,8 @@ import { nativeStoryRetainedRoute } from "../model/native-short-story-generation
 import { captureNativeSceneHandle, nativeSceneRetainedRoute } from "../model/native-scene-completion.ts";
 import { captureNativeSlidesHandle, nativeSlidesRetainedRoute } from "../model/native-slides-completion.ts";
 import { captureNativeStoryboardHandle, nativeStoryboardRetainedRoute } from "../model/native-storyboard-completion.ts";
-import { readNativeSceneCompletion, readNativeSlidesCompletion, readNativeStoryboardCompletion } from "../model/retained-short-story-client.ts";
+import { captureNativeAudioHandle, nativeAudioRetainedRoute } from "../model/native-audio-completion.ts";
+import { readNativeSceneCompletion, readNativeSlidesCompletion, readNativeStoryboardCompletion, readNativeAudioCompletion } from "../model/retained-short-story-client.ts";
 import "./native-short-story-dialog.css";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -172,8 +173,12 @@ export class DocumentArtifacts extends FormaElement {
   #storyboardResultError:string|null=null;
   #storyboardCompletedJobs=new Map<string,{job:DocumentJob;current:()=>boolean;retired?:true}>();
   #storyboardOverflow:{documentId:string;current:()=>boolean}|null=null;
-  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();}};
-  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();};
+  #audioResultRead:{jobId:string;abort:AbortController}|null=null;
+  #audioResultError:string|null=null;
+  #audioCompletedJobs=new Map<string,{job:DocumentJob;current:()=>boolean;retired?:true}>();
+  #audioOverflow:{documentId:string;current:()=>boolean}|null=null;
+  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();this.#audioResultRead?.abort.abort();}};
+  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();this.#storyboardResultRead?.abort.abort();this.#audioResultRead?.abort.abort();};
   #nativeStoryEligible(documentId:string){
     const session=this.store.session.get(),projection=this.store.projection.get();
     return Boolean(this.isConnected&&this.source==="document"&&this.closest("forma-workspace")
@@ -335,6 +340,7 @@ export class DocumentArtifacts extends FormaElement {
     this.retireNativeShortStory();
     this.#slidesResultRead?.abort.abort();this.#slidesResultRead=null;this.#slidesResultError=null;this.#slidesCompletedJobs.clear();this.#slidesOverflow=null;
     this.#storyboardResultRead?.abort.abort();this.#storyboardResultRead=null;this.#storyboardResultError=null;this.#storyboardCompletedJobs.clear();this.#storyboardOverflow=null;
+    this.#audioResultRead?.abort.abort();this.#audioResultRead=null;this.#audioResultError=null;this.#audioCompletedJobs.clear();this.#audioOverflow=null;
     this.#privateSourceRevision++;this.#presentationReceiptCheck=null;this.#model3dSubmitBasis=new WeakMap();
     this.#closeViewerPopovers();this.#sceneInputCurrent=null;this.#clearSceneCost();
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;
@@ -703,6 +709,84 @@ export class DocumentArtifacts extends FormaElement {
       if(ownedLease&&this.#sceneResultCloseLease===ownedLease)this.#sceneResultCloseLease=null;
       this.requestUpdate();
     }
+  }
+  #nativeAudioJob(job:DocumentJob){
+    return this.#nativeStoryEligible(job.documentId)&&job.kind==="render_document"&&job.status==="completed"
+      &&job.sourceSurface==="document"&&job.productionMode==="manual"&&job.result?.artifactKind==="audio";
+  }
+  #nativeAudioJobIdentity(job:DocumentJob){
+    return JSON.stringify([job.jobId,job.documentId,job.kind,job.status,job.sourceSurface,job.productionMode,
+      job.documentRevision,job.requestKey,job.requestedAt,job.completedAt,job.attemptCount,job.result?.artifactKind,job.result?.artifactId]);
+  }
+  async #openOriginalAudio(job:DocumentJob,event:MouseEvent,renderedCurrent:()=>boolean){
+    const trigger=event.currentTarget;
+    if(!(trigger instanceof HTMLButtonElement)||!this.contains(trigger)||this.#audioResultRead
+      ||!renderedCurrent()||!this.#nativeAudioJob(job)||!this.#readonlyReuseView()||this.#activeId||this.#convertingId)return false;
+    const handle=captureNativeAudioHandle({documentId:job.documentId,jobId:job.jobId});if(!handle)return false;
+    const store=this.store,source=this.#privateSourceCurrent(),authorization=store.captureAuthorizationScope(),route=store.route.get();
+    const identity=this.#nativeAudioJobIdentity(job),artifactId=job.result?.artifactId,read={jobId:job.jobId,abort:new AbortController()};
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    const current=()=>this.#audioResultRead===read&&!read.abort.signal.aborted&&renderedCurrent()&&source()
+      &&this.store===store&&store.authorizationScopeActive(authorization)&&store.route.get()===route
+      &&this.ownerDocument.visibilityState!=="hidden"&&!this.closest("[hidden],[inert]")
+      &&trigger.isConnected&&this.contains(trigger)&&trigger.dataset.nativeAudioJob===handle.jobId&&focus.current()
+      &&this.#readonlyReuseView()&&!this.#activeId&&!this.#convertingId&&!this.#audioCompletedJobs.get(handle.jobId)?.retired
+      &&(()=>{
+        const live=store.documentJobs.get().find(value=>value.jobId===handle.jobId);
+        if(live)return this.#nativeAudioJob(live)&&this.#nativeAudioJobIdentity(live)===identity;
+        const retained=this.#audioCompletedJobs.get(handle.jobId);
+        return Boolean(retained?.current()&&this.#nativeAudioJob(retained.job)&&this.#nativeAudioJobIdentity(retained.job)===identity);
+      })();
+    this.#audioResultRead=read;this.#audioResultError=null;this.requestUpdate();
+    try{
+      const completion=await readNativeAudioCompletion(handle,{origin:location.origin,signal:read.abort.signal,current,
+        request:(path,init)=>fetch(path,init)});
+      if(!current())return false;
+      const path=nativeAudioRetainedRoute(completion,handle);if(!path)return false;
+      await store.refreshEvents({readOnly:true,current});if(!current())return false;
+      const selected=completion.selection,artifact=store.projection.get().libraryArtifacts.find(value=>value.id===selected.artifactId);
+      if(selected.documentId!==handle.documentId||selected.artifactId!==artifactId
+        ||!artifact||artifact.kind!=="audio"||artifact.documentId!==selected.documentId
+        ||documentArtifactRevision(store.events.get(),artifact.id)!==selected.revision)return false;
+      const original={id:artifact.id,sourceEventId:artifact.sourceEventId,contentRef:artifact.contentRef,sequence:artifact.sequence,
+        inputRef:artifact.inputRef??null,mediaUrl:artifact.mediaUrl,mediaType:artifact.mediaType,mediaSha256:artifact.settings.source_media_sha256};
+      const exact=()=>Date.parse(completion.expiresAt)>Date.now()&&nativeAudioRetainedRoute(completion,handle)===path
+        &&store.projection.get().libraryArtifacts.some(value=>value.id===original.id&&value.kind==="audio"
+          &&value.documentId===selected.documentId&&value.sourceEventId===original.sourceEventId
+          &&value.contentRef===original.contentRef&&value.sequence===original.sequence
+          &&(value.inputRef??null)===original.inputRef&&value.mediaUrl===original.mediaUrl
+          &&value.mediaType===original.mediaType&&value.settings.source_media_sha256===original.mediaSha256)
+        &&documentArtifactRevision(store.events.get(),original.id)===selected.revision;
+      return await navigateInApp(this,navigation=>current()&&exact()&&navigation.current()
+        ?navigation.route(path,{documentFocus:false}):false);
+    }catch{
+      if(current())this.#audioResultError=handle.jobId;
+      return false;
+    }finally{
+      focus.dispose();read.abort.abort();if(this.#audioResultRead===read)this.#audioResultRead=null;
+      this.requestUpdate();
+    }
+  }
+  #nativeAudioCompletions(){
+    const source=this.#privateSourceCurrent(),live=this.store.documentJobs.get();
+    for(const [id,retained] of this.#audioCompletedJobs){
+      const current=live.find(job=>job.jobId===id);
+      if(!retained.current()||!this.#nativeAudioJob(retained.job))this.#audioCompletedJobs.delete(id);
+      else if(current&&(!this.#nativeAudioJob(current)||this.#nativeAudioJobIdentity(current)!==this.#nativeAudioJobIdentity(retained.job)))retained.retired=true;
+    }
+    if(this.#audioOverflow&&(!this.#audioOverflow.current()||!this.#nativeStoryEligible(this.#audioOverflow.documentId)))this.#audioOverflow=null;
+    let capacity=Boolean(this.#audioOverflow);
+    for(const job of live.filter(value=>this.#nativeAudioJob(value))){
+      if(this.#audioCompletedJobs.has(job.jobId))continue;
+      if(this.#audioCompletedJobs.size>=120){this.#audioOverflow??={documentId:job.documentId,current:source};capacity=true;continue;}
+      // Keep an observed exact completion across the ordinary feed ACK. Its
+      // authority is still re-read before Open; it is never a cached receipt.
+      const captured=Object.freeze({...job,result:job.result?Object.freeze({...job.result}):job.result});
+      this.#audioCompletedJobs.set(job.jobId,{job:captured,current:source});
+    }
+    const jobs=[...this.#audioCompletedJobs.values()].filter(value=>!value.retired).map(value=>value.job);
+    if(!jobs.length&&!capacity)return nothing;
+    return html`<div class="document-artifact-jobs native-audio-completions">${jobs.map(job=>html`<span><b>${this.i18n.system("Completed audio")}</b><small>${this.i18n.date(new Date(job.completedAt??job.updatedAt),{dateStyle:"medium",timeStyle:"short"})}</small><button type="button" class="button secondary compact" data-native-audio-job=${job.jobId} aria-busy=${String(this.#audioResultRead?.jobId===job.jobId)} @click=${(event:MouseEvent)=>void this.#openOriginalAudio(job,event,source)}>${this.i18n.system("Open original audio")}</button>${this.#audioResultError===job.jobId?html`<small role="status">${this.i18n.system("The exact completed audio could not be verified. Try opening this same request again.")}</small>`:nothing}</span>`)}${capacity?html`<p role="status">${this.i18n.system("More completed audio results are available. Open them from this Document’s results.")}</p>`:nothing}</div>`;
   }
   #nativeStoryboardJob(job:DocumentJob){
     return this.#nativeStoryEligible(job.documentId)&&job.kind==="render_document"&&job.status==="completed"
@@ -1581,7 +1665,7 @@ export class DocumentArtifacts extends FormaElement {
     const files=model3dArtifactFiles(artifact),preview=model3dPreviewFile(artifact),reuse=model3dArtifactContextReadiness(artifact);
     const unsupportedPreview=files.some(file=>file.role==="mesh"&&file.format==="glb"&&file.previewSupported===false);
     return html`<section class="artifact-model3d-result">
-      ${preview?html`<forma-model3d-viewer .src=${preview.url} .readonly=${true}></forma-model3d-viewer>`:html`<div class="model3d-preview-unavailable" role="status">${icon("layers")}<p>${unsupportedPreview?this.i18n.t("model3d.output.previewUnsupported","This model is available as an original download. Its mesh features or size exceed the interactive viewer’s current support."):this.i18n.t("model3d.output.previewUnavailable","Interactive preview requires a self-contained GLB. The returned files remain available in their original formats below.")}</p></div>`}
+      ${preview?html`<forma-model3d-viewer .src=${preview.url} .expectedSha256=${preview.sha256} .readonly=${true}></forma-model3d-viewer>`:html`<div class="model3d-preview-unavailable" role="status">${icon("layers")}<p>${unsupportedPreview?this.i18n.t("model3d.output.previewUnsupported","This model is available as an original download. Its mesh features or size exceed the interactive viewer’s current support."):this.i18n.t("model3d.output.previewUnavailable","Interactive preview requires a self-contained GLB. The returned files remain available in their original formats below.")}</p></div>`}
       ${preview?html`<p>${this.i18n.t("model3d.output.viewHelp","Rotate the preview to inspect the result. To guide another generation, use the original model as context and save the image view you want to send.")}</p>`:nothing}
       ${!reuse.supported?html`<p role="status">${unsupportedPreview?this.i18n.t("model3d.output.reuseUnsupported","To reuse this output as a reference, simplify or convert it to a self-contained GLB supported by the viewer, then upload it."):this.i18n.t("model3d.output.reuseUnavailable","To reuse this output as context, download and upload a self-contained GLB model with its textures embedded.")}</p>`:nothing}
       <section id=${`artifact-model3d-files-${artifact.id}`} class="model3d-output-files" aria-label=${this.i18n.t("model3d.output.files","Returned model files and textures")}><h3>${this.i18n.t("model3d.output.files","Returned model files and textures")}</h3>
@@ -1771,10 +1855,11 @@ export class DocumentArtifacts extends FormaElement {
       const target=this.#viewDialog()?.querySelector<HTMLTextAreaElement>('.artifact-direct-editor textarea[rows="12"]');
       if(target?.isConnected)focus.run(target,()=>{
         if(!current())return false;
-        if(artifact.kind!=="short_story"||this.#viewerFocused){target.focus();return true;}
+        const editorKind=artifact.kind;
+        if((editorKind!=="short_story"&&editorKind!=="slides")||this.#viewerFocused){target.focus();return true;}
         const editorCurrent=()=>current()&&target.isConnected&&!this.#viewerFocused
           &&target.ownerDocument===this.ownerDocument
-          &&dialog?.getAttribute("data-artifact-kind")==="short_story"
+          &&dialog?.getAttribute("data-artifact-kind")===editorKind
           &&dialog.getAttribute("data-output-focus")==="false"
           &&dialog.querySelector<HTMLTextAreaElement>('.artifact-direct-editor textarea[rows="12"]')===target;
         if(!editorCurrent())return false;
@@ -2240,6 +2325,7 @@ export class DocumentArtifacts extends FormaElement {
       ${this.#productionWorkflow()}
       ${this.#nativeSlidesCompletions()}
       ${this.#nativeStoryboardCompletions()}
+      ${this.#nativeAudioCompletions()}
       ${artifacts.length?html`<div class="document-artifact-list">${artifacts.slice(0,this.compact&&!this.#showAll?3:Math.max(12,artifacts.length)).map((artifact)=>{const review=artifactReviewState(artifact,this.#artifactSourceBlocks(artifact),this.store.events.get()),sceneConfiguration=this.#artifactSceneConfiguration(artifact),identity=artifactIdentities.get(artifact.id);return html`<button type="button" data-forma-content="primary" @click=${()=>this.#openArtifact(artifact)}>${this.#preview(artifact)}<span><b dir="auto">${artifact.title}</b><small>${identity?.disambiguator?`${identity.disambiguator} · `:""}${sceneConfiguration?this.#sceneVariantLabel(sceneConfiguration.medium):this.i18n.system(documentArtifactDefinition(artifact.kind).label)} · ${artifact.itemCount} ${artifact.kind==="slides"?this.i18n.system("slides"):artifact.kind==="storyboard"?this.i18n.system("frames"):this.i18n.system(artifact.itemCount===1 ? "part" : "parts")} · ${this.#reviewLabel(review)}${outdatedWorkflowOutputs.has(artifact.id)?html` · ${this.i18n.t("workflow.inputsChangedLabel","Production inputs changed")}`:nothing}</small>${this.#createdTime(artifact)}</span></button>`;})}</div>${this.compact&&artifacts.length>3?html`<button type="button" class="button ghost compact artifact-show-all" @click=${()=>{this.#showAll=!this.#showAll;this.requestUpdate();}}>${this.#showAll?this.i18n.system("Show fewer"):this.i18n.system("View all {count} outputs", { count: this.i18n.number(artifacts.length) })}</button>`:nothing}`:nothing}
       ${recoverablePresentationJob&&artifacts.length?html`<aside class="document-artifact-recovery" role="status"><button type="button" class="button primary compact" @click=${()=>this.#recoverPresentation(recoverablePresentationJob.jobId)}>${this.i18n.system("Recover saved render")}</button><small>${this.i18n.system("Paid once · replay without another provider call")}</small></aside>`:nothing}
       ${jobs.length?html`<div class="document-artifact-jobs" aria-live="polite">${jobs.map((job)=>html`<span><i></i><b>${DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?this.i18n.system(documentArtifactDefinition(job.result!.artifactKind as DocumentArtifactKind).label):this.i18n.system("Artifact")}</b><small>${job.progressMessage?localizedDocumentJobProgress(job,this.i18n):this.i18n.system(job.stage)}</small>${job.result?.artifactKind==="slides"?html`<button type="button" class="button ghost compact" @click=${()=>this.#inspectRunningInputs(job)}>Inspect inputs</button>`:nothing}<button type="button" class="button ghost compact" ?disabled=${job.status==="committing"} title=${job.status==="committing"?this.i18n.system("This result is already being saved"):this.i18n.t("generation.stopUncertainty","Stopping does not guarantee that provider work stops or that reserved budget is released. Incurred costs remain; uncertain holds stay reserved until verified. Check the original receipt.")} @click=${()=>this.#stop(job.jobId)}>${job.status==="committing"?this.i18n.system("Saving…"):this.i18n.system("Stop")}</button></span>`)}</div>`:nothing}

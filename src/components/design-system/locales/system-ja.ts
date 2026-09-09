@@ -1,5 +1,12 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1nnfzqo.15": "音声が完成しました",
+  "system.auto.eo9qdm.19": "元の音声を開く",
+  "system.auto.6otw8x.85": "この完成済み音声を確認できませんでした。同じリクエストをもう一度開いてください。",
+  "system.auto.4h6snz.83": "ほかにも完成済みの音声があります。このドキュメントの結果から開いてください。",
+  "system.auto.swxdvr.10": "音声を読み込む",
+  "system.auto.18mtyu5.14": "音声を読み込み中…",
+  "system.auto.89gsst.40": "Formaでは音声を編集できません。",
   "system.auto.1nn949p.38": "パーソナルメモリアプリケーションのインターフェース。",
   "system.auto.1iw06ox.82": "同意の操作のみを提供します。このコンポーネントをマウントしても、メモリへの登録やアクティビティの記録は一切行われません。",
   "system.auto.1ebefvb.101": "組み込み先のホストを閉じると、その次の DOM 更新より前に処理が無効化されます。再び開くには、新たにマウントする必要があります。",
@@ -6131,6 +6138,11 @@ Object.assign(messages, {
 Object.assign(messages, {
   "system.auto.12n9acm.49": "保存済みネイティブストーリーボードのアプリケーションインターフェース。",
   "system.auto.16gltqk.141": "ストアに依存しない保存済みネイティブストーリーボードのインターフェース。組み込む前に、実際の属性、JavaScript プロパティ、イベントを確認してください。",
+});
+
+Object.assign(messages, {
+  "system.auto.j0hvzh.44": "保存済みネイティブ音声のアプリケーションインターフェース。",
+  "system.auto.1tbmd5n.136": "ストアに依存しない保存済みネイティブ音声のインターフェース。組み込む前に、実際の属性、JavaScript プロパティ、イベントを確認してください。",
 });
 
 export default messages;

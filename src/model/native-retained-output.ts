@@ -1,9 +1,10 @@
+import { projectNativeRetainedAudio, validateNativeRetainedAudio, type NativeRetainedAudioContent } from "./native-retained-audio.ts";
 import { projectNativeRetainedModel3d, validateNativeRetainedModel3d, type NativeRetainedModel3dContent } from "./native-retained-model3d.ts";
 import { presentationAudienceItem } from "./presentation-delivery.ts";
 import type { DocumentArtifactDraftItem, SlideCitation, SlidePresentation, SlideQuote, SlideVisualData, SlideVisualDatum } from "./document-artifacts.ts";
 import type { RetainedStorySelection } from "./retained-short-story.ts";
 
-export type NativeRetainedOutputKind = "scene" | "slides" | "storyboard" | "model3d";
+export type NativeRetainedOutputKind = "scene" | "slides" | "storyboard" | "model3d" | "audio";
 export type NativeRetainedStoryboardFrame = Readonly<{
   id: string; title: string; body: string; notes: string; imagePrompt: string;
   image: Readonly<{ url: string; mediaType: "image/jpeg" | "image/png" | "image/webp"; width: number | null; height: number | null }> | null;
@@ -21,6 +22,7 @@ export type NativeRetainedOutputDto = NativeRetainedOutputBase & (
   | Readonly<{ output: "slides"; content: Readonly<{ items: readonly DocumentArtifactDraftItem[]; presentation: SlidePresentation | null }> }>
   | Readonly<{ output: "storyboard"; content: Readonly<{ frames: readonly NativeRetainedStoryboardFrame[] }> }>
   | Readonly<{ output: "model3d"; content: NativeRetainedModel3dContent }>
+  | Readonly<{ output: "audio"; content: NativeRetainedAudioContent }>
 );
 
 export const NATIVE_RETAINED_OUTPUT_JSON_MAX_BYTES = 1_000_000;
@@ -136,7 +138,7 @@ function readSelection(value: Json | undefined): RetainedStorySelection {
 }
 function readTarget(value: unknown): NativeRetainedOutputTarget {
   const entry = record(captureJson(value, 4096), ["output", "selection"]);
-  return Object.freeze({ output: choice(entry.output, ["scene", "slides", "storyboard", "model3d"]), selection: readSelection(entry.selection) });
+  return Object.freeze({ output: choice(entry.output, ["scene", "slides", "storyboard", "model3d", "audio"]), selection: readSelection(entry.selection) });
 }
 function selectionFromQuery(parameters: URLSearchParams, documentId: string | null, artifactId: string | null): RetainedStorySelection {
   const revision = parameters.get("revision");
@@ -162,10 +164,10 @@ export function parseNativeRetainedOutputRoute(route: string): NativeRetainedOut
   try {
     if (typeof route !== "string" || route.length > 2048 || hasUnsafeUrlCharacters(route)) return null;
     const path = route.split("?", 1)[0];
-    if (path !== "/make/scene" && path !== "/make/slides" && path !== "/make/storyboard" && path !== "/make/model3d") return null;
+    if (path !== "/make/scene" && path !== "/make/slides" && path !== "/make/storyboard" && path !== "/make/model3d" && path !== "/make/audio") return null;
     const url = new URL(route, "https://forma.local");
     if (!exactQuery(url.searchParams, ["document", "artifact", "revision", "sha256"])) return null;
-    return Object.freeze({ output: path === "/make/scene" ? "scene" : path === "/make/slides" ? "slides" : path === "/make/storyboard" ? "storyboard" : "model3d",
+    return Object.freeze({ output: path === "/make/scene" ? "scene" : path === "/make/slides" ? "slides" : path === "/make/storyboard" ? "storyboard" : path === "/make/audio" ? "audio" : "model3d",
       selection: selectionFromQuery(url.searchParams, url.searchParams.get("document"), url.searchParams.get("artifact")) });
   } catch { return null; }
 }
@@ -181,7 +183,7 @@ export function parseNativeRetainedOutputRequestUrl(requestUrl: string): NativeR
   try {
     if (typeof requestUrl !== "string" || requestUrl.length > 4096 || hasUnsafeUrlCharacters(requestUrl)) return null;
     const rawPath = requestUrl.match(/^https?:\/\/[^/?#]+(\/[^?#]*)/u)?.[1];
-    const path = rawPath?.match(/^\/api\/retained-output\/(scene|slides|storyboard|model3d)\/([^/]+)\/([^/]+)$/u);
+    const path = rawPath?.match(/^\/api\/retained-output\/(scene|slides|storyboard|model3d|audio)\/([^/]+)\/([^/]+)$/u);
     if (!path) return null;
     const url = new URL(requestUrl);
     if (url.username || url.password || !exactQuery(url.searchParams, ["revision", "sha256"])) return null;
@@ -359,6 +361,10 @@ export function validateNativeRetainedOutputDto(candidate: unknown, target: Nati
       const frames = readStoryboardFrames(content.frames);
       return finish(expected, title, expiresAt, { frames }, now);
     }
+    if (expected.output === "audio") {
+      const content = validateNativeRetainedAudio(value.content);
+      return content ? finish(expected, title, expiresAt, content, now) : null;
+    }
     if (expected.output === "model3d") {
       const content = validateNativeRetainedModel3d(value.content);
       return content ? finish(expected, title, expiresAt, content, now) : null;
@@ -381,7 +387,7 @@ export function validateNativeRetainedOutputDto(candidate: unknown, target: Nati
  */
 export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, rawContent: unknown,
   expiresAt: string, sceneMedium: unknown = null,
-  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown } = {}): NativeRetainedOutputDto | null {
+  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown; audioReceipt?: unknown } = {}): NativeRetainedOutputDto | null {
   try {
     const expected = readTarget(target);
     const raw = record(captureJson(rawContent), ["title"], [], true);
@@ -391,10 +397,14 @@ export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, 
       if (sceneMedium !== null && sceneMedium !== "visual" && sceneMedium !== "audio") return null;
       return finish(expected, title, expiresAt, { content_markdown: text(raw.content_markdown, NATIVE_RETAINED_OUTPUT_MARKDOWN_MAX_BYTES), medium: sceneMedium }, Date.now());
     }
-    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt"]);
+    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt", "audioReceipt"]);
     if (expected.output === "storyboard") {
       const frames = projectStoryboardFrames(raw.items, metadata.storyboardItems ?? null);
       return finish(expected, title, expiresAt, { frames }, Date.now());
+    }
+    if (expected.output === "audio") {
+      const content = projectNativeRetainedAudio(raw.content_markdown, metadata.audioReceipt ?? null);
+      return content ? finish(expected, title, expiresAt, content, Date.now()) : null;
     }
     if (expected.output === "model3d") {
       const content = projectNativeRetainedModel3d(metadata.model3dReceipt ?? null);

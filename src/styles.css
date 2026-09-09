@@ -2098,6 +2098,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .artifact-viewer-kicker .artifact-review-status { min-inline-size: 0; font-size: inherit; overflow-wrap: anywhere; }
 .document-artifact-reader > .artifact-viewer-header h2 { margin: .2rem 0 0; font-size: clamp(1.15rem,2.15vi,1.65rem); line-height: 1.14; overflow-wrap: anywhere; }
 .artifact-viewer-details { color: var(--muted); font-size: var(--type-caption); }
+/* Reserve title font overhang and both edges of the evidence summary’s outside focus ring. */
+dialog.document-artifact-view[data-output-focus="false"] > .document-artifact-reader > .artifact-viewer-header > .artifact-viewer-identity > h2 + .artifact-viewer-details { margin-block-start: calc(var(--forma-focus-clearance) + .25rem); }
+dialog.document-artifact-view[data-output-focus="false"] > .document-artifact-reader > .artifact-viewer-header > .artifact-viewer-identity > h2 + .artifact-viewer-details[open] > div { padding-block-start: var(--forma-focus-clearance); }
 .artifact-viewer-details > summary { display: flex; min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; cursor: pointer; font-weight: 600; }
 .artifact-viewer-details > div { display: grid; gap: .35rem; padding-block-end: .7rem; }
 .artifact-viewer-details > div > p { overflow-wrap: anywhere; }
@@ -2287,6 +2290,8 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck-reader-content { display: grid; min-width: 0; gap: 1rem; margin-block-start: .85rem; color: var(--ink); font-size: var(--type-small); line-height: 1.65; }
 .presentation-deck-reader-content :is(h3,h4,p,ul,ol,figure,blockquote,dl) { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .presentation-deck-reader-content :is(ul,ol) { display: grid; gap: .4rem; padding-inline-start: 1.35rem; }
+/* Audience list items choose direction independently; reserve both outside-marker gutters. */
+.presentation-deck-reader-content > ul { padding-inline-end: 1.35rem; }
 .presentation-deck-reader-content blockquote { padding: .75rem 1rem; color: var(--ink); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 6px; font-size: var(--type-body); }
 .presentation-deck-reader-content figure { display: grid; gap: .55rem; }
 .presentation-deck-reader-content figcaption,.presentation-deck-evidence h4 { color: var(--ink); font-size: var(--type-small); font-weight: 700; }
