@@ -2086,6 +2086,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "artifact.review.staleApproved.label": "Approval expired · context changed",
   "artifact.review.edited.label": "Edited · review again",
   "video.title": "Video",
+  "video.retainedFile": "Video file",
+  "video.individualScenes": "Individual scenes",
   "video.scene": "Scene",
   "video.untitledScene": "Untitled scene",
   "video.reelLabel": "{title} video reel",

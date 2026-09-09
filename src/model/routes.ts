@@ -30,7 +30,7 @@ export function routePathname(route: string) {
 /** Only project-scoped task views carry a Document context; this does not change Document-view or job-feed routing. */
 export function isProjectTaskRoute(route: string) {
   const pathname = routePathname(route);
-  if (["/deliver", "/activity", "/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio"].includes(pathname)) return true;
+  if (["/deliver", "/activity", "/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname)) return true;
   const base = libraryBaseRoute(route);
   if (pathname === base) return true;
   if (!pathname.startsWith(base + "/")) return false;

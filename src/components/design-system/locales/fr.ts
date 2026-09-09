@@ -2043,6 +2043,8 @@ Object.assign(messages, {
   "artifact.review.staleApproved.label": "Approbation expirée · contexte modifié",
   "artifact.review.edited.label": "Modifié · nouvelle révision nécessaire",
   "video.title": "Vidéo",
+  "video.retainedFile": "Fichier vidéo",
+  "video.individualScenes": "Scènes individuelles",
   "video.scene": "Scène",
   "video.untitledScene": "Scène sans titre",
   "video.reelLabel": "Séquence vidéo : {title}",

@@ -56,7 +56,7 @@ test("native retained output: local route decoding rejects ambiguous paths and q
   const healthy = route(), suffix = healthy.slice(healthy.indexOf("?"));
   for (const value of ["https://forma.example" + healthy, "//forma.example" + healthy, " " + healthy, healthy + "\n",
     healthy + "#", healthy + "#fragment", "/make/scene/" + suffix, "/make/other/../scene" + suffix,
-    "/make/%73cene" + suffix, "/make/Scene" + suffix, "/make/scene\\" + suffix, "/make/scene", "/make/video" + suffix,
+    "/make/%73cene" + suffix, "/make/Scene" + suffix, "/make/scene\\" + suffix, "/make/scene", "/make/unknown-output" + suffix,
     healthy + "&revision=3", healthy + "&%72evision=3", healthy + "&extra=1", healthy.replace("&revision=3", ""),
     healthy.replace("document%3Aone._-", "document%2Fone"), healthy.replace("artifact%3Aone._-", "%ZZ"),
     healthy.replace("a".repeat(64), "A".repeat(64)), "/make/scene?" + "x".repeat(2049)]) {
@@ -82,7 +82,7 @@ test("native retained output: API paths encode exact identity and reject alterna
     const healthy = "https://forma.example" + path;
     for (const value of [path, "//forma.example" + path, healthy.replace("https:", "ftp:"), healthy.replace("https://", "https://user:pass@"),
       healthy + "#", healthy + "\t", healthy.replace("/retained-output/", "/other/../retained-output/"),
-      healthy.replace(`/${output}/`, `/${output.toUpperCase()}/`), healthy.replace(`/${output}/`, "/video/"),
+      healthy.replace(`/${output}/`, `/${output.toUpperCase()}/`), healthy.replace(`/${output}/`, "/unknown-output/"),
       healthy.replace("/artifact%3Aone._-?", "/artifact%3Aone._-/?"), healthy.replace("document%3Aone._-", "document%2Fone"),
       healthy.replace("artifact%3Aone._-", "%ZZ"), healthy + "&revision=3", healthy + "&output=scene",
       healthy.replace("revision=3", "revision=01"), healthy.replace("&sha256=" + "a".repeat(64), "")]) {
@@ -95,7 +95,7 @@ test("native retained output: API paths encode exact identity and reject alterna
 });
 
 test("native retained output: path construction validates target without coercion or getters", () => {
-  for (const value of [{ ...target(), output: ["scene"] }, { ...target(), output: "video" }, { ...target(), extra: true },
+  for (const value of [{ ...target(), output: ["scene"] }, { ...target(), output: "unknown-output" }, { ...target(), extra: true },
     { ...target(), selection: { ...selection(), revision: "3" } }, { ...target(), selection: { ...selection(), documentId: "bad/id" } },
     { ...target(), selection: { ...selection(), contentSha256: "A".repeat(64) } }]) {
     assert.throws(() => nativeRetainedOutputRequestPath(value), TypeError);

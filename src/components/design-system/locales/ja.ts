@@ -2039,6 +2039,8 @@ Object.assign(messages, {
   "artifact.review.staleApproved.label": "承認が失効しました · コンテキストが変更されました",
   "artifact.review.edited.label": "編集されました · 再レビューが必要",
   "video.title": "動画",
+  "video.retainedFile": "動画ファイル",
+  "video.individualScenes": "個別のシーン",
   "video.scene": "シーン",
   "video.untitledScene": "無題のシーン",
   "video.reelLabel": "{title}の動画リール",

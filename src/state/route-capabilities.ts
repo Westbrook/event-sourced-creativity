@@ -9,7 +9,7 @@ export type RouteCapabilities = {
 /** Existing retained readers own one exact output, not the generic background job feed. */
 export function isRetainedOutputReaderRoute(path: string): boolean {
   const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
-  return ["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio"].includes(pathname);
+  return ["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname);
 }
 
 /** Keep startup work proportional to the information the active surface actually renders. */

@@ -2097,6 +2097,8 @@ Object.assign(messages, {
   "artifact.review.staleApproved.label": "انتهت صلاحية الاعتماد · تم تعديل السياق",
   "artifact.review.edited.label": "تم التعديل · يلزم إجراء مراجعة جديدة",
   "video.title": "فيديو",
+  "video.retainedFile": "ملف فيديو",
+  "video.individualScenes": "مشاهد منفصلة",
   "video.scene": "مشهد",
   "video.untitledScene": "مشهد بلا عنوان",
   "video.reelLabel": "مقاطع فيديو {title}",

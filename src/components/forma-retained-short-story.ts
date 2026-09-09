@@ -7,12 +7,14 @@ import { parseNativeRetainedOutputRoute, type NativeRetainedOutputDto } from "..
 import { readRetainedShortStory, readNativeRetainedOutput } from "../model/retained-short-story-client.ts";
 import "./forma-retained-short-story.css";
 
-type RetainedOutputKind = "short_story" | "scene" | "slides" | "storyboard" | "model3d" | "audio";
+type RetainedOutputKind = "short_story" | "scene" | "slides" | "storyboard" | "model3d" | "audio" | "video";
 type RetainedOutput = RetainedStoryDto | NativeRetainedOutputDto;
 type SlidesRenderer = typeof import("./native-retained-slides.ts").renderNativeRetainedSlides;
 type StoryboardRenderer = typeof import("./native-retained-storyboard.ts").renderNativeRetainedStoryboard;
 type AudioRenderer = typeof import("./native-retained-audio.ts").renderNativeRetainedAudio;
 type Model3dRenderer = typeof import("./native-retained-model3d.ts").renderNativeRetainedModel3d;
+type VideoRenderer = typeof import("./native-retained-video.ts").mountNativeRetainedVideo;
+type VideoPresentation = ReturnType<VideoRenderer>;
 type ReadOwner = {
   epoch: number;
   route: string;
@@ -39,6 +41,8 @@ export class FormaRetainedShortStory extends FormaElement {
   #storyboardRenderer: StoryboardRenderer | null = null;
   #model3dRenderer: Model3dRenderer | null = null;
   #audioRenderer: AudioRenderer | null = null;
+  #videoRenderer: VideoRenderer | null = null;
+  #videoPresentation: VideoPresentation | null = null;
   #phase: "waiting" | "loading" | "ready" | "unavailable" = "waiting";
   #unsubscribe?: () => void;
   #mount?: HTMLElement;
@@ -66,16 +70,23 @@ export class FormaRetainedShortStory extends FormaElement {
     ++this.#epoch;
     this.#owner?.abort.abort();
     this.#owner = null;
+    this.#retireVideo();
     this.#result = null;
     this.#slidesRenderer = null;
     this.#storyboardRenderer = null;
     this.#model3dRenderer = null;
     this.#audioRenderer = null;
+    this.#videoRenderer = null;
     if (this.#expiryTimer !== undefined) clearTimeout(this.#expiryTimer);
     this.#expiryTimer = undefined;
     if (this.#mount) render(nothing, this.#mount);
     this.#phase = "unavailable";
     this.requestUpdate();
+  }
+  #retireVideo() {
+    const presentation = this.#videoPresentation;
+    this.#videoPresentation = null;
+    presentation?.dispose();
   }
   #withdraw = () => {
     // Authorization events precede session publication: do not wait for the old key to change.
@@ -92,7 +103,7 @@ export class FormaRetainedShortStory extends FormaElement {
       this.#clear();
       this.#route = route;
       const pathname = routePathname(route);
-      this.#output = pathname === "/make/scene" ? "scene" : pathname === "/make/slides" ? "slides" : pathname === "/make/storyboard" ? "storyboard" : pathname === "/make/model3d" ? "model3d" : pathname === "/make/audio" ? "audio" : "short_story";
+      this.#output = pathname === "/make/scene" ? "scene" : pathname === "/make/slides" ? "slides" : pathname === "/make/storyboard" ? "storyboard" : pathname === "/make/model3d" ? "model3d" : pathname === "/make/audio" ? "audio" : pathname === "/make/video" ? "video" : "short_story";
       this.#withdrawn = false;
       this.#attempted = false;
     }
@@ -158,6 +169,7 @@ export class FormaRetainedShortStory extends FormaElement {
       let storyboardRenderer: StoryboardRenderer | null = null;
       let model3dRenderer: Model3dRenderer | null = null;
       let audioRenderer: AudioRenderer | null = null;
+      let videoRenderer: VideoRenderer | null = null;
       if (owner.current() && result.kind === "native-retained-output" && result.output === "slides") {
         // The story/Scene path does not load the slide leaf or its presentation dependencies.
         slidesRenderer = (await import("./native-retained-slides.ts")).renderNativeRetainedSlides;
@@ -171,6 +183,9 @@ export class FormaRetainedShortStory extends FormaElement {
       if (owner.current() && result.kind === "native-retained-output" && result.output === "audio") {
         audioRenderer = (await import("./native-retained-audio.ts")).renderNativeRetainedAudio;
       }
+      if (owner.current() && result.kind === "native-retained-output" && result.output === "video") {
+        videoRenderer = (await import("./native-retained-video.ts")).mountNativeRetainedVideo;
+      }
       if (!owner.current() || !(Date.parse(result.expiresAt) > Date.now())) {
         if (this.#owner === owner) this.#withdraw();
         return;
@@ -180,6 +195,7 @@ export class FormaRetainedShortStory extends FormaElement {
       this.#storyboardRenderer = storyboardRenderer;
       this.#model3dRenderer = model3dRenderer;
       this.#audioRenderer = audioRenderer;
+      this.#videoRenderer = videoRenderer;
       this.#phase = "ready";
       this.#armExpiry(owner, result);
       this.requestUpdate();
@@ -222,13 +238,14 @@ export class FormaRetainedShortStory extends FormaElement {
       : this.#output === "storyboard" ? this.i18n.t("artifact.storyboard.label", "Storyboard")
       : this.#output === "model3d" ? this.i18n.t("model3d.label", "3D model")
       : this.#output === "audio" ? this.i18n.t("artifact.audio.label", "Audio")
+      : this.#output === "video" ? this.i18n.t("artifact.video.label", "Video")
       : this.i18n.t("artifact.short_story.label", "Short story");
   }
   protected override updated() {
     this.#mount = this.querySelector<HTMLElement>("[data-retained-story-mount]") ?? undefined;
     if (!this.#mount) return;
     const result = this.#result;
-    if (!this.#ready() || !result) { render(nothing, this.#mount); return; }
+    if (!this.#ready() || !result) { this.#retireVideo(); render(nothing, this.#mount); return; }
     if (result.kind === "native-retained-output" && result.output === "slides") {
       render(this.#slidesRenderer ? this.#slidesRenderer(result, this.i18n) : nothing, this.#mount);
       return;
@@ -239,6 +256,15 @@ export class FormaRetainedShortStory extends FormaElement {
     }
     if (result.kind === "native-retained-output" && result.output === "model3d") {
       render(this.#model3dRenderer ? this.#model3dRenderer(result, this.i18n) : nothing, this.#mount);
+      return;
+    }
+    if (result.kind === "native-retained-output" && result.output === "video") {
+      if (!this.#videoPresentation && this.#videoRenderer) {
+        const owner = this.#owner;
+        this.#videoPresentation = this.#videoRenderer(this.#mount, result, { locale: this.i18n,
+          isCurrent: (selected, mount) => this.#owner === owner && selected === this.#result
+            && mount === this.#mount && this.#ready() });
+      } else this.#videoPresentation?.refresh();
       return;
     }
     if (result.kind === "native-retained-output" && result.output === "audio") {
