@@ -648,6 +648,10 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     // Only current, owned copy families participate. Text is not native focus
     // authority. Whitespace is protected only by explicit box-level contracts.
     const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
+    const libraryWeightFormSelector = ".library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form";
+    const libraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
+    const libraryWeightCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output`;
+    const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -665,6 +669,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form > fieldset[aria-labelledby="library-block-content"] > forma-ui-rich-text.block-editor-copy > .ui-rich-text > :is(label.ui-rich-text-label,small:not(.ui-field-error))',
         '.library-main > .library-body > .library-content > section:has(> .section-heading > forma-ui-segmented-control.compact-segmented) > .family-empty[data-forma-empty-state] > :is(h3,p)',
         libraryOutputCopySelector,
+        libraryWeightCopySelector,
+        libraryWeightLabelCopySelector,
       ]],
       ["forma-reality-layers", [
         ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
@@ -692,12 +698,39 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       for (const element of elements) {
         if (!element.isConnected || element.closest(ownerSelector) !== surface
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
+        const libraryWeightLabel = ownerSelector === "forma-library" && element.tagName === "LABEL"
+          && element.matches(libraryWeightLabelCopySelector);
         if (ownerSelector === "forma-workspace-settings" && element.tagName === "LABEL") {
           const field = element.querySelector<HTMLInputElement>(':scope > input[name="name"]');
           if (!(element instanceof HTMLLabelElement) || !field || element.control !== field
             || field.form !== element.parentElement) continue;
         }
-        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-library" && (element.tagName === "OUTPUT" || libraryWeightLabel)) {
+          const forms = [...surface.querySelectorAll<HTMLFormElement>(libraryWeightFormSelector)];
+          const form = forms[0], label = libraryWeightLabel ? element : element.parentElement;
+          if (forms.length !== 1 || !(form instanceof HTMLFormElement)
+            || !(label instanceof HTMLLabelElement) || !label.isConnected) continue;
+          const labels = [...form.querySelectorAll<HTMLLabelElement>(libraryWeightLabelSelector)];
+          const outputs = [...label.querySelectorAll<HTMLOutputElement>(":scope > output")];
+          const fields = [...label.querySelectorAll<HTMLInputElement>(':scope > input[type="range"]')];
+          const field = fields[0], output = outputs[0];
+          // The visible label names the current range; OUTPUT refers to that
+          // same range while retaining its separately measured copy box.
+          if (labels.length !== 1 || labels[0] !== label || outputs.length !== 1
+            || !(output instanceof HTMLOutputElement) || !output.isConnected || output.form !== form
+            || !libraryWeightLabel && output !== element
+            || fields.length !== 1 || !(field instanceof HTMLInputElement) || !field.isConnected
+            || field.form !== form || field.previousElementSibling !== output
+            || !field.id || label.htmlFor !== field.id || label.control !== field
+            || field.labels?.length !== 1 || field.labels[0] !== label
+            || output.htmlFor.length !== 1 || output.htmlFor[0] !== field.id
+            || field.min !== "0" || field.max !== "1" || field.step !== ".05") continue;
+          const value = Number(field.value);
+          if (!field.value.trim() || !Number.isFinite(value) || value < 0 || value > 1
+            || output.value !== `${Math.round(value * 100)}%`
+            || output.textContent?.trim() !== output.value) continue;
+        }
+        if (ownerSelector === "forma-library" && ["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel) {
           const rich = element.parentElement;
           const field = rich?.querySelector<HTMLTextAreaElement>(":scope > textarea.ui-rich-text-input");
           const label = rich?.querySelector<HTMLLabelElement>(":scope > label.ui-rich-text-label");
@@ -733,17 +766,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || !field.getAttribute("aria-describedby")?.split(/\s+/u).includes(element.id))) continue;
         }
         // The Document editor, associated Library field/empty-state regions and
-        // native Layers weight label/output and full Image-history header copy
+        // current Library weight output, native Layers weight label/output and full Image-history header copy
         // carry box-level copy contracts, including their intentional whitespace.
         // Other admitted copy keeps text fragments.
         const wholeRegion = ownerSelector === "forma-workspace"
-          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName)
+          || ownerSelector === "forma-library" && (["LABEL", "SMALL"].includes(element.tagName) && !libraryWeightLabel
+            || element.tagName === "OUTPUT"
             || element.tagName === "P" && element.parentElement?.matches(".family-empty[data-forma-empty-state]")
             || element.tagName === "DIV" && element.matches(libraryOutputCopySelector))
           || ownerSelector === "forma-reality-layers" && ["LABEL", "OUTPUT"].includes(element.tagName)
           || ownerSelector === "forma-document-generations";
-        const walker = wholeRegion ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        for (let text: Node | null = wholeRegion ? element : walker!.nextNode(); text; text = walker?.nextNode() ?? null) {
+        // Weight-label text is a separate fragment contract. Never walk into
+        // its OUTPUT or replace the row with a duplicate whole-label box.
+        const directText = libraryWeightLabel ? [...element.childNodes].filter(node => node.nodeType === 3) : null;
+        const walker = wholeRegion || directText ? null : document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let directIndex = 0;
+        for (let text: Node | null = wholeRegion ? element : directText?.[directIndex++] ?? walker?.nextNode() ?? null;
+          text; text = directText ? directText[directIndex++] ?? null : walker?.nextNode() ?? null) {
           const parent = wholeRegion ? element : text.parentElement;
           if (!text.textContent?.trim() || !parent
             || parent.closest("[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon")

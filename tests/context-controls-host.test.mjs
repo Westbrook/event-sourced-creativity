@@ -8,6 +8,7 @@ import { html, noChange, nothing } from "lit";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
 import { repeat } from "lit/directives/repeat.js";
+import { live } from "lit/directives/live.js";
 import { foldEvents } from "../src/model/events.ts";
 import { libraryBlockEditorRoute, libraryFocusRoute } from "../src/model/routes.ts";
 import { suggestedSubtype } from "../src/model/block-types.ts";
@@ -79,6 +80,7 @@ async function loadActual(relative) {
     else if (specifier === "lit/directives/cache.js") dependencies.set(specifier, { cache });
     else if (specifier === "lit/directives/keyed.js") dependencies.set(specifier, { keyed });
     else if (specifier === "lit/directives/repeat.js") dependencies.set(specifier, { repeat });
+    else if (specifier === "lit/directives/live.js") dependencies.set(specifier, { live });
     else if (/\/(?:forma-element|presentational-element)$/.test(specifier)) dependencies.set(specifier, { FormaElement: ElementPort, FormaPresentationalElement: ElementPort, icon: () => nothing });
     else if (specifier === "./modal-dialog") dependencies.set(specifier, modalPort);
     else if (/\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });
@@ -240,7 +242,23 @@ const ContextStorePublication = (() => {
     assert.equal(matches.length, 1, "one actual Store member " + name); return matches[0];
   };
   const notify = member("notify");
-  const delivery = notify.body.statements.filter(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+  // Current Store encloses this same synchronous delivery in its native-Image
+  // transaction. This finite subscription port does not simulate that scope
+  // reconciliation; bind its exact one-argument nonasync wrapper before taking
+  // the immediate listener statement, never an arbitrary descendant callback.
+  assert.equal(notify.body.statements.length, 1, "one current notify wrapper");
+  const notificationReturn = notify.body.statements[0];
+  assert.ok(ts.isReturnStatement(notificationReturn) && notificationReturn.expression
+    && ts.isCallExpression(notificationReturn.expression), "notify returns its current wrapper");
+  const notificationCall = notificationReturn.expression;
+  assert.equal(notificationCall.expression.getText(tree), "this.#nativeImageMutation");
+  assert.equal(notificationCall.arguments.length, 1, "one current mutation callback");
+  const notificationWork = notificationCall.arguments[0];
+  assert.ok(ts.isArrowFunction(notificationWork) && ts.isBlock(notificationWork.body)
+    && notificationWork.parameters.length === 0
+    && !notificationWork.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword),
+    "current notification callback is a zero-argument synchronous block");
+  const delivery = notificationWork.body.statements.filter(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
     && node.expression.expression.getText(tree) === "this.#listeners.forEach");
   assert.equal(delivery.length, 1, "one actual synchronous Store listener delivery");
   const code = ts.transpileModule("return class { " + ["#listeners", "subscribe"].map(name => member(name).getText(tree)).join("\n")
@@ -1974,26 +1992,124 @@ async function cContextLibraryNavigationParent(t, f) {
   assert.equal(f.store.transitionWorkspace, undefined);
   assert.equal(f.store.captureWorkspaceNavigationFocus, undefined);
 
-  // Reuse the actual guard and actual same-lease route-record reader, but do
-  // not pretend the old finite setRoute performs Store history/HTTP work.
+  // Bind the current same-app delegation and guarded commit before reusing
+  // its actual currentness/handoff methods. The finite stable/advance ports
+  // below cover route/source/authorization only, not browser/session cookies,
+  // Image startup/retirement, Store history, hydration or HTTP work.
   const storeTree = syntax("src/state/store.ts");
   const storeOwner = storeTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaStore");
   assert.ok(storeOwner);
-  const member = name => {
+  const memberNode = name => {
     const found = storeOwner.members.filter(node => node.name?.getText(storeTree) === name);
-    assert.equal(found.length, 1, "one actual Store member " + name); return found[0].getText(storeTree);
+    assert.equal(found.length, 1, "one actual Store member " + name); return found[0];
   };
-  const guard = storeTree.statements.filter(node => ts.isVariableStatement(node)).flatMap(node => node.declarationList.declarations)
-    .filter(node => node.name.getText(storeTree) === "workspaceNavigationCurrent");
-  assert.equal(guard.length, 1);
-  const sameApp = storeOwner.members.find(node => node.name?.getText(storeTree) === "transitionWorkspace");
-  assert.ok(sameApp?.body);
-  const branch = sameApp.body.statements.find(node => ts.isIfStatement(node) && node.expression.getText(storeTree) === "source===destination");
-  assert.ok(branch);
-  assert.ok(branch.thenStatement.getText(storeTree).includes("if(options.onOriginHandoff&&!options.onOriginHandoff())return false;"));
-  assert.ok(branch.thenStatement.getText(storeTree).includes("this.#commitRoute(path,options);return true;"));
-  const code = ts.transpileModule("const " + guard[0].getText(storeTree) + ";\nreturn class ContextUnitNavigation {\n"
-    + ["#workspaceTransition", "#workspaceNavigationFocus", "captureWorkspaceNavigationFocus"].map(member).join("\n")
+  const member = name => memberNode(name).getText(storeTree);
+  for (const name of ["#captureWorkspaceNavigation", "#takeWorkspaceNavigation", "#workspaceNavigationStable",
+    "#workspaceNavigationCurrent", "#handoffWorkspaceNavigation", "#advanceWorkspaceNavigation", "#commitRoute"]) {
+    const node = memberNode(name);
+    assert.ok(ts.isMethodDeclaration(node) && !node.asteriskToken
+      && !node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword), "synchronous Store owner method " + name);
+  }
+  const printer = ts.createPrinter({ removeComments: true });
+  const statements = name => {
+    const body = memberNode(name).body; assert.ok(body, "actual Store body " + name); return body.statements;
+  };
+  const expectStatements = (name, expected, actual = statements(name)) => {
+    const tree = ts.createSourceFile("navigation-contract.ts", expected, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const print = (nodes, source) => [...nodes].map(node => printer.printNode(ts.EmitHint.Unspecified, node, source));
+    assert.deepEqual(print(actual, storeTree), print(tree.statements, tree), "current Store contract " + name);
+  };
+  expectStatements("#takeWorkspaceNavigation", `
+    const owner=this.#workspaceNavigationOwners.get(options);
+    if(owner){this.#workspaceNavigationOwners.delete(options);return owner;}
+    return this.#captureWorkspaceNavigation(options);
+  `);
+  expectStatements("#captureWorkspaceNavigation", `
+    const session=this.session.get();
+    const owner:WorkspaceNavigationOwner={options:{},handedOff:false,revision:this.#workspaceTransition,
+      route:this.route.get(),browserRoute:\`\${location.pathname}\${location.search}\${location.hash}\`,
+      session,sessionRevision:this.#sessionRevision,sourceGeneration:this.#sourceGeneration,sourceRetired:this.#sourceRetired,
+      authorization:session?this.#authorizationScope(session):"",shared:Boolean(session?.projectContext),
+      cookieGeneration:this.#projectContextCookieGeneration,cookieSessionGeneration:this.#projectContextSessionGeneration,startup:null};
+    owner.options={...options};
+  `, statements("#captureWorkspaceNavigation").slice(0, 3));
+  expectStatements("transitionWorkspace", `
+    const owner=this.#takeWorkspaceNavigation(options),navigationScope=this.captureAuthorizationScope();options=owner.options;
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    path=this.#projectTaskRoute(path,options);
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    const source=applicationIdFromRoute(owner.route),destination=applicationIdFromRoute(path);
+    if(source===destination)return this.#commitRoute(path,owner);
+  `, statements("transitionWorkspace").slice(0, 7));
+  expectStatements("#workspaceNavigationStable", `
+    const session=this.session.get();
+    return owner.revision===this.#workspaceTransition&&owner.route===this.route.get()
+      &&owner.browserRoute===\`\${location.pathname}\${location.search}\${location.hash}\`
+      &&owner.session===session&&owner.sessionRevision===this.#sessionRevision
+      &&owner.sourceGeneration===this.#sourceGeneration&&owner.sourceRetired===this.#sourceRetired
+      &&owner.authorization===(session?this.#authorizationScope(session):"")&&owner.shared===Boolean(session?.projectContext)
+      &&owner.cookieGeneration===this.#projectContextCookieGeneration&&owner.cookieSessionGeneration===this.#projectContextSessionGeneration;
+  `);
+  expectStatements("#workspaceNavigationCurrent", `
+    if(!this.#workspaceNavigationStable(owner))return false;
+    if(!owner.handedOff&&owner.options.current&&(!owner.options.current()||!this.#workspaceNavigationStable(owner)))return false;
+    if(owner.options.focus&&(!owner.options.focus.current()||!this.#workspaceNavigationStable(owner)))return false;
+    return this.#workspaceNavigationStable(owner);
+  `);
+  expectStatements("#handoffWorkspaceNavigation", `
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(owner.handedOff||!owner.options.onOriginHandoff)return true;
+    if(!owner.options.onOriginHandoff())return false;
+    owner.handedOff=true;return this.#workspaceNavigationCurrent(owner);
+  `);
+  expectStatements("#advanceWorkspaceNavigation", `
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    owner.revision=++this.#workspaceTransition;
+  `, statements("#advanceWorkspaceNavigation").slice(0, 2));
+  const commit = statements("#commitRoute");
+  expectStatements("#commitRoute", `
+    const options=owner.options,startup=owner.startup?.owner===owner?owner.startup:null;
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+  `, commit.slice(0, 2));
+  const admissions = commit.filter(node => ts.isIfStatement(node)
+    && node.expression.getText(storeTree) === "!this.#handoffWorkspaceNavigation(owner)||!this.#advanceWorkspaceNavigation(owner)");
+  assert.equal(admissions.length, 1, "one direct guarded commit admission");
+  const admission = commit.indexOf(admissions[0]);
+  expectStatements("#commitRoute admission", `
+    if(!this.#handoffWorkspaceNavigation(owner)||!this.#advanceWorkspaceNavigation(owner))return false;
+    owner.handedOff=true;
+    const changed=owner.route!==routedPath||before!==expectedBrowserRoute;
+  `, commit.slice(admission, admission + 3));
+  const committed = commit[admission + 3];
+  assert.ok(ts.isVariableStatement(committed));
+  assert.equal(committed.declarationList.declarations.length, 1);
+  const declaration = committed.declarationList.declarations[0], mutation = declaration.initializer;
+  assert.equal(declaration.name.getText(storeTree), "committed");
+  assert.ok(mutation && ts.isCallExpression(mutation));
+  assert.equal(mutation.expression.getText(storeTree), "this.#nativeImageMutation");
+  assert.equal(mutation.arguments.length, 2);
+  const publish = mutation.arguments[0];
+  assert.ok(ts.isArrowFunction(publish) && ts.isBlock(publish.body));
+  assert.ok(!publish.modifiers?.some(node => node.kind === ts.SyntaxKind.AsyncKeyword), "route publication is synchronous");
+  assert.equal(publish.parameters.length, 0);
+  expectStatements("#commitRoute mutation currentness", "if(!this.#workspaceNavigationCurrent(owner))return false;", publish.body.statements.slice(0, 1));
+  const focused = publish.body.statements.filter(node => ts.isExpressionStatement(node)
+    && ts.isBinaryExpression(node.expression) && node.expression.left.getText(storeTree) === "this.#workspaceNavigationFocus");
+  assert.equal(focused.length, 1);
+  const focusIndex = publish.body.statements.indexOf(focused[0]);
+  expectStatements("#commitRoute focus record", `
+    if(!this.#workspaceNavigationCurrent(owner))return false;
+    this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:owner.revision}:null;
+  `, publish.body.statements.slice(focusIndex - 1, focusIndex + 1));
+  const routes = publish.body.statements.filter(node => ts.isIfStatement(node) && node.expression.getText(storeTree) === "!startup");
+  assert.equal(routes.length, 1);
+  assert.ok(publish.body.statements.indexOf(routes[0]) > focusIndex);
+  expectStatements("#commitRoute finite no-startup publication", `
+    if(!startup){this.route.set(routedPath);owner.route=routedPath;return this.#workspaceNavigationCurrent(owner);}
+  `, routes);
+  const code = ts.transpileModule("return class ContextUnitNavigation {\n"
+    + ["#workspaceTransition", "#workspaceNavigationFocus", "captureWorkspaceNavigationFocus",
+      "#workspaceNavigationCurrent", "#handoffWorkspaceNavigation"].map(member).join("\n")
     + `
       constructor(store) { this.store=store; this.route=store.route; }
       retireChangedRoute() {
@@ -2001,17 +2117,29 @@ async function cContextLibraryNavigationParent(t, f) {
           this.#workspaceTransition++; this.#workspaceNavigationFocus=null;
         }
       }
+      #workspaceNavigationStable(owner) {
+        const store=this.store;
+        return owner.revision===this.#workspaceTransition&&owner.route===store.route.get()
+          &&store.sourceOwnershipActive(owner.source)&&store.authorizationScopeActive(owner.authorization);
+      }
+      #advanceWorkspaceNavigation(owner) {
+        if(!this.#workspaceNavigationCurrent(owner))return false;
+        owner.revision=++this.#workspaceTransition;return true;
+      }
       async transitionWorkspace(path,options={}) {
-        const store=this.store,route=store.route.get(),source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
-        if(!workspaceNavigationCurrent(options)||!store.sourceOwnershipActive(source)||!store.authorizationScopeActive(authorization))return false;
-        assert.equal(applicationIdFromRoute(path),applicationIdFromRoute(route),"This unit port cannot stand in for an audience handoff");
+        const store=this.store,owner={options:{},handedOff:false,revision:this.#workspaceTransition,
+          route:store.route.get(),source:store.captureSourceOwnership(),authorization:store.captureAuthorizationScope()};
+        owner.options={...options};
+        assert.equal(owner.options.nativeImageStartup,undefined,"This finite port has no Image startup or retirement");
+        if(!this.#workspaceNavigationCurrent(owner))return false;
+        assert.equal(applicationIdFromRoute(path),applicationIdFromRoute(owner.route),"This unit port cannot stand in for an audience handoff");
         assert.ok(path==="/library"||libraryBlockEditorFromRoute(path),"Only these existing local Library routes are modeled");
-        if(options.onOriginHandoff&&!options.onOriginHandoff())return false;
-        if(!workspaceNavigationCurrent(options)||store.route.get()!==route||!store.sourceOwnershipActive(source)||!store.authorizationScopeActive(authorization))return false;
-        this.#workspaceTransition++;
-        this.#workspaceNavigationFocus=options.focus?{route:path,focus:options.focus,revision:this.#workspaceTransition}:null;
-        store.setRoute(path);
-        return store.route.get()===path;
+        if(!this.#handoffWorkspaceNavigation(owner)||!this.#advanceWorkspaceNavigation(owner))return false;
+        owner.handedOff=true;
+        if(!this.#workspaceNavigationCurrent(owner))return false;
+        this.#workspaceNavigationFocus=owner.options.focus?{route:path,focus:owner.options.focus,revision:owner.revision}:null;
+        store.setRoute(path);owner.route=path;
+        return this.#workspaceNavigationCurrent(owner);
       }
     }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const { libraryBlockEditorFromRoute } = await import("../src/model/routes.ts");
@@ -2085,3 +2213,87 @@ async function cContextLibraryNavigationParent(t, f) {
   f.contextLibraryNavigation = { shell, library, native, boundary: "actual Shell admission / explicitly finite original Store route port" };
   return f.contextLibraryNavigation;
 }
+
+// Actual full Library/editor rendering and input handlers, using the existing
+// keyed-cache port. Native attribute bindings are observable here; the port
+// does not implement browser label.control, accessible-name or focus semantics.
+for (const [locale, expectedName] of Object.entries({
+  en: "Default influence", fr: "Influence par défaut", ar: "التأثير الافتراضي", ja: "デフォルトの影響",
+})) test("Library influence range has a stable localized label through " + locale + " input and cache", { concurrency: false }, t => {
+  const f = fixture(locale);
+  t.after(() => f.i18n.hostDisconnected());
+  for (const id of ["decision-0", "decision-1"]) {
+    const created = f.state.events.find(event => event.type === "BlockCreated" && event.payload.block_id === id);
+    created.payload.scope = "library"; delete created.payload.document_id;
+  }
+  const originalEvents = structuredClone(f.state.events), originalRequests = structuredClone(f.state.requests);
+  f.state.route = libraryBlockEditorRoute("decision-0");
+  activeFixture = f; f.host = new FormaLibrary(); f.draw();
+  assert.equal(f.i18n.system("Default influence"), expectedName, "use the exact current locale catalog");
+  const readWeight = (editor, value, expectedId) => {
+    assert.ok(editor instanceof registry["forma-library-block-editor"] && editor.isConnected);
+    const ranges = f.renderer.ownNodes(editor, "input").filter(node => node.attributes.type === "range");
+    assert.equal(ranges.length, 1);
+    const range = ranges[0], id = range.attributes.id;
+    assert.equal(typeof id, "string"); assert.ok(id.length > 0 && !/\s/u.test(id), "the real range has a usable ID");
+    if (expectedId !== undefined) assert.equal(id, expectedId, "redraw/cache never allocates a replacement range ID");
+    const labels = f.renderer.ownNodes(editor, "label").filter(node => node.attributes.class === "library-weight");
+    const outputs = f.renderer.ownNodes(editor, "output").filter(node => node.attributes.for === id);
+    assert.equal(labels.length, 1); assert.equal(outputs.length, 1);
+    assert.equal(labels[0].attributes.for, id, "the visible label addresses the range, not its preceding OUTPUT");
+    assert.equal(outputs[0].attributes.for, id, "the percentage records which range produced it");
+    assert.equal(range.attributes["aria-label"], expectedName, "the explicit range name excludes the changing percentage");
+    assert.equal(range.attributes.min, "0"); assert.equal(range.attributes.max, "1"); assert.equal(range.attributes.step, ".05");
+    assert.equal(range.value, String(value)); assert.equal(typeof range.handlers.input, "function");
+    const groups = [...editor.markup.matchAll(/<label\b[^>]*class="library-weight"[^>]*>([\s\S]*?)<\/label>/gu)];
+    assert.equal(groups.length, 1);
+    const parts = groups[0][1].match(/^([^<]*)<output\b[^>]*>([^<]*)<\/output>\s*<input\b/u);
+    assert.ok(parts, "the real emitted label keeps its text, percentage and range in the existing order");
+    assert.equal(parts[1].trim(), escapeText(expectedName));
+    assert.equal(parts[2], `${Math.round(value * 100)}%`, "percentage text comes from the real editor render");
+    assert.equal(f.renderer.ownNodes(editor, "input").filter(node => node.attributes.id === id).length, 1);
+    return { range, id };
+  };
+  const first = f.renderer.component("forma-library-block-editor", "decision-0");
+  const initial = readWeight(first, .7);
+  f.draw(); readWeight(first, .7, initial.id);
+  const handle = () => f.renderer.ownNodes(first, "input").find(node => node.attributes.maxlength === "96");
+  const handleDraft = "Unfinished Library influence handle", copyDraft = "  Keep this exact draft العربية 日本語.\n";
+  handle().handlers.input.call(first, { target: { value: handleDraft } }); f.draw();
+  const richText = f.renderer.query(first, "forma-ui-rich-text").find(child => child.attributes.class === "block-editor-copy");
+  assert.ok(richText);
+  richText.dispatchEvent(new CustomEvent("forma-input", { detail: { value: copyDraft } })); f.draw();
+  const firstRange = readWeight(first, .7, initial.id).range;
+  firstRange.value = "0.35";
+  firstRange.handlers.input.call(first, { target: firstRange, currentTarget: firstRange }); f.draw();
+  readWeight(first, .35, initial.id);
+  assert.deepEqual(f.state.events, originalEvents); assert.deepEqual(f.state.requests, originalRequests);
+
+  f.state.route = libraryBlockEditorRoute("decision-1"); f.draw();
+  assert.equal(first.isConnected, false);
+  const second = f.renderer.component("forma-library-block-editor", "decision-1");
+  assert.notEqual(second, first);
+  const other = readWeight(second, .7);
+  assert.notEqual(other.id, initial.id, "separate retained editor instances cannot share their range ID");
+  other.range.value = "0.85";
+  other.range.handlers.input.call(second, { target: other.range, currentTarget: other.range }); f.draw();
+  readWeight(second, .85, other.id);
+  f.state.route = "/library"; f.draw();
+  assert.equal(second.isConnected, false);
+  f.state.route = libraryBlockEditorRoute("decision-0"); f.draw();
+  assert.equal(f.renderer.component("forma-library-block-editor", "decision-0"), first);
+  readWeight(first, .35, initial.id);
+  assert.equal(handle().value, handleDraft);
+  assert.equal(f.renderer.query(first, "forma-ui-rich-text").find(child => child.attributes.class === "block-editor-copy"), richText);
+  assert.equal(richText.value, copyDraft); assert.equal(f.renderer.ownNodes(richText, "textarea")[0].value, copyDraft);
+  f.draw(); readWeight(first, .35, initial.id);
+  f.state.route = libraryBlockEditorRoute("decision-1"); f.draw();
+  assert.equal(f.renderer.component("forma-library-block-editor", "decision-1"), second);
+  readWeight(second, .85, other.id);
+  assert.deepEqual(f.state.events, originalEvents, "input and cache navigation neither save nor append an event");
+  assert.deepEqual(f.state.requests, originalRequests, "the range has no provider or fetch interaction");
+  for (const id of ["decision-0", "decision-1"]) {
+    assert.equal(f.store.projection.get().libraryBlocks.find(block => block.id === id).properties.weight, .7,
+      "the saved source weight stays unchanged while each instance keeps its local draft");
+  }
+});

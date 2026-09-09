@@ -1631,11 +1631,15 @@ const e6DocumentCopySelectors = [
   e6DocumentCopyPrefix + ' > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
 ];
 const e6DocumentFieldSelector = ':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]';
+const fLibraryWeightFormSelector = '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form';
+const fLibraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
+const fLibraryWeightCopySelector = fLibraryWeightFormSelector + ' > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output';
+const fLibraryWeightLabelCopySelector = fLibraryWeightFormSelector + ' > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
 function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en", viewport = { width: 320, height: 800 }, right = 310, top = 680, normalWidth = 137.1875 } = {}) {
   const x = d411Placement(t, [], viewport, undefined, locale), full = d411Rect(0, 0, viewport.width, viewport.height);
   const shell = x.ancestor(full), main = x.ancestor(full, { parentElement: shell });
   const surface = x.ancestor(full, { parentElement: main, isConnected: true });
-  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
+  const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
   shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
@@ -1663,12 +1667,17 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   surface.querySelectorAll = selector => {
     assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors]
-      : family === "forma-library" ? e11LibraryCopySelectors
+      : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector]
       : family === fTerminalCopyOwner ? [fTerminalCopySelector]
       : family === imageHistoryCopyOwner ? [imageHistoryCopySelector]
       : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
       "copy selection remains restricted to the actual declared owner family");
-    copyQueries.push(selector);
+    // Keep each original selector in its original ledger; the two new Library
+    // copy admissions have distinct ledgers and a complete ordered census.
+    allCopyQueries.push(selector);
+    if (selector === fLibraryWeightCopySelector) fCopyQueries.push(selector);
+    else if (selector === fLibraryWeightLabelCopySelector) fLabelQueries.push(selector);
+    else copyQueries.push(selector);
     // Retain the old exact help query for a meaningful pre-runtime baseline;
     // the new union selects that same original node, not a duplicate fixture.
     return selector === e6DocumentCopySelectors[2]
@@ -1694,6 +1703,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   x.copy = (selector, raw, fragments, properties = {}) => {
     const element = x.control(raw, { tagName: "P", textContent: "Existing authored copy", isConnected: true, parentElement: surface,
+      matches(query) { assert.equal(query, fLibraryWeightLabelCopySelector); return false; },
       closest(query) {
         if (query === family) return surface;
         assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
@@ -1703,6 +1713,11 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     element.getBoundingClientRect = () => { copyBoxReads.push(element); return raw; };
     element.textNodes = [{ textContent: element.textContent, parentElement: element, fragments }];
     selected.set(selector, [...(selected.get(selector) ?? []), element]); return element;
+  };
+  x.selectWeightLabelForTest = label => {
+    assert.equal(family, "forma-library"); assert.equal(label.tagName, "LABEL");
+    assert.equal(selected.has(fLibraryWeightLabelCopySelector), false, "select the same associated label only once");
+    selected.set(fLibraryWeightLabelCopySelector, [label]);
   };
   x.replaceOriginalHelpForTest = node => {
     selected.set(e6HelpCopySelector, [node]);
@@ -1716,16 +1731,23 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   const baseRun = x.run;
   x.run = () => {
-    const start = allOwnerQueries.length, box = baseRun();
+    const start = allOwnerQueries.length, copyStart = allCopyQueries.length, box = baseRun();
     const actual = allOwnerQueries.slice(start);
     const expected = actual.length === 0 ? [] : actual.includes("forma-reality-layers")
       ? [e6CopyFamilies[0], e6CopyFamilies[1], "forma-reality-layers", e6CopyFamilies[2], e6CopyFamilies[3]] : [...e6CopyFamilies];
     if (actual.includes(fTerminalCopyOwner)) expected.push(fTerminalCopyOwner);
     if (actual.includes(imageHistoryCopyOwner)) expected.push(imageHistoryCopyOwner);
     assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four, extended-five, terminal-six or Image-seven owner query sequence");
+    if (family === "forma-library") {
+      const actualCopy = allCopyQueries.slice(copyStart), added = fLibraryWeightCopySelector;
+      const labelTail = actualCopy.includes(fLibraryWeightLabelCopySelector) ? [fLibraryWeightLabelCopySelector] : [];
+      if (labelTail.length) assert.ok(actualCopy.includes(added), "the label admission follows the existing OUTPUT admission");
+      assert.deepEqual(actualCopy, actualCopy.length ? [...e11LibraryCopySelectors, ...(actualCopy.includes(added) ? [added] : []), ...labelTail] : [],
+        "the complete Library copy-query sequence retains its family and ordered additions, without skips, duplicates or hidden queries");
+    }
     return box;
   };
-  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
+  return Object.assign(x, { familyQueries, allOwnerQueries, layersOwnerQueries, terminalOwnerQueries, imageOwnerQueries, copyQueries, allCopyQueries, fCopyQueries, fLabelQueries, rangeReads, detached, copyBoxReads, surface, main, shell });
 }
 function e6MeasuredSettings(x) {
   // Exact narrow320 Create body and two ordinary text fragments from
@@ -2825,4 +2847,400 @@ test("F measured R4 Shell alert and terminal copy remain clear together at nativ
   assert.deepEqual(x.rangeReads, [heading.textNodes[0], body.textNodes[0]]);
   assert.deepEqual(x.detached, x.rangeReads);
   assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+});
+
+
+// Library weight copy regression controls, retained from the accepted F donor.
+// Declared in-memory boxes/associations exercise actual Panel placement;
+// native Japanese geometry and browser focus remain separately verified.
+function fCopyOmissionPlacement(t, kind, { top = 650, value = '0.65' } = {}) {
+  assert.equal(kind, 'weight', 'this focused fixture admits Library weight only');
+  const family = 'forma-library';
+  const selector = fLibraryWeightCopySelector;
+  const x = e6CopyPlacement(t, { family, viewport: { width: 320, height: 800 }, right: 310, top, normalWidth: 44 });
+  const calls = [], formQueries = [], associationQueries = [];
+  const form = x.ancestor(d411Rect(16, 0, 288, 800), { tagName: 'FORM', isConnected: true, parentElement: x.surface });
+  const raw = d411Rect(33, 650, 254, 40);
+  const fragment = d411Rect(40, 655, 80, 18);
+  let parent, copy, field, focused, ring, label, output, forms, labels, outputs, fields;
+  const native = {};
+  const action = name => ({ focus: () => calls.push('focus-' + name), click: () => calls.push('click-' + name) });
+  {
+    // The paired Library source gives the range a stable id and an explicit
+    // visible label. OUTPUT references that same range without owning the label.
+    for (const key of ['HTMLFormElement', 'HTMLLabelElement', 'HTMLInputElement', 'HTMLOutputElement']) {
+      const previous = Object.getOwnPropertyDescriptor(globalThis, key), Type = class {};
+      native[key] = Type;
+      Object.defineProperty(globalThis, key, { configurable: true, value: Type });
+      t.after(() => { if (previous) Object.defineProperty(globalThis, key, previous); else delete globalThis[key]; });
+    }
+    Object.setPrototypeOf(form, native.HTMLFormElement.prototype);
+    const fieldset = x.ancestor(d411Rect(33, 620, 254, 140), { tagName: 'FIELDSET', parentElement: form });
+    label = Object.assign(new native.HTMLLabelElement(), x.ancestor(d411Rect(33, 640, 254, 114), {
+      tagName: 'LABEL', className: 'library-weight', isConnected: true, parentElement: fieldset,
+      htmlFor: 'f-library-weight', textContent: 'Default influence',
+    }));
+    parent = label;
+    copy = x.copy(selector, raw, [fragment], { tagName: 'OUTPUT', parentElement: label, form, textContent: Math.round(Number(value) * 100) + '%' });
+    Object.setPrototypeOf(copy, native.HTMLOutputElement.prototype);
+    output = copy;
+    // A normal OUTPUT value setter also replaces its text. Keep them coupled
+    // except in the explicitly named interface-defense counterexample below.
+    Object.defineProperty(output, 'value', { configurable: true, get() { return this.textContent; }, set(next) {
+      this.textContent = String(next); this.textNodes[0].textContent = this.textContent;
+    } });
+    field = Object.assign(new native.HTMLInputElement(), x.control(d411Rect(33, 700, 254, 44), {
+      tagName: 'INPUT', type: 'range', id: 'f-library-weight', ariaLabel: 'Default influence',
+      isConnected: true, min: '0', max: '1', step: '.05', value,
+      form, parentElement: label, previousElementSibling: output, labels: [label], disabled: false,
+      outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px', ...action('range'),
+    }));
+    label.control = field; output.labels = []; output.htmlFor = [field.id];
+    forms = [form]; labels = [label]; outputs = [output]; fields = [field];
+    const query = x.surface.querySelectorAll;
+    x.surface.querySelectorAll = querySelector => {
+      if (querySelector === fLibraryWeightFormSelector) { formQueries.push(querySelector); return forms; }
+      return query(querySelector);
+    };
+    form.querySelectorAll = querySelector => { assert.equal(querySelector, fLibraryWeightLabelSelector); associationQueries.push(querySelector); return labels; };
+    label.querySelectorAll = querySelector => {
+      associationQueries.push(querySelector);
+      if (querySelector === ':scope > output') return outputs;
+      assert.equal(querySelector, ':scope > input[type="range"]'); return fields;
+    };
+    focused = field; ring = d411Rect(27, 694, 266, 56); x.controls.push(field);
+  }
+  x.f.document.activeElement = focused; x.surface.scrollTop = 17;
+  x.f.panel.draftForTest = '  Preserve the independent unsent Assistant question.  ';
+  const state = { x, kind, family, selector, raw, fragment, parent, form, copy, field, focused, ring,
+    label, output, forms, labels, outputs, fields, native, calls, formQueries, associationQueries };
+  state.snapshot = () => ({ focus: x.f.document.activeElement, fieldValue: field.value, text: copy.textContent,
+    draft: x.f.panel.draftForTest, tasks: x.f.panel.tasks, messages: x.f.panel.messages, scope: x.f.panel.conversationScope,
+    owner: x.f.panel.parentElement, scroll: x.surface.scrollTop, copyParent: copy.parentElement, fieldParent: field.parentElement,
+    fieldForm: field.form, outputForm: output?.form, outputValue: output?.value, outputLabels: output?.labels,
+    fieldLabels: field.labels, fieldId: field.id, fieldName: field.ariaLabel, labelText: label?.textContent,
+    labelFor: label?.htmlFor, outputFor: output?.htmlFor,
+    control: label?.control, sibling: field.previousElementSibling, min: field.min, max: field.max, step: field.step });
+  state.before = state.snapshot();
+  return state;
+}
+
+function fCopyOmissionUnchanged(state, box) {
+  const { x } = state;
+  assert.deepEqual(state.snapshot(), state.before, 'placement preserves native focus, raw values, association, scope and independent guidance');
+  assert.deepEqual(state.calls, []); assert.deepEqual(x.f.emitted, []);
+  assert.equal(box.width, 44); assert.equal(box.height, 44); assert.ok(box.top >= 8 && box.bottom <= 792);
+  assert.ok(x.boxes.length <= 16); assert.deepEqual(x.queries, [d420TaskRegionQuery]);
+  assert.deepEqual(x.detached, x.rangeReads);
+}
+
+function fCopyOmissionQueries(state, requireAdmission = true) {
+  const { x, selector } = state;
+  const base = e11LibraryCopySelectors;
+  const added = requireAdmission ? [selector] : x.fCopyQueries;
+  assert.ok(added.length === 0 || added.length === 1 && added[0] === selector);
+  assert.deepEqual(x.copyQueries, base); assert.deepEqual(x.fCopyQueries, added);
+  assert.deepEqual(x.fLabelQueries, x.fLabelQueries.length ? [fLibraryWeightLabelCopySelector] : []);
+  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries], 'the complete family and each exact optional F admission retain their order');
+}
+
+function fWeightLabelTextPlacement(t, {
+  direct = [{ text: 'Default influence', fragments: [d411Rect(244, 650, 43, 18)] }],
+  outputBox = d411Rect(40, 650, 80, 40),
+} = {}) {
+  const state = fCopyOmissionPlacement(t, 'weight'), { x, label, output, field } = state;
+  const labelRaw = d411Rect(33, 600, 254, 154), fieldset = label.parentElement;
+  fieldset.getBoundingClientRect = () => d411Rect(33, 592, 254, 168);
+  fieldset.clientWidth = 254; fieldset.clientHeight = 168;
+  label.clientWidth = labelRaw.width; label.clientHeight = labelRaw.height;
+  label.getBoundingClientRect = () => { x.copyBoxReads.push(label); return labelRaw; };
+  output.getBoundingClientRect = () => { x.copyBoxReads.push(output); return outputBox; };
+  state.raw = outputBox;
+  label.matches = selector => { assert.equal(selector, fLibraryWeightLabelCopySelector); return true; };
+  const closest = function(selector) {
+    if (selector === 'forma-library') return x.surface;
+    assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
+      ':modal, :popover-open'].includes(selector));
+    if (selector.startsWith('[hidden]')) {
+      if (this.hiddenAncestor) return this;
+      for (let node = this.parentElement; node; node = node.parentElement) if (node.hiddenAncestor) return node;
+    }
+    return null;
+  };
+  label.closest = closest; output.closest = closest;
+  const textNode = (text, fragments, parent) => ({
+    nodeType: 3, textContent: text, fragments, parentNode: parent, parentElement: parent,
+  });
+  const directNodes = direct.map(({ text, fragments }) => textNode(text, fragments, label));
+  const whitespace = textNode(' \n  ', [d411Rect(244, 650, 43, 18)], label);
+  const comment = { nodeType: 8, textContent: 'Lit marker, not visible text', fragments: [d411Rect(40, 632, 80, 12)], parentNode: label, parentElement: label };
+  const nested = x.ancestor(d411Rect(33, 632, 254, 58), {
+    nodeType: 1, tagName: 'SPAN', parentNode: label, parentElement: label, textContent: 'Separate nested text', closest,
+  });
+  const nestedText = textNode(nested.textContent, [d411Rect(40, 632, 80, 12)], nested);
+  nested.childNodes = [nestedText];
+  output.nodeType = 1; output.parentNode = label; field.nodeType = 1; field.parentNode = label;
+  Object.assign(output.textNodes[0], { nodeType: 3, parentNode: output });
+  label.childNodes = [...directNodes, whitespace, comment, output, field, nested];
+  // A real SHOW_TEXT traversal would also visit the OUTPUT and nested SPAN.
+  // Keep that complete inventory distinct so a generic descendant walk cannot
+  // masquerade as the required direct-TEXT-only traversal.
+  label.textNodes = [...directNodes, whitespace, output.textNodes[0], nestedText];
+  Object.defineProperty(label, 'textContent', { configurable: true, get() {
+    return directNodes.map(node => node.textContent).join('') + whitespace.textContent + output.textContent + nested.textContent;
+  } });
+  x.selectWeightLabelForTest(label);
+  const snapshot = state.snapshot;
+  state.snapshot = () => ({ ...snapshot(), directText: directNodes.map(node => node.textContent),
+    childOrder: [...label.childNodes], descendantTextInventory: [...label.textNodes],
+    nestedText: nestedText.textContent, commentText: comment.textContent });
+  Object.assign(state, { directNodes, whitespace, comment, nested, nestedText, labelRaw, outputBox });
+  state.before = state.snapshot();
+  return state;
+}
+
+function fWeightLabelQueries(state, requireLabel = true) {
+  fCopyOmissionQueries(state);
+  assert.deepEqual(state.x.fLabelQueries, requireLabel || state.x.fLabelQueries.length ? [fLibraryWeightLabelCopySelector] : []);
+}
+
+test('F Library explicitly labelled range and associated OUTPUT protect the whole percentage box at current values', { concurrency: false }, () => {
+  for (const value of ['0', '0.65', '1']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, 'weight', { value });
+      const { x, raw, fragment, ring, output, field, label, form } = state;
+      const initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, [raw]).length, 1); assert.equal(x.overlap(initial, [fragment, ring]).length, 0);
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+        'clear full percentage copy without altering the current named native range');
+      assert.equal(box.bottom, 642); assert.deepEqual(x.copyBoxReads, [output]); assert.deepEqual(x.rangeReads, []);
+      assert.equal(label.control, field); assert.equal(label.htmlFor, field.id); assert.deepEqual(field.labels, [label]);
+      assert.equal(field.ariaLabel, label.textContent); assert.deepEqual(output.labels, []); assert.deepEqual(output.htmlFor, [field.id]);
+      assert.equal(output.form, form); assert.equal(field.form, form); assert.equal(field.previousElementSibling, output);
+      assert.equal(output.value, Math.round(Number(value) * 100) + '%');
+      assert.deepEqual(state.formQueries, [fLibraryWeightFormSelector]);
+      assert.deepEqual(state.associationQueries, [fLibraryWeightLabelSelector, ':scope > output', ':scope > input[type="range"]']);
+      fCopyOmissionQueries(state); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('F Library OUTPUT refuses duplicate, indirect or foreign native associations', { concurrency: false }, () => {
+  for (const defect of ['untyped-form', 'untyped-label', 'untyped-output', 'untyped-range', 'disconnected-label', 'disconnected-range',
+    'duplicate-form', 'duplicate-label', 'foreign-label', 'no-direct-output', 'duplicate-output', 'no-direct-range', 'duplicate-range',
+    'foreign-output-form', 'foreign-range-form', 'intervening-sibling', 'label-controls-output', 'additional-range-label', 'foreign-range-label',
+    'missing-range-id', 'foreign-label-for', 'missing-output-for', 'foreign-output-for', 'additional-output-for', 'foreign-output']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, 'weight');
+      const { x, form, label, output, field, forms, labels, outputs, fields, raw } = state;
+      if (defect === 'untyped-form') Object.setPrototypeOf(form, Object.prototype);
+      if (defect === 'untyped-label') Object.setPrototypeOf(label, Object.prototype);
+      if (defect === 'untyped-output') Object.setPrototypeOf(output, Object.prototype);
+      if (defect === 'untyped-range') Object.setPrototypeOf(field, Object.prototype);
+      if (defect === 'disconnected-label') label.isConnected = false;
+      if (defect === 'disconnected-range') field.isConnected = false;
+      const other = node => Object.assign(Object.create(Object.getPrototypeOf(node)), node);
+      if (defect === 'duplicate-form') forms.push(other(form));
+      if (defect === 'duplicate-label') labels.push(other(label));
+      if (defect === 'foreign-label') labels[0] = other(label);
+      if (defect === 'no-direct-output') outputs.length = 0;
+      if (defect === 'duplicate-output') outputs.push(other(output));
+      if (defect === 'no-direct-range') fields.length = 0;
+      if (defect === 'duplicate-range') fields.push(other(field));
+      if (defect === 'foreign-output-form') output.form = {};
+      if (defect === 'foreign-range-form') field.form = {};
+      if (defect === 'intervening-sibling') field.previousElementSibling = {};
+      if (defect === 'label-controls-output') label.control = output;
+      if (defect === 'additional-range-label') field.labels = [label, other(label)];
+      if (defect === 'foreign-range-label') field.labels = [other(label)];
+      if (defect === 'missing-range-id') field.id = '';
+      if (defect === 'foreign-label-for') label.htmlFor = 'other-range';
+      if (defect === 'missing-output-for') output.htmlFor = [];
+      if (defect === 'foreign-output-for') output.htmlFor = ['other-range'];
+      if (defect === 'additional-output-for') output.htmlFor = [field.id, 'other-range'];
+      if (defect === 'foreign-output') outputs[0] = other(output);
+      state.before = state.snapshot();
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw]).length, 1, defect + ': a refused association cannot silently grant copy coverage');
+      assert.equal(box.top, 650); assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionQueries(state, false); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('F Library percentage rejects stale display and declared invalid range-interface states', { concurrency: false }, () => {
+  // Stale percentage updates both OUTPUT value/text, as the native interface
+  // does. Invalid strings/bounds and a split value/text port below are explicit
+  // defensive-interface stress, not claims about settled native range values.
+  for (const defect of ['stale-percentage', 'wrong-min', 'wrong-max', 'wrong-step', 'empty', 'not-finite', 'below', 'above', 'split-output-interface']) {
+    const cleanup = [];
+    try {
+      const state = fCopyOmissionPlacement({ after: undo => cleanup.push(undo) }, 'weight'), { x, output, field, raw } = state;
+      if (defect === 'stale-percentage') output.value = '60%';
+      if (defect === 'wrong-min') field.min = '-1';
+      if (defect === 'wrong-max') field.max = '2';
+      if (defect === 'wrong-step') field.step = '.1';
+      if (defect === 'empty') field.value = '  ';
+      if (defect === 'not-finite') field.value = 'NaN';
+      if (defect === 'below') field.value = '-0.05';
+      if (defect === 'above') field.value = '1.05';
+      // Keep the display consistent with each invalid scalar so rejection must
+      // come from trim/finite/bounds guards, not a coincident stale percentage.
+      if (['empty', 'not-finite', 'below', 'above'].includes(defect)) output.value = Math.round(Number(field.value) * 100) + '%';
+      if (defect === 'split-output-interface') { Object.defineProperty(output, 'value', { configurable: true, value: '65%' }); output.textContent = '60%'; }
+      state.before = state.snapshot();
+      const box = x.run();
+      assert.equal(x.overlap(box, [raw]).length, 1, defect); assert.equal(box.top, 650);
+      assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []);
+      fCopyOmissionQueries(state, false); fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('F weight label whitespace, comments and nested descendants do not become a whole-row copy obstacle', { concurrency: false }, () => {
+  for (const mode of ['row-whitespace', 'nested-text', 'comment-text', 'clipped-direct-text']) {
+    const cleanup = [];
+    try {
+      const direct = [{ text: 'Default influence', fragments: [d411Rect(40, 616, 80, 18)] }];
+      const state = fWeightLabelTextPlacement({ after: undo => cleanup.push(undo) }, { direct });
+      const { x, label, labelRaw, output, outputBox, directNodes, nestedText, comment, ring } = state;
+      const collision = d411Rect(244, 650, 43, 18);
+      if (mode === 'nested-text') nestedText.fragments = [collision];
+      if (mode === 'comment-text') comment.fragments = [collision];
+      if (mode === 'clipped-direct-text') {
+        directNodes[0].fragments = [collision];
+        // Declared client clipping retains only x33..233 of this row. The
+        // colliding direct text lies entirely outside that actual clip port.
+        label.overflowX = 'hidden'; label.clientWidth = 200;
+      }
+      state.before = state.snapshot();
+      const initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, [labelRaw]).length, 1); assert.equal(x.overlap(initial, [outputBox, ring]).length, 0);
+      if (mode === 'nested-text') assert.equal(x.overlap(initial, nestedText.fragments).length, 1);
+      if (mode === 'comment-text') assert.equal(x.overlap(initial, comment.fragments).length, 1);
+      const box = x.run();
+      assert.deepEqual(box, initial, mode + ': unadmitted or clipped text does not relocate Ask');
+      fWeightLabelQueries(state, false);
+      assert.deepEqual(x.rangeReads, x.fLabelQueries.length ? directNodes : []);
+      assert.deepEqual(x.copyBoxReads.filter(node => node !== label), [output]);
+      if (mode !== 'clipped-direct-text') assert.deepEqual(x.copyBoxReads, [output], 'do not read a duplicate whole-label box');
+      assert.equal(x.rangeReads.includes(nestedText), false); assert.equal(x.rangeReads.includes(comment), false);
+      assert.equal(x.rangeReads.includes(output.textNodes[0]), false); assert.equal(x.rangeReads.includes(state.whitespace), false);
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('F weight label text cannot authorize hovered Ask movement or become native focus authority', { concurrency: false }, t => {
+  const state = fWeightLabelTextPlacement(t), { x, label, directNodes, outputBox, ring } = state;
+  const fragments = directNodes.flatMap(node => node.fragments);
+  x.hovered = true;
+  const box = x.run();
+  assert.equal(x.overlap(box, fragments).length, 1); assert.equal(x.overlap(box, [outputBox, ring]).length, 0);
+  assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []); assert.deepEqual(x.allCopyQueries, []);
+  assert.deepEqual(x.copyBoxReads, []); assert.deepEqual(x.rangeReads, []); fCopyOmissionUnchanged(state, box);
+  // Deliberately defensive nonnative activeElement port, not a claim that a
+  // native LABEL receives focus from Tab in the real editor.
+  x.f.document.activeElement = label; state.before = state.snapshot();
+  assert.deepEqual(x.run(), box); assert.deepEqual(x.writes, []); assert.deepEqual(x.allOwnerQueries, []);
+  fCopyOmissionUnchanged(state, box);
+});
+
+test('F weight direct label text alone and every wrapped fragment clear Ask with the named range unchanged', { concurrency: false }, () => {
+  const variants = [
+    [{ text: 'Default influence', fragments: [d411Rect(244, 650, 43, 18)] }],
+    [{ text: 'Default influence', fragments: [d411Rect(40, 650, 80, 18), d411Rect(244, 672, 43, 18)] }],
+    [{ text: 'Default ', fragments: [d411Rect(40, 650, 80, 18)] }, { text: 'influence', fragments: [d411Rect(244, 674, 43, 18)] }],
+  ];
+  for (const direct of variants) {
+    const cleanup = [];
+    try {
+      const state = fWeightLabelTextPlacement({ after: undo => cleanup.push(undo) }, { direct });
+      const { x, directNodes, outputBox, output, ring, label, field } = state;
+      const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, fragments).length, 1, 'only the direct label text supplies the initial copy collision');
+      assert.equal(x.overlap(initial, [outputBox, ring, field.getBoundingClientRect()]).length, 0);
+      const box = x.run();
+      // Geometry comes first: the preserved OUTPUT-only source leaves this
+      // label collision, independently of the added selector/traversal ledger.
+      assert.equal(x.overlap(box, [...fragments, outputBox, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0,
+        'clear every direct text fragment together with the entire OUTPUT and native focus envelope');
+      fWeightLabelQueries(state);
+      assert.deepEqual(x.rangeReads, directNodes); assert.deepEqual(x.copyBoxReads, [output]);
+      assert.equal(label.control, field); assert.equal(field.ariaLabel, 'Default influence');
+      assert.deepEqual(field.labels, [label]); assert.deepEqual(output.htmlFor, [field.id]);
+      assert.deepEqual(state.formQueries, [fLibraryWeightFormSelector, fLibraryWeightFormSelector]);
+      assert.deepEqual(state.associationQueries, [
+        fLibraryWeightLabelSelector, ':scope > output', ':scope > input[type="range"]',
+        fLibraryWeightLabelSelector, ':scope > output', ':scope > input[type="range"]',
+      ]);
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test('F weight relanding clears direct label text as well as the whole OUTPUT and native ring', { concurrency: false }, t => {
+  const state = fWeightLabelTextPlacement(t, {
+    direct: [{ text: 'Default influence', fragments: [d411Rect(244, 612, 43, 18)] }],
+    outputBox: d411Rect(33, 650, 254, 40),
+  });
+  const { x, directNodes, outputBox, output, ring } = state;
+  const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+  assert.equal(x.overlap(initial, [outputBox]).length, 1); assert.equal(x.overlap(initial, [...fragments, ring]).length, 0);
+  const outputOnlyDestination = d411Rect(266, 598, 44, 44);
+  assert.equal(x.overlap(outputOnlyDestination, [outputBox, ring]).length, 0);
+  assert.equal(x.overlap(outputOnlyDestination, fragments).length, 1, 'the declared upstream label defeats an OUTPUT-only destination');
+  const box = x.run();
+  assert.equal(x.overlap(box, [...fragments, outputBox, ring, ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+  fWeightLabelQueries(state); assert.deepEqual(x.rangeReads, directNodes); assert.deepEqual(x.copyBoxReads, [output]);
+  fCopyOmissionUnchanged(state, box);
+});
+
+test('F weight direct label copy retains current-owner, connected OUTPUT, association and value guards', { concurrency: false }, () => {
+  for (const defect of ['foreign-label-owner', 'hidden-label', 'hidden-label-text', 'busy-main', 'duplicate-owner', 'foreign-main',
+    'disconnected-label', 'disconnected-output', 'untyped-label', 'untyped-output', 'duplicate-form', 'duplicate-label',
+    'no-direct-output', 'duplicate-output', 'no-direct-range', 'duplicate-range', 'label-controls-output', 'foreign-label-for',
+    'foreign-range-label', 'foreign-output-for', 'intervening-sibling', 'foreign-output-form', 'stale-percentage', 'invalid-current-value']) {
+    const cleanup = [];
+    try {
+      const state = fWeightLabelTextPlacement({ after: undo => cleanup.push(undo) });
+      const { x, label, output, field, forms, labels, outputs, fields, directNodes, outputBox, ring } = state;
+      if (defect === 'foreign-label-owner') { const closest = label.closest; label.closest = function(selector) { return selector === 'forma-library' ? {} : closest.call(this, selector); }; }
+      if (defect === 'hidden-label') label.hiddenAncestor = true;
+      if (defect === 'hidden-label-text') label.visibility = 'hidden';
+      if (defect === 'busy-main') x.main.getAttribute = name => { assert.equal(name, 'aria-busy'); return 'true'; };
+      if (defect === 'duplicate-owner') { const query = x.main.querySelectorAll; x.main.querySelectorAll = selector => { const found = query(selector); return selector === 'forma-library' ? [x.surface, { ...x.surface }] : found; }; }
+      if (defect === 'foreign-main') { const closest = x.surface.closest; x.surface.closest = selector => selector === '#main-content' ? {} : closest(selector); }
+      if (defect === 'disconnected-label') label.isConnected = false;
+      if (defect === 'disconnected-output') output.isConnected = false;
+      if (defect === 'untyped-label') Object.setPrototypeOf(label, Object.prototype);
+      if (defect === 'untyped-output') Object.setPrototypeOf(output, Object.prototype);
+      const other = node => Object.assign(Object.create(Object.getPrototypeOf(node)), node);
+      if (defect === 'duplicate-form') forms.push(other(state.form));
+      if (defect === 'duplicate-label') labels.push(other(label));
+      if (defect === 'no-direct-output') outputs.length = 0;
+      if (defect === 'duplicate-output') outputs.push(other(output));
+      if (defect === 'no-direct-range') fields.length = 0;
+      if (defect === 'duplicate-range') fields.push(other(field));
+      if (defect === 'label-controls-output') label.control = output;
+      if (defect === 'foreign-label-for') label.htmlFor = 'another-range';
+      if (defect === 'foreign-range-label') field.labels = [other(label)];
+      if (defect === 'foreign-output-for') output.htmlFor = ['another-range'];
+      if (defect === 'intervening-sibling') field.previousElementSibling = {};
+      if (defect === 'foreign-output-form') output.form = {};
+      if (defect === 'stale-percentage') output.value = '60%';
+      if (defect === 'invalid-current-value') { field.value = '1.05'; output.value = '105%'; }
+      state.before = state.snapshot();
+      const fragments = directNodes.flatMap(node => node.fragments), initial = x.launcher.getBoundingClientRect();
+      assert.equal(x.overlap(initial, fragments).length, 1); assert.equal(x.overlap(initial, [outputBox, ring]).length, 0);
+      const box = x.run();
+      assert.equal(box.top, 650, defect); assert.equal(x.overlap(box, fragments).length, 1, defect + ': refusal is not copy-clearance evidence');
+      assert.deepEqual(x.rangeReads, [], defect + ': no refused label text is measured');
+      assert.equal(x.copyBoxReads.includes(label), false, defect + ': no whole-label fallback');
+      fCopyOmissionUnchanged(state, box);
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
 });
