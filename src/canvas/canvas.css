@@ -349,7 +349,7 @@ button.canvas-document-output-preview .canvas-artifact-slide-preview .presentati
     order: -1;
   }
 
-  .canvas-artifact-viewer:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > .canvas-artifact-viewer-content:has(> .forma-soundtrack-companions:only-child) {
+  .canvas-artifact-viewer:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > .canvas-artifact-viewer-content:has(> .forma-soundtrack-companions) {
     padding-inline: var(--forma-card-inset,1.25rem);
   }
 
