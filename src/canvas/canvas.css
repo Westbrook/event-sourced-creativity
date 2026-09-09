@@ -349,7 +349,7 @@ button.canvas-document-output-preview .canvas-artifact-slide-preview .presentati
     order: -1;
   }
 
-  .canvas-artifact-viewer:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > .canvas-artifact-viewer-content:has(> pre) {
+  .canvas-artifact-viewer:not([data-output-focus="true"]) > .canvas-artifact-viewer-card > .canvas-artifact-viewer-content {
     scroll-padding-block: var(--forma-focus-clearance,.5rem);
   }
 
