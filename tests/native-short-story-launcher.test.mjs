@@ -240,11 +240,8 @@ test("opening focus is owned temporarily and editing requires the exact still-op
   assert.match(host, /create&&!create\.open&&!this\.#nativeStoryOpening\)ensureModalDialog\(create\)/u);
 });
 
-test("pane retirement is before each existing transition to the exact hidden predicate", () => {
-  assert.match(workspace, /if\(narrow&&this\.#workbenchPane==="write"&&!this\.#artifactViewerOpen\)this\.#retireHiddenNativeStory\(\);\n {4}this\.#narrowWorkbench=narrow/u);
-  assert.match(workspace, /if\(this\.#narrowWorkbench&&pane==="write"&&!this\.#artifactViewerOpen\)this\.#retireHiddenNativeStory\(\);\n {4}this\.#workbenchPane=pane/u);
-  assert.match(workspace, /if\(!open&&this\.#narrowWorkbench&&this\.#workbenchPane==="write"\)this\.#retireHiddenNativeStory\(\);\n {4}this\.#artifactViewerOpen=open/u);
-});
+// The former adjacency-only pane assertion is replaced by actual Workspace
+// transition and reentry controls in native-image-workspace-integration.test.mjs.
 
 test("result navigation source retains exact expiry checks across admitted native close", () => {
   const open = host.slice(host.indexOf("  async #openNativeStoryResult("), host.indexOf("  #privateSourceRevision=0;"));

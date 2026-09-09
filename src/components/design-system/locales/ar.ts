@@ -10,6 +10,10 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "nativeImage.check": "تحقق",
+  "nativeImage.creating": "جارٍ الإنشاء",
+  "nativeImage.unconfirmed": "غير مؤكد",
+  "nativeImage.closed": "مغلق",
   "component.forma-document-artifacts.method.retireNativeShortStory.description": "يستدعي المكوّن الأب هذه الطريقة قبل إخفاء لوحة النتيجة، بما في ذلك تغييرات التخطيط المتجاوب.",
   "story.launcher.title": "قصة قصيرة",
   "story.launcher.document": "المستند",

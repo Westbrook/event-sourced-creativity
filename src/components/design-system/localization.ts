@@ -18,6 +18,10 @@ export type FormaMessageCatalog = Readonly<Record<string, string>>;
 export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
+  "nativeImage.check": "Check",
+  "nativeImage.creating": "Creating",
+  "nativeImage.unconfirmed": "Unconfirmed",
+  "nativeImage.closed": "Closed",
   "component.forma-document-artifacts.method.retireNativeShortStory.description": "Parent calls before the result pane becomes hidden, including responsive changes.",
   "story.launcher.title": "Short Story",
   "story.launcher.document": "Document",

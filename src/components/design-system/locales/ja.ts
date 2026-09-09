@@ -10,6 +10,10 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "nativeImage.check": "確認",
+  "nativeImage.creating": "作成中",
+  "nativeImage.unconfirmed": "未確認",
+  "nativeImage.closed": "終了",
   "component.forma-document-artifacts.method.retireNativeShortStory.description": "親コンポーネントは、レスポンシブ表示の変更時を含め、結果ペインが非表示になる前にこのメソッドを呼び出します。",
   "story.launcher.title": "ショートストーリー",
   "story.launcher.document": "ドキュメント",

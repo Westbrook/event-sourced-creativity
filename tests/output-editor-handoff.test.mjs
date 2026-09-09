@@ -5,7 +5,7 @@ import ts from "typescript";
 import { html } from "lit";
 import { snapshot as outputSnapshot, deferred } from "./output-ui-source-harness.mjs";
 import { createSceneStoreHost, untilScene } from "./helpers/scene-cost-store-host.mjs";
-import { documentContextBlockRoute } from "../src/model/routes.ts";
+import { documentContextBlockRoute, withDocumentInRoute } from "../src/model/routes.ts";
 import { calmFullPageNativePorts as navigationPorts, fullPageTree } from "./helpers/calm-full-page-fixture.mjs";
 import { installOutputNavigationFocusNative } from "./helpers/output-navigation-focus-native.mjs";
 
@@ -45,11 +45,11 @@ function retainedReview(projectId,documentId,blockId){
     review:{sourceText:"One owned image.",proposals:[{key:"original-execution:proposal-one",executionId:"original-execution",proposalId:"proposal-one",decomposition:proposal}],
       selections:[{executionId:"original-execution",bindingHash:"c".repeat(64),proposalId:"proposal-one"}]}};
 }
-async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="apply",blockType="output"}={}){
+async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="apply",blockType="output",shellMain=false}={}){
   noProviders(t);
   const baseCleanups=[],nativeCleanups=[];
   const f=fixture({after:cleanup=>baseCleanups.push(cleanup)},{locale,facts:[{id:"requirement-A",type:blockType,text:"One owned image."}]});
-  f.host.isConnected=false;f.host.disconnectedCallback();f.trace.length=0;f.frames=[];f.opened=[];f.patches=[];f.visibleCard=true;f.otherDialog=false;f.navigationGate=null;
+  f.host.isConnected=false;f.host.disconnectedCallback();f.trace.length=0;f.frames=[];f.opened=[];f.patches=[];f.visibleCard=true;f.otherDialog=false;f.navigationGate=null;f.shellMain=shellMain;
   Object.assign(f,{resizeTargets:new Map(),timers:new Map(),storage:new Map(),timerSequence:0});
   t.after(async()=>{
     navigationPorts.bindFixture(f);
@@ -101,7 +101,7 @@ async function handoffFixture(t,{locale="en",error=endpointError,refusalAt="appl
     :body.action==="resume"?Response.json({status:"review",preview:f.preview}):assert.fail("Unexpected action "+body.action);
   f.store.guardedFetch=async(url,init)=>{assert.equal(url,"/api/context/apply","No analysis/provider route");const body=JSON.parse(init.body);f.state.requests.push({url,body});return f.reply(body);};
   f.block=f.store.projection.get().libraryBlocks.find(block=>block.id==="requirement-A");
-  class HandoffPage extends ElementPort{render(){return html`<forma-context-intelligence .block=${this.fixture.block} surface="library"></forma-context-intelligence><forma-output-requirements .documentId=${this.fixture.output.documentId} .blockId=${"requirement-A"}></forma-output-requirements>`;}}
+  class HandoffPage extends ElementPort{render(){const content=html`<forma-context-intelligence .block=${this.fixture.block} surface="library"></forma-context-intelligence><forma-output-requirements .documentId=${this.fixture.output.documentId} .blockId=${"requirement-A"}></forma-output-requirements>`;return this.fixture.shellMain?html`<main id="main-content" tabindex="-1">${content}</main><button type="button" data-image-focus-outside>Another current action</button>`:content;}}
   f.renderer=new navigationPorts.RendererPort(f,{"forma-context-intelligence":ContextIntelligence,"forma-output-requirements":FormaOutputRequirements,"forma-output-requirement-card":FormaOutputRequirementCard});
   f.shell=new FormaShell();f.shell.tag="forma-shell";f.shell.attributes={};f.shell.isConnected=true;
   f.host=new HandoffPage();f.host.tag="handoff-page";f.host.attributes={};f.host.isConnected=true;f.host.parentElement=f.shell;
@@ -303,4 +303,234 @@ test("Phase4 explicit Cancel discards the Output handoff and starts a fresh save
  assert.equal(f.contextButtons().some(button=>button.textContent===f.i18n.t("output.requirement.edit")),false);
  assert.equal(f.state.requests.length,requests+1);assert.equal(f.state.requests.at(-1).body.action,"resume");
  await old();assert.equal(f.opened.length,0);f.noWork();
+});
+
+// Native Image integration: reuse the existing Output handoff fixture above.
+// These finite ports assert ownership and receipts, not browser focus or saved-provider custody.
+import * as imageNative from "./helpers/native-image-launcher-fixture.mjs";
+const {NativeImageHost}=await loadActual("src/components/native-image-host.ts");
+const imageStartupSlots=["component-load","document-sync","history","private-hydration","initial-visible-job-read"];
+
+function nativeLauncherTemplate(env){
+  const values=[...imageNative.templates(env.nativeHost?env.nativeHost.render(env.origin):env.f.shell.renderNativeImage(env.origin))].filter(value=>value.strings.join("").includes('class="native-image-launcher"'));
+  assert.equal(values.length,1,"one actual Host-owned launcher template");return values[0];
+}
+function nativeRefs(template){return template.values.filter(value=>imageNative.isDirectiveResult(value)&&typeof value.values[0]==="function").map(value=>value.values[0]);}
+function nativeDismiss(host){
+  const handlers=[...imageNative.templates(host.renderStatus())].flatMap(template=>template.values.filter((_value,index)=>template.strings[index].endsWith("@click=")));
+  assert.ok(handlers.length<=1,"the actual Host has at most one status acknowledgment");return handlers[0]??null;
+}
+function mountNativeLauncher(env){
+  const template=nativeLauncherTemplate(env),refs=nativeRefs(template);
+  assert.equal(refs.length,1);
+  // Recommit the SAME native root. Giving I5 a replacement root intentionally
+  // retires its opening, and is not a way to refresh this fixture's controls.
+  const owner=env.mounted??={region:imageNative.plainElement("SECTION"),buttons:[0,1,2].map(()=>imageNative.plainElement("BUTTON"))};
+  for(const button of owner.buttons)owner.region.children.add(button);
+  refs[0](owner.region);
+  const disabled=template.values.filter((_value,index)=>template.strings[index].endsWith("?disabled="));
+  owner.buttons[0].disabled=disabled[0];owner.buttons[1].disabled=disabled[1];
+  owner.clicks=template.values.filter((_value,index)=>template.strings[index].endsWith("@click="));assert.equal(owner.clicks.length,3);
+  return owner;
+}
+function mountNativeImage(env){
+  const owner=mountNativeLauncher(env),images=[...imageNative.templates(nativeLauncherTemplate(env))].filter(value=>value.strings.join("").includes("<img"));
+  assert.equal(images.length,1,"one actual I3 image after the exact I1 match");
+  const template=images[0],refs=nativeRefs(template);assert.equal(refs.length,4);
+  const region=imageNative.plainElement("SECTION"),image=imageNative.plainElement("IMG"),status=imageNative.plainElement("P"),action=imageNative.plainElement("BUTTON");
+  owner.region.children.add(region);for(const element of[image,status,action])region.children.add(element);
+  [region,image,status,action].forEach((element,index)=>refs[index](element));
+  const index=template.strings.findIndex(part=>part.endsWith("@click="));assert.notEqual(index,-1);
+  return env.image={owner,region,image,status,action,refs,loaded:image.listener("load"),activate:template.values[index]};
+}
+async function nativeImageShellFixture(t,{actualStore=false,directHost=false,sameRouteFocus=false}={}){
+  const fixtureCleanups=[];let env;
+  t.after(async()=>{
+    try{
+      if(env){
+        env.cleanupFailure.enabled=false;env.releasePending?.();env.startupGate.resolve();
+        // Let the already-invoked navigation publish its commit/refusal before
+        // deciding whether this fixture still owns an accepted startup.
+        await new Promise(setImmediate);
+        if(env.mode==="accept"&&env.commits.length)await env.waitForStartup("fixture joins admitted startup before native teardown");
+        env.nativeHost?.disconnect();
+      }
+    }finally{for(const cleanup of fixtureCleanups)await cleanup();}
+  });
+  const f=await handoffFixture({mock:t.mock,after:cleanup=>fixtureCleanups.push(cleanup)},{shellMain:sameRouteFocus});env={f,origin:f.context,trace:[],submissions:[],reads:[],navigations:[],finishes:[],commits:[],present:true,
+    sourceSubscribers:new Set(),viewSubscribers:new Set(),sourceDisposals:0,cleanupFailure:{enabled:false,reason:undefined},startupGate:deferred(),mode:"accept",navigationFailure:undefined};
+  if(actualStore){
+    const h=await createSceneStoreHost({count:1});env.actual=h;t.after(()=>h.close());
+    env.priorStoreTimers=new Set(h.timers.keys());env.deliveredStoreFrames=[];
+    const documentId=h.worker.documentId,projectId=h.worker.projectId,events=h.store.events.get();
+    h.store.events.set([...events,{eventId:"native-image-existing-output",streamId:h.worker.streamId,sequence:h.store.head.get()+1,actor:"user:"+h.worker.owner,correlationId:"fixture",occurredAt:"2026-08-27T00:00:00Z",type:"BlockCreated",payload:{project_id:projectId,document_id:documentId,block_id:"requirement-A",type:"output",handle:"output/existing",position:"z",properties:{text:"One owned image.",weight:1}}}]);
+    f.store=h.store;f.host.store=h.store;f.context.store=h.store;f.shell.store=h.store;
+    f.block=h.store.projection.get().libraryBlocks.find(block=>block.id==="requirement-A");f.context.block=f.block;
+    f.output.projectId=projectId;f.output.documentId=documentId;
+    h.store.outputRequirements.resource=()=>({state:"ready",snapshot:f.output,error:null});h.store.outputRequirements.ensure=async()=>h.store.outputRequirements.resource();
+    // The existing Store host has already supplied its real session/events.
+    // The hidden document deliberately selects its existing passive policy.
+    h.store.loading.set(false);
+    if(sameRouteFocus)h.store.route.set(withDocumentInRoute("/",documentId,h.store.projection.get().documentTitle));
+    const previous=Object.getOwnPropertyDescriptor(globalThis,"history");Object.defineProperty(globalThis,"history",{configurable:true,value:{pushState(_state,_title,route){const url=new URL(route,"http://localhost");Object.assign(h.location,{pathname:url.pathname,search:url.search,hash:url.hash});},replaceState(_state,_title,route){this.pushState(_state,_title,route);}}});
+    t.after(()=>previous?Object.defineProperty(globalThis,"history",previous):delete globalThis.history);
+    const priorCancel=Object.getOwnPropertyDescriptor(globalThis,"cancelAnimationFrame");Object.defineProperty(globalThis,"cancelAnimationFrame",{configurable:true,value:id=>h.window.clearTimeout(id)});
+    t.after(()=>priorCancel?Object.defineProperty(globalThis,"cancelAnimationFrame",priorCancel):delete globalThis.cancelAnimationFrame);
+    // Bridge only the two existing native Window ports. The real Store event,
+    // including its exact commit receipt, reaches the real Shell listener.
+    const dispatch=h.window.dispatchEvent.bind(h.window);
+    t.mock.method(h.window,"dispatchEvent",event=>{
+      if(event.type==="forma-route-changed"&&event.detail?.nativeImageStartup)env.commits.push({startup:event.detail.nativeImageStartup,receipt:event.detail.nativeImageCommit});
+      const returned=dispatch(event);for(const listener of [...(f.listeners.get(event.type)??[])])listener(event);return returned;
+    });
+    f.draw();
+    env.value=imageNative.evidence(documentId);
+    Object.assign(env.value.setup,{documentRevision:h.store.documentGenerationRevision(),requestKey:h.store.documentGenerationRequestKey("generate",null,"prose")});
+    Object.assign(env.value.job,env.value.setup);env.value.handle=imageNative.captureNativeImageHandle(env.value.job,env.value.setup);assert.ok(env.value.handle);
+  }else{
+    env.value=imageNative.evidence("A");
+    f.store.captureNativeImageLifetime=setup=>{
+      const source=f.store.captureSourceOwnership(),route=f.store.route.get();let active=true;
+      return Object.freeze({current:()=>active&&f.store.sourceOwnershipActive(source)&&f.store.route.get()===route&&f.state.documentId===setup.documentId,
+        subscribe(listener){env.sourceSubscribers.add(listener);return()=>{env.trace.push("source-unsubscribe");env.sourceSubscribers.delete(listener);if(env.cleanupFailure.enabled)throw env.cleanupFailure.reason;};},
+        dispose(){env.trace.push("source-dispose");active=false;env.sourceDisposals++;}});
+    };
+    f.store.finishNativeImageStartup=(startup,reason)=>{env.finishes.push({startup,reason});};
+  }
+  env.presentation=Object.freeze({current:()=>env.present&&env.origin.isConnected&&f.shell.contains(env.origin),
+    subscribe(listener){env.viewSubscribers.add(listener);return()=>{env.trace.push("view-unsubscribe");env.viewSubscribers.delete(listener);};}});
+  env.waitForStartup=message=>untilScene(()=>{
+    if(env.actual&&env.commits.length){
+      assert.equal(env.commits.length,1,"this native Store fixture owns only destination A");
+      const h=env.actual;assert.equal(h.store.route.get(),env.commits[0].receipt.path);
+      // The Store helper's RAF is a manual delay16 native timer. Deliver only
+      // new frames of this committed A; leave pre-existing/passive timers alone.
+      const frames=[...h.timers].filter(([id,task])=>!env.priorStoreTimers.has(id)&&task.delay===16);
+      for(const[id,task]of frames){
+        const current=h.timers.get(id);
+        // An earlier genuine frame may cancel a later captured frame. Never
+        // deliver that canceled callback or silently consume a replacement.
+        if(current!==task){assert.equal(current,undefined,"only an actually canceled frame may disappear");continue;}
+        h.timers.delete(id);env.deliveredStoreFrames.push(id);task.callback();
+      }
+    }
+    return env.available();
+  },message);
+  // Explicit generation/inspection ports: real I1/I2/I3/I5 and Host behavior,
+  // but no paid dispatch or pretend saved provider output is exercised here.
+  const submit=(setup,controls)=>{env.submissions.push({setup,controls});return Promise.resolve({disposition:"acknowledged",handle:env.value.handle,reused:false});};
+  const inspect=(handle,controls)=>{env.reads.push({handle,controls});return Promise.resolve({status:"data",data:env.value.data});};
+  if(actualStore){t.mock.method(f.store,"submitNativeImage",submit);t.mock.method(f.store,"inspectNativeImage",inspect);}
+  else{f.store.submitNativeImage=submit;f.store.inspectNativeImage=inspect;}
+  const open=f.store.openDocument.bind(f.store);
+  t.mock.method(f.store,"openDocument",async(documentId,path,surface,options={})=>{
+    if(surface!=="native-image")return open(documentId,path,surface,options);
+    const call={documentId,path,surface,options};env.navigations.push(call);
+    if(env.mode==="cancel")return false;
+    if(env.mode==="throw")throw env.navigationFailure;
+    const handoff=options.onOriginHandoff;
+    const opened=await open(documentId,path,surface,{...options,onOriginHandoff:()=>{
+      const accepted=handoff?.();env.trace.push("handoff:"+accepted);
+      if(accepted)assert.equal(options.current(),true,"accepted destination survives synchronous source presentation retirement");
+      return accepted;
+    }});
+    if(opened&&!actualStore){
+      // This remains the declared mocked Store boundary, not route-write or
+      // producer evidence. Only the separate actual Store test makes those claims.
+      const startup=options.nativeImageStartup,receipt=Object.freeze({intent:startup.id,path});env.commits.push({startup,receipt});startup.commit(receipt);
+      startup.start("component-load",()=>env.startupGate.promise);
+      for(const slot of imageStartupSlots.slice(1))startup.unnecessary(slot,"finite-store-boundary");
+      env.afterCommit?.(call);
+    }
+    return opened;
+  });
+  env.toasts=[];t.mock.method(f.store,"toast",(...args)=>{env.toasts.push(args);});
+  if(directHost){
+    const messages=Object.freeze({}),locale=Object.freeze({locale:"en",messages,direction:"ltr"});
+    env.nativeHost=new NativeImageHost({store:()=>f.store,locale:()=>locale,text:(key,fallback)=>messages[key]??fallback,changed:()=>env.changed?.(),navigate:(...args)=>{assert.ok(env.navigate,"this direct Host fixture explicitly supplies its navigation port");return env.navigate(...args);}});
+  }
+  env.available=()=>env.nativeHost?env.nativeHost.available:f.shell.nativeImageAvailable;
+  env.opening=env.nativeHost?env.nativeHost.open(env.origin,env.value.setup,env.presentation):f.shell.openNativeImage(env.origin,env.value.setup,env.presentation);assert.ok(env.opening,"the actual Host admits the current Image presentation");
+  env.mounted=mountNativeLauncher(env);
+  env.match=async()=>{
+    const submissions=env.submissions.length,reads=env.reads.length;
+    let mounted=mountNativeLauncher(env);assert.equal(mounted.buttons[0].disabled,false);mounted.clicks[0](imageNative.portEvent(mounted.buttons[0]));
+    assert.equal(env.submissions.length,submissions+1);await untilScene(env.available,"original Create settlement owned by the Host");
+    mounted=mountNativeLauncher(env);assert.equal(mounted.buttons[1].disabled,false);mounted.clicks[1](imageNative.portEvent(mounted.buttons[1]));
+    assert.equal(env.reads.length,reads+1);await untilScene(env.available,"original Check settlement owned by the Host");
+    const image=mountNativeImage(env);assert.equal(image.action.disabled,true);imageNative.loadPort(image);assert.equal(image.action.disabled,false);return image;
+  };
+  env.edit=()=>{assert.ok(env.image);if(env.actual&&env.navigations.length===0&&env.commits.length===0)env.priorStoreTimers=new Set(env.actual.timers.keys());env.image.activate(imageNative.portEvent(env.image.action));};
+  return env;
+}
+
+test("Native Image Shell accepted same-Document Edit retires only its source while admitted startup remains owned",async t=>{
+  const env=await nativeImageShellFixture(t);await env.match();const old=env.image.activate;env.edit();
+  await untilScene(()=>env.commits.length===1,"the declared Store boundary returns its exact commit");
+  const {startup,receipt}=env.commits[0];assert.strictEqual(receipt.intent,startup.id);assert.equal(receipt.path,env.navigations[0].path);
+  assert.equal(env.navigations[0].documentId,"A");assert.equal(env.sourceDisposals,1);assert.equal(env.image.image.isConnected,false);
+  assert.equal(env.f.shell.nativeImageAvailable,false,"pending original startup still occupies its custodian");
+  env.present=false;env.f.shell.retireNativeImage(env.origin,env.presentation);old(imageNative.portEvent(env.image.action));
+  assert.equal(env.navigations.length,1);assert.equal(env.finishes.length,0,"source retirement does not withdraw destination startup");
+  env.startupGate.resolve();await untilScene(()=>env.f.shell.nativeImageAvailable,"original startup settlement releases its exact occupancy");
+  assert.equal(env.f.store.route.get(),receipt.path);assert.equal(env.submissions.length,1);assert.equal(env.reads.length,1);assert.deepEqual(env.toasts,[]);
+});
+
+test("Native Image Shell committed A cannot overwrite synchronous navigation B when A startup settles",async t=>{
+  const env=await nativeImageShellFixture(t);await env.match();const routeB=documentContextBlockRoute("B","Document B","");let reentry;
+  env.afterCommit=()=>{reentry=env.f.shell.navigateFrom(env.origin,options=>env.f.store.openDocument("B",routeB,"fixture-reentry",options));};
+  env.edit();await untilScene(()=>env.commits.length===1&&reentry!==undefined,"B entered during the original A navigation callback");
+  assert.equal(await reentry,true);assert.equal(env.f.store.route.get(),routeB);assert.notEqual(env.commits[0].receipt.path,routeB);
+  env.startupGate.resolve();await untilScene(()=>env.f.shell.nativeImageAvailable,"A's genuine original startup completes independently");
+  assert.equal(env.f.store.route.get(),routeB);assert.equal(env.navigations.length,1);assert.equal(env.submissions.length,1);assert.equal(env.reads.length,1);assert.deepEqual(env.toasts,[]);
+});
+
+
+// Actual Shell lifecycle and actual Store startup event, inside the existing
+// explicitly reduced unit subtree. The main and outside button are declared
+// native focus ports; this does not certify a full Shell render or browser focus.
+for(const withdrawal of ["current","focus-moved","source-owner-replaced"])test("Native Image Shell same accessible route focuses only its current startup / "+withdrawal,async t=>{
+  const env=await nativeImageShellFixture(t,{actualStore:true,sameRouteFocus:true}),{f}=env,h=env.actual;
+  const route=h.store.route.get();
+  assert.equal(route,withDocumentInRoute("/",env.value.setup.documentId,h.store.projection.get().documentTitle));
+  assert.equal(h.store.loading.get(),false);assert.equal(h.store.routeDataReady(),true);
+  // Deliver the real public Lit lifecycle once before Edit. Its unchanged
+  // route key must already exist; a first-ever route announcement is no proof.
+  f.shell.updated();await f.shell.updateComplete;
+  await env.match();
+  // The existing I3 plainElement has no native focus IDL. Supply only its
+  // inert base method; the shared native port records and owns the real call.
+  env.image.action.focus=()=>{};
+  f.native.focus(env.image.action);
+  assert.equal(f.native.document.activeElement===env.image.action,true);
+  const source=h.store.captureSourceOwnership();assert.ok(source&&h.store.sourceOwnershipActive(source));
+  const beforeFocus=f.native.nativeFocus.length;
+  env.edit();
+  await untilScene(()=>env.commits.length===1,"real same-path Image startup dispatch reaches its owning Shell");
+  assert.equal(env.commits[0].receipt.path,route);assert.equal(h.store.route.get(),route);
+  assert.equal(env.image.image.isConnected,false,"the actual inline Image presentation retired at handoff");
+  assert.equal(env.navigations.length,1);assert.equal(env.submissions.length,1);assert.equal(env.reads.length,1);
+  let outside;
+  if(withdrawal==="focus-moved"){
+    outside=f.renderer.ownNodes(f.host,"button").find(node=>Object.hasOwn(node.attributes,"data-image-focus-outside"));
+    assert.ok(outside?.isConnected);f.native.focus(outside);
+  }else if(withdrawal==="source-owner-replaced"){
+    const session=h.store.session.get();h.store.session.set({...session,permissionEpoch:"same-route-image-source-replaced"});
+    assert.equal(h.store.sourceOwnershipActive(source),false,"the real Store source authorization owner changed");
+  }
+  const afterWithdrawal=f.native.nativeFocus.length;
+  f.shell.updated();await f.shell.updateComplete;await Promise.resolve();
+  const main=f.shell.querySelector("#main-content");assert.ok(main?.isConnected);
+  if(withdrawal==="current"){
+    const focused=f.native.nativeFocus.slice(beforeFocus);
+    assert.equal(focused.length,1,"one owned startup request focuses its existing route destination");
+    assert.equal(focused[0].node===main,true);assert.equal(f.native.document.activeElement===main,true);
+    assert.deepEqual(focused[0].args,[{preventScroll:true}]);
+  }else{
+    assert.equal(f.native.nativeFocus.length,afterWithdrawal,"retired ownership cannot add a focus call");
+    assert.equal(f.native.document.activeElement===main,false);
+    if(outside)assert.equal(f.native.document.activeElement===outside,true);
+  }
+  f.shell.updated();await f.shell.updateComplete;await Promise.resolve();
+  assert.equal(f.native.nativeFocus.length,withdrawal==="current"?beforeFocus+1:afterWithdrawal,"later same-key updates cannot renew a consumed or retired focus request");
 });
