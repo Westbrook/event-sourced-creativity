@@ -6121,4 +6121,16 @@ Object.assign(messages, {
   "system.auto.1qr28rr.76": "ほかにも完成したスライドがあります。このドキュメントの結果から開いてください。",
 });
 
+Object.assign(messages, {
+  "system.auto.4rojjd.20": "完成したストーリーボード",
+  "system.auto.5nc7q3.24": "元のストーリーボードを開く",
+  "system.auto.hzzc8o.90": "このリクエストで完成したストーリーボードを確認できませんでした。同じリクエストをもう一度開いてください。",
+  "system.auto.6sar0r.81": "ほかにも完成したストーリーボードがあります。このドキュメントの結果から開いてください。",
+});
+
+Object.assign(messages, {
+  "system.auto.12n9acm.49": "保存済みネイティブストーリーボードのアプリケーションインターフェース。",
+  "system.auto.16gltqk.141": "ストアに依存しない保存済みネイティブストーリーボードのインターフェース。組み込む前に、実際の属性、JavaScript プロパティ、イベントを確認してください。",
+});
+
 export default messages;

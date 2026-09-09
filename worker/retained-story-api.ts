@@ -1,6 +1,8 @@
+import { parseNativeStoryboardCompletionUrl, validateNativeStoryboardCompletion, type NativeStoryboardHandle } from "../src/model/native-storyboard-completion.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
 import { parseNativeSlidesCompletionUrl, validateNativeSlidesCompletion, type NativeSlidesHandle } from "../src/model/native-slides-completion.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
+import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { parseNativeSceneCompletionUrl, validateNativeSceneCompletion, type NativeSceneHandle } from "../src/model/native-scene-completion.ts";
 import { parseNativeStoryCompletionUrl, validateNativeStoryCompletion, type NativeStoryHandle } from "../src/model/native-short-story-generation.ts";
 import {
@@ -138,7 +140,7 @@ function eventSnapshot(rows: EventRow[]): string {
 }
 
 function selectNative(rows: EventRow[], selection: { documentId:string; artifactId:string; revision:number; contentSha256?:string }, ownerId: string, completionId?:string,
-  expectedKind: "short_story" | NativeRetainedOutputKind = "short_story", requestedSlideCount?: number) {
+  expectedKind: "short_story" | NativeRetainedOutputKind = "short_story", requestedItemCount?: number) {
   const decoded = rows.map(row => {
     const payload = record(JSON.parse(row.payload));
     if (!payload) throw unavailable();
@@ -200,8 +202,70 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
   }
   // The public event envelope retains item_count; settings is intentionally
   // private. Bind the actual public count without reading private_json.
-  if (requestedSlideCount !== undefined && payload.item_count !== requestedSlideCount) throw unavailable();
-  return Object.freeze({ projectId, contentId, sceneMedium });
+  if (requestedItemCount !== undefined && payload.item_count !== requestedItemCount) throw unavailable();
+  return Object.freeze({ projectId, contentId, sceneMedium,
+    completionId: completion.row.event_id, completionItemCount: payload.item_count });
+}
+
+const storyboardReceiptGuard = () => `private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
+  AND redacted_at IS NULL AND length(CAST(private_json AS BLOB))<=${EVENT_BYTES}`;
+
+/** Frame identities/media are private completion metadata, not authored plan
+ * fields. Read only the selected envelope after its public custody was proved.
+ * Its exact bytes join the final current-source witness below.
+ */
+async function storyboardReceipt(env: WorkerEnv, native: ReturnType<typeof selectNative>, ownerId: string,
+  selection: { documentId: string; artifactId: string }) {
+  const bindings = [native.completionId, ownerId, selection.documentId, native.projectId];
+  const row = await env.DB.prepare(`SELECT private_json FROM event_private_payloads WHERE ${storyboardReceiptGuard()}`)
+    .bind(...bindings).first<{ private_json: string }>();
+  if (!row || typeof row.private_json !== "string" || bytes(row.private_json) > EVENT_BYTES) throw unavailable();
+  const payload = record(JSON.parse(row.private_json));
+  if (!payload || payload.document_id !== selection.documentId || payload.project_id !== native.projectId
+    || payload.artifact_id !== selection.artifactId || payload.artifact_kind !== "storyboard"
+    || payload.content_ref !== native.contentId || payload.requested_by_user_id !== ownerId
+    || !Number.isSafeInteger(native.completionItemCount) || Number(native.completionItemCount) < 1
+    || Number(native.completionItemCount) > 24 || payload.item_count !== native.completionItemCount
+    || !Array.isArray(payload.items) || payload.items.length !== native.completionItemCount) throw unavailable();
+  const prefix = `${ownerMediaNamespace(ownerId)}/generated/`;
+  for (const value of payload.items) {
+    const item = record(value);
+    if (!item) throw unavailable();
+    if (item.media_url === null) continue;
+    if (typeof item.media_url !== "string" || !item.media_url.startsWith("/api/media/")) throw unavailable();
+    let key: string;
+    try { key = decodeURIComponent(item.media_url.slice("/api/media/".length)); } catch { throw unavailable(); }
+    if (!key.startsWith(prefix)) throw unavailable();
+  }
+  return { bindings, raw: row.private_json, items: payload.items };
+}
+
+const model3dReceiptGuard = () => `private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
+  AND redacted_at IS NULL AND length(CAST(private_json AS BLOB))<=${EVENT_BYTES}`;
+
+// Native file references belong to the selected completion envelope, not its
+// prose generation plan. Its exact private bytes join the final witness.
+async function model3dReceipt(env: WorkerEnv, native: ReturnType<typeof selectNative>, ownerId: string,
+  selection: { documentId: string; artifactId: string }) {
+  const bindings = [native.completionId, ownerId, selection.documentId, native.projectId];
+  const row = await env.DB.prepare(`SELECT private_json FROM event_private_payloads WHERE ${model3dReceiptGuard()}`)
+    .bind(...bindings).first<{ private_json: string }>();
+  if (!row || typeof row.private_json !== "string" || bytes(row.private_json) > EVENT_BYTES) throw unavailable();
+  const payload = record(JSON.parse(row.private_json));
+  if (!payload || payload.document_id !== selection.documentId || payload.project_id !== native.projectId
+    || payload.artifact_id !== selection.artifactId || payload.artifact_kind !== "model3d"
+    || payload.content_ref !== native.contentId || payload.requested_by_user_id !== ownerId) throw unavailable();
+  const files = record(payload.settings)?.model3d_files;
+  if (files !== undefined && !Array.isArray(files)) throw unavailable();
+  const prefix = `${ownerMediaNamespace(ownerId)}/generated/`;
+  for (const value of Array.isArray(files) ? files : []) {
+    const file = record(value);
+    if (!file || typeof file.url !== "string" || !file.url.startsWith("/api/media/")) throw unavailable();
+    let key: string;
+    try { key = decodeURIComponent(file.url.slice("/api/media/".length)); } catch { throw unavailable(); }
+    if (!key.startsWith(prefix)) throw unavailable();
+  }
+  return { bindings, raw: row.private_json, payload };
 }
 
 function personalContentGuard() {
@@ -245,10 +309,10 @@ const jobCte = `story_job AS (
   FROM story_job
 ), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=16384)`;
 
-// Scene retains its one-item consent. Generic manual Slides retains the exact
-// numeric request count; flexible policies require a different completion contract.
-// Both kinds use the same attempt, ownership, result and final-recheck witness.
-function nativeCompletionJobCte(output: NativeRetainedOutputKind) {
+// Scene retains its one-item consent. Manual Slides and Storyboard bind their
+// exact numeric counts; Storyboard additionally requires explicit paid-media consent.
+// These completed-only reads share the same attempt and final ownership witness.
+function nativeCompletionJobCte(output: "scene" | "slides" | "storyboard") {
   const requestGuard = output === "scene" ? `    AND (json_type(job.request_json,'$.itemCount') IS NULL
       OR (json_type(job.request_json,'$.itemCount')='integer' AND json_extract(job.request_json,'$.itemCount')=1))
     AND json_extract(job.request_json,'$.sceneRequestId')=job.job_id
@@ -259,7 +323,12 @@ function nativeCompletionJobCte(output: NativeRetainedOutputKind) {
     AND json_extract(job.request_json,'$.sceneCostConsent.documentId')=job.document_id
     AND json_extract(job.request_json,'$.sceneCostConsent.productionMode')='manual'
     AND json_type(job.request_json,'$.sceneCostConsent.itemCount')='integer'
-    AND json_extract(job.request_json,'$.sceneCostConsent.itemCount')=1` : `
+    AND json_extract(job.request_json,'$.sceneCostConsent.itemCount')=1` : output === "storyboard" ? `
+    AND json_type(job.request_json,'$.itemCount')='integer'
+    AND json_extract(job.request_json,'$.itemCount') BETWEEN 1 AND 12
+    AND json_type(job.request_json,'$.paidMediaConfirmed')='true'
+    AND json_type(job.request_json,'$.sceneRequestId') IS NULL AND json_type(job.request_json,'$.sceneCostConsent') IS NULL
+    AND json_type(job.request_json,'$.requestedSlideCount') IS NULL AND json_type(job.request_json,'$.slideCountPolicy') IS NULL` : `
     AND json_type(job.request_json,'$.itemCount')='integer'
     AND json_extract(job.request_json,'$.itemCount') BETWEEN 1 AND ${MAX_MANUAL_PRESENTATION_SLIDES}
     AND (json_type(job.request_json,'$.requestedSlideCount') IS NULL
@@ -289,7 +358,7 @@ ${requestGuard}
 ), story_job_json AS (
   SELECT json_object('jobId',job_id,'documentId',document_id,'correlationId',correlation_id,'attemptCount',attempt_count,'artifactId',json_extract(result_json,'$.artifactId'),
     'appendedEventIds',json_extract(result_json,'$.appendedEventIds'),'expiresAt',expires_at,
-    ${output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : ""}
+    ${output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : output === "storyboard" ? "'requestedFrameCount',json_extract(request_json,'$.itemCount')," : ""}
     'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.correlation_id
       AND type='DocumentRenderCompleted' AND actor='worker:renderer' AND client_id='server:document-job:render_document')) AS job_json
   FROM story_job
@@ -298,9 +367,10 @@ ${requestGuard}
 
 type NativeOutputCompletion =
   | { output: "scene"; handle: NativeSceneHandle }
-  | { output: "slides"; handle: NativeSlidesHandle };
+  | { output: "slides"; handle: NativeSlidesHandle }
+  | { output: "storyboard"; handle: NativeStoryboardHandle };
 
-async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle, ownerId:string, streamId:string, output:NativeRetainedOutputKind | null=null) {
+async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle | NativeStoryboardHandle, ownerId:string, streamId:string, output:"scene" | "slides" | "storyboard" | null=null) {
   const bindings=[handle.jobId,handle.documentId,ownerId,streamId];
   const raw=await env.DB.prepare(`WITH ${output ? nativeCompletionJobCte(output) : jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
   if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>16384)throw unavailable();
@@ -318,8 +388,11 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
   const requestedSlideCount = output === "slides" && typeof row.requestedSlideCount === "number" ? row.requestedSlideCount : undefined;
   if (output === "slides" && (typeof requestedSlideCount !== "number" || !Number.isSafeInteger(requestedSlideCount)
     || requestedSlideCount < 1 || requestedSlideCount > MAX_MANUAL_PRESENTATION_SLIDES)) throw unavailable();
+  const requestedFrameCount = output === "storyboard" && typeof row.requestedFrameCount === "number" ? row.requestedFrameCount : undefined;
+  if (output === "storyboard" && (typeof requestedFrameCount !== "number" || !Number.isSafeInteger(requestedFrameCount)
+    || requestedFrameCount < 1 || requestedFrameCount > 12)) throw unavailable();
   return {bindings,snapshot:raw.job_json,artifactId:row.artifactId,completionId:row.completionId,expiresAt:row.expiresAt,
-    requestedSlideCount};
+    requestedSlideCount, requestedFrameCount};
 }
 
 /**
@@ -358,7 +431,9 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const events = await env.DB.prepare(`WITH ${eventCte} SELECT * FROM event_rows ORDER BY sequence`)
       .bind(streamId).all<EventRow>();
     const snapshot = eventSnapshot(events.results);
-    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount);
+    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount ?? job?.requestedFrameCount);
+    const storyboard = (nativeCompletion?.output ?? nativeOutput?.output) === "storyboard" ? await storyboardReceipt(env, native, identity.userId, target) : null;
+    const model3d = nativeOutput?.output === "model3d" ? await model3dReceipt(env, native, identity.userId, target) : null;
     const contentBindings = [native.contentId, identity.userId, native.projectId, target.documentId, target.artifactId];
     const source = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${personalContentGuard()}`)
       .bind(...contentBindings).first<{ content: string; expires_at: string }>();
@@ -371,13 +446,18 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
       || !Array.isArray(body.items)) throw unavailable();
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
-      ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium)
+      ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium, {
+        storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null })
       : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
         selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
     if (!dto || nativeCompletion?.output === "scene" && body.items.length !== 1
-      || nativeCompletion?.output === "slides" && body.items.length !== job?.requestedSlideCount) throw unavailable();
+      || nativeCompletion?.output === "slides" && body.items.length !== job?.requestedSlideCount
+      || nativeCompletion?.output === "storyboard" && body.items.length !== job?.requestedFrameCount) throw unavailable();
     const completionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
-    const completion = job && handle ? nativeCompletion?.output === "slides"
+    const completion = job && handle ? nativeCompletion?.output === "storyboard"
+      ? validateNativeStoryboardCompletion({schemaVersion:1,kind:"native-storyboard-completion",handle,
+        selection,expiresAt:completionExpiry},handle)
+      : nativeCompletion?.output === "slides"
       ? validateNativeSlidesCompletion({schemaVersion:1,kind:"native-slides-completion",handle,
         selection,expiresAt:completionExpiry},handle)
       : nativeCompletion?.output === "scene"
@@ -400,8 +480,10 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         AND (SELECT COUNT(*) FROM event_rows)=(SELECT COUNT(*) FROM expected_events)
         AND NOT EXISTS(SELECT 1 FROM expected_events expected LEFT JOIN event_rows actual
           ON actual.event_id=json_extract(expected.value,'$[0]') WHERE actual.event_id IS NULL OR ${comparisons})
-        ${job?"AND EXISTS(SELECT 1 FROM bounded_story_job WHERE CAST(job_json AS BLOB)=CAST(? AS BLOB))":""}`)
-      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]))
+        ${job?"AND EXISTS(SELECT 1 FROM bounded_story_job WHERE CAST(job_json AS BLOB)=CAST(? AS BLOB))":""}
+        ${storyboard?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${storyboardReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${model3d?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}`)
+      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]))
       .first<{ admitted: number }>();
     if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()) throw unavailable();
     // No asynchronous work occurs between the final read and literal response.
@@ -419,13 +501,15 @@ export function handleRetainedStoryRead(request: Request, env: WorkerEnv): Promi
   return readCurrentRetainedNative(request, env, null);
 }
 
-/** Scene and Slides use the same current personal read witness, with no generation or media authority. */
+/** Native outputs use the current personal read witness, with no generation or media authority. */
 export function handleNativeRetainedOutputRead(request: Request, env: WorkerEnv): Promise<Response> {
   if (request.method !== "GET") return Promise.resolve(error("method_not_allowed", 405));
   const sceneHandle = parseNativeSceneCompletionUrl(request.url);
   if (sceneHandle) return readCurrentRetainedNative(request, env, null, { output: "scene", handle: sceneHandle });
   const slidesHandle = parseNativeSlidesCompletionUrl(request.url);
   if (slidesHandle) return readCurrentRetainedNative(request, env, null, { output: "slides", handle: slidesHandle });
+  const storyboardHandle = parseNativeStoryboardCompletionUrl(request.url);
+  if (storyboardHandle) return readCurrentRetainedNative(request, env, null, { output: "storyboard", handle: storyboardHandle });
   const target = parseNativeRetainedOutputRequestUrl(request.url);
   if (!target) return Promise.resolve(error("invalid_native_retained_output_selection", 400));
   return readCurrentRetainedNative(request, env, target);

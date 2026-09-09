@@ -14173,6 +14173,13 @@
             },
             {
               "kind": "field",
+              "name": "expectedSha256",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
               "name": "label",
               "type": {
                 "text": "string"
@@ -14197,7 +14204,6 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\"",
               "attribute": "src"
             },
             {
@@ -14241,8 +14247,7 @@
               "fieldName": "src",
               "type": {
                 "text": "string"
-              },
-              "default": "\"\""
+              }
             }
           ],
           "events": [
@@ -14276,6 +14281,65 @@
           "declaration": {
             "name": "FormaModel3dViewer",
             "module": "src/components/model3d-viewer.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/native-retained-storyboard.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "NativeRetainedStoryboard",
+          "tagName": "forma-native-retained-storyboard",
+          "customElement": true,
+          "summary": "Native retained storyboard application interface.",
+          "description": "Store-independent native retained storyboard interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "locale",
+              "type": {
+                "text": "StoryboardLocale | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "result",
+              "type": {
+                "text": "(Readonly<{ schemaVersion: 1; kind: \"native-retained-output\"; selection: import(\"./src/model/retained-short-story\").RetainedStorySelection; title: string; expiresAt: string; }> & Readonly<{ output: \"storyboard\"; content: Readonly<{ frames: readonly NativeRetainedStoryboardFrame[]; }>; }>) | null"
+              },
+              "default": "null"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-native-retained-storyboard",
+          "declaration": {
+            "name": "NativeRetainedStoryboard",
+            "module": "src/components/native-retained-storyboard.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "NativeRetainedStoryboard",
+          "declaration": {
+            "name": "NativeRetainedStoryboard",
+            "module": "src/components/native-retained-storyboard.ts"
           }
         }
       ]

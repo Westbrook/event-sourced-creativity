@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash, webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import * as modelView from "../src/model/model3d-view.ts";
 import {
   MAX_MODEL3D_UPLOAD_BYTES,
   model3dMimeType,
@@ -253,4 +257,101 @@ test("accessor counts and offsets cannot read beyond their own buffer view", () 
   shortView.bufferViews[0].byteLength = 24;
   assert.throws(() => validateModel3dAsset(glb(shortView)), /glb|accessor|view|range|bounds|length/i,
     "a valid backing buffer cannot hide an accessor extending beyond its declared view");
+});
+
+// Exercise the actual byte reader and viewer class without loading Three or WebGL,
+// using the same declaration-extraction control as model3d-settings-editor tests.
+const viewerSource = ts.createSourceFile("model3d-viewer.ts", readFileSync(new URL("../src/components/model3d-viewer.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const viewerNames = new Set(["ModelPreviewError", "disposeModelResources", "readModelBytes", "FormaModel3dViewer"]);
+const viewerDeclarations = viewerSource.statements.filter(node => (ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node)) && viewerNames.has(node.name?.text));
+assert.equal(viewerDeclarations.length, viewerNames.size, "load the actual viewer and byte-reader declarations");
+const compiledViewer = ts.transpileModule(viewerDeclarations.map(node => node.getText(viewerSource).replace(/^export /u, "")).join("\n"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, useDefineForClassFields: false },
+}).outputText.replace(/\bimport\(/gu, "importPreview(");
+const makeViewer = new Function("ports", `
+  const { html, nothing, FormaPresentationalElement, MAX_MODEL3D_UPLOAD_BYTES, validateModel3dAsset,
+    isModel3dMediaSource, MODEL3D_CAPTURE_SIZE, MODEL3D_MAX_DISTANCE, MODEL3D_MIN_DISTANCE,
+    model3dPresetView, normalizeModel3dView, crypto, fetch, importPreview } = ports;
+  ${compiledViewer}
+  return { readModelBytes, FormaModel3dViewer };
+`);
+const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+function previewFixture(fetch, crypto = webcrypto) {
+  const imports = [];
+  class ElementPort {
+    isConnected = true;
+    updateComplete = Promise.resolve();
+    i18n = { t: (_key, fallback) => fallback, number: String };
+    requestUpdate() {}
+    connectedCallback() {}
+    disconnectedCallback() {}
+  }
+  const api = makeViewer({ ...modelView, MAX_MODEL3D_UPLOAD_BYTES, validateModel3dAsset,
+    html: (strings, ...values) => ({ strings, values }), nothing: null, FormaPresentationalElement: ElementPort,
+    crypto, fetch,
+    importPreview: specifier => { imports.push(specifier); return Promise.reject(new Error("Three intentionally not loaded by byte-reader tests")); },
+  });
+  return { ...api, imports };
+}
+const modelResponse = bytes => new Response(bytes, { headers: { "content-type": GLB_MIME } });
+
+test("the viewer checks exact GLB bytes while preserving callers without an expected hash", async () => {
+  const bytes = glb(), expected = sha256(bytes); let reads = 0;
+  const f = previewFixture(async () => { reads++; return modelResponse(bytes); });
+  for (const hash of [undefined, "", expected]) {
+    const actual = await f.readModelBytes("/api/media/model.glb", new AbortController().signal, hash);
+    assert.deepEqual(Buffer.from(actual), bytes);
+  }
+  assert.equal(reads, 3);
+  const changed = glb({ ...triangleJson(), extras: { changed: true } });
+  const mismatch = previewFixture(async () => modelResponse(changed));
+  await assert.rejects(mismatch.readModelBytes("/api/media/model.glb", new AbortController().signal, expected), error => error.kind === "source");
+});
+
+test("the viewer refuses malformed nonempty expected hashes before fetching", async () => {
+  let reads = 0;
+  const f = previewFixture(async () => { reads++; return modelResponse(glb()); });
+  for (const value of [null, false, 64, {}, "A".repeat(64), "a".repeat(63), "a".repeat(65), " " + "a".repeat(64), "g".repeat(64)])
+    await assert.rejects(f.readModelBytes("/api/media/model.glb", new AbortController().signal, value), error => error.kind === "source");
+  assert.equal(reads, 0);
+});
+
+test("a hash mismatch never reaches Three, and changing hash or source synchronously aborts earlier work", async () => {
+  const bytes = glb(), expected = sha256(bytes);
+  const pending = []; let digests = 0;
+  const f = previewFixture((_source, options) => new Promise(resolve => pending.push({ signal: options.signal, resolve })), {
+    randomUUID: () => webcrypto.randomUUID(),
+    subtle: { digest: async (algorithm, input) => {
+      assert.equal(algorithm, "SHA-256"); digests++;
+      return Uint8Array.from(createHash("sha256").update(input).digest()).buffer;
+    } },
+  });
+  const viewer = new f.FormaModel3dViewer();
+  assert.equal(viewer.expectedSha256, "", "existing callers have no digest requirement");
+  viewer.src = "/api/media/model.glb"; viewer.expectedSha256 = expected;
+  viewer.updated(new Map([["src", ""], ["expectedSha256", ""]]));
+  assert.equal(pending.length, 1);
+  viewer.expectedSha256 = "0".repeat(64); viewer.expectedSha256 = expected;
+  assert.equal(pending[0].signal.aborted, true, "A to B to A retires the earlier load before an update");
+  // A transport that ignores abort may still return bytes; it cannot reach parsing.
+  pending[0].resolve(modelResponse(bytes));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(digests, 1, "the stale returned bytes finished the actual reader and digest");
+  assert.deepEqual(f.imports, []);
+  viewer.updated(new Map([["expectedSha256", "0".repeat(64)]]));
+  assert.equal(pending.length, 2);
+  viewer.src = "/api/media/other.glb";
+  assert.equal(pending[1].signal.aborted, true);
+  pending[1].resolve(modelResponse(bytes));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(digests, 2);
+  assert.deepEqual(f.imports, []);
+  viewer.expectedSha256 = "0".repeat(64);
+  viewer.updated(new Map([["src", "/api/media/model.glb"], ["expectedSha256", expected]]));
+  assert.equal(pending.length, 3);
+  pending[2].resolve(modelResponse(bytes));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(digests, 3);
+  assert.deepEqual(f.imports, [], "different valid GLB bytes cannot load Three");
+  assert.match(JSON.stringify(viewer.render()), /This model is not available as private Forma media/u);
 });

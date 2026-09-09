@@ -39,8 +39,8 @@ const rawSlides = () => ({ title: "  Findings\r\n", summary: "Private summary", 
 const projectedSlides = () => projectNativeRetainedOutput(target("slides"), rawSlides(), EXPIRY);
 const valid = (value, expected = target(value.output)) => validateNativeRetainedOutputDto(value, expected, NOW);
 
-test("native retained output: exact Scene and Slides routes retain immutable four-field selections", () => {
-  for (const output of ["scene", "slides"]) for (const revision of [0, 3, Number.MAX_SAFE_INTEGER]) {
+test("native retained output: exact native output routes retain immutable four-field selections", () => {
+  for (const output of ["scene", "slides", "storyboard", "model3d"]) for (const revision of [0, 3, Number.MAX_SAFE_INTEGER]) {
     const selected = { ...selection(), revision }, result = parseNativeRetainedOutputRoute(route(output, selected));
     assert.deepEqual(result, { output, selection: selected });
     assert.ok(Object.isFrozen(result)); assert.ok(Object.isFrozen(result.selection));
@@ -73,7 +73,7 @@ test("native retained output: local route decoding rejects ambiguous paths and q
 });
 
 test("native retained output: API paths encode exact identity and reject alternate request forms", () => {
-  for (const output of ["scene", "slides"]) {
+  for (const output of ["scene", "slides", "storyboard", "model3d"]) {
     const expected = target(output), path = nativeRetainedOutputRequestPath(expected);
     assert.equal(path, `/api/retained-output/${output}/document%3Aone._-/artifact%3Aone._-?revision=3&sha256=${"a".repeat(64)}`);
     for (const origin of ["https://forma.example", "http://localhost:4192"]) {
@@ -308,4 +308,123 @@ test("native retained output: expired or noncanonical timestamps never yield a u
     assert.equal(projectNativeRetainedOutput(target(), { title: "Scene", content_markdown: "Text" }, expiresAt), null);
   }
   for (const now of [NaN, Infinity, "0", null]) assert.equal(validateNativeRetainedOutputDto(candidate, target(), now), null);
+});
+
+const model3dFile = () => ({ url: "/api/media/u-6f776e6572%2Fgenerated%2Fmodel.glb", mimeType: "model/gltf-binary",
+  fileName: "Original model.glb", fileSize: 976, format: "glb", role: "mesh", sha256: "b".repeat(64), previewSupported: true });
+const model3dEnvelope = () => ({ artifact_kind: "model3d", settings: { model3d_files: [model3dFile()],
+  model3d: { prompt: "PRIVATE provider input" }, reserved_cost_microusd: 123 }, media_url: "https://provider.invalid/model.glb" });
+const rawModel3d = () => ({ title: "Original 3D model", content_markdown: "PRIVATE generation prompt", items: [] });
+const projectedModel3d = (receipt = model3dEnvelope()) => projectNativeRetainedOutput(target("model3d"), rawModel3d(), EXPIRY, null, { model3dReceipt: receipt });
+
+test("native retained Model3D projects selected file references without exposing the generation plan", () => {
+  const receipt = model3dEnvelope(), dto = projectedModel3d(receipt);
+  assert.ok(dto); assert.equal(dto.output, "model3d");
+  assert.deepEqual(dto.content, { files: [model3dFile()], availability: "mesh-reference" });
+  assert.deepEqual(valid(dto), dto);
+  assert.doesNotMatch(JSON.stringify(dto), /PRIVATE|provider\.invalid|reserved_cost|content_markdown/u);
+  receipt.settings.model3d_files[0].sha256 = "c".repeat(64);
+  assert.equal(dto.content.files[0].sha256, "b".repeat(64));
+  for (const value of [dto, dto.content, dto.content.files, dto.content.files[0]]) assert.ok(Object.isFrozen(value));
+});
+
+test("native retained Model3D never invents a mesh from a prompt or legacy media URL", () => {
+  for (const receipt of [{ artifact_kind: "model3d" }, { artifact_kind: "model3d", settings: {} },
+    { artifact_kind: "model3d", settings: { model3d_files: [] }, media_url: model3dFile().url }]) {
+    assert.deepEqual(projectedModel3d(receipt).content, { files: [], availability: "metadata-only" });
+  }
+  const receipt = model3dEnvelope();
+  receipt.settings.model3d_files = [{ ...model3dFile(), fileName: "Original package.zip", format: null, mimeType: "application/zip" }];
+  assert.equal(projectedModel3d(receipt).content.availability, "file-references");
+  assert.equal(projectedModel3d(null), null);
+  assert.equal(projectedModel3d({ artifact_kind: "scene" }), null);
+});
+
+test("native retained Model3D refuses malformed file identities instead of repairing or dropping rows", () => {
+  for (const delta of [{ url: "https://provider.invalid/model.glb" }, { url: "/api/media/%ZZ" },
+    { url: "/api/media/u-6f776e6572%2Fgenerated%2F..%2Fmodel.glb" }, { sha256: "" }, { sha256: "A".repeat(64) },
+    { fileSize: 0 }, { fileSize: -1 }, { fileName: "../model.glb" }, { role: "manifest" },
+    { mimeType: "text/html" }, { previewSupported: "yes" }, { sourcePrompt: "PRIVATE" }]) {
+    const receipt = model3dEnvelope(); Object.assign(receipt.settings.model3d_files[0], delta);
+    assert.equal(projectedModel3d(receipt), null, JSON.stringify(delta));
+  }
+  const receipt = model3dEnvelope(); receipt.settings.model3d_files.push(model3dFile());
+  assert.equal(projectedModel3d(receipt), null);
+  assert.equal(projectedModel3d({ artifact_kind: "model3d", settings: { model3d_files: null } }), null);
+});
+
+test("native retained Model3D keeps exact selection and honest derived availability", () => {
+  const dto = projectedModel3d();
+  for (const delta of [{ documentId: "other" }, { artifactId: "other" }, { revision: 4 }, { contentSha256: "c".repeat(64) }]) {
+    assert.equal(valid(dto, { output: "model3d", selection: { ...selection(), ...delta } }), null);
+  }
+  assert.equal(valid({ ...dto, content: { ...dto.content, availability: "files-retained" } }), null);
+  assert.equal(valid({ ...dto, content: { files: [], availability: "mesh-reference" } }), null);
+  assert.equal(valid({ ...dto, content: { ...dto.content, content_markdown: "invented editable mesh" } }), null);
+});
+
+test("native retained Model3D bounds file metadata and never invokes receipt getters", () => {
+  let calls = 0;
+  const receipt = model3dEnvelope();
+  Object.defineProperty(receipt.settings.model3d_files[0], "url", { enumerable: true, get() { calls++; return model3dFile().url; } });
+  assert.equal(projectedModel3d(receipt), null); assert.equal(calls, 0);
+  const options = {};
+  Object.defineProperty(options, "model3dReceipt", { enumerable: true, get() { calls++; return model3dEnvelope(); } });
+  assert.equal(projectNativeRetainedOutput(target("model3d"), rawModel3d(), EXPIRY, null, options), null);
+  assert.equal(calls, 0);
+  const oversized = model3dEnvelope();
+  oversized.settings.model3d_files = Array.from({ length: 65 }, (_, index) => ({ ...model3dFile(), url: `/api/media/file-${index}.glb` }));
+  assert.equal(projectedModel3d(oversized), null);
+});
+
+const storyboardRaw = () => ({title:"  Harbor لوحة\r\n",content_markdown:"Retained outline",items:[
+  {title:"  Frame 1\r\n",body:"\ufeff  Exact <script>copy</script>\nوفحصت ميرا الضوء.  ",notes:"  Pan left\r\n",image_prompt:"  Keeper image\n",slide:null},
+  {title:"Frame 2",body:"The image was not retained.",notes:"",image_prompt:"",slide:null},
+]});
+const storyboardReceipts = () => [
+  {id:"frame:keeper",title:"Original title",media_url:"/api/media/u-owner%2Fgenerated%2Fkeeper.png",media_type:"image/png",width:1280,height:720},
+  {id:"frame:missing",title:"Original second title",media_url:null,media_type:null,width:null,height:null},
+];
+
+test("native storyboard exact routes and API selectors preserve all four source coordinates",()=>{
+  assert.deepEqual(parseNativeRetainedOutputRoute(route("storyboard")),target("storyboard"));
+  const path=nativeRetainedOutputRequestPath(target("storyboard"));
+  assert.deepEqual(parseNativeRetainedOutputRequestUrl(`https://forma.test${path}`),target("storyboard"));
+  for(const suffix of ["#changed","&revision=3","&frame=other"])
+    assert.equal(parseNativeRetainedOutputRoute(route("storyboard")+suffix),null);
+});
+
+test("native storyboard joins exact immutable receipt IDs/order to unmodified current authored text",()=>{
+  const raw=storyboardRaw(),receipt=storyboardReceipts(),before=structuredClone({raw,receipt});
+  const output=projectNativeRetainedOutput(target("storyboard"),raw,EXPIRY,null,{storyboardItems:receipt});
+  assert.ok(output);assert.deepEqual(output.content.frames.map(frame=>frame.id),receipt.map(frame=>frame.id));
+  for(const [index,frame] of output.content.frames.entries()){
+    const item=raw.items[index];
+    assert.deepEqual([frame.title,frame.body,frame.notes,frame.imagePrompt],[item.title,item.body,item.notes,item.image_prompt]);
+  }
+  assert.equal(output.content.frames[1].image,null);
+  assert.deepEqual(output.content.frames[0].image,{url:receipt[0].media_url,mediaType:"image/png",width:1280,height:720});
+  assert.deepEqual(validateNativeRetainedOutputDto(output,target("storyboard"),NOW),output);
+  assert.ok(Object.isFrozen(output.content.frames[0]));assert.deepEqual({raw,receipt},before);
+});
+
+test("native storyboard rejects missing, duplicate or ambiguous frame receipts without fabricating a frame",()=>{
+  for(const alter of [r=>r.pop(),r=>r.push({...r[0]}),r=>r[1].id=r[0].id,r=>delete r[0].id,
+    r=>r[0].media_url="https://example.test/image.png",r=>r[0].media_url="/api/media/private-token",
+    r=>r[0].media_type="text/html",r=>r[0].width=-1,r=>r[1].width=100]){
+    const receipt=storyboardReceipts();alter(receipt);
+    assert.equal(projectNativeRetainedOutput(target("storyboard"),storyboardRaw(),EXPIRY,null,{storyboardItems:receipt}),null);
+  }
+  assert.equal(projectNativeRetainedOutput(target("storyboard"),storyboardRaw(),EXPIRY),null);
+  let reads=0;const receipts=storyboardReceipts();Object.defineProperty(receipts[0],"id",{enumerable:true,get(){reads++;return "frame:fake";}});
+  assert.equal(projectNativeRetainedOutput(target("storyboard"),storyboardRaw(),EXPIRY,null,{storyboardItems:receipts}),null);assert.equal(reads,0);
+});
+
+test("native storyboard client keeps identity, expiry and closed frame fields strict",()=>{
+  const dto=()=>projectNativeRetainedOutput(target("storyboard"),storyboardRaw(),EXPIRY,null,{storyboardItems:storyboardReceipts()});
+  for(const change of [v=>v.selection.revision++,v=>v.selection.artifactId="other",v=>v.selection.contentSha256="b".repeat(64),
+    v=>v.selection.documentId="other",v=>v.content.frames[0].injected=true,v=>v.content.frames[0].image.url="data:image/png,anything",
+    v=>v.expiresAt="2000-01-01T00:00:00.000Z",v=>v.content.frames.reverse().push(v.content.frames[0])]){
+    const value=structuredClone(dto());change(value);assert.equal(validateNativeRetainedOutputDto(value,target("storyboard"),NOW),null);
+  }
 });

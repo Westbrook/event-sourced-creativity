@@ -1004,3 +1004,161 @@ test("native Story and Scene completion rechecks isolated correlation or attempt
     assert.equal(f.rawReads.length, 1); assert.equal(f.changes(), afterMutation);
   });
 });
+
+const {ownerMediaNamespace}=await import("../src/model/media-ownership.ts");
+const storyboardBody = () => ({...initialBody(),title:"Exact Storyboard لوحة",items:[
+  {title:"  Current keeper\r\n",body:"\ufeff  <script>literal</script>\nوفحصت ميرا الضوء.  ",notes:"  Pan left. ",image_prompt:"  Frame prompt\n",slide:null},
+  {title:"Missing picture",body:"Complete written direction remains.",notes:"Hold.",image_prompt:"No retained image",slide:null},
+]});
+const storyboardItems = () => [
+  {id:"frame:keeper",title:"Original keeper",media_url:`/api/media/${ownerMediaNamespace(OWNER)}%2Fgenerated%2Fkeeper.png`,media_type:"image/png",width:1280,height:720},
+  {id:"frame:missing",title:"Original second",media_url:null,media_type:null,width:null,height:null},
+];
+async function storyboardFixture(t){
+  const f=await fixture(t,{kind:"storyboard",completionPayload:{item_count:2,items:storyboardItems()}});
+  f.replace(storyboardBody());return f;
+}
+const editStoryboardEnvelope=(f,change)=>{
+  const row=f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=?").get(f.completion.eventId);
+  const payload=JSON.parse(row.private_json);change(payload);
+  f.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run(JSON.stringify(payload),f.completion.eventId);
+};
+
+test("native storyboard actual RAM Worker reads exact private frame witness without any writes or media",async t=>{
+  const f=await storyboardFixture(t),before=f.changes(),response=await f.readNative("storyboard");
+  assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"private, no-store");
+  const dto=await response.json();assert.deepEqual(dto.selection,f.select());assert.equal(dto.output,"storyboard");
+  assert.deepEqual(dto.content.frames.map(frame=>frame.id),["frame:keeper","frame:missing"]);
+  assert.deepEqual(dto.content.frames.map(frame=>[frame.title,frame.body,frame.notes,frame.imagePrompt]),
+    storyboardBody().items.map(item=>[item.title,item.body,item.notes,item.image_prompt]));
+  assert.equal(dto.content.frames[1].image,null);assert.equal(f.changes(),before);
+  assert.equal(f.calls.filter(sql=>sql.startsWith("SELECT private_json")).length,1);
+  assert.ok(f.calls.at(-1).includes("CAST(private_json AS BLOB)=CAST(? AS BLOB)"));
+  assert.equal(f.calls.some(sql=>/artifact_revisions|document_jobs/u.test(sql)),false);
+});
+
+test("native storyboard binds revised text and original frame order to the exact current revision hash",async t=>{
+  const f=await storyboardFixture(t),old=f.select(),body=storyboardBody();body.items[0].body="The current edited direction. المعدل";f.replace(body);
+  await f.append("DocumentArtifactEdited",{artifact_id:ARTIFACT,artifact_kind:"storyboard",content_ref:CONTENT,revision:1,
+    content_sha256:digest(f.raw()),edited_by_user_id:OWNER});
+  const before=f.changes(),response=await f.readNative("storyboard",f.select(1));assert.equal(response.status,200);
+  const dto=await response.json();assert.equal(dto.content.frames[0].body,body.items[0].body);
+  assert.deepEqual(dto.content.frames.map(frame=>frame.id),["frame:keeper","frame:missing"]);
+  assert.equal((await f.readNative("storyboard",old)).status,404);assert.equal(f.changes(),before);
+});
+
+test("native storyboard rejects wrong or missing private frame source before exposing raw authored content",async t=>{
+  for(const fault of ["document","artifact","owner","content","kind","count","duplicate","missing","redacted","foreign-owner","foreign-media"]){
+    await t.test(fault,async child=>{
+      const f=await storyboardFixture(child);
+      const field={document:"document_id",artifact:"artifact_id",owner:"requested_by_user_id",content:"content_ref",kind:"artifact_kind"}[fault];
+      if(field)editStoryboardEnvelope(f,p=>p[field]="other");
+      if(fault==="count")editStoryboardEnvelope(f,p=>p.item_count=1);
+      if(fault==="duplicate")editStoryboardEnvelope(f,p=>p.items[1].id=p.items[0].id);
+      if(fault==="foreign-media")editStoryboardEnvelope(f,p=>p.items[0].media_url=`/api/media/${ownerMediaNamespace("another-owner")}%2Fgenerated%2Fkeeper.png`);
+      if(fault==="missing")f.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(f.completion.eventId);
+      if(fault==="redacted")f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run("2030-01-01T00:00:00.000Z",f.completion.eventId);
+      if(fault==="foreign-owner")f.sqlite.prepare("UPDATE event_private_payloads SET owner_id=? WHERE private_event_id=?").run("other",f.completion.eventId);
+      const before=f.changes(),response=await f.readNative("storyboard");assert.equal(response.status,404);
+      assert.equal(f.changes(),before);assert.equal(f.calls.some(sql=>sql.includes("expected_events AS")),false);
+      if(fault!=="duplicate")assert.equal(f.rawReads.length,0);
+    });
+  }
+});
+
+test("native storyboard final witness rejects private frame mutation, retirement and custody change",async t=>{
+  for(const fault of ["frame-id","frame-media","redaction","owner","document","project","deleted"]){
+    await t.test(fault,async child=>{
+      const f=await storyboardFixture(child);let entered=0;
+      f.setBeforeRead(sql=>{
+        if(!sql.includes("expected_events AS"))return;entered++;
+        if(fault==="frame-id")editStoryboardEnvelope(f,p=>p.items[0].id="frame:changed");
+        if(fault==="frame-media")editStoryboardEnvelope(f,p=>p.items[0].media_url=`/api/media/${ownerMediaNamespace(OWNER)}%2Fgenerated%2Fchanged.png`);
+        const column={redaction:"redacted_at",owner:"owner_id",document:"document_id",project:"project_id"}[fault];
+        if(column)f.sqlite.prepare(`UPDATE event_private_payloads SET ${column}=? WHERE private_event_id=?`).run("other",f.completion.eventId);
+        if(fault==="deleted")f.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(f.completion.eventId);
+      });
+      assert.equal((await f.readNative("storyboard")).status,404);assert.equal(entered,1);
+    });
+  }
+});
+
+// Declared file metadata only: these read-endpoint fixtures never seed or read
+// mesh bytes. The browser fixture separately proves authenticated media reads.
+const retainedModel3dPlan = () => ({ title: "Authored retained 3D plan", summary: "Private retained plan summary",
+  content_markdown: "# An authored retained 3D plan\n\nA local model reference, with no generation performed.",
+  presentation: null, items: [] });
+const retainedModel3dFile = (owner = OWNER) => ({
+  url: `/api/media/${encodeURIComponent(`u-${Buffer.from(owner, "utf8").toString("hex")}/generated/${ARTIFACT}.glb`)}`,
+  mimeType: "model/gltf-binary", fileName: "authored-retained-model.glb", fileSize: 1024,
+  format: "glb", role: "mesh", sha256: digest("declared synthetic retained model metadata"), previewSupported: true,
+});
+
+test("native retained Model3D returns the exact owned completion file metadata without writes or media access", async t => {
+  const file = retainedModel3dFile(), plan = retainedModel3dPlan();
+  const f = await fixture(t, { kind: "model3d", completionPayload: {
+    settings: { model3d_files: [file] }, item_count: 0, items: [],
+  } });
+  f.replace(plan);
+  const before = f.changes(), originalRaw = f.raw();
+  const response = await f.readNative("model3d");
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.deepEqual(await response.json(), { schemaVersion: 1, kind: "native-retained-output", output: "model3d",
+    selection: f.select(), title: plan.title, expiresAt: EXPIRY,
+    content: { files: [file], availability: "mesh-reference" } });
+  assert.equal(f.calls.filter(sql => sql.startsWith("SELECT private_json FROM event_private_payloads")).length, 1);
+  assert.equal(f.calls.filter(sql => sql.includes("expected_events AS")).length, 1);
+  assert.equal(f.rawReads.length, 1);
+  assert.equal(f.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(CONTENT).content, originalRaw);
+  assert.equal(f.changes(), before);
+});
+
+test("native retained Model3D rejects another owner's private media namespace before raw plan materialization", async t => {
+  const f = await fixture(t, { kind: "model3d", completionPayload: {
+    settings: { model3d_files: [retainedModel3dFile("another-retained-owner")] }, item_count: 0, items: [],
+  } });
+  f.replace(retainedModel3dPlan());
+  const before = f.changes(), response = await f.readNative("model3d");
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "retained_story_unavailable" });
+  assert.equal(f.calls.filter(sql => sql.startsWith("SELECT private_json FROM event_private_payloads")).length, 1);
+  assert.deepEqual(f.rawReads, []);
+  assert.equal(f.calls.some(sql => sql.includes("expected_events AS")), false);
+  assert.equal(f.changes(), before);
+});
+
+test("native retained Model3D final witness rejects changed private file metadata while public history and raw plan stay identical", async t => {
+  const f = await fixture(t, { kind: "model3d", completionPayload: {
+    settings: { model3d_files: [retainedModel3dFile()] }, item_count: 0, items: [],
+  } });
+  f.replace(retainedModel3dPlan());
+  const originalRaw = f.raw(), selection = f.select();
+  const publicRows = () => f.sqlite.prepare("SELECT event_id,sequence,payload FROM events ORDER BY sequence").all();
+  const originalPublic = publicRows();
+  const originalPrivate = f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=?")
+    .get(f.completion.eventId).private_json;
+  const changed = JSON.parse(originalPrivate);
+  changed.settings.model3d_files[0].sha256 = "b".repeat(64);
+  let entered = 0, afterMutation = null;
+  f.setBeforeRead(sql => {
+    if (!sql.includes("expected_events AS")) return;
+    entered++;
+    f.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?")
+      .run(JSON.stringify(changed), f.completion.eventId);
+    afterMutation = f.changes();
+  });
+  const response = await f.readNative("model3d", selection);
+  assert.equal(entered, 1, "owned metadata, raw bytes and hash must pass before the final witness");
+  assert.equal(f.rawReads.length, 1);
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "retained_story_unavailable" });
+  assert.deepEqual(publicRows(), originalPublic);
+  assert.equal(f.raw(), originalRaw);
+  assert.equal(f.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(CONTENT).content, originalRaw);
+  assert.deepEqual(f.select(), selection);
+  assert.notEqual(f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=?")
+    .get(f.completion.eventId).private_json, originalPrivate);
+  assert.equal(f.changes(), afterMutation, "the only write is the explicit fixture race mutation");
+});

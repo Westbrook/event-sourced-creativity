@@ -6121,4 +6121,16 @@ Object.assign(messages, {
   "system.auto.1qr28rr.76": "D’autres diapositives terminées sont disponibles. Ouvrez-les depuis les résultats de ce document.",
 });
 
+Object.assign(messages, {
+  "system.auto.4rojjd.20": "Storyboard terminé",
+  "system.auto.5nc7q3.24": "Ouvrir le storyboard d’origine",
+  "system.auto.hzzc8o.90": "Impossible de vérifier le storyboard terminé de cette demande précise. Essayez d’ouvrir à nouveau cette même demande.",
+  "system.auto.6sar0r.81": "D’autres storyboards terminés sont disponibles. Ouvrez-les depuis les résultats de ce document.",
+});
+
+Object.assign(messages, {
+  "system.auto.12n9acm.49": "Interface applicative native de storyboard conservé.",
+  "system.auto.16gltqk.141": "Interface native de storyboard conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
+});
+
 export default messages;

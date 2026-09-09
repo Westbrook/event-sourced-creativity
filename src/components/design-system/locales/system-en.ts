@@ -6152,4 +6152,16 @@ Object.assign(messages, {
   "system.auto.1qr28rr.76": "More completed slides are available. Open them from this Document’s results.",
 });
 
+Object.assign(messages, {
+  "system.auto.4rojjd.20": "Completed Storyboard",
+  "system.auto.5nc7q3.24": "Open original Storyboard",
+  "system.auto.hzzc8o.90": "The exact completed storyboard could not be verified. Try opening this same request again.",
+  "system.auto.6sar0r.81": "More completed storyboards are available. Open them from this Document’s results.",
+});
+
+Object.assign(messages, {
+  "system.auto.12n9acm.49": "Native retained storyboard application interface.",
+  "system.auto.16gltqk.141": "Store-independent native retained storyboard interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+});
+
 export default messages;

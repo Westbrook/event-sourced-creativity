@@ -13,7 +13,7 @@ const methods = source.slice(start, end);
 assert.equal((methods.match(/async #openOriginalSlides\(/g) ?? []).length, 1);
 const minimalClass = stripTypeScriptTypes(`class Subject {
   #slidesResultRead=null; #slidesResultError=null; #activeId=""; #convertingId="";
-  #slidesCompletedJobs=new Map();
+  #slidesCompletedJobs=new Map(); #slidesOverflow=null;
   constructor(state){this.state=state;this.store=state.store;this.ownerDocument=state.document;
     this.i18n={system:value=>value,date:()=>"Recorded completion"};}
   #nativeStoryEligible(documentId){return this.state.eligible&&documentId===this.state.documentId;}
@@ -303,14 +303,41 @@ test("120-reference cap preserves ACK-omitted references and advertises overflow
   assert.deepEqual([...s.subject.completed().entries()],original);assert.equal(buttons(next).length,120);
   assert.equal(hasCapacityNotice(next),true);assert.equal(s.subject.completed().has("job-121"),false);
 });
-test("retired slots still count toward capacity and overflow notice survives an empty visible list",()=>{
-  const s=fixture();s.jobs=Array.from({length:120},(_,i)=>jobAt(s,i));s.subject.render();
-  s.jobs=s.jobs.map(job=>({...job,status:"running"}));s.subject.render();
+test("observed overflow survives ACK omission, all-slot retirement and another empty feed until source changes",()=>{
+  const s=fixture();s.jobs=Array.from({length:121},(_,i)=>jobAt(s,i));
+  const first=s.subject.render(),original=[...s.subject.completed().entries()];
+  assert.equal(original.length,120);assert.equal(buttons(first).length,120);assert.equal(hasCapacityNotice(first),true);
+  assert.equal(s.subject.completed().has("job-120"),false);
+  s.jobs=[];const acknowledged=s.subject.render();
+  assert.equal(buttons(acknowledged).length,120);assert.equal(hasCapacityNotice(acknowledged),true);
+  assert.deepEqual([...s.subject.completed().entries()],original);
+  s.jobs=Array.from({length:120},(_,i)=>({...jobAt(s,i),status:"running"}));
+  const retired=s.subject.render();
   assert.equal(s.subject.completed().size,120);
   assert.equal([...s.subject.completed().values()].every(value=>value.retired),true);
-  s.jobs=[jobAt(s,121)];const next=s.subject.render();
-  assert.deepEqual(buttons(next),[]);assert.equal(hasCapacityNotice(next),true);
-  assert.equal(s.subject.completed().has("job-121"),false);
+  assert.deepEqual(buttons(retired),[]);assert.equal(hasCapacityNotice(retired),true);
+  s.jobs=[];const omitted=s.subject.render();
+  assert.deepEqual(buttons(omitted),[]);assert.equal(hasCapacityNotice(omitted),true);
+  assert.equal(s.subject.completed().size,120);assert.equal(s.subject.completed().has("job-120"),false);
+  s.sourceIdentity={};const changed=s.subject.render();
+  assert.equal(changed,null);assert.equal(hasCapacityNotice(changed),false);assert.equal(s.subject.completed().size,0);
+});
+test("exactly 120 observed jobs never invent a more-completions notice across omission and retirement",()=>{
+  const s=fixture();s.jobs=Array.from({length:120},(_,i)=>jobAt(s,i));
+  const first=s.subject.render();assert.equal(buttons(first).length,120);assert.equal(hasCapacityNotice(first),false);
+  s.jobs=[];const acknowledged=s.subject.render();
+  assert.equal(buttons(acknowledged).length,120);assert.equal(hasCapacityNotice(acknowledged),false);
+  s.jobs=Array.from({length:120},(_,i)=>({...jobAt(s,i),status:"running"}));
+  assert.equal(hasCapacityNotice(s.subject.render()),false);
+  s.jobs=[];assert.equal(s.subject.render(),null);assert.equal(s.subject.completed().size,120);
+});
+for(const [name,mutate] of [
+  ["Document",s=>{s.documentId="document-b";}],
+  ["private eligibility",s=>{s.eligible=false;}],
+])test(`observed overflow clears after ${name} changes with the feed omitted`,()=>{
+  const s=fixture();s.jobs=Array.from({length:121},(_,i)=>jobAt(s,i));assert.equal(hasCapacityNotice(s.subject.render()),true);
+  s.jobs=[];mutate(s);const next=s.subject.render();
+  assert.equal(next,null);assert.equal(s.subject.completed().size,0);
 });
 test("source retirement releases bounded retention for a new source",()=>{
   const s=fixture();s.jobs=Array.from({length:120},(_,i)=>jobAt(s,i));s.subject.render();

@@ -53,7 +53,8 @@ function disposeModelResources(roots: Three.Object3D[], resources: Iterable<unkn
   for (const resource of resources) dispose(resource);
 }
 
-async function readModelBytes(source: string, signal: AbortSignal) {
+async function readModelBytes(source: string, signal: AbortSignal, expectedSha256 = "") {
+  if (typeof expectedSha256 !== "string" || expectedSha256 !== "" && !/^[a-f0-9]{64}$/u.test(expectedSha256)) throw new ModelPreviewError("source");
   const response = await fetch(source, { signal, credentials: "same-origin", redirect: "error", cache: "no-store" });
   if (!response.ok) throw new ModelPreviewError("source");
   const length = Number(response.headers.get("content-length"));
@@ -73,13 +74,18 @@ async function readModelBytes(source: string, signal: AbortSignal) {
   const bytes = new Uint8Array(size); let offset = 0;
   for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
   validateModel3dAsset(bytes, response.headers.get("content-type"));
+  if (expectedSha256) {
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (digest !== expectedSha256) throw new ModelPreviewError("source");
+  }
   return bytes.buffer;
 }
 
 /** Local orbit/capture control. Its parent owns media permission and durable saves. */
 export class FormaModel3dViewer extends FormaPresentationalElement {
-  static properties = { src: { type: String }, view: { attribute: false }, readonly: { type: Boolean, reflect: true }, disabled: { type: Boolean }, label: { type: String } };
-  src = "";
+  static properties = { src: { type: String, noAccessor: true }, expectedSha256: { attribute: false, noAccessor: true }, view: { attribute: false }, readonly: { type: Boolean, reflect: true }, disabled: { type: Boolean }, label: { type: String } };
+  #src = "";
+  #expectedSha256 = "";
   view: Model3dView | null = null;
   readonly = false;
   disabled = false;
@@ -97,6 +103,20 @@ export class FormaModel3dViewer extends FormaPresentationalElement {
   #background: Model3dBackground = "#ffffff";
   #helpId = `model3d-help-${crypto.randomUUID()}`;
 
+  get src() { return this.#src; }
+  set src(value: string) {
+    if (value === this.#src) return;
+    const previous = this.#src; this.#src = value;
+    this.#retire(); this.requestUpdate("src", previous);
+  }
+  get expectedSha256() { return this.#expectedSha256; }
+  set expectedSha256(value: string) {
+    if (value === this.#expectedSha256) return;
+    const previous = this.#expectedSha256; this.#expectedSha256 = value;
+    // Retire even A → B → A before Lit's next update; the earlier bytes cannot return.
+    this.#retire(); this.requestUpdate("expectedSha256", previous);
+  }
+
   override connectedCallback() { super.connectedCallback(); this.#reconnect = true; this.requestUpdate(); }
   override disconnectedCallback() { this.#retire(); super.disconnectedCallback(); }
 
@@ -105,7 +125,7 @@ export class FormaModel3dViewer extends FormaPresentationalElement {
     const signature = JSON.stringify(incomingView);
     const viewChanged = signature !== this.#viewSignature;
     if (viewChanged) { this.#viewSignature = signature; this.#viewRevision += 1; }
-    if (changed.has("src") || this.#reconnect) {
+    if (changed.has("src") || changed.has("expectedSha256") || this.#reconnect) {
       this.#reconnect = false;
       void this.#load();
     } else if (viewChanged && this.#runtime) this.#applyView(incomingView);
@@ -141,21 +161,23 @@ export class FormaModel3dViewer extends FormaPresentationalElement {
 
   async #load() {
     this.#retire();
-    const source = this.src; const loadId = this.#loadId;
+    const source = this.src, expectedSha256 = this.expectedSha256; const loadId = this.#loadId;
     this.#failure = null; this.#captureFailed = false;
     this.#background = (normalizeModel3dView(this.view) ?? model3dPresetView()).background;
     if (!source || !this.isConnected) { this.requestUpdate(); return; }
     if (!isModel3dMediaSource(source)) { this.#failure = "source"; this.requestUpdate(); return; }
     const controller = new AbortController(); this.#abort = controller;
-    const current = () => this.isConnected && this.#loadId === loadId && this.src === source && !controller.signal.aborted;
+    const current = () => this.isConnected && this.#loadId === loadId && this.src === source && this.expectedSha256 === expectedSha256 && !controller.signal.aborted;
     this.#loading = true; this.requestUpdate();
     let roots: Three.Object3D[] = []; let resources: Iterable<unknown> = [];
     let renderer: Three.WebGLRenderer | undefined; let environment: Three.WebGLRenderTarget | undefined;
     let controls: OrbitControls | undefined; let resize: ResizeObserver | undefined;
     let handedOff = false;
     try {
-      const [three, { GLTFLoader }, { OrbitControls: Controls }, { RoomEnvironment }, bytes] = await Promise.all([
-        import("three"), import("three/addons/loaders/GLTFLoader.js"), import("three/addons/controls/OrbitControls.js"), import("three/addons/environments/RoomEnvironment.js"), readModelBytes(source, controller.signal),
+      const bytes = await readModelBytes(source, controller.signal, expectedSha256);
+      if (!current()) return;
+      const [three, { GLTFLoader }, { OrbitControls: Controls }, { RoomEnvironment }] = await Promise.all([
+        import("three"), import("three/addons/loaders/GLTFLoader.js"), import("three/addons/controls/OrbitControls.js"), import("three/addons/environments/RoomEnvironment.js"),
       ]);
       if (!current()) return;
       const manager = new three.LoadingManager(); let embeddedFailure = false;

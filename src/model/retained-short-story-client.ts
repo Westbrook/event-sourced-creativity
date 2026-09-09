@@ -1,3 +1,4 @@
+import { captureNativeStoryboardHandle, nativeStoryboardCompletionPath, validateNativeStoryboardCompletion, NATIVE_STORYBOARD_COMPLETION_MAX_BYTES, type NativeStoryboardHandle, type NativeStoryboardCompletion } from "./native-storyboard-completion.ts";
 import { captureNativeSlidesHandle, nativeSlidesCompletionPath, validateNativeSlidesCompletion, NATIVE_SLIDES_COMPLETION_MAX_BYTES, type NativeSlidesHandle, type NativeSlidesCompletion } from "./native-slides-completion.ts";
 import { captureNativeSceneHandle, nativeSceneCompletionPath, validateNativeSceneCompletion, NATIVE_SCENE_COMPLETION_MAX_BYTES, type NativeSceneHandle, type NativeSceneCompletion } from "./native-scene-completion.ts";
 import { captureNativeStoryHandle, nativeStoryCompletionPath, validateNativeStoryCompletion, NATIVE_STORY_COMPLETION_MAX_BYTES, type NativeStoryHandle, type NativeStoryCompletion } from "./native-short-story-generation.ts";
@@ -130,4 +131,15 @@ export async function readNativeSlidesCompletion(
   if (!handle) throw new Error("invalid_native_slides_handle");
   return readNativeJson(nativeSlidesCompletionPath(handle), controls, NATIVE_SLIDES_COMPLETION_MAX_BYTES,
     candidate => validateNativeSlidesCompletion(candidate, handle));
+}
+
+
+/** Read only the exact original Storyboard completion handle. */
+export async function readNativeStoryboardCompletion(
+  value: NativeStoryboardHandle, controls: RetainedStoryReadControls,
+): Promise<NativeStoryboardCompletion> {
+  const handle = captureNativeStoryboardHandle(value);
+  if (!handle) throw new Error("invalid_native_storyboard_handle");
+  return readNativeJson(nativeStoryboardCompletionPath(handle), controls, NATIVE_STORYBOARD_COMPLETION_MAX_BYTES,
+    candidate => validateNativeStoryboardCompletion(candidate, handle));
 }

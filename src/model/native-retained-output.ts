@@ -1,8 +1,13 @@
+import { projectNativeRetainedModel3d, validateNativeRetainedModel3d, type NativeRetainedModel3dContent } from "./native-retained-model3d.ts";
 import { presentationAudienceItem } from "./presentation-delivery.ts";
 import type { DocumentArtifactDraftItem, SlideCitation, SlidePresentation, SlideQuote, SlideVisualData, SlideVisualDatum } from "./document-artifacts.ts";
 import type { RetainedStorySelection } from "./retained-short-story.ts";
 
-export type NativeRetainedOutputKind = "scene" | "slides";
+export type NativeRetainedOutputKind = "scene" | "slides" | "storyboard" | "model3d";
+export type NativeRetainedStoryboardFrame = Readonly<{
+  id: string; title: string; body: string; notes: string; imagePrompt: string;
+  image: Readonly<{ url: string; mediaType: "image/jpeg" | "image/png" | "image/webp"; width: number | null; height: number | null }> | null;
+}>;
 export type NativeRetainedOutputTarget = Readonly<{ output: NativeRetainedOutputKind; selection: RetainedStorySelection }>;
 type NativeRetainedOutputBase = Readonly<{
   schemaVersion: 1;
@@ -14,6 +19,8 @@ type NativeRetainedOutputBase = Readonly<{
 export type NativeRetainedOutputDto = NativeRetainedOutputBase & (
   | Readonly<{ output: "scene"; content: Readonly<{ content_markdown: string; medium: "visual" | "audio" | null }> }>
   | Readonly<{ output: "slides"; content: Readonly<{ items: readonly DocumentArtifactDraftItem[]; presentation: SlidePresentation | null }> }>
+  | Readonly<{ output: "storyboard"; content: Readonly<{ frames: readonly NativeRetainedStoryboardFrame[] }> }>
+  | Readonly<{ output: "model3d"; content: NativeRetainedModel3dContent }>
 );
 
 export const NATIVE_RETAINED_OUTPUT_JSON_MAX_BYTES = 1_000_000;
@@ -129,7 +136,7 @@ function readSelection(value: Json | undefined): RetainedStorySelection {
 }
 function readTarget(value: unknown): NativeRetainedOutputTarget {
   const entry = record(captureJson(value, 4096), ["output", "selection"]);
-  return Object.freeze({ output: choice(entry.output, ["scene", "slides"]), selection: readSelection(entry.selection) });
+  return Object.freeze({ output: choice(entry.output, ["scene", "slides", "storyboard", "model3d"]), selection: readSelection(entry.selection) });
 }
 function selectionFromQuery(parameters: URLSearchParams, documentId: string | null, artifactId: string | null): RetainedStorySelection {
   const revision = parameters.get("revision");
@@ -155,10 +162,10 @@ export function parseNativeRetainedOutputRoute(route: string): NativeRetainedOut
   try {
     if (typeof route !== "string" || route.length > 2048 || hasUnsafeUrlCharacters(route)) return null;
     const path = route.split("?", 1)[0];
-    if (path !== "/make/scene" && path !== "/make/slides") return null;
+    if (path !== "/make/scene" && path !== "/make/slides" && path !== "/make/storyboard" && path !== "/make/model3d") return null;
     const url = new URL(route, "https://forma.local");
     if (!exactQuery(url.searchParams, ["document", "artifact", "revision", "sha256"])) return null;
-    return Object.freeze({ output: path === "/make/scene" ? "scene" : "slides",
+    return Object.freeze({ output: path === "/make/scene" ? "scene" : path === "/make/slides" ? "slides" : path === "/make/storyboard" ? "storyboard" : "model3d",
       selection: selectionFromQuery(url.searchParams, url.searchParams.get("document"), url.searchParams.get("artifact")) });
   } catch { return null; }
 }
@@ -174,7 +181,7 @@ export function parseNativeRetainedOutputRequestUrl(requestUrl: string): NativeR
   try {
     if (typeof requestUrl !== "string" || requestUrl.length > 4096 || hasUnsafeUrlCharacters(requestUrl)) return null;
     const rawPath = requestUrl.match(/^https?:\/\/[^/?#]+(\/[^?#]*)/u)?.[1];
-    const path = rawPath?.match(/^\/api\/retained-output\/(scene|slides)\/([^/]+)\/([^/]+)$/u);
+    const path = rawPath?.match(/^\/api\/retained-output\/(scene|slides|storyboard|model3d)\/([^/]+)\/([^/]+)$/u);
     if (!path) return null;
     const url = new URL(requestUrl);
     if (url.username || url.password || !exactQuery(url.searchParams, ["revision", "sha256"])) return null;
@@ -267,6 +274,57 @@ function immutable<T>(value: T): T {
   }
   return value;
 }
+
+function storyboardImage(value: Json | undefined): NativeRetainedStoryboardFrame["image"] {
+  if (value === null) return null;
+  const image = record(value, ["url", "mediaType", "width", "height"]);
+  const url = text(image.url, 2048);
+  // Existing same-origin authenticated generated-image endpoint only. A retained
+  // path is a read request, never proof that the image still exists or is readable.
+  if (!/^\/api\/media\/[A-Za-z0-9._~%+-]+$/u.test(url)) invalid();
+  let key: string;
+  try { key = decodeURIComponent(url.slice("/api/media/".length)); } catch { return invalid(); }
+  if (!/^u-[A-Za-z0-9_-]+\/generated\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/iu.test(key)) invalid();
+  for (const name of ["width", "height"] as const) {
+    if (image[name] !== null && (typeof image[name] !== "number" || !Number.isSafeInteger(image[name])
+      || image[name] <= 0 || image[name] > 32768)) invalid();
+  }
+  return { url, mediaType: choice(image.mediaType, ["image/jpeg", "image/png", "image/webp"]),
+    width: image.width as number | null, height: image.height as number | null };
+}
+
+function readStoryboardFrames(value: Json | undefined): NativeRetainedStoryboardFrame[] {
+  const frames = list(value, 24), ids = new Set<string>();
+  if (!frames.length) invalid();
+  return frames.map(value => {
+    const frame = record(value, ["id", "title", "body", "notes", "imagePrompt", "image"]);
+    if (typeof frame.id !== "string" || !identifier.test(frame.id) || ids.has(frame.id)) invalid();
+    ids.add(frame.id);
+    return { id: frame.id, title: text(frame.title), body: text(frame.body), notes: text(frame.notes),
+      imagePrompt: text(frame.imagePrompt), image: storyboardImage(frame.image) };
+  });
+}
+
+function projectStoryboardFrames(authoredValue: Json | undefined, receiptValue: Json): NativeRetainedStoryboardFrame[] {
+  const authored = list(authoredValue, 24), receipts = list(receiptValue, 24);
+  if (!authored.length || authored.length !== receipts.length) invalid();
+  // The artifact editor changes only named text fields at existing item indices.
+  // Completion receipt order/IDs remain immutable across those source revisions.
+  return readStoryboardFrames(authored.map((value, index) => {
+    const item = record(value, ["title", "body"], ["notes", "image_prompt", "slide", "context_group_ids"]);
+    const receipt = record(receipts[index], ["id", "media_url", "media_type", "width", "height"], [], true);
+    const image = receipt.media_url === null ? null : {
+      url: receipt.media_url, mediaType: receipt.media_type, width: receipt.width, height: receipt.height,
+    };
+    if (receipt.media_url === null && (receipt.media_type !== null || receipt.width !== null || receipt.height !== null)) invalid();
+    if (Object.hasOwn(item, "slide") && item.slide !== null) invalid();
+    if (Object.hasOwn(item, "context_group_ids")) strings(item.context_group_ids, NATIVE_RETAINED_OUTPUT_CITATIONS_MAX);
+    return { id: receipt.id, title: text(item.title), body: text(item.body),
+      notes: Object.hasOwn(item, "notes") ? text(item.notes) : "",
+      imagePrompt: Object.hasOwn(item, "image_prompt") ? text(item.image_prompt) : "", image };
+  }));
+}
+
 function finish(target: NativeRetainedOutputTarget, title: string, expiresAt: string,
   content: NativeRetainedOutputDto["content"], now: number): NativeRetainedOutputDto {
   if (typeof now !== "number" || !Number.isFinite(now) || typeof expiresAt !== "string"
@@ -296,6 +354,15 @@ export function validateNativeRetainedOutputDto(candidate: unknown, target: Nati
       const medium = content.medium === null ? null : choice(content.medium, ["visual", "audio"]);
       return finish(expected, title, expiresAt, { content_markdown: text(content.content_markdown, NATIVE_RETAINED_OUTPUT_MARKDOWN_MAX_BYTES), medium }, now);
     }
+    if (expected.output === "storyboard") {
+      const content = record(value.content, ["frames"]);
+      const frames = readStoryboardFrames(content.frames);
+      return finish(expected, title, expiresAt, { frames }, now);
+    }
+    if (expected.output === "model3d") {
+      const content = validateNativeRetainedModel3d(value.content);
+      return content ? finish(expected, title, expiresAt, content, now) : null;
+    }
     const content = record(value.content, ["items", "presentation"]);
     const items = list(content.items, NATIVE_RETAINED_OUTPUT_ITEMS_MAX).map(item => readItem(item, true));
     if (!items.length) return null;
@@ -313,7 +380,8 @@ export function validateNativeRetainedOutputDto(candidate: unknown, target: Nati
  * audience privacy policy, and evidence excerpts and producer fields stay out.
  */
 export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, rawContent: unknown,
-  expiresAt: string, sceneMedium: unknown = null): NativeRetainedOutputDto | null {
+  expiresAt: string, sceneMedium: unknown = null,
+  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown } = {}): NativeRetainedOutputDto | null {
   try {
     const expected = readTarget(target);
     const raw = record(captureJson(rawContent), ["title"], [], true);
@@ -322,6 +390,15 @@ export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, 
     if (expected.output === "scene") {
       if (sceneMedium !== null && sceneMedium !== "visual" && sceneMedium !== "audio") return null;
       return finish(expected, title, expiresAt, { content_markdown: text(raw.content_markdown, NATIVE_RETAINED_OUTPUT_MARKDOWN_MAX_BYTES), medium: sceneMedium }, Date.now());
+    }
+    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt"]);
+    if (expected.output === "storyboard") {
+      const frames = projectStoryboardFrames(raw.items, metadata.storyboardItems ?? null);
+      return finish(expected, title, expiresAt, { frames }, Date.now());
+    }
+    if (expected.output === "model3d") {
+      const content = projectNativeRetainedModel3d(metadata.model3dReceipt ?? null);
+      return content ? finish(expected, title, expiresAt, content, Date.now()) : null;
     }
     const items = list(raw.items, NATIVE_RETAINED_OUTPUT_ITEMS_MAX).map(item => audienceItem(readItem(item, false)));
     if (!items.length) return null;

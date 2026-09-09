@@ -7,9 +7,11 @@ import { parseNativeRetainedOutputRoute, type NativeRetainedOutputDto } from "..
 import { readRetainedShortStory, readNativeRetainedOutput } from "../model/retained-short-story-client.ts";
 import "./forma-retained-short-story.css";
 
-type RetainedOutputKind = "short_story" | "scene" | "slides";
+type RetainedOutputKind = "short_story" | "scene" | "slides" | "storyboard" | "model3d";
 type RetainedOutput = RetainedStoryDto | NativeRetainedOutputDto;
 type SlidesRenderer = typeof import("./native-retained-slides.ts").renderNativeRetainedSlides;
+type StoryboardRenderer = typeof import("./native-retained-storyboard.ts").renderNativeRetainedStoryboard;
+type Model3dRenderer = typeof import("./native-retained-model3d.ts").renderNativeRetainedModel3d;
 type ReadOwner = {
   epoch: number;
   route: string;
@@ -33,6 +35,8 @@ export class FormaRetainedShortStory extends FormaElement {
   #output: RetainedOutputKind = "short_story";
   #result: RetainedOutput | null = null;
   #slidesRenderer: SlidesRenderer | null = null;
+  #storyboardRenderer: StoryboardRenderer | null = null;
+  #model3dRenderer: Model3dRenderer | null = null;
   #phase: "waiting" | "loading" | "ready" | "unavailable" = "waiting";
   #unsubscribe?: () => void;
   #mount?: HTMLElement;
@@ -62,6 +66,8 @@ export class FormaRetainedShortStory extends FormaElement {
     this.#owner = null;
     this.#result = null;
     this.#slidesRenderer = null;
+    this.#storyboardRenderer = null;
+    this.#model3dRenderer = null;
     if (this.#expiryTimer !== undefined) clearTimeout(this.#expiryTimer);
     this.#expiryTimer = undefined;
     if (this.#mount) render(nothing, this.#mount);
@@ -77,12 +83,13 @@ export class FormaRetainedShortStory extends FormaElement {
 
   #sync = () => {
     if (!this.isConnected) return;
-    const route = this.store.route.get();
+    // In-page anchors change focus, not the retained selection or its read owner.
+    const route = this.store.route.get().split("#", 1)[0] ?? "";
     if (route !== this.#route) {
       this.#clear();
       this.#route = route;
       const pathname = routePathname(route);
-      this.#output = pathname === "/make/scene" ? "scene" : pathname === "/make/slides" ? "slides" : "short_story";
+      this.#output = pathname === "/make/scene" ? "scene" : pathname === "/make/slides" ? "slides" : pathname === "/make/storyboard" ? "storyboard" : pathname === "/make/model3d" ? "model3d" : "short_story";
       this.#withdrawn = false;
       this.#attempted = false;
     }
@@ -118,7 +125,7 @@ export class FormaRetainedShortStory extends FormaElement {
       const now = this.store.projection.get();
       const selected = now.libraryArtifacts.find(value => value.id === selection.artifactId);
       return this.isConnected && this.#owner === owner && this.#epoch === owner.epoch && !owner.abort.signal.aborted
-        && !this.#withdrawn && this.store.route.get() === route && personal()
+        && !this.#withdrawn && this.store.route.get().split("#", 1)[0] === route && personal()
         && this.store.session.get()?.user.userId === actorId && this.store.authorizationScopeActive(authorization)
         && this.store.sourceOwnershipActive(source) && !this.store.loading.get()
         && now.projectId === projectId && now.documentId === selection.documentId
@@ -145,9 +152,17 @@ export class FormaRetainedShortStory extends FormaElement {
         ? await readRetainedShortStory(owner.selection, controls)
         : await readNativeRetainedOutput({ output: owner.output, selection: owner.selection }, controls);
       let slidesRenderer: SlidesRenderer | null = null;
+      let storyboardRenderer: StoryboardRenderer | null = null;
+      let model3dRenderer: Model3dRenderer | null = null;
       if (owner.current() && result.kind === "native-retained-output" && result.output === "slides") {
         // The story/Scene path does not load the slide leaf or its presentation dependencies.
         slidesRenderer = (await import("./native-retained-slides.ts")).renderNativeRetainedSlides;
+      }
+      if (owner.current() && result.kind === "native-retained-output" && result.output === "storyboard") {
+        storyboardRenderer = (await import("./native-retained-storyboard.ts")).renderNativeRetainedStoryboard;
+      }
+      if (owner.current() && result.kind === "native-retained-output" && result.output === "model3d") {
+        model3dRenderer = (await import("./native-retained-model3d.ts")).renderNativeRetainedModel3d;
       }
       if (!owner.current() || !(Date.parse(result.expiresAt) > Date.now())) {
         if (this.#owner === owner) this.#withdraw();
@@ -155,6 +170,8 @@ export class FormaRetainedShortStory extends FormaElement {
       }
       this.#result = result;
       this.#slidesRenderer = slidesRenderer;
+      this.#storyboardRenderer = storyboardRenderer;
+      this.#model3dRenderer = model3dRenderer;
       this.#phase = "ready";
       this.#armExpiry(owner, result);
       this.requestUpdate();
@@ -194,6 +211,8 @@ export class FormaRetainedShortStory extends FormaElement {
   #label() {
     return this.#output === "scene" ? this.i18n.t("artifact.scene.label", "Scene")
       : this.#output === "slides" ? this.i18n.t("artifact.slides.label", "Slides")
+      : this.#output === "storyboard" ? this.i18n.t("artifact.storyboard.label", "Storyboard")
+      : this.#output === "model3d" ? this.i18n.t("model3d.label", "3D model")
       : this.i18n.t("artifact.short_story.label", "Short story");
   }
   protected override updated() {
@@ -203,6 +222,14 @@ export class FormaRetainedShortStory extends FormaElement {
     if (!this.#ready() || !result) { render(nothing, this.#mount); return; }
     if (result.kind === "native-retained-output" && result.output === "slides") {
       render(this.#slidesRenderer ? this.#slidesRenderer(result, this.i18n) : nothing, this.#mount);
+      return;
+    }
+    if (result.kind === "native-retained-output" && result.output === "storyboard") {
+      render(this.#storyboardRenderer ? this.#storyboardRenderer(result, this.i18n) : nothing, this.#mount);
+      return;
+    }
+    if (result.kind === "native-retained-output" && result.output === "model3d") {
+      render(this.#model3dRenderer ? this.#model3dRenderer(result, this.i18n) : nothing, this.#mount);
       return;
     }
     const content = result.kind === "native-retained-short-story" ? result.contentMarkdown : result.content.content_markdown;
@@ -217,7 +244,7 @@ export class FormaRetainedShortStory extends FormaElement {
     const canEdit = role === "creator" || role === "admin";
     return html`<section class="retained-story-page" aria-label=${this.#label()}>
       <header class="retained-story-toolbar"><h1>${this.#label()}</h1>
-        ${ready && this.#result ? html`<a class="button secondary" href=${this.#href(this.#result.selection)} @click=${this.#handoff} @auxclick=${this.#handoff}>${canEdit ? this.i18n.t("retainedStory.editInForma", "Edit in Forma") : this.i18n.t("retainedStory.openInForma", "Open in Forma")}</a>` : nothing}
+        ${ready && this.#result ? html`<a class="button secondary" href=${this.#href(this.#result.selection)} @click=${this.#handoff} @auxclick=${this.#handoff}>${canEdit && this.#output !== "model3d" ? this.i18n.t("retainedStory.editInForma", "Edit in Forma") : this.i18n.t("retainedStory.openInForma", "Open in Forma")}</a>` : nothing}
       </header>
       <p class="retained-story-status" role="status" aria-live="polite">${ready ? "" : pending ? this.i18n.t("status.loading", "Loading") : this.#output === "short_story" ? this.i18n.t("retainedStory.unavailable", "Story unavailable") : this.i18n.system("Unavailable")}</p>
       ${!ready && !pending ? html`<button type="button" class="button secondary retained-story-retry" @click=${this.#retry}>${this.i18n.t("retainedStory.reload", "Reload")}</button>` : nothing}
