@@ -10769,6 +10769,29 @@
             },
             {
               "kind": "method",
+              "name": "openNativeShortStory",
+              "parameters": [
+                {
+                  "name": "documentId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current?: (stage: CreativePreparationStage) => boolean; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "openRender",
               "parameters": [
                 {
@@ -10795,6 +10818,16 @@
                   "text": "Promise<boolean>"
                 }
               }
+            },
+            {
+              "kind": "method",
+              "name": "retireNativeShortStory",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Parent calls before the result pane becomes hidden, including responsive changes."
             },
             {
               "kind": "field",
@@ -12792,8 +12825,8 @@
           "name": "FormaRetainedShortStory",
           "tagName": "forma-retained-short-story",
           "customElement": true,
-          "summary": "Short story",
-          "description": "Short story",
+          "summary": "Output",
+          "description": "Output",
           "superclass": {
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"

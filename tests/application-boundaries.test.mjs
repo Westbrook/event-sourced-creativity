@@ -3,6 +3,19 @@ import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { APPLICATIONS, CREATE_ROUTE_PREFIX, SITE_ROUTE_ENTRIES, applicationEntryPath, applicationIdFromRoute, navigationItemActive, resolveServerRoute } from "../src/platform/applications.ts";
 
+test("retained output routes use the existing Creative entry without accepting sibling paths", () => {
+  for (const path of ["/make/short-story", "/make/scene", "/make/slides"]) {
+    for (const route of [path, path + "/?document=doc-a&artifact=artifact-a&revision=0&sha256=" + "a".repeat(64)]) {
+      assert.deepEqual(resolveServerRoute(route), { application: "creative", entryPath: "/creative/", canonicalFamily: path });
+      assert.equal(applicationIdFromRoute(route), "creative");
+      assert.equal(applicationEntryPath(route), "/creative/");
+    }
+    assert.equal(resolveServerRoute(path + "/extra"), null);
+    assert.equal(resolveServerRoute(path + "-extra"), null);
+  }
+  for (const path of ["/make/video", "/make/model3d", "/make/storyboard"]) assert.equal(resolveServerRoute(path), null);
+});
+
 const sourceFiles=async(directory)=>{
   const entries=await readdir(directory,{withFileTypes:true});
   const nested=await Promise.all(entries.map((entry)=>entry.isDirectory()?sourceFiles(new URL(`${entry.name}/`,directory)):entry.name.endsWith(".ts")?[new URL(entry.name,directory)]:[]));

@@ -3,6 +3,25 @@ import test from "node:test";
 import { artifactFocusRoute, artifactFocusOptionsFromRoute, projectTaskDocumentIdFromRoute, documentContextBlockFromRoute, documentContextBlockRoute, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 import { applicationEntryPath, applicationIdFromRoute } from "../src/platform/applications.ts";
 
+test("retained output task routes preserve exact Document and artifact Edit selection", () => {
+  const options = { expectedRevision: 3, intent: "inspect", expectedContentSha256: "a".repeat(64) };
+  for (const path of ["/make/short-story", "/make/scene", "/make/slides"]) {
+    for (const documents of [["doc-a"], ["文書/د"], [""], ["doc-a", "doc-b"]]) {
+      const route = new URL(path + "/", "https://fixture.invalid");
+      for (const document of documents) route.searchParams.append("document", document);
+      const current = route.pathname + route.search;
+      assert.equal(documentViewFromRoute(current), null, "a retained read never opens a Document editor");
+      assert.equal(projectTaskDocumentIdFromRoute(current), documents.length === 1 ? documents[0] : "");
+      const href = artifactFocusRoute("artifact-one", "", options, current);
+      assert.deepEqual(new URL(href, route).searchParams.getAll("document"), documents);
+      assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+      assert.deepEqual(libraryFocusFromRoute(href), { kind: "artifact", id: "artifact-one" });
+    }
+    assert.equal(projectTaskDocumentIdFromRoute(path), null);
+    assert.equal(projectTaskDocumentIdFromRoute(path + "/extra?document=doc-a"), null);
+  }
+});
+
 test("document views use a readable path for the selected durable document", () => {
   const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"], ["/studio/chat", "chat"]];
   for (const [path, view] of paths) {

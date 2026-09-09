@@ -1,14 +1,20 @@
+import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
+import { parseNativeSceneCompletionUrl, validateNativeSceneCompletion, type NativeSceneHandle } from "../src/model/native-scene-completion.ts";
 import { parseNativeStoryCompletionUrl, validateNativeStoryCompletion, type NativeStoryHandle } from "../src/model/native-short-story-generation.ts";
 import {
   parseRetainedStoryRequestUrl, validateRetainedStoryDto,
   RETAINED_STORY_JSON_MAX_BYTES,
-  type RetainedStoryDto,
 } from "../src/model/retained-short-story.ts";
+import {
+  parseNativeRetainedOutputRequestUrl, projectNativeRetainedOutput,
+  type NativeRetainedOutputKind, type NativeRetainedOutputTarget,
+} from "../src/model/native-retained-output.ts";
 import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy.ts";
 import { configuredPilotAdmissionGuard, POLICY_VERSION } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 const AUTH_BYTES = 128 * 1024;
+const MAX_NATIVE_COMPLETION_ATTEMPTS = documentJobMaxAttempts("render_document");
 const EVENT_COUNT = 512;
 const EVENT_BYTES = 1024 * 1024;
 const EVENT_ROW_BYTES = 64 * 1024;
@@ -129,7 +135,8 @@ function eventSnapshot(rows: EventRow[]): string {
   return snapshot;
 }
 
-function selectNative(rows: EventRow[], selection: { documentId:string; artifactId:string; revision:number; contentSha256?:string }, ownerId: string, completionId?:string) {
+function selectNative(rows: EventRow[], selection: { documentId:string; artifactId:string; revision:number; contentSha256?:string }, ownerId: string, completionId?:string,
+  expectedKind: "short_story" | NativeRetainedOutputKind = "short_story") {
   const decoded = rows.map(row => {
     const payload = record(JSON.parse(row.payload));
     if (!payload) throw unavailable();
@@ -150,7 +157,7 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
   if (completionId !== undefined && completion.row.event_id !== completionId) throw unavailable();
   const payload = completion.payload;
   if (payload.document_id !== selection.documentId || payload.project_id !== projectId
-    || payload.artifact_kind !== "short_story" || payload.requested_by_user_id !== ownerId
+    || payload.artifact_kind !== expectedKind || payload.requested_by_user_id !== ownerId
     || typeof payload.content_ref !== "string" || !opaque.test(payload.content_ref)
     || completion.row.sequence <= document.row.sequence) throw unavailable();
   const contentId = payload.content_ref;
@@ -183,7 +190,13 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
         || row.secret_document !== selection.documentId || row.secret_project !== projectId) throw unavailable();
     } else if (row.secret_id !== null) throw unavailable();
   }
-  return Object.freeze({ projectId, contentId });
+  let sceneMedium: unknown = null;
+  if (expectedKind === "scene") {
+    const configured = record(payload.settings)?.scene_medium;
+    if (payload.scene_medium !== undefined && configured !== undefined && payload.scene_medium !== configured) throw unavailable();
+    sceneMedium = payload.scene_medium ?? configured ?? null;
+  }
+  return Object.freeze({ projectId, contentId, sceneMedium });
 }
 
 function personalContentGuard() {
@@ -203,7 +216,9 @@ function personalContentGuard() {
 // SQL JSON evaluation/scan work is not bounded by this transport cap.
 const jobCte = `story_job AS (
   SELECT job.* FROM document_jobs job WHERE job.job_id=? AND job.document_id=? AND job.owner_id=? AND job.stream_id=?
-    AND job.kind='render_document' AND job.status='completed' AND job.source_surface='document' AND job.correlation_id=job.job_id
+    AND job.kind='render_document' AND job.status='completed' AND job.source_surface='document'
+    AND typeof(job.attempt_count)='integer' AND job.attempt_count BETWEEN 1 AND ${MAX_NATIVE_COMPLETION_ATTEMPTS}
+    AND job.correlation_id=(job.job_id||':attempt:'||CAST(job.attempt_count AS TEXT))
     AND job.error_message IS NULL AND job.completed_at IS NOT NULL
     AND typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))=24
     AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -215,22 +230,64 @@ const jobCte = `story_job AS (
     AND json_type(job.result_json,'$.appendedEventIds')='array'
     AND NOT EXISTS(SELECT 1 FROM project_resource_scopes scope WHERE
       (scope.resource_kind='job' AND scope.resource_id=job.job_id) OR (scope.resource_kind='document' AND scope.resource_id=job.document_id))
-    AND (SELECT COUNT(*) FROM events event WHERE event.stream_id=job.stream_id AND event.correlation_id=job.job_id
+    AND (SELECT COUNT(*) FROM events event WHERE event.stream_id=job.stream_id AND event.correlation_id=job.correlation_id
       AND event.type='DocumentRenderCompleted')=1
 ), story_job_json AS (
-  SELECT json_object('jobId',job_id,'documentId',document_id,'artifactId',json_extract(result_json,'$.artifactId'),
+  SELECT json_object('jobId',job_id,'documentId',document_id,'correlationId',correlation_id,'attemptCount',attempt_count,'artifactId',json_extract(result_json,'$.artifactId'),
     'appendedEventIds',json_extract(result_json,'$.appendedEventIds'),'expiresAt',expires_at,
-    'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.job_id
+    'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.correlation_id
       AND type='DocumentRenderCompleted' AND actor='worker:renderer' AND client_id='server:document-job:render_document')) AS job_json
   FROM story_job
 ), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=16384)`;
 
-async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle, ownerId:string, streamId:string) {
+// Scene automatic count is absent or numeric one; its retained consent and actual
+// one-item projection remain separate requirements. Both kinds bind the exact run attempt.
+const sceneJobCte = `story_job AS (
+  SELECT job.* FROM document_jobs job WHERE job.job_id=? AND job.document_id=? AND job.owner_id=? AND job.stream_id=?
+    AND job.kind='render_document' AND job.status='completed' AND job.source_surface='document'
+    AND typeof(job.attempt_count)='integer' AND job.attempt_count BETWEEN 1 AND ${MAX_NATIVE_COMPLETION_ATTEMPTS}
+    AND job.correlation_id=(job.job_id||':attempt:'||CAST(job.attempt_count AS TEXT))
+    AND job.error_message IS NULL AND job.completed_at IS NOT NULL
+    AND typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))=24
+    AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    AND json_valid(job.request_json) AND json_extract(job.request_json,'$.artifactKind')='scene'
+    AND json_extract(job.request_json,'$.productionMode')='manual'
+    AND (json_type(job.request_json,'$.itemCount') IS NULL
+      OR (json_type(job.request_json,'$.itemCount')='integer' AND json_extract(job.request_json,'$.itemCount')=1))
+    AND json_extract(job.request_json,'$.sceneRequestId')=job.job_id
+    AND json_extract(job.request_json,'$.sceneCostConsent.version')='scene-cost-v1'
+    AND json_type(job.request_json,'$.sceneCostConsent.confirmed')='true'
+    AND json_extract(job.request_json,'$.sceneCostConsent.requestId')=job.job_id
+    AND json_extract(job.request_json,'$.sceneCostConsent.actorUserId')=job.owner_id
+    AND json_extract(job.request_json,'$.sceneCostConsent.documentId')=job.document_id
+    AND json_extract(job.request_json,'$.sceneCostConsent.productionMode')='manual'
+    AND json_type(job.request_json,'$.sceneCostConsent.itemCount')='integer'
+    AND json_extract(job.request_json,'$.sceneCostConsent.itemCount')=1
+    AND json_type(job.request_json,'$.outputExecution') IS NULL AND json_type(job.request_json,'$.workflowId') IS NULL
+    AND json_type(job.request_json,'$.workflowStageId') IS NULL AND json_type(job.request_json,'$.workflowSources') IS NULL
+    AND json_valid(job.result_json) AND length(CAST(job.result_json AS BLOB))<=${AUTH_BYTES}
+    AND json_extract(job.result_json,'$.artifactKind')='scene'
+    AND json_type(job.result_json,'$.appendedEventIds')='array'
+    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes scope WHERE
+      (scope.resource_kind='job' AND scope.resource_id=job.job_id) OR (scope.resource_kind='document' AND scope.resource_id=job.document_id))
+    AND (SELECT COUNT(*) FROM events event WHERE event.stream_id=job.stream_id AND event.correlation_id=job.correlation_id
+      AND event.type='DocumentRenderCompleted')=1
+), story_job_json AS (
+  SELECT json_object('jobId',job_id,'documentId',document_id,'correlationId',correlation_id,'attemptCount',attempt_count,'artifactId',json_extract(result_json,'$.artifactId'),
+    'appendedEventIds',json_extract(result_json,'$.appendedEventIds'),'expiresAt',expires_at,
+    'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.correlation_id
+      AND type='DocumentRenderCompleted' AND actor='worker:renderer' AND client_id='server:document-job:render_document')) AS job_json
+  FROM story_job
+), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=16384)`;
+
+async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle, ownerId:string, streamId:string, scene=false) {
   const bindings=[handle.jobId,handle.documentId,ownerId,streamId];
-  const raw=await env.DB.prepare(`WITH ${jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
+  const raw=await env.DB.prepare(`WITH ${scene ? sceneJobCte : jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
   if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>16384)throw unavailable();
   const row=record(JSON.parse(raw.job_json));
   if(!row||row.jobId!==handle.jobId||row.documentId!==handle.documentId
+    ||typeof row.attemptCount!=="number"||!Number.isSafeInteger(row.attemptCount)||row.attemptCount<1||row.attemptCount>MAX_NATIVE_COMPLETION_ATTEMPTS
+    ||row.correlationId!==`${handle.jobId}:attempt:${row.attemptCount}`
     ||typeof row.artifactId!=="string"||!opaque.test(row.artifactId)
     ||typeof row.completionId!=="string"||!opaque.test(row.completionId)
     ||!Array.isArray(row.appendedEventIds)||row.appendedEventIds.length<1||row.appendedEventIds.length>128
@@ -247,10 +304,10 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle, ownerI
  * here are fixed SELECTs; no provider, MEDIA, budget, repair or writer entry.
  * Runtime/import/SQL qualification is separate from this detached source.
  */
-export async function handleRetainedStoryRead(request: Request, env: WorkerEnv): Promise<Response> {
+async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativeOutput: NativeRetainedOutputTarget | null, sceneHandle: NativeSceneHandle | null = null): Promise<Response> {
   if (request.method !== "GET") return error("method_not_allowed", 405);
-  const handle = parseNativeStoryCompletionUrl(request.url);
-  let selection = parseRetainedStoryRequestUrl(request.url);
+  const handle = sceneHandle ?? (nativeOutput ? null : parseNativeStoryCompletionUrl(request.url));
+  let selection = nativeOutput?.selection ?? parseRetainedStoryRequestUrl(request.url);
   if (!selection && !handle) return error("invalid_retained_story_selection", 400);
   try {
     const identity = hostedIdentity(request);
@@ -272,12 +329,12 @@ export async function handleRetainedStoryRead(request: Request, env: WorkerEnv):
     });
     if (access.identityPolicyDeniedCustody) return error("retained_story_access_denied", 403);
     const streamId = `creative:${identity.userId}`;
-    const job = handle ? await completedStoryJob(env, handle, identity.userId, streamId) : null;
+    const job = handle ? await completedStoryJob(env, handle, identity.userId, streamId, Boolean(sceneHandle)) : null;
     const target = job && handle ? {documentId:handle.documentId,artifactId:job.artifactId,revision:0} : selection!;
     const events = await env.DB.prepare(`WITH ${eventCte} SELECT * FROM event_rows ORDER BY sequence`)
       .bind(streamId).all<EventRow>();
     const snapshot = eventSnapshot(events.results);
-    const native = selectNative(events.results, target, identity.userId, job?.completionId);
+    const native = selectNative(events.results, target, identity.userId, job?.completionId, sceneHandle ? "scene" : nativeOutput?.output ?? "short_story");
     const contentBindings = [native.contentId, identity.userId, native.projectId, target.documentId, target.artifactId];
     const source = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${personalContentGuard()}`)
       .bind(...contentBindings).first<{ content: string; expires_at: string }>();
@@ -288,11 +345,18 @@ export async function handleRetainedStoryRead(request: Request, env: WorkerEnv):
     const body = record(JSON.parse(source.content));
     if (!body || typeof body.title !== "string" || typeof body.content_markdown !== "string"
       || !Array.isArray(body.items)) throw unavailable();
-    const dto: RetainedStoryDto | null = validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
-      selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
-    if (!dto) throw unavailable();
-    const completion = job && handle ? validateNativeStoryCompletion({schemaVersion:1,kind:"native-short-story-completion",handle,
-      selection,expiresAt:Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at},handle) : null;
+    const outputTarget = sceneHandle ? { output: "scene" as const, selection } : nativeOutput;
+    const dto = outputTarget
+      ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium)
+      : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
+        selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
+    if (!dto || sceneHandle && body.items.length !== 1) throw unavailable();
+    const completionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
+    const completion = job && handle ? sceneHandle
+      ? validateNativeSceneCompletion({schemaVersion:1,kind:"native-scene-completion",handle,
+        selection,expiresAt:completionExpiry},handle)
+      : validateNativeStoryCompletion({schemaVersion:1,kind:"native-short-story-completion",handle,
+        selection,expiresAt:completionExpiry},handle) : null;
     if (job && !completion) throw unavailable();
     const serialized = JSON.stringify(completion ?? dto);
     if (bytes(serialized) > RETAINED_STORY_JSON_MAX_BYTES) throw unavailable();
@@ -300,7 +364,7 @@ export async function handleRetainedStoryRead(request: Request, env: WorkerEnv):
     // source-redaction/scope metadata, personal custody and exact raw content.
     // The witness is a closed array generated above, never caller-supplied SQL.
     const comparisons = eventColumns.map((name, index) => `actual.${name} IS NOT json_extract(expected.value,'$[${index}]')`).join(" OR ");
-    const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${jobCte}`:""},
+    const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${sceneHandle ? sceneJobCte : jobCte}`:""},
       expected_events AS (SELECT value FROM json_each(?))
       SELECT 1 AS admitted FROM private_content WHERE ${personalContentGuard()}
         AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?
@@ -320,4 +384,19 @@ export async function handleRetainedStoryRead(request: Request, env: WorkerEnv):
     // Missing schema, adapter failures and invalid stored JSON remain opaque.
     return error("retained_story_unavailable", 503);
   }
+}
+
+/** Preserve the original Short Story read and completed-job protocol. */
+export function handleRetainedStoryRead(request: Request, env: WorkerEnv): Promise<Response> {
+  return readCurrentRetainedNative(request, env, null);
+}
+
+/** Scene and Slides use the same current personal read witness, with no generation or media authority. */
+export function handleNativeRetainedOutputRead(request: Request, env: WorkerEnv): Promise<Response> {
+  if (request.method !== "GET") return Promise.resolve(error("method_not_allowed", 405));
+  const sceneHandle = parseNativeSceneCompletionUrl(request.url);
+  if (sceneHandle) return readCurrentRetainedNative(request, env, null, sceneHandle);
+  const target = parseNativeRetainedOutputRequestUrl(request.url);
+  if (!target) return Promise.resolve(error("invalid_native_retained_output_selection", 400));
+  return readCurrentRetainedNative(request, env, target);
 }

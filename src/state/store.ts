@@ -1,3 +1,4 @@
+import { captureNativeStorySetup, acknowledgedNativeStoryHandle, type NativeStorySetup, type NativeStorySubmission, type NativeStoryHandle, type NativeStoryFailureReason } from "../model/native-short-story-generation.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, savedPresentationReceiptCheckResponse, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../model/document-render-guidance.ts";
 import { validateModel3dRequest, estimateModel3dCostMicrousd, type Model3dSettings } from "../model/model3d";
@@ -58,7 +59,7 @@ import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, rec
 import { accountSnapshotFenceCurrent, captureAccountSnapshotFence, clearAccountSnapshots, clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotFence, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
 import { canvasOfflineQueue } from "../sync/canvas-offline-queue";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
-import { routeCapabilities } from "./route-capabilities";
+import { isRetainedOutputReaderRoute, routeCapabilities } from "./route-capabilities";
 import type { FormaCapability } from "../platform/capabilities";
 import { applicationIdFromRoute, type ApplicationId } from "../platform/applications";
 import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
@@ -67,6 +68,12 @@ import type { PresentationCandidateRevisionRequest, PresentationCandidateRevisio
 // State-only cleanup may preserve focus; this never bypasses action/current guards.
 type WorkspaceNavigationOptions = { replace?:boolean; preserveFocus?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string; onOriginHandoff?:()=>boolean; onDestinationSource?:(source:CapturedSourceOwnership)=>boolean };
 const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options.current||options.current())&&(!options.focus||options.focus.current());
+type DocumentArtifactRenderOptions = {model3dPrompt?:string;model3dPromptSource?:"document";model3dAdaptation?:ReturnType<typeof model3dAdaptationReceipt>;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void};
+// Internal classification only; legacy callers still receive the same localized Error.message.
+class GenerationBudgetAdmissionError extends Error {
+  constructor(readonly reason:"budget-blocked"|"user-canceled",message:string){super(message);}
+}
+type NativeStoryObserver = { current:()=>boolean; onDispatch:()=>void; acknowledged:(handle:NativeStoryHandle,reused:boolean)=>void; failed:(reason:NativeStoryFailureReason)=>void };
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
 export type CapturedSourceOwnership = Readonly<{ authorization:CapturedAuthorizationScope; generation:number }>;
@@ -360,6 +367,8 @@ export class FormaStore {
   #collaborationPollTimer = 0;
   #jobsSyncing = false;
   #jobSyncScope = "";
+  #jobFeedRevision = 0;
+  #jobSyncRevision = 0;
   #jobResyncRequested = false;
   #jobPollFailures = 0;
   #jobPollIssueNotified = false;
@@ -420,12 +429,13 @@ export class FormaStore {
     if(this.planningConsent.get()&&(!this.#scopeStillActive(this.#planningConsentScope)||this.route.get()!==this.#planningConsentRoute))this.#finishPlanningConsent(false);
     this.#listeners.forEach((listener) => listener());
   }
-  #publishAppended(events:CreativeEvent[],read?:EventSourceRead){
+  #publishAppended(events:CreativeEvent[],read?:EventSourceRead,readOnly=false){
     if(!events.length)return;
     if(this.#sourceRetired)return;
     if(!read)this.#sourcePublishedRead=++this.#sourceReadSequence;
     if (events.some((event) => event.type.startsWith("Output") || /^(?:Block|Document|Rights|Artifact|GenerationCompleted)/.test(event.type))) this.outputRequirements.invalidate();
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
+    if(readOnly)return;
     if(session?.projectContext&&events.some((event)=>["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","DocumentArtifactEdited","DocumentRenderCompleted","BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","RightsAsserted"].includes(event.type))){void this.syncProjectNotifications();void this.syncReviewInbox();}
     else if(session?.projectContext&&events.some((event)=>event.type==="OutputRenamed"))void this.syncReviewInbox();
     window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));
@@ -765,8 +775,8 @@ export class FormaStore {
     this.notify();
   }
   /** Feed omission is not deletion. Recheck the exact private identities still shown elsewhere. */
-  async #revalidateMissingAdaptivePlans(jobs:DocumentJob[],authorization:string,previous=new Map<string,DocumentJob>()){
-    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return [];}
+  async #revalidateMissingAdaptivePlans(jobs:DocumentJob[],authorization:string,previous=new Map<string,DocumentJob>(),feedCurrent=()=>true){
+    const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)||!feedCurrent()){return [];}
     type Target={documentId:string;canvasId:string|null;sourceSurface?:string;requestKey?:string;planningProjectScope?:boolean;planningLocale?:string};
     const targets=new Map<string,Target>(),present=new Set(jobs.map(job=>job.jobId));
     const remember=(id:string,target:Target)=>{if(!id||present.has(id))return;const known=previous.get(id)??this.#jobDetails.get(id),identity=known??{...target,jobId:id,kind:"structure_adaptive" as const,planningExecutionId:id};this.#rememberPlanningRecovery(identity);targets.set(id,{documentId:identity.documentId,canvasId:identity.canvasId??null,sourceSurface:identity.sourceSurface,requestKey:identity.requestKey,planningProjectScope:identity.planningProjectScope,planningLocale:identity.planningLocale});};
@@ -779,8 +789,9 @@ export class FormaStore {
     const inspected=await Promise.all([...targets].map(async([id,target])=>{
       const revision=this.#planningRecoveryIdentities.get(id)?.revision,terminalRevision=this.#planningRecoveryIdentities.get(id)?.terminalRevision??0;
       const deliberateReadRevision=this.#planningRecoveryIdentities.get(id)?.deliberateReadRevision??0,startedAt=this.#planningRecoverySequence;
+      if(!feedCurrent())return null;
       if(revision===undefined){this.#clearAdaptivePrivatePresentation(id);return null;}
-      const currentRead=()=>this.#planningRecoveryIdentities.get(id)?.revision===revision&&(this.#planningRecoveryIdentities.get(id)?.deliberateReadRevision??0)===deliberateReadRevision&&(this.#planningRecoveryIdentities.get(id)?.withdrawalRevision??0)<=startedAt&&(this.#planningRecoveryIdentities.get(id)?.certifiedReadRevision??0)<=startedAt;
+      const currentRead=()=>feedCurrent()&&this.#planningRecoveryIdentities.get(id)?.revision===revision&&(this.#planningRecoveryIdentities.get(id)?.deliberateReadRevision??0)===deliberateReadRevision&&(this.#planningRecoveryIdentities.get(id)?.withdrawalRevision??0)<=startedAt&&(this.#planningRecoveryIdentities.get(id)?.certifiedReadRevision??0)<=startedAt;
       try{
         const response=await fetch(`/api/document-jobs/${encodeURIComponent(id)}?inspection=1`);
         this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
@@ -793,6 +804,8 @@ export class FormaStore {
           &&projection.documents.some(document=>document.id===job.documentId&&document.projectId===projection.projectId));
         const withdrawn=matches&&(job?.result?.planningReviewAvailable===false||job?.result?.resultUnavailable===true);
         if(withdrawn){this.#withdrawAdaptiveRead(id,startedAt);return null;}
+        // Exact negative evidence still retires private bytes; route ownership
+        // controls only positive feed publication and further work.
         if(!currentRead())return null;
         if(!job||!matches||!(job.status==="completed"&&job.result?.structure)&&job.result?.planningReviewAvailable!==true)throw new Error("planning_result_unavailable");
         const current=this.planningConsent.get(),currentId=current?.recoveryExecutionId??(current?.submitted||current?.quote?.status!=="quoted"?current?.quote?.executionId:undefined);
@@ -802,13 +815,14 @@ export class FormaStore {
         // epoch. Do not republish its older status or financial receipt. A
         // genuinely certified completion and explicit withdrawal stay distinct.
         if(job.status!=="completed"&&(this.#planningRecoveryIdentities.get(id)?.terminalRevision??0)!==terminalRevision)return null;
-        this.#rememberPlanningRecovery(job);this.#observeAdaptivePlanningJob(job);this.#cacheDocumentJobDetail(job);
+        this.#rememberPlanningRecovery(job);this.#observeAdaptivePlanningJob(job);if(!feedCurrent())return null;this.#cacheDocumentJobDetail(job);
         const certified=this.#planningRecoveryIdentities.get(id);if(certified)certified.detailRevision=certified.revision;
         this.#trimDocumentJobDetails();
         return{job,revision:this.#planningRecoveryIdentities.get(id)?.revision,terminalRevision:this.#planningRecoveryIdentities.get(id)?.terminalRevision??0,deliberateReadRevision};
       }catch{if((this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))&&currentRead())this.#clearAdaptivePrivatePresentation(id);return null;}
     }));
     this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+    if(!feedCurrent())return [];
     return inspected.filter((entry):entry is {job:DocumentJob;revision:number;terminalRevision:number;deliberateReadRevision:number}=>entry!==null&&entry.revision!==undefined&&this.#planningRecoveryIdentities.get(entry.job.jobId)?.revision===entry.revision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.terminalRevision??0)===entry.terminalRevision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.deliberateReadRevision??0)===entry.deliberateReadRevision);
   }
   #canPresentAdaptivePlanningJob(job:DocumentJob){
@@ -1296,10 +1310,13 @@ export class FormaStore {
     }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}
   }
   #flushPendingJobNotices(){
-    if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;
+    if(!this.#jobFeedCurrent()||document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;
+    const feedRevision=this.#jobFeedRevision,sourceOwner=this.captureSourceOwnership();
     const jobs=this.#pendingJobNotices.splice(0),locale=currentFormaLocale(),source="{count} background document operations finished.";
     const combined=(locale.messages[formaSystemMessageId(source)]??source).replace("{count}",new Intl.NumberFormat(locale.formatLocale).format(jobs.length));
     this.toast(jobs.length===1?this.#jobNotice(jobs[0]):combined);
+    if(!this.sourceOwnershipActive(sourceOwner))return;
+    if(!this.#jobFeedCurrent(feedRevision)){this.#pendingJobNotices.unshift(...jobs);return;}
     for(const job of jobs)if(!job.canvasId||this.#jobResultVisible(job))void this.#ackJob(job.jobId);
   }
   #outputSourceProjectId(){return this.#sourceRetired?this.#retiredSourceProjectId:this.projection.get().projectId||null;}
@@ -1857,8 +1874,10 @@ export class FormaStore {
       this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};
     }
   }
-  async #refreshEvents(options:{fromStart?:boolean}={}){
+  async #refreshEvents(options:{fromStart?:boolean;readOnly?:boolean;current?:()=>boolean}={}){
+    if(options.current&&!options.current())return false;
     if(this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration)await this.#reconcileProjectContextCookie();
+    if(options.current&&!options.current())return false;
     const read=this.#beginSourceRead("full");
     const baseProfile=this.#historyProfile,wasRetired=this.#sourceRetired,previous=wasRetired?[]:this.events.get(),known=new Set(previous.map(event=>event.eventId));
     const after=options.fromStart===true||wasRetired?0:this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();
@@ -1868,16 +1887,17 @@ export class FormaStore {
     if(body.read.from===0)replace=true;
     const changed=wasRetired||replace||body.events.length>0||body.head!==after||Object.keys(body.content).length>0;
     const complete=replace?body.events:[...previous,...body.events.filter(event=>!known.has(event.eventId))];
+    if(options.current&&!options.current())return false;
     this.#publishSourceRead(body,()=>{
       if(changed){this.events.set(complete);const confirmed=this.#clientEventIds(complete);
         if(confirmed.size)this.optimisticEvents.set(this.optimisticEvents.get().filter(event=>!confirmed.has(String(event.payload.client_event_id??""))));
         if(replace||Object.keys(body.content).length)this.#mergeSourceContent(body.read,body.content,replace);
         this.head.set(body.head);if(replace)this.#historyProfile=body.read.profile;}
     },replace?body.read.profile:eventProfileRank(baseProfile)<eventProfileRank(body.read.profile)?baseProfile:body.read.profile);
-    if(changed)this.#publishAppended(complete.filter(event=>!known.has(event.eventId)),body.read);
+    if(changed)this.#publishAppended(complete.filter(event=>!known.has(event.eventId)),body.read,options.readOnly);
     return changed;
   }
-  async refreshEvents(options:{fromStart?:boolean}={}){if(await this.#refreshEvents(options))this.notify();}
+  async refreshEvents(options:{fromStart?:boolean;readOnly?:boolean;current?:()=>boolean}={}){if(await this.#refreshEvents(options))this.notify();}
 
   /** One direct receipt-bound transport. Never appendBatch, Canvas queue or optimistic events. */
   async canvasArrangementRequest(command: OutcomeArrangementCommand, controls: { current?: () => boolean; onDispatch?: () => void; onNotDispatchedAtConfirmation?: () => void } = {}): Promise<OutcomeArrangementHttp> {
@@ -2238,8 +2258,9 @@ export class FormaStore {
   #canRequestProjectOutputs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.output.request");}
   #canReadProjectJobs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.read")||permissions.includes("project.output.request");}
   canPreparePlanning(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.author")&&permissions.includes("project.output.request");}
-  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canReadProjectJobs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
-  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get()||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
+  #jobFeedCurrent(revision=this.#jobFeedRevision){return revision===this.#jobFeedRevision&&!isRetainedOutputReaderRoute(this.route.get());}
+  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.#jobFeedCurrent()||!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canReadProjectJobs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
+  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(!this.#jobFeedCurrent()||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){
     if(!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canRequestProjectOutputs())return;
@@ -2255,18 +2276,22 @@ export class FormaStore {
   }
   async #driveDocumentJob(job:DocumentJob){const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();if(!this.sourceOwnershipActive(sourceOwner)||this.#sourcePausedJobs.get(job.jobId)===authorization)return;this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
 async syncDocumentJobs(){
-    const sourceOwner=this.captureSourceOwnership();
-    if(!this.sourceOwnershipActive(sourceOwner)||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);return;}
+    const sourceOwner=this.captureSourceOwnership(),feedRevision=this.#jobFeedRevision;
+    if(!this.#jobFeedCurrent(feedRevision)||!this.sourceOwnershipActive(sourceOwner)||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}
     const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";
-    if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}
-    this.#jobsSyncing=true;this.#jobSyncScope=scope;
+    if(this.#jobsSyncing){if(scope!==this.#jobSyncScope||feedRevision!==this.#jobSyncRevision)this.#jobResyncRequested=true;return;}
+    this.#jobsSyncing=true;this.#jobSyncScope=scope;this.#jobSyncRevision=feedRevision;
+    const readCurrent=()=>this.#jobFeedCurrent(feedRevision)&&this.sourceOwnershipActive(sourceOwner)
+      &&this.#scopeStillActive(authorization)&&this.#canReadProjectJobs()&&this.#jobScope()===scope;
+    const assertReadCurrent=()=>{if(!readCurrent())throw new Error("job_feed_retired");};
     const feedBeforeRead=this.documentJobs.get();
     const planningReadSequence=this.#planningRecoverySequence;
     try{
       const response=await fetch(`/api/document-jobs${scope}`);
+      if(!readCurrent()){this.#jobResyncRequested=true;void response.body?.cancel().catch(()=>{});return;}
       if(!response.ok)throw new Error(`Job status returned ${response.status}`);
       const body=await response.json() as {jobs?:DocumentJob[]},currentSession=this.session.get();
-      if(!this.sourceOwnershipActive(sourceOwner)||this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}
+      if(!readCurrent()||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}
       // A newer explicit action may have completed while this list was in transit.
       // Discard that older page; a free resync can observe the new canonical state.
       if(this.documentJobs.get()!==feedBeforeRead){this.#jobResyncRequested=true;return;}
@@ -2281,21 +2306,22 @@ async syncDocumentJobs(){
         return job;
       });
       this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
-      for(const job of jobs)this.#observeAdaptivePlanningJob(job);
-      this.notify();
+      for(const job of jobs){assertReadCurrent();this.#observeAdaptivePlanningJob(job);}
+      assertReadCurrent();this.notify();assertReadCurrent();
       const terminalChanges=jobs.filter(job=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));
       const fanProgress=jobs.some(job=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);
       const disappearedActive=[...previous.values()].some(job=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some(current=>current.jobId===job.jobId));
       const completed=terminalChanges.filter(job=>!job.notifiedAt&&!job.parentJobId);
       if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}
-      if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);this.#pendingJobEventRefresh=false;}
+      if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);assertReadCurrent();this.#pendingJobEventRefresh=false;}
       if(this.#pendingJobSessionRefresh){
-        try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);this.#pendingJobSessionRefresh=false;}
+        try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);assertReadCurrent();this.#pendingJobSessionRefresh=false;}
         catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently of creative recovery. */}
       }
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
-      const inspected=await this.#revalidateMissingAdaptivePlans(jobs,authorization,previous);
-      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+      assertReadCurrent();
+      const inspected=await this.#revalidateMissingAdaptivePlans(jobs,authorization,previous,readCurrent);
+      this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);assertReadCurrent();
       // Exact inspections may overlap a newer completion, dismissal, or withdrawal.
       // Reconcile from the current authorized page, never the pre-await snapshot.
       const currentJobs=this.documentJobs.get(),currentIds=new Set(currentJobs.map(job=>job.jobId));
@@ -2309,6 +2335,7 @@ async syncDocumentJobs(){
       const recovered=new Map([...acceptedInspections,...freshDetails].map(job=>[job.jobId,job]));
       this.#syncAdaptiveSuggestionSets([...currentJobs,...recovered.values()]);
       for(const changed of completed){
+        assertReadCurrent();
         const job=this.documentJobs.get().find(current=>current.jobId===changed.jobId);if(!job)continue;
         if(job.kind==="structure_adaptive"&&job.sourceSurface!=="canvas"&&job.status==="completed"&&job.result?.structure
           &&job.result.planningReviewAvailable!==false&&job.result.resultUnavailable!==true&&!this.#dismissedAdaptiveSuggestions.has(job.jobId)){
@@ -2322,19 +2349,25 @@ async syncDocumentJobs(){
           }
         }
         if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}
-        if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));if(!job.canvasId)void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);
+        if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));assertReadCurrent();if(!job.canvasId)void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);
       }
-      const latest=this.documentJobs.get();this.notify();this.#driveDocumentJobs(latest);
+      const latest=this.documentJobs.get();this.notify();assertReadCurrent();this.#driveDocumentJobs(latest);
       this.#scheduleJobPoll(latest.some(job=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
     }catch{
-      if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){
+      if(readCurrent()){
         this.#jobPollFailures+=1;
         if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}
         this.#scheduleJobPoll(5_000);
       }
     }finally{
       this.#jobsSyncing=false;
-      if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}
+      const resumedAfterReader=feedRevision!==this.#jobFeedRevision;
+      const resync=this.#jobResyncRequested||this.#jobScope()!==scope||resumedAfterReader;
+      this.#jobResyncRequested=false;
+      // An original request releases only its single-flight lock. A return from
+      // a retained reader may request a fresh page for the current source/actor.
+      if(resync&&this.#jobFeedCurrent()&&this.sourceOwnershipActive(this.captureSourceOwnership())
+        &&(resumedAfterReader||this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)))queueMicrotask(()=>void this.syncDocumentJobs());
     }
   }
 
@@ -2440,7 +2473,7 @@ async syncDocumentJobs(){
     const locale=currentFormaLocale();
     const localize=(source:string,values:Record<string,string|number>={})=>(locale.messages[formaSystemMessageId(source)]??source).replace(/\{(\w+)\}/g,(_,name:string)=>String(values[name]??""));
     const scope=localize(gate.scope==="workspace"?"organization":"personal");
-    if(gate.level==="blocked")throw new Error(localize("This generation exceeds the remaining {scope} monthly budget.",{scope}));
+    if(gate.level==="blocked")throw new GenerationBudgetAdmissionError("budget-blocked",localize("This generation exceeds the remaining {scope} monthly budget.",{scope}));
     if(!gate.requiresAcknowledgement){this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
     const dialog=document.createElement("dialog");dialog.className="modal generation-budget-approval";dialog.lang=locale.locale;dialog.dir=locale.direction;const dialogId=crypto.randomUUID();dialog.setAttribute("aria-labelledby",`generation-budget-title-${dialogId}`);dialog.setAttribute("aria-describedby",`generation-budget-description-${dialogId}`);
     const card=document.createElement("section");card.className="modal-card";
@@ -2452,13 +2485,13 @@ async syncDocumentJobs(){
     const footer=document.createElement("footer"),cancel=document.createElement("button"),continueButton=document.createElement("button");cancel.type="button";cancel.className="button ghost";cancel.textContent=locale.messages["action.cancel"]??"Cancel";continueButton.type="button";continueButton.className="button primary";continueButton.textContent=localize("I understand, continue");footer.append(cancel,continueButton);card.append(footer);dialog.append(card);document.body.append(dialog);
     const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(requested:boolean)=>{if(settled)return;settled=true;window.removeEventListener("forma-authorization-changed",changed);window.removeEventListener("forma-event-source-retired",retired);const value=requested&&this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner);if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);if(dialog.open)dialog.close();dialog.remove();resolve(value);};const changed=()=>finish(false),retired=(event:Event)=>{const detail=(event as CustomEvent<EventSourceRetirement>).detail;if(detail&&this.sourceOwnershipScopeActive(detail.source))finish(false);};window.addEventListener("forma-authorization-changed",changed,{once:true});window.addEventListener("forma-event-source-retired",retired);cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});if(!this.#scopeStillActive(authorization)||!this.sourceOwnershipActive(sourceOwner)){finish(false);return;}dialog.showModal();});
     this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
-    if(!accepted)throw new Error(localize("Generation canceled before any provider work was started."));
+    if(!accepted)throw new GenerationBudgetAdmissionError("user-canceled",localize("Generation canceled before any provider work was started."));
     payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
   }
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string,controls:Pick<SceneSubmissionPorts,"current"|"onDispatch">&{nativeShortStory?:true}={}):Promise<{job:DocumentJob;reused:boolean;sceneCostExisting?:{requestId:string;preview:SceneCostPreview|null}}>{
     const sourceOwner=this.captureSourceOwnership(),sourceProjectId=this.projection.get().projectId;
     const scene=kind==="render_document"&&payload.artifactKind==="scene";
-    const guarded=scene||kind==="render_document"&&payload.artifactKind==="model3d";
+    const guarded=scene||kind==="render_document"&&payload.artifactKind==="model3d"||controls.nativeShortStory===true;
     const check=()=>{this.#assertSourceOwnership(sourceOwner);if(guarded&&controls.current&&!controls.current())throw new Error("scene_cost_changed");};check();
     if(!payload.locale&&["preview","generate","prompt_fan","render_document"].includes(kind))payload={...payload,locale:typeof document==="undefined"?"en":document.documentElement.lang||"en"};
     const authorization=this.#activeAuthorizationScope();
@@ -2496,6 +2529,7 @@ async syncDocumentJobs(){
           ||original.preview.projectId!==sourceProjectId||original.preview.documentId!==documentId)))throw new Error("scene_cost_unavailable");
       }
       if(kind==="structure_adaptive"&&!adaptiveJobMatchesRequest(body.job,{documentId,canvasId:typeof payload.canvasId==="string"?payload.canvasId:null,sourceSurface,requestKey}))throw new Error(currentFormaLocale().messages["next.exact.unavailable"]??"The exact planning request changed.");
+      if(controls.nativeShortStory&&!acknowledgedNativeStoryHandle(body.job,{documentId,documentRevision:payload.documentRevision,requestKey:payload.requestKey}))throw new Error("native_story_job_identity_mismatch");
       const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");
       if(!this.sourceOwnershipActive(sourceOwner)||guarded&&controls.current&&!controls.current()){
         this.#sourcePausedJobs.set(body.job.jobId,authorization);
@@ -2654,8 +2688,15 @@ async syncDocumentJobs(){
         recordPopulationSource("memory",this.events.get().length);
       }
     }
+    // Retire before publishing the route: synchronous subscribers can commit
+    // a return to an eligible surface while the original signal is changing.
+    if(isRetainedOutputReaderRoute(routedPath)){
+      this.#jobFeedRevision+=1;window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";this.#jobResyncRequested=false;
+    }
     this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:this.#workspaceTransition}:null;
-    this.route.set(routedPath);this.#scheduleProjectTaskExpiry();if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath, ...(options.preserveFocus===true?{preserveFocus:true}:{}) } }));
+    this.route.set(routedPath);this.#scheduleProjectTaskExpiry();
+    if(!isRetainedOutputReaderRoute(routedPath)&&!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}
+    this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath, ...(options.preserveFocus===true?{preserveFocus:true}:{}) } }));
     const required=this.#profileForRoute(routedPath);
     if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
     if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
@@ -4446,7 +4487,29 @@ async syncDocumentJobs(){
     }
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{model3dPrompt?:string;model3dPromptSource?:"document";model3dAdaptation?:ReturnType<typeof model3dAdaptationReceipt>;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void}={}){
+  /** One explicit native submission; this surface does not issue Experience/Output authorization. */
+  async submitNativeShortStory(input:NativeStorySetup,controls:{current:()=>boolean}):Promise<NativeStorySubmission>{
+    const setup=captureNativeStorySetup(input),source=this.captureSourceOwnership();
+    let dispatched=false,acknowledged:NativeStorySubmission|null=null,failure:NativeStoryFailureReason="unavailable";
+    const current=()=>Boolean(setup&&this.sourceOwnershipActive(source)&&this.projection.get().documentId===setup.documentId
+      &&!this.session.get()?.projectContext&&!this.session.get()?.impersonation&&controls.current());
+    if(!setup||!current())return Object.freeze({disposition:"not-dispatched",handle:null,reason:"unavailable"});
+    // The private observer cannot be supplied through the legacy options object.
+    await this.#renderDocumentArtifact("short_story",{...setup,itemCount:1,productionMode:"manual",sourceSurface:"document"},{
+      current,onDispatch:()=>{dispatched=true;},acknowledged:(handle,reused)=>{
+        acknowledged=Object.freeze({disposition:"acknowledged",handle,reused});
+      },failed:(reason)=>{failure=reason;},
+    });
+    // Even after local withdrawal, a genuine acknowledgment remains a handle,
+    // not permission to display. A lost response never manufactures one.
+    return acknowledged??(dispatched?Object.freeze({disposition:"dispatched-unconfirmed",handle:null}):Object.freeze({disposition:"not-dispatched",handle:null,reason:failure}));
+  }
+
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:DocumentArtifactRenderOptions={}){
+    return this.#renderDocumentArtifact(kind,options);
+  }
+
+  async #renderDocumentArtifact(kind:DocumentArtifactKind,options:DocumentArtifactRenderOptions={},nativeStory?:NativeStoryObserver){
     if(kind==="model3d"){
       const source=this.captureSourceOwnership(),documentId=options.documentId??this.projection.get().documentId;
       const projection=this.projection.get(),context=this.#generationContext(documentId);
@@ -4480,7 +4543,7 @@ async syncDocumentJobs(){
       }catch(error){if(current())this.toast(error instanceof Error?error.message:"The 3D model could not be started.");return false;}
     }
     const guidanceProblem=documentRenderGuidanceProblem(options);
-    if(guidanceProblem){this.toast(this.#systemNotice(guidanceProblem.message));return false;}
+    if(guidanceProblem){if(!nativeStory)this.toast(this.#systemNotice(guidanceProblem.message));return false;}
     const guidance=documentRenderGuidance(options);
     options={...options,audience:guidance.audience||undefined,tone:guidance.tone||undefined};
     if(kind==="scene"){
@@ -4525,7 +4588,13 @@ async syncDocumentJobs(){
     if(kind==="slides"&&options.slideCountPolicy!==undefined){try{const count=resolvePresentationCountRequest({...options,productionMode});requestedSlideCount=count.requestedSlideCount;itemCount=count.itemCount;}catch(error){this.toast(error instanceof Error?error.message:"Invalid presentation count policy");return false;}}
     if(kind==="slides"){if(options.itemCount!==undefined&&options.requestedSlideCount!==undefined&&options.itemCount!==options.requestedSlideCount){this.toast("The selected slide count does not match the requested presentation size.");return false;}const maximumSlideCount=productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:15;if(requestedSlideCount!==undefined&&(!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1||requestedSlideCount>maximumSlideCount)){this.toast(this.#systemNotice("{mode} presentations support between 1 and {maximum} slides. The request was not started.",{mode:this.#systemNotice(productionMode==="managed"?"Managed":"Manual"),maximum:maximumSlideCount}));return false;}}
     const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,...(options.slideCountPolicy?{slideCountPolicy:options.slideCountPolicy}:{}),authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}${options.slideCountPolicy?`:policy:${generationRevisionFor(options.slideCountPolicy)}`:""}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}${audioIdentity}${workflowIdentity}`;
-    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId);this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
+    try{const {job,reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId,nativeStory?{current:nativeStory.current,onDispatch:nativeStory.onDispatch,nativeShortStory:true}:undefined);
+      if(nativeStory){
+        const handle=acknowledgedNativeStoryHandle(job,{documentId,documentRevision:context.documentRevision,requestKey});
+        if(!handle)throw new Error("native_story_job_identity_mismatch");
+        nativeStory.acknowledged(handle,reused);
+      }
+      if(!nativeStory)this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){if(nativeStory)nativeStory.failed(error instanceof GenerationBudgetAdmissionError?error.reason:"unavailable");else this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
   async openProject(projectId: string, destination = "/", options: WorkspaceNavigationOptions = {}) {

@@ -1,5 +1,11 @@
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { html, nothing, type PropertyValues } from "lit";
+import { NativeShortStoryController, type NativeStoryOpening } from "./native-short-story-controller.ts";
+import { nativeStoryDialogPresentation, renderNativeStoryDialog } from "./native-short-story-dialog.ts";
+import { nativeStoryRetainedRoute } from "../model/native-short-story-generation.ts";
+import { captureNativeSceneHandle, nativeSceneRetainedRoute } from "../model/native-scene-completion.ts";
+import { readNativeSceneCompletion } from "../model/retained-short-story-client.ts";
+import "./native-short-story-dialog.css";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
 import { localizeTemplateResult } from "./design-system/localized-template";
@@ -96,6 +102,8 @@ export function documentArtifactPlaybackSeconds(artifact:Pick<DocumentArtifact,"
   return typeof configured==="number"&&Number.isFinite(configured)&&configured>0?configured:null;
 }
 
+type NativeStoryCloseLease = { dialog:HTMLDialogElement; current:()=>boolean; closedCurrent:()=>boolean };
+
 type SceneRequestHandle = { requestId: string; everDispatched: boolean };
 type SceneCostView = {
   handle: SceneRequestHandle; request: SceneCostRequest; sourceSurface: string; requestHash: string;
@@ -141,6 +149,169 @@ export class DocumentArtifacts extends FormaElement {
   #viewerCloseGuard:{viewer:()=>boolean;dialog:HTMLDialogElement;current:()=>boolean}|null=null;
   #editDraftRevision=0;
   #presentationReceiptCheck:{jobId:string;status:PresentationReceiptCheckStatus|"checking";current:()=>boolean}|null=null;
+  #nativeStoryController:NativeShortStoryController|null=null;
+  #nativeStoryOpening:NativeStoryOpening|null=null;
+  #nativeStoryEpoch=0;
+  #nativeStoryIntentRevision=0;
+  #nativeStoryCurrent:CreativePreparationGuard|null=null;
+  #nativeStoryAudience="";#nativeStoryTone="";#nativeStoryLocale="";#nativeStoryDocumentTitle="";
+  #nativeStoryComposing=false;
+  #nativeStoryOpener:HTMLElement|undefined;
+  // One admitted close only; its in-flight receipt is never restored as dialog state.
+  #nativeStoryCloseLease:NativeStoryCloseLease|null=null;
+  #createOpener:HTMLElement|undefined;
+  #sceneResultRead:{view:SceneCostView;abort:AbortController}|null=null;
+  #sceneResultCloseLease:NativeStoryCloseLease|null=null;
+  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();}};
+  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();};
+  #nativeStoryEligible(documentId:string){
+    const session=this.store.session.get(),projection=this.store.projection.get();
+    return Boolean(this.isConnected&&this.source==="document"&&this.closest("forma-workspace")
+      &&session&&!session.projectContext&&!session.impersonation&&this.store.captureAuthorizationScope()
+      &&projection.documentId===documentId&&this.#targetDocumentId()===documentId
+      &&projection.documents.some(value=>value.id===documentId&&value.projectId===projection.projectId&&!value.removed)
+      &&nextActionFacts(this.store,documentId,null).canConfigure);
+  }
+  #nativeStoryDialog(opening=this.#nativeStoryOpening){
+    const dialog=this.#createDialog();
+    return opening&&dialog?.dataset.nativeStoryOpening===String(opening.id)?dialog:null;
+  }
+  #nativeStoryLive(opening:NativeStoryOpening){
+    return Boolean(this.#nativeStoryOpening===opening&&this.#createOpen
+      &&this.#nativeStoryController?.state.openingId===opening.id&&this.#nativeStoryController.state.status!=="retired"
+      &&this.ownerDocument.visibilityState!=="hidden"&&!this.closest("[hidden],[inert]")&&this.#nativeStoryCurrent?.());
+  }
+  /** Parent calls before the result pane becomes hidden, including responsive changes. */
+  retireNativeShortStory(){this.#retireNativeStoryOpening();}
+  #retireNativeStoryOpening(lease:NativeStoryCloseLease|null=null){
+    const opening=this.#nativeStoryOpening,dialog=this.#nativeStoryDialog(),current=this.#nativeStoryCurrent;
+    ++this.#nativeStoryEpoch;this.#nativeStoryCloseLease=lease;
+    this.#nativeStoryOpening=null;this.#nativeStoryCurrent=null;this.#nativeStoryOpener=undefined;
+    this.#nativeStoryAudience="";this.#nativeStoryTone="";this.#nativeStoryLocale="";this.#nativeStoryDocumentTitle="";this.#nativeStoryComposing=false;
+    if(opening){this.#createOpen=false;if(this.#configurationCurrent===current)this.#configurationCurrent=null;}
+    try{if(opening)this.#nativeStoryController?.retire(opening);}
+    finally{dialog?.close();if(opening)this.requestUpdate();}
+  }
+  async openNativeShortStory(documentId:string,options:{current?:(stage:CreativePreparationStage)=>boolean}={}){
+    const previousIntent=this.#nativeStoryIntentRevision;
+    if(!this.#nativeStoryEligible(documentId)||this.#activeId||this.#submitting||this.#sceneSubmitting
+      ||this.#workflowBusy||this.#activeWorkflowStageId||this.#pendingWorkflowRegeneration
+      ||this.#failedInputJob||this.#runningInputJob||this.#sceneInputCurrent||this.#referenceBusy
+      ||this.#createOpen&&!this.#nativeStoryOpening||options.current&&!options.current("opening")
+      ||[...this.ownerDocument.querySelectorAll("dialog[open]")].some(dialog=>dialog!==this.#nativeStoryDialog())
+      ||previousIntent!==this.#nativeStoryIntentRevision)return false;
+    ++this.#nativeStoryIntentRevision;
+    const epoch=this.#nativeStoryEpoch+1;
+    this.retireNativeShortStory();if(this.#nativeStoryEpoch!==epoch)return false;
+    const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope(),route=this.store.route.get();
+    const opener=this.ownerDocument.activeElement instanceof HTMLElement?this.ownerDocument.activeElement:undefined;
+    const focus=captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>{
+      const dialog=this.#nativeStoryDialog();
+      return epoch===this.#nativeStoryEpoch&&Boolean(dialog?.open&&(element===dialog||element===dialog.querySelector("[data-native-story-close]")));
+    }});
+    try{
+    const current=retainCreativePreparation(()=>nextActionFacts(this.store,documentId,null),stage=>
+      epoch===this.#nativeStoryEpoch&&sourceCurrent()&&this.store.authorizationScopeActive(authorization)
+      &&this.store.route.get()===route&&this.#nativeStoryEligible(documentId)
+      &&this.ownerDocument.visibilityState!=="hidden"&&(!options.current||options.current(stage))
+      &&(stage==="opening"?focus.current()&&![...this.ownerDocument.querySelectorAll("dialog[open]")].some(dialog=>dialog!==this.#nativeStoryDialog())
+        :Boolean(this.#nativeStoryDialog()?.open&&this.#nativeStoryDialog()?.matches(":modal"))));
+    if(!current())return false;
+    await this.updateComplete;if(!current())return false;
+    await this.#revealWorkbenchPane();if(!current())return false;
+    this.#retireRequestReview();
+    this.#nativeStoryCurrent=current;this.#configurationCurrent=current;this.#createOpen=true;
+    this.#nativeStoryAudience="";this.#nativeStoryTone="";this.#nativeStoryLocale=this.i18n.locale;
+    this.#nativeStoryDocumentTitle=this.store.projection.get().documentTitle;this.#nativeStoryOpener=opener;
+    const store=this.store;
+    const controller=this.#nativeStoryController??=new NativeShortStoryController({
+      submit:(setup,controls)=>store.submitNativeShortStory(setup,controls),
+      origin:this.ownerDocument.location.origin,
+      request:(path,init)=>{
+        const opening=this.#nativeStoryOpening,signal=init.signal;
+        return store.guardedFetch(path,init,"Read story",{
+          current:()=>this.store===store&&Boolean(opening&&signal&&!signal.aborted&&this.#nativeStoryLive(opening)),
+        });
+      },
+      changed:()=>this.requestUpdate(),
+    });
+    const opening=controller.open({documentId,current});
+    if(controller.state.openingId!==opening.id||controller.state.status==="retired"||!current()){
+      if(epoch===this.#nativeStoryEpoch){this.#nativeStoryOpening=opening;this.retireNativeShortStory();}return false;
+    }
+    this.#nativeStoryOpening=opening;this.requestUpdate();
+    await this.updateComplete;
+    if(!this.#nativeStoryLive(opening)){if(this.#nativeStoryOpening===opening)this.retireNativeShortStory();return false;}
+    const dialog=this.#nativeStoryDialog(opening);
+    const initialFocus=dialog?.querySelector<HTMLElement>("[data-native-story-close]");
+    if(!dialog||!initialFocus||!focus.run(initialFocus,()=>current()&&ensureModalDialog(dialog)&&dialog.open&&dialog.matches(":modal"))
+      ||!current.beginEditing()){if(this.#nativeStoryOpening===opening)this.retireNativeShortStory();return false;}
+    return this.#nativeStoryLive(opening);
+    }catch{if(epoch===this.#nativeStoryEpoch)this.retireNativeShortStory();return false;}
+    finally{focus.dispose();}
+  }
+  #nativeStoryTemplate(opening:NativeStoryOpening){
+    const controller=this.#nativeStoryController!;
+    const editable=()=>this.#nativeStoryLive(opening)&&nativeStoryDialogPresentation(controller.state).create;
+    const failClosed=()=>{if(this.#nativeStoryOpening===opening)this.retireNativeShortStory();};
+    return renderNativeStoryDialog({openingId:opening.id,documentTitle:this.#nativeStoryDocumentTitle,
+      locale:this.#nativeStoryLocale,audience:this.#nativeStoryAudience,tone:this.#nativeStoryTone,composing:this.#nativeStoryComposing,
+      state:controller.state,i18n:this.i18n,
+      close:()=>{if(this.#nativeStoryOpening===opening)this.retireNativeShortStory();},
+      change:(field,value)=>{if(!editable())return;if(field==="audience")this.#nativeStoryAudience=value;else this.#nativeStoryTone=value;this.requestUpdate();},
+      composition:active=>{if(!editable())return;this.#nativeStoryComposing=active;this.requestUpdate();},
+      create:()=>{
+        if(!editable()||this.#nativeStoryComposing||documentRenderGuidance({audience:this.#nativeStoryAudience,tone:this.#nativeStoryTone}).issues.length)return;
+        void controller.create(opening,{audience:this.#nativeStoryAudience,tone:this.#nativeStoryTone,locale:this.#nativeStoryLocale}).catch(failClosed);
+      },
+      check:()=>{if(this.#nativeStoryLive(opening))void controller.check(opening).catch(failClosed);},
+      open:event=>{void this.#openNativeStoryResult(opening,event).catch(failClosed);},
+    });
+  }
+  #nativeStoryReadOnly(opening:NativeStoryOpening){
+    return this.#nativeStoryLive(opening)&&this.#nativeStoryController?.state.status==="available"
+      &&!this.#editingId&&!this.#savingEdit&&!this.#reviewNote&&!this.#submitting&&!this.#referenceBusy
+      &&!this.#sceneSubmitting&&!this.#workflowBusy&&!this.#convertingId;
+  }
+  async #openNativeStoryResult(opening:NativeStoryOpening,event:MouseEvent){
+    const trigger=event.currentTarget,element=this.#nativeStoryDialog(opening),controller=this.#nativeStoryController;
+    const parent=this.closest<FormaElement>("forma-workspace");
+    if(!(trigger instanceof HTMLButtonElement)||!element?.contains(trigger)||!parent||!controller||!this.#nativeStoryLive(opening))return;
+    const path=controller.openStory(opening),state=controller.state,completion=state.completion,handle=state.handle;
+    if(!path||!completion||!handle||!this.#nativeStoryLive(opening))return;
+    const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope(),route=this.store.route.get();
+    let retainedCurrent=()=>true;
+    const exact=()=>Date.parse(completion.expiresAt)>Date.now()&&nativeStoryRetainedRoute(completion,handle)===path&&retainedCurrent();
+    const origin=()=>sourceCurrent()&&this.store.authorizationScopeActive(authorization)&&this.store.route.get()===route
+      &&this.#nativeStoryEligible(opening.documentId)&&this.ownerDocument.visibilityState!=="hidden"&&!this.closest("[hidden],[inert]");
+    const live=()=>this.#nativeStoryReadOnly(opening)&&exact();
+    const closedEpoch=this.#nativeStoryEpoch+1;
+    const lease:NativeStoryCloseLease={dialog:element,current:()=>this.#nativeStoryCloseLease===lease&&this.#nativeStoryEpoch===closedEpoch
+      &&!this.#nativeStoryOpening&&origin()&&exact(),closedCurrent:()=>lease.current()&&!element.open&&this.#readonlyReuseView()};
+    const opener=this.#nativeStoryOpener?.isConnected?this.#nativeStoryOpener:undefined;
+    try{
+      return await navigateInApp(this,async navigation=>{
+        if(!navigation.current()||!live()||!origin())return false;
+        await this.store.refreshEvents({readOnly:true,current:()=>navigation.current()&&live()&&origin()});
+        if(!navigation.current()||!live()||!origin())return false;
+        const selected=completion.selection,artifact=this.store.projection.get().libraryArtifacts.find(value=>value.id===selected.artifactId);
+        if(!artifact||artifact.kind!=="short_story"||artifact.documentId!==selected.documentId
+          ||documentArtifactRevision(this.store.events.get(),artifact.id)!==selected.revision)return false;
+        retainedCurrent=()=>this.store.projection.get().libraryArtifacts.some(value=>value.id===artifact.id&&value.kind==="short_story"
+          &&value.documentId===selected.documentId&&value.sourceEventId===artifact.sourceEventId
+          &&value.contentRef===artifact.contentRef&&value.sequence===artifact.sequence)
+          &&documentArtifactRevision(this.store.events.get(),artifact.id)===selected.revision;
+        if(!exact())return false;
+        if(!await navigation.closeNativePresentation(()=>{
+          if(live()&&origin())this.#retireNativeStoryOpening(lease);
+        },{parent,closedCurrent:lease.closedCurrent}))return false;
+        // The native close is asynchronous. Recheck expiry and exact selection at route activation.
+        if(!navigation.current()||!lease.closedCurrent()||!exact())return false;
+        return navigation.route(path,{documentFocus:false});
+      },{presentation:{owner:this,element,trigger,opener,current:()=>live()||lease.current()}});
+    }finally{if(this.#nativeStoryCloseLease===lease)this.#nativeStoryCloseLease=null;}
+  }
+
   #privateSourceRevision=0;
   #privateSourceCurrent(){
     const source=this.store.captureSourceOwnership(),revision=this.#privateSourceRevision;
@@ -151,6 +322,7 @@ export class DocumentArtifacts extends FormaElement {
     if(source&&this.store.sourceOwnershipScopeActive(source))this.#clearPrivateGenerationInputs();
   };
   #clearPrivateGenerationInputs=()=>{
+    this.retireNativeShortStory();
     this.#privateSourceRevision++;this.#presentationReceiptCheck=null;this.#model3dSubmitBasis=new WeakMap();
     this.#closeViewerPopovers();this.#sceneInputCurrent=null;this.#clearSceneCost();
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;
@@ -162,8 +334,9 @@ export class DocumentArtifacts extends FormaElement {
     this.#pendingWorkflowRegeneration=null;this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#viewerActionsOpen=false;
     this.#clearCreationDraft();this.#viewDialog()?.close();this.requestUpdate();
   };
-  override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);window.addEventListener("forma-event-source-retired",this.#retirePrivateGenerationInputs);}
+  override connectedCallback(){super.connectedCallback();this.ownerDocument.addEventListener("visibilitychange",this.#nativeStoryPageHidden);window.addEventListener("pagehide",this.#nativeStoryPageHide);window.addEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);window.addEventListener("forma-event-source-retired",this.#retirePrivateGenerationInputs);}
   override disconnectedCallback(){
+    this.ownerDocument.removeEventListener("visibilitychange",this.#nativeStoryPageHidden);window.removeEventListener("pagehide",this.#nativeStoryPageHide);
     this.#outputReuse.cancel?.();
     window.removeEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);
     window.removeEventListener("forma-event-source-retired",this.#retirePrivateGenerationInputs);
@@ -242,6 +415,7 @@ export class DocumentArtifacts extends FormaElement {
   }
   #sceneCanCreate(){return this.#sceneCanAuthor()&&this.store.session.get()?.provider.plannerConfigured===true;}
   #clearSceneCost(){
+    this.#sceneResultRead?.abort.abort();this.#sceneResultRead=null;
     this.#sceneCostRevision++;this.#sceneCostView=null;this.#sceneSourcesRefreshed=false;this.#sceneCapacityDestination=null;this.#sceneSubmitting=null;
   }
   #sceneDraftChanged(){
@@ -444,13 +618,87 @@ export class DocumentArtifacts extends FormaElement {
       this.requestUpdate();
     }
   }
+  #sceneOriginalResultReady(view:SceneCostView){
+    const job=view.inspection?.job,preview=view.inspection?.preview;
+    return Boolean(view.current()&&view.checked&&!view.busy&&job?.status==="completed"
+      &&this.#sceneInspectionValid(view.inspection!,view)&&isSceneCostPreview(preview)
+      &&preview.requestHash===view.requestHash&&preview.itemCount===1&&preview.productionMode==="manual"
+      &&job.sourceSurface==="document"&&job.productionMode==="manual"&&job.result?.artifactKind==="scene"
+      &&view.sourceSurface==="document"&&view.request.productionMode==="manual"
+      &&!view.request.workflowId&&!view.request.workflowStageId&&!view.request.workflowSources?.length
+      &&this.#audience===(view.request.audience??"")&&this.#tone===(view.request.tone??"")
+      &&!this.#activeWorkflowStageId&&!this.#pendingWorkflowRegeneration&&!this.#requestReviewLoading
+      &&!this.#editingId&&!this.#savingEdit&&!this.#reviewNote&&!this.#submitting&&!this.#referenceBusy
+      &&!this.#sceneSubmitting&&!this.#workflowBusy&&!this.#convertingId
+      &&[...this.#requestDrafts].every(([kind,draft])=>kind==="scene"||kind==="short_story"
+        &&draft.audience===""&&draft.tone===""&&draft.productionMode==="manual"&&draft.itemCount===6
+        &&draft.managedSlideInput===""&&!draft.invalidSlideCount));
+  }
+  async #openOriginalScene(view:SceneCostView,event:MouseEvent){
+    const trigger=event.currentTarget,element=this.#createDialog(),parent=this.closest<FormaElement>("forma-workspace");
+    if(!(trigger instanceof HTMLButtonElement)||!element?.contains(trigger)||!element.open||!parent
+      ||this.#sceneResultRead||!this.#sceneOriginalResultReady(view))return false;
+    const job=view.inspection!.job!,handle=captureNativeSceneHandle({documentId:job.documentId,jobId:job.jobId});
+    if(!handle)return false;
+    const store=this.store,source=this.#privateSourceCurrent(),authorization=store.captureAuthorizationScope(),route=store.route.get();
+    const epoch=this.#sceneCostRevision,read={view,abort:new AbortController()};
+    const focus=captureOutputNavigationFocus(this.ownerDocument);let focusTransferred=false;
+    const opener=this.#createOpener?.isConnected?this.#createOpener:undefined;
+    const origin=()=>this.store===store&&source()&&store.authorizationScopeActive(authorization)&&store.route.get()===route
+      &&this.#targetDocumentId()===handle.documentId&&this.ownerDocument.visibilityState!=="hidden"&&!this.closest("[hidden],[inert]");
+    const originalCurrent=()=>this.#sceneResultRead===read&&!read.abort.signal.aborted&&(focusTransferred||focus.current())&&origin()&&this.#createDialog()===element
+      &&element.contains(trigger)&&this.#sceneOriginalResultReady(view);
+    const current=()=>element.open&&originalCurrent();let closingStarted=false;
+    let ownedLease:NativeStoryCloseLease|null=null;
+    this.#sceneResultRead=read;this.requestUpdate();
+    try{
+      const completion=await readNativeSceneCompletion(handle,{origin:location.origin,signal:read.abort.signal,current,
+        request:(path,init)=>fetch(path,init)});
+      if(!current())return false;
+      const path=nativeSceneRetainedRoute(completion,handle);if(!path)return false;
+      await store.refreshEvents({readOnly:true,current});if(!current())return false;
+      const selected=completion.selection,artifact=store.projection.get().libraryArtifacts.find(value=>value.id===selected.artifactId);
+      if(!artifact||artifact.kind!=="scene"||artifact.documentId!==selected.documentId
+        ||documentArtifactRevision(store.events.get(),artifact.id)!==selected.revision)return false;
+      const exact=()=>Date.parse(completion.expiresAt)>Date.now()&&nativeSceneRetainedRoute(completion,handle)===path
+        &&store.projection.get().libraryArtifacts.some(value=>value.id===artifact.id&&value.kind==="scene"
+          &&value.documentId===selected.documentId&&value.sourceEventId===artifact.sourceEventId
+          &&value.contentRef===artifact.contentRef&&value.sequence===artifact.sequence)
+        &&documentArtifactRevision(store.events.get(),artifact.id)===selected.revision;
+      const live=()=>current()&&exact();
+      const closed=()=>origin()&&exact()&&this.#sceneCostRevision===epoch+1&&!this.#sceneCostView&&!this.#createOpen
+        &&this.#configurationCurrent===null&&!this.#activeWorkflowStageId&&!this.#pendingWorkflowRegeneration
+        &&this.#kind==="scene"&&this.#audience===(view.request.audience??"")&&this.#tone===(view.request.tone??"")
+        &&this.#readonlyReuseView();
+      const closing=()=>closingStarted&&!element.open&&originalCurrent()&&exact();
+      const lease:NativeStoryCloseLease={dialog:element,current:()=>this.#sceneResultCloseLease===lease&&(live()||closing()||closed()),
+        closedCurrent:()=>this.#sceneResultCloseLease===lease&&!element.open&&(closing()||closed())};
+      this.#sceneResultCloseLease=lease;ownedLease=lease;
+      return await navigateInApp(this,async navigation=>{
+        if(!live())return false;
+        focusTransferred=true;focus.dispose();
+        if(!await navigation.closeNativePresentation(()=>{
+          if(live()){closingStarted=true;element.close();}
+        },{parent,closedCurrent:lease.closedCurrent}))return false;
+        if(!navigation.current()||!lease.closedCurrent()||!closed()||!exact())return false;
+        return navigation.route(path,{documentFocus:false});
+      },{presentation:{owner:this,element,trigger,opener,current:lease.current}});
+    }catch{
+      if(current()){view.error="unavailable";this.requestUpdate();}
+      return false;
+    }finally{
+      focus.dispose();read.abort.abort();if(this.#sceneResultRead===read)this.#sceneResultRead=null;
+      if(ownedLease&&this.#sceneResultCloseLease===ownedLease)this.#sceneResultCloseLease=null;
+      this.requestUpdate();
+    }
+  }
   #sceneCostControls(){
     const required=this.#sceneActionCurrent(),view=this.#sceneCostView?.current()?this.#sceneCostView:null;
     const destination=this.#sceneDestination(),handle=destination?this.#sceneHandles().get(destination):undefined;
-    const job=view?.inspection?.job,preview=this.#sceneFreshPreview(),unused=Boolean(view&&this.#sceneSafeUnused(view)),busy=Boolean(view?.busy||this.#submitting||this.#sceneSubmitting?.formCurrent()||this.#workflowBusy);
+    const job=view?.inspection?.job,preview=this.#sceneFreshPreview(),unused=Boolean(view&&this.#sceneSafeUnused(view)),busy=Boolean(view?.busy||this.#sceneResultRead||this.#submitting||this.#sceneSubmitting?.formCurrent()||this.#workflowBusy);
     return html`<aside class="artifact-cost-confirm artifact-scene-cost-status" aria-label=${this.i18n.t("scene.cost.review","Scene cost and request status")}><span>
       <b>${job?this.i18n.t("scene.cost.original","Original Scene request — not the current draft"):preview?this.i18n.t("scene.cost.ready","Verified Scene plan — approval required"):this.i18n.t("scene.cost.notVerified","Scene plan not yet verified")}</b>
-      <small role="status">${destination&&this.#sceneCapacityDestination===destination?this.i18n.t("scene.cost.capacity","This window is retaining the maximum number of Scene request references. Return to an existing Scene destination or inspect its recorded work in Activity; unresolved requests will not be replaced."):view?.busy?this.i18n.t("scene.cost.checking","Checking this exact Scene request…"):view?.error==="source-index"?this.i18n.t("scene.cost.sourcesStale","The Document’s saved source index needs refreshing. Refresh the Document, then check this same request again."):view?.error==="recovery"?this.i18n.t("scene.cost.recoveryChanged","The original request no longer permits a new request. Keep this reference and check it again; no new request was started."):view?.error?this.i18n.t("scene.cost.unavailable","The exact Scene request could not be verified. Check its original status before approving paid work."):this.#sceneSourcesRefreshed?this.i18n.t("scene.cost.sourcesRefreshed","Document sources refreshed. Check this same Scene request again before approving."):job?this.i18n.t("scene.cost.originalStatus","Original request status: {status}. Draft changes do not change this recorded request.",{status:this.i18n.t(`activity.status.${job.status}`,job.status)}):handle?.everDispatched?this.i18n.t("scene.cost.unknown","This request may already have been submitted. Check its original status; no replacement request will be started automatically."):this.i18n.t("scene.cost.free","Checking the current plan or original request is free: no provider call, reservation, or generation starts.")}</small>
+      <small role="status">${destination&&this.#sceneCapacityDestination===destination?this.i18n.t("scene.cost.capacity","This window is retaining the maximum number of Scene request references. Return to an existing Scene destination or inspect its recorded work in Activity; unresolved requests will not be replaced."):(view?.busy||this.#sceneResultRead?.view===view)?this.i18n.t("scene.cost.checking","Checking this exact Scene request…"):view?.error==="source-index"?this.i18n.t("scene.cost.sourcesStale","The Document’s saved source index needs refreshing. Refresh the Document, then check this same request again."):view?.error==="recovery"?this.i18n.t("scene.cost.recoveryChanged","The original request no longer permits a new request. Keep this reference and check it again; no new request was started."):view?.error?this.i18n.t("scene.cost.unavailable","The exact Scene request could not be verified. Check its original status before approving paid work."):this.#sceneSourcesRefreshed?this.i18n.t("scene.cost.sourcesRefreshed","Document sources refreshed. Check this same Scene request again before approving."):job?this.i18n.t("scene.cost.originalStatus","Original request status: {status}. Draft changes do not change this recorded request.",{status:this.i18n.t(`activity.status.${job.status}`,job.status)}):handle?.everDispatched?this.i18n.t("scene.cost.unknown","This request may already have been submitted. Check its original status; no replacement request will be started automatically."):this.i18n.t("scene.cost.free","Checking the current plan or original request is free: no provider call, reservation, or generation starts.")}</small>
       ${this.store.session.get()?.provider.plannerConfigured!==true?html`<small>${this.i18n.system("Provider")}: ${this.i18n.t("lab.unavailable","Unavailable")} · ${this.i18n.t("generation.contactAdministrator","Contact your project administrator")}</small>`:nothing}
       ${unused?html`<small>${this.i18n.t("scene.cost.unused","The original request is verified unused. New Scene request checks it again, then prepares a new plan for separate approval.")}</small>`:nothing}
       ${job&&!view?.inspection?.preview?html`<small>${this.i18n.t("scene.cost.detailsUnavailable","The original cost and settings are unavailable. This does not establish a zero charge or released reservation.")}</small>`:nothing}
@@ -458,6 +706,7 @@ export class DocumentArtifacts extends FormaElement {
         <button type="button" class="button secondary compact" ?disabled=${busy||!required()} @click=${()=>void this.#prepareSceneCost(required)}>${handle?.everDispatched||job?this.i18n.t("scene.cost.inspect","Check original Scene request · free"):this.i18n.t("scene.cost.check","Check Scene cost · free")}</button>
         ${view?.error==="source-index"?html`<button type="button" class="button secondary compact" ?disabled=${busy} @click=${()=>void this.#refreshSceneSources(view)}>${this.i18n.t("scene.cost.refreshSources","Refresh Document sources")}</button>`:nothing}
         ${job&&view?html`<button type="button" class="button secondary compact" ?disabled=${busy||!view.checked} @click=${()=>void this.#inspectSceneRequest(view)}>${this.i18n.t("scene.cost.receipt","Inspect original Scene inputs")}</button>`:nothing}
+        ${job?.status==="completed"&&job.productionMode==="manual"&&job.sourceSurface==="document"&&view?.inspection?.preview?.itemCount===1?html`<button type="button" class="button secondary compact" ?disabled=${busy&&this.#sceneResultRead?.view!==view||!this.#sceneOriginalResultReady(view)} aria-busy=${this.#sceneResultRead?.view===view?"true":nothing} @click=${(event:MouseEvent)=>void this.#openOriginalScene(view,event)}>${this.i18n.t("scene.cost.openOriginal","Open original Scene")}</button>${!busy&&!this.#sceneOriginalResultReady(view)?html`<small>${this.i18n.t("scene.cost.openDraftBlocked","Your current settings differ from the original request or contain other unsaved output drafts. Inspect the original inputs before leaving this draft.")}</small>`:nothing}`:nothing}
         ${(job?.status==="completed"||unused)&&view?.checked&&this.#sceneCanAuthor()?html`<button type="button" class="button secondary compact" ?disabled=${busy} @click=${()=>void this.#newSceneRequest(view,unused)}>${this.i18n.t("scene.cost.new","New Scene request")}</button>`:nothing}
       </div>
     </span></aside>`;
@@ -731,7 +980,7 @@ export class DocumentArtifacts extends FormaElement {
     if(scope!==this.#viewerPopoverScope)this.#closeViewerPopovers();
     this.#viewerPopoverScope=scope;
   }
-  #clearCreationDraft(){this.#retireRequestReview();this.#requestDrafts.clear();this.#model3dSettings=structuredClone(DEFAULT_MODEL3D_SETTINGS);this.#model3dReferenceBlockIds=[];this.#model3dDraftRevision++;this.#clearSceneCost();this.#createOpen=false;this.#confirmed=false;this.#configurationCurrent=null;this.#audience="";this.#tone="";this.#rememberedAudiences.clear();this.#rememberedTones.clear();this.#soundtrackBlockIds=[];this.#audioImageBlockId="";this.#audioVideoArtifactId="";this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#createDialog()?.close();}
+  #clearCreationDraft(){this.retireNativeShortStory();this.#retireRequestReview();this.#requestDrafts.clear();this.#model3dSettings=structuredClone(DEFAULT_MODEL3D_SETTINGS);this.#model3dReferenceBlockIds=[];this.#model3dDraftRevision++;this.#clearSceneCost();this.#createOpen=false;this.#confirmed=false;this.#configurationCurrent=null;this.#audience="";this.#tone="";this.#rememberedAudiences.clear();this.#rememberedTones.clear();this.#soundtrackBlockIds=[];this.#audioImageBlockId="";this.#audioVideoArtifactId="";this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#createDialog()?.close();}
   #viewerCurrent:(()=>boolean)|null=null;
   #viewerOpening=false;
   #deliveryBinding:{artifactId:string;revision:number;content:string;contentSha256:string;current:()=>boolean}|null=null;
@@ -822,6 +1071,7 @@ export class DocumentArtifacts extends FormaElement {
     }catch{return false;}finally{focus.dispose();}
   }
   protected override willUpdate(changed:PropertyValues<this>){
+    if(this.#nativeStoryOpening&&!this.#nativeStoryLive(this.#nativeStoryOpening))this.retireNativeShortStory();
     this.#syncViewerPopovers();
     if(this.#presentationReceiptCheck&&!this.#presentationReceiptCheck.current())this.#presentationReceiptCheck=null;
     const scope=nextActionFacts(this.store,this.#targetDocumentId(),this.source==="canvas"?this.store.canvasProjection.get().selectedCanvasId:null).authorityKey;
@@ -844,7 +1094,7 @@ export class DocumentArtifacts extends FormaElement {
     if(bindingArtifact&&this.store.content.get()[bindingArtifact.contentRef??""]&&!this.#currentDeliveryBinding(bindingArtifact)&&!this.#deliveryBindingLoading)void this.#refreshDeliveryBinding(bindingArtifact);
     const preflight=this.querySelector("forma-video-reference-preflight");
     if(preflight)preflight.documentId=this.#targetDocumentId();
-    if(this.#createOpen&&create&&!create.open)ensureModalDialog(create);
+    if(this.#createOpen&&create&&!create.open&&!this.#nativeStoryOpening)ensureModalDialog(create);
     if(this.#activeId&&view&&!this.#viewerOpening){
       this.dispatchEvent(new CustomEvent("document-artifact-viewer-open",{bubbles:true,composed:true}));
       if(!view.open)ensureModalDialog(view);
@@ -883,11 +1133,12 @@ export class DocumentArtifacts extends FormaElement {
       if(!bound)this.#autoBoundWorkflowEvents.delete(completion.eventId);
     });
   }
-  #openCreate=async(inferKind=false,required?:CreativePreparationGuard)=>{if(!required)this.#retireRequestReview();const sourceCurrent=this.#privateSourceCurrent(),retained=required??retainCreativePreparation(()=>nextActionFacts(this.store,this.#targetDocumentId(),this.source==="canvas"?this.store.canvasProjection.get().selectedCanvasId:null));const current:CreativePreparationGuard=Object.assign(()=>sourceCurrent()&&retained(),{beginEditing:()=>sourceCurrent()&&retained.beginEditing()});if(!current())return false;const project=this.store.session.get()?.projectContext;if(project&&!project.permissions.includes("project.output.request"))return false;this.#configurationCurrent=current;if(inferKind){const projection=this.#projection(),inferred=inferDocumentArtifactKind(projection.blocks,projection.documentTitle);if(inferred)this.#selectArtifactKind(inferred);if(!this.#activeWorkflowStageId)this.#sceneMedium="visual";}this.#confirmed=false;this.#videoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;this.#soundtrackBlockIds=[];this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#audioImageBlockId="";if(this.#kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount();this.#createOpen=true;this.requestUpdate();await this.updateComplete;if(this.#configurationCurrent!==current)return false;if(!current()){this.#createOpen=false;this.#configurationCurrent=null;this.#createDialog()?.close();this.requestUpdate();return false;}const dialog=this.#createDialog();if(dialog&&!dialog.open)ensureModalDialog(dialog);return Boolean(dialog?.open)&&current.beginEditing();};
+  #openCreate=async(inferKind=false,required?:CreativePreparationGuard)=>{const nativeIntent=this.#nativeStoryIntentRevision;if(required&&!required()||nativeIntent!==this.#nativeStoryIntentRevision)return false;this.retireNativeShortStory();if(nativeIntent!==this.#nativeStoryIntentRevision)return false;if(!required)this.#retireRequestReview();const privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent(),retained=required??retainCreativePreparation(()=>nextActionFacts(this.store,this.#targetDocumentId(),this.source==="canvas"?this.store.canvasProjection.get().selectedCanvasId:null));const current:CreativePreparationGuard=Object.assign(()=>sourceCurrent()&&retained(),{beginEditing:()=>sourceCurrent()&&retained.beginEditing()});if(!current())return false;const project=this.store.session.get()?.projectContext;if(project&&!project.permissions.includes("project.output.request"))return false;this.#configurationCurrent=current;if(inferKind){const projection=this.#projection(),inferred=inferDocumentArtifactKind(projection.blocks,projection.documentTitle);if(inferred)this.#selectArtifactKind(inferred);if(!this.#activeWorkflowStageId)this.#sceneMedium="visual";}this.#confirmed=false;this.#videoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;this.#soundtrackBlockIds=[];this.#sendSoundtrackToVideoProvider=false;this.#sendAudioVideoToProvider=false;this.#audioImageBlockId="";if(this.#kind==="slides"&&!this.#requestDrafts.has("slides"))this.#resetPresentationCount();if(!this.#createOpen)this.#createOpener=this.ownerDocument.activeElement instanceof HTMLElement?this.ownerDocument.activeElement:undefined;this.#createOpen=true;this.requestUpdate();await this.updateComplete;if(this.#configurationCurrent!==current)return false;if(!current()){this.#createOpen=false;this.#configurationCurrent=null;this.#createDialog()?.close();this.requestUpdate();return false;}const dialog=this.#createDialog();if(dialog&&!dialog.open)ensureModalDialog(dialog);return Boolean(dialog?.open)&&current.beginEditing();};
   async #revealWorkbenchPane(){this.dispatchEvent(new CustomEvent("document-artifact-open",{bubbles:true,composed:true}));const workspace=this.closest("forma-workspace") as (HTMLElement&{updateComplete?:Promise<boolean>})|null;if(workspace?.updateComplete)await workspace.updateComplete;}
   async openRender(kind?:DocumentArtifactKind,documentId?:string,options:{videoSeconds?:VideoDurationSeconds;sceneMedium?:SceneMedium;current?:(stage:CreativePreparationStage)=>boolean}={}){
-    this.#retireRequestReview();this.#activeWorkflowStageId="";if(documentId)this.documentId=documentId;
-    const sourceCurrent=this.#privateSourceCurrent();
+    const nativeIntent=this.#nativeStoryIntentRevision;if(options.current&&!options.current("opening")||nativeIntent!==this.#nativeStoryIntentRevision)return false;
+    this.retireNativeShortStory();if(nativeIntent!==this.#nativeStoryIntentRevision)return false;this.#retireRequestReview();this.#activeWorkflowStageId="";if(documentId)this.documentId=documentId;
+    const privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent();
     const current=retainCreativePreparation(()=>nextActionFacts(this.store,this.#targetDocumentId(),this.source==="canvas"?this.store.canvasProjection.get().selectedCanvasId:null),(stage)=>sourceCurrent()&&(!options.current||options.current(stage)));
     if(!current())return false;
     if(kind)this.#selectArtifactKind(kind);if(kind==="scene")this.#sceneMedium=isSceneMedium(options.sceneMedium)?options.sceneMedium:"visual";if(options.videoSeconds)this.#seconds=normalizeVideoDurationSeconds(options.videoSeconds);
@@ -895,11 +1146,11 @@ export class DocumentArtifacts extends FormaElement {
     await this.#revealWorkbenchPane();if(!current())return false;
     return this.#openCreate(!kind,current);
   }
-  async openArtifactById(artifactId:string,options:{expectedRevision?:number;expectedContentSha256?:string;intent?:ArtifactDeliveryIntent;current?:(stage:CreativePreparationStage)=>boolean}={}){const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope(),artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId);if(!artifact||!authorization)throw new Error("The requested output is no longer available.");if(!sourceCurrent()||options.current&&!options.current("opening"))return false;const revision=options.expectedRevision??documentArtifactRevision(this.store.events.get(),artifactId),retained=this.store.content.get()[artifact.contentRef??""];if(documentArtifactRevision(this.store.events.get(),artifactId)!==revision)return false;this.documentId=artifact.documentId;await this.updateComplete;if(!sourceCurrent())return false;await this.#revealWorkbenchPane();if(!sourceCurrent())return false;if(!this.store.authorizationScopeActive(authorization)||this.#targetDocumentId()!==artifact.documentId||documentArtifactRevision(this.store.events.get(),artifactId)!==revision||retained!==undefined&&retained!==this.store.content.get()[artifact.contentRef??""]||!this.store.projection.get().libraryArtifacts.some((candidate)=>candidate.id===artifactId&&candidate.documentId===artifact.documentId&&candidate.sequence===artifact.sequence&&candidate.sourceEventId===artifact.sourceEventId&&candidate.contentRef===artifact.contentRef))throw new Error("The requested output changed before it opened.");if(options.current&&!options.current("opening"))return false;return this.#openArtifact(artifact,(stage)=>sourceCurrent()&&this.store.authorizationScopeActive(authorization)&&this.#targetDocumentId()===artifact.documentId&&(!options.current||options.current(stage)),revision,options);}
+  async openArtifactById(artifactId:string,options:{expectedRevision?:number;expectedContentSha256?:string;intent?:ArtifactDeliveryIntent;current?:(stage:CreativePreparationStage)=>boolean}={}){const nativeIntent=this.#nativeStoryIntentRevision,privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent(),authorization=this.store.captureAuthorizationScope(),artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId);if(!artifact||!authorization)throw new Error("The requested output is no longer available.");if(!sourceCurrent()||options.current&&!options.current("opening")||nativeIntent!==this.#nativeStoryIntentRevision)return false;this.retireNativeShortStory();if(nativeIntent!==this.#nativeStoryIntentRevision)return false;const revision=options.expectedRevision??documentArtifactRevision(this.store.events.get(),artifactId),retained=this.store.content.get()[artifact.contentRef??""];if(documentArtifactRevision(this.store.events.get(),artifactId)!==revision)return false;this.documentId=artifact.documentId;await this.updateComplete;if(!sourceCurrent())return false;await this.#revealWorkbenchPane();if(!sourceCurrent())return false;if(!this.store.authorizationScopeActive(authorization)||this.#targetDocumentId()!==artifact.documentId||documentArtifactRevision(this.store.events.get(),artifactId)!==revision||retained!==undefined&&retained!==this.store.content.get()[artifact.contentRef??""]||!this.store.projection.get().libraryArtifacts.some((candidate)=>candidate.id===artifactId&&candidate.documentId===artifact.documentId&&candidate.sequence===artifact.sequence&&candidate.sourceEventId===artifact.sourceEventId&&candidate.contentRef===artifact.contentRef))throw new Error("The requested output changed before it opened.");if(options.current&&!options.current("opening"))return false;return this.#openArtifact(artifact,(stage)=>sourceCurrent()&&this.store.authorizationScopeActive(authorization)&&this.#targetDocumentId()===artifact.documentId&&(!options.current||options.current(stage)),revision,options);}
   // Exact read-only job inspection shared by next actions on every surface.
   // The optional caller owns the inspection lifetime, not a disposable focus lease.
   // Its boolean result means only that this exact current inspection was presented.
-  async openJobById(jobId:string,options:{current?:()=>boolean}={}){const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope(),job=this.store.documentJobs.get().find((candidate)=>candidate.jobId===jobId);if(!job||!authorization)throw new Error("The requested work is no longer available.");const route=options.current?this.store.route.get():"",callerCurrent=()=>sourceCurrent()&&(!options.current||this.store.route.get()===route&&options.current());if(!callerCurrent())return false;this.documentId=job.documentId;await this.updateComplete;if(!callerCurrent())return false;await this.#revealWorkbenchPane();if(!callerCurrent())return false;if(!this.store.authorizationScopeActive(authorization)||this.#targetDocumentId()!==job.documentId||!this.store.documentJobs.get().some((candidate)=>candidate.jobId===jobId&&candidate.documentId===job.documentId))return false;const required:(()=>boolean)|undefined=options.current?()=>callerCurrent()&&this.#sceneInputCurrent===required&&this.store.authorizationScopeActive(authorization)&&this.#targetDocumentId()===job.documentId:undefined;if(required)this.#sceneInputCurrent=required;if(["failed","partial","canceled"].includes(job.status))await this.#inspectFailedInputs(job,required);else await this.#inspectRunningInputs(job,required);if(required){if(!required())return false;await this.updateComplete;if(!required())return false;const dialog=this.querySelector("forma-generation-input-dialog");await dialog?.updateComplete;return Boolean(required()&&dialog?.isConnected&&dialog.open&&dialog.querySelector<HTMLDialogElement>("dialog")?.open&&(this.#failedInputJob?.jobId===jobId||this.#runningInputJob?.jobId===jobId));}}
+  async openJobById(jobId:string,options:{current?:()=>boolean}={}){const nativeIntent=this.#nativeStoryIntentRevision;if(options.current&&!options.current()||nativeIntent!==this.#nativeStoryIntentRevision)return false;this.retireNativeShortStory();if(nativeIntent!==this.#nativeStoryIntentRevision)return false;const privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent(),authorization=this.store.captureAuthorizationScope(),job=this.store.documentJobs.get().find((candidate)=>candidate.jobId===jobId);if(!job||!authorization)throw new Error("The requested work is no longer available.");const route=options.current?this.store.route.get():"",callerCurrent=()=>sourceCurrent()&&(!options.current||this.store.route.get()===route&&options.current());if(!callerCurrent())return false;this.documentId=job.documentId;await this.updateComplete;if(!callerCurrent())return false;await this.#revealWorkbenchPane();if(!callerCurrent())return false;if(!this.store.authorizationScopeActive(authorization)||this.#targetDocumentId()!==job.documentId||!this.store.documentJobs.get().some((candidate)=>candidate.jobId===jobId&&candidate.documentId===job.documentId))return false;const required:(()=>boolean)|undefined=options.current?()=>callerCurrent()&&this.#sceneInputCurrent===required&&this.store.authorizationScopeActive(authorization)&&this.#targetDocumentId()===job.documentId:undefined;if(required)this.#sceneInputCurrent=required;if(["failed","partial","canceled"].includes(job.status))await this.#inspectFailedInputs(job,required);else await this.#inspectRunningInputs(job,required);if(required){if(!required())return false;await this.updateComplete;if(!required())return false;const dialog=this.querySelector("forma-generation-input-dialog");await dialog?.updateComplete;return Boolean(required()&&dialog?.isConnected&&dialog.open&&dialog.querySelector<HTMLDialogElement>("dialog")?.open&&(this.#failedInputJob?.jobId===jobId||this.#runningInputJob?.jobId===jobId));}}
   #closeOnBackdrop(event:MouseEvent){if(event.target!==event.currentTarget)return;const dialog=event.currentTarget as HTMLDialogElement;if(dialog.classList.contains("document-artifact-view")&&!this.#cancelViewer(event,false))return;dialog.close();if(dialog.classList.contains("document-artifact-create")){this.#createOpen=false;this.#activeWorkflowStageId="";void this.#restoreWorkflowRegeneration();}else{this.#activeId="";this.#reviewNote="";this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#viewerActionsOpen=false;}this.requestUpdate();}
   #setViewerFocus(focused:boolean){this.#viewerFocused=focused;if(focused)this.#reviewPanelOpen=false;this.requestUpdate();void this.updateComplete.then(()=>this.#viewDialog()?.querySelector<HTMLButtonElement>(".artifact-viewer-focus-toggle")?.focus({preventScroll:true}));}
   #cancelViewer(event:Event,exitFocus=true){
@@ -913,7 +1164,7 @@ export class DocumentArtifacts extends FormaElement {
     if(!exitFocus||!this.#viewerFocused)return true;
     event.preventDefault();event.stopPropagation();this.#setViewerFocus(false);return false;
   }
-  async #openArtifact(artifact:DocumentArtifact,required:(stage:CreativePreparationStage)=>boolean=()=>true,revision=documentArtifactRevision(this.store.events.get(),artifact.id),options:{expectedContentSha256?:string;intent?:ArtifactDeliveryIntent}={}){const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope();let opening=true,retained:string|undefined=this.store.content.get()[artifact.contentRef??""],contentCaptured=retained!==undefined;const current=()=>sourceCurrent()&&this.#viewerCurrent===current&&Boolean(authorization&&this.store.authorizationScopeActive(authorization))&&required(opening?"opening":"editing")&&this.store.projection.get().libraryArtifacts.some((candidate)=>candidate.id===artifact.id&&candidate.documentId===artifact.documentId&&candidate.sequence===artifact.sequence&&candidate.sourceEventId===artifact.sourceEventId&&candidate.contentRef===artifact.contentRef)&&(!opening||documentArtifactRevision(this.store.events.get(),artifact.id)===revision&&(!contentCaptured||this.store.content.get()[artifact.contentRef??""]===retained));if(!sourceCurrent())return false;this.#viewerCloseGuard=null;this.#viewerCurrent=current;this.#viewerOpening=true;this.#deliveryBinding=null;this.#deliveryBindingLoading=null;this.#viewDialog()?.close();this.#activeId="";this.#viewerReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:undefined;if(artifact.contentRef&&!this.store.content.get()[artifact.contentRef])await this.store.ensurePrivateContent(artifact.contentRef);if(!current())return false;retained=this.store.content.get()[artifact.contentRef??""];contentCaptured=true;const binding=await this.#artifactBinding(artifact);if(!current()||options.expectedContentSha256&&binding?.content_sha256!==options.expectedContentSha256)return false;this.#deliveryBinding=binding&&retained!==undefined?{artifactId:artifact.id,revision:binding.artifact_revision,content:retained,contentSha256:binding.content_sha256,current}:null;this.#activeId=artifact.id;this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#historyOpen=false;this.#historyBusy=false;this.#revisionHistory=[];this.#revisionBefore=null;this.#revisionPreview=null;this.#reviewers=[];this.#selectedReviewerId="";this.#reviewNote="";const context=this.store.session.get()?.projectContext;if(context&&context.permissions.includes("project.author")){try{const authorization=this.store.captureAuthorizationScope();const response=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/projects/${encodeURIComponent(context.projectAccessId)}/members`,{credentials:"same-origin"});const body=await response.json() as {members?:Array<{user_id:string;display_name:string;review_access?:number|boolean}>};if(current()&&response.ok&&authorization&&this.store.authorizationScopeActive(authorization)&&this.#activeId===artifact.id){const history=this.store.events.get();const completed=history.find((event)=>event.eventId===artifact.sourceEventId);const rendered=[...history].reverse().find((event)=>event.type==="DocumentRenderRequested"&&String(event.payload.artifact_id??"")===artifact.id);const actorOf=(value:string)=>value.startsWith("user:")?value.slice(5):"";const contributors=history.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifact.id).flatMap((event)=>[actorOf(event.actor),String(event.payload.edited_by_user_id??"")]);const disqualified=new Set([this.store.session.get()?.user.userId??"",String(completed?.payload.requested_by_user_id??actorOf(rendered?.actor??"")),...contributors].filter(Boolean));this.#reviewers=(body.members??[]).filter((member)=>Boolean(member.review_access)&&!disqualified.has(member.user_id)).map((member)=>({userId:member.user_id,displayName:member.display_name}));this.#selectedReviewerId=this.#reviewers[0]?.userId??"";}}catch{/* The exact review request remains disabled until eligible reviewers can be verified. */}}if(!current())return false;this.requestUpdate();await this.updateComplete;if(!current())return false;const dialog=this.#viewDialog();this.#viewerOpening=false;if(dialog){dialog.setAttribute("aria-label",artifact.title);const closed=()=>{if(dialog.open)return;dialog.removeEventListener("close",closed);if(this.#viewerCurrent!==current||this.#viewerOpening)return;const owned=current(),registered=this.#viewerCloseGuard,closeGuard=registered?.viewer===current&&registered.dialog===dialog?registered:null;if(closeGuard)this.#viewerCloseGuard=null;this.#viewerCurrent=null;this.#reviewNote="";this.#viewerFocused=false;this.#reviewPanelOpen=false;const opener=this.#viewerReturnFocus;this.#viewerReturnFocus=undefined;if(!owned)return;if((!closeGuard||closeGuard.current())&&opener?.isConnected)opener.focus({preventScroll:true});this.dispatchEvent(new CustomEvent("document-artifact-close",{bubbles:true,composed:true,...(closeGuard?{detail:{preserveFocus:true}}:{})}));};dialog.addEventListener("close",closed);if(!dialog.open)ensureModalDialog(dialog);if(dialog.open){opening=false;retained=undefined;}}if(!this.store.session.get()?.projectContext&&this.store.ui.instrumentation)void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,source_surface:`${this.source}-artifact-gallery`}});if(dialog?.open&&options.intent)await this.#showArtifactIntent(artifact,options.intent);return Boolean(dialog?.open&&this.#viewerCurrent===current&&current());}
+  async #openArtifact(artifact:DocumentArtifact,required:(stage:CreativePreparationStage)=>boolean=()=>true,revision=documentArtifactRevision(this.store.events.get(),artifact.id),options:{expectedContentSha256?:string;intent?:ArtifactDeliveryIntent}={}){const nativeIntent=this.#nativeStoryIntentRevision;if(!required("opening")||nativeIntent!==this.#nativeStoryIntentRevision)return false;this.retireNativeShortStory();if(nativeIntent!==this.#nativeStoryIntentRevision)return false;const privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent(),authorization=this.store.captureAuthorizationScope();let opening=true,retained:string|undefined=this.store.content.get()[artifact.contentRef??""],contentCaptured=retained!==undefined;const current=()=>sourceCurrent()&&this.#viewerCurrent===current&&Boolean(authorization&&this.store.authorizationScopeActive(authorization))&&required(opening?"opening":"editing")&&this.store.projection.get().libraryArtifacts.some((candidate)=>candidate.id===artifact.id&&candidate.documentId===artifact.documentId&&candidate.sequence===artifact.sequence&&candidate.sourceEventId===artifact.sourceEventId&&candidate.contentRef===artifact.contentRef)&&(!opening||documentArtifactRevision(this.store.events.get(),artifact.id)===revision&&(!contentCaptured||this.store.content.get()[artifact.contentRef??""]===retained));if(!sourceCurrent())return false;this.#viewerCloseGuard=null;this.#viewerCurrent=current;this.#viewerOpening=true;this.#deliveryBinding=null;this.#deliveryBindingLoading=null;this.#viewDialog()?.close();this.#activeId="";this.#viewerReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:undefined;if(artifact.contentRef&&!this.store.content.get()[artifact.contentRef])await this.store.ensurePrivateContent(artifact.contentRef);if(!current())return false;retained=this.store.content.get()[artifact.contentRef??""];contentCaptured=true;const binding=await this.#artifactBinding(artifact);if(!current()||options.expectedContentSha256&&binding?.content_sha256!==options.expectedContentSha256)return false;this.#deliveryBinding=binding&&retained!==undefined?{artifactId:artifact.id,revision:binding.artifact_revision,content:retained,contentSha256:binding.content_sha256,current}:null;this.#activeId=artifact.id;this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#historyOpen=false;this.#historyBusy=false;this.#revisionHistory=[];this.#revisionBefore=null;this.#revisionPreview=null;this.#reviewers=[];this.#selectedReviewerId="";this.#reviewNote="";const context=this.store.session.get()?.projectContext;if(context&&context.permissions.includes("project.author")){try{const authorization=this.store.captureAuthorizationScope();const response=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/projects/${encodeURIComponent(context.projectAccessId)}/members`,{credentials:"same-origin"});const body=await response.json() as {members?:Array<{user_id:string;display_name:string;review_access?:number|boolean}>};if(current()&&response.ok&&authorization&&this.store.authorizationScopeActive(authorization)&&this.#activeId===artifact.id){const history=this.store.events.get();const completed=history.find((event)=>event.eventId===artifact.sourceEventId);const rendered=[...history].reverse().find((event)=>event.type==="DocumentRenderRequested"&&String(event.payload.artifact_id??"")===artifact.id);const actorOf=(value:string)=>value.startsWith("user:")?value.slice(5):"";const contributors=history.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifact.id).flatMap((event)=>[actorOf(event.actor),String(event.payload.edited_by_user_id??"")]);const disqualified=new Set([this.store.session.get()?.user.userId??"",String(completed?.payload.requested_by_user_id??actorOf(rendered?.actor??"")),...contributors].filter(Boolean));this.#reviewers=(body.members??[]).filter((member)=>Boolean(member.review_access)&&!disqualified.has(member.user_id)).map((member)=>({userId:member.user_id,displayName:member.display_name}));this.#selectedReviewerId=this.#reviewers[0]?.userId??"";}}catch{/* The exact review request remains disabled until eligible reviewers can be verified. */}}if(!current())return false;this.requestUpdate();await this.updateComplete;if(!current())return false;const dialog=this.#viewDialog();this.#viewerOpening=false;if(dialog){dialog.setAttribute("aria-label",artifact.title);const closed=()=>{if(dialog.open)return;dialog.removeEventListener("close",closed);if(this.#viewerCurrent!==current||this.#viewerOpening)return;const owned=current(),registered=this.#viewerCloseGuard,closeGuard=registered?.viewer===current&&registered.dialog===dialog?registered:null;if(closeGuard)this.#viewerCloseGuard=null;this.#viewerCurrent=null;this.#reviewNote="";this.#viewerFocused=false;this.#reviewPanelOpen=false;const opener=this.#viewerReturnFocus;this.#viewerReturnFocus=undefined;if(!owned)return;if((!closeGuard||closeGuard.current())&&opener?.isConnected)opener.focus({preventScroll:true});this.dispatchEvent(new CustomEvent("document-artifact-close",{bubbles:true,composed:true,...(closeGuard?{detail:{preserveFocus:true}}:{})}));};dialog.addEventListener("close",closed);if(!dialog.open)ensureModalDialog(dialog);if(dialog.open){opening=false;retained=undefined;}}if(!this.store.session.get()?.projectContext&&this.store.ui.instrumentation)void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,source_surface:`${this.source}-artifact-gallery`}});if(dialog?.open&&options.intent)await this.#showArtifactIntent(artifact,options.intent);return Boolean(dialog?.open&&this.#viewerCurrent===current&&current());}
   #model3dReferences(){return videoReferencePreflight(this.#projection().blocks,this.store.events.get()).items;}
   #model3dReferenceMime(item:VideoReferencePreflightItem){
     const ingestion=[...this.store.events.get()].reverse().find(event=>event.type==="ReferenceIngested"&&event.payload.reference_id===item.block.properties.reference_id);
@@ -1064,7 +1315,7 @@ export class DocumentArtifacts extends FormaElement {
     (next?.querySelector<HTMLElement>(".document-artifact-failure-actions > .button")??this.querySelector<HTMLElement>(".document-artifacts > header > button"))?.focus({preventScroll:true});
   }
   async #inspectFailedInputs(job:DocumentJob,required?:()=>boolean){
-    const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope();if(!sourceCurrent()||!authorization||required&&!required())return;
+    const nativeIntent=this.#nativeStoryIntentRevision,privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent(),authorization=this.store.captureAuthorizationScope();if(!sourceCurrent()||!authorization||required&&!required()||nativeIntent!==this.#nativeStoryIntentRevision)return;
     if(!required)this.#sceneInputCurrent=null;
     const current=()=>sourceCurrent()&&this.store.authorizationScopeActive(authorization)&&(required?required():!this.#sceneInputCurrent&&this.#failedInputJob?.jobId===job.jobId);
     this.#actorInputContent={};this.#runningInputJob=null;this.#failedInputJob=required?null:job;this.requestUpdate();
@@ -1092,7 +1343,7 @@ export class DocumentArtifacts extends FormaElement {
     }
   }
   async #inspectRunningInputs(job:DocumentJob,required?:()=>boolean){
-    const sourceCurrent=this.#privateSourceCurrent(),authorization=this.store.captureAuthorizationScope();if(!sourceCurrent()||!authorization||required&&!required())return;
+    const nativeIntent=this.#nativeStoryIntentRevision,privateCurrent=this.#privateSourceCurrent(),sourceCurrent=()=>nativeIntent===this.#nativeStoryIntentRevision&&privateCurrent(),authorization=this.store.captureAuthorizationScope();if(!sourceCurrent()||!authorization||required&&!required()||nativeIntent!==this.#nativeStoryIntentRevision)return;
     if(!required)this.#sceneInputCurrent=null;
     const current=()=>sourceCurrent()&&this.store.authorizationScopeActive(authorization)&&(required?required():!this.#sceneInputCurrent&&this.#runningInputJob?.jobId===job.jobId);
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=required?null:job;this.requestUpdate();
@@ -1234,6 +1485,14 @@ export class DocumentArtifacts extends FormaElement {
   }
   /** Only this exact current readonly viewer may be subtracted from its parent. */
   allowsNavigationPresentation(context?:NavigationPresentationContext):boolean{
+    const sceneLease=this.#sceneResultCloseLease;
+    if(sceneLease?.current()&&navigationPresentationMatches(context,this,sceneLease.dialog))return true;
+    if(sceneLease&&context?.closingPresentation?.presentation.element===sceneLease.dialog
+      &&navigationPresentationClosing(context,this)&&sceneLease.closedCurrent())return true;
+    const opening=this.#nativeStoryOpening,lease=this.#nativeStoryCloseLease;
+    if(opening&&this.#nativeStoryReadOnly(opening)&&navigationPresentationMatches(context,this,this.#nativeStoryDialog(opening)))return true;
+    if(lease&&context?.closingPresentation?.presentation.element===lease.dialog
+      &&navigationPresentationClosing(context,this)&&lease.closedCurrent())return true;
     return this.isConnected&&!this.#convertingId&&this.#readonlyReuseView()
       &&(navigationPresentationClosing(context,this)||Boolean(this.#viewerCurrent?.())&&Boolean(this.#activeId)
         &&navigationPresentationMatches(context,this,this.#viewDialog()));
@@ -1474,6 +1733,7 @@ export class DocumentArtifacts extends FormaElement {
   }
   #preview(artifact:DocumentArtifact){const content=this.#content(artifact),items=this.#items(artifact);if(artifact.kind==="model3d")return html`<div class="artifact-model3d-preview"><span aria-hidden="true">${icon("layers")}</span><b>${this.i18n.t("model3d.label","3D model")}</b><p>${artifact.summary}</p></div>`;if(artifact.kind==="video"&&artifact.mediaUrl)return html`<video controls preload="metadata" src=${artifact.mediaUrl}></video>`;if(artifact.kind==="audio")return html`<div class="artifact-audio-preview"><span aria-hidden="true">${icon("audio")}</span><p>${artifact.summary}</p></div>`;if(artifact.kind==="storyboard")return html`<div class="artifact-storyboard-strip">${items.map((item)=>item.mediaUrl?this.#image(item):html`<span>${icon("image")}</span>`)}</div>`;if(artifact.kind==="slides"){const item=items[0]??{title:artifact.title,body:artifact.summary,notes:"",imagePrompt:"",slide:null};return html`<div class="artifact-slide-preview">${this.#slide({title:item.title,body:item.body,notes:item.notes,image_prompt:item.imagePrompt,slide:item.slide},content?.presentation??artifact.presentation,0,artifact.itemCount,true)}</div>`;}return html`<div class="artifact-text-preview"><span>${icon(kindIcon(artifact.kind))}</span><p>${artifact.summary}</p></div>`;}
   #createDialogTemplate(){
+    if(this.#nativeStoryOpening)return this.#nativeStoryTemplate(this.#nativeStoryOpening);
     const definition=documentArtifactDefinition(this.#kind);
     const guidance=documentRenderGuidance({audience:this.#audience,tone:this.#tone});
     const guidanceIssue=(field:"audience"|"tone")=>guidance.issues.find(issue=>issue.field===field);
@@ -1805,7 +2065,8 @@ export class DocumentArtifacts extends FormaElement {
     const recoverablePresentationJob=failedJobs.find(documentJobCanRecoverPresentation);
     const active=this.#viewerCurrent&&!this.#viewerCurrent()?null:this.store.projection.get().libraryArtifacts.find((artifact)=>artifact.id===this.#activeId)??null;const inputArtifact=this.store.projection.get().libraryArtifacts.find((artifact)=>artifact.id===this.#inputId)??active;
     const inspectionContent=project||this.#sceneInputCurrent?this.#actorInputContent:this.store.content.get(),sceneInputOwner=this.#sceneInputCurrent;
-    const dialogs=html`${readOnly?nothing:keyed(JSON.stringify([this.store.captureAuthorizationScope()?.key??"",projection.projectId,this.#targetDocumentId(),this.source]),cache(this.#createOpen?localizeTemplateResult(this.#createDialogTemplate(),this.i18n):nothing))}${this.#viewer(active)}${this.#runningInputJob?html`<forma-generation-input-dialog .open=${true} .openingCurrent=${sceneInputOwner} .inspection=${documentGenerationInputInspection(this.#runningInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{if(this.#sceneInputCurrent!==sceneInputOwner)return;this.#sceneInputCurrent=null;this.#runningInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:this.#failedInputJob?html`<forma-generation-input-dialog .open=${true} .openingCurrent=${sceneInputOwner} .inspection=${failedGenerationInputInspection(this.#failedInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{if(this.#sceneInputCurrent!==sceneInputOwner)return;this.#sceneInputCurrent=null;this.#failedInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:!project&&inputArtifact?html`<forma-generation-input-dialog .open=${Boolean(this.#inputId)} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
+    const nativeStoryDocumentId=this.#targetDocumentId(),nativeStorySourceCurrent=this.#privateSourceCurrent();
+    const dialogs=html`${readOnly?nothing:keyed(JSON.stringify([this.store.captureAuthorizationScope()?.key??"",projection.projectId,this.#targetDocumentId(),this.source]),this.#nativeStoryOpening?keyed(this.#nativeStoryOpening.id,this.#createOpen?this.#nativeStoryTemplate(this.#nativeStoryOpening):nothing):cache(this.#createOpen?localizeTemplateResult(this.#createDialogTemplate(),this.i18n):nothing))}${this.#viewer(active)}${this.#runningInputJob?html`<forma-generation-input-dialog .open=${true} .openingCurrent=${sceneInputOwner} .inspection=${documentGenerationInputInspection(this.#runningInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{if(this.#sceneInputCurrent!==sceneInputOwner)return;this.#sceneInputCurrent=null;this.#runningInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:this.#failedInputJob?html`<forma-generation-input-dialog .open=${true} .openingCurrent=${sceneInputOwner} .inspection=${failedGenerationInputInspection(this.#failedInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{if(this.#sceneInputCurrent!==sceneInputOwner)return;this.#sceneInputCurrent=null;this.#failedInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:!project&&inputArtifact?html`<forma-generation-input-dialog .open=${Boolean(this.#inputId)} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
     if(this.launcherOnly)return html`<div class="document-artifact-launcher">${dialogs}</div>`;
     const workflow=this.#currentWorkflow();
     const outdatedWorkflowOutputs=new Set(workflow
@@ -1813,7 +2074,7 @@ export class DocumentArtifacts extends FormaElement {
         .flatMap((state)=>state.inputFreshness==="changed"&&state.stage.source?[state.stage.source.outputId]:[])
       : []);
     return html`<section class=${`document-artifacts ${this.compact?"compact":""}`} aria-label=${this.i18n.t("workbench.creativeResults","Creative results")}>
-      <header><div><span class="eyebrow">${this.i18n.t("workbench.creativeResults","Creative results")}</span><h2>${artifactHeading}</h2>${this.compact?nothing:html`<p>Every result comes from the same decisions and remains attached to this document in every view.</p>`}</div>${readOnly?nothing:html`<button type="button" class="button secondary compact" @click=${()=>{this.#activeWorkflowStageId="";void this.#openCreate(true);}}>Create output</button>`}</header>
+      <header><div><span class="eyebrow">${this.i18n.t("workbench.creativeResults","Creative results")}</span><h2>${artifactHeading}</h2>${this.compact?nothing:html`<p>Every result comes from the same decisions and remains attached to this document in every view.</p>`}</div>${this.#nativeStoryEligible(nativeStoryDocumentId)?html`<button type="button" class="button secondary native-story-launch" @click=${()=>void this.openNativeShortStory(nativeStoryDocumentId,{current:()=>nativeStorySourceCurrent()})}>${this.i18n.t("story.launcher.title")}</button>`:nothing}${readOnly?nothing:html`<button type="button" class="button secondary compact" @click=${()=>{this.#activeWorkflowStageId="";void this.#openCreate(true);}}>Create output</button>`}</header>
       ${this.#productionWorkflow()}
       ${artifacts.length?html`<div class="document-artifact-list">${artifacts.slice(0,this.compact&&!this.#showAll?3:Math.max(12,artifacts.length)).map((artifact)=>{const review=artifactReviewState(artifact,this.#artifactSourceBlocks(artifact),this.store.events.get()),sceneConfiguration=this.#artifactSceneConfiguration(artifact),identity=artifactIdentities.get(artifact.id);return html`<button type="button" data-forma-content="primary" @click=${()=>this.#openArtifact(artifact)}>${this.#preview(artifact)}<span><b dir="auto">${artifact.title}</b><small>${identity?.disambiguator?`${identity.disambiguator} · `:""}${sceneConfiguration?this.#sceneVariantLabel(sceneConfiguration.medium):this.i18n.system(documentArtifactDefinition(artifact.kind).label)} · ${artifact.itemCount} ${artifact.kind==="slides"?this.i18n.system("slides"):artifact.kind==="storyboard"?this.i18n.system("frames"):this.i18n.system(artifact.itemCount===1 ? "part" : "parts")} · ${this.#reviewLabel(review)}${outdatedWorkflowOutputs.has(artifact.id)?html` · ${this.i18n.t("workflow.inputsChangedLabel","Production inputs changed")}`:nothing}</small>${this.#createdTime(artifact)}</span></button>`;})}</div>${this.compact&&artifacts.length>3?html`<button type="button" class="button ghost compact artifact-show-all" @click=${()=>{this.#showAll=!this.#showAll;this.requestUpdate();}}>${this.#showAll?this.i18n.system("Show fewer"):this.i18n.system("View all {count} outputs", { count: this.i18n.number(artifacts.length) })}</button>`:nothing}`:nothing}
       ${recoverablePresentationJob&&artifacts.length?html`<aside class="document-artifact-recovery" role="status"><button type="button" class="button primary compact" @click=${()=>this.#recoverPresentation(recoverablePresentationJob.jobId)}>${this.i18n.system("Recover saved render")}</button><small>${this.i18n.system("Paid once · replay without another provider call")}</small></aside>`:nothing}

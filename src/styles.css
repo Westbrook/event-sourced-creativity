@@ -452,8 +452,9 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-i
 .block-editor > label { color: var(--muted); font: var(--type-micro) var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .block-editor textarea { width: 100%; padding: 10px 11px; resize: vertical; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; font: 500 var(--type-body)/1.4 var(--serif); }
 .block-editor textarea:focus { border-color: var(--orange); outline: 3px solid var(--orange-soft); }
-.block-editor > div { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
-.block-editor > div small { margin-right: auto; color: var(--muted); font: var(--type-micro) var(--mono); }
+.block-editor > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; }
+.block-editor > div small { min-inline-size: 0; flex: 1 1 100%; margin-inline-end: auto; overflow-wrap: anywhere; color: var(--muted); font: var(--type-micro) var(--mono); }
+.block-editor > div > .button { flex: 0 0 auto; max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
 .palette-row { display: flex; gap: 8px; padding: 14px 0 12px; }
 .swatch { position: relative; width: 53px; cursor: pointer; }
 .swatch input { position: absolute; width: 1px; height: 1px; opacity: 0; }

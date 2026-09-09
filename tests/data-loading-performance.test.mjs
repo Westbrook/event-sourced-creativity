@@ -26,6 +26,44 @@ import { EXTRACTOR_EVAL_FIXTURES } from "../src/model/extractors.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 
+test("retained output routed refusals do not schedule background writes or hydrate unrelated work", async t => {
+  const { database, environment, context, drainBackground } = await productionWorker();
+  const waitUntil = context.waitUntil;
+  t.after(async () => {
+    context.waitUntil = waitUntil;
+    const failures = [];
+    try { await drainBackground(); } catch (error) { failures.push(error); }
+    try { database.sqlite.close(); } catch (error) { failures.push(error); }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Retained output routing cleanup failed", { cause: failures[0] });
+  });
+  await drainBackground();
+  for (const route of ["/make/short-story", "/make/scene", "/make/slides"]) {
+    assert.deepEqual(routeCapabilities(route + "/?document=doc-a"), { profile: "workspace", privateContent: false, jobHistory: false });
+  }
+  for (const prefix of ["/api/retained-story", "/api/retained-output/scene", "/api/retained-output/slides"]) {
+    const exact = prefix + "/document-a/artifact-a?revision=0&sha256=" + "a".repeat(64);
+    for (const [path, init, status] of [
+      [prefix, {}, 400], [prefix + "/invalid", {}, 400],
+      [exact, { method: "POST" }, 405], [exact, { method: "HEAD" }, 405],
+      [exact, { method: "POST", headers: { origin: "https://other.invalid" } }, 403],
+      [exact, {}, 401],
+    ]) {
+      let scheduled = 0;
+      context.waitUntil = promise => { scheduled += 1; waitUntil(promise); };
+      database.reset();
+      // Fresh DB identity prevents a warm retention throttle from concealing a scheduled write.
+      const DB = { prepare: sql => database.DB.prepare(sql), batch: statements => database.DB.batch(statements) };
+      const response = await worker.fetch(new Request("http://localhost" + path, init), { ...environment, DB }, context);
+      await drainBackground();
+      const label = `${init.method ?? "GET"} ${path}`;
+      assert.equal(response.status, status, label);
+      assert.equal(scheduled, 0, label + " background work");
+      assert.equal(database.writeCount(), 0, label + " database writes");
+    }
+  }
+});
+
 function measuredDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   const calls = [];

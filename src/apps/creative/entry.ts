@@ -5,7 +5,7 @@ import { documentViewFromRoute, routePathname } from "../../model/routes";
 export function loadCreativeRoute(path: string): Promise<unknown> {
   const pathname=routePathname(path);
   const documentView = documentViewFromRoute(path);
-  if (pathname === "/make/short-story") return import("../../components/forma-retained-short-story");
+  if (["/make/short-story", "/make/scene", "/make/slides"].includes(pathname)) return import("../../components/forma-retained-short-story");
   if (pathname === "/share" || pathname.startsWith("/share/")) return import("../../components/forma-shared-view");
   if (pathname.startsWith("/projects") || pathname === "/creative") return import("../../components/forma-projects");
   if (pathname.startsWith("/studio/project")) return import("../../components/forma-project-contents");
@@ -27,7 +27,7 @@ export function loadCreativeRoute(path: string): Promise<unknown> {
 export class FormaCreativeApplication extends FormaElement {
   override render() {
     const path = this.store.route.get();const pathname=routePathname(path);const documentView=documentViewFromRoute(path);
-    if(pathname === "/make/short-story") return html`<forma-retained-short-story></forma-retained-short-story>`;
+    if(["/make/short-story", "/make/scene", "/make/slides"].includes(pathname)) return html`<forma-retained-short-story></forma-retained-short-story>`;
     if(pathname.startsWith("/projects")||pathname==="/creative")return html`<forma-projects></forma-projects>`;
     if(pathname.startsWith("/studio/project"))return html`<forma-project-contents></forma-project-contents>`;
     if(documentView==="board")return html`<forma-context-board></forma-context-board>`;

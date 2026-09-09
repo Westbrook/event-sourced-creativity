@@ -39,7 +39,7 @@ import { handleContextIntelligence } from "./context-intelligence-api";
 import { handleContextApplication } from "./context-application-api";
 import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
-import { handleRetainedStoryRead } from "./retained-story-api";
+import { handleRetainedStoryRead, handleNativeRetainedOutputRead } from "./retained-story-api";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -88,6 +88,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
     if(url.pathname==="/api/retained-story"||url.pathname.startsWith("/api/retained-story/"))return handleRetainedStoryRead(request,env);
+    if(url.pathname==="/api/retained-output"||url.pathname.startsWith("/api/retained-output/"))return handleNativeRetainedOutputRead(request,env);
     const marketingRoute=parseMarketingRoute(url.pathname);
     if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
@@ -287,7 +288,8 @@ export default {
     const started=performance.now();
     const response=await routeRequest(request,env,context);
     const pathname=new URL(request.url).pathname;
-    const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/");
+    const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
+      ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
     if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);

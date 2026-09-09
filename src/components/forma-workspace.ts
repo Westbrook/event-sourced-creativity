@@ -121,6 +121,7 @@ export class FormaWorkspace extends FormaElement {
     if(compact===this.#compactInspector&&narrow===this.#narrowWorkbench)return;
     const inspectorChanged=compact!==this.#compactInspector;
     const restoreFocus=this.querySelector("#document-workbench-inspector")?.contains(document.activeElement)??false;
+    if(narrow&&this.#workbenchPane==="write"&&!this.#artifactViewerOpen)this.#retireHiddenNativeStory();
     this.#narrowWorkbench=narrow;
     if(inspectorChanged){
       this.#compactInspector=compact;
@@ -153,13 +154,16 @@ export class FormaWorkspace extends FormaElement {
     return true;
   }
 
+  #retireHiddenNativeStory(){this.querySelector("forma-document-artifacts")?.retireNativeShortStory();}
   #selectWorkbenchPane(pane:"write"|"result"|"review"){
+    if(this.#narrowWorkbench&&pane==="write"&&!this.#artifactViewerOpen)this.#retireHiddenNativeStory();
     this.#workbenchPane=pane;
     this.requestUpdate();
   }
 
   #setArtifactViewerOpen(open:boolean){
     if(this.#artifactViewerOpen===open)return;
+    if(!open&&this.#narrowWorkbench&&this.#workbenchPane==="write")this.#retireHiddenNativeStory();
     this.#artifactViewerOpen=open;
     if(open&&this.#workbenchPane==="write"){
       this.#selectWorkbenchPane("result");

@@ -1,0 +1,51 @@
+/* Page-flow audience reading uses the existing native article styles.
+   Shared modal/Deck styles and their bounded scrollers are unchanged. */
+.experience-slides-reader { min-inline-size: 0; }
+.experience-slides-reader > .experience-slides-title {
+  min-inline-size: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+.experience-slides-reader .experience-slides-item { min-inline-size: 0; }
+.experience-slides-reader .experience-slides-item > forma-presentation-slide {
+  display: block;
+  inline-size: 100%;
+  aspect-ratio: 16 / 9;
+}
+.experience-slides-reader .experience-slides-reading {
+  box-sizing: border-box;
+  inline-size: min(100%, 70ch);
+  min-inline-size: 0;
+  max-block-size: none;
+  max-height: none;
+  margin-inline: auto;
+  padding-block: 1rem;
+  padding-inline: max(1rem, var(--forma-safe-inline-start, 0px)) max(1rem, var(--forma-safe-inline-end, 0px));
+  overflow: visible;
+  font: inherit;
+  line-height: 1.65;
+}
+.experience-slides-reader .experience-slides-reading > summary {
+  display: list-item;
+  list-style: revert;
+  align-content: center;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  min-inline-size: var(--forma-control-min-size, 2.75rem);
+}
+.experience-slides-reader .experience-slides-reading > article {
+  min-inline-size: 0;
+  font-size: 1rem;
+  overflow: visible;
+}
+.experience-slides-reader .experience-slides-reading > article :is(h3,h4,p,li,dt,dd) {
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+/* Individual list items can resolve to either reading direction. */
+.experience-slides-reader .experience-slides-reading > article :is(ul,ol) {
+  padding-inline: 1.5em;
+}
+.experience-slides-reader .experience-slides-reading > article dl {
+  grid-template-columns: minmax(0, 1fr);
+}

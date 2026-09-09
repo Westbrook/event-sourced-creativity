@@ -1,4 +1,9 @@
+import { captureNativeSceneHandle, nativeSceneCompletionPath, validateNativeSceneCompletion, NATIVE_SCENE_COMPLETION_MAX_BYTES, type NativeSceneHandle, type NativeSceneCompletion } from "./native-scene-completion.ts";
 import { captureNativeStoryHandle, nativeStoryCompletionPath, validateNativeStoryCompletion, NATIVE_STORY_COMPLETION_MAX_BYTES, type NativeStoryHandle, type NativeStoryCompletion } from "./native-short-story-generation.ts";
+import {
+  nativeRetainedOutputRequestPath, parseNativeRetainedOutputRequestUrl, validateNativeRetainedOutputDto,
+  NATIVE_RETAINED_OUTPUT_JSON_MAX_BYTES, type NativeRetainedOutputTarget, type NativeRetainedOutputDto,
+} from "./native-retained-output.ts";
 import {
   RETAINED_STORY_JSON_MAX_BYTES, retainedStoryRequestPath, validateRetainedStoryDto,
   type RetainedStoryDto, type RetainedStorySelection,
@@ -93,4 +98,25 @@ export async function readNativeStoryCompletion(
   if(!handle)throw new Error("invalid_native_story_handle");
   return readNativeJson(nativeStoryCompletionPath(handle),controls,NATIVE_STORY_COMPLETION_MAX_BYTES,
     candidate=>validateNativeStoryCompletion(candidate,handle));
+}
+
+/** The same bounded native transport, with a separately captured literal format and selection. */
+export async function readNativeRetainedOutput(
+  target: NativeRetainedOutputTarget, controls: RetainedStoryReadControls,
+): Promise<NativeRetainedOutputDto> {
+  const path = nativeRetainedOutputRequestPath(target);
+  const expected = parseNativeRetainedOutputRequestUrl("https://forma.local" + path);
+  if (!expected) throw new TypeError("Invalid native retained output target");
+  return readNativeJson(path, controls, NATIVE_RETAINED_OUTPUT_JSON_MAX_BYTES,
+    candidate => validateNativeRetainedOutputDto(candidate, expected));
+}
+
+/** Explicit original Scene completion check through the existing bounded transport. */
+export async function readNativeSceneCompletion(
+  value: NativeSceneHandle, controls: RetainedStoryReadControls,
+): Promise<NativeSceneCompletion> {
+  const handle = captureNativeSceneHandle(value);
+  if (!handle) throw new Error("invalid_native_scene_handle");
+  return readNativeJson(nativeSceneCompletionPath(handle), controls, NATIVE_SCENE_COMPLETION_MAX_BYTES,
+    candidate => validateNativeSceneCompletion(candidate, handle));
 }
