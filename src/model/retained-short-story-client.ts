@@ -1,3 +1,4 @@
+import { captureNativeSlidesHandle, nativeSlidesCompletionPath, validateNativeSlidesCompletion, NATIVE_SLIDES_COMPLETION_MAX_BYTES, type NativeSlidesHandle, type NativeSlidesCompletion } from "./native-slides-completion.ts";
 import { captureNativeSceneHandle, nativeSceneCompletionPath, validateNativeSceneCompletion, NATIVE_SCENE_COMPLETION_MAX_BYTES, type NativeSceneHandle, type NativeSceneCompletion } from "./native-scene-completion.ts";
 import { captureNativeStoryHandle, nativeStoryCompletionPath, validateNativeStoryCompletion, NATIVE_STORY_COMPLETION_MAX_BYTES, type NativeStoryHandle, type NativeStoryCompletion } from "./native-short-story-generation.ts";
 import {
@@ -119,4 +120,14 @@ export async function readNativeSceneCompletion(
   if (!handle) throw new Error("invalid_native_scene_handle");
   return readNativeJson(nativeSceneCompletionPath(handle), controls, NATIVE_SCENE_COMPLETION_MAX_BYTES,
     candidate => validateNativeSceneCompletion(candidate, handle));
+}
+
+/** Explicit original Slides completion check through the same bounded read-only transport. */
+export async function readNativeSlidesCompletion(
+  value: NativeSlidesHandle, controls: RetainedStoryReadControls,
+): Promise<NativeSlidesCompletion> {
+  const handle = captureNativeSlidesHandle(value);
+  if (!handle) throw new Error("invalid_native_slides_handle");
+  return readNativeJson(nativeSlidesCompletionPath(handle), controls, NATIVE_SLIDES_COMPLETION_MAX_BYTES,
+    candidate => validateNativeSlidesCompletion(candidate, handle));
 }

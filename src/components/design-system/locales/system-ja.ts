@@ -6114,4 +6114,11 @@ Object.assign(messages, {
   "system.auto.13cst8w.95": "パネル内の移動のみを行います。正確なフォーカス移動とすべての判断は、既存の出力コントローラーが引き続き担います。",
 });
 
+Object.assign(messages, {
+  "system.auto.8gjuco.16": "完成したスライド",
+  "system.auto.1v74toi.20": "元のスライドを開く",
+  "system.auto.z24au1.86": "このリクエストで完成したスライドを確認できませんでした。同じリクエストをもう一度開いてください。",
+  "system.auto.1qr28rr.76": "ほかにも完成したスライドがあります。このドキュメントの結果から開いてください。",
+});
+
 export default messages;

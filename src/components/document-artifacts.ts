@@ -4,7 +4,8 @@ import { NativeShortStoryController, type NativeStoryOpening } from "./native-sh
 import { nativeStoryDialogPresentation, renderNativeStoryDialog } from "./native-short-story-dialog.ts";
 import { nativeStoryRetainedRoute } from "../model/native-short-story-generation.ts";
 import { captureNativeSceneHandle, nativeSceneRetainedRoute } from "../model/native-scene-completion.ts";
-import { readNativeSceneCompletion } from "../model/retained-short-story-client.ts";
+import { captureNativeSlidesHandle, nativeSlidesRetainedRoute } from "../model/native-slides-completion.ts";
+import { readNativeSceneCompletion, readNativeSlidesCompletion } from "../model/retained-short-story-client.ts";
 import "./native-short-story-dialog.css";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -162,8 +163,11 @@ export class DocumentArtifacts extends FormaElement {
   #createOpener:HTMLElement|undefined;
   #sceneResultRead:{view:SceneCostView;abort:AbortController}|null=null;
   #sceneResultCloseLease:NativeStoryCloseLease|null=null;
-  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();}};
-  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();};
+  #slidesResultRead:{jobId:string;abort:AbortController}|null=null;
+  #slidesResultError:string|null=null;
+  #slidesCompletedJobs=new Map<string,{job:DocumentJob;current:()=>boolean;retired?:true}>();
+  #nativeStoryPageHidden=()=>{if(this.ownerDocument.visibilityState==="hidden"){this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();}};
+  #nativeStoryPageHide=()=>{this.retireNativeShortStory();this.#sceneResultRead?.abort.abort();this.#slidesResultRead?.abort.abort();};
   #nativeStoryEligible(documentId:string){
     const session=this.store.session.get(),projection=this.store.projection.get();
     return Boolean(this.isConnected&&this.source==="document"&&this.closest("forma-workspace")
@@ -323,6 +327,7 @@ export class DocumentArtifacts extends FormaElement {
   };
   #clearPrivateGenerationInputs=()=>{
     this.retireNativeShortStory();
+    this.#slidesResultRead?.abort.abort();this.#slidesResultRead=null;this.#slidesResultError=null;this.#slidesCompletedJobs.clear();
     this.#privateSourceRevision++;this.#presentationReceiptCheck=null;this.#model3dSubmitBasis=new WeakMap();
     this.#closeViewerPopovers();this.#sceneInputCurrent=null;this.#clearSceneCost();
     this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;
@@ -691,6 +696,80 @@ export class DocumentArtifacts extends FormaElement {
       if(ownedLease&&this.#sceneResultCloseLease===ownedLease)this.#sceneResultCloseLease=null;
       this.requestUpdate();
     }
+  }
+  #nativeSlidesJob(job:DocumentJob){
+    return this.#nativeStoryEligible(job.documentId)&&job.kind==="render_document"&&job.status==="completed"
+      &&job.sourceSurface==="document"&&job.productionMode==="manual"&&job.result?.artifactKind==="slides";
+  }
+  #nativeSlidesJobIdentity(job:DocumentJob){
+    return JSON.stringify([job.jobId,job.documentId,job.kind,job.status,job.sourceSurface,job.productionMode,
+      job.documentRevision,job.requestKey,job.requestedAt,job.completedAt,job.attemptCount,job.result?.artifactKind,job.result?.artifactId]);
+  }
+  async #openOriginalSlides(job:DocumentJob,event:MouseEvent,renderedCurrent:()=>boolean){
+    const trigger=event.currentTarget;
+    if(!(trigger instanceof HTMLButtonElement)||!this.contains(trigger)||this.#slidesResultRead
+      ||!renderedCurrent()||!this.#nativeSlidesJob(job)||!this.#readonlyReuseView()||this.#activeId||this.#convertingId)return false;
+    const handle=captureNativeSlidesHandle({documentId:job.documentId,jobId:job.jobId});if(!handle)return false;
+    const store=this.store,source=this.#privateSourceCurrent(),authorization=store.captureAuthorizationScope(),route=store.route.get();
+    const identity=this.#nativeSlidesJobIdentity(job),artifactId=job.result?.artifactId,read={jobId:job.jobId,abort:new AbortController()};
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    const current=()=>this.#slidesResultRead===read&&!read.abort.signal.aborted&&renderedCurrent()&&source()
+      &&this.store===store&&store.authorizationScopeActive(authorization)&&store.route.get()===route
+      &&this.ownerDocument.visibilityState!=="hidden"&&!this.closest("[hidden],[inert]")
+      &&trigger.isConnected&&this.contains(trigger)&&trigger.dataset.nativeSlidesJob===handle.jobId&&focus.current()
+      &&this.#readonlyReuseView()&&!this.#activeId&&!this.#convertingId&&!this.#slidesCompletedJobs.get(handle.jobId)?.retired
+      &&(()=>{
+        const live=store.documentJobs.get().find(value=>value.jobId===handle.jobId);
+        if(live)return this.#nativeSlidesJob(live)&&this.#nativeSlidesJobIdentity(live)===identity;
+        const retained=this.#slidesCompletedJobs.get(handle.jobId);
+        return Boolean(retained?.current()&&this.#nativeSlidesJob(retained.job)&&this.#nativeSlidesJobIdentity(retained.job)===identity);
+      })();
+    this.#slidesResultRead=read;this.#slidesResultError=null;this.requestUpdate();
+    try{
+      const completion=await readNativeSlidesCompletion(handle,{origin:location.origin,signal:read.abort.signal,current,
+        request:(path,init)=>fetch(path,init)});
+      if(!current())return false;
+      const path=nativeSlidesRetainedRoute(completion,handle);if(!path)return false;
+      await store.refreshEvents({readOnly:true,current});if(!current())return false;
+      const selected=completion.selection,artifact=store.projection.get().libraryArtifacts.find(value=>value.id===selected.artifactId);
+      if(selected.documentId!==handle.documentId||selected.artifactId!==artifactId
+        ||!artifact||artifact.kind!=="slides"||artifact.documentId!==selected.documentId
+        ||documentArtifactRevision(store.events.get(),artifact.id)!==selected.revision)return false;
+      const original={id:artifact.id,sourceEventId:artifact.sourceEventId,contentRef:artifact.contentRef,sequence:artifact.sequence};
+      const exact=()=>Date.parse(completion.expiresAt)>Date.now()&&nativeSlidesRetainedRoute(completion,handle)===path
+        &&store.projection.get().libraryArtifacts.some(value=>value.id===original.id&&value.kind==="slides"
+          &&value.documentId===selected.documentId&&value.sourceEventId===original.sourceEventId
+          &&value.contentRef===original.contentRef&&value.sequence===original.sequence)
+        &&documentArtifactRevision(store.events.get(),original.id)===selected.revision;
+      return await navigateInApp(this,navigation=>current()&&exact()&&navigation.current()
+        ?navigation.route(path,{documentFocus:false}):false);
+    }catch{
+      if(current())this.#slidesResultError=handle.jobId;
+      return false;
+    }finally{
+      focus.dispose();read.abort.abort();if(this.#slidesResultRead===read)this.#slidesResultRead=null;
+      this.requestUpdate();
+    }
+  }
+  #nativeSlidesCompletions(){
+    const source=this.#privateSourceCurrent(),live=this.store.documentJobs.get();
+    for(const [id,retained] of this.#slidesCompletedJobs){
+      const current=live.find(job=>job.jobId===id);
+      if(!retained.current()||!this.#nativeSlidesJob(retained.job))this.#slidesCompletedJobs.delete(id);
+      else if(current&&(!this.#nativeSlidesJob(current)||this.#nativeSlidesJobIdentity(current)!==this.#nativeSlidesJobIdentity(retained.job)))retained.retired=true;
+    }
+    let capacity=false;
+    for(const job of live.filter(value=>this.#nativeSlidesJob(value))){
+      if(this.#slidesCompletedJobs.has(job.jobId))continue;
+      if(this.#slidesCompletedJobs.size>=120){capacity=true;continue;}
+      // Keep an observed exact completion across the ordinary feed ACK. Its
+      // authority is still re-read before Open; it is never a cached receipt.
+      const captured=Object.freeze({...job,result:job.result?Object.freeze({...job.result}):job.result});
+      this.#slidesCompletedJobs.set(job.jobId,{job:captured,current:source});
+    }
+    const jobs=[...this.#slidesCompletedJobs.values()].filter(value=>!value.retired).map(value=>value.job);
+    if(!jobs.length&&!capacity)return nothing;
+    return html`<div class="document-artifact-jobs native-slides-completions">${jobs.map(job=>html`<span><b>${this.i18n.system("Completed Slides")}</b><small>${this.i18n.date(new Date(job.completedAt??job.updatedAt),{dateStyle:"medium",timeStyle:"short"})}</small><button type="button" class="button secondary compact" data-native-slides-job=${job.jobId} aria-busy=${String(this.#slidesResultRead?.jobId===job.jobId)} @click=${(event:MouseEvent)=>void this.#openOriginalSlides(job,event,source)}>${this.i18n.system("Open original Slides")}</button>${this.#slidesResultError===job.jobId?html`<small role="status">${this.i18n.system("The exact completed slides could not be verified. Try opening this same request again.")}</small>`:nothing}</span>`)}${capacity?html`<p role="status">${this.i18n.system("More completed slides are available. Open them from this Document’s results.")}</p>`:nothing}</div>`;
   }
   #sceneCostControls(){
     const required=this.#sceneActionCurrent(),view=this.#sceneCostView?.current()?this.#sceneCostView:null;
@@ -2076,6 +2155,7 @@ export class DocumentArtifacts extends FormaElement {
     return html`<section class=${`document-artifacts ${this.compact?"compact":""}`} aria-label=${this.i18n.t("workbench.creativeResults","Creative results")}>
       <header><div><span class="eyebrow">${this.i18n.t("workbench.creativeResults","Creative results")}</span><h2>${artifactHeading}</h2>${this.compact?nothing:html`<p>Every result comes from the same decisions and remains attached to this document in every view.</p>`}</div>${this.#nativeStoryEligible(nativeStoryDocumentId)?html`<button type="button" class="button secondary native-story-launch" @click=${()=>void this.openNativeShortStory(nativeStoryDocumentId,{current:()=>nativeStorySourceCurrent()})}>${this.i18n.t("story.launcher.title")}</button>`:nothing}${readOnly?nothing:html`<button type="button" class="button secondary compact" @click=${()=>{this.#activeWorkflowStageId="";void this.#openCreate(true);}}>Create output</button>`}</header>
       ${this.#productionWorkflow()}
+      ${this.#nativeSlidesCompletions()}
       ${artifacts.length?html`<div class="document-artifact-list">${artifacts.slice(0,this.compact&&!this.#showAll?3:Math.max(12,artifacts.length)).map((artifact)=>{const review=artifactReviewState(artifact,this.#artifactSourceBlocks(artifact),this.store.events.get()),sceneConfiguration=this.#artifactSceneConfiguration(artifact),identity=artifactIdentities.get(artifact.id);return html`<button type="button" data-forma-content="primary" @click=${()=>this.#openArtifact(artifact)}>${this.#preview(artifact)}<span><b dir="auto">${artifact.title}</b><small>${identity?.disambiguator?`${identity.disambiguator} · `:""}${sceneConfiguration?this.#sceneVariantLabel(sceneConfiguration.medium):this.i18n.system(documentArtifactDefinition(artifact.kind).label)} · ${artifact.itemCount} ${artifact.kind==="slides"?this.i18n.system("slides"):artifact.kind==="storyboard"?this.i18n.system("frames"):this.i18n.system(artifact.itemCount===1 ? "part" : "parts")} · ${this.#reviewLabel(review)}${outdatedWorkflowOutputs.has(artifact.id)?html` · ${this.i18n.t("workflow.inputsChangedLabel","Production inputs changed")}`:nothing}</small>${this.#createdTime(artifact)}</span></button>`;})}</div>${this.compact&&artifacts.length>3?html`<button type="button" class="button ghost compact artifact-show-all" @click=${()=>{this.#showAll=!this.#showAll;this.requestUpdate();}}>${this.#showAll?this.i18n.system("Show fewer"):this.i18n.system("View all {count} outputs", { count: this.i18n.number(artifacts.length) })}</button>`:nothing}`:nothing}
       ${recoverablePresentationJob&&artifacts.length?html`<aside class="document-artifact-recovery" role="status"><button type="button" class="button primary compact" @click=${()=>this.#recoverPresentation(recoverablePresentationJob.jobId)}>${this.i18n.system("Recover saved render")}</button><small>${this.i18n.system("Paid once · replay without another provider call")}</small></aside>`:nothing}
       ${jobs.length?html`<div class="document-artifact-jobs" aria-live="polite">${jobs.map((job)=>html`<span><i></i><b>${DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?this.i18n.system(documentArtifactDefinition(job.result!.artifactKind as DocumentArtifactKind).label):this.i18n.system("Artifact")}</b><small>${job.progressMessage?localizedDocumentJobProgress(job,this.i18n):this.i18n.system(job.stage)}</small>${job.result?.artifactKind==="slides"?html`<button type="button" class="button ghost compact" @click=${()=>this.#inspectRunningInputs(job)}>Inspect inputs</button>`:nothing}<button type="button" class="button ghost compact" ?disabled=${job.status==="committing"} title=${job.status==="committing"?this.i18n.system("This result is already being saved"):this.i18n.t("generation.stopUncertainty","Stopping does not guarantee that provider work stops or that reserved budget is released. Incurred costs remain; uncertain holds stay reserved until verified. Check the original receipt.")} @click=${()=>this.#stop(job.jobId)}>${job.status==="committing"?this.i18n.system("Saving…"):this.i18n.system("Stop")}</button></span>`)}</div>`:nothing}

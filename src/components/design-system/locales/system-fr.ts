@@ -6114,4 +6114,11 @@ Object.assign(messages, {
   "system.auto.13cst8w.95": "Navigation du panneau uniquement. Le contrôleur de sorties existant reste responsable du focus exact et de toutes les décisions.",
 });
 
+Object.assign(messages, {
+  "system.auto.8gjuco.16": "Diapositives terminées",
+  "system.auto.1v74toi.20": "Ouvrir les diapositives d’origine",
+  "system.auto.z24au1.86": "Impossible de vérifier les diapositives terminées de cette demande précise. Essayez d’ouvrir à nouveau cette même demande.",
+  "system.auto.1qr28rr.76": "D’autres diapositives terminées sont disponibles. Ouvrez-les depuis les résultats de ce document.",
+});
+
 export default messages;

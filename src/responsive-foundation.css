@@ -4703,6 +4703,12 @@ forma-presentation-deck {
   min-block-size: 0;
 }
 
+/* Keep the reading owner’s outward focus ring inside the clipped viewport. */
+dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport {
+  box-sizing: border-box;
+  padding: var(--forma-focus-clearance);
+}
+
 .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > nav,
 :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
   position: static;
@@ -4719,6 +4725,15 @@ forma-presentation-deck {
   gap: .35rem;
   overflow: hidden;
   pointer-events: auto;
+}
+
+/* Give the native navigation its own focus gutters while retaining clipping. */
+@media (min-height: 37.5rem) {
+  dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
+    box-sizing: border-box;
+    padding: var(--forma-focus-clearance);
+    scroll-padding: var(--forma-focus-clearance);
+  }
 }
 
 .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > nav > button,

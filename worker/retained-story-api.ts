@@ -1,3 +1,5 @@
+import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
+import { parseNativeSlidesCompletionUrl, validateNativeSlidesCompletion, type NativeSlidesHandle } from "../src/model/native-slides-completion.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { parseNativeSceneCompletionUrl, validateNativeSceneCompletion, type NativeSceneHandle } from "../src/model/native-scene-completion.ts";
 import { parseNativeStoryCompletionUrl, validateNativeStoryCompletion, type NativeStoryHandle } from "../src/model/native-short-story-generation.ts";
@@ -136,7 +138,7 @@ function eventSnapshot(rows: EventRow[]): string {
 }
 
 function selectNative(rows: EventRow[], selection: { documentId:string; artifactId:string; revision:number; contentSha256?:string }, ownerId: string, completionId?:string,
-  expectedKind: "short_story" | NativeRetainedOutputKind = "short_story") {
+  expectedKind: "short_story" | NativeRetainedOutputKind = "short_story", requestedSlideCount?: number) {
   const decoded = rows.map(row => {
     const payload = record(JSON.parse(row.payload));
     if (!payload) throw unavailable();
@@ -196,6 +198,9 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
     if (payload.scene_medium !== undefined && configured !== undefined && payload.scene_medium !== configured) throw unavailable();
     sceneMedium = payload.scene_medium ?? configured ?? null;
   }
+  // The public event envelope retains item_count; settings is intentionally
+  // private. Bind the actual public count without reading private_json.
+  if (requestedSlideCount !== undefined && payload.item_count !== requestedSlideCount) throw unavailable();
   return Object.freeze({ projectId, contentId, sceneMedium });
 }
 
@@ -240,19 +245,11 @@ const jobCte = `story_job AS (
   FROM story_job
 ), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=16384)`;
 
-// Scene automatic count is absent or numeric one; its retained consent and actual
-// one-item projection remain separate requirements. Both kinds bind the exact run attempt.
-const sceneJobCte = `story_job AS (
-  SELECT job.* FROM document_jobs job WHERE job.job_id=? AND job.document_id=? AND job.owner_id=? AND job.stream_id=?
-    AND job.kind='render_document' AND job.status='completed' AND job.source_surface='document'
-    AND typeof(job.attempt_count)='integer' AND job.attempt_count BETWEEN 1 AND ${MAX_NATIVE_COMPLETION_ATTEMPTS}
-    AND job.correlation_id=(job.job_id||':attempt:'||CAST(job.attempt_count AS TEXT))
-    AND job.error_message IS NULL AND job.completed_at IS NOT NULL
-    AND typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))=24
-    AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    AND json_valid(job.request_json) AND json_extract(job.request_json,'$.artifactKind')='scene'
-    AND json_extract(job.request_json,'$.productionMode')='manual'
-    AND (json_type(job.request_json,'$.itemCount') IS NULL
+// Scene retains its one-item consent. Generic manual Slides retains the exact
+// numeric request count; flexible policies require a different completion contract.
+// Both kinds use the same attempt, ownership, result and final-recheck witness.
+function nativeCompletionJobCte(output: NativeRetainedOutputKind) {
+  const requestGuard = output === "scene" ? `    AND (json_type(job.request_json,'$.itemCount') IS NULL
       OR (json_type(job.request_json,'$.itemCount')='integer' AND json_extract(job.request_json,'$.itemCount')=1))
     AND json_extract(job.request_json,'$.sceneRequestId')=job.job_id
     AND json_extract(job.request_json,'$.sceneCostConsent.version')='scene-cost-v1'
@@ -262,11 +259,28 @@ const sceneJobCte = `story_job AS (
     AND json_extract(job.request_json,'$.sceneCostConsent.documentId')=job.document_id
     AND json_extract(job.request_json,'$.sceneCostConsent.productionMode')='manual'
     AND json_type(job.request_json,'$.sceneCostConsent.itemCount')='integer'
-    AND json_extract(job.request_json,'$.sceneCostConsent.itemCount')=1
+    AND json_extract(job.request_json,'$.sceneCostConsent.itemCount')=1` : `
+    AND json_type(job.request_json,'$.itemCount')='integer'
+    AND json_extract(job.request_json,'$.itemCount') BETWEEN 1 AND ${MAX_MANUAL_PRESENTATION_SLIDES}
+    AND (json_type(job.request_json,'$.requestedSlideCount') IS NULL
+      OR (json_type(job.request_json,'$.requestedSlideCount')='integer'
+        AND json_extract(job.request_json,'$.requestedSlideCount')=json_extract(job.request_json,'$.itemCount')))
+    AND json_type(job.request_json,'$.slideCountPolicy') IS NULL`;
+  return `story_job AS (
+  SELECT job.* FROM document_jobs job WHERE job.job_id=? AND job.document_id=? AND job.owner_id=? AND job.stream_id=?
+    AND job.kind='render_document' AND job.status='completed' AND job.source_surface='document'
+    AND typeof(job.attempt_count)='integer' AND job.attempt_count BETWEEN 1 AND ${MAX_NATIVE_COMPLETION_ATTEMPTS}
+    AND job.correlation_id=(job.job_id||':attempt:'||CAST(job.attempt_count AS TEXT))
+    AND job.error_message IS NULL AND job.completed_at IS NOT NULL
+    AND typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))=24
+    AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    AND json_valid(job.request_json) AND json_extract(job.request_json,'$.artifactKind')='${output}'
+    AND json_extract(job.request_json,'$.productionMode')='manual'
+${requestGuard}
     AND json_type(job.request_json,'$.outputExecution') IS NULL AND json_type(job.request_json,'$.workflowId') IS NULL
     AND json_type(job.request_json,'$.workflowStageId') IS NULL AND json_type(job.request_json,'$.workflowSources') IS NULL
     AND json_valid(job.result_json) AND length(CAST(job.result_json AS BLOB))<=${AUTH_BYTES}
-    AND json_extract(job.result_json,'$.artifactKind')='scene'
+    AND json_extract(job.result_json,'$.artifactKind')='${output}'
     AND json_type(job.result_json,'$.appendedEventIds')='array'
     AND NOT EXISTS(SELECT 1 FROM project_resource_scopes scope WHERE
       (scope.resource_kind='job' AND scope.resource_id=job.job_id) OR (scope.resource_kind='document' AND scope.resource_id=job.document_id))
@@ -275,14 +289,20 @@ const sceneJobCte = `story_job AS (
 ), story_job_json AS (
   SELECT json_object('jobId',job_id,'documentId',document_id,'correlationId',correlation_id,'attemptCount',attempt_count,'artifactId',json_extract(result_json,'$.artifactId'),
     'appendedEventIds',json_extract(result_json,'$.appendedEventIds'),'expiresAt',expires_at,
+    ${output === "slides" ? "'requestedSlideCount',json_extract(request_json,'$.itemCount')," : ""}
     'completionId',(SELECT event_id FROM events WHERE stream_id=story_job.stream_id AND correlation_id=story_job.correlation_id
       AND type='DocumentRenderCompleted' AND actor='worker:renderer' AND client_id='server:document-job:render_document')) AS job_json
   FROM story_job
 ), bounded_story_job AS (SELECT job_json FROM story_job_json WHERE length(CAST(job_json AS BLOB))<=16384)`;
+}
 
-async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle, ownerId:string, streamId:string, scene=false) {
+type NativeOutputCompletion =
+  | { output: "scene"; handle: NativeSceneHandle }
+  | { output: "slides"; handle: NativeSlidesHandle };
+
+async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | NativeSceneHandle | NativeSlidesHandle, ownerId:string, streamId:string, output:NativeRetainedOutputKind | null=null) {
   const bindings=[handle.jobId,handle.documentId,ownerId,streamId];
-  const raw=await env.DB.prepare(`WITH ${scene ? sceneJobCte : jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
+  const raw=await env.DB.prepare(`WITH ${output ? nativeCompletionJobCte(output) : jobCte} SELECT job_json FROM bounded_story_job`).bind(...bindings).first<{job_json:string}>();
   if(!raw||typeof raw.job_json!=="string"||bytes(raw.job_json)>16384)throw unavailable();
   const row=record(JSON.parse(raw.job_json));
   if(!row||row.jobId!==handle.jobId||row.documentId!==handle.documentId
@@ -295,7 +315,11 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
     ||new Set(row.appendedEventIds).size!==row.appendedEventIds.length||!row.appendedEventIds.includes(row.completionId)
     ||typeof row.expiresAt!=="string"||!(Date.parse(row.expiresAt)>Date.now())
     ||new Date(row.expiresAt).toISOString()!==row.expiresAt)throw unavailable();
-  return {bindings,snapshot:raw.job_json,artifactId:row.artifactId,completionId:row.completionId,expiresAt:row.expiresAt};
+  const requestedSlideCount = output === "slides" && typeof row.requestedSlideCount === "number" ? row.requestedSlideCount : undefined;
+  if (output === "slides" && (typeof requestedSlideCount !== "number" || !Number.isSafeInteger(requestedSlideCount)
+    || requestedSlideCount < 1 || requestedSlideCount > MAX_MANUAL_PRESENTATION_SLIDES)) throw unavailable();
+  return {bindings,snapshot:raw.job_json,artifactId:row.artifactId,completionId:row.completionId,expiresAt:row.expiresAt,
+    requestedSlideCount};
 }
 
 /**
@@ -304,9 +328,9 @@ async function completedStoryJob(env:WorkerEnv, handle:NativeStoryHandle | Nativ
  * here are fixed SELECTs; no provider, MEDIA, budget, repair or writer entry.
  * Runtime/import/SQL qualification is separate from this detached source.
  */
-async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativeOutput: NativeRetainedOutputTarget | null, sceneHandle: NativeSceneHandle | null = null): Promise<Response> {
+async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativeOutput: NativeRetainedOutputTarget | null, nativeCompletion: NativeOutputCompletion | null = null): Promise<Response> {
   if (request.method !== "GET") return error("method_not_allowed", 405);
-  const handle = sceneHandle ?? (nativeOutput ? null : parseNativeStoryCompletionUrl(request.url));
+  const handle = nativeCompletion?.handle ?? (nativeOutput ? null : parseNativeStoryCompletionUrl(request.url));
   let selection = nativeOutput?.selection ?? parseRetainedStoryRequestUrl(request.url);
   if (!selection && !handle) return error("invalid_retained_story_selection", 400);
   try {
@@ -329,12 +353,12 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     });
     if (access.identityPolicyDeniedCustody) return error("retained_story_access_denied", 403);
     const streamId = `creative:${identity.userId}`;
-    const job = handle ? await completedStoryJob(env, handle, identity.userId, streamId, Boolean(sceneHandle)) : null;
+    const job = handle ? await completedStoryJob(env, handle, identity.userId, streamId, nativeCompletion?.output ?? null) : null;
     const target = job && handle ? {documentId:handle.documentId,artifactId:job.artifactId,revision:0} : selection!;
     const events = await env.DB.prepare(`WITH ${eventCte} SELECT * FROM event_rows ORDER BY sequence`)
       .bind(streamId).all<EventRow>();
     const snapshot = eventSnapshot(events.results);
-    const native = selectNative(events.results, target, identity.userId, job?.completionId, sceneHandle ? "scene" : nativeOutput?.output ?? "short_story");
+    const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount);
     const contentBindings = [native.contentId, identity.userId, native.projectId, target.documentId, target.artifactId];
     const source = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${personalContentGuard()}`)
       .bind(...contentBindings).first<{ content: string; expires_at: string }>();
@@ -345,14 +369,18 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const body = record(JSON.parse(source.content));
     if (!body || typeof body.title !== "string" || typeof body.content_markdown !== "string"
       || !Array.isArray(body.items)) throw unavailable();
-    const outputTarget = sceneHandle ? { output: "scene" as const, selection } : nativeOutput;
+    const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
       ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium)
       : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
         selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
-    if (!dto || sceneHandle && body.items.length !== 1) throw unavailable();
+    if (!dto || nativeCompletion?.output === "scene" && body.items.length !== 1
+      || nativeCompletion?.output === "slides" && body.items.length !== job?.requestedSlideCount) throw unavailable();
     const completionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
-    const completion = job && handle ? sceneHandle
+    const completion = job && handle ? nativeCompletion?.output === "slides"
+      ? validateNativeSlidesCompletion({schemaVersion:1,kind:"native-slides-completion",handle,
+        selection,expiresAt:completionExpiry},handle)
+      : nativeCompletion?.output === "scene"
       ? validateNativeSceneCompletion({schemaVersion:1,kind:"native-scene-completion",handle,
         selection,expiresAt:completionExpiry},handle)
       : validateNativeStoryCompletion({schemaVersion:1,kind:"native-short-story-completion",handle,
@@ -364,7 +392,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     // source-redaction/scope metadata, personal custody and exact raw content.
     // The witness is a closed array generated above, never caller-supplied SQL.
     const comparisons = eventColumns.map((name, index) => `actual.${name} IS NOT json_extract(expected.value,'$[${index}]')`).join(" OR ");
-    const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${sceneHandle ? sceneJobCte : jobCte}`:""},
+    const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${nativeCompletion ? nativeCompletionJobCte(nativeCompletion.output) : jobCte}`:""},
       expected_events AS (SELECT value FROM json_each(?))
       SELECT 1 AS admitted FROM private_content WHERE ${personalContentGuard()}
         AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?
@@ -395,7 +423,9 @@ export function handleRetainedStoryRead(request: Request, env: WorkerEnv): Promi
 export function handleNativeRetainedOutputRead(request: Request, env: WorkerEnv): Promise<Response> {
   if (request.method !== "GET") return Promise.resolve(error("method_not_allowed", 405));
   const sceneHandle = parseNativeSceneCompletionUrl(request.url);
-  if (sceneHandle) return readCurrentRetainedNative(request, env, null, sceneHandle);
+  if (sceneHandle) return readCurrentRetainedNative(request, env, null, { output: "scene", handle: sceneHandle });
+  const slidesHandle = parseNativeSlidesCompletionUrl(request.url);
+  if (slidesHandle) return readCurrentRetainedNative(request, env, null, { output: "slides", handle: slidesHandle });
   const target = parseNativeRetainedOutputRequestUrl(request.url);
   if (!target) return Promise.resolve(error("invalid_native_retained_output_selection", 400));
   return readCurrentRetainedNative(request, env, target);

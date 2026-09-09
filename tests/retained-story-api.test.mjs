@@ -895,7 +895,7 @@ test("native Scene completion final witness rejects changed Scene association, s
 
 test("native Scene completion rejects malformed dispatch and wrong methods before database work", async t => {
   const f = await nativeSceneFixture(t), before = f.changes();
-  for (const path of ["/api/retained-output/scene/jobs/one", "/api/retained-output/slides/jobs/one/two",
+  for (const path of ["/api/retained-output/scene/jobs/one", "/api/retained-output/slides/jobs/one/two/extra",
     "/api/retained-output/scene/jobs/one/two?", "/api/retained-output/scene/jobs/one/two?revision=0"]) {
     assert.equal((await handleNativeRetainedOutputRead(new Request("https://forma.test" + path), f.env)).status, 400);
   }

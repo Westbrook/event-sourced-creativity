@@ -6145,4 +6145,11 @@ Object.assign(messages, {
   "system.auto.1o9k7vt.139": "The saved receipt could not be verified. No new generation was started. Check the original request again; its billing state is unconfirmed."
 });
 
+Object.assign(messages, {
+  "system.auto.8gjuco.16": "Completed Slides",
+  "system.auto.1v74toi.20": "Open original Slides",
+  "system.auto.z24au1.86": "The exact completed slides could not be verified. Try opening this same request again.",
+  "system.auto.1qr28rr.76": "More completed slides are available. Open them from this Document’s results.",
+});
+
 export default messages;
