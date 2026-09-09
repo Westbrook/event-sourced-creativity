@@ -1546,9 +1546,10 @@ export class FormaShell extends FormaElement {
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${errorMessage} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
       ${this.#nativeImageHost.renderStatus()}
+      ${this.store.ui.toast&&this.store.ui.toastPresentation==="inline"?html`<div class="queued-notice" role="status" aria-live="polite">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>`:nothing}
       <main id="main-content" tabindex="-1" aria-busy=${sourceReady||documentRouteState==="unavailable"?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourcePlaceholder}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourcePlaceholder}</main>
       ${session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
-      ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
+      ${this.store.ui.toast&&this.store.ui.toastPresentation!=="inline" ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen&&this.store.canManageProjectShares()?this.#share():nothing}
       ${this.#planningConsent()}

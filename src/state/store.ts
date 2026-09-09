@@ -387,7 +387,9 @@ export class FormaStore {
   readonly adaptiveSuggestionSets = new Signal.State<Record<string,AdaptiveSuggestionSet[]>>({});
   readonly canvasPlanningChoices = new Signal.State<Record<string,string>>({});
   readonly canvasPlanningSelection = new Signal.State({scope:"",canvasId:"",itemIds:[] as string[]});
-  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: window.matchMedia?.("(max-width: 75rem), (max-height: 37.5rem)")?.matches ?? false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, impersonationConfirmOpen:false, impersonationAction:"", selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
+  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: window.matchMedia?.("(max-width: 75rem), (max-height: 37.5rem)")?.matches ?? false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, impersonationConfirmOpen:false, impersonationAction:"", selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "", toastPresentation: "overlay" as "overlay"|"inline" });
+  #toastTimer?:number;
+  #toastRevision=0;
   readonly projection = new Signal.Computed<CreativeProjection>(() => {
     const route = this.route.get(), taskDocumentId = projectTaskDocumentIdFromRoute(route);
     const addressedDocumentId=isDocumentViewRoute(route)?documentIdFromRoute(route):null;
@@ -1544,7 +1546,7 @@ export class FormaStore {
     this.documentJobs.set(this.documentJobs.get().map(job=>this.#privateJobReference(job)));this.#jobDetails.clear();
     this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.replayEvents.set([]);this.head.set(0);
     this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
-    this.loading.set(false);this.busy.set("");this.error.set("The current source is unavailable. Its saved operation references are retained.");this.appendFailure.set("");this.ui.toast="";
+    this.loading.set(false);this.busy.set("");this.error.set("The current source is unavailable. Its saved operation references are retained.");this.appendFailure.set("");this.#retireToast();
     this.generationReadiness.set({});this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});
     this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.#resetReviewInbox();
     this.#privateContentScope="none";this.#historyProfile="projects";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
@@ -2896,12 +2898,23 @@ export class FormaStore {
   }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   #systemNotice(source:string,values:Record<string,string|number>={}){const locale=currentFormaLocale();const automatic=formaSystemMessageId(source);const fallback=Object.entries(FORMA_DEFAULT_MESSAGES).find(([,value])=>value===source)?.[0];const message=locale.messages[automatic]??(fallback?locale.messages[fallback]:undefined)??source;return Object.keys(values).length?message.replace(/\{(\w+)\}/g,(_,key:string)=>{const value=values[key];return typeof value==="number"?new Intl.NumberFormat(locale.formatLocale).format(value):String(value??"");}):message;}
-  toast(message: string) {
+  #retireToast(){
+    const revision=++this.#toastRevision;
+    if(this.#toastTimer!==undefined)window.clearTimeout(this.#toastTimer);
+    this.#toastTimer=undefined;
+    this.ui.toast="";this.ui.toastPresentation="overlay";
+    return revision;
+  }
+  toast(message: string,presentation:"overlay"|"inline"="overlay") {
     return this.#nativeImageMutation(()=>{
     const localized=this.#systemNotice(message);
-    this.ui.toast=localized;
+    const revision=this.#retireToast();
+    this.ui.toastPresentation=presentation;this.ui.toast=localized;
+    this.#toastTimer=window.setTimeout(()=>{
+      if(this.#toastRevision!==revision)return;
+      this.#retireToast();this.notify();
+    },2800);
     this.notify();
-    window.setTimeout(()=>{if(this.ui.toast===localized){this.ui.toast="";this.notify();}},2800);
     });
   }
   async confirmImpersonatedInteraction(action="change this fictional account"){
@@ -5737,7 +5750,7 @@ export class FormaStore {
         const result=await this.#startDocumentJob("render_document",{...context,...settings,requestKey,artifactKind:"model3d",productionMode:"manual",
           locale:options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en"),paidMediaConfirmed:true,itemCount:1},
           options.sourceSurface??"document",documentId,{current,onDispatch:options.onDispatch});
-        if(current())this.toast(result.reused?"This exact 3D request is already in progress.":"3D model queued. You can keep working while it is prepared.");
+        if(current())this.toast(result.reused?"This exact 3D request is already in progress.":"3D model queued. You can keep working while it is prepared.","inline");
         return true;
       }catch(error){if(current())this.toast(error instanceof Error?error.message:"The 3D model could not be started.");return false;}
     }
@@ -5793,7 +5806,7 @@ export class FormaStore {
         if(!handle)throw new Error("native_story_job_identity_mismatch");
         nativeStory.acknowledged(handle,reused);
       }
-      if(!nativeStory)this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){if(nativeStory)nativeStory.failed(error instanceof GenerationBudgetAdmissionError?error.reason:"unavailable");else this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
+      if(!nativeStory)this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":kind==="audio"?"audio":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}),kind==="video"&&productionMode==="manual"?"inline":"overlay");return true;}catch(error){if(nativeStory)nativeStory.failed(error instanceof GenerationBudgetAdmissionError?error.reason:"unavailable");else this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
   #observeWorkspaceNavigation<T>(pending:Promise<T>):Promise<PromiseSettledResult<T>>{

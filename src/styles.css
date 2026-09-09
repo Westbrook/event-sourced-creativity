@@ -692,6 +692,7 @@ details.proposal-corpus button { justify-self: start; max-inline-size: 100%; min
 .command-card footer span:last-child { margin-left: auto; }
 .toast { position: fixed; z-index: 150; right: 20px; bottom: 90px; max-width: 360px; padding: 11px 15px; color: #fff; background: var(--forest); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--type-caption); }
 .toast[popover] { inset: auto 20px 90px auto; width: max-content; margin: 0; border: 0; }
+.app-shell > .queued-notice { flex: none; min-inline-size: 0; max-inline-size: 100%; padding: 11px 15px; overflow-wrap: anywhere; color: var(--on-strong); background: var(--forest); font-size: var(--type-caption); }
 .comparison-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .comparison-grid .output-art { min-height: 260px; border-radius: 7px; }
 .comparison-grid b { display: block; margin-top: 6px; font-size: var(--type-caption); }
