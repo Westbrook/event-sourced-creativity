@@ -1055,6 +1055,12 @@ test("E5 source policy: open Slides tools keep standard native scroll gutters", 
   assert.ok(deck.includes('aria-label="Slide style"'));
   const current = ':is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar';
   const legacy = ':is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar';
+  // Native Download R1 clipped the six-pixel Export ring at both block edges
+  // of this ordinary-height scroll owner. Keep its existing inline/scroll policy.
+  assert.equal(eDeclaration(legacy, "padding-block"), "var(--forma-focus-clearance)",
+    "the scrolling Slides toolbar reserves the standard outer focus clearance at both block edges");
+  assert.equal(eDeclaration(legacy, "padding-inline"), "clamp(.375rem, 1vi, .75rem)");
+  assert.equal(eDeclaration(legacy, "overflow-x"), "auto");
   assert.equal(eDeclaration(current, "position", eLandscape), "relative");
   assert.equal(eDeclaration(current, "inset", eLandscape), "auto");
   assert.equal(eDeclaration(legacy, "padding", eLandscape), ".125rem");

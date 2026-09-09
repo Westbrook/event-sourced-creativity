@@ -3965,7 +3965,7 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   flex-direction: row;
   flex-wrap: nowrap;
   gap: .375rem;
-  padding-block: .25rem;
+  padding-block: var(--forma-focus-clearance);
   padding-inline: clamp(.375rem, 1vi, .75rem);
   overflow-x: auto;
 }

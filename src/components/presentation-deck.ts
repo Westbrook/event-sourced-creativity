@@ -14,8 +14,10 @@ import { inferPresentationAudienceLocale } from "../model/presentation-source";
 import { presentationUsesReadingView } from "../model/presentation-view-posture";
 import { renderSoundtrackCompanions as renderAudioCompanions, soundtrackCompanions, type SoundtrackAsset } from "./audio-playback";
 import { audioFileExtension } from "../model/audio";
+import { captureOutputNavigationFocus } from "./output-navigation-focus";
 
 type DeckView="list"|"slideshow";
+type ExportFocusReturn={controller:AbortController;cancel:(event:MouseEvent)=>void;restore:(delivered:boolean)=>Promise<void>;dispose:()=>void};
 const DECK_VIEW_PREFERENCE="forma:slides:deck-view";
 const DECK_STYLE_PREFERENCE="forma:slides:style";
 const DECK_SLIDE_PREFERENCE="forma:slides:current";
@@ -39,6 +41,7 @@ export class PresentationDeck extends FormaElement{
   items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";deckTitle="";documentId="";sourceSurface="presentation-deck";releaseAllowed=true;#view:DeckView=readDeckView();#index=0;#indexKey="";#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;#exporting=false;#exportMenuId=`presentation-deck-export-${crypto.randomUUID()}`;#exportMenuOpen=false;#fullscreenActive=false;#touchStart:{x:number;y:number}|null=null;#followSoundtrackCues=false;#compactToolsOpen=false;#automaticReading=false;#visualOverflow=false;#readingOverride:boolean|null=null;#readingObserver?:ResizeObserver;#readingViewport?:HTMLElement;
   #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"downloading"|"failed";completed:number;total:number;message?:string}|null=null;
   #exportAbort?:AbortController;
+  #exportFocus?:ExportFocusReturn;
   #activeFitKey="";
   #popoverScope="";
   #stopExportPosition?:()=>void;
@@ -77,7 +80,7 @@ export class PresentationDeck extends FormaElement{
     this.requestUpdate();
   };
   override connectedCallback(){super.connectedCallback();document.addEventListener("fullscreenchange",this.#fullscreenChanged);this.requestUpdate();}
-  override disconnectedCallback(){this.#closeDeckPopovers();this.#exportAbort?.abort();document.removeEventListener("fullscreenchange",this.#fullscreenChanged);this.#readingObserver?.disconnect();this.#readingViewport=undefined;if(this.#postureFrame)cancelAnimationFrame(this.#postureFrame);this.#postureFrame=0;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#closeDeckPopovers();this.#exportAbort?.abort();this.#exportFocus?.dispose();this.#exportFocus=undefined;document.removeEventListener("fullscreenchange",this.#fullscreenChanged);this.#readingObserver?.disconnect();this.#readingViewport=undefined;if(this.#postureFrame)cancelAnimationFrame(this.#postureFrame);this.#postureFrame=0;super.disconnectedCallback();}
   protected override updated(){
     const viewport=this.#view==="slideshow"?this.querySelector<HTMLElement>(".presentation-deck-viewport"):null;
     if(viewport===this.#readingViewport)return;
@@ -141,6 +144,68 @@ export class PresentationDeck extends FormaElement{
     this.requestUpdate();
   }
   #exportFromMenu(format:"pdf"|"powerpoint"|"powerpoint-presenter",items:DocumentArtifactDraftItem[],presentation:SlidePresentation){const menu=this.querySelector<HTMLElement>(`#${this.#exportMenuId}`);if(menu?.matches(":popover-open"))menu.hidePopover();this.querySelector<HTMLButtonElement>(".presentation-deck-export")?.focus({preventScroll:true});return format==="pdf"?this.#downloadPdf(items,presentation):format==="powerpoint-presenter"?this.#downloadPresenterPowerPoint(items,presentation):this.#downloadPowerPoint(items,presentation);}
+  #captureExportFocus(controller:AbortController,authorization:NonNullable<ReturnType<PresentationDeck["store"]["captureAuthorizationScope"]>>){
+    const store=this.store,owner=this.ownerDocument,ownerWindow=owner.defaultView,source=store.captureSourceOwnership();
+    const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");
+    if(!ownerWindow||!source||!trigger)return undefined;
+    const route=store.route.get(),documentId=this.documentId,artifactId=this.preferenceKey,surface=this.sourceSurface;
+    const snapshot=()=>{
+      const projection=store.projection.get(),artifact=projection.libraryArtifacts.find(candidate=>candidate.id===artifactId);
+      const content=artifact?.contentRef?store.content.get()[artifact.contentRef]:null;
+      const revision=store.events.get().filter(event=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
+      return JSON.stringify([projection.documentId,artifact?.id,artifact?.documentId,artifact?.sourceEventId,artifact?.contentRef,artifact?.sequence,content,revision,this.items,this.presentation,this.activePresentation,this.#showFooterLabel]);
+    };
+    let original:string;
+    try{original=snapshot();}catch{return undefined;}
+    let closed=false,departed=false,canceled=false;
+    let focus:ReturnType<typeof captureOutputNavigationFocus>|undefined;
+    const current=()=>{
+      try{return !closed&&this.isConnected&&this.ownerDocument===owner&&this.store===store
+        &&this.#exportAbort===controller&&this.releaseAllowed&&owner.visibilityState==="visible"&&owner.hasFocus()
+        &&store.sourceOwnershipActive(source)&&store.authorizationScopeActive(authorization)&&store.route.get()===route
+        &&this.documentId===documentId&&this.preferenceKey===artifactId&&this.sourceSurface===surface&&snapshot()===original
+        &&trigger.isConnected&&trigger.ownerDocument===owner&&this.querySelector(".presentation-deck-export")===trigger;
+      }catch{return false;}
+    };
+    const visible=()=>!trigger.closest("[hidden],[inert],[aria-hidden='true']")&&trigger.getClientRects().length>0
+      &&trigger.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
+    if(current()&&!trigger.disabled&&visible()&&owner.activeElement===trigger)focus=captureOutputNavigationFocus(owner);
+    const depart=()=>{departed=true;focus?.dispose();};
+    const visibility=()=>{if(owner.visibilityState!=="visible")depart();};
+    ownerWindow.addEventListener("blur",depart);
+    owner.addEventListener("visibilitychange",visibility);
+    const dispose=()=>{if(closed)return;closed=true;focus?.dispose();ownerWindow.removeEventListener("blur",depart);owner.removeEventListener("visibilitychange",visibility);};
+    return{controller,dispose,
+      cancel:(event:MouseEvent)=>{
+        const control=event.currentTarget as HTMLButtonElement|null;
+        if(!current()||!this.#exporting||!control||control!==this.querySelector(".presentation-deck-export-cancel")
+          ||!control.isConnected||control.disabled||owner.activeElement!==control)return;
+        // Deliberate Cancel removes its own focused control; it owns a fresh return.
+        focus?.dispose();departed=false;focus=captureOutputNavigationFocus(owner);canceled=true;
+      },
+      restore:async(delivered:boolean)=>{
+        try{
+          await this.updateComplete;
+          if(!delivered&&!canceled)return;
+          const ready=()=>!departed&&current()&&!this.#exporting&&!trigger.disabled&&visible()&&Boolean(focus?.current());
+          if(ready())focus!.run(trigger,()=>{if(!ready())return false;trigger.focus({preventScroll:true});return ready()&&owner.activeElement===trigger;});
+        }catch{/* Failed or withdrawn UI cannot acquire focus or replace the export outcome. */}
+        finally{dispose();}
+      },
+    };
+  }
+  async #finishExport(controller:AbortController,focus:ExportFocusReturn|undefined,delivered:boolean){
+    if(this.#exportAbort!==controller){focus?.dispose();return;}
+    this.#exporting=false;
+    if(this.#exportProgress?.stage!=="failed")this.#exportProgress=null;
+    try{this.requestUpdate();await focus?.restore(delivered);}
+    catch{/* A failed enabled-state render cannot replace the completed export. */}
+    finally{
+      if(this.#exportAbort===controller)this.#exportAbort=undefined;
+      if(this.#exportFocus===focus)this.#exportFocus=undefined;
+      focus?.dispose();
+    }
+  }
   async #fullscreen(){try{if(document.fullscreenElement===this)await document.exitFullscreen();else if(typeof this.requestFullscreen==="function"){if(this.#view!=="slideshow")this.#setView("slideshow");await this.requestFullscreen();}}catch{this.store.toast("Fullscreen presentation is unavailable in this browser.");}}
   #touchBegin(event:PointerEvent){if(event.pointerType==="touch")this.#touchStart={x:event.clientX,y:event.clientY};}
   #touchEnd(event:PointerEvent,total:number){if(event.pointerType!=="touch"||!this.#touchStart)return;const horizontal=event.clientX-this.#touchStart.x,vertical=event.clientY-this.#touchStart.y;this.#touchStart=null;if(Math.abs(horizontal)<48||Math.abs(horizontal)<Math.abs(vertical)*1.5)return;const rtl=this.matches(":dir(rtl)");this.#setIndex(this.#index+(horizontal<0===!rtl?1:-1),total);}
@@ -189,11 +254,15 @@ export class PresentationDeck extends FormaElement{
     const authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false,artifactId=this.preferenceKey,documentId=this.documentId||this.store.projection.get().documentId;
     if(!authorization||!artifactId)return;
     const controller=new AbortController();
+    this.#exportFocus?.dispose();
     this.#exportAbort=controller;
+    const focus=this.#captureExportFocus(controller,authorization);
+    this.#exportFocus=focus;
     this.#exporting=true;
     this.#exportProgress={stage:"preparing",completed:0,total:items.length};
-    this.requestUpdate();
+    let delivered=false;
     try{
+      this.requestUpdate();
       const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId),retained=artifact?.contentRef?this.store.content.get()[artifact.contentRef]:"";
       if(scoped&&!retained){
         const message=this.i18n.system("The latest approved presentation is unavailable.");
@@ -227,6 +296,7 @@ export class PresentationDeck extends FormaElement{
       document.body.append(link);
       link.click();
       link.remove();
+      delivered=true;
       window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
       this.store.toast(this.i18n.system("{count}-page PDF downloaded.",{count:this.i18n.number(result.pageCount)}));
     }catch(error){
@@ -237,11 +307,7 @@ export class PresentationDeck extends FormaElement{
         :this.i18n.t("presentation.export.pdfFailed");
       this.#exportProgress={stage:"failed",completed:this.#exportProgress?.completed??0,total:items.length,message};
     }finally{
-      this.#exportAbort=undefined;
-      this.#exporting=false;
-      if(this.#exportProgress?.stage!=="failed")this.#exportProgress=null;
-      this.requestUpdate();
-      if(controller.signal.aborted&&this.isConnected)void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".presentation-deck-export")?.focus({preventScroll:true}));
+      await this.#finishExport(controller,focus,delivered);
     }
   }
   async #downloadPowerPoint(items:DocumentArtifactDraftItem[],presentation:SlidePresentation){return this.#downloadPowerPointVariant(items,presentation,false);}
@@ -257,11 +323,15 @@ export class PresentationDeck extends FormaElement{
   async #downloadPowerPointVariant(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,includePresenterNotes:boolean){
     if(this.#exporting||!this.releaseAllowed)return;const authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false,artifactId=this.preferenceKey,documentId=this.documentId||this.store.projection.get().documentId;if(!authorization||scoped&&!artifactId)return;
     const controller=new AbortController();
+    this.#exportFocus?.dispose();
     this.#exportAbort=controller;
+    const focus=this.#captureExportFocus(controller,authorization);
+    this.#exportFocus=focus;
     this.#exporting=true;
     this.#exportProgress={stage:"preparing",completed:0,total:items.length};
-    this.requestUpdate();
+    let delivered=false;
     try{
+      this.requestUpdate();
       const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId);
       const retained=artifact?.contentRef?this.store.content.get()[artifact.contentRef]:"";
       if(scoped&&!retained){
@@ -291,18 +361,14 @@ export class PresentationDeck extends FormaElement{
       if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
       this.#exportProgress={stage:"downloading",completed:items.length,total:items.length};
       this.requestUpdate();
-      const blob=new Blob([bytes as Uint8Array<ArrayBuffer>],{type:POWERPOINT_DOCUMENT_MIME}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=presentationEditableExportFilename(this.deckTitle.trim()||this.i18n.system("Slide deck"),this.i18n.locale);document.body.append(link);link.click();link.remove();window.setTimeout(()=>URL.revokeObjectURL(url),60_000);this.store.toast(includePresenterNotes?(items.length===1?this.i18n.system("{count} editable PowerPoint slide and speaker notes downloaded.",{count:this.i18n.number(items.length)}):this.i18n.system("{count} editable PowerPoint slides and speaker notes downloaded.",{count:this.i18n.number(items.length)})):this.i18n.t("presentation.export.audienceDownloaded","",{count:this.i18n.number(items.length)}));
+      const blob=new Blob([bytes as Uint8Array<ArrayBuffer>],{type:POWERPOINT_DOCUMENT_MIME}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=presentationEditableExportFilename(this.deckTitle.trim()||this.i18n.system("Slide deck"),this.i18n.locale);document.body.append(link);link.click();link.remove();delivered=true;window.setTimeout(()=>URL.revokeObjectURL(url),60_000);this.store.toast(includePresenterNotes?(items.length===1?this.i18n.system("{count} editable PowerPoint slide and speaker notes downloaded.",{count:this.i18n.number(items.length)}):this.i18n.system("{count} editable PowerPoint slides and speaker notes downloaded.",{count:this.i18n.number(items.length)})):this.i18n.t("presentation.export.audienceDownloaded","",{count:this.i18n.number(items.length)}));
     }catch(error){
       if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
       console.error("Editable slide export failed",error);
       const message=this.i18n.t("presentation.export.powerpointFailed");
       this.#exportProgress={stage:"failed",completed:this.#exportProgress?.completed??0,total:items.length,message};
     }finally{
-      this.#exportAbort=undefined;
-      this.#exporting=false;
-      if(this.#exportProgress?.stage!=="failed")this.#exportProgress=null;
-      this.requestUpdate();
-      if(controller.signal.aborted&&this.isConnected)void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".presentation-deck-export")?.focus({preventScroll:true}));
+      await this.#finishExport(controller,focus,delivered);
     }
   }
   #key(event:KeyboardEvent,total:number){
@@ -323,7 +389,7 @@ export class PresentationDeck extends FormaElement{
     const label=progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):progress.stage==="finalizing"?this.i18n.t("job.progress.finalizing"):this.i18n.t("job.progress.downloading"));
     const determinate=progress.stage!=="preparing"&&total>0;
     return html`<section id=${`${this.#exportMenuId}-status`} class="presentation-deck-export-status" data-export-stage=${progress.stage} role=${failed?"alert":"status"} aria-live=${failed?"assertive":"polite"} aria-atomic="true">
-      <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${()=>{this.#exportAbort?.abort();void this.updateComplete.then(()=>{const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");if(this.isConnected&&!trigger?.disabled)trigger?.focus({preventScroll:true});});}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>
+      <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${(event:MouseEvent)=>{this.#exportFocus?.cancel(event);this.#exportAbort?.abort();}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>
       ${failed?html`<button type="button" class="button secondary compact presentation-deck-export-retry" @click=${()=>{const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");trigger?.focus({preventScroll:true});trigger?.click();}}>${this.i18n.t("action.retry")}</button>`:determinate?html`<progress max=${total} value=${completed} aria-label=${this.i18n.t("status.progress")} aria-valuetext=${count}></progress>`:html`<progress aria-label=${this.i18n.t("status.progress")}></progress>`}
     </section>`;
   }
