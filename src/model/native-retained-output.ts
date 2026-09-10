@@ -1,6 +1,7 @@
 import { projectNativeRetainedVideo, validateNativeRetainedVideo, type NativeRetainedVideoContent } from "./native-retained-video.ts";
 import { projectNativeRetainedAudio, validateNativeRetainedAudio, type NativeRetainedAudioContent } from "./native-retained-audio.ts";
 import { projectNativeRetainedModel3d, validateNativeRetainedModel3d, type NativeRetainedModel3dContent } from "./native-retained-model3d.ts";
+import { parseModel3dMediaRevision } from "./model3d-media-revision.ts";
 import { presentationAudienceItem } from "./presentation-delivery.ts";
 import { parseAudioMediaRevision, parseVideoMediaRevision, type DocumentArtifactDraftItem, type SlideCitation, type SlidePresentation, type SlideQuote, type SlideVisualData, type SlideVisualDatum } from "./document-artifacts.ts";
 import type { RetainedStorySelection } from "./retained-short-story.ts";
@@ -393,17 +394,19 @@ export function validateNativeRetainedOutputDto(candidate: unknown, target: Nati
  */
 export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, rawContent: unknown,
   expiresAt: string, sceneMedium: unknown = null,
-  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown; audioReceipt?: unknown; audioRevision?: unknown; videoReceipt?: unknown; videoRevision?: unknown } = {}): NativeRetainedOutputDto | null {
+  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown; model3dRevision?: unknown; audioReceipt?: unknown; audioRevision?: unknown; videoReceipt?: unknown; videoRevision?: unknown } = {}): NativeRetainedOutputDto | null {
   try {
     const expected = readTarget(target);
     const raw = record(captureJson(rawContent), ["title"], [], true);
     const title = text(raw.title);
     if (Object.hasOwn(raw, "content_markdown")) text(raw.content_markdown, NATIVE_RETAINED_OUTPUT_MARKDOWN_MAX_BYTES);
+    if (expected.output !== "model3d" && (Object.hasOwn(raw, "model3d_revision")
+      || Object.hasOwn(retainedMetadata, "model3dRevision"))) return null;
     if (expected.output === "scene") {
       if (sceneMedium !== null && sceneMedium !== "visual" && sceneMedium !== "audio") return null;
       return finish(expected, title, expiresAt, { content_markdown: text(raw.content_markdown, NATIVE_RETAINED_OUTPUT_MARKDOWN_MAX_BYTES), medium: sceneMedium }, Date.now());
     }
-    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt", "audioReceipt", "audioRevision", "videoReceipt", "videoRevision"]);
+    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt", "model3dRevision", "audioReceipt", "audioRevision", "videoReceipt", "videoRevision"]);
     if (expected.output === "storyboard") {
       const frames = projectStoryboardFrames(raw.items, metadata.storyboardItems ?? null);
       return finish(expected, title, expiresAt, { frames }, Date.now());
@@ -433,7 +436,15 @@ export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, 
       return content ? finish(expected, title, expiresAt, content, Date.now()) : null;
     }
     if (expected.output === "model3d") {
-      const content = projectNativeRetainedModel3d(metadata.model3dReceipt ?? null);
+      const hasRevision = Object.hasOwn(raw, "model3d_revision"), hasWitness = Object.hasOwn(metadata, "model3dRevision");
+      if (Object.hasOwn(raw, "audio_revision") || Object.hasOwn(raw, "video_revision")
+        || Object.hasOwn(metadata, "audioRevision") || Object.hasOwn(metadata, "videoRevision")
+        || hasRevision !== hasWitness || hasRevision && expected.selection.revision === 0) return null;
+      const revision = hasRevision ? parseModel3dMediaRevision(raw.model3d_revision) : undefined;
+      const witnessed = hasWitness ? parseModel3dMediaRevision(metadata.model3dRevision) : undefined;
+      if (hasRevision && (!revision || !witnessed || JSON.stringify(revision) !== JSON.stringify(witnessed)
+        || revision.source.revision >= expected.selection.revision)) return null;
+      const content = projectNativeRetainedModel3d(metadata.model3dReceipt ?? null, witnessed);
       return content ? finish(expected, title, expiresAt, content, Date.now()) : null;
     }
     const items = list(raw.items, NATIVE_RETAINED_OUTPUT_ITEMS_MAX).map(item => audienceItem(readItem(item, false)));

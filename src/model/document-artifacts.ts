@@ -3,6 +3,8 @@ import type { ImageFocalPoint } from "./focal-point.ts";
 import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
 import { protectedPresentationScoreContradictions, resolvePresentationSourceReferences, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
+import { parseModel3dMediaRevision, type Model3dMediaRevision } from "./model3d-media-revision.ts";
+import { projectNativeRetainedModel3d, type NativeRetainedModel3dFile } from "./native-retained-model3d.ts";
 
 export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
@@ -147,7 +149,17 @@ export type DocumentArtifactDraft = {
   items: DocumentArtifactDraftItem[];
   audio_revision?: AudioMediaRevision;
   video_revision?: VideoMediaRevision;
+  model3d_revision?: Model3dMediaRevision;
 };
+
+/** One explicit private GLB descriptor; legacy root URLs and ambiguous inventories are not edit sources. */
+export function model3dArtifactMediaFile(artifact: Pick<DocumentArtifact, "kind" | "settings">): NativeRetainedModel3dFile | null {
+  if (artifact.kind !== "model3d") return null;
+  const retained = projectNativeRetainedModel3d({ artifact_kind: "model3d", settings: artifact.settings });
+  const glbs = retained?.files.filter(file => file.role === "mesh" && file.format === "glb"
+    && file.mimeType === "model/gltf-binary" && file.previewSupported !== false) ?? [];
+  return glbs.length === 1 ? glbs[0]! : null;
+}
 
 /** Immutable authored clip provenance; the enclosing edit event identifies its current revision. */
 export type AudioMediaRevision = {
@@ -828,7 +840,9 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
     if (!parsed || typeof parsed !== "object" || typeof parsed.title !== "string" || typeof parsed.content_markdown !== "string" || !Array.isArray(parsed.items)) return null;
     const audioRevision = Object.hasOwn(parsed, "audio_revision") ? parseAudioMediaRevision(parsed.audio_revision) : undefined;
     const videoRevision = Object.hasOwn(parsed, "video_revision") ? parseVideoMediaRevision(parsed.video_revision) : undefined;
-    if (audioRevision === null || videoRevision === null || audioRevision && videoRevision) return null;
+    const model3dRevision = Object.hasOwn(parsed, "model3d_revision") ? parseModel3dMediaRevision(parsed.model3d_revision) : undefined;
+    if (audioRevision === null || videoRevision === null || model3dRevision === null
+      || [audioRevision, videoRevision, model3dRevision].filter(Boolean).length > 1) return null;
     const presentation=normalizeSlidePresentation(parsed.presentation);if(presentation&&!presentation.footerLabel){const fallback=text(parsed.title);if(fallback&&!processDerivedSlideLabel(fallback))presentation.footerLabel=fallback;}
     return {
       title: parsed.title,
@@ -838,6 +852,7 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
       items:parsed.items.map((item,index)=>normalizeSlideItem(item,index)),
       ...(audioRevision ? { audio_revision: audioRevision } : {}),
       ...(videoRevision ? { video_revision: videoRevision } : {}),
+      ...(model3dRevision ? { model3d_revision: model3dRevision } : {}),
     };
   } catch { return null; }
 }

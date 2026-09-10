@@ -9,7 +9,8 @@ import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-
 import { parseNativeSlidesCompletionUrl, validateNativeSlidesCompletion, type NativeSlidesHandle } from "../src/model/native-slides-completion.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
-import { parseAudioMediaRevision, parseVideoMediaRevision } from "../src/model/document-artifacts.ts";
+import { model3dArtifactMediaFile, parseAudioMediaRevision, parseVideoMediaRevision } from "../src/model/document-artifacts.ts";
+import { parseModel3dMediaRevision } from "../src/model/model3d-media-revision.ts";
 import { parseNativeSceneCompletionUrl, validateNativeSceneCompletion, type NativeSceneHandle } from "../src/model/native-scene-completion.ts";
 import { parseNativeStoryCompletionUrl, validateNativeStoryCompletion, type NativeStoryHandle } from "../src/model/native-short-story-generation.ts";
 import {
@@ -216,6 +217,9 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
     completionId: completion.row.event_id, completionItemCount: payload.item_count, completionInputRef: payload.input_ref,
     latestEditId: edits.at(-1)?.row.event_id ?? null,
     editIds: Object.freeze(edits.map(edit => edit.row.event_id)),
+    model3dMediaTransitions: Object.freeze(expectedKind === "model3d" ? edits.flatMap((edit, index) =>
+      edit.payload.source_surface === "document-artifact-model3d-scale" || edit.payload.revision_action === "restore"
+        || Array.isArray(edit.payload.changed_fields) && edit.payload.changed_fields.includes("model3d_revision") ? [index] : []) : []),
     editContentHashes: Object.freeze(edits.map(edit => edit.payload.content_sha256 as string)) });
 }
 
@@ -487,6 +491,114 @@ async function videoEditReceipt(env: WorkerEnv, native: ReturnType<typeof select
     if (settings && Object.hasOwn(settings, "source_media_sha256") && settings.source_media_sha256 !== revision.source.sha256) throw unavailable();
   }
   return { ...current, revision, source: { bindings: sourceBindings, raw: snapshot.content_json,
+    expiresAt: snapshot.expires_at, edit: sourceEdit } };
+}
+
+const model3dSourceRevisionGuard = () => `owner_id=? AND artifact_id=? AND revision=? AND document_id=? AND project_id=?
+  AND organization_id IS NULL AND project_access_id IS NULL AND redacted_at IS NULL
+  AND typeof(content_json)='text' AND length(CAST(content_json AS BLOB)) BETWEEN 1 AND ${RETAINED_STORY_JSON_MAX_BYTES}
+  AND content_sha256=? AND typeof(expires_at)='text' AND length(CAST(expires_at AS BLOB))=24
+  AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`;
+
+// An authored current GLB needs both its exact private edit and the exact source
+// revision it scaled. Original completion files remain immutable. This bounded
+// witness reads metadata only; authenticated media reads establish actual bytes.
+async function model3dEditReceipt(env: WorkerEnv, native: ReturnType<typeof selectNative>, ownerId: string,
+  selection: { documentId: string; artifactId: string; revision: number; contentSha256: string },
+  body: Record<string, unknown>, original: Awaited<ReturnType<typeof model3dReceipt>>) {
+  const hasBodyRevision = Object.hasOwn(body, "model3d_revision");
+  const crossKind = (value: Record<string, unknown>) => Object.hasOwn(value, "audio_revision") || Object.hasOwn(value, "video_revision");
+  if (crossKind(body)) throw unavailable();
+  if (!native.latestEditId) {
+    if (selection.revision !== 0 || hasBodyRevision) throw unavailable();
+    return null;
+  }
+  const readEdit = async (eventId: string, revision: number, contentSha256: string) => {
+    const bindings = [eventId, ownerId, selection.documentId, native.projectId];
+    const row = await env.DB.prepare(`SELECT private_json FROM event_private_payloads WHERE ${model3dReceiptGuard()}`)
+      .bind(...bindings).first<{ private_json: string }>();
+    if (!row || typeof row.private_json !== "string" || bytes(row.private_json) > EVENT_BYTES) throw unavailable();
+    const payload = record(JSON.parse(row.private_json));
+    if (!payload || payload.document_id !== selection.documentId || payload.project_id !== native.projectId
+      || payload.artifact_id !== selection.artifactId || payload.content_ref !== native.contentId
+      || payload.edited_by_user_id !== ownerId || payload.revision !== revision || payload.content_sha256 !== contentSha256
+      || payload.artifact_kind !== undefined && payload.artifact_kind !== "model3d" || crossKind(payload)) throw unavailable();
+    return { bindings, raw: row.private_json, payload };
+  };
+  const restoredOriginal = (payload: Record<string, unknown>, revision: number) => payload.artifact_kind === "model3d"
+    && payload.model3d_revision === null && payload.revision_action === "restore"
+    && payload.source_surface === "document-artifact-history" && Number.isSafeInteger(payload.restored_from_revision)
+    && Number(payload.restored_from_revision) >= 0 && Number(payload.restored_from_revision) < revision;
+  const originalResetBefore = async (revision: number) => {
+    const index = native.model3dMediaTransitions.filter(index => index + 1 < revision).at(-1);
+    if (index === undefined) return undefined;
+    const reset = await readEdit(native.editIds[index]!, index + 1, native.editContentHashes[index]!);
+    if (!restoredOriginal(reset.payload, index + 1)) throw unavailable();
+    return reset;
+  };
+  const current = await readEdit(native.latestEditId, selection.revision, selection.contentSha256);
+  if (!Object.hasOwn(current.payload, "model3d_revision")) {
+    if (hasBodyRevision || current.payload.source_surface === "document-artifact-model3d-scale" || current.payload.revision_action === "restore"
+      || Array.isArray(current.payload.changed_fields) && current.payload.changed_fields.includes("model3d_revision")) throw unavailable();
+    // A legacy text edit may carry original files, but omission after a geometry
+    // edit cannot silently resurrect those files. A real intervening original
+    // restore supplies its own private revision/hash witness and final SQL pin.
+    return { ...current, revision: undefined, source: undefined, originalReset: await originalResetBefore(selection.revision) };
+  }
+  if (current.payload.artifact_kind !== "model3d") throw unavailable();
+  if (current.payload.model3d_revision === null) {
+    if (hasBodyRevision || !restoredOriginal(current.payload, selection.revision)) throw unavailable();
+    return { ...current, revision: undefined, source: undefined, originalReset: undefined };
+  }
+  const revision = parseModel3dMediaRevision(current.payload.model3d_revision);
+  const authored = hasBodyRevision ? parseModel3dMediaRevision(body.model3d_revision) : null;
+  if (!revision || !authored || JSON.stringify(revision) !== JSON.stringify(authored)
+    || revision.source.revision >= selection.revision) throw unavailable();
+  const prefix = `${ownerMediaNamespace(ownerId)}/generated/`;
+  for (const url of [revision.media.url, revision.source.url]) {
+    if (!decodeURIComponent(url.slice("/api/media/".length)).startsWith(prefix)) throw unavailable();
+  }
+  const originalFile = model3dArtifactMediaFile({ kind: "model3d", settings: record(original.payload.settings) ?? {} });
+  if (!originalFile) throw unavailable();
+  const sourceBindings = [ownerId, selection.artifactId, revision.source.revision, selection.documentId,
+    native.projectId, revision.source.contentSha256];
+  const snapshot = await env.DB.prepare(`SELECT content_json,content_sha256,expires_at FROM artifact_revisions WHERE ${model3dSourceRevisionGuard()}`)
+    .bind(...sourceBindings).first<{ content_json: string; content_sha256: string; expires_at: string }>();
+  if (!snapshot || typeof snapshot.content_json !== "string" || bytes(snapshot.content_json) > RETAINED_STORY_JSON_MAX_BYTES
+    || !Number.isFinite(Date.parse(snapshot.expires_at)) || Date.parse(snapshot.expires_at) <= Date.now()
+    || await hash(snapshot.content_json) !== revision.source.contentSha256) throw unavailable();
+  const sourceBody = record(JSON.parse(snapshot.content_json));
+  if (!sourceBody || crossKind(sourceBody)) throw unavailable();
+  const hasSourceRevision = Object.hasOwn(sourceBody, "model3d_revision");
+  let sourceEdit: Awaited<ReturnType<typeof readEdit>> | null = null;
+  if (revision.source.revision === 0) {
+    if (hasSourceRevision) throw unavailable();
+  } else {
+    if (native.editContentHashes[revision.source.revision - 1] !== revision.source.contentSha256) throw unavailable();
+    sourceEdit = await readEdit(native.editIds[revision.source.revision - 1]!, revision.source.revision, revision.source.contentSha256);
+  }
+  let originalReset: Awaited<ReturnType<typeof originalResetBefore>>;
+  if (hasSourceRevision) {
+    const previous = parseModel3dMediaRevision(sourceBody.model3d_revision);
+    const witnessed = sourceEdit ? parseModel3dMediaRevision(sourceEdit.payload.model3d_revision) : null;
+    if (!previous || !witnessed || sourceEdit?.payload.artifact_kind !== "model3d"
+      || JSON.stringify(previous) !== JSON.stringify(witnessed) || previous.source.revision >= revision.source.revision
+      || previous.media.url !== revision.source.url || previous.media.sha256 !== revision.source.sha256
+      || previous.media.byteLength !== revision.source.byteLength
+      || previous.vertexCount !== revision.vertexCount || previous.positionAccessorCount !== revision.positionAccessorCount
+      || JSON.stringify(previous.afterBounds) !== JSON.stringify(revision.beforeBounds)) throw unavailable();
+  } else {
+    if (sourceEdit && Object.hasOwn(sourceEdit.payload, "model3d_revision")
+      && !restoredOriginal(sourceEdit.payload, revision.source.revision)) throw unavailable();
+    if (sourceEdit && !Object.hasOwn(sourceEdit.payload, "model3d_revision")) {
+      if (sourceEdit.payload.source_surface === "document-artifact-model3d-scale" || sourceEdit.payload.revision_action === "restore"
+        || Array.isArray(sourceEdit.payload.changed_fields) && sourceEdit.payload.changed_fields.includes("model3d_revision")) throw unavailable();
+      originalReset = await originalResetBefore(revision.source.revision);
+    }
+    if (revision.source.url !== originalFile.url || revision.source.sha256 !== originalFile.sha256
+      || revision.source.byteLength !== originalFile.fileSize) throw unavailable();
+  }
+  return { ...current, revision, originalReset, source: { bindings: sourceBindings, raw: snapshot.content_json,
     expiresAt: snapshot.expires_at, edit: sourceEdit } };
 }
 
@@ -914,12 +1026,16 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
       || !Array.isArray(body.items)) throw unavailable();
     const audioEdit = audio ? await audioEditReceipt(env, native, identity.userId, selection, body, audio) : null;
     const videoEdit = video ? await videoEditReceipt(env, native, identity.userId, selection, body, video) : null;
+    const model3dEdit = model3d ? await model3dEditReceipt(env, native, identity.userId, selection, body, model3d) : null;
+    const retainedExpiresAt = model3dEdit?.source && Date.parse(model3dEdit.source.expiresAt) < Date.parse(source.expires_at)
+      ? model3dEdit.source.expiresAt : source.expires_at;
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
-      ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium, {
+      ? projectNativeRetainedOutput(outputTarget, body, retainedExpiresAt, native.sceneMedium, {
         storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null, audioReceipt: audio?.payload ?? null,
         ...(audioEdit?.revision ? { audioRevision: audioEdit.revision } : {}), videoReceipt: video?.payload ?? null,
-        ...(videoEdit?.revision ? { videoRevision: videoEdit.revision } : {}) })
+        ...(videoEdit?.revision ? { videoRevision: videoEdit.revision } : {}),
+        ...(model3dEdit?.revision ? { model3dRevision: model3dEdit.revision } : {}) })
       : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
         selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
     if (!dto || nativeCompletion?.output === "scene" && body.items.length !== 1
@@ -933,7 +1049,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
       || nativeCompletion?.output === "model3d" && (body.items.length !== 0 || body.presentation !== null
         || body.content_markdown !== model3dInput?.prompt || dto.kind !== "native-retained-output" || dto.output !== "model3d"
         || dto.content.files.length === 0)) throw unavailable();
-    const sourceCompletionExpiry = job && Date.parse(job.expiresAt)<Date.parse(source.expires_at)?job.expiresAt:source.expires_at;
+    const sourceCompletionExpiry = job && Date.parse(job.expiresAt)<Date.parse(retainedExpiresAt)?job.expiresAt:retainedExpiresAt;
     const completionExpiry = completionInput && Date.parse(completionInput.expiresAt) < Date.parse(sourceCompletionExpiry)
       ? completionInput.expiresAt : sourceCompletionExpiry;
     const completion = job && handle ? nativeCompletion?.output === "model3d"
@@ -980,11 +1096,16 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         ${videoEdit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${videoEdit?.source?`AND EXISTS(SELECT 1 FROM artifact_revisions WHERE ${videoSourceRevisionGuard()} AND CAST(content_json AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}
         ${videoEdit?.source?.edit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${model3dEdit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${model3dEdit?.source?`AND EXISTS(SELECT 1 FROM artifact_revisions WHERE ${model3dSourceRevisionGuard()} AND CAST(content_json AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}
+        ${model3dEdit?.source?.edit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${model3dEdit?.originalReset?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${completionInput?`AND EXISTS(SELECT 1 FROM private_content WHERE ${audioInputGuard()} AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}`)
-      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(videoEdit?[...videoEdit.bindings,videoEdit.raw]:[]), ...(videoEdit?.source?[...videoEdit.source.bindings,videoEdit.source.raw,videoEdit.source.expiresAt]:[]), ...(videoEdit?.source?.edit?[...videoEdit.source.edit.bindings,videoEdit.source.edit.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
+      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(videoEdit?[...videoEdit.bindings,videoEdit.raw]:[]), ...(videoEdit?.source?[...videoEdit.source.bindings,videoEdit.source.raw,videoEdit.source.expiresAt]:[]), ...(videoEdit?.source?.edit?[...videoEdit.source.edit.bindings,videoEdit.source.edit.raw]:[]), ...(model3dEdit?[...model3dEdit.bindings,model3dEdit.raw]:[]), ...(model3dEdit?.source?[...model3dEdit.source.bindings,model3dEdit.source.raw,model3dEdit.source.expiresAt]:[]), ...(model3dEdit?.source?.edit?[...model3dEdit.source.edit.bindings,model3dEdit.source.edit.raw]:[]), ...(model3dEdit?.originalReset?[...model3dEdit.originalReset.bindings,model3dEdit.originalReset.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
       .first<{ admitted: number }>();
     if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()
       || videoEdit?.source && Date.parse(videoEdit.source.expiresAt) <= Date.now()
+      || model3dEdit?.source && Date.parse(model3dEdit.source.expiresAt) <= Date.now()
       || completionInput && Date.parse(completionInput.expiresAt) <= Date.now()) throw unavailable();
     // No asynchronous work occurs between the final read and literal response.
     return new Response(serialized, { status: 200, headers });
