@@ -658,6 +658,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const libraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
     const libraryWeightCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output`;
     const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
+    const documentContextStatusSelector = '#document-context-panel forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] > article.context-block--summary > .block-body > .block-heading > .block-heading-state > .context-lock-state';
     const families = [
       ["forma-workspace-settings", [
         ".page-header-copy > :is(.eyebrow,h1,p)",
@@ -684,6 +685,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       ]],
       ["forma-project-contents", [".studio-main > .page-header--document > .page-header-copy > :is(.eyebrow,h1,p)"]],
       ["forma-workspace", [
+        documentContextStatusSelector,
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
@@ -764,7 +766,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             || field.form !== form || output.form !== form || field.previousElementSibling !== output
             || element !== label && element !== output) continue;
         }
-        if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)) {
+        if (ownerSelector === "forma-workspace" && ["SPAN", "SMALL"].includes(element.tagName)
+          && !element.matches(documentContextStatusSelector)) {
           const label = element.parentElement;
           const field = label?.querySelector<HTMLInputElement | HTMLTextAreaElement>(':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]');
           if (!(label instanceof HTMLLabelElement) || !field?.id || label.control !== field
