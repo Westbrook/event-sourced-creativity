@@ -2522,8 +2522,8 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .document-artifact-reader > .artifact-viewer-header > .document-artifact-reader-actions > .button { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
   .document-artifact-reader > footer { align-items: center; flex-direction: row; }
   .document-artifact-reader > footer > span { max-inline-size: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .document-artifact-reader > footer > div { inline-size: auto; flex-wrap: nowrap; justify-content: start; overflow-x: auto; padding-block: .15rem; }
-  .document-artifact-reader > footer .button { inline-size: auto; flex: none; white-space: nowrap; }
+  .document-artifact-reader > footer > div { inline-size: auto; flex-wrap: nowrap; justify-content: start; overflow-x: auto; padding: var(--forma-focus-clearance, .5rem); }
+  .document-artifact-reader > footer .button { inline-size: auto; flex: none; white-space: nowrap; scroll-margin: var(--forma-focus-clearance, .5rem); }
   .document-artifact-reader > footer > div > .button.primary { order: -1; }
   .document-artifact-view .presentation-deck-toolbar { flex-direction: row; gap: .55rem; overflow-x: auto; padding-block: .35rem; }
   .document-artifact-view .presentation-deck-toolbar > div { flex: none; flex-wrap: nowrap; gap: .4rem; }
