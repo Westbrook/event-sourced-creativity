@@ -23,6 +23,13 @@ import { videoArtifactMediaItem, type VideoTrimEditCode, type VideoTrimEditReque
 import { videoTrimCopy } from "./design-system/locales/video-trim-messages.ts";
 import { type VideoTrimSelection } from "./video-trim-editor.ts";
 import "./video-trim-editor.ts";
+import { model3dArtifactMediaFile } from "../model/document-artifacts.ts";
+import { prepareModel3dArtifactScale, type Model3dArtifactScalePreparation, type Model3dArtifactScaleSource, type Model3dScaleEditRequest } from "../model/model3d-artifact-revision.ts";
+import { GeometryScaleError, type Model3dGeometryBounds } from "../model/model3d-geometry-edit.ts";
+import { MAX_MODEL3D_UPLOAD_BYTES } from "../model/model3d-assets.ts";
+import type { Model3dScaleEditCode } from "../model/model3d-media-revision.ts";
+import { model3dScaleCopy } from "./design-system/locales/model3d-artifact-scale-messages.ts";
+import { renderModel3dArtifactScaleEditor, renderModel3dArtifactScaleActions, type Model3dArtifactScaleView } from "./model3d-artifact-scale-editor.ts";
 import "./native-short-story-dialog.css";
 import { cache } from "lit/directives/cache.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -138,6 +145,15 @@ type VideoTrimDraft = {
   request: VideoTrimEditRequest | null; code: VideoTrimEditCode | null;
 };
 
+type Model3dScaleDraft = {
+  artifactId:string; mediaUrl:string; byteLength:number; rawContent:string;
+  abort:AbortController; current:()=>boolean; basisCurrent:()=>boolean;
+  source:Model3dArtifactScaleSource|null; bytes:Uint8Array|null;
+  prepared:Model3dArtifactScalePreparation|null; beforeBounds:Model3dGeometryBounds|null; factor:string; preparation:number;
+  loading:boolean; preparing:boolean; saving:boolean; checking:boolean;
+  request:Model3dScaleEditRequest|null; code:Model3dScaleEditCode|null;
+};
+
 type SceneRequestHandle = { requestId: string; everDispatched: boolean };
 type SceneCostView = {
   handle: SceneRequestHandle; request: SceneCostRequest; sourceSurface: string; requestHash: string;
@@ -186,6 +202,8 @@ export class DocumentArtifacts extends FormaElement {
   #audioTrimNotice:{artifactId:string;code:"saved"|"unchanged";current:()=>boolean}|null=null;
   #videoTrim:VideoTrimDraft|null=null;
   #videoTrimNotice:{artifactId:string;code:"saved"|"unchanged";current:()=>boolean}|null=null;
+  #model3dScale:Model3dScaleDraft|null=null;
+  #model3dScaleNotice:{artifactId:string;code:"saved"|"unchanged";current:()=>boolean}|null=null;
   #presentationReceiptCheck:{jobId:string;status:PresentationReceiptCheckStatus|"checking";current:()=>boolean}|null=null;
   #nativeStoryController:NativeShortStoryController|null=null;
   #nativeStoryOpening:NativeStoryOpening|null=null;
@@ -461,6 +479,7 @@ export class DocumentArtifacts extends FormaElement {
   #clearPrivateGenerationInputs=()=>{
     this.#retireAudioTrim();this.#audioTrimNotice=null;
     this.#retireVideoTrim();this.#videoTrimNotice=null;
+    this.#retireModel3dScale();this.#model3dScaleNotice=null;
     this.retireNativeShortStory();
     this.#slidesResultRead?.abort.abort();this.#slidesResultRead=null;this.#slidesResultError=null;this.#slidesCompletedJobs.clear();this.#slidesOverflow=null;
     this.#storyboardResultRead?.abort.abort();this.#storyboardResultRead=null;this.#storyboardResultError=null;this.#storyboardCompletedJobs.clear();this.#storyboardOverflow=null;
@@ -1524,6 +1543,7 @@ export class DocumentArtifacts extends FormaElement {
   protected override willUpdate(changed:PropertyValues<this>){
     this.#syncAudioTrim();
     this.#syncVideoTrim();
+    this.#syncModel3dScale();
     if(this.#nativeStoryOpening&&!this.#nativeStoryLive(this.#nativeStoryOpening))this.retireNativeShortStory();
     this.#syncViewerPopovers();
     if(this.#presentationReceiptCheck&&!this.#presentationReceiptCheck.current())this.#presentationReceiptCheck=null;
@@ -1611,6 +1631,7 @@ export class DocumentArtifacts extends FormaElement {
       event.preventDefault();event.stopPropagation();
       if(this.#audioTrim){this.store.toast(this.#savingEdit?audioTrimCopy(this.i18n.locale).saving:audioTrimCopy(this.i18n.locale).finish);return false;}
       if(this.#videoTrim){this.store.toast(this.#savingEdit?videoTrimCopy(this.i18n.locale).saving:videoTrimCopy(this.i18n.locale).finish);return false;}
+      if(this.#model3dScale){const copy=model3dScaleCopy(this.i18n.locale);this.store.toast(this.#savingEdit?copy.saving:`${copy.save} / ${copy.cancel}`);return false;}
       this.store.toast(this.#savingEdit
         ?this.i18n.t("artifact.delivery.savingCorrection")
         :this.i18n.t("artifact.delivery.finishCorrection","",{save:this.i18n.system("Save finished output"),cancel:this.i18n.system("Cancel")}));
@@ -1873,12 +1894,14 @@ export class DocumentArtifacts extends FormaElement {
   #model3dOutput(artifact:DocumentArtifact,releaseAllowed:boolean,disabledExportTitle:string){
     const files=model3dArtifactFiles(artifact),preview=model3dPreviewFile(artifact),reuse=model3dArtifactContextReadiness(artifact);
     const unsupportedPreview=files.some(file=>file.role==="mesh"&&file.format==="glb"&&file.previewSupported===false);
+    const scaleCopy=model3dScaleCopy(this.i18n.locale),edited=Boolean(this.#content(artifact)?.model3d_revision);
     return html`<section class="artifact-model3d-result">
+      ${this.#model3dScaleNotice?.artifactId===artifact.id&&this.#model3dScaleNotice.current()?html`<p class="artifact-model3d-scale-status" role="status">${scaleCopy.status[this.#model3dScaleNotice.code]}</p>`:nothing}
       ${preview?html`<forma-model3d-viewer .src=${preview.url} .expectedSha256=${preview.sha256} .readonly=${true}></forma-model3d-viewer>`:html`<div class="model3d-preview-unavailable" role="status">${icon("layers")}<p>${unsupportedPreview?this.i18n.t("model3d.output.previewUnsupported","This model is available as an original download. Its mesh features or size exceed the interactive viewer’s current support."):this.i18n.t("model3d.output.previewUnavailable","Interactive preview requires a self-contained GLB. The returned files remain available in their original formats below.")}</p></div>`}
       ${preview?html`<p>${this.i18n.t("model3d.output.viewHelp","Rotate the preview to inspect the result. To guide another generation, use the original model as context and save the image view you want to send.")}</p>`:nothing}
       ${!reuse.supported?html`<p role="status">${unsupportedPreview?this.i18n.t("model3d.output.reuseUnsupported","To reuse this output as a reference, simplify or convert it to a self-contained GLB supported by the viewer, then upload it."):this.i18n.t("model3d.output.reuseUnavailable","To reuse this output as context, download and upload a self-contained GLB model with its textures embedded.")}</p>`:nothing}
       <section id=${`artifact-model3d-files-${artifact.id}`} class="model3d-output-files" aria-label=${this.i18n.t("model3d.output.files","Returned model files and textures")}><h3>${this.i18n.t("model3d.output.files","Returned model files and textures")}</h3>
-        <p>${this.i18n.t("model3d.output.filesHelp","Each download preserves the provider’s returned format. Meshes that use separate textures need their companion files.")}</p>
+        <p>${edited?scaleCopy.currentFileNotes:this.i18n.t("model3d.output.filesHelp","Each download preserves the provider’s returned format. Meshes that use separate textures need their companion files.")}</p>
         ${files.length?html`<ul>${files.map(file=>html`<li><div><b dir="auto">${file.fileName}</b><small>${file.role==="mesh"?this.i18n.t("model3d.output.mesh","Mesh"):file.role==="texture"?this.i18n.t("model3d.output.texture","Texture"):this.i18n.t("model3d.output.preview","Preview")} · ${file.format?.toUpperCase()??file.mimeType}${file.fileSize===null?"":` · ${this.i18n.number(file.fileSize/1_000_000,{maximumFractionDigits:2})} MB`}</small></div><button type="button" class="button secondary compact artifact-export-choice" data-artifact-export ?disabled=${!releaseAllowed} title=${releaseAllowed?file.fileName:disabledExportTitle} @click=${()=>void this.#downloadModel3dFile(artifact,file)}>${icon("download")}${this.i18n.t("model3d.output.download","Download {format}",{format:file.format?.toUpperCase()??file.mimeType})}</button></li>`)}</ul>`:html`<p role="status">${this.i18n.t("model3d.output.filesUnavailable","The retained model files are unavailable. Inspect the original generation receipt before requesting another paid generation.")}</p>`}
       </section>
     </section>`;
@@ -2202,6 +2225,197 @@ export class DocumentArtifacts extends FormaElement {
       <p class="artifact-audio-trim-notes">${copy.originalNotes}</p>
     </section>`;
   }
+  #retireModel3dScale(){
+    const draft=this.#model3dScale;this.#model3dScale=null;
+    if(draft){draft.abort.abort();draft.preparation++;draft.bytes?.fill(0);draft.prepared?.geometry.bytes.fill(0);
+      draft.bytes=null;draft.prepared=null;draft.beforeBounds=null;draft.source=null;draft.rawContent="";}
+  }
+  #syncModel3dScale(){
+    const draft=this.#model3dScale;
+    if(this.#model3dScaleNotice&&!this.#model3dScaleNotice.current())this.#model3dScaleNotice=null;
+    if(!draft)return;
+    if(!draft.current()){
+      this.#retireModel3dScale();
+      if(this.#editingId===draft.artifactId){this.#editingId="";this.#editRevision=0;}
+    }else if(!draft.basisCurrent()){
+      draft.abort.abort();draft.preparation++;draft.bytes?.fill(0);draft.prepared?.geometry.bytes.fill(0);
+      draft.bytes=null;draft.prepared=null;draft.beforeBounds=null;draft.loading=false;draft.preparing=false;
+      if(!draft.saving&&draft.code!=="unconfirmed")draft.code="source_changed";
+    }
+  }
+  #model3dScaleMediaOwned(artifact:DocumentArtifact){
+    const file=model3dArtifactMediaFile(artifact),ownerId=this.store.session.get()?.user.userId;
+    if(!file||!ownerId)return null;
+    try{const key=decodeURIComponent(file.url.slice("/api/media/".length));
+      return key.startsWith(`${ownerMediaNamespace(ownerId)}/generated/`)&&key.endsWith(".glb")?file:null;}
+    catch{return null;}
+  }
+  async #readModel3dScaleMedia(draft:Model3dScaleDraft):Promise<Uint8Array>{
+    const url=new URL(draft.mediaUrl,this.ownerDocument.location.origin);
+    if(url.origin!==this.ownerDocument.location.origin||url.pathname!==draft.mediaUrl||url.search||url.hash
+      ||!Number.isSafeInteger(draft.byteLength)||draft.byteLength<1||draft.byteLength>MAX_MODEL3D_UPLOAD_BYTES)
+      throw new Error("model3d_scale_unavailable");
+    const controller=new AbortController(),deadline=Date.now()+30_000;
+    const current=()=>draft.basisCurrent()&&!draft.abort.signal.aborted&&!controller.signal.aborted&&Date.now()<deadline;
+    const check=()=>{if(!current())throw new Error("model3d_scale_retired");};
+    check();
+    let stop!:(error:Error)=>void;
+    const stopped=new Promise<never>((_resolve,reject)=>{stop=reject;});void stopped.catch(()=>undefined);
+    const abort=()=>{controller.abort();stop(new Error("model3d_scale_retired"));};
+    draft.abort.signal.addEventListener("abort",abort,{once:true});const timer=setTimeout(abort,30_000);
+    const settle=<T>(operation:Promise<T>)=>Promise.race([operation,stopped]);
+    const cancel=(operation:(()=>Promise<unknown>)|undefined)=>{try{if(operation)void operation().catch(()=>undefined);}catch{/* Already released. */}};
+    let response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined,complete=false;
+    const bytes=new Uint8Array(draft.byteLength);
+    try{
+      const request=this.store.guardedFetch(draft.mediaUrl,{method:"GET",signal:controller.signal,
+        credentials:"same-origin",redirect:"error",cache:"no-store"},"load a saved GLB for local scaling",{current});
+      void request.then(late=>{if(!current())cancel(late.body?()=>late.body!.cancel():undefined);},()=>undefined).catch(()=>undefined);
+      response=await settle(request);check();
+      if(response.status!==200||response.redirected||response.url!==url.href
+        ||response.headers.get("content-type")?.split(";",1)[0]?.trim().toLowerCase()!=="model/gltf-binary")
+        throw new Error("model3d_scale_unavailable");
+      const header=response.headers.get("content-length"),encoding=response.headers.get("content-encoding");
+      const identity=encoding===null||encoding.trim().toLowerCase()==="identity";
+      if(header!==null&&(!/^(0|[1-9]\d*)$/u.test(header)||!Number.isSafeInteger(Number(header))
+        ||identity&&Number(header)!==draft.byteLength))throw new Error("model3d_scale_size");
+      reader=response.body?.getReader();if(!reader)throw new Error("model3d_scale_unavailable");
+      let size=0,chunks=0;
+      for(;;){
+        check();const part=await settle(reader.read());check();if(part.done)break;
+        if(++chunks>65_536||!(part.value instanceof Uint8Array)||!part.value.byteLength
+          ||size+part.value.byteLength>bytes.byteLength)throw new Error("model3d_scale_size");
+        bytes.set(part.value,size);size+=part.value.byteLength;
+      }
+      if(size!==draft.byteLength)throw new Error("model3d_scale_size");
+      check();complete=true;return bytes;
+    }finally{
+      clearTimeout(timer);draft.abort.signal.removeEventListener("abort",abort);controller.abort();
+      if(!complete){bytes.fill(0);cancel(reader?()=>reader!.cancel():response?.body?()=>response!.body!.cancel():undefined);}
+      try{reader?.releaseLock();}catch{/* The retired read cannot own editor state. */}
+    }
+  }
+  async #prepareModel3dScale(draft:Model3dScaleDraft){
+    if(!draft.source||!draft.bytes||!draft.basisCurrent()||draft.saving||draft.code==="unconfirmed")return;
+    const preparation=++draft.preparation,factor=Number(draft.factor);
+    draft.prepared?.geometry.bytes.fill(0);draft.prepared=null;draft.code=null;
+    if(!draft.factor.trim()||!Number.isFinite(factor)||factor<=0){draft.code="invalid_scale";draft.preparing=false;this.requestUpdate();return;}
+    draft.preparing=true;this.requestUpdate();
+    const current=()=>draft.basisCurrent()&&draft.preparation===preparation&&!draft.abort.signal.aborted;
+    try{
+      const prepared=await prepareModel3dArtifactScale({captured:draft.source,current:draft.source,
+        rawContent:draft.rawContent,bytes:draft.bytes,factor});
+      if(!current()){prepared.geometry.bytes.fill(0);return;}
+      draft.prepared=prepared;draft.beforeBounds=prepared.geometry.beforeBounds;
+    }catch(error){
+      if(current())draft.code=error instanceof GeometryScaleError?(error.code==="unsupported"?"unsupported":"invalid_scale"):"unavailable";
+    }finally{if(draft.preparation===preparation){draft.preparing=false;this.requestUpdate();}}
+  }
+  async #startModel3dScale(artifact:DocumentArtifact,event:MouseEvent){
+    const origin=event.currentTarget;
+    if(!(origin instanceof HTMLButtonElement)||origin!==this.querySelector(".artifact-model3d-scale-open")||!origin.isConnected
+      ||this.#savingEdit||this.#editingId||artifact.kind!=="model3d"||this.store.session.get()?.projectContext)return;
+    const raw=this.store.content.get()[artifact.contentRef??""],content=parseDocumentArtifactContent(raw),file=this.#model3dScaleMediaOwned(artifact);
+    if(!content||!raw||!file||content.items.length||artifact.items.length)return;
+    const store=this.store,source=this.#privateSourceCurrent(),authorization=store.captureAuthorizationScope();
+    const viewer=this.#viewerCurrent,dialog=this.#viewDialog(),route=store.route.get(),projectId=store.projection.get().projectId;
+    const ownerId=store.session.get()?.user.userId??"",fileIdentity=JSON.stringify(file);
+    if(!authorization||authorization.shared||!ownerId||!viewer?.()||!dialog?.open||!dialog.contains(origin))return;
+    const revision=documentArtifactRevision(store.events.get(),artifact.id),head=store.head.get(),abort=new AbortController();
+    const scope=()=>source()&&this.store===store&&store.authorizationScopeActive(authorization)
+      &&!store.session.get()?.projectContext&&store.session.get()?.user.userId===ownerId
+      &&this.#viewerCurrent===viewer&&viewer()&&this.#activeId===artifact.id
+      &&store.route.get()===route&&store.projection.get().projectId===projectId&&this.#viewDialog()===dialog&&dialog.open
+      &&store.projection.get().libraryArtifacts.some(value=>value.id===artifact.id&&value.documentId===artifact.documentId
+        &&value.sourceEventId===artifact.sourceEventId&&value.contentRef===artifact.contentRef);
+    if(!scope())return;
+    const draft:Model3dScaleDraft={artifactId:artifact.id,mediaUrl:file.url,byteLength:file.fileSize,rawContent:raw,
+      abort,source:null,bytes:null,prepared:null,beforeBounds:null,factor:"1",preparation:0,loading:true,preparing:false,saving:false,checking:false,request:null,code:null,
+      current:()=>this.#model3dScale===draft&&scope(),
+      basisCurrent:()=>draft.current()&&store.head.get()===head&&store.content.get()[artifact.contentRef??""]===raw
+        &&documentArtifactRevision(store.events.get(),artifact.id)===revision
+        &&store.projection.get().libraryArtifacts.some(value=>value.id===artifact.id&&value.items.length===0
+          &&JSON.stringify(model3dArtifactMediaFile(value))===fileIdentity),
+    };
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    this.#model3dScaleNotice=null;this.#model3dScale=draft;this.#editingId=artifact.id;this.#editRevision=revision;
+    this.#editMarkdown=content.content_markdown;this.#editItems=[];this.#reviewPanelOpen=false;this.requestUpdate();
+    try{
+      const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));
+      if(!draft.basisCurrent()||abort.signal.aborted)return;
+      const contentSha256=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
+      draft.source={artifactKind:"model3d",artifactId:artifact.id,documentId:artifact.documentId,projectId,
+        sourceEventId:artifact.sourceEventId,revision,contentSha256,mediaUrl:file.url,mediaSha256:file.sha256,byteLength:file.fileSize};
+      const bytes=await this.#readModel3dScaleMedia(draft);
+      if(!draft.basisCurrent()||abort.signal.aborted){bytes.fill(0);return;}draft.bytes=bytes;
+      await this.#prepareModel3dScale(draft);
+    }catch{if(draft.current())draft.code=draft.basisCurrent()?"unavailable":"source_changed";}
+    finally{
+      try{
+        if(draft.current()){
+          draft.loading=false;this.requestUpdate();await this.updateComplete;
+          const target=dialog.querySelector<HTMLInputElement|HTMLButtonElement>(draft.prepared?".artifact-model3d-scale-factor":".artifact-model3d-scale-cancel");
+          if(draft.current()&&focus.current()&&target?.isConnected&&!target.disabled)
+            focus.run(target,()=>{if(!draft.current())return false;target.focus();return true;});
+        }
+      }catch{/* A newer native intent owns focus. */}finally{focus.dispose();}
+    }
+  }
+  #changeModel3dScale(event:InputEvent,expected:Model3dScaleDraft){
+    const draft=this.#model3dScale,target=event.currentTarget;
+    if(!draft||draft!==expected||draft.saving||draft.checking||!draft.basisCurrent()||draft.code==="unconfirmed"
+      ||!(target instanceof HTMLInputElement)||target!==this.querySelector(".artifact-model3d-scale-factor"))return;
+    draft.factor=target.value;void this.#prepareModel3dScale(draft);
+  }
+  async #saveModel3dScale(artifact:DocumentArtifact,event:MouseEvent,check=false,expected=this.#model3dScale){
+    const draft=this.#model3dScale,origin=event.currentTarget;
+    if(!draft||draft!==expected||draft.artifactId!==artifact.id||draft.saving||this.#savingEdit
+      ||!(origin instanceof HTMLButtonElement)||origin!==this.querySelector(check?".artifact-model3d-scale-check":".artifact-model3d-scale-save")
+      ||!origin.isConnected||!this.#viewDialog()?.contains(origin))return;
+    if(check?(!draft.current()||draft.code!=="unconfirmed"||!draft.request):
+      (!draft.prepared||draft.preparing||draft.loading||!draft.basisCurrent()||draft.code!==null))return;
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    draft.saving=true;draft.checking=check;this.#savingEdit=true;draft.code=null;this.requestUpdate();let invoked=false;
+    try{
+      if(!check)draft.request=draft.prepared!.request;
+      const input=draft.request;
+      const result=input?(invoked=true,check?await this.store.checkModel3dScaleOperation(artifact.id,input):await this.store.reviseDocumentArtifact(artifact.id,input))
+        :{status:"unchanged" as const,code:"unchanged" as const};
+      if(!draft.current())return;draft.code=result.code;
+      if(result.status!=="saved"&&result.status!=="unchanged")return;
+      const revision=documentArtifactRevision(this.store.events.get(),artifact.id),raw=this.store.content.get()[artifact.contentRef??""];
+      const current=this.store.projection.get().libraryArtifacts.find(value=>value.id===artifact.id),file=current&&model3dArtifactMediaFile(current);
+      if(result.status==="saved"&&(!input||!current||!file||revision!==result.revision||revision!==input.expectedRevision+1
+        ||current.items.length!==0||current.mediaUrl!==result.model3dRevision.media.url||file.url!==result.model3dRevision.media.url
+        ||file.sha256!==input.model3dScale.resultMediaSha256||file.fileSize!==result.model3dRevision.media.byteLength)){
+        draft.code="unconfirmed";return;
+      }
+      if(result.status==="unchanged"&&!draft.basisCurrent()){draft.code="unconfirmed";return;}
+      const store=this.store,source=this.#privateSourceCurrent(),authorization=store.captureAuthorizationScope(),viewer=this.#viewerCurrent,route=store.route.get();
+      const noticeCurrent=()=>source()&&this.store===store&&Boolean(authorization&&store.authorizationScopeActive(authorization))
+        &&this.#viewerCurrent===viewer&&Boolean(viewer?.())&&this.#activeId===artifact.id&&store.route.get()===route
+        &&documentArtifactRevision(store.events.get(),artifact.id)===revision&&store.content.get()[artifact.contentRef??""]===raw;
+      this.#model3dScaleNotice={artifactId:artifact.id,code:result.code,current:noticeCurrent};
+      const ownsFocus=origin.isConnected&&this.ownerDocument.activeElement===origin&&focus.current();
+      this.#cancelArtifactEdit();await this.updateComplete;
+      const menu=this.querySelector<FormaUiPopover>(".artifact-viewer-actions-popover");if(menu)await menu.updateComplete;
+      const target=menu?.querySelector<HTMLButtonElement>(".ui-popover-trigger")??this.#viewDialog()?.querySelector<HTMLButtonElement>(".artifact-viewer-review-toggle");
+      if(ownsFocus&&noticeCurrent()&&focus.current()&&target?.isConnected&&!target.disabled)
+        focus.run(target,()=>{if(!noticeCurrent())return false;target.focus();return true;});
+    }catch{if(draft.current())draft.code=invoked?"unconfirmed":"unavailable";}
+    finally{focus.dispose();draft.saving=false;draft.checking=false;
+      if(this.#model3dScale===draft||!this.#model3dScale){this.#savingEdit=false;this.#syncModel3dScale();this.requestUpdate();}}
+  }
+  #model3dScaleView(artifact:DocumentArtifact,draft:Model3dScaleDraft):Model3dArtifactScaleView{
+    return{locale:this.i18n.locale,fieldForm:`artifact-model3d-scale-field-${artifact.id}`,factor:draft.factor,
+      beforeBounds:draft.beforeBounds,afterBounds:draft.prepared?.geometry.afterBounds??null,
+      loading:draft.loading,preparing:draft.preparing,saving:draft.saving,checking:draft.checking,
+      ready:Boolean(draft.prepared&&draft.basisCurrent()&&draft.code===null),code:draft.code,
+      onFactorInput:event=>this.#changeModel3dScale(event,draft),
+      onSave:event=>void this.#saveModel3dScale(artifact,event,false,draft),
+      onCheck:event=>void this.#saveModel3dScale(artifact,event,true,draft),
+      onCancel:event=>{if(this.#model3dScale===draft&&draft.current()&&event.currentTarget===this.querySelector(".artifact-model3d-scale-cancel"))void this.#cancelArtifactEdit(event);}};
+  }
   #retireVideoTrim(){
     const draft=this.#videoTrim;this.#videoTrim=null;
     if(draft){draft.abort.abort();draft.bytes?.fill(0);draft.bytes=null;draft.selection=null;}
@@ -2471,6 +2685,7 @@ export class DocumentArtifacts extends FormaElement {
     const focus=event?captureOutputNavigationFocus(this.ownerDocument):null,artifactId=this.#editingId;
     this.#retireAudioTrim();
     this.#retireVideoTrim();
+    this.#retireModel3dScale();
     this.#editingId="";this.#editMarkdown="";this.#editItems=[];this.#editRevision=0;this.requestUpdate();
     // Native close, source retirement and Save ACK cleanup do not acquire focus.
     if(!focus)return;
@@ -2860,9 +3075,11 @@ export class DocumentArtifacts extends FormaElement {
     const editing=this.#editingId===artifact.id,audioDraft=this.#audioTrim?.artifactId===artifact.id?this.#audioTrim:null;
     const videoDraft=this.#videoTrim?.artifactId===artifact.id?this.#videoTrim:null,videoCopy=videoTrimCopy(this.i18n.locale);
     const canTrimVideo=canAuthor&&!context&&Boolean(content)&&Boolean(this.#videoTrimMediaOwned(artifact));
+    const model3dDraft=this.#model3dScale?.artifactId===artifact.id?this.#model3dScale:null,model3dCopy=model3dScaleCopy(this.i18n.locale);
+    const canScaleModel3d=canAuthor&&!context&&Boolean(content)&&Boolean(this.#model3dScaleMediaOwned(artifact));
     const audioCopy=audioTrimCopy(this.i18n.locale),canTrim=canAuthor&&!context&&Boolean(content)&&artifact.kind==="audio";
     // Keep zero/one alternative and active edit disposition direct.
-    const viewerSecondaryCount=Number(!context)+Number(Boolean(content))+Number(canAuthor&&Boolean(content)&&artifact.kind!=="audio"&&artifact.kind!=="model3d")+Number(canTrim)+Number(canTrimVideo)+Number(canAuthor)
+    const viewerSecondaryCount=Number(!context)+Number(Boolean(content))+Number(canAuthor&&Boolean(content)&&artifact.kind!=="audio"&&artifact.kind!=="model3d")+Number(canTrim)+Number(canTrimVideo)+Number(canScaleModel3d)+Number(canAuthor)
       +2*Number(Boolean(content)&&artifact.kind!=="slides"&&artifact.kind!=="model3d")
       +Number(Boolean(content)&&(artifact.kind==="storyboard"||artifact.kind==="video"&&items.length>1)&&items.some(item=>Boolean(item.mediaUrl)))
       +Number(Boolean(artifact.mediaUrl)&&artifact.kind!=="model3d");
@@ -2887,11 +3104,11 @@ export class DocumentArtifacts extends FormaElement {
     const pendingActionLabel=(action:string)=>this.#savingEdit?this.i18n.t("artifact.delivery.actionPending","",{action}):action;
     const reuseAccessibleLabel=this.store.route.get().startsWith("/canvas/")?this.i18n.t(remaining?"projects.useEditCreator":"projects.editCreator",remaining?"Use & edit in Creator Workspace":"Edit in Creator Workspace"):this.i18n.system("Use {value} as input", { value: documentArtifactDefinition(artifact.kind).label.toLowerCase() });
     const reuseLabel=this.#convertingId===artifact.id?this.i18n.system("Opening editable input…"):this.store.route.get().startsWith("/canvas/")?this.i18n.t(remaining?"projects.useEditCreator":"projects.editCreator",remaining?"Use & edit in Creator Workspace":"Edit in Creator Workspace"):!remaining?this.i18n.system("Edit input"):artifact.kind==="storyboard"?(remaining-1===1 ? this.i18n.system("Use & edit {count} frame", { count: this.i18n.number(Math.max(0,remaining-1)) }) : this.i18n.system("Use & edit {count} frames", { count: this.i18n.number(Math.max(0,remaining-1)) })):this.i18n.system("Use & edit {value}", { value: documentArtifactDefinition(artifact.kind).label.toLowerCase() });
-    const viewerActions=html`<div id=${actionsPanelId} class="artifact-viewer-actions-body" @click=${groupViewerActions?viewerMenuAction:undefined}>${audioDraft?html`<button type="button" class="button secondary artifact-audio-trim-cancel" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>this.#cancelArtifactEdit(event)}>${audioCopy.cancel}</button>${audioDraft.code==="unconfirmed"||audioDraft.checking?html`<button type="button" class="button secondary artifact-audio-trim-check" aria-disabled=${String(this.#savingEdit)} aria-busy=${String(audioDraft.checking)} @click=${(event:MouseEvent)=>void this.#saveAudioTrim(artifact,event,true)}>${audioDraft.checking?audioCopy.checking:audioCopy.check}</button>`:nothing}<button type="button" class="button primary artifact-audio-trim-save" aria-disabled=${String(this.#savingEdit||!audioDraft.selection||audioDraft.code==="unconfirmed"||audioDraft.code==="invalid_range")} aria-busy=${String(this.#savingEdit)} @click=${(event:MouseEvent)=>void this.#saveAudioTrim(artifact,event)}>${this.#savingEdit?audioCopy.saving:audioCopy.save}</button>`:videoDraft?html`<button type="button" class="button secondary artifact-video-trim-cancel" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>{if(this.#videoTrim===videoDraft&&videoDraft.current()&&event.currentTarget===this.querySelector(".artifact-video-trim-cancel"))return this.#cancelArtifactEdit(event);}}>${videoCopy.cancel}</button>${videoDraft.code==="unconfirmed"||videoDraft.checking?html`<button type="button" class="button secondary artifact-video-trim-check" aria-disabled=${String(this.#savingEdit)} aria-busy=${String(videoDraft.checking)} @click=${(event:MouseEvent)=>void this.#saveVideoTrim(artifact,event,true,videoDraft)}>${videoDraft.checking?videoCopy.checking:videoCopy.check}</button>`:nothing}<button type="button" class="button primary artifact-video-trim-save" aria-disabled=${String(this.#savingEdit||!videoDraft.selection||videoDraft.code==="unconfirmed"||videoDraft.code==="invalid_range")} aria-busy=${String(this.#savingEdit)} @click=${(event:MouseEvent)=>void this.#saveVideoTrim(artifact,event,false,videoDraft)}>${this.#savingEdit?videoCopy.saving:videoCopy.save}</button>`:editing?html`<button type="button" class="button secondary" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>this.#cancelArtifactEdit(event)}>Cancel</button><button type="button" class="button primary" ?disabled=${this.#savingEdit||!this.#editMarkdown.trim()} @click=${()=>void this.#saveArtifactEdit(artifact)}>${this.#savingEdit?this.i18n.system("Saving finished output…"):this.i18n.system("Save finished output")}</button>`:html`${!context?html`<button class="button secondary" @click=${()=>{this.#inputId=artifact.id;this.requestUpdate();}}>Inspect inputs</button>`:nothing}${content?html`<button type="button" class="button secondary" @click=${()=>void this.#loadHistory(artifact)}>Output history</button>`:nothing}${canTrim?html`<button type="button" class="button primary artifact-audio-trim-open" ?disabled=${this.#savingEdit} title=${audioCopy.personalOnly} @click=${(event:MouseEvent)=>void this.#startAudioTrim(artifact,event)}>${audioCopy.action}</button>`:nothing}${canTrimVideo?html`<button type="button" class="button primary artifact-video-trim-open" ?disabled=${this.#savingEdit} title=${videoCopy.personalOnly} @click=${(event:MouseEvent)=>void this.#startVideoTrim(artifact,event)}>${videoCopy.action}</button>`:nothing}${canAuthor&&content&&artifact.kind!=="audio"&&artifact.kind!=="model3d"?html`<button type="button" class="button primary" ?disabled=${this.#savingEdit} title=${this.#savingEdit?this.i18n.t("artifact.delivery.editBusy"):nothing} @click=${(event:MouseEvent)=>{if(!this.#savingEdit)return this.#startArtifactEdit(artifact,event);}}>${this.#savingEdit?this.i18n.t("artifact.delivery.editPending","",{edit:this.i18n.system("Edit finished output")}):this.i18n.system("Edit finished output")}</button>`:nothing}${canAuthor?html`<button class="button secondary" data-artifact-reuse aria-label=${pendingActionLabel(reuseAccessibleLabel)} ?disabled=${this.#convertingId===artifact.id||this.#savingEdit||artifact.kind==="model3d"&&!model3dArtifactContextReadiness(artifact).supported} title=${this.#savingEdit?this.i18n.t("artifact.delivery.editBusy"):nothing} @click=${(event:MouseEvent)=>this.#addArtifactContext(artifact,event)}>${pendingActionLabel(reuseLabel)}</button>`:nothing}${content&&artifact.kind!=="slides"&&artifact.kind!=="model3d"?html`<button class="button secondary artifact-export-choice" data-artifact-export ?disabled=${!releaseAllowed} title=${releaseAllowed?delivery.approved?this.i18n.system("Download the approved output"):this.i18n.t("artifact.delivery.downloadCurrent","Download the current output"):disabledExportTitle} @click=${()=>this.#download(artifact)}>Download Markdown</button><button class="button secondary artifact-export-choice" ?disabled=${!releaseAllowed} title=${releaseAllowed?this.i18n.system("Download an editable Microsoft Word document"):disabledExportTitle} @click=${()=>void this.#downloadWord(artifact)}>Download Word</button>`:nothing}${content&&(artifact.kind==="storyboard"||artifact.kind==="video"&&items.length>1)&&items.some((item)=>item.mediaUrl)?html`<button type="button" class="button secondary artifact-export-choice" ?disabled=${!releaseAllowed} title=${releaseAllowed?delivery.approved?this.i18n.system("Download the approved media"):this.i18n.t("projects.downloadMedia","Download media"):disabledExportTitle} @click=${()=>void this.#downloadMediaArchive(artifact)}>${this.i18n.t("projects.downloadMedia","Download media")} · ${this.i18n.number(items.length)} ${this.i18n.system(artifact.kind==="storyboard"?"frames":"scenes")}</button>`:nothing}${artifact.mediaUrl&&artifact.kind!=="model3d"?html`<button type="button" class="button primary artifact-export-choice" ?disabled=${!releaseAllowed} title=${releaseAllowed?delivery.approved?this.i18n.system("Download the approved media"):this.i18n.t("projects.downloadMedia","Download media"):disabledExportTitle} @click=${()=>void this.#downloadMedia(artifact)}>${artifact.kind==="audio"?this.i18n.t("audio.output.download","Download audio"):artifact.kind==="video"&&artifact.itemCount>1?this.i18n.system("Download first scene"):this.i18n.system("Download media")}</button>`:nothing}`}</div>`;
+    const viewerActions=html`<div id=${actionsPanelId} class="artifact-viewer-actions-body" @click=${groupViewerActions?viewerMenuAction:undefined}>${model3dDraft?renderModel3dArtifactScaleActions(this.#model3dScaleView(artifact,model3dDraft)):audioDraft?html`<button type="button" class="button secondary artifact-audio-trim-cancel" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>this.#cancelArtifactEdit(event)}>${audioCopy.cancel}</button>${audioDraft.code==="unconfirmed"||audioDraft.checking?html`<button type="button" class="button secondary artifact-audio-trim-check" aria-disabled=${String(this.#savingEdit)} aria-busy=${String(audioDraft.checking)} @click=${(event:MouseEvent)=>void this.#saveAudioTrim(artifact,event,true)}>${audioDraft.checking?audioCopy.checking:audioCopy.check}</button>`:nothing}<button type="button" class="button primary artifact-audio-trim-save" aria-disabled=${String(this.#savingEdit||!audioDraft.selection||audioDraft.code==="unconfirmed"||audioDraft.code==="invalid_range")} aria-busy=${String(this.#savingEdit)} @click=${(event:MouseEvent)=>void this.#saveAudioTrim(artifact,event)}>${this.#savingEdit?audioCopy.saving:audioCopy.save}</button>`:videoDraft?html`<button type="button" class="button secondary artifact-video-trim-cancel" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>{if(this.#videoTrim===videoDraft&&videoDraft.current()&&event.currentTarget===this.querySelector(".artifact-video-trim-cancel"))return this.#cancelArtifactEdit(event);}}>${videoCopy.cancel}</button>${videoDraft.code==="unconfirmed"||videoDraft.checking?html`<button type="button" class="button secondary artifact-video-trim-check" aria-disabled=${String(this.#savingEdit)} aria-busy=${String(videoDraft.checking)} @click=${(event:MouseEvent)=>void this.#saveVideoTrim(artifact,event,true,videoDraft)}>${videoDraft.checking?videoCopy.checking:videoCopy.check}</button>`:nothing}<button type="button" class="button primary artifact-video-trim-save" aria-disabled=${String(this.#savingEdit||!videoDraft.selection||videoDraft.code==="unconfirmed"||videoDraft.code==="invalid_range")} aria-busy=${String(this.#savingEdit)} @click=${(event:MouseEvent)=>void this.#saveVideoTrim(artifact,event,false,videoDraft)}>${this.#savingEdit?videoCopy.saving:videoCopy.save}</button>`:editing?html`<button type="button" class="button secondary" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>this.#cancelArtifactEdit(event)}>Cancel</button><button type="button" class="button primary" ?disabled=${this.#savingEdit||!this.#editMarkdown.trim()} @click=${()=>void this.#saveArtifactEdit(artifact)}>${this.#savingEdit?this.i18n.system("Saving finished output…"):this.i18n.system("Save finished output")}</button>`:html`${!context?html`<button class="button secondary" @click=${()=>{this.#inputId=artifact.id;this.requestUpdate();}}>Inspect inputs</button>`:nothing}${content?html`<button type="button" class="button secondary" @click=${()=>void this.#loadHistory(artifact)}>Output history</button>`:nothing}${canTrim?html`<button type="button" class="button primary artifact-audio-trim-open" ?disabled=${this.#savingEdit} title=${audioCopy.personalOnly} @click=${(event:MouseEvent)=>void this.#startAudioTrim(artifact,event)}>${audioCopy.action}</button>`:nothing}${canTrimVideo?html`<button type="button" class="button primary artifact-video-trim-open" ?disabled=${this.#savingEdit} title=${videoCopy.personalOnly} @click=${(event:MouseEvent)=>void this.#startVideoTrim(artifact,event)}>${videoCopy.action}</button>`:nothing}${canScaleModel3d?html`<button type="button" class="button primary artifact-model3d-scale-open" ?disabled=${this.#savingEdit} @click=${(event:MouseEvent)=>void this.#startModel3dScale(artifact,event)}>${model3dCopy.action}</button>`:nothing}${canAuthor&&content&&artifact.kind!=="audio"&&artifact.kind!=="model3d"?html`<button type="button" class="button primary" ?disabled=${this.#savingEdit} title=${this.#savingEdit?this.i18n.t("artifact.delivery.editBusy"):nothing} @click=${(event:MouseEvent)=>{if(!this.#savingEdit)return this.#startArtifactEdit(artifact,event);}}>${this.#savingEdit?this.i18n.t("artifact.delivery.editPending","",{edit:this.i18n.system("Edit finished output")}):this.i18n.system("Edit finished output")}</button>`:nothing}${canAuthor?html`<button class="button secondary" data-artifact-reuse aria-label=${pendingActionLabel(reuseAccessibleLabel)} ?disabled=${this.#convertingId===artifact.id||this.#savingEdit||artifact.kind==="model3d"&&!model3dArtifactContextReadiness(artifact).supported} title=${this.#savingEdit?this.i18n.t("artifact.delivery.editBusy"):nothing} @click=${(event:MouseEvent)=>this.#addArtifactContext(artifact,event)}>${pendingActionLabel(reuseLabel)}</button>`:nothing}${content&&artifact.kind!=="slides"&&artifact.kind!=="model3d"?html`<button class="button secondary artifact-export-choice" data-artifact-export ?disabled=${!releaseAllowed} title=${releaseAllowed?delivery.approved?this.i18n.system("Download the approved output"):this.i18n.t("artifact.delivery.downloadCurrent","Download the current output"):disabledExportTitle} @click=${()=>this.#download(artifact)}>Download Markdown</button><button class="button secondary artifact-export-choice" ?disabled=${!releaseAllowed} title=${releaseAllowed?this.i18n.system("Download an editable Microsoft Word document"):disabledExportTitle} @click=${()=>void this.#downloadWord(artifact)}>Download Word</button>`:nothing}${content&&(artifact.kind==="storyboard"||artifact.kind==="video"&&items.length>1)&&items.some((item)=>item.mediaUrl)?html`<button type="button" class="button secondary artifact-export-choice" ?disabled=${!releaseAllowed} title=${releaseAllowed?delivery.approved?this.i18n.system("Download the approved media"):this.i18n.t("projects.downloadMedia","Download media"):disabledExportTitle} @click=${()=>void this.#downloadMediaArchive(artifact)}>${this.i18n.t("projects.downloadMedia","Download media")} · ${this.i18n.number(items.length)} ${this.i18n.system(artifact.kind==="storyboard"?"frames":"scenes")}</button>`:nothing}${artifact.mediaUrl&&artifact.kind!=="model3d"?html`<button type="button" class="button primary artifact-export-choice" ?disabled=${!releaseAllowed} title=${releaseAllowed?delivery.approved?this.i18n.system("Download the approved media"):this.i18n.t("projects.downloadMedia","Download media"):disabledExportTitle} @click=${()=>void this.#downloadMedia(artifact)}>${artifact.kind==="audio"?this.i18n.t("audio.output.download","Download audio"):artifact.kind==="video"&&artifact.itemCount>1?this.i18n.system("Download first scene"):this.i18n.system("Download media")}</button>`:nothing}`}</div>`;
     return html`<dialog class="document-artifact-view" data-output-focus=${String(this.#viewerFocused)} data-artifact-kind=${artifact.kind} closedby=${editing?"closerequest":"any"} @click=${this.#closeOnBackdrop} @cancel=${this.#cancelViewer} @close=${(event:Event)=>{const dialog=event.currentTarget as HTMLDialogElement;if(dialog.open||dialog!==this.#viewDialog()||this.#viewerOpening)return;this.#deliveryBinding=null;this.#deliveryBindingLoading=null;this.#closeViewerPopovers();this.#viewerFocused=false;this.#reviewPanelOpen=false;this.#viewerActionsOpen=false;if(this.#activeId){this.#activeId="";this.#cancelArtifactEdit();this.requestUpdate();}}}>
       <article class="document-artifact-reader">
         <header class="artifact-viewer-header"><div class="artifact-viewer-identity"><div class="artifact-viewer-kicker"><span>${sceneConfiguration?this.#sceneVariantLabel(sceneConfiguration.medium):this.i18n.system(documentArtifactDefinition(artifact.kind).label)}${artifactIdentity.disambiguator?` · ${artifactIdentity.disambiguator}`:""}</span><p class=${`artifact-review-status artifact-review-${review.status}`}><b>${context&&review.status==="approved"&&!delivery.approved?this.i18n.t("artifact.delivery.unverifiedApproval","Recorded approval does not match the current output."):this.#reviewLabel(review)}</b>${review.changedBlockIds.length?html` · ${review.changedBlockIds.length} source decision${review.changedBlockIds.length===1?"":"s"} changed`:nothing}</p></div><h2 dir="auto">${artifact.title}</h2><details id=${evidencePanelId} class="artifact-viewer-details"><summary>${this.i18n.t("production.evidence","Review production evidence")}</summary><div><p dir="auto">${artifact.summary}</p><p>${this.i18n.t("artifact.delivery.revision","Output revision {revision}",{revision:this.i18n.number(delivery.revision)})}</p>${this.#currentDeliveryBinding(artifact)?html`<p><b>${this.i18n.t("artifact.delivery.contentHash","Retained content SHA-256")}</b> <code dir="ltr">${this.#currentDeliveryBinding(artifact)!.contentSha256}</code></p>`:html`<p>${this.i18n.t("artifact.delivery.bytesUnavailable","The current output bytes are unavailable for review or export.")}</p>`}${delivery.exportReceipt?html`<p>${this.i18n.t("artifact.delivery.exportRecorded","Export authorization recorded earlier for this revision")}</p>`:nothing}${!releaseAllowed&&(delivery.rightsBlockIds.length||delivery.review.status==="stale")?html`<p>${this.i18n.t("artifact.delivery.currentSourcesBlocked","Export is blocked now: the inputs changed or their rights are no longer current.")}</p>`:nothing}<p>${this.i18n.t("artifact.delivery.notDelivered","Export authorization does not confirm download or recipient delivery.")}</p>${sceneConfiguration?html`<p class="artifact-scene-configuration"><b>${this.i18n.t("scene.medium.label","Scene type")}</b> ${this.#sceneVariantLabel(sceneConfiguration.medium)}${sceneConfiguration.targetFormat?` · ${this.#workflowFormatLabel(sceneConfiguration.targetFormat)}`:""} · ${this.#sceneAlternateLabel(sceneConfiguration.alternateMedium)}</p>`:nothing}${productionOwner?html`<p class="artifact-viewer-provider">${artifact.kind==="slides"?`${artifact.provider} · `:""}${artifact.modelId}</p>`:nothing}${generationCost?html`<p class="artifact-generation-cost">${settledGenerationCost===null?this.i18n.system("Settled provider cost unavailable"):this.i18n.system("Settled provider cost: {settledGenerationCost}", { settledGenerationCost: settledGenerationCost })}${generationCost.reservedMicrousd===null?"":" · " + this.i18n.t("production.reserved","Initially reserved: {amount}", { amount: formatGenerationUsd(generationCost.reservedMicrousd) })}</p>`:nothing}</div></details></div><div class="document-artifact-reader-actions">${canAuthor?html`<button type="button" class="icon-button artifact-rename" aria-label=${this.i18n.system("Rename {documentTitle}",{documentTitle:artifact.title})} title=${this.i18n.system("Rename")} @click=${()=>void this.#renameArtifact(artifact)}>${icon("edit")}</button>`:nothing}${delivery.canRead?html`<button type="button" class="button primary compact artifact-viewer-review-toggle" ?disabled=${editing||this.#savingEdit} title=${this.#savingEdit?this.i18n.t(editing?"artifact.delivery.savingCorrection":"artifact.delivery.editBusy"):nothing} aria-controls=${artifact.kind==="slides"&&delivery.intent==="export"?nothing:delivery.intent==="inspect"?evidencePanelId:delivery.intent==="review"?reviewPanelId:artifact.kind==="model3d"?`artifact-model3d-files-${artifact.id}`:actionsPanelId} aria-expanded=${delivery.intent==="inspect"||delivery.intent==="export"&&(!groupViewerActions||artifact.kind==="slides"||artifact.kind==="model3d")?nothing:delivery.intent==="review"?this.#reviewPanelOpen:this.#viewerActionsOpen} @click=${()=>void this.#showArtifactIntent(artifact,delivery.intent)}>${pendingActionLabel(this.i18n.t(`artifact.delivery.action.${delivery.action}`))}</button>`:nothing}<button type="button" class="icon-button artifact-viewer-focus-toggle" aria-label=${focusLabel} title=${focusLabel} aria-pressed=${this.#viewerFocused} ?disabled=${editing} @click=${()=>this.#setViewerFocus(!this.#viewerFocused)}>${icon(this.#viewerFocused?"collapse":"expand")}</button><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close","Close")} @click=${(event:MouseEvent)=>{if(this.#cancelViewer(event,false))this.#viewDialog()?.close();}}>${icon("close")}</button></div></header>
-        <div class=${`document-artifact-reader-content artifact-reader-${artifact.kind}`}>${audioDraft?this.#audioTrimTemplate(audioDraft):videoDraft?this.#videoTrimTemplate(videoDraft):editing?html`<section class="artifact-direct-editor" aria-label="Edit finished output"><label>Finished output<textarea rows="12" .value=${this.#editMarkdown} @input=${(event:InputEvent)=>{this.#editMarkdown=(event.currentTarget as HTMLTextAreaElement).value;if(this.#editItems.length===1&&["short_story","scene"].includes(artifact.kind))this.#editItems[0]!.body=this.#editMarkdown;this.#editDraftRevision++;this.requestUpdate();}}></textarea></label>${this.#editItems.length>1||["slides","storyboard","video"].includes(artifact.kind)?html`<ol class="artifact-direct-editor-items">${this.#editItems.map((item,index)=>html`<li><h3>${artifact.kind==="slides"?this.i18n.system("Slide"):artifact.kind==="storyboard"?this.i18n.system("Frame"):artifact.kind==="video"?this.i18n.system("Scene"):this.i18n.system("Part")} ${index+1}</h3><label>Title<input .value=${item.title} @input=${(event:InputEvent)=>{item.title=(event.currentTarget as HTMLInputElement).value;this.#editDraftRevision++;this.requestUpdate();}}></label><label>Content<textarea rows="4" .value=${item.body} @input=${(event:InputEvent)=>{item.body=(event.currentTarget as HTMLTextAreaElement).value;this.#editDraftRevision++;this.requestUpdate();}}></textarea></label><label>Notes<textarea rows="2" .value=${item.notes} @input=${(event:InputEvent)=>{item.notes=(event.currentTarget as HTMLTextAreaElement).value;this.#editDraftRevision++;this.requestUpdate();}}></textarea></label></li>`)}</ol>`:nothing}<p>Your correction updates the finished deliverable itself. No model provider is called; any earlier approval must be requested again.</p></section>`:artifact.kind==="model3d"?this.#model3dOutput(artifact,releaseAllowed,disabledExportTitle):artifact.kind==="audio"?html`<section class="artifact-audio-result">${this.#audioTrimNotice?.artifactId===artifact.id&&this.#audioTrimNotice.current()?html`<p class="artifact-audio-trim-status" role="status">${audioCopy.status[this.#audioTrimNotice.code]}</p>`:nothing}${renderAudioPlayer(artifact.mediaUrl,artifact.title,this.i18n,{transcript:artifact.settings.audio_role==="voice"&&content?.content_markdown?"":typeof artifact.settings.lyrics==="string"?artifact.settings.lyrics:""})}${artifact.settings.audio_synthid_watermarked?html`<p class="artifact-audio-watermark">${this.i18n.t("audio.generation.watermark","Generated audio includes an embedded SynthID watermark.")}</p>`:nothing}${content?.content_markdown?html`<details class="forma-audio-transcript"><summary>${artifact.settings.audio_role==="voice"?this.i18n.t("audio.reference.transcript","Transcript or listening notes"):this.i18n.t("audio.generation.lyrics","Lyrics and production notes")}</summary><pre class="artifact-prose" dir="auto">${content.content_markdown}</pre></details>`:nothing}</section>`:artifact.kind==="video"&&artifact.mediaUrl?html`${this.#videoTrimNotice?.artifactId===artifact.id&&this.#videoTrimNotice.current()?html`<p class="artifact-video-trim-status" role="status">${videoCopy.status[this.#videoTrimNotice.code]}</p>`:nothing}${this.#videoReel(artifact,items)}`:artifact.kind==="storyboard"?html`<ol class="artifact-storyboard">${items.map((item,index)=>html`<li>${this.#image(item)}<div><span>Shot ${index+1}</span><h3>${item.title}</h3><p>${item.body}</p><small>${item.notes}</small></div></li>`)}</ol>`:artifact.kind==="slides"?html`<forma-presentation-deck .items=${deckItems} .presentation=${presentation} .preferenceKey=${artifact.id} .deckTitle=${artifact.title} .documentId=${artifact.documentId} .releaseAllowed=${releaseAllowed} .sourceSurface=${`${this.source}-artifact-viewer`}></forma-presentation-deck>`:html`<pre class="artifact-prose">${content?.content_markdown??this.i18n.system("The retained artifact content is unavailable.")}</pre>`}${!editing&&artifact.kind!=="slides"?html`${renderIncludedSoundtrackTranscripts(artifact.settings.soundtrack_assets,this.i18n)}${renderSoundtrackCompanions(artifact.settings.soundtrack_assets,this.i18n)}`:nothing}</div>
+        <div class=${`document-artifact-reader-content artifact-reader-${artifact.kind}`}>${model3dDraft?renderModel3dArtifactScaleEditor(this.#model3dScaleView(artifact,model3dDraft)):audioDraft?this.#audioTrimTemplate(audioDraft):videoDraft?this.#videoTrimTemplate(videoDraft):editing?html`<section class="artifact-direct-editor" aria-label="Edit finished output"><label>Finished output<textarea rows="12" .value=${this.#editMarkdown} @input=${(event:InputEvent)=>{this.#editMarkdown=(event.currentTarget as HTMLTextAreaElement).value;if(this.#editItems.length===1&&["short_story","scene"].includes(artifact.kind))this.#editItems[0]!.body=this.#editMarkdown;this.#editDraftRevision++;this.requestUpdate();}}></textarea></label>${this.#editItems.length>1||["slides","storyboard","video"].includes(artifact.kind)?html`<ol class="artifact-direct-editor-items">${this.#editItems.map((item,index)=>html`<li><h3>${artifact.kind==="slides"?this.i18n.system("Slide"):artifact.kind==="storyboard"?this.i18n.system("Frame"):artifact.kind==="video"?this.i18n.system("Scene"):this.i18n.system("Part")} ${index+1}</h3><label>Title<input .value=${item.title} @input=${(event:InputEvent)=>{item.title=(event.currentTarget as HTMLInputElement).value;this.#editDraftRevision++;this.requestUpdate();}}></label><label>Content<textarea rows="4" .value=${item.body} @input=${(event:InputEvent)=>{item.body=(event.currentTarget as HTMLTextAreaElement).value;this.#editDraftRevision++;this.requestUpdate();}}></textarea></label><label>Notes<textarea rows="2" .value=${item.notes} @input=${(event:InputEvent)=>{item.notes=(event.currentTarget as HTMLTextAreaElement).value;this.#editDraftRevision++;this.requestUpdate();}}></textarea></label></li>`)}</ol>`:nothing}<p>Your correction updates the finished deliverable itself. No model provider is called; any earlier approval must be requested again.</p></section>`:artifact.kind==="model3d"?this.#model3dOutput(artifact,releaseAllowed,disabledExportTitle):artifact.kind==="audio"?html`<section class="artifact-audio-result">${this.#audioTrimNotice?.artifactId===artifact.id&&this.#audioTrimNotice.current()?html`<p class="artifact-audio-trim-status" role="status">${audioCopy.status[this.#audioTrimNotice.code]}</p>`:nothing}${renderAudioPlayer(artifact.mediaUrl,artifact.title,this.i18n,{transcript:artifact.settings.audio_role==="voice"&&content?.content_markdown?"":typeof artifact.settings.lyrics==="string"?artifact.settings.lyrics:""})}${artifact.settings.audio_synthid_watermarked?html`<p class="artifact-audio-watermark">${this.i18n.t("audio.generation.watermark","Generated audio includes an embedded SynthID watermark.")}</p>`:nothing}${content?.content_markdown?html`<details class="forma-audio-transcript"><summary>${artifact.settings.audio_role==="voice"?this.i18n.t("audio.reference.transcript","Transcript or listening notes"):this.i18n.t("audio.generation.lyrics","Lyrics and production notes")}</summary><pre class="artifact-prose" dir="auto">${content.content_markdown}</pre></details>`:nothing}</section>`:artifact.kind==="video"&&artifact.mediaUrl?html`${this.#videoTrimNotice?.artifactId===artifact.id&&this.#videoTrimNotice.current()?html`<p class="artifact-video-trim-status" role="status">${videoCopy.status[this.#videoTrimNotice.code]}</p>`:nothing}${this.#videoReel(artifact,items)}`:artifact.kind==="storyboard"?html`<ol class="artifact-storyboard">${items.map((item,index)=>html`<li>${this.#image(item)}<div><span>Shot ${index+1}</span><h3>${item.title}</h3><p>${item.body}</p><small>${item.notes}</small></div></li>`)}</ol>`:artifact.kind==="slides"?html`<forma-presentation-deck .items=${deckItems} .presentation=${presentation} .preferenceKey=${artifact.id} .deckTitle=${artifact.title} .documentId=${artifact.documentId} .releaseAllowed=${releaseAllowed} .sourceSurface=${`${this.source}-artifact-viewer`}></forma-presentation-deck>`:html`<pre class="artifact-prose">${content?.content_markdown??this.i18n.system("The retained artifact content is unavailable.")}</pre>`}${!editing&&artifact.kind!=="slides"?html`${renderIncludedSoundtrackTranscripts(artifact.settings.soundtrack_assets,this.i18n)}${renderSoundtrackCompanions(artifact.settings.soundtrack_assets,this.i18n)}`:nothing}</div>
         ${reviewerGuidance?html`<aside class="artifact-review-guidance" aria-label="Requested changes for this output revision"><b>Reviewer requested these changes</b><p dir="auto">${reviewerGuidance}</p></aside>`:nothing}
         ${canAuthor||canReview||changedSourceIds.length?html`<div id=${reviewPanelId} class="artifact-review-actions" tabindex="-1" aria-label="Output review workflow" ?hidden=${!this.#reviewPanelOpen}>${changedSourceIds.length?html`<div><p>${this.i18n.t("artifact.delivery.sourcesChanged","These exact inputs changed or their rights are no longer current.")}</p><ul>${changedSourceIds.map(id=>{const block=this.#artifactSourceBlocks(artifact).find(candidate=>candidate.id===id),source=id.startsWith("output:")?this.store.projection.get().libraryArtifacts.find(candidate=>candidate.id===id.slice(7)):null;const href=source?libraryFocusRoute("artifact",source.id,source.title,this.store.route.get()):block?documentContextBlockRoute(artifact.documentId,this.store.projection.get().documents.find(document=>document.id===artifact.documentId)?.title??"",block.id):null;return html`<li>${href?html`<a class="button ghost compact" href=${href} @click=${(event:MouseEvent)=>void this.#openChangedSource(artifact,id,href,event)}>${source?.title??String(block?.properties.label??block?.handle??"")}</a>`:this.i18n.t("artifact.delivery.sourceUnavailable","An input is no longer available.")}</li>`;})}</ul></div>`:nothing}${canAuthor&&!delivery.approved?html`${context?html`<label>Independent reviewer<select .value=${this.#selectedReviewerId} @change=${(event:Event)=>{this.#selectedReviewerId=(event.currentTarget as HTMLSelectElement).value;this.#reviewIntentRevision++;this.requestUpdate();}} ?disabled=${!this.#reviewers.length}>${this.#reviewers.length?this.#reviewers.map((reviewer)=>html`<option value=${reviewer.userId}>${reviewer.displayName}</option>`):html`<option value="">No designated reviewer</option>`}</select></label>`:nothing}<button type="button" class="button secondary compact" ?disabled=${editing||!this.#currentDeliveryBinding(artifact)||review.status==="unverified"||review.status==="stale"||Boolean(context&&!this.#selectedReviewerId)} @click=${()=>void this.#reviewArtifact(artifact,"ArtifactReviewRequested")}>${review.status==="in-review"?this.i18n.system("Reassign reviewer"):this.i18n.system("Assign exact review")}</button>${context&&!this.#reviewers.length?html`<small>Enable independent approval for an existing project Viewer under organization settings.</small>`:nothing}`:nothing}${canReview&&independentEligible?html`<label>Required changes<textarea rows="2" maxlength="500" .value=${this.#reviewNote} @input=${(event:InputEvent)=>{this.#reviewNote=(event.currentTarget as HTMLTextAreaElement).value;this.#reviewIntentRevision++;this.requestUpdate();}} placeholder="Explain the exact correction needed for this output revision"></textarea></label><button type="button" class="button secondary compact" ?disabled=${editing||!this.#currentDeliveryBinding(artifact)||!this.#reviewNote.trim()||review.status!=="in-review"} @click=${()=>void this.#reviewArtifact(artifact,"ArtifactChangesRequested")}>Request changes</button><button type="button" class="button primary compact" ?disabled=${editing||!this.#currentDeliveryBinding(artifact)||review.status!=="in-review"} @click=${()=>void this.#reviewArtifact(artifact,"ArtifactApproved")}>Approve output</button>`:canReview&&context?html`<small>A different designated reviewer must approve work you created, edited, or submitted.</small>`:nothing}</div>`:nothing}
         ${this.#historyOpen?html`<section class="artifact-revision-history" aria-label="Finished output history"><header><h3>Recoverable output history</h3><button type="button" class="button ghost compact" @click=${()=>{this.#historyOpen=false;this.#revisionPreview=null;this.requestUpdate();}}>Close history</button></header>${this.#historyBusy?html`<p role="status">Loading saved output revisions…</p>`:html`<ol>${this.#revisionHistory.map((entry)=>html`<li><div><b>${entry.current?this.i18n.system("Current output"):this.i18n.system("Revision {revision}", { revision: this.i18n.number(entry.revision) })}</b><small>${this.i18n.date(new Date(entry.createdAt),{dateStyle:"medium",timeStyle:"short"})} · ${entry.createdByUserId}${entry.available?"":" " + this.i18n.system("· retention period ended")}</small></div><div>${entry.available?html`<button type="button" class="button secondary compact" aria-label=${this.i18n.system("Inspect revision {revision}", { revision: this.i18n.number(entry.revision) })} @click=${()=>void this.#previewRevision(artifact,entry.revision)}>Inspect</button>${canAuthor&&!entry.current?html`<button type="button" class="button secondary compact" aria-label=${this.i18n.system("Restore revision {revision}", { revision: this.i18n.number(entry.revision) })} ?disabled=${this.#savingEdit} @click=${()=>void this.#restoreRevision(artifact,entry.revision)}>Restore</button>`:nothing}`:nothing}</div></li>`)}</ol>${this.#revisionBefore!==null?html`<button type="button" class="button secondary compact" @click=${()=>void this.#loadHistory(artifact,true)}>Load older revisions</button>`:nothing}`}${this.#revisionPreview?html`<details open><summary>Revision ${this.#revisionPreview.revision} content</summary><pre>${this.#revisionPreview.content.markdown}</pre>${this.#revisionPreview.content.items.length>1||["slides","storyboard","video"].includes(artifact.kind)?html`<ol>${this.#revisionPreview.content.items.map((item,index)=>html`<li><div><b>${artifact.kind==="slides"?this.i18n.system("Slide"):artifact.kind==="storyboard"?this.i18n.system("Frame"):artifact.kind==="video"?this.i18n.system("Scene"):this.i18n.system("Part")} ${index+1}: ${item.title}</b>${item.body?html`<p>${item.body}</p>`:nothing}${item.notes?html`<p><b>Notes:</b> ${item.notes}</p>`:nothing}</div></li>`)}</ol>`:nothing}</details>`:nothing}<p>Restoring creates a new revision and requires fresh independent approval. No generation provider is contacted.</p></section>`:nothing}

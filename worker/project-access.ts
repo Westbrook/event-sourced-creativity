@@ -1,3 +1,4 @@
+import { parseModel3dMediaRevision, parseModel3dCurrentProjection, type Model3dCurrentProjection } from "../src/model/model3d-media-revision.ts";
 import { validWorkspaceQuickEditEvents } from "../src/model/workspace-local-proposal.ts";
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
@@ -605,7 +606,7 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
     if(!value||typeof value!=="object")return value;
     const safe:Record<string,unknown>={};
     for(const [key,item] of Object.entries(value as Record<string,unknown>)){
-      if(/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|(?:video|audio)_input_receipt|artifact_plan/i.test(key))continue;
+      if(key==="model3d_current_projection"||/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|(?:video|audio)_input_receipt|artifact_plan/i.test(key))continue;
       if(key==="content_ref"&&!contentIds.has(String(item)))continue;
       if(typeof item==="string"&&mediaKey(item)&&!activeResources.get("media")?.has(mediaKey(item)))continue;
       safe[key]=redact(item);
@@ -617,7 +618,58 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
 
 type ProjectPresentationResources=Map<string,Set<string>>&{retiredCanvasItems:Set<string>};
 
-function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:ProjectPresentationResources,contentIds=new Set<string>()){
+/** A read-only current-file witness from one already-authorized page snapshot.
+ * No historical URL is restored and metadata-only readers never hydrate bodies. */
+async function projectModel3dCurrentProjections(rows:Record<string,unknown>[],context:ProjectRequestContext,
+  active:ProjectPresentationResources,resources:Record<string,unknown>[],contents:Record<string,unknown>[]){
+  const result=new Map<string,Model3dCurrentProjection>();
+  const resource=(kind:string,id:string,artifactId:string,documentId:string,contentRef:string)=>{
+    const matches=resources.filter(row=>row.resource_kind===kind&&row.resource_id===id&&row.visibility==="collaborative_output"
+      &&row.publication_project_id===context.projectId&&typeof row.publication_source_event_id==="string"&&row.publication_source_event_id
+      &&row.publication_event_id===row.publication_source_event_id&&row.publication_artifact_id===artifactId
+      &&row.publication_document_id===documentId&&row.publication_content_ref===contentRef&&row.publication_source_project_id===context.projectId);
+    return matches.length===1?matches[0]:null;
+  };
+  for(const row of rows){
+    const event=serializeEvent(row),p=event.payload;
+    if(event.type!=="DocumentArtifactEdited"||row.model3d_current_edit_id!==event.eventId)continue;
+    let operational:Record<string,unknown>;
+    try{const value:unknown=typeof row.payload==="string"?JSON.parse(row.payload):row.payload;
+      if(!value||typeof value!=="object"||Array.isArray(value))continue;operational=value as Record<string,unknown>;}catch{continue;}
+    if(["artifact_id","artifact_kind","document_id","project_id","content_ref","revision","content_sha256"].some(key=>operational[key]!==p[key]))continue;
+    const artifactId=String(p.artifact_id??"");
+    if(event.streamId!==`creative:${context.ownerUserId}`||p.artifact_kind!=="model3d"||p.project_id!==context.projectId
+      ||typeof p.document_id!=="string"||!active.get("document")?.has(p.document_id)
+      ||typeof p.content_ref!=="string"||!active.get("artifact")?.has(artifactId)||!active.get("content")?.has(p.content_ref)
+      ||!Number.isSafeInteger(p.revision)||Number(p.revision)<1||typeof p.content_sha256!=="string"||!(/^[a-f0-9]{64}$/u).test(p.content_sha256)
+      ||Object.hasOwn(p,"audio_revision")||Object.hasOwn(p,"video_revision"))continue;
+    const revision=parseModel3dMediaRevision(p.model3d_revision);if(!revision||revision.source.revision>=Number(p.revision))continue;
+    const key=mediaKey(revision.media.url);if(!key||!active.get("media")?.has(key))continue;
+    const artifactScope=resource("artifact",artifactId,artifactId,p.document_id,p.content_ref),contentScope=resource("content",p.content_ref,artifactId,p.document_id,p.content_ref),mediaScope=resource("media",key,artifactId,p.document_id,p.content_ref);
+    if(!artifactScope||!contentScope||!mediaScope||artifactScope.publication_source_event_id!==contentScope.publication_source_event_id
+      ||artifactScope.publication_source_event_id!==mediaScope.publication_source_event_id)continue;
+    const bodies=contents.filter(value=>value.content_id===p.content_ref);
+    if(bodies.length!==1)continue;
+    // Metadata-only pages already select the immutable private event receipt.
+    // Scope association qualifies display; it grants no review/write authority.
+    // Content pages additionally bind the exact current authored bytes.
+    if(typeof bodies[0]!.content==="string"){
+      if(bodies[0]!.publication_project_id!==context.projectId||bodies[0]!.publication_source_event_id!==artifactScope.publication_source_event_id)continue;
+      const raw=bodies[0]!.content as string;let body:Record<string,unknown>;
+      try{const parsed:unknown=JSON.parse(raw);if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))continue;body=parsed as Record<string,unknown>;}catch{continue;}
+      if(!Array.isArray(body.items)||body.items.length!==0||body.presentation!==null||Object.hasOwn(body,"audio_revision")||Object.hasOwn(body,"video_revision"))continue;
+      const authored=parseModel3dMediaRevision(body.model3d_revision);
+      if(!authored||JSON.stringify(authored)!==JSON.stringify(revision))continue;
+      const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw))),byte=>byte.toString(16).padStart(2,"0")).join("");
+      if(digest!==p.content_sha256)continue;
+    }
+    const projection=parseModel3dCurrentProjection({schemaVersion:1,revision:p.revision,contentSha256:p.content_sha256,media:revision.media});
+    if(projection)result.set(event.eventId,projection);
+  }
+  return result;
+}
+
+function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:ProjectPresentationResources,contentIds=new Set<string>(),model3dCurrent?:Model3dCurrentProjection){
   const event=serializeEvent(row);
   const privateConversation=event.type==="ChatMessageSent"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";
   const payload=event.payload,operation=payload.operation&&typeof payload.operation==="object"?payload.operation as Record<string,unknown>:{};
@@ -643,13 +695,14 @@ function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestCo
     ...(payload.item_id?{item_id:String(payload.item_id)}:{}),
     ...(payload.arrangement_id?{arrangement_id:String(payload.arrangement_id)}:{}),removed:true}
     :redactProjectPayload(event.payload,visibleContent,activeResources);
+  if(model3dCurrent)presentedPayload.model3d_current_projection=model3dCurrent;
   return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:presentedPayload};
 }
 
 /** Same-snapshot structural witnesses for shared Canvas presentation. Observed
  * reads retain raw provenance only for server-local final-response validation;
  * resourceIndex and event serialization never expose it. */
-function prepareProjectPresentationResources(env:WorkerEnv,context:ProjectRequestContext,observed=false,descriptors?:AssistantContextReadDescriptor[]){
+function prepareProjectPresentationResources(env:WorkerEnv,context:ProjectRequestContext,observed=false,descriptors?:AssistantContextReadDescriptor[],model3dPublication=false){
   const body="COALESCE(secret.private_json,source.payload)";
   const provenance=observed?`,json_array(resource.project_access_id,resource.resource_kind,resource.resource_id,resource.organization_id,resource.project_id,
     resource.owner_user_id,resource.visibility,resource.source_event_id,resource.actor_user_id,resource.created_at) AS source_resource_record,
@@ -659,7 +712,11 @@ function prepareProjectPresentationResources(env:WorkerEnv,context:ProjectReques
       custody.owner_user_id,custody.source_stream_id,custody.source_sequence,custody.project_sequence,custody.actor_user_id,custody.created_at) END AS source_custody_record,
     CASE WHEN secret.private_event_id IS NULL THEN NULL ELSE json_array(secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,
       secret.private_json,secret.created_at,secret.redacted_at) END AS source_private_record`:"";
-  const sql=`SELECT resource.resource_kind,resource.resource_id,resource.visibility,
+  const sql=`SELECT resource.resource_kind,resource.resource_id,resource.visibility,${model3dPublication?`
+    resource.source_event_id AS publication_source_event_id,resource.project_id AS publication_project_id,
+    publication.event_id AS publication_event_id,json_extract(publication.payload,'$.artifact_id') AS publication_artifact_id,
+    json_extract(publication.payload,'$.document_id') AS publication_document_id,json_extract(publication.payload,'$.content_ref') AS publication_content_ref,
+    json_extract(publication.payload,'$.project_id') AS publication_source_project_id,`:""}
     CASE WHEN custody.event_id IS NOT NULL AND(source.payload IS NOT NULL)
       AND(json_extract(source.payload,'$._private_ref') IS NULL OR secret.private_event_id IS NOT NULL) THEN source.type ELSE NULL END AS source_type,
     json_extract(${body},'$.canvas_id') AS source_canvas_id,
@@ -672,7 +729,10 @@ function prepareProjectPresentationResources(env:WorkerEnv,context:ProjectReques
       FROM json_each(CASE WHEN source.type='CanvasArrangementCreated' THEN ${body} ELSE '{}' END,'$.frames') frame) AS source_frame_ids,
     (SELECT json_group_array(CASE WHEN frame.type='object' THEN json_extract(frame.value,'$.item_id') ELSE NULL END)
       FROM json_each(CASE WHEN source.type='CanvasArrangementCreated' THEN ${body} ELSE '{}' END,'$.previous_frames') frame) AS source_previous_frame_ids${provenance}
-    FROM project_resource_scopes resource
+    FROM project_resource_scopes resource${model3dPublication?`
+    LEFT JOIN events publication ON publication.event_id=resource.source_event_id AND publication.stream_id='creative:'||resource.owner_user_id
+      AND publication.type='DocumentRenderCompleted' AND json_extract(publication.payload,'$.artifact_kind')='model3d'
+      AND resource.resource_kind IN('artifact','content','media')`:""}
     LEFT JOIN events source ON source.event_id=resource.source_event_id AND source.stream_id='creative:'||resource.owner_user_id
       AND resource.resource_kind IN('canvas','canvas_item','canvas_context','canvas_arrangement')
     LEFT JOIN project_event_scopes custody ON custody.event_id=source.event_id
@@ -755,7 +815,15 @@ const assistantContextEventProvenance=`,json_array(scope.event_id,scope.project_
 export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean,sourceObserver?:AssistantContextReadObserver){
   await synchronizeProjectScope(env,context);
   const size=Math.max(1,Math.min(5000,Math.floor(limit)||5000));
-  const eventSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
+  const eventSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${!sourceObserver?`,
+      CASE WHEN event.type='DocumentArtifactEdited' AND json_extract(event.payload,'$.artifact_kind')='model3d' THEN(
+        SELECT current_event.event_id FROM project_event_scopes current_scope JOIN events current_event ON current_event.event_id=current_scope.event_id
+        WHERE current_scope.project_access_id=scope.project_access_id AND current_scope.organization_id=scope.organization_id
+          AND current_scope.owner_user_id=scope.owner_user_id AND current_scope.project_id=scope.project_id
+          AND current_scope.source_stream_id=event.stream_id AND current_event.stream_id=event.stream_id
+          AND current_event.type='DocumentArtifactEdited'
+          AND json_extract(current_event.payload,'$.artifact_id')=json_extract(event.payload,'$.artifact_id')
+        ORDER BY current_scope.project_sequence DESC LIMIT 1) ELSE NULL END AS model3d_current_edit_id`:""}${sourceObserver?assistantContextEventProvenance:""} FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
       LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
       WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ORDER BY scope.project_sequence LIMIT ?`;
   const eventBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),size];
@@ -764,7 +832,7 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
     {sql:headSql,bindings:headBindings,role:"project-head",projectAccessId:context.projectAccessId,organizationId:context.organizationId}];
   const statements=[
     env.DB.prepare(eventSql).bind(...eventBindings),env.DB.prepare(headSql).bind(...headBindings),
-    prepareProjectPresentationResources(env,context,Boolean(sourceObserver),descriptors),
+    prepareProjectPresentationResources(env,context,Boolean(sourceObserver),descriptors,!sourceObserver),
   ];
   // Metadata pages retain only references eligible for this exact reader. Body
   // hydration is separate; content=0 must neither select bytes nor erase live IDs.
@@ -784,7 +852,7 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
         AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id) ELSE NULL END AS source_retention_record`:"";
   const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
   const ordinaryContent=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
-  const contentSql=`SELECT content.content_id${includeContent?",content.content":""}${contentProvenance} FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
+  const contentSql=`SELECT content.content_id${includeContent?",content.content":""}${includeContent&&!sourceObserver?",scope.source_event_id AS publication_source_event_id,scope.project_id AS publication_project_id":""}${contentProvenance} FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
     CROSS JOIN private_content content ON content.content_id=scope.resource_id
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.resource_kind='content'
       AND ((scope.visibility='collaborative_output' AND content.owner_id=scope.owner_user_id AND content.kind='document-artifact')
@@ -801,8 +869,10 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
   const content=includeContent?Object.fromEntries((contentRow?.results??[]).map((row)=>[String(row.content_id),String(row.content)])):{};
   const allowedContent=new Set((contentRow?.results??[]).map((row)=>String(row.content_id)));
   const activeResources=resourceIndex(resourceRows?.results??[]);
-  const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent));
-  const head=Number(headRow?.results[0]?.head??0),nextAfter=Number(events.at(-1)?.sequence??after);
+  const head=Number(headRow?.results[0]?.head??0);
+  const model3dCurrent=!sourceObserver?await projectModel3dCurrentProjections(rows?.results??[],context,activeResources,resourceRows?.results??[],contentRow?.results??[]):new Map<string,Model3dCurrentProjection>();
+  const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent,model3dCurrent.get(String(row.event_id))));
+  const nextAfter=Number(events.at(-1)?.sequence??after);
   return{events,head,nextAfter,hasMore:nextAfter<head,...(includeContent?{content}:{}),permissionSchemaVersion:1};
 }
 

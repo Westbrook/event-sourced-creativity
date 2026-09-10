@@ -39,8 +39,10 @@ import { OUTCOME_ARRANGEMENT_ENDPOINT, type OutcomeArrangementCommand, type Outc
 import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas-document-target";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { documentArtifactRevision, isDocumentArtifactKind, parseAudioMediaRevision, parseDocumentArtifactContent, parseVideoMediaRevision, parseVideoTrimEditRequest, videoArtifactMediaItem, type AudioTrimEditRequest, type AudioTrimEditResult, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId, type VideoTrimEditRequest, type VideoTrimEditResult } from "../model/document-artifacts";
+import { documentArtifactRevision, isDocumentArtifactKind, parseAudioMediaRevision, parseDocumentArtifactContent, parseVideoMediaRevision, parseVideoTrimEditRequest, videoArtifactMediaItem, model3dArtifactMediaFile, type AudioTrimEditRequest, type AudioTrimEditResult, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId, type VideoTrimEditRequest, type VideoTrimEditResult } from "../model/document-artifacts";
 import { ownerMediaNamespace } from "../model/media-ownership";
+import { parseModel3dScaleEditRequest, type Model3dScaleEditRequest } from "../model/model3d-artifact-revision";
+import { parseModel3dMediaRevision, type Model3dScaleEditResult } from "../model/model3d-media-revision";
 import { artifactContextEvents, imageOutputContextEvents, model3dArtifactContextReadiness } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType, CONTEXT_CONTAINS_RELATION, isContextCompositionRelation, normalizeActionBlockReferences } from "../model/combined-context";
@@ -174,7 +176,10 @@ type EventSourcePage = { events:CreativeEvent[]; content:Record<string,string>; 
 type AudioTrimObservation = { artifactId:string; request:AudioTrimEditRequest; contentRef:string; documentId:string; projectId:string; sourceMediaUrl:string; sourceRaw:string; sourceRevision:number };
 type VideoTrimObservation = { artifactId:string; request:VideoTrimEditRequest; contentRef:string; documentId:string; projectId:string; route:string; ownerUserId:string;
   sourceMediaUrl:string; sourceMediaType:string; sourceItemId:string; sourceItemsRaw:string; sourceSettingsRaw:string; sourceHashPresent:boolean; sourceMediaSha256:unknown; sourceEventId:string; sourceRaw:string; sourceRevision:number };
-type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation; videoTrim?:VideoTrimObservation };
+type Model3dScaleObservation = { artifactId:string; request:Model3dScaleEditRequest; contentRef:string; documentId:string; projectId:string; route:string; ownerUserId:string;
+  sourceMediaUrl:string; sourceMediaSha256:string; sourceMediaByteLength:number; sourceFileRaw:string; sourceRootMediaUrl:unknown; sourceRootMediaType:unknown;
+  sourceItemsRaw:string; sourceSettingsRaw:string; sourceEventId:string; sourceRaw:string; sourceRevision:number };
+type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation; videoTrim?:VideoTrimObservation; model3dScale?:Model3dScaleObservation };
 const EVENT_WRITE_SCOPE_CAPACITY=32, EVENT_WRITE_STORE_CAPACITY=128;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
@@ -4174,8 +4179,10 @@ export class FormaStore {
   /** Correct the durable deliverable itself without invoking a generation provider. */
   async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest):Promise<AudioTrimEditResult>;
   async reviseDocumentArtifact(artifactId:string,input:VideoTrimEditRequest):Promise<VideoTrimEditResult>;
+  async reviseDocumentArtifact(artifactId:string,input:Model3dScaleEditRequest):Promise<Model3dScaleEditResult>;
   async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<boolean>;
-  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|VideoTrimEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<AudioTrimEditResult|VideoTrimEditResult|boolean>{
+  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|VideoTrimEditRequest|Model3dScaleEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<AudioTrimEditResult|VideoTrimEditResult|Model3dScaleEditResult|boolean>{
+    if ("model3dScale" in input) return this.#reviseModel3dDocumentArtifact(artifactId,input);
     if ("videoTrim" in input) return this.#reviseVideoDocumentArtifact(artifactId,input);
     const requestInput=JSON.parse(JSON.stringify(input)) as typeof input;
     const trimInput = "audioTrim" in requestInput ? requestInput : null;
@@ -4537,6 +4544,234 @@ export class FormaStore {
       const saved=await this.#validatedVideoTrimSave(snapshot,result,receipt.appended);
       if(!current())return retired;
       if(!saved||receipt.appended[0]?.payload.video_trim_request_sha256!==fingerprint)return unconfirmed;
+      this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+      this.#mergeConfirmed(receipt.appended,receipt.head);
+      this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});
+      return saved;
+    }catch{return current()?unconfirmed:retired;}
+  }
+
+  #model3dScaleSourceCurrent(snapshot:Model3dScaleObservation):boolean{
+    const artifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===snapshot.artifactId);
+    const file=artifact?model3dArtifactMediaFile(artifact):null;
+    return !this.session.get()?.projectContext && this.route.get()===snapshot.route && this.projection.get().projectId===snapshot.projectId
+      && artifact?.kind==="model3d" && artifact.documentId===snapshot.documentId && artifact.contentRef===snapshot.contentRef
+      && artifact.sourceEventId===snapshot.sourceEventId && artifact.mediaUrl===snapshot.sourceRootMediaUrl && artifact.mediaType===snapshot.sourceRootMediaType
+      && file?.url===snapshot.sourceMediaUrl && file.sha256===snapshot.sourceMediaSha256 && file.fileSize===snapshot.sourceMediaByteLength
+      && JSON.stringify(file)===snapshot.sourceFileRaw && JSON.stringify(artifact.items)===snapshot.sourceItemsRaw
+      && JSON.stringify(artifact.settings)===snapshot.sourceSettingsRaw && this.session.get()?.user.userId===snapshot.ownerUserId
+      && documentArtifactRevision(this.events.get(),snapshot.artifactId)===snapshot.sourceRevision && this.content.get()[snapshot.contentRef]===snapshot.sourceRaw;
+  }
+
+  /** The one-megabyte raw revision may expand when nested as a JSON string in its ACK. */
+  async #model3dScaleResponse(input:string,init:RequestInit,action:string,controls:{current:()=>boolean;onDispatch?:()=>void}):Promise<{
+    response:Response;result:{appended?:CreativeEvent[];content?:Record<string,string>;head?:number;revision?:number;error?:string}
+  }>{
+    const controller=new AbortController(),deadline=Date.now()+90_000,maxBytes=8*1024*1024;
+    let closed=false,dispatched=false,stop!:(error:Error)=>void;
+    const current=()=>!closed&&!controller.signal.aborted&&Date.now()<deadline&&controls.current();
+    const check=()=>{if(!current())throw new Error("model3d_scale_unconfirmed");};
+    const stopped=new Promise<never>((_resolve,reject)=>{stop=reject;});void stopped.catch(()=>undefined);
+    const timer=setTimeout(()=>{closed=true;stop(new Error("model3d_scale_unconfirmed"));controller.abort();},90_000);
+    const settle=<T>(operation:Promise<T>)=>Promise.race([operation,stopped]);
+    const cancel=(operation:(()=>Promise<unknown>)|undefined)=>{
+      // A stalled cancellation or a late response cannot prolong the operation
+      // or publish a receipt after this exact request has become unconfirmed.
+      try{if(operation)void operation().catch(()=>undefined);}catch{/* Already released. */}
+    };
+    let response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined,complete=false;
+    try{
+      check();
+      const request=this.guardedFetch(input,{...init,signal:controller.signal,redirect:"error",cache:"no-store"},action,
+        {current:()=>dispatched||current(),onDispatch:()=>{dispatched=true;controls.onDispatch?.();}});
+      void request.then(late=>{if(!current())cancel(late.body?()=>late.body!.cancel():undefined);},()=>undefined).catch(()=>undefined);
+      response=await settle(request);check();
+      if(response.redirected||response.headers.get("content-type")?.split(";",1)[0]?.trim().toLowerCase()!=="application/json")
+        throw new Error("model3d_scale_unconfirmed");
+      const header=response.headers.get("content-length"),encoding=response.headers.get("content-encoding");
+      const identity=encoding===null||encoding.trim().toLowerCase()==="identity";
+      if(header!==null&&(!/^(0|[1-9]\d*)$/u.test(header)||!Number.isSafeInteger(Number(header))
+        ||identity&&(Number(header)<1||Number(header)>maxBytes)))throw new Error("model3d_scale_unconfirmed");
+      reader=response.body?.getReader();if(!reader)throw new Error("model3d_scale_unconfirmed");
+      const bytes=new Uint8Array(maxBytes);let size=0,chunks=0;
+      for(;;){
+        check();const part=await settle(reader.read());check();
+        if(part.done)break;
+        if(++chunks>65_536||!(part.value instanceof Uint8Array)||!part.value.byteLength||size+part.value.byteLength>maxBytes)
+          throw new Error("model3d_scale_unconfirmed");
+        bytes.set(part.value,size);size+=part.value.byteLength;
+      }
+      complete=true;
+      if(!size||identity&&header!==null&&size!==Number(header))throw new Error("model3d_scale_unconfirmed");
+      const result:unknown=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes.subarray(0,size)));
+      check();
+      if(!result||typeof result!=="object"||Array.isArray(result))throw new Error("model3d_scale_unconfirmed");
+      return{response,result};
+    }finally{
+      closed=true;clearTimeout(timer);controller.abort();
+      if(!complete)cancel(reader?()=>reader!.cancel():response?.body?()=>response!.body!.cancel():undefined);
+      try{reader?.releaseLock();}catch{/* A late pending read owns no Store publication. */}
+    }
+  }
+
+  #model3dScaleWrites=new Set<string>();
+  /** One owned Model3D write; an uncertain acknowledgment is observed separately, never retried here. */
+  async #reviseModel3dDocumentArtifact(artifactId:string,input:Model3dScaleEditRequest):Promise<Model3dScaleEditResult>{
+    if(this.#model3dScaleWrites.has(artifactId))return{status:"unconfirmed",code:"unconfirmed"};
+    this.#model3dScaleWrites.add(artifactId);
+    try{return await this.#performModel3dDocumentArtifact(artifactId,input);}
+    finally{this.#model3dScaleWrites.delete(artifactId);}
+  }
+
+  async #performModel3dDocumentArtifact(artifactId:string,input:Model3dScaleEditRequest):Promise<Model3dScaleEditResult>{
+    const failure=(status:"conflict"|"refused"|"unconfirmed"|"retired",code:"source_changed"|"invalid_scale"|"unsupported"|"unavailable"|"access_denied"|"unconfirmed"|"retired")=>
+      ({status,code} as Model3dScaleEditResult);
+    const request=parseModel3dScaleEditRequest(input);
+    if(!request)return failure("refused","invalid_scale");
+    const artifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
+    if(!artifact||artifact.kind!=="model3d"||this.session.get()?.projectContext)return failure("refused","unsupported");
+    const file=model3dArtifactMediaFile(artifact),contentRef=artifact.contentRef??"",sourceRaw=this.content.get()[contentRef];
+    const draft=parseDocumentArtifactContent(sourceRaw),ownerUserId=this.session.get()?.user.userId??"";
+    if(!file||file.mimeType!=="model/gltf-binary"||typeof file.sha256!=="string"||!/^[a-f0-9]{64}$/u.test(file.sha256)
+      ||typeof file.fileSize!=="number"||!Number.isSafeInteger(file.fileSize)||file.fileSize<1||file.fileSize>MAX_MODEL3D_UPLOAD_BYTES
+      ||!contentRef||typeof sourceRaw!=="string"||!draft||draft.audio_revision||draft.video_revision||!ownerUserId)return failure("refused","unavailable");
+    let sourceKey:string;
+    try{sourceKey=decodeURIComponent(file.url.slice("/api/media/".length));}catch{return failure("refused","unavailable");}
+    if(file.url!==`/api/media/${encodeURIComponent(sourceKey)}`||!sourceKey.startsWith(`${ownerMediaNamespace(ownerUserId)}/generated/`)
+      ||!sourceKey.endsWith(".glb")||/[\p{Cc}\\]/u.test(sourceKey)||sourceKey.split("/").some(part=>part==="."||part===".."))return failure("refused","unavailable");
+    const snapshot:Model3dScaleObservation={artifactId,request,contentRef,documentId:artifact.documentId,projectId:this.projection.get().projectId,
+      route:this.route.get(),ownerUserId,sourceMediaUrl:file.url,sourceMediaSha256:file.sha256,sourceMediaByteLength:file.fileSize,
+      sourceFileRaw:JSON.stringify(file),sourceRootMediaUrl:artifact.mediaUrl,sourceRootMediaType:artifact.mediaType,
+      sourceItemsRaw:JSON.stringify(artifact.items),sourceSettingsRaw:JSON.stringify(artifact.settings),
+      sourceEventId:artifact.sourceEventId,sourceRaw,sourceRevision:documentArtifactRevision(this.events.get(),artifactId)};
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const current=()=>this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&this.#model3dScaleSourceCurrent(snapshot);
+    if(!current())return failure("retired","retired");
+    let sourceDigest:string;
+    try{sourceDigest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(sourceRaw))),byte=>byte.toString(16).padStart(2,"0")).join("");}
+    catch{return current()?failure("unconfirmed","unconfirmed"):failure("retired","retired");}
+    if(!current())return failure("retired","retired");
+    if(snapshot.sourceRevision!==request.expectedRevision||sourceDigest!==request.expectedContentSha256
+      ||snapshot.sourceMediaSha256!==request.model3dScale.sourceMediaSha256)return failure("conflict","source_changed");
+    if(draft.model3d_revision&&(draft.model3d_revision.media.url!==snapshot.sourceMediaUrl
+      ||draft.model3d_revision.media.byteLength!==snapshot.sourceMediaByteLength
+      ||draft.model3d_revision.media.sha256!==snapshot.sourceMediaSha256))return failure("conflict","source_changed");
+    if([...this.#eventWriteObservations.values()].some(value=>value.model3dScale?.artifactId===artifactId&&this.sourceOwnershipActive(value.source)
+      &&JSON.stringify(value.model3dScale.request)===JSON.stringify(request)))return failure("unconfirmed","unconfirmed");
+    const admission=await this.#admitEventWrite([{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],"append"),observation=admission.observation;
+    if(!admission.admitted){
+      if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!current()},[],current()?"none":"withheld",{silent:true});
+      return current()?failure("unconfirmed","unconfirmed"):failure("retired","retired");
+    }
+    observation.model3dScale=snapshot;
+    const owned=()=>current()&&this.sourceOwnershipActive(observation.source)&&!observation.paused;
+    const edit=async():Promise<Model3dScaleEditResult>=>{
+      if(!owned()){
+        this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");
+        return failure("retired","retired");
+      }
+      this.busy.set("DocumentArtifactEdited");this.notify();let dispatched=false;observation.attempted=true;
+      try{
+        const {response,result}=await this.#model3dScaleResponse("/api/artifacts/"+encodeURIComponent(artifactId),
+          {method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(request)},"save a correction to this finished output",
+          {current:()=>dispatched||owned(),onDispatch:()=>{dispatched=true;}});
+        this.#assertAuthorizationScope(authorization);
+        if(!response.ok){
+          const refused:Model3dScaleEditResult|null=response.status===409&&["artifact_revision_conflict","model3d_scale_source_changed"].includes(result.error??"")?failure("conflict","source_changed")
+            :response.status===400&&result.error==="model3d_scale_invalid_scale"?failure("refused","invalid_scale")
+            :response.status===400&&result.error==="model3d_scale_unsupported"?failure("refused","unsupported")
+            :response.status===400&&["invalid_artifact_revision","artifact_revision_too_large"].includes(result.error??"")?failure("refused","unavailable")
+            :response.status===404?failure("refused","unavailable")
+            :response.status===401||response.status===403?failure("refused","access_denied"):null;
+          if(refused){
+            const active=owned();
+            this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:!active},[],active?"none":"withheld",{silent:true});
+            this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);
+            return active?refused:failure("retired","retired");
+          }
+          throw new Error("model3d_scale_unconfirmed");
+        }
+        const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+        if(!receipt||!receipt.committed.some(event=>event.type==="DocumentArtifactEdited"))throw new Error("model3d_scale_unconfirmed");
+        const saved=await this.#validatedModel3dScaleSave(snapshot,result,receipt.appended);
+        if(!saved)throw new Error("model3d_scale_unconfirmed");
+        const active=owned(),patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,
+          outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!active};
+        if(!active){this.#finishEventWrite(observation,patch,[],"withheld");return failure("retired","retired");}
+        if(!receipt.complete||receipt.rejected.length){this.#finishEventWrite(observation,patch,[],"none",{silent:true});return failure("unconfirmed","unconfirmed");}
+        this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+        this.#mergeConfirmed(receipt.appended,receipt.head);
+        this.#finishEventWrite(observation,patch,receipt.appended,"published",{silent:true});
+        return saved;
+      }catch(error){
+        if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;
+        const active=owned();
+        this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!active},[],active?"none":"withheld",{silent:true});
+        return active?failure("unconfirmed","unconfirmed"):failure("retired","retired");
+      }finally{if(this.sourceOwnershipScopeActive(sourceOwner)){this.busy.set("");this.notify();}}
+    };
+    const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  async #validatedModel3dScaleSave(snapshot:Model3dScaleObservation,result:{content?:Record<string,string>;revision?:number},appended:CreativeEvent[]):Promise<Extract<Model3dScaleEditResult,{status:"saved"}>|null>{
+    const input=snapshot.request,raw=result.content?.[snapshot.contentRef],parsed=parseDocumentArtifactContent(raw),model=parsed?.model3d_revision;
+    const original=parseDocumentArtifactContent(snapshot.sourceRaw),event=appended.find(value=>value.type==="DocumentArtifactEdited"&&value.payload.artifact_id===snapshot.artifactId);
+    if(typeof raw!=="string"||!parsed||!model||!original||parsed.audio_revision||parsed.video_revision||!event||appended.length!==1
+      ||!result.content||Array.isArray(result.content)||Object.keys(result.content).length!==1||!Object.hasOwn(result.content,snapshot.contentRef)
+      ||result.revision!==snapshot.sourceRevision+1||event.payload.revision!==result.revision
+      ||event.payload.artifact_kind!=="model3d"||event.payload.document_id!==snapshot.documentId||event.payload.project_id!==snapshot.projectId||event.payload.content_ref!==snapshot.contentRef
+      ||event.payload.source_surface!=="document-artifact-model3d-scale"||JSON.stringify(event.payload.changed_fields)!==JSON.stringify(["model3d_revision"])
+      ||event.payload.edited_by_user_id!==snapshot.ownerUserId||model.source.url!==snapshot.sourceMediaUrl
+      ||model.source.sha256!==input.model3dScale.sourceMediaSha256||model.source.byteLength!==snapshot.sourceMediaByteLength
+      ||model.source.revision!==snapshot.sourceRevision||model.source.contentSha256!==input.expectedContentSha256
+      ||model.factor!==input.model3dScale.factor||model.media.sha256!==input.model3dScale.resultMediaSha256||model.media.fileName!=="scaled-model.glb"
+      ||JSON.stringify(parseModel3dMediaRevision(event.payload.model3d_revision))!==JSON.stringify(model))return null;
+    if(original.model3d_revision&&(JSON.stringify(original.model3d_revision.afterBounds)!==JSON.stringify(model.beforeBounds)
+      ||original.model3d_revision.vertexCount!==model.vertexCount||original.model3d_revision.positionAccessorCount!==model.positionAccessorCount))return null;
+    const unchangedRawFields=(value:string):string|null=>{
+      try{
+        const object:unknown=JSON.parse(value);
+        if(!object||typeof object!=="object"||Array.isArray(object))return null;
+        const fields={...object as Record<string,unknown>};delete fields.model3d_revision;
+        return JSON.stringify(fields);
+      }catch{return null;}
+    };
+    const sourceFields=unchangedRawFields(snapshot.sourceRaw);
+    if(sourceFields===null||sourceFields!==unchangedRawFields(raw))return null;
+    let mediaKey:string;
+    try{mediaKey=decodeURIComponent(model.media.url.slice("/api/media/".length));}catch{return null;}
+    const mediaPrefix=`${ownerMediaNamespace(snapshot.ownerUserId)}/generated/`;
+    if(!mediaKey.startsWith(mediaPrefix)||!/^model3d-scale-[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.glb$/u.test(mediaKey.slice(mediaPrefix.length)))return null;
+    const digest=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),byte=>byte.toString(16).padStart(2,"0")).join("");
+    const [contentSha256,fingerprint]=await Promise.all([digest(raw),digest(JSON.stringify(input))]);
+    if(event.payload.content_sha256!==contentSha256||event.payload.model3d_scale_request_sha256!==fingerprint)return null;
+    return{status:"saved",code:"saved",revision:result.revision,contentSha256,model3dRevision:model};
+  }
+
+  /** Explicit observation of the same original Model3D operation; this method issues only a GET. */
+  async checkModel3dScaleOperation(artifactId:string,input:Model3dScaleEditRequest):Promise<Model3dScaleEditResult>{
+    const unconfirmed:Model3dScaleEditResult={status:"unconfirmed",code:"unconfirmed"},retired:Model3dScaleEditResult={status:"retired",code:"retired"};
+    const request=parseModel3dScaleEditRequest(input);
+    if(!request)return unconfirmed;
+    const fingerprintInput=JSON.stringify(request);
+    const observation=[...this.#eventWriteObservations.values()].find(value=>value.model3dScale?.artifactId===artifactId&&JSON.stringify(value.model3dScale.request)===fingerprintInput);
+    if(!observation?.model3dScale||observation.pending)return unconfirmed;
+    const snapshot=observation.model3dScale,source=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const current=()=>this.sourceOwnershipActive(source)&&this.sourceOwnershipActive(observation.source)&&!observation.paused
+      &&this.#scopeStillActive(authorization)&&this.#model3dScaleSourceCurrent(snapshot);
+    if(!current())return retired;
+    try{
+      const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(fingerprintInput))),byte=>byte.toString(16).padStart(2,"0")).join("");
+      if(!current())return retired;
+      const {response,result}=await this.#model3dScaleResponse(`/api/artifacts/${encodeURIComponent(artifactId)}?model3dScaleOperation=${fingerprint}&expectedRevision=${request.expectedRevision}`,
+        {method:"GET",cache:"no-store"},"check an existing Model3D save",{current});
+      if(!current())return retired;
+      if(!response.ok)return response.status===409&&result.error==="artifact_revision_conflict"?{status:"conflict",code:"source_changed"}:unconfirmed;
+      const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+      if(!receipt||!receipt.complete||receipt.rejected.length)return unconfirmed;
+      const saved=await this.#validatedModel3dScaleSave(snapshot,result,receipt.appended);
+      if(!current())return retired;
+      if(!saved||receipt.appended[0]?.payload.model3d_scale_request_sha256!==fingerprint)return unconfirmed;
       this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
       this.#mergeConfirmed(receipt.appended,receipt.head);
       this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});

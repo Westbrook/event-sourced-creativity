@@ -1,4 +1,5 @@
 import { MODEL3D_FORMAT_MIME_TYPES, MODEL3D_PRIVATE_TRANSFER_MAX_BYTES, isModel3dFormat, type Model3dFormat } from "./model3d.ts";
+import { model3dRevisionFile, parseModel3dMediaRevision } from "./model3d-media-revision.ts";
 
 export type NativeRetainedModel3dFile = Readonly<{
   url: string;
@@ -102,21 +103,36 @@ function content(retainedFiles: readonly NativeRetainedModel3dFile[]): NativeRet
   return result;
 }
 
-/** Project only the selected DocumentRenderCompleted envelope. The caller binds
- * its source/auth witness and captures the complete envelope before this call.
+/** Project the selected completion, or only its independently witnessed current
+ * GLB derivative. The caller binds the edit/source/auth witness before this call.
  * Only named own data descriptors are read here; input getters, iterators and
  * serialization hooks are never called. Reflection traps may throw and fail closed.
  * Neither the raw prose plan nor legacy media_url fields imply retained files.
  */
-export function projectNativeRetainedModel3d(source: unknown): NativeRetainedModel3dContent | null {
+export function projectNativeRetainedModel3d(source: unknown, model3dRevision?: unknown): NativeRetainedModel3dContent | null {
   try {
     const envelope = record(source);
     if (own(envelope, "artifact_kind") !== "model3d") invalid();
     const settingsDescriptor = Object.getOwnPropertyDescriptor(envelope, "settings");
-    if (!settingsDescriptor) return content(Object.freeze([]));
-    const settings = record(own(envelope, "settings"));
-    if (!Object.getOwnPropertyDescriptor(settings, "model3d_files")) return content(Object.freeze([]));
-    return content(files(own(settings, "model3d_files")));
+    let retained: readonly NativeRetainedModel3dFile[] = Object.freeze([]);
+    if (settingsDescriptor) {
+      const settings = record(own(envelope, "settings"));
+      if (Object.getOwnPropertyDescriptor(settings, "model3d_files")) retained = files(own(settings, "model3d_files"));
+    }
+    if (model3dRevision !== undefined) {
+      const revision = parseModel3dMediaRevision(model3dRevision);
+      const originals = retained.filter(value => value.role === "mesh" && value.format === "glb"
+        && value.mimeType === "model/gltf-binary" && value.previewSupported !== false);
+      if (!revision || originals.length !== 1) invalid();
+      if (revision.source.revision === 0 && (revision.source.url !== originals[0]!.url
+        || revision.source.sha256 !== originals[0]!.sha256 || revision.source.byteLength !== originals[0]!.fileSize)) invalid();
+      const derivative = model3dRevisionFile(revision);
+      if (!derivative) invalid();
+      // Unedited alternate meshes, textures and previews stay in original history.
+      // They are never presented as files of the scaled current revision.
+      return content(Object.freeze([file(derivative)]));
+    }
+    return content(retained);
   } catch { return null; }
 }
 
