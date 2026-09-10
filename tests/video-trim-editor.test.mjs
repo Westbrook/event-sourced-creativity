@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { html, noChange, nothing } from "lit";
 import { calmFullPageNativePorts as ports, fullPageTree } from "./helpers/calm-full-page-fixture.mjs";
 
 // Reuse the retained Audio renderer's actual-source/native-template ports.
@@ -180,7 +181,7 @@ test("four localized editor controls keep a fixed LTR time axis and remain unass
   assert.equal(new Set(forms).size, 4, "each editor owns a distinct unassociated native form ID");
 });
 
-// The host controls below execute four complete current private methods. Native
+// The host controls below execute five complete current private methods. Native
 // focus, the already-verified scope, remux completion and Store replies are finite
 // dependency ports; this is neither another remux test nor a Worker/RAM proof.
 const hostUrl = new URL("../src/components/document-artifacts.ts", import.meta.url);
@@ -188,7 +189,7 @@ const hostText = readFileSync(hostUrl, "utf8");
 const hostSyntax = ts.createSourceFile(hostUrl.pathname, hostText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const hostOwner = hostSyntax.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "DocumentArtifacts");
 assert.ok(hostOwner, "actual DocumentArtifacts owner");
-const hostMethods = ["#retireVideoTrim", "#syncVideoTrim", "#changeVideoTrim", "#saveVideoTrim"].map(name => {
+const hostMethods = ["#retireVideoTrim", "#syncVideoTrim", "#changeVideoTrim", "#saveVideoTrim", "#videoTrimTemplate"].map(name => {
   const matches = hostOwner.members.filter(member => ts.isMethodDeclaration(member) && member.name.getText(hostSyntax) === name);
   assert.equal(matches.length, 1, "one actual method: " + name);
   const method = matches[0]; assert.equal(Boolean(method.asteriskToken), false);
@@ -210,11 +211,12 @@ const hostCode = ts.transpileModule(`class VideoHostControl {
   retire() { return this.#retireVideoTrim(); }
   sync() { return this.#syncVideoTrim(); }
   change(event, expected) { return this.#changeVideoTrim(event, expected); }
+  template(draft = this.#videoTrim) { return this.#videoTrimTemplate(draft); }
   save(artifact, event, check = false, expected = this.#videoTrim) { return this.#saveVideoTrim(artifact, event, check, expected); }
   ${hostMethods.join("\n")}
 }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
 const hostFactory = new Function("trimVideoPrefix", "documentArtifactRevision", "videoArtifactMediaItem",
-  "captureOutputNavigationFocus", "HTMLButtonElement", hostCode + "\nreturn VideoHostControl;");
+  "captureOutputNavigationFocus", "HTMLButtonElement", "html", "noChange", "nothing", "videoTrimCopy", hostCode + "\nreturn VideoHostControl;");
 function deferred() {
   let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
@@ -248,17 +250,166 @@ function hostFixture() {
   const Host = hostFactory(async (bytes, range) => { f.trimCalls.push({ bytes, range }); return f.trimResult; },
     (events, id) => { assert.equal(id, "video-a"); return events.revision; },
     artifact => artifact?.item ?? null,
-    () => ({ current: () => f.focusCurrent, run: (target, operation) => f.focusCurrent && operation(), dispose() {} }), ButtonPort);
+    () => ({ current: () => f.focusCurrent, run: (target, operation) => f.focusCurrent && operation(), dispose() {} }), ButtonPort, html, noChange, nothing, videoTrimCopy);
   f.host = new Host(f);
   const draft = { artifactId: "video-a", itemId: "item-a", abort: new AbortController(),
     bytes: new Uint8Array([11, 22, 33, 44]), selection: selection(2), expectedRevision: 3,
-    expectedContentSha256: "c".repeat(64), loading: false, saving: false, checking: false, request: null, code: null,
+    expectedContentSha256: "c".repeat(64), loading: false, saving: false, checking: false, request: null, code: null, invalidRangeFromInput: null,
     current: () => f.current && f.host.state().draft === draft,
     basisCurrent: () => draft.current() && f.basis };
   f.draft = draft; f.host.install(draft);
   f.save = (check = false, expected = draft) => f.host.save(f.artifact, { currentTarget: f.origin }, check, expected);
   return f;
 }
+
+// Compose the existing native-template ports with the actual host template and
+// the actual registered leaf. Only the surrounding host/store lifetime remains
+// the same finite port used below; no status predicate or message is replaced.
+function combinedTrimFixture(t, { locale = "en" } = {}) {
+  const native = leafFixture(t, { locale, accept: false }), f = hostFixture(), originalLeaf = native.host;
+  const dispatchPorts = new Map();
+  f.host.i18n = native.f.i18n;
+  class HostTemplatePort extends ports.ElementPort {
+    render() { return f.host.template(); }
+    disconnectedCallback() {}
+  }
+  native.f.host = new HostTemplatePort(); native.f.host.tag = "section"; native.f.host.attributes = {};
+  native.f.renderer.registry["forma-video-trim-editor"] = VideoTrimEditor;
+  const draw = () => {
+    const tree = native.draw(), component = tree.visible("forma-video-trim-editor")[0]?.component;
+    if (component) {
+      assert.ok(component instanceof VideoTrimEditor); f.leaf = component;
+      if (!dispatchPorts.has(component)) {
+        const descriptor = Object.getOwnPropertyDescriptor(component, "dispatchEvent"), inherited = component.dispatchEvent;
+        dispatchPorts.set(component, descriptor);
+        // ElementPort invokes the actual bound listener without native dispatch
+        // populating currentTarget. Supply only that synchronous Event field;
+        // keep the inherited dispatch and restore the Event's own descriptor.
+        component.dispatchEvent = function (event) {
+          const previous = Object.getOwnPropertyDescriptor(event, "currentTarget");
+          Object.defineProperty(event, "currentTarget", { configurable: true, value: this });
+          try { return Reflect.apply(inherited, this, [event]); }
+          finally {
+            if (previous) Object.defineProperty(event, "currentTarget", previous);
+            else delete event.currentTarget;
+          }
+        };
+      }
+    }
+    return tree;
+  };
+  const statuses = tree => tree.visible("p").filter(node => node.attributes.role === "status");
+  t.after(() => {
+    for (const [component, descriptor] of dispatchPorts) {
+      if (descriptor) Object.defineProperty(component, "dispatchEvent", descriptor);
+      else delete component.dispatchEvent;
+    }
+    f.host.retire(); originalLeaf.disconnectedCallback();
+    for (const { instance } of native.f.renderer.instances.values()) {
+      instance.isConnected = false; instance.disconnectedCallback();
+    }
+  });
+  return Object.assign(f, { native, draw, statuses });
+}
+
+test("owned invalid Video input has one combined localized status and accepted correction clears both owners", async t => {
+  for (const locale of ["en", "fr", "ar", "ja"]) await t.test(locale, child => {
+    const f = combinedTrimFixture(child, { locale }); f.draw();
+    for (const value of ["", "1.5", "0", "5"]) {
+      f.native.enter("video-trim-end", value);
+      assert.equal(f.draft.code, "invalid_range"); assert.equal(f.draft.invalidRangeFromInput, f.leaf);
+      const tree = f.draw(), statuses = f.statuses(tree);
+      assert.equal(statuses.length, 1, "host and leaf together announce invalid input once");
+      assert.equal(statuses[0].text, videoTrimCopy(locale).status.invalid_range);
+      assert.equal(statuses[0].owner === f.leaf, true, "the actual leaf owns numeric input feedback");
+      assert.equal(tree.visible("p").some(node => node.attributes.class === "artifact-video-trim-status"), false);
+      assert.equal(f.native.input("video-trim-end").value, value);
+      assert.deepEqual(tree.visible("input").map(node => node.attributes["aria-invalid"]), ["true", "true"]);
+      assert.equal(f.draft.selection.endSample, 2);
+    }
+    f.native.enter("video-trim-end", 1);
+    assert.equal(f.draft.code, null); assert.equal(f.draft.invalidRangeFromInput, null);
+    const corrected = f.draw(); assert.equal(f.statuses(corrected).length, 0);
+    assert.deepEqual(corrected.visible("input").map(node => node.attributes["aria-invalid"]), ["false", "false"]);
+    assert.equal(f.native.input("video-trim-end").value, "1"); assert.equal(f.native.input("video-trim-end-range").value, "1");
+    assert.equal(f.trimCalls.length + f.reviseCalls.length + f.checkCalls.length, 0);
+  });
+});
+
+test("foreign, saving, source-retired and obsolete invalid handlers cannot acquire the current status owner", t => {
+  const f = combinedTrimFixture(t); f.draw();
+  const invalid = f.leaf.eventBindings["video-trim-invalid"]; assert.equal(typeof invalid, "function");
+  invalid({ currentTarget: {} });
+  f.draft.saving = true; invalid({ currentTarget: f.leaf }); f.draft.saving = false;
+  f.basis = false; invalid({ currentTarget: f.leaf }); f.basis = true;
+  assert.equal(f.draft.code, null); assert.equal(f.draft.invalidRangeFromInput, null);
+  assert.equal(f.statuses(f.draw()).length, 0);
+  const next = { ...f.draft, abort: new AbortController(), bytes: new Uint8Array([9]), code: null, invalidRangeFromInput: null };
+  next.current = () => f.current && f.host.state().draft === next; next.basisCurrent = () => next.current() && f.basis;
+  f.host.retire(); f.host.install(next); invalid({ currentTarget: f.leaf });
+  assert.equal(next.code, null); assert.equal(next.invalidRangeFromInput, null);
+  assert.equal(f.statuses(f.draw()).length, 0);
+  assert.equal(f.trimCalls.length + f.reviseCalls.length + f.checkCalls.length, 0);
+});
+
+test("a recreated Video leaf receives its real selection and leaves one host status until accepted correction", t => {
+  const f = combinedTrimFixture(t); f.draw(); f.native.enter("video-trim-end", "");
+  const invalidTree = f.draw(), previous = f.leaf, retainedSelection = f.draft.selection;
+  assert.equal(f.statuses(invalidTree).length, 1); assert.equal(f.statuses(invalidTree)[0].owner === previous, true);
+  assert.equal(f.draft.invalidRangeFromInput, previous);
+  const staleInvalid = previous.eventBindings["video-trim-invalid"];
+  const entries = [...f.native.f.renderer.instances.entries()].filter(([, row]) => row.instance === previous);
+  assert.equal(entries.length, 1, "one current registered leaf instance");
+  // Explicitly deliver the old native component's disconnect and remove only
+  // that instance from the existing renderer's registration cache. The draft,
+  // production template, selection setter and shared renderer remain intact.
+  previous.isConnected = false; previous.disconnectedCallback();
+  f.native.f.renderer.instances.delete(entries[0][0]); f.leaf = null;
+  const replacedTree = f.draw(), replacement = f.leaf;
+  assert.notEqual(replacement, previous); assert.equal(replacement.isConnected, true);
+  assert.equal(f.draft.selection, retainedSelection); assert.equal(f.draft.invalidRangeFromInput, previous);
+  assert.equal(replacement.selection.endSample, retainedSelection.endSample);
+  assert.equal(replacement.selection.info.sourceSha256, retainedSelection.info.sourceSha256);
+  assert.deepEqual(replacedTree.visible("input").map(node => node.attributes["aria-invalid"]), ["false", "false"]);
+  const statuses = f.statuses(replacedTree); assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].attributes.class, "artifact-video-trim-status");
+  assert.equal(statuses[0].text, videoTrimCopy("en").status.invalid_range);
+  staleInvalid({ currentTarget: previous }); assert.equal(f.draft.invalidRangeFromInput, previous);
+  f.native.enter("video-trim-end", 1);
+  assert.equal(f.draft.invalidRangeFromInput, null); assert.equal(f.draft.code, null);
+  assert.equal(f.statuses(f.draw()).length, 0); assert.equal(replacement.selection.endSample, 1);
+  assert.equal(f.trimCalls.length + f.reviseCalls.length + f.checkCalls.length, 0);
+});
+
+test("remux and Store invalid-range failures retain one host status with valid leaf fields", async t => {
+  for (const origin of ["remux", "Store"]) await t.test(origin, async child => {
+    const f = combinedTrimFixture(child); f.draw();
+    if (origin === "remux") f.trimResult = null;
+    else f.revise = async () => ({ status: "refused", code: "invalid_range" });
+    await f.save();
+    assert.equal(f.draft.code, "invalid_range"); assert.equal(f.draft.invalidRangeFromInput, null);
+    const tree = f.draw(), statuses = f.statuses(tree);
+    assert.equal(statuses.length, 1); assert.equal(statuses[0].text, videoTrimCopy("en").status.invalid_range);
+    assert.equal(statuses[0].attributes.class, "artifact-video-trim-status");
+    assert.deepEqual(tree.visible("input").map(node => node.attributes["aria-invalid"]), ["false", "false"]);
+    assert.equal(f.trimCalls.length, 1); assert.equal(f.reviseCalls.length, origin === "Store" ? 1 : 0);
+    assert.equal(f.checkCalls.length, 0); assert.equal(f.cancelCalls, 0);
+  });
+});
+
+test("host status suppression is limited to a current leaf input error and keeps other Save failures visible", t => {
+  const f = combinedTrimFixture(t); f.draw();
+  for (const code of ["source_changed", "unsupported", "unavailable", "access_denied", "unconfirmed"]) {
+    f.draft.code = code; f.draft.invalidRangeFromInput = f.leaf;
+    const statuses = f.statuses(f.draw()); assert.equal(statuses.length, 1);
+    assert.equal(statuses[0].attributes.class, "artifact-video-trim-status");
+    assert.equal(statuses[0].text, videoTrimCopy("en").status[code]);
+  }
+  f.draft.code = "invalid_range"; f.draft.selection = null;
+  const missingLeaf = f.draw(); assert.equal(missingLeaf.visible("forma-video-trim-editor").length, 0);
+  assert.equal(f.statuses(missingLeaf).length, 1); assert.equal(f.statuses(missingLeaf)[0].text, videoTrimCopy("en").status.invalid_range);
+  assert.equal(f.trimCalls.length + f.reviseCalls.length + f.checkCalls.length, 0);
+});
 
 test("current host accepts only its captured draft and exact leaf's integer prefix event", () => {
   const f = hostFixture(), original = f.draft.selection;
@@ -275,9 +426,11 @@ test("current host accepts only its captured draft and exact leaf's integer pref
 
 test("host source retirement erases owned media and leaf state while preserving an unconfirmed operation receipt", () => {
   const f = hostFixture(), bytes = f.draft.bytes, request = { exactOriginalOperation: true };
+  f.draft.invalidRangeFromInput = f.leaf;
   f.draft.request = request; f.draft.code = "unconfirmed"; f.basis = false; f.host.sync();
   assert.deepEqual([...bytes], [0, 0, 0, 0]); assert.equal(f.draft.bytes, null);
   assert.equal(f.draft.selection, null); assert.equal(f.leaf.selection, null); assert.equal(f.draft.abort.signal.aborted, true);
+  assert.equal(f.draft.invalidRangeFromInput, null);
   assert.equal(f.draft.code, "unconfirmed"); assert.equal(f.draft.request, request);
   f.current = false; f.host.sync();
   assert.equal(f.host.state().draft, null); assert.equal(f.host.state().editingId, "");
