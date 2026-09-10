@@ -1,0 +1,18 @@
+forma-generated-image-editor { display: contents; }
+.generated-image-editor-dialog > .generated-image-editor-card {
+  position: relative; inline-size: min(54rem, calc(100vw - 2rem)); min-inline-size: 0;
+  max-block-size: calc(100dvh - 2rem); overflow: auto; margin: 1rem auto;
+  padding: clamp(1rem, 3vw, 1.75rem); scroll-padding-block: 1rem;
+}
+.generated-image-editor-card > h2 { padding-inline-end: 3.5rem; overflow-wrap: anywhere; }
+.generated-image-editor-card > p { max-inline-size: 65ch; overflow-wrap: anywhere; line-height: 1.6; }
+.generated-image-editor-disclosure { color: var(--muted); }
+.generated-image-editor-preview { display: block; inline-size: 100%; block-size: auto; max-block-size: 55dvh; object-fit: contain; background: var(--panel-2); }
+.generated-image-editor-card > footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-5); }
+.generated-image-editor-card :is(.button, .modal-close) { min-inline-size: 3rem; min-block-size: 3rem; white-space: normal; overflow-wrap: anywhere; }
+.generated-image-editor-card .button { max-inline-size: 100%; text-align: center; }
+.generated-image-editor-card button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 480px) {
+  .generated-image-editor-card > footer { align-items: stretch; }
+  .generated-image-editor-card > footer > button { flex: 1 1 100%; }
+}

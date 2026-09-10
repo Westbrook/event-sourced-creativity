@@ -6201,4 +6201,9 @@ Object.assign(messages, {
   "system.auto.1x2k3lt.139": "The host owns private access and Save. This quiet leaf selects an exact encoded sample boundary without loading, decoding or playing media."
 });
 
+Object.assign(messages, {
+  "system.auto.pqvhl5.45": "Generated image editor application interface.",
+  "system.auto.1wr7im1.141": "Application-connected generated image editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+});
+
 export default messages;

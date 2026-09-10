@@ -90,10 +90,11 @@ async function compositionPng(recipe: ReferenceCompositionRecipe, owner: Documen
 }
 
 export class ReferenceCompositor extends FormaPresentationalElement {
-  static properties = { sources: { attribute: false }, recipe: { attribute: false }, label: { type: String }, disabled: { type: Boolean } };
+  static properties = { sources: { attribute: false }, recipe: { attribute: false }, label: { type: String }, usageHint: { attribute: false }, disabled: { type: Boolean } };
   sources: readonly ReferenceCompositionSource[] = [];
   recipe: ReferenceCompositionRecipe | null = null;
   label = "";
+  usageHint = "";
   disabled = false;
   #draft = createReferenceComposition();
   #selected = "";
@@ -293,7 +294,7 @@ export class ReferenceCompositor extends FormaPresentationalElement {
             <small>${this.i18n.t("composition.limit", "", { count: this.i18n.number(REFERENCE_COMPOSITION_MAX_LAYERS) })}</small>
           </fieldset>
         </div>
-        <p class="reference-compositor-notice" role="status" aria-live="polite">${status ? this.i18n.t(`composition.${status}`) : this.#busy ? this.i18n.t("composition.preparing") : this.i18n.t("composition.usageHint")}</p>
+        <p class="reference-compositor-notice" role="status" aria-live="polite">${status ? this.i18n.t(`composition.${status}`) : this.#busy ? this.i18n.t("composition.preparing") : this.usageHint || this.i18n.t("composition.usageHint")}</p>
         <footer><small>${this.i18n.t("composition.dimensions", "", { width: this.i18n.number(draft.width), height: this.i18n.number(draft.height) })}</small><div><button type="button" class="button ghost" ?disabled=${this.disabled} @click=${() => this.#close()}>${this.i18n.t("action.cancel")}</button><button type="button" class="button primary" ?disabled=${blocked || Boolean(issue) || this.#invalidNumbers()} @click=${() => void this.#capture()}>${this.#busy ? this.i18n.t("composition.preparing") : this.i18n.t("composition.use")}</button></div></footer>
       </div>
     </dialog>`;

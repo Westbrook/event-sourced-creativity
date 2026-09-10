@@ -1,3 +1,4 @@
+import { projectGeneratedImageEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
@@ -92,6 +93,7 @@ export type CreativeDocument = {
 };
 
 export type CreativeOutput = {
+  imageRevision?: GeneratedImageOutputEdit;
   id: string;
   documentId: string;
   title?: string;
@@ -360,6 +362,20 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim(); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt, canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{}) }); });
         break;
       }
+      case "GeneratedImageEdited": {
+        // A server-only event overlays current pixels, preserving the immutable
+        // producer identity. A contradictory targeted edit cannot leave the old
+        // image looking like the newly edited current result.
+        const ids=new Set([p.output_id,p.object_id].filter((id):id is string=>typeof id==="string"&&Boolean(id)));
+        for(const id of ids){
+          const output=outputs.get(id);if(!output)continue;
+          const ownerId=event.streamId.startsWith("creative:")?event.streamId.slice("creative:".length):"";
+          const projectId=documents.get(output.documentId)?.projectId??"";
+          const edited=projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          outputs.set(id,edited??{...output,mediaUrl:null,mediaType:null,width:null,height:null,focalPoint:null});
+        }
+        break;
+      }
       case "DocumentRenderCompleted": {
         const kind = p.artifact_kind;
         if (!isDocumentArtifactKind(kind)) break;
@@ -497,7 +513,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       }
       case "ImageFocalPointCalculated": {
         const focalPoint=normalizeImageFocalPoint(p.focal_point);if(!focalPoint)break;
-        if(p.target_kind==="generation"){const output=outputs.get(String(p.target_id??""));if(output){output.focalPoint=focalPoint;}}
+        if(p.target_kind==="generation"){const output=outputs.get(String(p.target_id??""));if(output&&!output.imageRevision){output.focalPoint=focalPoint;}}
         else if(p.target_kind==="artifact"){for(const artifact of artifacts.values()){const item=artifact.items.find((candidate)=>candidate.id===String(p.target_id??""));if(item){item.focalPoint=focalPoint;break;}}}
         else {const block=blocks.get(String(p.block_id??p.target_id??""));if(block){block.properties.focal_point=focalPoint;block.sourceEvents.push(event.eventId);}}
         break;

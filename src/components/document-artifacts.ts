@@ -1,6 +1,6 @@
 import { storyboardAudienceHtml } from "../model/storyboard-audience.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
-import { html, nothing, type PropertyValues } from "lit";
+import { html, noChange, nothing, type PropertyValues } from "lit";
 import { NativeShortStoryController, type NativeStoryOpening } from "./native-short-story-controller.ts";
 import { nativeStoryDialogPresentation, renderNativeStoryDialog } from "./native-short-story-dialog.ts";
 import { nativeStoryRetainedRoute } from "../model/native-short-story-generation.ts";
@@ -143,6 +143,7 @@ type VideoTrimDraft = {
   expectedRevision: number; expectedContentSha256: string;
   loading: boolean; saving: boolean; checking: boolean;
   request: VideoTrimEditRequest | null; code: VideoTrimEditCode | null;
+  invalidRangeFromInput: Element | null;
 };
 
 type Model3dScaleDraft = {
@@ -2418,7 +2419,7 @@ export class DocumentArtifacts extends FormaElement {
   }
   #retireVideoTrim(){
     const draft=this.#videoTrim;this.#videoTrim=null;
-    if(draft){draft.abort.abort();draft.bytes?.fill(0);draft.bytes=null;draft.selection=null;}
+    if(draft){draft.abort.abort();draft.bytes?.fill(0);draft.bytes=null;draft.selection=null;draft.invalidRangeFromInput=null;}
     const editor=this.querySelector<import("./video-trim-editor.ts").VideoTrimEditor>("forma-video-trim-editor");
     if(editor)editor.selection=null;
   }
@@ -2432,7 +2433,7 @@ export class DocumentArtifacts extends FormaElement {
       return;
     }
     if(!draft.basisCurrent()){
-      draft.abort.abort();draft.bytes?.fill(0);draft.bytes=null;draft.selection=null;draft.loading=false;
+      draft.abort.abort();draft.bytes?.fill(0);draft.bytes=null;draft.selection=null;draft.invalidRangeFromInput=null;draft.loading=false;
       if(!draft.saving&&draft.code!=="unconfirmed")draft.code="source_changed";
       const editor=this.querySelector<import("./video-trim-editor.ts").VideoTrimEditor>("forma-video-trim-editor");
       if(editor)editor.selection=null;
@@ -2517,7 +2518,7 @@ export class DocumentArtifacts extends FormaElement {
         &&value.sourceEventId===artifact.sourceEventId&&value.contentRef===artifact.contentRef);
     if(!scope())return;
     const draft:VideoTrimDraft={artifactId:artifact.id,itemId:item.id,mediaUrl,abort,bytes:null,selection:null,
-      expectedRevision:revision,expectedContentSha256:"",loading:true,saving:false,checking:false,request:null,code:null,
+      expectedRevision:revision,expectedContentSha256:"",loading:true,saving:false,checking:false,request:null,code:null,invalidRangeFromInput:null,
       current:()=>this.#videoTrim===draft&&scope(),
       basisCurrent:()=>draft.current()&&store.head.get()===head&&store.content.get()[artifact.contentRef??""]===raw
         &&documentArtifactRevision(store.events.get(),artifact.id)===revision
@@ -2579,7 +2580,7 @@ export class DocumentArtifacts extends FormaElement {
       ||event.currentTarget!==this.querySelector("forma-video-trim-editor"))return;
     const {startSample,endSample}=event.detail;
     if(startSample!==0||!Number.isSafeInteger(endSample)||endSample<1||endSample>selection.info.sampleCount)return;
-    draft.selection={info:selection.info,startSample:0,endSample};draft.code=null;this.requestUpdate();
+    draft.selection={info:selection.info,startSample:0,endSample};draft.code=null;draft.invalidRangeFromInput=null;this.requestUpdate();
   }
   async #saveVideoTrim(artifact:DocumentArtifact,event:MouseEvent,check=false,expected=this.#videoTrim){
     const draft=this.#videoTrim,selection=draft?.selection,origin=event.currentTarget;
@@ -2588,7 +2589,7 @@ export class DocumentArtifacts extends FormaElement {
     if(check?(!draft.current()||draft.code!=="unconfirmed"||!draft.request):
       (!selection||!draft.bytes||!draft.basisCurrent()||draft.code==="unconfirmed"||draft.code==="invalid_range"))return;
     const focus=captureOutputNavigationFocus(this.ownerDocument);
-    draft.saving=true;draft.checking=check;this.#savingEdit=true;draft.code=null;this.requestUpdate();let invoked=false;
+    draft.saving=true;draft.checking=check;this.#savingEdit=true;draft.code=null;draft.invalidRangeFromInput=null;this.requestUpdate();let invoked=false;
     try{
       if(!check&&selection&&draft.bytes){
         const trimmed=await trimVideoPrefix(draft.bytes,{startSample:0,endSample:selection.endSample});
@@ -2633,15 +2634,16 @@ export class DocumentArtifacts extends FormaElement {
   }
   #videoTrimTemplate(draft:VideoTrimDraft){
     const copy=videoTrimCopy(this.i18n.locale);
+    const inputInvalid=draft.invalidRangeFromInput?.isConnected&&draft.invalidRangeFromInput===this.querySelector("forma-video-trim-editor");
     return html`<section class="artifact-video-trim" aria-label=${copy.title}>
       <h3>${copy.title}</h3><p>${copy.help}</p>
       ${draft.loading?html`<p role="status">${copy.loading}</p>`:nothing}
       ${draft.checking?html`<p role="status">${copy.checking}</p>`:nothing}
-      ${draft.code?html`<p class="artifact-video-trim-status" role="status">${copy.status[draft.code]}</p>`:nothing}
-      ${draft.selection?html`<forma-video-trim-editor .selection=${draft.selection} .disabled=${draft.saving||draft.code==="unconfirmed"}
+      ${draft.code&&!(draft.code==="invalid_range"&&inputInvalid&&draft.selection)?html`<p class="artifact-video-trim-status" role="status">${copy.status[draft.code]}</p>`:nothing}
+      ${draft.selection?html`<forma-video-trim-editor .selection=${inputInvalid?noChange:draft.selection} .disabled=${draft.saving||draft.code==="unconfirmed"}
         @video-trim-change=${(event:CustomEvent<{startSample:0;endSample:number}>)=>this.#changeVideoTrim(event,draft)}
         @video-trim-invalid=${(event:Event)=>{if(this.#videoTrim===draft&&draft.basisCurrent()&&!draft.saving&&draft.code!=="unconfirmed"
-          &&event.currentTarget===this.querySelector("forma-video-trim-editor")){draft.code="invalid_range";this.requestUpdate();}}}></forma-video-trim-editor>`:nothing}
+          &&event.currentTarget===this.querySelector("forma-video-trim-editor")){draft.code="invalid_range";draft.invalidRangeFromInput=event.currentTarget as Element;this.requestUpdate();}}}></forma-video-trim-editor>`:nothing}
       <p class="artifact-video-trim-notes">${copy.originalNotes}</p>
     </section>`;
   }

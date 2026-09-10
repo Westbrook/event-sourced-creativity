@@ -1,3 +1,7 @@
+import { captureCurrentGeneratedImageEdit, matchGeneratedImageEditSnapshot, type CurrentGeneratedImageEdit } from "../model/generated-image-edit-current.ts";
+import { GENERATED_IMAGE_EDIT_LIMITS } from "../model/generated-image-edit.ts";
+import { parseGeneratedImageEditRequest, parseGeneratedImageRevision, generatedImageEditOperationSha256, projectGeneratedImageEdit, type GeneratedImageEditRequest, type GeneratedImageEditSnapshot, type GeneratedImageEditAcknowledgment } from "../model/generated-image-revision.ts";
+import { inspectOutputAsset, outputAssetSha256 } from "../model/output-asset-inspection.ts";
 import { captureNativeStorySetup, acknowledgedNativeStoryHandle, type NativeStorySetup, type NativeStorySubmission, type NativeStoryHandle, type NativeStoryFailureReason } from "../model/native-short-story-generation.ts";
 import { captureNativeImageSetup, captureNativeImageHandle, captureNativeImageSubmission, captureNativeImageRead, joinNativeImageCompletion, nativeImageInspectionPath, NATIVE_IMAGE_LIMITS, type NativeImageSetup, type NativeImageHandle, type NativeImageSubmission, type NativeImageRead } from "../model/native-image-generation.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, savedPresentationReceiptCheckResponse, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
@@ -179,7 +183,8 @@ type VideoTrimObservation = { artifactId:string; request:VideoTrimEditRequest; c
 type Model3dScaleObservation = { artifactId:string; request:Model3dScaleEditRequest; contentRef:string; documentId:string; projectId:string; route:string; ownerUserId:string;
   sourceMediaUrl:string; sourceMediaSha256:string; sourceMediaByteLength:number; sourceFileRaw:string; sourceRootMediaUrl:unknown; sourceRootMediaType:unknown;
   sourceItemsRaw:string; sourceSettingsRaw:string; sourceEventId:string; sourceRaw:string; sourceRevision:number };
-type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation; videoTrim?:VideoTrimObservation; model3dScale?:Model3dScaleObservation };
+type GeneratedImageWriteObservation = {ownerId:string;projectId:string;documentId:string;outputId:string;route:string;rawJson:string;request:GeneratedImageEditRequest;operationSha256:string;width:number;height:number;output:import("../model/events").CreativeOutput};
+type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation; videoTrim?:VideoTrimObservation; imageEdit?:GeneratedImageWriteObservation; model3dScale?:Model3dScaleObservation };
 const EVENT_WRITE_SCOPE_CAPACITY=32, EVENT_WRITE_STORE_CAPACITY=128;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
@@ -1533,7 +1538,7 @@ export class FormaStore {
     const source=read.source,projectId=this.#outputSourceProjectId(),scope=source.authorization.key;
     this.#sourceRetired=true;this.#retiredSourceProjectId=projectId;this.#sourceGeneration+=1;this.#sourceCertifiedCoverage.clear();this.#sourceContentReadIds.clear();
     this.#retireDocumentCopySource(source);
-    for(const observation of this.#eventWriteObservations.values())if(this.sourceOwnershipScopeActive(observation.source)){observation.paused=true;observation.receipt=this.#eventWriteReceipt(observation,{privateUnavailable:true});}
+    for(const observation of this.#eventWriteObservations.values())if(this.sourceOwnershipScopeActive(observation.source)){observation.paused=true;observation.imageEdit=undefined;observation.receipt=this.#eventWriteReceipt(observation,{privateUnavailable:true});}
     const session=this.session.get(),context=session?.projectContext,retirementGeneration=this.#sourceGeneration;
     if(session&&projectId){
       const queueScope={ownerId:session.user.userId,projectId,...(context?{historyOwnerId:context.ownerUserId,organizationId:context.organizationId,
@@ -4316,6 +4321,197 @@ export class FormaStore {
     const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
   }
 
+  #generatedImageOwner(outputId:string,current:()=>boolean=()=>true){
+    const source=this.captureSourceOwnership(),authorization=this.captureAuthorizationScope(),route=this.route.get(),state=this.projection.get();
+    const output=state.libraryOutputs.find(item=>item.id===outputId),session=this.session.get();
+    const ownerId=session?.user.userId??"",documentId=output?.documentId??"",projectId=state.projectId;
+    const active=()=>{
+      const session=this.session.get(),projection=this.projection.get(),now=projection.libraryOutputs.find(item=>item.id===outputId);
+      return Boolean(source&&output&&ownerId&&ownerId!=="anonymous"&&session&&!session.projectContext&&!session.impersonation
+        &&session.user.userId===ownerId&&["creator","admin"].includes(session.user.role)&&session.policy.accepted===true
+        &&this.sourceOwnershipActive(source)&&this.authorizationScopeActive(authorization)&&this.route.get()===route
+        &&this.documentRouteState(route)==="ready"&&!this.#cachedHistoryRevalidation&&this.asOf.get()===Infinity
+        &&projection.documentId===documentId&&projection.projectId===projectId
+        &&projection.documents.some(item=>item.id===documentId&&item.projectId===projectId&&!item.removed)
+        &&now&&!now.discarded&&now.documentId===documentId&&now.sourceEventId===output.sourceEventId
+        &&now.generationId===output.generationId&&now.contentRef===output.contentRef&&current());
+    };
+    return {source,authorization,route,ownerId,projectId,documentId,outputId,active,
+      read:()=>active()?{ownerId,projectId,documentId,outputId,events:this.events.get(),content:this.content.get(),head:this.head.get()}:null};
+  }
+
+  /** Bound private receipt transport. It never retries a mutation. */
+  async #generatedImageHttp(path:string,init:RequestInit,current:()=>boolean,onDispatch?:()=>void){
+    const controller=new AbortController(),read=this.#beginSourceRead("full");
+    let timer:ReturnType<typeof setTimeout>|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+    const chunks:Uint8Array[]=[];let complete=false;
+    const cancel=()=>{try{void (reader?.cancel()??Promise.resolve()).catch(()=>{});}catch{/* Observe cancellation without blocking retirement. */}};
+    const failure=()=>new Error("generated_image_request_retired");
+    let rejectLifetime:(reason:Error)=>void=()=>{};
+    const lifetime=new Promise<never>((_,reject)=>{rejectLifetime=reject;timer=setTimeout(()=>{controller.abort();cancel();reject(failure());},30_000);});
+    const unsubscribe=this.subscribe(()=>{if(!current()){controller.abort();cancel();rejectLifetime(failure());}});
+    const bounded=<T>(promise:Promise<T>)=>Promise.race([promise,lifetime]);
+    const active=()=>{if(!current()||controller.signal.aborted)throw failure();};
+    try{
+      active();const pending=this.guardedFetch(path,{...init,credentials:"same-origin",redirect:"error",cache:"no-store",signal:controller.signal},"save this edited image",{current,onDispatch});
+      void pending.then(response=>{if(controller.signal.aborted)void response.body?.cancel().catch(()=>{});}).catch(()=>{});
+      const response=await bounded(pending);active();
+      if([401,403,404].includes(response.status)){this.#retireOwnedSource(read,response.status as 401|403|404);return{ok:false,status:response.status,body:null};}
+      if(!response.body)throw failure();reader=response.body.getReader();let length=0,count=0;
+      const typed=Object.getPrototypeOf(Uint8Array.prototype),size=Object.getOwnPropertyDescriptor(typed,"byteLength")!.get!,buffer=Object.getOwnPropertyDescriptor(typed,"buffer")!.get!;
+      while(true){const value=await bounded(reader.read());active();if(value.done){complete=true;break;}
+        if(!(value.value instanceof Uint8Array)||!(buffer.call(value.value) instanceof ArrayBuffer)||++count>65536)throw failure();
+        const bytes=size.call(value.value);if(!Number.isSafeInteger(bytes)||bytes<0||length+bytes>2_097_152)throw failure();
+        const copy=new Uint8Array(bytes);Uint8Array.prototype.set.call(copy,value.value);chunks.push(copy);length+=bytes;
+      }
+      const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+      try{const body:unknown=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));active();return{ok:response.ok,status:response.status,body};}
+      finally{bytes.fill(0);}
+    }finally{unsubscribe();if(timer!==undefined)clearTimeout(timer);if(!complete){controller.abort();cancel();}for(const chunk of chunks)chunk.fill(0);try{reader?.releaseLock();}catch{/* Pending cancellation retains its own native reader. */}}
+  }
+
+  /** Free current output inspection. Missing association stays an explicit UI choice. */
+  async loadGeneratedImageEdit(outputId:string,options:{current?:()=>boolean}={}):Promise<GeneratedImageEditSnapshot|null>{
+    const owner=this.#generatedImageOwner(outputId,options.current);if(!owner.active())return null;
+    try{
+      const response=await this.#generatedImageHttp("/api/generated-images/"+encodeURIComponent(outputId),{method:"GET"},owner.active);
+      if(!owner.active()||!response.ok||!response.body||typeof response.body!=="object"||Array.isArray(response.body))return null;
+      const incoming=response.body as Record<string,unknown>;
+      if(typeof incoming.rawJson!=="string"||typeof incoming.contentRef!=="string")return null;
+      // Read the committed stream separately; an endpoint DTO does not invent a
+      // CreativeOutput or certify a stale local history head.
+      await this.refreshEvents({readOnly:true,current:owner.active});if(!owner.active())return null;
+      const read=()=>{const value=owner.read();return value?{...value,content:{...value.content,[incoming.contentRef as string]:incoming.rawJson as string}}:null;};
+      const match=await matchGeneratedImageEditSnapshot(incoming,read);
+      if(!owner.active()||match.status!=="current")return null;
+      // Only this exact current source read may hydrate the original raw JSON.
+      this.content.set({...this.content.get(),[match.contentRef]:match.rawJson});this.notify();
+      return owner.active()?match:null;
+    }catch{return null;}
+  }
+
+  async captureGeneratedImageEdit(outputId:string,sourceId:string,options:{current?:()=>boolean}={}):Promise<CurrentGeneratedImageEdit|null>{
+    const owner=this.#generatedImageOwner(outputId,options.current);if(!owner.active())return null;
+    const value=await captureCurrentGeneratedImageEdit(owner.read,sourceId);
+    return owner.active()&&value.status==="captured"?value:null;
+  }
+
+  #generatedImageSourceCurrent(snapshot:GeneratedImageWriteObservation):boolean{
+    const output=this.projection.get().libraryOutputs.find(item=>item.id===snapshot.outputId),edit=output?.imageRevision;
+    return Boolean(output&&!output.discarded&&this.route.get()===snapshot.route&&this.projection.get().documentId===snapshot.documentId
+      &&this.projection.get().projectId===snapshot.projectId&&this.session.get()?.user.userId===snapshot.ownerId&&!this.session.get()?.projectContext
+      &&output.documentId===snapshot.documentId&&output.generationId===snapshot.request.generationId&&output.sourceEventId===snapshot.request.sourceEventId
+      &&output.contentRef===snapshot.request.contentRef&&this.content.get()[snapshot.request.contentRef]===snapshot.rawJson
+      &&(edit?.revision??0)===snapshot.request.expectedRevision&&(edit?.editEventId??null)===snapshot.request.expectedEditEventId
+      &&output.mediaUrl===snapshot.request.sourceMediaUrl&&output.mediaType==="image/png"&&output.width===snapshot.width&&output.height===snapshot.height);
+  }
+
+  async #validatedGeneratedImageSave(snapshot:GeneratedImageWriteObservation,body:unknown,appended:CreativeEvent[]):Promise<Extract<GeneratedImageEditAcknowledgment,{status:"saved"}>|null>{
+    if(!body||typeof body!=="object"||Array.isArray(body)||appended.length!==1)return null;
+    const result=body as Record<string,unknown>,request=snapshot.request,record=parseGeneratedImageRevision(result.imageRevision,snapshot.ownerId),event=appended[0]!;
+    if(result.status!=="saved"||result.code!=="saved"||!record||result.operationSha256!==snapshot.operationSha256
+      ||record.operationSha256!==snapshot.operationSha256||record.outputId!==snapshot.outputId||record.documentId!==snapshot.documentId
+      ||record.generationId!==request.generationId||record.sourceEventId!==request.sourceEventId||record.contentRef!==request.contentRef
+      ||record.contentSha256!==request.expectedContentSha256||record.revision!==request.expectedRevision+1||record.editEventId!==event.eventId
+      ||record.source.revision!==request.expectedRevision||record.source.eventId!==(request.expectedEditEventId??request.sourceEventId)
+      ||record.source.mediaUrl!==request.sourceMediaUrl||record.source.sha256!==request.sourceMediaSha256||record.source.width!==snapshot.width||record.source.height!==snapshot.height
+      ||record.media.sha256!==request.resultMediaSha256||record.media.byteLength!==request.resultByteLength||record.sourceId!==request.sourceId
+      ||JSON.stringify(record.recipe)!==JSON.stringify(request.recipe)||typeof result.stillCurrent!=="boolean"
+      ||!Number.isSafeInteger(result.currentRevision)||Number(result.currentRevision)<record.revision
+      ||typeof result.currentEditEventId!=="string"||!result.currentEditEventId
+      ||result.stillCurrent!==(result.currentRevision===record.revision&&result.currentEditEventId===record.editEventId))return null;
+    const recipeSha=await outputAssetSha256(new TextEncoder().encode(JSON.stringify(request.recipe)));
+    if(recipeSha!==record.recipeSha256)return null;
+    const p=event.payload;
+    const prior={...snapshot.output,imageRevision:snapshot.output.imageRevision};
+    const projected=projectGeneratedImageEdit(prior,event,{ownerId:snapshot.ownerId,projectId:snapshot.projectId});
+    if(!projected||projected.mediaUrl!==record.media.url||projected.width!==record.media.width||projected.height!==record.media.height
+      ||projected.imageRevision?.contentSha256!==record.contentSha256||projected.imageRevision.mediaSha256!==record.media.sha256
+      ||projected.imageRevision.byteLength!==record.media.byteLength||projected.imageRevision.operationSha256!==snapshot.operationSha256
+      ||p.image_edit_operation_sha256!==snapshot.operationSha256)return null;
+    return{status:"saved",code:"saved",imageRevision:record,operationSha256:snapshot.operationSha256,stillCurrent:result.stillCurrent,
+      currentRevision:Number(result.currentRevision),currentEditEventId:result.currentEditEventId};
+  }
+
+  #generatedImageWrites=new Set<string>();
+  async reviseGeneratedImage(outputId:string,input:GeneratedImageEditRequest,png:Uint8Array,options:{current?:()=>boolean}={}):Promise<GeneratedImageEditAcknowledgment>{
+    const uncertain:GeneratedImageEditAcknowledgment={status:"unconfirmed",code:"unconfirmed"};
+    if(this.#generatedImageWrites.has(outputId))return uncertain;
+    const request=parseGeneratedImageEditRequest(input),owner=this.#generatedImageOwner(outputId,options.current);
+    let bytes:Uint8Array<ArrayBuffer>|null=null;
+    try{const typed=Object.getPrototypeOf(Uint8Array.prototype),size=Object.getOwnPropertyDescriptor(typed,"byteLength")!.get!,buffer=Object.getOwnPropertyDescriptor(typed,"buffer")!.get!;
+      if(png instanceof Uint8Array&&buffer.call(png) instanceof ArrayBuffer){const length=size.call(png);if(Number.isSafeInteger(length)&&length>0&&length<=GENERATED_IMAGE_EDIT_LIMITS.pngBytes){bytes=new Uint8Array(length);Uint8Array.prototype.set.call(bytes,png);}}}catch{/* Invalid private bytes are never copied or sent. */}
+    if(!request||!bytes||!owner.active()){bytes?.fill(0);return{status:"refused",code:"invalid"};}
+    this.#generatedImageWrites.add(outputId);
+    let observation:EventWriteObservation|null=null;
+    try{
+      const captured=await this.captureGeneratedImageEdit(outputId,request.sourceId,options);if(!owner.active()||!captured)return{status:"refused",code:"source_changed"};
+      const basis=captured.basis;
+      if(basis.revision!==request.expectedRevision||captured.editEventId!==request.expectedEditEventId||basis.contentSha256!==request.expectedContentSha256
+        ||basis.media.url!==request.sourceMediaUrl||basis.media.sha256!==request.sourceMediaSha256||basis.generationId!==request.generationId
+        ||basis.sourceEventId!==request.sourceEventId||basis.contentRef!==request.contentRef||validateReferenceComposition(request.recipe,captured.sources)!==null)return{status:"refused",code:"source_changed"};
+      const inspected=await inspectOutputAsset(bytes,"edited.png",{snapshot:false});
+      const operationSha256=await generatedImageEditOperationSha256({ownerId:owner.ownerId,projectId:owner.projectId,documentId:owner.documentId,outputId},request);
+      if(!owner.active()||!captured.current())return{status:"refused",code:"source_changed"};
+      if(!operationSha256||inspected.status!=="inspected"||inspected.extension!=="png"||inspected.mimeType!=="image/png"||inspected.sha256!==request.resultMediaSha256
+        ||bytes.byteLength!==request.resultByteLength||inspected.facts.width!==request.recipe.width||inspected.facts.height!==request.recipe.height)return{status:"refused",code:"invalid"};
+      if([...this.#eventWriteObservations.values()].some(item=>item.imageEdit?.operationSha256===operationSha256&&this.sourceOwnershipActive(item.source)))return uncertain;
+      const admission=await this.#admitEventWrite([{type:"GeneratedImageEdited",payload:{output_id:outputId,object_id:outputId}}],"append");observation=admission.observation;
+      if(!admission.admitted){if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!owner.active()},[],"none",{silent:true});return uncertain;}
+      const snapshot:GeneratedImageWriteObservation={ownerId:owner.ownerId,projectId:owner.projectId,documentId:owner.documentId,outputId,route:owner.route,
+        rawJson:basis.rawJson,request,operationSha256,width:basis.media.width,height:basis.media.height,output:structuredClone(this.projection.get().libraryOutputs.find(item=>item.id===outputId)!)};
+      observation.imageEdit=snapshot;
+      const active=()=>owner.active()&&!observation!.paused&&this.sourceOwnershipActive(observation!.source);
+      const current=()=>active()&&this.#generatedImageSourceCurrent(snapshot)&&captured.current()!==null;
+      if(!current()){this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld",{silent:true});return{status:"refused",code:"source_changed"};}
+      const form=new FormData();form.set("request",JSON.stringify(request));form.set("png",new File([bytes],"edited.png",{type:"image/png"}));
+      let dispatched=false;
+      const response=await this.#generatedImageHttp("/api/generated-images/"+encodeURIComponent(outputId),{method:"PATCH",body:form},()=>dispatched?active():current(),()=>{dispatched=true;observation!.attempted=true;});
+      if(!active())return{status:"refused",code:"source_changed"};
+      const body=response.body as Record<string,unknown>|null;
+      if(response.ok&&body?.status==="unchanged"&&body.code==="unchanged"&&Object.keys(body).sort().join(",")==="code,status"
+        &&request.resultMediaSha256===request.sourceMediaSha256&&current()){
+        this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:false},[],"none",{silent:true});
+        this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);return{status:"unchanged",code:"unchanged"};
+      }
+      if(!response.ok&&body?.status==="refused"&&["invalid","source_changed","forbidden","unavailable"].includes(String(body.code))){
+        this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:false},[],"none",{silent:true});
+        this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);return{status:"refused",code:body.code as "invalid"|"source_changed"|"forbidden"|"unavailable"};
+      }
+      const receipt=this.#validateEventWriteBody(body,[{type:"GeneratedImageEdited",payload:{output_id:outputId,object_id:outputId}}],observation);
+      const saved=receipt?.complete&&!receipt.rejected.length?await this.#validatedGeneratedImageSave(snapshot,body,receipt.appended):null;
+      if(!active()||!saved||!receipt)throw new Error("generated_image_unconfirmed");
+      if(saved.stillCurrent&&current()){this.#mergeConfirmed(receipt.appended,receipt.head);this.notify();this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:[],observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});return saved;}
+      this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:[],observedHead:receipt.head,privateUnavailable:false},[],"none",{silent:true});
+      return{...saved,stillCurrent:false};
+    }catch{return uncertain;}
+    finally{bytes.fill(0);this.#generatedImageWrites.delete(outputId);if(observation?.pending)this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!owner.active()},[],owner.active()?"none":"withheld",{silent:true});}
+  }
+
+  /** Read-only observation of the exact admitted operation; no second PNG upload. */
+  async checkGeneratedImageEdit(outputId:string,operationSha256:string,options:{current?:()=>boolean}={}):Promise<GeneratedImageEditAcknowledgment>{
+    const uncertain:GeneratedImageEditAcknowledgment={status:"unconfirmed",code:"unconfirmed"},owner=this.#generatedImageOwner(outputId,options.current);
+    const observation=[...this.#eventWriteObservations.values()].find(item=>item.imageEdit?.outputId===outputId&&item.imageEdit.operationSha256===operationSha256);
+    if(!observation?.imageEdit||observation.pending||observation.paused||!owner.active()||!this.sourceOwnershipActive(observation.source))return uncertain;
+    const snapshot=observation.imageEdit,active=()=>owner.active()&&!observation.paused&&this.sourceOwnershipActive(observation.source);
+    observation.pending=true;
+    try{
+      const response=await this.#generatedImageHttp(`/api/generated-images/${encodeURIComponent(outputId)}?operationSha256=${operationSha256}`,{method:"GET"},active);
+      if(!active()||!response.ok)return uncertain;
+      const receipt=this.#validateEventWriteBody(response.body,[{type:"GeneratedImageEdited",payload:{output_id:outputId,object_id:outputId}}],observation);
+      const saved=receipt?.complete&&!receipt.rejected.length?await this.#validatedGeneratedImageSave(snapshot,response.body,receipt.appended):null;
+      if(!active()||!receipt||!saved)return uncertain;
+      const currentOutput=this.projection.get().libraryOutputs.find(item=>item.id===outputId);
+      const alreadyCurrent=currentOutput?.imageRevision?.editEventId===saved.imageRevision.editEventId&&currentOutput.mediaUrl===saved.imageRevision.media.url
+        &&this.content.get()[snapshot.request.contentRef]===snapshot.rawJson;
+      const current=saved.stillCurrent&&(this.#generatedImageSourceCurrent(snapshot)||alreadyCurrent);
+      if(current){this.#mergeConfirmed(receipt.appended,receipt.head);this.notify();}
+      this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:[],observedHead:receipt.head,privateUnavailable:false},current?receipt.appended:[],current?"published":"none",{silent:true});
+      return{...saved,stillCurrent:current};
+    }catch{return uncertain;}
+    finally{if(observation.pending)this.#finishEventWrite(observation,{outcome:"unconfirmed",privateUnavailable:!active()},[],active()?"none":"withheld",{silent:true});}
+  }
+
   async #validatedAudioTrimSave(snapshot:AudioTrimObservation,result:{content?:Record<string,string>;revision?:number},appended:CreativeEvent[]):Promise<Extract<AudioTrimEditResult,{status:"saved"}>|null>{
     const input=snapshot.request,raw=result.content?.[snapshot.contentRef],parsed=parseDocumentArtifactContent(raw),audio=parsed?.audio_revision;
     const original=parseDocumentArtifactContent(snapshot.sourceRaw),event=appended.find(value=>value.type==="DocumentArtifactEdited"&&value.payload.artifact_id===snapshot.artifactId);
@@ -5391,28 +5587,47 @@ export class FormaStore {
 
   async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){return this.addArtifactAsContext(artifactId,destinationDocumentId,sourceSurface);}
 
-  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card",options:{reveal?:boolean;contextParentBlockId?:string;identityReference?:boolean}={}){
+  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card",options:{reveal?:boolean;contextParentBlockId?:string;identityReference?:boolean;current?:()=>boolean}={}){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();const output=projection.libraryOutputs.find((candidate)=>candidate.id===outputId);if(!output){this.toast("That generated image is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before using this image as input.");return null;}
+    const editing=sourceSurface==="generated-image-editor",sourceRoute=this.route.get();
+    const sourceTuple=(value:NonNullable<typeof output>)=>JSON.stringify([value.id,value.documentId,value.generationId,value.sourceEventId,value.contentRef,value.mediaUrl,value.mediaType,value.width,value.height,value.imageRevision??null]);
+    const originalTuple=sourceTuple(output);
+    const imageCurrent=()=>{
+      if(!this.sourceOwnershipActive(sourceOwner)||options.current&&!options.current())return false;
+      if(!editing)return true;
+      const now=this.projection.get().libraryOutputs.find(item=>item.id===output.id),target=this.projection.get().documents.find(item=>item.id===destinationDocumentId);
+      return Boolean(now&&!now.discarded&&sourceTuple(now)===originalTuple&&target&&!target.removed&&target.projectId===document.projectId
+        &&this.route.get()===sourceRoute&&this.projection.get().documentId===destinationDocumentId&&this.projection.get().projectId===document.projectId);
+    };
+    if(!imageCurrent())return null;
     const parent=options.contextParentBlockId?projection.libraryBlocks.find((block)=>block.id===options.contextParentBlockId&&block.documentId===destinationDocumentId):undefined;
     if(options.contextParentBlockId&&(!parent||parent.locked))return null;
-    const existing=projection.libraryBlocks.find((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id);
+    const currentImageSources=output.imageRevision||sourceSurface==="generated-image-editor"?referenceCompositionSources(projection.libraryBlocks.filter(block=>block.documentId===destinationDocumentId),this.events.get()):null;
+    const currentImageHash=output.imageRevision?.mediaSha256??this.events.get().find(event=>event.eventId===output.sourceEventId)?.payload.source_content_hash;
+    const existing=projection.libraryBlocks.find((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id
+      &&(!currentImageSources||block.type==="reference"&&!block.removed&&block.properties.source_generation_id===output.generationId
+        &&block.properties.source_output_content_ref===output.contentRef&&block.properties.source_document_id===output.documentId
+        &&(()=>{const receipt=[...this.events.get()].reverse().find(event=>event.type==="ReferenceIngested"&&event.payload.reference_id===block.properties.reference_id)?.payload;
+          return receipt?.source_type==="generated-output"&&receipt.source_output_id===output.id&&receipt.source_generation_id===output.generationId
+            &&receipt.source_document_id===output.documentId&&receipt.document_id===destinationDocumentId&&receipt.project_id===document.projectId;})()
+        &&currentImageSources.some(source=>source.blockId===block.id&&source.kind==="image"&&!source.requiresUnlock&&source.mediaUrl===output.mediaUrl&&source.contentHash===currentImageHash)));
     if(existing){
       if(parent&&!projection.libraryBlockRelations.some((relation)=>isContextCompositionRelation(relation.kind)&&relation.fromBlockId===parent.id&&relation.toBlockId===existing.id)){
         if(existing.locked)return null;
         const relation={type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:parent.id,to_block_id:existing.id,kind:CONTEXT_CONTAINS_RELATION,properties:{member_order:projection.libraryBlockRelations.filter((item)=>isContextCompositionRelation(item.kind)&&item.fromBlockId===parent.id).length,relation_label:"Identity reference",relativity:1},source_surface:sourceSurface}};
         const protection=options.identityReference?[{type:"BlockPropertyEdited",payload:{block_id:existing.id,property_path:"pixel_reference_mode",old_value:existing.properties.pixel_reference_mode??"context_only",new_value:"context_only",source_surface:sourceSurface}},{type:"BlockPropertyEdited",payload:{block_id:existing.id,property_path:"context_reference_kind",old_value:existing.properties.context_reference_kind??null,new_value:"character_identity",source_surface:sourceSurface}}]:[];
-        const write=await this.appendBatchWithReceipt([...protection,relation],{rebaseAttempts:6});if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);if(!this.#eventWriteComplete(write,[...protection,relation]))return null;
+        const write=await this.appendBatchWithReceipt([...protection,relation],{rebaseAttempts:6,current:imageCurrent});if(write.publication!=="published"||!imageCurrent())return this.#withheldWrite(write);if(!this.#eventWriteComplete(write,[...protection,relation]))return null;
       }
       if(options.reveal!==false)await this.revealOutputInput(existing.id,destinationDocumentId);return{rootBlockId:existing.id,created:false,blockCount:0};
     }
-    const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;if(!this.sourceOwnershipActive(sourceOwner))return null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
-    const contentHash=this.events.get().find(event=>event.eventId===output.sourceEventId)?.payload.source_content_hash;
+    const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;if(!imageCurrent())return null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
+    const contentHash=output.imageRevision?.mediaSha256??this.events.get().find(event=>event.eventId===output.sourceEventId)?.payload.source_content_hash;
     const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content:direction,contentHash:typeof contentHash==="string"?contentHash:null,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
     if(parent&&options.identityReference){const created=result.events.find((event)=>event.type==="BlockCreated");if(created){const properties=created.payload.properties as Record<string,unknown>;created.payload={...created.payload,properties:{...properties,pixel_reference_mode:"context_only",context_reference_kind:"character_identity",likeness_transfer_consent:false}};}}
     if(parent)result.events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:parent.id,to_block_id:result.blockIds[0],kind:CONTEXT_CONTAINS_RELATION,properties:{member_order:projection.libraryBlockRelations.filter((item)=>isContextCompositionRelation(item.kind)&&item.fromBlockId===parent.id).length,relation_label:options.identityReference?"Identity reference":"Reference",relativity:1},source_surface:sourceSurface}});
-    const write=await this.appendBatchWithReceipt(result.events,{rebaseAttempts:6});if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);const created=write.appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
+    const write=await this.appendBatchWithReceipt(result.events,{rebaseAttempts:6,current:imageCurrent});if(write.publication!=="published"||!imageCurrent())return this.#withheldWrite(write);const created=write.appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
   }
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
