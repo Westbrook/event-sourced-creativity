@@ -6155,4 +6155,9 @@ Object.assign(messages, {
 
 Object.assign(messages, { "system.auto.xi82c4.15": "生成時間" });
 
+Object.assign(messages, {
+  "system.auto.1aa0m01.40": "音声トリミングエディターのアプリケーションインターフェース。",
+  "system.auto.s14phq.151": "ホストコンポーネントが非公開アクセスと保存を管理します。この子コンポーネントは検証済みの PCM バイトのみを表示し、明示的な要求に応じて、選択した正確な範囲のローカルプレビューを作成します。",
+});
+
 export default messages;

@@ -1,7 +1,11 @@
-import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, parseAudioMediaRevision, parseDocumentArtifactContent, type AudioTrimEditRequest } from "../src/model/document-artifacts.ts";
+import { PCM_WAV_EDIT_MAX_BYTES, inspectPcmWav, trimPcmWav } from "../src/model/audio-container.ts";
+import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { buildPresentationSourceContract, type PresentationSourceContract } from "../src/model/presentation-source.ts";
-import { hasCapability, requireConsent, requireUser } from "./pilot-policy.ts";
+import { configuredPilotAdmissionGuard, hasCapability, POLICY_VERSION, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
+import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
+import { readOwnedAudioReference, storeGeneratedMedia } from "./media-api.ts";
 import { appendProjectEvents, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, type ArtifactRevisionSnapshot, type ProjectRequestContext } from "./project-access.ts";
 import { ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readWorkspaceEvents, serializeEvent, streamHead, uuidV7, type WorkerEnv } from "./runtime.ts";
 
@@ -14,6 +18,62 @@ const DEFAULT_ARTIFACT_REVISION_DAYS = 365;
 type EditedItem = { index?: unknown; title?: unknown; body?: unknown; notes?: unknown };
 type RevisionRow={revision:number;content_json:string;content_sha256:string;created_by_user_id:string;created_at:string;expires_at:string;redacted_at:string|null;legally_held?:number};
 const sha256=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),(byte)=>byte.toString(16).padStart(2,"0")).join("");
+const audioBytesSha256=async(value:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",value as Uint8Array<ArrayBuffer>)),byte=>byte.toString(16).padStart(2,"0")).join("");
+function audioTrimRequest(value: unknown): AudioTrimEditRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>, trim = row.audioTrim as Record<string, unknown>;
+  const hash = (item: unknown) => typeof item === "string" && /^[a-f0-9]{64}$/u.test(item);
+  if (Object.keys(row).sort().join(",") !== "audioTrim,expectedContentSha256,expectedRevision"
+    || !Number.isSafeInteger(row.expectedRevision) || Number(row.expectedRevision) < 0 || !hash(row.expectedContentSha256)
+    || !trim || typeof trim !== "object" || Array.isArray(trim)
+    || Object.keys(trim).sort().join(",") !== "endFrame,resultMediaSha256,sourceFrameCount,sourceMediaSha256,startFrame"
+    || !hash(trim.sourceMediaSha256) || !hash(trim.resultMediaSha256)
+    || !Number.isSafeInteger(trim.sourceFrameCount) || Number(trim.sourceFrameCount) < 1
+    || !Number.isSafeInteger(trim.startFrame) || !Number.isSafeInteger(trim.endFrame)
+    || Number(trim.startFrame) < 0 || Number(trim.startFrame) >= Number(trim.endFrame) || Number(trim.endFrame) > Number(trim.sourceFrameCount)) return null;
+  return { expectedRevision: Number(row.expectedRevision), expectedContentSha256: row.expectedContentSha256 as string,
+    audioTrim: { sourceMediaSha256: trim.sourceMediaSha256 as string, sourceFrameCount: Number(trim.sourceFrameCount),
+      startFrame: Number(trim.startFrame), endFrame: Number(trim.endFrame), resultMediaSha256: trim.resultMediaSha256 as string } };
+}
+function audioTrimAdmission(env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string, artifactId: string, contentId: string) {
+  const snapshot = actor.authorizationSnapshot, pilot = configuredPilotAdmissionGuard(env, actor);
+  if (!snapshot) return { sql: "0", bindings: [] as Array<string | number> };
+  return { sql: `EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal
+    WHERE (principal.user_id,principal.email,principal.role,principal.updated_at,principal.consent_version,
+      COALESCE(principal.permission_epoch,''),COALESCE(principal.grants_json,'[]'),COALESCE(principal.organizations_json,'[]'),
+      COALESCE(principal.projects_json,'[]'),COALESCE(principal.identity_policies_json,'[]'),COALESCE(principal.approved_canvas_requirements,0))=(?,?,?,?,?,?,?,?,?,?,?))
+    AND (${pilot.sql}) AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
+    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=?)
+      OR (resource_kind='artifact' AND resource_id=?) OR (resource_kind='content' AND resource_id=?))
+    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=?)`,
+    bindings: [actor.userId,actor.userId,actor.email,actor.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,
+      snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...pilot.bindings,projectId,documentId,artifactId,contentId,contentId] };
+}
+/** The cap applies to observed stream bytes as well as the object's declared size. */
+async function audioTrimSource(env: WorkerEnv, ownerId: string, url: string, expectedHash: string) {
+  const metadata = await readOwnedAudioReference(env, ownerId, url, { metadataOnly: true });
+  if (!metadata || url !== `/api/media/${encodeURIComponent(metadata.key)}` || !metadata.key.startsWith(`${ownerMediaNamespace(ownerId)}/generated/`)
+    || metadata.mimeType !== "audio/wav" || metadata.metadata.sha256 !== expectedHash
+    || !Number.isSafeInteger(metadata.size) || metadata.size < 45 || metadata.size > PCM_WAV_EDIT_MAX_BYTES) return null;
+  const object = await env.MEDIA.get(metadata.key);
+  if (!object || object.customMetadata?.ownerId !== ownerId || object.customMetadata.sha256 !== expectedHash
+    || object.size !== metadata.size) return null;
+  const headers = new Headers(); object.writeHttpMetadata(headers);
+  if (headers.get("content-type") !== "audio/wav") return null;
+  const bytes = new Uint8Array(object.size), reader = object.body.getReader();
+  let offset = 0, chunks = 0, complete = false;
+  const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 30_000);
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) { complete = offset === bytes.length; break; }
+      if (!(next.value instanceof Uint8Array) || ++chunks > 65_536 || offset + next.value.byteLength > bytes.length
+        || offset + next.value.byteLength > PCM_WAV_EDIT_MAX_BYTES) return null;
+      bytes.set(next.value, offset); offset += next.value.byteLength;
+    }
+    return complete && await audioBytesSha256(bytes) === expectedHash ? bytes : null;
+  } finally { clearTimeout(timer); if (!complete) await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
 const revisionHoldSql=(alias:string)=>`EXISTS(SELECT 1 FROM organization_retention_policies policy
     WHERE policy.organization_id=${alias}.organization_id AND policy.legal_hold=1)
   OR EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=${alias}.organization_id AND hold.status='active'
@@ -95,12 +155,18 @@ async function trustedPresentationRevisionSourceContract(
 
 /** Read recoverable, exactly scoped revisions or atomically correct/restore the real retained output. */
 export async function handleArtifactEdit(request: Request, env: WorkerEnv, artifactId: string,path:string[]=[]): Promise<Response> {
+  const search = new URL(request.url).searchParams;
+  const checkRequest = path.length === 0 && request.method === "GET" && search.has("audioTrimOperation");
+  const checkFingerprint = search.get("audioTrimOperation"), checkRevision = Number(search.get("expectedRevision"));
+  if (checkRequest && (!/^[a-f0-9]{64}$/u.test(checkFingerprint??"") || !/^\d+$/u.test(search.get("expectedRevision")??"")
+    || !Number.isSafeInteger(checkRevision) || [...search.keys()].sort().join(",") !== "audioTrimOperation,expectedRevision"))
+    return Response.json({error:"audio_trim_invalid_range"},{status:400});
   const historyRequest=path.length>=1&&path[0]==="revisions";
   const listRequest=historyRequest&&path.length===1&&request.method==="GET";
   const detailRequest=historyRequest&&path.length===2&&request.method==="GET";
   const restoreRequest=historyRequest&&path.length===3&&path[2]==="restore"&&request.method==="POST";
   const editRequest=path.length===0&&request.method==="PATCH";
-  if(!artifactId||!listRequest&&!detailRequest&&!restoreRequest&&!editRequest)return new Response("Method not allowed",{status:405});
+  if(!artifactId||!listRequest&&!detailRequest&&!restoreRequest&&!editRequest&&!checkRequest)return new Response("Method not allowed",{status:405});
   const origin=request.headers.get("origin");
   if((editRequest||restoreRequest)&&origin&&origin!==new URL(request.url).origin)return Response.json({error:"same_origin_required"},{status:403});
   await ensureSchema(env);
@@ -114,8 +180,9 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
   if ((editRequest||restoreRequest)&&project&&!hasCapability(actor,"project.author",{organizationId:project.organizationId,projectAccessId:project.projectAccessId})) {
     return Response.json({ error: "project_read_only" }, { status: 403 });
   }
-  if((editRequest||restoreRequest)&&!project&&actor.role!=="creator"&&actor.role!=="admin")return Response.json({error:"creator_required"},{status:403});
+  if((editRequest||restoreRequest||checkRequest)&&!project&&actor.role!=="creator"&&actor.role!=="admin")return Response.json({error:"creator_required"},{status:403});
   const ownerId=project?.ownerUserId??actor.userId;
+  const initialPersonalHead = project ? null : await streamHead(env, actor.streamId);
   let history=project?await readProjectSourceEvents(env,project):await readWorkspaceEvents(env,actor.streamId);
   let completed=[...history].reverse().find((event)=>event.type==="DocumentRenderCompleted"&&String(event.payload.artifact_id??"")===artifactId);
   if (!completed) return Response.json({ error: "artifact_not_found" }, { status: 404 });
@@ -154,6 +221,29 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
   const edits=history.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId);
   const revision=edits.length;
   const latestEdit=edits.at(-1);
+  if (checkRequest) {
+    if (project || artifact.kind !== "audio") return Response.json({error:"audio_trim_unsupported"},{status:400});
+    if (revision <= checkRevision) return Response.json({error:"audio_trim_unconfirmed"},{status:409});
+    const saved = original.audio_revision;
+    if (revision !== checkRevision + 1 || latestEdit?.payload.audio_trim_request_sha256 !== checkFingerprint)
+      return Response.json({error:"artifact_revision_conflict",revision},{status:409});
+    if (!saved || saved.source.revision !== checkRevision || latestEdit.payload.content_sha256 !== await sha256(source.content)
+      || JSON.stringify(parseAudioMediaRevision(latestEdit.payload.audio_revision)) !== JSON.stringify(saved)
+      || artifact.mediaUrl !== saved.media.url || artifact.settings.source_media_sha256 !== saved.media.sha256)
+      return Response.json({error:"audio_trim_unconfirmed"},{status:409});
+    const admission = audioTrimAdmission(env,actor,projection.projectId,documentId,artifactId,contentId);
+    const current = await env.DB.prepare(`SELECT 1 AS current WHERE (${admission.sql})
+      AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+      AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND content=? AND redacted_at IS NULL
+        AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
+        AND redacted_at IS NULL AND private_json=?)`)
+      .bind(...admission.bindings,actor.streamId,initialPersonalHead,contentId,ownerId,source.content,
+        latestEdit.eventId,ownerId,documentId,projection.projectId,JSON.stringify(latestEdit.payload)).first();
+    if (!current) return Response.json({error:"audio_trim_unconfirmed"},{status:409});
+    return Response.json({appended:[latestEdit],head:initialPersonalHead,content:{[contentId]:source.content},revision},
+      {headers:{"cache-control":"private, no-store"}});
+  }
   const currentAuthor=latestEdit?String(latestEdit.payload.edited_by_user_id??(latestEdit.actor.startsWith("user:")?latestEdit.actor.slice(5):ownerId)):String(completed.payload.requested_by_user_id??ownerId);
   const currentCreatedAt=latestEdit?.occurredAt??completed.occurredAt;
   const revisionScope=project?" AND organization_id=? AND project_access_id=? AND project_id=?":" AND organization_id IS NULL AND project_access_id IS NULL";
@@ -188,9 +278,37 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     if(detailRequest)return Response.json({artifactId,documentId,revision:selectedRevision,currentRevision:revision,sha256:historical.content_sha256,createdByUserId:historical.created_by_user_id,createdAt:historical.created_at,content:{markdown:retained.content_markdown,items:retained.items.map((item)=>({title:item.title,body:item.body,notes:item.notes}))}});
   }
 
-  let input:{markdown?:unknown;items?:unknown;expectedRevision?:unknown};
+  let input:{markdown?:unknown;items?:unknown;expectedRevision?:unknown;expectedContentSha256?:unknown;audioTrim?:unknown};
   try{input=await request.json() as typeof input;}catch{return Response.json({error:"invalid_artifact_edit"},{status:400});}
   if(!input||typeof input!=="object"||Array.isArray(input))return Response.json({error:"invalid_artifact_edit"},{status:400});
+  const trimRequested = editRequest && Object.hasOwn(input, "audioTrim");
+  const trimInput = trimRequested ? audioTrimRequest(input) : null;
+  if (trimRequested && !trimInput) return Response.json({error:"audio_trim_invalid_range"},{status:400});
+  if (trimInput && (project || artifact.kind !== "audio")) return Response.json({error:"audio_trim_unsupported"},{status:400});
+  const trimFingerprint = trimInput ? await sha256(JSON.stringify(trimInput)) : null;
+  const personalAudioRestore = restoreRequest && artifact.kind === "audio" && !project;
+  const trimAdmission = trimInput || personalAudioRestore ? audioTrimAdmission(env, actor, projection.projectId, documentId, artifactId, contentId) : null;
+  const trimStillCurrent = async () => Boolean(trimAdmission && await env.DB.prepare(`SELECT 1 AS current
+    WHERE (${trimAdmission.sql}) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+      AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact'
+        AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND content=?)`)
+    .bind(...trimAdmission.bindings,actor.streamId,initialPersonalHead,contentId,ownerId,source.content).first());
+  if (trimInput && trimInput.expectedRevision !== revision) {
+    // An explicit retry of this exact operation can observe its original commit;
+    // it never stages another object or creates a second edit event.
+    const saved = original.audio_revision;
+    if (revision === trimInput.expectedRevision + 1 && latestEdit?.payload.audio_trim_request_sha256 === trimFingerprint
+      && saved && JSON.stringify(parseAudioMediaRevision(latestEdit.payload.audio_revision)) === JSON.stringify(saved)
+      && saved.source.revision === trimInput.expectedRevision && saved.source.contentSha256 === trimInput.expectedContentSha256
+      && saved.source.sha256 === trimInput.audioTrim.sourceMediaSha256 && saved.source.frameCount === trimInput.audioTrim.sourceFrameCount
+      && saved.startFrame === trimInput.audioTrim.startFrame && saved.endFrame === trimInput.audioTrim.endFrame
+      && saved.media.sha256 === trimInput.audioTrim.resultMediaSha256 && latestEdit.payload.content_sha256 === await sha256(source.content)
+      && await trimStillCurrent()) {
+      return Response.json({appended:[latestEdit],head:initialPersonalHead,content:{[contentId]:source.content},revision});
+    }
+    return Response.json({error:"artifact_revision_conflict",revision},{status:409});
+  }
+  if (trimInput) input = { ...input, markdown: original.content_markdown };
   if(restoreRequest&&historical){
     const retained=parseDocumentArtifactContent(historical.content_json)!;
     input={expectedRevision:input.expectedRevision,markdown:retained.content_markdown,items:retained.items.map((item,index)=>({index,title:item.title,body:item.body,notes:item.notes}))};
@@ -202,6 +320,53 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
 
   const restoredOriginal=restoreRequest&&historical?parseDocumentArtifactContent(historical.content_json):null;
   const edited=restoredOriginal??{...original,content_markdown:markdown,items:original.items.map((item)=>({...item}))};
+  if (personalAudioRestore) {
+    if (edited.audio_revision) {
+      const retained = edited.audio_revision;
+      if (retained.source.revision >= selectedRevision) return Response.json({error:"artifact_revision_corrupted"},{status:409});
+      let media: Uint8Array | null;
+      try { media = await audioTrimSource(env,ownerId,retained.media.url,retained.media.sha256); }
+      catch { return Response.json({error:"audio_trim_unavailable"},{status:404}); }
+      const info = media ? inspectPcmWav(media) : null;
+      if (!media || !info || media.length !== retained.media.byteLength || info.frameCount !== retained.frameCount
+        || info.channels !== retained.channels || info.sampleRate !== retained.sampleRate)
+        return Response.json({error:"audio_trim_unavailable"},{status:404});
+    }
+    if (!await trimStillCurrent()) return Response.json({error:"artifact_revision_conflict",revision},{status:409});
+  }
+  let stagedAudio: {key:string} | null = null;
+  let pendingAudio: {operationId:string;bytes:Uint8Array;sourceMediaSha256:string} | null = null;
+  if (trimInput) {
+    const sourceHash = await sha256(source.content);
+    if (sourceHash !== trimInput.expectedContentSha256 || latestEdit && latestEdit.payload.content_sha256 !== sourceHash)
+      return Response.json({error:"artifact_revision_conflict",revision},{status:409});
+    const mediaUrl = original.audio_revision?.media.url ?? artifact.mediaUrl;
+    const mediaHash = original.audio_revision?.media.sha256 ?? artifact.settings.source_media_sha256;
+    if (!mediaUrl || typeof mediaHash !== "string" || mediaHash !== trimInput.audioTrim.sourceMediaSha256
+      || artifact.mediaUrl !== mediaUrl || artifact.settings.source_media_sha256 !== mediaHash)
+      return Response.json({error:"audio_trim_source_changed"},{status:409});
+    if (artifact.mediaType !== "audio/wav") return Response.json({error:"audio_trim_unsupported"},{status:400});
+    let sourceBytes: Uint8Array | null;
+    try { sourceBytes = await audioTrimSource(env, ownerId, mediaUrl, mediaHash); }
+    catch { return Response.json({error:"audio_trim_unavailable"},{status:404}); }
+    if (!sourceBytes) return Response.json({error:"audio_trim_unavailable"},{status:404});
+    const info = inspectPcmWav(sourceBytes);
+    if (!info) return Response.json({error:"audio_trim_unsupported"},{status:400});
+    if (info.frameCount !== trimInput.audioTrim.sourceFrameCount) return Response.json({error:"audio_trim_source_changed"},{status:409});
+    const trimmed = trimPcmWav(sourceBytes, trimInput.audioTrim.startFrame, trimInput.audioTrim.endFrame);
+    const resultHash = trimmed ? await audioBytesSha256(trimmed.bytes) : null;
+    if (!trimmed || resultHash !== trimInput.audioTrim.resultMediaSha256)
+      return Response.json({error:"audio_trim_invalid_range"},{status:400});
+    if (!await trimStillCurrent()) return Response.json({error:"audio_trim_source_changed"},{status:409});
+    if (!trimmed.changed) return Response.json({appended:[],content:{[contentId]:source.content},revision});
+    // Allocate the immutable identity now, but validate the full revision before any R2 put.
+    const operationId = `audio-trim-${uuidV7()}`, key = `${ownerMediaNamespace(ownerId)}/generated/${operationId}.wav`;
+    const audioRevision = parseAudioMediaRevision({schemaVersion:1,operation:"trim",media:{url:`/api/media/${encodeURIComponent(key)}`,mediaType:"audio/wav",sha256:resultHash,byteLength:trimmed.bytes.length},
+      source:{url:mediaUrl,sha256:mediaHash,revision,contentSha256:sourceHash,frameCount:info.frameCount},startFrame:trimmed.startFrame,endFrame:trimmed.endFrame,
+      sampleRate:info.sampleRate,channels:info.channels,bitsPerSample:16,frameCount:trimmed.frameCount,durationSeconds:trimmed.durationSeconds});
+    if (!audioRevision) return Response.json({error:"audio_trim_invalid_range"},{status:400});
+    edited.audio_revision = audioRevision; pendingAudio = {operationId,bytes:trimmed.bytes,sourceMediaSha256:mediaHash};
+  }
   if (input.items !== undefined) {
     if (!Array.isArray(input.items) || input.items.length > MAX_ARTIFACT_ITEMS) return Response.json({ error: "invalid_artifact_items" }, { status: 400 });
     for (const candidate of input.items as EditedItem[]) {
@@ -237,10 +402,12 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     project_id: project?.projectId ?? projection.projectId,
     content_ref: contentId,
     revision: revision + 1,
-    changed_fields: ["content_markdown", ...(input.items !== undefined || edited.items.length === 1 ? ["items"] : [])],
+    changed_fields: trimInput ? ["audio_revision"] : ["content_markdown", ...(input.items !== undefined || edited.items.length === 1 ? ["items"] : [])],
     content_sha256: digest,
     edited_by_user_id: actor.userId,
-    source_surface:restoreRequest?"document-artifact-history":"document-artifact-editor",
+    source_surface:restoreRequest?"document-artifact-history":trimInput?"document-artifact-audio-trim":"document-artifact-editor",
+    ...(artifact.kind === "audio" && edited.audio_revision ? {audio_revision:edited.audio_revision} : artifact.kind === "audio" && restoreRequest ? {audio_revision:null} : {}),
+    ...(trimFingerprint ? {audio_trim_request_sha256:trimFingerprint} : {}),
     ...(restoreRequest?{restored_from_revision:selectedRevision,revision_action:"restore"}:{}),
   };
   const currentStored=await env.DB.prepare("SELECT revision FROM artifact_revisions WHERE owner_id=? AND artifact_id=? AND revision=?")
@@ -269,22 +436,54 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     return Response.json({ ...result, content: { [contentId]: serialized }, revision: revision + 1 });
   }
 
-  const head = await streamHead(env, actor.streamId);
+  if (pendingAudio) {
+    if (!await trimStillCurrent()) return Response.json({error:"audio_trim_source_changed"},{status:409});
+    try {
+      // R2 staging remains separate from the atomic DB reference commit.
+      const retained = await storeGeneratedMedia(env,ownerId,pendingAudio.operationId,pendingAudio.bytes,"local-pcm-trim","audio/wav",
+        {source:"authored-audio-edit",artifactId,sourceMediaSha256:pendingAudio.sourceMediaSha256,sourceRevision:String(revision),requestSha256:trimFingerprint!});
+      stagedAudio = {key:retained.key};
+    } catch { return Response.json({error:"audio_trim_unconfirmed"},{status:503}); }
+  }
+  const head = trimAdmission ? initialPersonalHead! : await streamHead(env, actor.streamId);
   const event = makeEvent(actor.streamId, head + 1, "user", "web:artifact-editor", uuidV7(), "DocumentArtifactEdited", payload);
-  const restoreGuard=restoreSource?" AND EXISTS(SELECT 1 FROM artifact_revisions retained WHERE retained.owner_id=? AND retained.organization_id IS NULL AND retained.project_access_id IS NULL AND retained.artifact_id=? AND retained.revision=? AND retained.redacted_at IS NULL AND retained.expires_at>? AND retained.content_sha256=? AND retained.content_json=?)":"";
+  const restoreGuard=restoreSource?` AND EXISTS(SELECT 1 FROM artifact_revisions retained WHERE retained.owner_id=? AND retained.organization_id IS NULL AND retained.project_access_id IS NULL AND retained.artifact_id=? AND retained.revision=? AND retained.redacted_at IS NULL AND retained.expires_at>?${personalAudioRestore?" AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')":""} AND retained.content_sha256=? AND retained.content_json=?)`:"";
   const statements=[
     env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
         AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>? AND content=?)
-        AND (SELECT COUNT(*) FROM events revision WHERE revision.stream_id=? AND revision.type='DocumentArtifactEdited' AND json_extract(revision.payload,'$.artifact_id')=?)=?${restoreGuard}`)
-      .bind(...eventWriteBindings(event),event.streamId,head,contentId,ownerId,now,source.content,event.streamId,artifactId,revision,...(restoreSource?[ownerId,artifactId,restoreSource.revision,now,restoreSource.contentSha256,restoreSource.contentJson]:[])),
+        AND (SELECT COUNT(*) FROM events revision WHERE revision.stream_id=? AND revision.type='DocumentArtifactEdited' AND json_extract(revision.payload,'$.artifact_id')=?)=?${restoreGuard}${trimAdmission?` AND (${trimAdmission.sql}) AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`:""}`)
+      .bind(...eventWriteBindings(event),event.streamId,head,contentId,ownerId,now,source.content,event.streamId,artifactId,revision,...(restoreSource?[ownerId,artifactId,restoreSource.revision,now,restoreSource.contentSha256,restoreSource.contentJson]:[]),...(trimAdmission?[...trimAdmission.bindings,contentId]:[])),
   ];
   for(const retained of revisions)statements.push(env.DB.prepare(`INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at)
     SELECT ?,?,NULL,NULL,?,?,?,?,?,?,?,?,?,NULL WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)`)
     .bind(retained.revisionId,ownerId,projection.projectId,documentId,artifactId,retained.revision,retained.contentJson,retained.contentSha256,retained.createdByUserId,retained.createdAt,retained.expiresAt,event.eventId));
   statements.push(env.DB.prepare("UPDATE private_content SET content=? WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>? AND content=? AND EXISTS(SELECT 1 FROM events WHERE event_id=?)")
     .bind(serialized,contentId,ownerId,now,source.content,event.eventId));
-  const results=await env.DB.batch(statements);
-  if (results.some((result) => Number(result.meta.changes ?? 0) !== 1)) return Response.json({ error: "artifact_revision_conflict", revision }, { status: 409 });
+  let results;
+  try { results=await env.DB.batch(statements); }
+  catch (error) {
+    // A lost transaction response is not proof that its media is unreferenced.
+    if (trimAdmission) return Response.json({error:"audio_trim_unconfirmed"},{status:503});
+    throw error;
+  }
+  // D1 includes trigger writes in changes; every guarded Audio statement must still write.
+  const incompleteWrite = trimAdmission
+    ? !Array.isArray(results) || results.length !== statements.length || statements.some((_, index) => {
+      const changes = results[index]?.meta?.changes;
+      return results[index]?.success !== true || typeof changes !== "number" || !Number.isSafeInteger(changes) || changes <= 0;
+    })
+    : results.some((result) => Number(result.meta.changes ?? 0) !== 1);
+  if (incompleteWrite) {
+    if (trimAdmission) {
+      try {
+        const committed = await env.DB.prepare("SELECT event_id FROM events WHERE event_id=?").bind(event.eventId).first();
+        if (committed) return Response.json({error:"audio_trim_unconfirmed"},{status:503});
+        // This request alone owns this fresh key, and its exact event was not committed.
+        if (stagedAudio) await env.MEDIA.delete(stagedAudio.key);
+      } catch { return Response.json({error:"audio_trim_unconfirmed"},{status:503}); }
+    }
+    return Response.json({ error: "artifact_revision_conflict", revision }, { status: 409 });
+  }
   return Response.json({ appended: [event], head: event.sequence, content: { [contentId]: serialized }, revision: revision + 1 });
 }
