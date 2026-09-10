@@ -21,7 +21,7 @@ const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-export type OutputAssetKind = "image" | "audio" | "video" | "presentation" | "model3d";
+export type OutputAssetKind = "image" | "audio" | "video" | "presentation" | "model3d" | "document";
 export type OutputAssetFacts = {
   width?: number;
   height?: number;
@@ -53,7 +53,7 @@ export type OutputAssetInspection = {
   status: "inspected" | "unsupported" | "invalid";
   kind: OutputAssetKind | null;
   mimeType: string | null;
-  extension: "png" | "jpg" | "wav" | "mp3" | "mp4" | "pptx" | "glb" | null;
+  extension: "png" | "jpg" | "wav" | "mp3" | "mp4" | "pptx" | "glb" | "md" | null;
   byteLength: number;
   sha256: string | null;
   facts: OutputAssetFacts;
@@ -970,6 +970,22 @@ function inspectGlb(bytes: Uint8Array): ParsedAsset {
   };
 }
 
+function inspectMarkdown(bytes: Uint8Array): ParsedAsset {
+  let text: string;
+  try { text = decoder.decode(bytes); } catch { return fail("invalid_markdown_text"); }
+  requireFact(text.trim().length > 0, "invalid_markdown_text");
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    requireFact(!(code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)
+      && !(code >= 0x7f && code <= 0x9f), "invalid_markdown_text");
+  }
+  return {
+    kind: "document", mimeType: "text/markdown", extension: "md", facts: {},
+    checks: ["explicit-safe-markdown-filename", "fatal-utf8-decode", "nonblank-text", "binary-control-rejection"],
+    limitations: ["Only bounded, nonblank UTF-8 text was checked. Markdown rendering, screenplay structure, completeness, source coverage, rights, linked-content safety and film composition require separate review; no links or embedded media were fetched."],
+  };
+}
+
 /**
  * Inspect exact file bytes; no MIME or dimension assertions from the caller are accepted.
  * Snapshotting is the public default. Internal callers may disable it only when
@@ -992,8 +1008,14 @@ export async function inspectOutputAsset(input: Uint8Array, declaredName?: strin
     else if (bytes.length >= 8 && ascii(bytes, 4) === "ftyp") parsed = inspectMp4(bytes);
     else if (bytes.length >= 4 && ascii(bytes, 0) === "PK\x03\x04") parsed = await inspectPptx(bytes);
     else if (isGlb) parsed = inspectGlb(bytes);
+    // These recognizable unsupported formats must not become documents merely
+    // because their headers can be decoded as text and their suffix is .md.
+    else if (bytes.length >= 6 && (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a")
+      || bytes.length >= 12 && ascii(bytes, 0) === "RIFF" && ascii(bytes, 8) === "WEBP"
+      || bytes.length >= 5 && ascii(bytes, 0, 5) === "%PDF-") fail("output_asset_format_unsupported", true);
+    else if (declaredName !== undefined && /\.md$/iu.test(declaredName)) parsed = inspectMarkdown(bytes);
     else fail("output_asset_format_unsupported", true);
-    const formatLimitations = { png: "output_png_visual_review_required", jpg: "output_jpeg_decode_review_required", wav: "output_wav_listening_review_required", mp3: "output_mp3_listening_review_required", mp4: "output_mp4_playback_review_required", pptx: "output_pptx_content_review_required", glb: "output_model3d_visual_review_required" };
+    const formatLimitations = { png: "output_png_visual_review_required", jpg: "output_jpeg_decode_review_required", wav: "output_wav_listening_review_required", mp3: "output_mp3_listening_review_required", mp4: "output_mp4_playback_review_required", pptx: "output_pptx_content_review_required", glb: "output_model3d_visual_review_required", md: "output_markdown_content_review_required" };
     return { ...empty, ...parsed, status: "inspected", errors: [], limitations: [...empty.limitations, ...parsed.limitations], limitationCodes: [...empty.limitationCodes!, ...(parsed.extension ? [formatLimitations[parsed.extension]] : [])] };
   } catch (error) {
     return { ...empty, status: error instanceof InspectionFailure && error.unsupported ? "unsupported" : "invalid", errors: [error instanceof InspectionFailure ? error.code : "asset_inspection_failed"] };

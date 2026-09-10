@@ -70,3 +70,47 @@ test("real existing Forma PowerPoint export remains inspectable without changing
   const bytes = createPowerPointDocument(items, defaultSlidePresentation(), { title: "Approved research" });
   const result = await inspectOutputAsset(bytes, "forma-export.pptx"); assert.equal(result.status, "inspected", result.errors.join(",")); assert.equal(result.facts.slideCount, 1);
 });
+
+test("delivery preserves exact authored Markdown bytes and document identity in ZIP, JSON and CSV", async () => {
+  const bytes = utf8("\ufeff# Harbor script — نص / 脚本\r\n\r\nMAYA: Café at dawn.\r\n\tThe boat waits.\r\n");
+  const files = [file("harbor-script", bytes, "Harbor script.md")], result = await createOutputDeliveryArchive(files, plan(files));
+  const entries = readStoredZip(result.bytes), manifest = JSON.parse(new TextDecoder().decode(entries.get("manifest.json"))), delivered = manifest.files[0];
+  assert.deepEqual([...entries.keys()].sort(), ["files/harbor-script.md", "manifest.csv", "manifest.json"]);
+  assert.deepEqual(entries.get("files/harbor-script.md"), bytes);
+  assert.equal(delivered.kind, "document"); assert.equal(delivered.mimeType, "text/markdown"); assert.equal(delivered.path, "files/harbor-script.md");
+  assert.equal(delivered.name, "Harbor script.md"); assert.equal(delivered.sha256, digest(bytes)); assert.equal(delivered.byteLength, bytes.length); assert.deepEqual(delivered.facts, {});
+  assert.deepEqual(delivered.limitationCodes, ["output_inspection_not_acceptance", "output_markdown_content_review_required"]);
+  const csv = new TextDecoder().decode(entries.get("manifest.csv"));
+  for (const field of [delivered.path, delivered.name, delivered.sha256, delivered.mimeType, String(bytes.length), "acceptance-1"]) assert.ok(csv.includes(`"${field}"`), field);
+  assert.deepEqual(manifest.targets, plan(files).targets); assert.equal(result.sha256, digest(result.bytes));
+  assert.equal(manifest.deliveryStatus, "unknown", "a script file alone cannot establish completed Film scope");
+});
+
+test("Markdown delivery snapshots original bytes, filename and target mapping before asynchronous inspection", async () => {
+  const bytes = utf8("\ufeff# Original\r\nExact café / 港 text.\r\n"), original = bytes.slice();
+  const files = [file("script", bytes, "script.md")], manifest = plan(files), pending = createOutputDeliveryArchive(files, manifest);
+  bytes.fill(0); files[0].name = "changed.png"; files[0].expectedSha256 = digest(bytes); manifest.targets[0].targetId = "changed-target";
+  const result = await pending, entries = readStoredZip(result.bytes);
+  assert.deepEqual(entries.get("files/script.md"), original); assert.equal(result.manifest.files[0].sha256, digest(original));
+  assert.equal(result.manifest.files[0].name, "script.md"); assert.equal(result.manifest.targets[0].targetId, "target-1");
+});
+
+test("Markdown delivery refuses changed hashes, invalid bytes and unsafe paths without manufacturing a file", async () => {
+  const changed = file("script", utf8("# Original script\n"), "script.md"); changed.bytes[2] = 88;
+  await assert.rejects(createOutputDeliveryArchive([changed], plan([changed])), /output_delivery_hash_mismatch/);
+  for (const bytes of [utf8(" \r\n"), utf8("# Script\nA\u0000B"), Uint8Array.of(0xc0, 0xaf)]) {
+    const invalid = file("script", bytes, "script.md"); await assert.rejects(createOutputDeliveryArchive([invalid], plan([invalid])), /output_delivery_file_inspection_failed/);
+  }
+  for (const overrides of [{ id: "../script" }, { name: "../script.md" }, { name: "script\u202e.md" }]) {
+    const unsafe = { ...file("script", utf8("# Script\n"), "script.md"), ...overrides };
+    await assert.rejects(createOutputDeliveryArchive([unsafe], plan([unsafe])), /unsafe_or_duplicate_output_file_id|unsafe_output_asset_name|invalid_output_delivery_target/);
+  }
+});
+
+test("delivery keeps an image renamed Markdown as an image and refuses Markdown renamed as an image", async () => {
+  const disguisedImage = file("script", png(), "script.md"), result = await createOutputDeliveryArchive([disguisedImage], plan([disguisedImage]));
+  assert.equal(result.manifest.files[0].kind, "image"); assert.equal(result.manifest.files[0].path, "files/script.png");
+  assert.deepEqual(readStoredZip(result.bytes).get("files/script.png"), disguisedImage.bytes);
+  const disguisedText = file("script", utf8("# Authored script\n"), "script.png");
+  await assert.rejects(createOutputDeliveryArchive([disguisedText], plan([disguisedText])), /output_delivery_file_inspection_failed/);
+});
