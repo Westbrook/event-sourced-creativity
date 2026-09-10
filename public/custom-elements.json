@@ -14210,6 +14210,117 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/model3d-geometry-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "Model3dGeometryEditor",
+          "tagName": "forma-model3d-geometry-editor",
+          "customElement": true,
+          "summary": "Model3d geometry editor application interface.",
+          "description": "Application-connected model3d geometry editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "blockId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "kind": "field",
+              "name": "busy",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether an action is currently in progress."
+            },
+            {
+              "kind": "field",
+              "name": "guard",
+              "type": {
+                "text": "() => boolean"
+              },
+              "default": "() => true"
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
+            }
+          ],
+          "events": [
+            {
+              "name": "model3d-geometry-saved",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "model3d-geometry-state",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-model3d-geometry-editor",
+          "declaration": {
+            "name": "Model3dGeometryEditor",
+            "module": "src/components/model3d-geometry-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "Model3dGeometryEditor",
+          "declaration": {
+            "name": "Model3dGeometryEditor",
+            "module": "src/components/model3d-geometry-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/model3d-settings-editor.ts",
       "declarations": [
         {

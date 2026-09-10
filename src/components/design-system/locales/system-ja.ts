@@ -6160,4 +6160,9 @@ Object.assign(messages, {
   "system.auto.s14phq.151": "ホストコンポーネントが非公開アクセスと保存を管理します。この子コンポーネントは検証済みの PCM バイトのみを表示し、明示的な要求に応じて、選択した正確な範囲のローカルプレビューを作成します。",
 });
 
+Object.assign(messages, {
+  "system.auto.1s1bf0d.46": "3D形状エディターのアプリケーションインターフェース。",
+  "system.auto.10kzqe5.142": "アプリケーションに接続された3D形状エディターのインターフェース。組み込む前に、実際の属性、JavaScriptプロパティ、およびイベントを確認してください。",
+});
+
 export default messages;

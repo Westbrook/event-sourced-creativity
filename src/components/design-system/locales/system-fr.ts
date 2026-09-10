@@ -6160,4 +6160,9 @@ Object.assign(messages, {
   "system.auto.s14phq.151": "Le composant hôte gère l’accès privé et l’enregistrement. Ce composant enfant affiche uniquement les octets PCM vérifiés et crée, sur demande explicite, un aperçu local de la plage exacte sélectionnée.",
 });
 
+Object.assign(messages, {
+  "system.auto.1s1bf0d.46": "Interface applicative de l’éditeur de géométrie 3D.",
+  "system.auto.10kzqe5.142": "Interface de l’éditeur de géométrie 3D connectée à l’application. Examinez ses attributs, propriétés JavaScript et événements réels avant de l’intégrer.",
+});
+
 export default messages;
