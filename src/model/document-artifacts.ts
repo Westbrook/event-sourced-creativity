@@ -146,6 +146,7 @@ export type DocumentArtifactDraft = {
   presentation: SlidePresentation | null;
   items: DocumentArtifactDraftItem[];
   audio_revision?: AudioMediaRevision;
+  video_revision?: VideoMediaRevision;
 };
 
 /** Immutable authored clip provenance; the enclosing edit event identifies its current revision. */
@@ -168,6 +169,92 @@ export type AudioTrimEditResult =
   | { status: "refused"; code: "invalid_range" | "unsupported" | "unavailable" | "access_denied" }
   | { status: "unconfirmed"; code: "unconfirmed" }
   | { status: "retired"; code: "retired" };
+
+/** An immutable encoded-prefix edit; the enclosing event carries the current revision. */
+export type VideoMediaRevision = {
+  schemaVersion: 1; operation: "prefix-trim";
+  media: { url: string; mediaType: "video/mp4"; sha256: string; byteLength: number };
+  source: { url: string; sha256: string; revision: number; contentSha256: string; itemId: string;
+    sampleCount: number; timescale: number; durationTicks: number; width: number; height: number };
+  startSample: 0; endSample: number; sampleCount: number; timescale: number; durationTicks: number;
+  durationSeconds: number; width: number; height: number;
+};
+export type VideoTrimEditRequest = {
+  expectedRevision: number; expectedContentSha256: string;
+  videoTrim: { sourceMediaSha256: string; sourceSampleCount: number; startSample: 0; endSample: number; resultMediaSha256: string };
+};
+export type VideoTrimEditCode = AudioTrimEditCode;
+export type VideoTrimEditResult =
+  | { status: "saved"; code: "saved"; revision: number; contentSha256: string; videoRevision: VideoMediaRevision }
+  | { status: "unchanged"; code: "unchanged" }
+  | { status: "conflict"; code: "source_changed" }
+  | { status: "refused"; code: "invalid_range" | "unsupported" | "unavailable" | "access_denied" }
+  | { status: "unconfirmed"; code: "unconfirmed" }
+  | { status: "retired"; code: "retired" };
+
+function closedVideoRecord(value: unknown, names: readonly string[]): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const prototype = Object.getPrototypeOf(value), keys = Reflect.ownKeys(value);
+  if (prototype !== Object.prototype && prototype !== null || keys.length !== names.length
+    || keys.some(key => typeof key !== "string" || !names.includes(key))
+    || names.some(key => { const property = Object.getOwnPropertyDescriptor(value, key); return !property?.enumerable || !Object.hasOwn(property, "value"); })) return null;
+  return value as Record<string, unknown>;
+}
+const videoRevisionInteger = (value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+const videoRevisionDigest = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+function videoRevisionMediaUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2048 || !/^\/api\/media\/(?:[A-Za-z0-9._~!'()*-]|%[A-Fa-f0-9]{2})+$/u.test(value)) return false;
+  try { const segment = value.slice("/api/media/".length), key = decodeURIComponent(segment);
+    return !!key && encodeURIComponent(key) === segment && !/[\p{Cc}\\]/u.test(key) && !key.split("/").some(part => part === "." || part === "..");
+  } catch { return false; }
+}
+/** Returns a canonical closed request so client and Worker fingerprint identical fields/order. */
+export function parseVideoTrimEditRequest(value: unknown): VideoTrimEditRequest | null {
+  try {
+    const row = closedVideoRecord(value, ["expectedRevision", "expectedContentSha256", "videoTrim"]);
+    const trim = row && closedVideoRecord(row.videoTrim, ["sourceMediaSha256", "sourceSampleCount", "startSample", "endSample", "resultMediaSha256"]);
+    if (!row || !trim || !videoRevisionInteger(row.expectedRevision, 0) || !videoRevisionDigest(row.expectedContentSha256)
+      || !videoRevisionDigest(trim.sourceMediaSha256) || !videoRevisionDigest(trim.resultMediaSha256)
+      || !videoRevisionInteger(trim.sourceSampleCount, 1, 100_000) || trim.startSample !== 0
+      || !videoRevisionInteger(trim.endSample, 1, trim.sourceSampleCount)) return null;
+    return { expectedRevision: row.expectedRevision, expectedContentSha256: row.expectedContentSha256,
+      videoTrim: { sourceMediaSha256: trim.sourceMediaSha256, sourceSampleCount: trim.sourceSampleCount,
+        startSample: 0, endSample: trim.endSample, resultMediaSha256: trim.resultMediaSha256 } };
+  } catch { return null; }
+}
+/** Malformed present metadata is unavailable; it never silently selects the original file. */
+export function parseVideoMediaRevision(value: unknown): VideoMediaRevision | null {
+  try {
+    const row = closedVideoRecord(value, ["schemaVersion", "operation", "media", "source", "startSample", "endSample", "sampleCount", "timescale", "durationTicks", "durationSeconds", "width", "height"]);
+    const media = row && closedVideoRecord(row.media, ["url", "mediaType", "sha256", "byteLength"]);
+    const source = row && closedVideoRecord(row.source, ["url", "sha256", "revision", "contentSha256", "itemId", "sampleCount", "timescale", "durationTicks", "width", "height"]);
+    if (!row || !media || !source || row.schemaVersion !== 1 || row.operation !== "prefix-trim" || row.startSample !== 0
+      || !videoRevisionMediaUrl(media.url) || !videoRevisionMediaUrl(source.url) || media.url === source.url || media.mediaType !== "video/mp4"
+      || !videoRevisionDigest(media.sha256) || !videoRevisionDigest(source.sha256) || media.sha256 === source.sha256 || !videoRevisionDigest(source.contentSha256)
+      || !videoRevisionInteger(media.byteLength, 32, 24_000_000) || !videoRevisionInteger(source.revision, 0)
+      || typeof source.itemId !== "string" || !source.itemId || source.itemId.length > 1024 || /\p{Cc}/u.test(source.itemId)
+      || !videoRevisionInteger(source.sampleCount, 2, 100_000) || !videoRevisionInteger(row.endSample, 1, source.sampleCount - 1)
+      || row.sampleCount !== row.endSample || !videoRevisionInteger(source.timescale, 1, 0xffffffff) || row.timescale !== source.timescale
+      || !videoRevisionInteger(source.durationTicks, source.sampleCount, 0xffffffff)
+      || !videoRevisionInteger(row.durationTicks, row.sampleCount as number, source.durationTicks - 1)
+      || row.durationSeconds !== row.durationTicks / source.timescale
+      || !videoRevisionInteger(source.width, 1, 0xffff) || !videoRevisionInteger(source.height, 1, 0xffff)
+      || row.width !== source.width || row.height !== source.height) return null;
+    return { schemaVersion: 1, operation: "prefix-trim", media: { url: media.url, mediaType: "video/mp4", sha256: media.sha256, byteLength: media.byteLength },
+      source: { url: source.url, sha256: source.sha256, revision: source.revision, contentSha256: source.contentSha256, itemId: source.itemId,
+        sampleCount: source.sampleCount, timescale: source.timescale, durationTicks: source.durationTicks, width: source.width, height: source.height },
+      startSample: 0, endSample: row.endSample, sampleCount: row.endSample, timescale: source.timescale, durationTicks: row.durationTicks,
+      durationSeconds: row.durationSeconds as number, width: source.width, height: source.height };
+  } catch { return null; }
+}
+/** This first slice edits exactly one immutable Video item sharing the retained root MP4. */
+export function videoArtifactMediaItem(artifact: DocumentArtifact): DocumentArtifactItem | null {
+  if (artifact.kind !== "video" || artifact.mediaType !== "video/mp4" || !videoRevisionMediaUrl(artifact.mediaUrl)) return null;
+  const media = artifact.items.filter(item => item.mediaUrl !== null || item.mediaType !== null);
+  if (media.length !== 1 || !media[0]!.id || media[0]!.mediaUrl !== artifact.mediaUrl || media[0]!.mediaType !== "video/mp4") return null;
+  return artifact.items.filter(item => item.id === media[0]!.id).length === 1 ? media[0]! : null;
+}
 
 /** Closed, non-coercing parser. A malformed present override must never select the original media. */
 export function parseAudioMediaRevision(value: unknown): AudioMediaRevision | null {
@@ -740,7 +827,8 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
     const parsed = JSON.parse(value) as Partial<DocumentArtifactDraft>;
     if (!parsed || typeof parsed !== "object" || typeof parsed.title !== "string" || typeof parsed.content_markdown !== "string" || !Array.isArray(parsed.items)) return null;
     const audioRevision = Object.hasOwn(parsed, "audio_revision") ? parseAudioMediaRevision(parsed.audio_revision) : undefined;
-    if (audioRevision === null) return null;
+    const videoRevision = Object.hasOwn(parsed, "video_revision") ? parseVideoMediaRevision(parsed.video_revision) : undefined;
+    if (audioRevision === null || videoRevision === null || audioRevision && videoRevision) return null;
     const presentation=normalizeSlidePresentation(parsed.presentation);if(presentation&&!presentation.footerLabel){const fallback=text(parsed.title);if(fallback&&!processDerivedSlideLabel(fallback))presentation.footerLabel=fallback;}
     return {
       title: parsed.title,
@@ -749,6 +837,7 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
       presentation,
       items:parsed.items.map((item,index)=>normalizeSlideItem(item,index)),
       ...(audioRevision ? { audio_revision: audioRevision } : {}),
+      ...(videoRevision ? { video_revision: videoRevision } : {}),
     };
   } catch { return null; }
 }

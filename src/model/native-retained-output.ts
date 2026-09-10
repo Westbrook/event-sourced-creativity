@@ -2,7 +2,7 @@ import { projectNativeRetainedVideo, validateNativeRetainedVideo, type NativeRet
 import { projectNativeRetainedAudio, validateNativeRetainedAudio, type NativeRetainedAudioContent } from "./native-retained-audio.ts";
 import { projectNativeRetainedModel3d, validateNativeRetainedModel3d, type NativeRetainedModel3dContent } from "./native-retained-model3d.ts";
 import { presentationAudienceItem } from "./presentation-delivery.ts";
-import { parseAudioMediaRevision, type DocumentArtifactDraftItem, type SlideCitation, type SlidePresentation, type SlideQuote, type SlideVisualData, type SlideVisualDatum } from "./document-artifacts.ts";
+import { parseAudioMediaRevision, parseVideoMediaRevision, type DocumentArtifactDraftItem, type SlideCitation, type SlidePresentation, type SlideQuote, type SlideVisualData, type SlideVisualDatum } from "./document-artifacts.ts";
 import type { RetainedStorySelection } from "./retained-short-story.ts";
 
 export type NativeRetainedOutputKind = "scene" | "slides" | "storyboard" | "model3d" | "audio" | "video";
@@ -393,7 +393,7 @@ export function validateNativeRetainedOutputDto(candidate: unknown, target: Nati
  */
 export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, rawContent: unknown,
   expiresAt: string, sceneMedium: unknown = null,
-  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown; audioReceipt?: unknown; audioRevision?: unknown; videoReceipt?: unknown } = {}): NativeRetainedOutputDto | null {
+  retainedMetadata: { storyboardItems?: unknown; model3dReceipt?: unknown; audioReceipt?: unknown; audioRevision?: unknown; videoReceipt?: unknown; videoRevision?: unknown } = {}): NativeRetainedOutputDto | null {
   try {
     const expected = readTarget(target);
     const raw = record(captureJson(rawContent), ["title"], [], true);
@@ -403,16 +403,24 @@ export function projectNativeRetainedOutput(target: NativeRetainedOutputTarget, 
       if (sceneMedium !== null && sceneMedium !== "visual" && sceneMedium !== "audio") return null;
       return finish(expected, title, expiresAt, { content_markdown: text(raw.content_markdown, NATIVE_RETAINED_OUTPUT_MARKDOWN_MAX_BYTES), medium: sceneMedium }, Date.now());
     }
-    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt", "audioReceipt", "audioRevision", "videoReceipt"]);
+    const metadata = record(captureJson(retainedMetadata), [], ["storyboardItems", "model3dReceipt", "audioReceipt", "audioRevision", "videoReceipt", "videoRevision"]);
     if (expected.output === "storyboard") {
       const frames = projectStoryboardFrames(raw.items, metadata.storyboardItems ?? null);
       return finish(expected, title, expiresAt, { frames }, Date.now());
     }
     if (expected.output === "video") {
-      const content = projectNativeRetainedVideo(raw.content_markdown, raw.items, metadata.videoReceipt ?? null);
+      const hasRevision = Object.hasOwn(raw, "video_revision"), hasWitness = Object.hasOwn(metadata, "videoRevision");
+      if (Object.hasOwn(raw, "audio_revision") || Object.hasOwn(metadata, "audioRevision")
+        || hasRevision !== hasWitness || hasRevision && expected.selection.revision === 0) return null;
+      const revision = hasRevision ? parseVideoMediaRevision(raw.video_revision) : undefined;
+      const witnessed = hasWitness ? parseVideoMediaRevision(metadata.videoRevision) : undefined;
+      if (hasRevision && (!revision || !witnessed || JSON.stringify(revision) !== JSON.stringify(witnessed)
+        || revision.source.revision >= expected.selection.revision)) return null;
+      const content = projectNativeRetainedVideo(raw.content_markdown, raw.items, metadata.videoReceipt ?? null, witnessed);
       return content ? finish(expected, title, expiresAt, content, Date.now()) : null;
     }
     if (expected.output === "audio") {
+      if (Object.hasOwn(raw, "video_revision") || Object.hasOwn(metadata, "videoRevision")) return null;
       // The authored field alone never authorizes media. Require the caller's
       // independently witnessed current edit record, with no malformed fallback.
       const hasRevision = Object.hasOwn(raw, "audio_revision"), hasWitness = Object.hasOwn(metadata, "audioRevision");

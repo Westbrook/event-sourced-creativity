@@ -1,7 +1,7 @@
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
-import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, parseAudioMediaRevision, type DocumentArtifact } from "./document-artifacts.ts";
+import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, parseAudioMediaRevision, parseVideoMediaRevision, videoArtifactMediaItem, type DocumentArtifact } from "./document-artifacts.ts";
 
 export type EventActor = "user" | `worker:${string}` | `model:${string}`;
 
@@ -232,6 +232,8 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const outputs = new Map<string, CreativeOutput>();
   const artifacts = new Map<string, DocumentArtifact>();
   const originalAudio = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
+  const originalVideo = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings" | "items">>();
+  const videoEditCounts = new Map<string, number>();
   const generationCanvas = new Map<string,{canvasId:string;contextSetId:string}>();
   const documentCompiles = new Map<string, Record<string, unknown>>();
   const previewOutputByEvent = new Map<string, string>();
@@ -368,10 +370,40 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
           sourceEventId: event.eventId, sourceSurface: p.source_surface ? String(p.source_surface) : null, settings: asRecord(p.settings), presentation:normalizeSlidePresentation(p.presentation),
         });
         if (kind === "audio") { const audio = artifacts.get(id)!; originalAudio.set(id, { mediaUrl: audio.mediaUrl, mediaType: audio.mediaType, settings: { ...audio.settings } }); }
+        if (kind === "video") { const video = artifacts.get(id)!; originalVideo.set(id, { mediaUrl: video.mediaUrl, mediaType: video.mediaType, settings: { ...video.settings }, items: video.items.map(item => ({ ...item })) }); videoEditCounts.set(id, 0); }
         break;
       }
       case "DocumentArtifactEdited": {
         const artifact = artifacts.get(String(p.artifact_id ?? ""));
+        if (artifact?.kind === "video") {
+          const count = (videoEditCounts.get(artifact.id) ?? 0) + 1; videoEditCounts.set(artifact.id, count);
+          if (!Object.hasOwn(p, "video_revision") && !Object.hasOwn(p, "audio_revision") && p.source_surface !== "document-artifact-video-trim") break;
+          const original = originalVideo.get(artifact.id), item = original && videoArtifactMediaItem({ ...artifact, ...original });
+          const revised = parseVideoMediaRevision(p.video_revision);
+          const identity = p.artifact_kind === "video" && p.document_id === artifact.documentId && p.content_ref === artifact.contentRef
+            && p.project_id === documents.get(artifact.documentId)?.projectId && p.revision === count && !Object.hasOwn(p, "audio_revision");
+          if (identity && original && item && revised && revised.source.itemId === item.id && revised.source.revision < count
+            && (revised.source.revision !== 0 || revised.source.url === original.mediaUrl
+              && (!Object.hasOwn(original.settings, "source_media_sha256") || original.settings.source_media_sha256 === revised.source.sha256))) {
+            artifact.mediaUrl = revised.media.url; artifact.mediaType = revised.media.mediaType;
+            artifact.items = artifact.items.map(candidate => candidate.id === item.id ? { ...candidate, mediaUrl: revised.media.url,
+              mediaType: revised.media.mediaType, durationSeconds: revised.durationSeconds, width: revised.width, height: revised.height } : candidate);
+            artifact.settings = { ...artifact.settings, source_media_sha256: revised.media.sha256, duration_seconds: revised.durationSeconds, video_seconds: revised.durationSeconds,
+              estimated_duration_seconds: null, duration_basis: "media-container", duration_media_url: revised.media.url, duration_media_sha256: revised.media.sha256 };
+          } else if (identity && original && item && p.video_revision === null && p.revision_action === "restore"
+            && p.source_surface === "document-artifact-history" && Number.isSafeInteger(p.restored_from_revision)
+            && Number(p.restored_from_revision) >= 0 && Number(p.restored_from_revision) < count) {
+            artifact.mediaUrl = original.mediaUrl; artifact.mediaType = original.mediaType; artifact.settings = { ...original.settings };
+            artifact.items = original.items.map(candidate => ({ ...candidate }));
+          } else {
+            artifact.mediaUrl = null; artifact.mediaType = null;
+            artifact.items = artifact.items.map(candidate => candidate.mediaUrl !== null || candidate.mediaType !== null
+              ? { ...candidate, mediaUrl: null, mediaType: null, durationSeconds: null, width: null, height: null } : candidate);
+            artifact.settings = { ...artifact.settings, source_media_sha256: null, duration_seconds: null, video_seconds: null,
+              estimated_duration_seconds: null, duration_media_url: null, duration_media_sha256: null };
+          }
+          break;
+        }
         if (!artifact || artifact.kind !== "audio" || !Object.hasOwn(p, "audio_revision")
           || p.document_id !== artifact.documentId || p.content_ref !== artifact.contentRef
           || p.project_id !== documents.get(artifact.documentId)?.projectId) break;

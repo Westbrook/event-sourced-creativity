@@ -6191,4 +6191,9 @@ Object.assign(messages, {
   "system.auto.s14phq.151": "The host owns private access and Save. This leaf only displays verified PCM bytes and creates an explicitly requested local preview of its exact range.",
 });
 
+Object.assign(messages, {
+  "system.auto.1qxwyl2.40": "Video trim editor application interface.",
+  "system.auto.1x2k3lt.139": "The host owns private access and Save. This quiet leaf selects an exact encoded sample boundary without loading, decoding or playing media."
+});
+
 export default messages;

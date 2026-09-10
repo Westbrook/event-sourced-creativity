@@ -9,7 +9,7 @@ import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-
 import { parseNativeSlidesCompletionUrl, validateNativeSlidesCompletion, type NativeSlidesHandle } from "../src/model/native-slides-completion.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
-import { parseAudioMediaRevision } from "../src/model/document-artifacts.ts";
+import { parseAudioMediaRevision, parseVideoMediaRevision } from "../src/model/document-artifacts.ts";
 import { parseNativeSceneCompletionUrl, validateNativeSceneCompletion, type NativeSceneHandle } from "../src/model/native-scene-completion.ts";
 import { parseNativeStoryCompletionUrl, validateNativeStoryCompletion, type NativeStoryHandle } from "../src/model/native-short-story-generation.ts";
 import {
@@ -215,6 +215,7 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
   return Object.freeze({ projectId, contentId, sceneMedium,
     completionId: completion.row.event_id, completionItemCount: payload.item_count, completionInputRef: payload.input_ref,
     latestEditId: edits.at(-1)?.row.event_id ?? null,
+    editIds: Object.freeze(edits.map(edit => edit.row.event_id)),
     editContentHashes: Object.freeze(edits.map(edit => edit.payload.content_sha256 as string)) });
 }
 
@@ -392,6 +393,101 @@ async function audioEditReceipt(env: WorkerEnv, native: ReturnType<typeof select
       || revision.source.sha256 !== record(original.payload.settings)?.source_media_sha256) throw unavailable();
   } else if (revision.source.contentSha256 !== native.editContentHashes[revision.source.revision - 1]) throw unavailable();
   return { bindings, raw: row.private_json, revision };
+}
+
+const videoSourceRevisionGuard = () => `owner_id=? AND artifact_id=? AND revision=? AND document_id=? AND project_id=?
+  AND organization_id IS NULL AND project_access_id IS NULL AND redacted_at IS NULL
+  AND typeof(content_json)='text' AND length(CAST(content_json AS BLOB)) BETWEEN 1 AND ${RETAINED_STORY_JSON_MAX_BYTES}
+  AND content_sha256=? AND typeof(expires_at)='text' AND length(CAST(expires_at AS BLOB))=24
+  AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`;
+
+// Select edited Video from a separately retained private edit and one exact
+// source snapshot. Original completion identity remains authoritative; no media
+// is opened and no historical playback or recursive source traversal occurs.
+async function videoEditReceipt(env: WorkerEnv, native: ReturnType<typeof selectNative>, ownerId: string,
+  selection: { documentId: string; artifactId: string; revision: number; contentSha256: string },
+  body: Record<string, unknown>, original: Awaited<ReturnType<typeof videoReceipt>>) {
+  const hasBodyRevision = Object.hasOwn(body, "video_revision");
+  if (Object.hasOwn(body, "audio_revision")) throw unavailable();
+  if (!native.latestEditId) {
+    if (selection.revision !== 0 || hasBodyRevision) throw unavailable();
+    return null;
+  }
+  const readEdit = async (eventId: string, revision: number, contentSha256: string) => {
+    const bindings = [eventId, ownerId, selection.documentId, native.projectId];
+    const row = await env.DB.prepare(`SELECT private_json FROM event_private_payloads WHERE ${videoReceiptGuard()}`)
+      .bind(...bindings).first<{ private_json: string }>();
+    if (!row || typeof row.private_json !== "string" || bytes(row.private_json) > EVENT_BYTES) throw unavailable();
+    const payload = record(JSON.parse(row.private_json));
+    if (!payload || payload.document_id !== selection.documentId || payload.project_id !== native.projectId
+      || payload.artifact_id !== selection.artifactId || payload.content_ref !== native.contentId
+      || payload.edited_by_user_id !== ownerId || payload.revision !== revision || payload.content_sha256 !== contentSha256
+      || payload.artifact_kind !== undefined && payload.artifact_kind !== "video" || Object.hasOwn(payload, "audio_revision")) throw unavailable();
+    return { bindings, raw: row.private_json, payload };
+  };
+  const restoredOriginal = (payload: Record<string, unknown>, revision: number) => payload.artifact_kind === "video"
+    && payload.video_revision === null && payload.revision_action === "restore"
+    && payload.source_surface === "document-artifact-history" && Number.isSafeInteger(payload.restored_from_revision)
+    && Number(payload.restored_from_revision) >= 0 && Number(payload.restored_from_revision) < revision;
+  const current = await readEdit(native.latestEditId, selection.revision, selection.contentSha256);
+  const hasReceiptRevision = Object.hasOwn(current.payload, "video_revision");
+  if (!hasReceiptRevision) {
+    if (hasBodyRevision) throw unavailable();
+    return { ...current, revision: undefined, source: undefined };
+  }
+  if (current.payload.artifact_kind !== "video") throw unavailable();
+  if (current.payload.video_revision === null) {
+    if (hasBodyRevision || !restoredOriginal(current.payload, selection.revision)) throw unavailable();
+    return { ...current, revision: undefined, source: undefined };
+  }
+  const revision = parseVideoMediaRevision(current.payload.video_revision);
+  const authored = hasBodyRevision ? parseVideoMediaRevision(body.video_revision) : null;
+  if (!revision || !authored || JSON.stringify(revision) !== JSON.stringify(authored)
+    || revision.source.revision >= selection.revision) throw unavailable();
+  const prefix = `${ownerMediaNamespace(ownerId)}/generated/`;
+  for (const url of [revision.media.url, revision.source.url]) {
+    if (!decodeURIComponent(url.slice("/api/media/".length)).startsWith(prefix)) throw unavailable();
+  }
+  const originalItems = (original.payload.items as unknown[]).map(record);
+  const mediaItems = originalItems.filter(item => item?.media_url !== null);
+  if (mediaItems.length !== 1 || mediaItems[0]?.id !== revision.source.itemId
+    || mediaItems[0]?.media_url !== original.payload.media_url || original.payload.media_type !== "video/mp4"
+    || mediaItems[0]?.media_type !== "video/mp4") throw unavailable();
+  const sourceBindings = [ownerId, selection.artifactId, revision.source.revision, selection.documentId,
+    native.projectId, revision.source.contentSha256];
+  const snapshot = await env.DB.prepare(`SELECT content_json,content_sha256,expires_at FROM artifact_revisions WHERE ${videoSourceRevisionGuard()}`)
+    .bind(...sourceBindings).first<{ content_json: string; content_sha256: string; expires_at: string }>();
+  if (!snapshot || typeof snapshot.content_json !== "string" || bytes(snapshot.content_json) > RETAINED_STORY_JSON_MAX_BYTES
+    || !Number.isFinite(Date.parse(snapshot.expires_at)) || Date.parse(snapshot.expires_at) <= Date.now()
+    || await hash(snapshot.content_json) !== revision.source.contentSha256) throw unavailable();
+  const sourceBody = record(JSON.parse(snapshot.content_json));
+  if (!sourceBody || Object.hasOwn(sourceBody, "audio_revision")) throw unavailable();
+  const hasSourceRevision = Object.hasOwn(sourceBody, "video_revision");
+  let sourceEdit: Awaited<ReturnType<typeof readEdit>> | null = null;
+  if (revision.source.revision === 0) {
+    if (hasSourceRevision) throw unavailable();
+  } else {
+    if (native.editContentHashes[revision.source.revision - 1] !== revision.source.contentSha256) throw unavailable();
+    sourceEdit = await readEdit(native.editIds[revision.source.revision - 1]!, revision.source.revision, revision.source.contentSha256);
+  }
+  if (hasSourceRevision) {
+    const previous = parseVideoMediaRevision(sourceBody.video_revision);
+    const witnessed = sourceEdit ? parseVideoMediaRevision(sourceEdit.payload.video_revision) : null;
+    if (!previous || !witnessed || sourceEdit?.payload.artifact_kind !== "video"
+      || JSON.stringify(previous) !== JSON.stringify(witnessed) || previous.source.revision >= revision.source.revision
+      || previous.source.itemId !== revision.source.itemId || previous.media.url !== revision.source.url
+      || previous.media.sha256 !== revision.source.sha256
+      || (["sampleCount", "timescale", "durationTicks", "width", "height"] as const).some(key =>
+        previous[key] !== revision.source[key])) throw unavailable();
+  } else {
+    if (sourceEdit && Object.hasOwn(sourceEdit.payload, "video_revision")
+      && !restoredOriginal(sourceEdit.payload, revision.source.revision)) throw unavailable();
+    if (revision.source.url !== original.payload.media_url) throw unavailable();
+    const settings = record(original.payload.settings);
+    if (settings && Object.hasOwn(settings, "source_media_sha256") && settings.source_media_sha256 !== revision.source.sha256) throw unavailable();
+  }
+  return { ...current, revision, source: { bindings: sourceBindings, raw: snapshot.content_json,
+    expiresAt: snapshot.expires_at, edit: sourceEdit } };
 }
 
 function personalContentGuard() {
@@ -817,11 +913,13 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     if (!body || typeof body.title !== "string" || typeof body.content_markdown !== "string"
       || !Array.isArray(body.items)) throw unavailable();
     const audioEdit = audio ? await audioEditReceipt(env, native, identity.userId, selection, body, audio) : null;
+    const videoEdit = video ? await videoEditReceipt(env, native, identity.userId, selection, body, video) : null;
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
       ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium, {
         storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null, audioReceipt: audio?.payload ?? null,
-        ...(audioEdit?.revision ? { audioRevision: audioEdit.revision } : {}), videoReceipt: video?.payload ?? null })
+        ...(audioEdit?.revision ? { audioRevision: audioEdit.revision } : {}), videoReceipt: video?.payload ?? null,
+        ...(videoEdit?.revision ? { videoRevision: videoEdit.revision } : {}) })
       : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
         selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
     if (!dto || nativeCompletion?.output === "scene" && body.items.length !== 1
@@ -879,10 +977,14 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         ${video?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${audio?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${audioReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${audioEdit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${audioReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${videoEdit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${videoEdit?.source?`AND EXISTS(SELECT 1 FROM artifact_revisions WHERE ${videoSourceRevisionGuard()} AND CAST(content_json AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}
+        ${videoEdit?.source?.edit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${completionInput?`AND EXISTS(SELECT 1 FROM private_content WHERE ${audioInputGuard()} AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}`)
-      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
+      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(videoEdit?[...videoEdit.bindings,videoEdit.raw]:[]), ...(videoEdit?.source?[...videoEdit.source.bindings,videoEdit.source.raw,videoEdit.source.expiresAt]:[]), ...(videoEdit?.source?.edit?[...videoEdit.source.edit.bindings,videoEdit.source.edit.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
       .first<{ admitted: number }>();
     if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()
+      || videoEdit?.source && Date.parse(videoEdit.source.expiresAt) <= Date.now()
       || completionInput && Date.parse(completionInput.expiresAt) <= Date.now()) throw unavailable();
     // No asynchronous work occurs between the final read and literal response.
     return new Response(serialized, { status: 200, headers });

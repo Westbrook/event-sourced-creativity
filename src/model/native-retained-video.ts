@@ -1,3 +1,5 @@
+import { parseVideoMediaRevision } from "./document-artifacts.ts";
+
 export type NativeRetainedVideoMedia = Readonly<{ url: string; mediaType: "video/mp4" }>;
 export type NativeRetainedVideoClip = Readonly<{
   id: string;
@@ -9,7 +11,7 @@ export type NativeRetainedVideoClip = Readonly<{
 }>;
 export type NativeRetainedVideoContent = Readonly<{
   content_markdown: string;
-  /** The completion's root reference stays distinct from each scene reference. */
+  /** The selected root reference stays distinct from each clip reference. */
   primaryMedia: NativeRetainedVideoMedia | null;
   clips: readonly NativeRetainedVideoClip[];
 }>;
@@ -123,16 +125,18 @@ function receiptMedia(row: object): NativeRetainedVideoMedia | null {
 /** NEW native adaptation. The caller captures bounded JSON and binds the exact
  * selected completion, source revision, owner and private-media namespace.
  * Current edits retain their text; immutable completion indices supply IDs and
- * media. No input getter, iterator or serialization hook is invoked. Reflection
+ * original media. An independently witnessed edit may replace only the root
+ * and its one exact media-bearing item. No input getter, iterator or
+ * serialization hook is invoked. Reflection
  * traps may throw and fail closed. Root media never fills a missing scene file.
  */
 export function projectNativeRetainedVideo(rawContentMarkdown: unknown, rawItems: unknown,
-  receipt: unknown): NativeRetainedVideoContent | null {
+  receipt: unknown, videoRevision?: unknown): NativeRetainedVideoContent | null {
   try {
     const envelope = record(receipt);
     if (own(envelope, "artifact_kind") !== "video") invalid();
     const url = own(envelope, "media_url"), mediaType = own(envelope, "media_type");
-    const primaryMedia = url === null && mediaType === null ? null : media({ url, mediaType });
+    let primaryMedia = url === null && mediaType === null ? null : media({ url, mediaType });
     const authored = list(rawItems), receipts = list(own(envelope, "items")), count = own(envelope, "item_count");
     if (!authored.length || authored.length !== receipts.length || typeof count !== "number"
       || !Number.isSafeInteger(count) || count !== receipts.length) invalid();
@@ -141,6 +145,22 @@ export function projectNativeRetainedVideo(rawContentMarkdown: unknown, rawItems
       if (Object.getOwnPropertyDescriptor(selected, "title")) text(own(selected, "title"));
       return { id: own(selected, "id"), title: item.title, body: item.body, notes: item.notes, media: receiptMedia(selected) };
     });
+    if (videoRevision !== undefined) {
+      const revision = parseVideoMediaRevision(videoRevision), candidates = clips.filter(value => value.media !== null);
+      if (!revision || !primaryMedia || candidates.length !== 1
+        || candidates[0]!.id !== revision.source.itemId || candidates[0]!.media!.url !== primaryMedia.url) invalid();
+      if (revision.source.revision === 0) {
+        if (revision.source.url !== primaryMedia.url) invalid();
+        const settings = own(envelope, "settings", false);
+        if (settings !== undefined && settings !== null) {
+          const configured = record(settings);
+          if (Object.getOwnPropertyDescriptor(configured, "source_media_sha256")
+            && own(configured, "source_media_sha256") !== revision.source.sha256) invalid();
+        }
+      }
+      primaryMedia = media({ url: revision.media.url, mediaType: revision.media.mediaType });
+      candidates[0]!.media = primaryMedia;
+    }
     return finish(rawContentMarkdown, primaryMedia, clips);
   } catch { return null; }
 }

@@ -6160,4 +6160,9 @@ Object.assign(messages, {
   "system.auto.s14phq.151": "Le composant hôte gère l’accès privé et l’enregistrement. Ce composant enfant affiche uniquement les octets PCM vérifiés et crée, sur demande explicite, un aperçu local de la plage exacte sélectionnée.",
 });
 
+Object.assign(messages, {
+  "system.auto.1qxwyl2.40": "Interface de l’application pour le rognage vidéo.",
+  "system.auto.1x2k3lt.139": "L’hôte gère l’accès privé et l’enregistrement. Ce composant sans lecture sélectionne une limite exacte d’échantillon encodé sans charger, décoder ni lire de média."
+});
+
 export default messages;
