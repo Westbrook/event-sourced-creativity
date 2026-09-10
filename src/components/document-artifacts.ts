@@ -1,3 +1,4 @@
+import { storyboardAudienceHtml } from "../model/storyboard-audience.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { html, nothing, type PropertyValues } from "lit";
 import { NativeShortStoryController, type NativeStoryOpening } from "./native-short-story-controller.ts";
@@ -1885,7 +1886,8 @@ export class DocumentArtifacts extends FormaElement {
       }
       const{createOfficeArchive}=await import("../model/office-documents");
       if(!this.store.authorizationScopeActive(authorization))return;
-      const bytes=createOfficeArchive([{name:"README.md",content:content.content_markdown},{name:"manifest.json",content:JSON.stringify({title:artifact.title,kind:artifact.kind,revision:binding.artifact_revision,contentSha256:binding.content_sha256,items:manifest,...(soundtrackManifest.length?{soundtracks:soundtrackManifest}:{})},null,2)},...files],{media:true});
+      const audience=artifact.kind==="storyboard"?[{name:"index.html",content:storyboardAudienceHtml({title:artifact.title,markdown:content.content_markdown,frames:manifest,soundtracks:soundtrackManifest})}]:[];
+      const bytes=createOfficeArchive([...audience,{name:"README.md",content:content.content_markdown},{name:"manifest.json",content:JSON.stringify({title:artifact.title,kind:artifact.kind,revision:binding.artifact_revision,contentSha256:binding.content_sha256,items:manifest,...(soundtrackManifest.length?{soundtracks:soundtrackManifest}:{})},null,2)},...files],{media:true});
       if(!this.store.authorizationScopeActive(authorization)||this.store.content.get()[artifact.contentRef??""]!==retained)return;
       const receipt={type:"DocumentArtifactExported",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,format:"application/zip",...binding,source_surface:`${this.source}-artifact-viewer`}};
       if(!await this.store.authorizeProjectExport(receipt,authorization)||!this.store.authorizationScopeActive(authorization))return;

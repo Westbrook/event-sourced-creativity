@@ -185,7 +185,8 @@ async function readStoryboardArchive(directory, download, q, savedHash) {
   const bytes = Buffer.from(await download.blob.arrayBuffer()), file = join(directory, download.filename);
   await writeFile(file, bytes, { flag: "wx" }); const opened = await readFile(file); assert.deepEqual(opened, bytes);
   const entries = readStoredZip(new Uint8Array(opened.buffer, opened.byteOffset, opened.byteLength)), decoder = new TextDecoder("utf-8", { fatal: true });
-  assert.deepEqual([...entries.keys()], ["README.md", "manifest.json", "frames/frame-001.png", "frames/frame-002.png"]);
+  assert.deepEqual([...entries.keys()], ["index.html", "README.md", "manifest.json", "frames/frame-001.png", "frames/frame-002.png"]);
+  assert.match(decoder.decode(entries.get("index.html")), /^<!doctype html>\n<html lang="en">/u);
   assert.equal(decoder.decode(entries.get("README.md")), revisedMarkdown);
   const manifest = JSON.parse(decoder.decode(entries.get("manifest.json")));
   assert.equal(manifest.title, "Harbor storyboard"); assert.equal(manifest.kind, "storyboard");
