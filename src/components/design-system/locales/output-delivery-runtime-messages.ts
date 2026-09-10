@@ -874,6 +874,18 @@ const groups = {
     "يشمل عدد الشرائح الشرائح المخفية، التي تُحصى منفصلة أيضًا. راجع العرض وفائدة المحتوى والاستشهادات وإمكانية الوصول وسلامة الصفحات المرتبطة؛ لم تُجلب الروابط الخارجية.",
     "スライド数には非表示のスライドも含まれ、非表示分は別途数えています。表示、有用な内容、引用、アクセシビリティ、リンク先の安全性を確認してください。外部リンクは取得していません。",
   ] },
+  markdownReview: { codes: "output_markdown_content_review_required", text: [
+    "Inspection verifies bounded UTF-8 text bytes only. Review the script, exact source coverage and rights separately. Markdown was not rendered; links and embedded media were not fetched. Script acceptance does not establish a composed film.",
+    "L’inspection vérifie uniquement des octets de texte UTF-8 dans les limites prises en charge. Examinez séparément le scénario, la couverture exacte des sources et les droits. Le Markdown n’a pas été rendu ; les liens et médias intégrés n’ont pas été chargés. L’acceptation du scénario n’établit pas l’existence d’un film monté.",
+    "يتحقق الفحص من بايتات نص UTF-8 ضمن الحدود المدعومة فقط. راجع السيناريو ونطاق تغطية المصادر بدقة والحقوق بشكل منفصل. لم يُعرض Markdown ولم تُجلب الروابط أو الوسائط المضمنة. اعتماد السيناريو لا يثبت وجود فيلم مركّب.",
+    "検査は対応上限内のUTF-8テキストのバイト列のみを検証します。脚本、正確な出典の範囲、利用権を別途確認してください。Markdownの表示処理やリンク・埋め込みメディアの取得は行っていません。脚本の承認は編集済み映画の存在を証明しません。",
+  ] },
+  markdownInvalid: { codes: "invalid_markdown_text", text: [
+    "The Markdown file must contain nonblank, valid UTF-8 text without binary control characters. Export an owned text file with a .md name, then inspect it again.",
+    "Le fichier Markdown doit contenir du texte UTF-8 valide, non vide et non limité aux espaces, sans caractères de contrôle binaires. Exportez un fichier texte détenu portant l’extension .md, puis inspectez-le à nouveau.",
+    "يجب أن يحتوي ملف Markdown على نص UTF-8 صالح لا يقتصر على الفراغات وخالٍ من محارف التحكم الثنائية. صدّر ملفًا نصيًا مملوكًا باسم ينتهي بـ .md، ثم افحصه مجددًا.",
+    "Markdownファイルには、空白のみではない有効なUTF-8テキストが必要です。バイナリ制御文字は使用できません。所有するテキストファイルを.md拡張子で書き出し、再度検査してください。",
+  ] },
   assetEmpty: { codes: "empty_output_asset", text: [
     "The file is empty. Select the finished file before uploading it.", "Le fichier est vide. Sélectionnez le fichier terminé avant de l’importer.", "الملف فارغ. اختر الملف النهائي قبل رفعه.", "ファイルが空です。完成したファイルを選択してからアップロードしてください。",
   ] },
@@ -890,10 +902,10 @@ const groups = {
     "対応する長さの範囲で、パス、制御文字、予約されたデバイス名を含まない通常のファイル名を使用してください。",
   ] },
   assetFormat: { codes: "output_asset_format_unsupported", text: [
-    "This file format is not supported for adoption. Use a supported PNG, JPEG, WAV, MP3, MP4, or macro-free PPTX file; extension names alone are not proof.",
-    "Ce format de fichier ne peut pas être adopté. Utilisez un fichier PNG, JPEG, WAV, MP3, MP4 ou PPTX sans macros pris en charge ; l’extension seule ne constitue pas une preuve.",
-    "تنسيق الملف هذا غير مدعوم للاعتماد. استخدم ملف PNG أو JPEG أو WAV أو MP3 أو MP4 أو PPTX دون وحدات ماكرو مدعومًا؛ فالامتداد وحده ليس دليلًا.",
-    "このファイル形式は採用に対応していません。対応するPNG、JPEG、WAV、MP3、MP4、またはマクロなしのPPTXを使用してください。拡張子だけでは形式を証明できません。",
+    "This file format is not supported for adoption. Use a supported PNG, JPEG, WAV, MP3, MP4, macro-free PPTX, GLB, or UTF-8 Markdown (.md) file; extension names alone are not proof.",
+    "Ce format de fichier ne peut pas être adopté. Utilisez un fichier PNG, JPEG, WAV, MP3, MP4, PPTX sans macros, GLB ou Markdown UTF-8 (.md) pris en charge ; l’extension seule ne constitue pas une preuve.",
+    "تنسيق الملف هذا غير مدعوم للاعتماد. استخدم ملف PNG أو JPEG أو WAV أو MP3 أو MP4 أو PPTX دون وحدات ماكرو أو GLB أو Markdown بترميز UTF-8 وامتداد .md مدعومًا؛ فالامتداد وحده ليس دليلًا.",
+    "このファイル形式は採用に対応していません。対応するPNG、JPEG、WAV、MP3、MP4、マクロなしのPPTX、GLB、またはUTF-8のMarkdown（.md）を使用してください。拡張子だけでは形式を証明できません。",
   ] },
   decompressionUnavailable: { codes: "decompression_unavailable decompression_format_unavailable", text: [
     "This environment cannot inspect the file’s compression format. Use a supported export or ask an administrator to restore the inspection capability.",
