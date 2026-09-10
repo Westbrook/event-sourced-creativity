@@ -7,7 +7,6 @@ import { createGenerationAccountingHandler } from "../worker/generation-accounti
 const now = Date.now();
 const stamp = new Date(now - 1000).toISOString();
 const actor = { userId: "owner", streamId: "creative:owner", role: "admin", access: { identityPolicyDeniedCustody: false }, authorizationSnapshot: { updatedAt: stamp, rawEpoch: "epoch-1" } };
-const clone = value => JSON.parse(JSON.stringify(value));
 const checkpoint = () => ({
   providerSubmissionProtocol: 1, reservationId: "token-1", costReservationId: "cost-1", costReservationPeriod: "2026-08", plannerResponseId: "resp-planner",
   generationReceipt: { actual_provider_call_count: 3 },
@@ -63,7 +62,7 @@ function fixture({ result = checkpoint(), request = {}, status = "failed" } = {}
     prepare: sql => new Prepared(sql),
     async batch(statements) {
       beforeBatch?.();
-      assert.ok(statements.length <= 7);
+      assert.equal(statements.length, 8);
       sqlite.exec("BEGIN");
       try { const values = statements.map(statement => statement.execute()); sqlite.exec("COMMIT"); return values; }
       catch (error) { sqlite.exec("ROLLBACK"); throw error; }
@@ -89,7 +88,7 @@ test("accepted failed video remains unknown; completed preparation costs and ori
   assert.match(preview.snapshotSha256, /^[a-f0-9]{64}$/u);
   assert.doesNotMatch(JSON.stringify(preview), /PRIVATE_|private\.invalid|responseRef|pricingReceipt|request_json|result_json/u);
   assert.deepEqual(f.snapshot(), before);
-  assert.equal(f.reads.length, 8);
+  assert.equal(f.reads.length, 9);
 });
 
 test("repeated read has a stable evidence digest; no screenshot/request parameter can resolve accepted billing", async () => {

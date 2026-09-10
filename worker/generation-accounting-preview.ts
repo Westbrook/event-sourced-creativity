@@ -1,3 +1,4 @@
+import { planManagedVideoAccounting } from "./managed-video-accounting-reconciliation.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { PilotUser } from "./pilot-policy.ts";
 
@@ -29,6 +30,161 @@ const scopeSQL = `SELECT CASE WHEN
   OR EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=?)
   THEN 1 ELSE 0 END AS conflict`;
 const auditAmounts = ["reserved_tokens", "used_tokens", "released_tokens", "total_tokens", "planner_tokens", "reserved_microusd", "used_microusd", "released_microusd", "cost_microusd", "planner_cost_microusd", "video_cost_microusd"] as const;
+
+
+const PRIOR_USAGE_LIMIT = 32;
+const acquisitionReasons = [
+  "external_billing_adjudication_not_acquired",
+  "prepaid_marker_present", "prepaid_marker_malformed", "prior_usage_observed",
+  "prior_usage_truncated", "prior_usage_evidence_malformed", "prior_usage_join_unresolved",
+] as const;
+type AcquisitionReason = typeof acquisitionReasons[number];
+const validDate = (value: unknown): value is string => typeof value === "string" && value.length <= 40
+  && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value) && Number.isFinite(Date.parse(value));
+const objectRecord = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+/** Only identities from the retained, bounded checkpoint can shape this query. */
+function priorUsageStatement(env: DB, actor: PilotUser, job: Row, tokenId: string, costId: string, checkpoint: Record<string, unknown>) {
+  const entries = objectRecord(checkpoint.providerSubmissions);
+  const calls = entries && Object.keys(entries).length <= 64 ? Object.values(entries).map(objectRecord).filter(value => value !== null) : [];
+  const plannerIds = calls.filter(call => call.provider === "openai" && call.operation === "planning" && id(call.providerRequestId)).map(call => call.providerRequestId);
+  const mediaIds = calls.filter(call => call.provider === "fal" && ["image", "video"].includes(String(call.operation)) && id(call.providerRequestId)).map(call => call.providerRequestId);
+  const payload = "CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END";
+  return env.DB.prepare(
+    "SELECT e.event_id,e.stream_id,e.correlation_id,e.type,e.occurred_at,CASE WHEN length(e.payload)<=65536 THEN e.payload ELSE NULL END AS payload,"
+    + "t.reservation_id AS token_join_id,t.owner_id AS token_owner_id,t.stream_id AS token_stream_id,t.correlation_id AS token_correlation_id,t.operation AS token_operation,t.period AS token_period,t.status AS token_status,t.reserved_tokens AS token_reserved,t.used_tokens AS token_used,"
+    + "c.reservation_id AS cost_join_id,c.owner_id AS cost_owner_id,c.workspace_id AS cost_workspace_id,c.stream_id AS cost_stream_id,c.correlation_id AS cost_correlation_id,c.operation AS cost_operation,c.period AS cost_period,c.status AS cost_status,c.reserved_microusd AS cost_reserved,c.used_microusd AS cost_used "
+    + "FROM events e LEFT JOIN budget_reservations t ON t.reservation_id=json_extract(" + payload + ",'$.reservation_id') AND t.owner_id=? "
+    + "LEFT JOIN cost_budget_reservations c ON c.reservation_id=json_extract(" + payload + ",'$.cost_reservation_id') AND c.owner_id=? "
+    + "WHERE e.stream_id=? AND e.type IN('GenerationUsageRecorded','BudgetReleased') AND ("
+    + "e.correlation_id=? OR e.correlation_id=? OR instr(e.correlation_id,?||':attempt:')=1 "
+    + "OR json_extract(" + payload + ",'$.job_id')=? "
+    + "OR json_extract(" + payload + ",'$.reservation_id')=? OR json_extract(" + payload + ",'$.cost_reservation_id')=? "
+    + "OR json_extract(" + payload + ",'$.planner_response_id') IN(SELECT value FROM json_each(?)) "
+    + "OR json_extract(" + payload + ",'$.provider_job_id') IN(SELECT value FROM json_each(?))) "
+    + "ORDER BY e.event_id LIMIT 33")
+    .bind(actor.userId, actor.userId, actor.streamId, job.correlation_id, job.job_id, job.job_id,
+      job.job_id, tokenId, costId, JSON.stringify(plannerIds), JSON.stringify(mediaIds));
+}
+
+function prepaidObservation(source: Record<string, unknown>) {
+  const observe = (key: string, valid: (value: unknown) => boolean) => {
+    if (!Object.hasOwn(source, key)) return { state: "absent" as const, value: null };
+    const value = source[key];
+    return valid(value) ? { state: "value" as const, value: Array.isArray(value) ? [...value] : value }
+      : { state: "malformed" as const, value: null };
+  };
+  return {
+    anchor: observe("productionPrepaidAnchor", value => typeof value === "boolean"),
+    sceneIds: observe("productionPrepaidSceneIds", value => Array.isArray(value) && value.length <= 64
+      && value.every(id) && new Set(value).size === value.length),
+    providerCostMicrousd: observe("prepaidProviderCostMicrousd", integer),
+  };
+}
+
+/** Describe joined rows, never infer per-call allocation or subtract any earlier payment. */
+function priorUsageObservation(rows: Row[], actor: PilotUser, job: Row, tokenId: string, costId: string, calls: Array<Record<string, unknown>>) {
+  const plannerIds = new Set(calls.filter(call => call.operation === "planning").map(call => call.providerRequestId));
+  const mediaIds = new Set(calls.filter(call => call.provider === "fal").map(call => call.providerRequestId));
+  const reasons = new Set<AcquisitionReason>();
+  const truncated = rows.length > PRIOR_USAGE_LIMIT;
+  if (truncated) reasons.add("prior_usage_truncated");
+  let malformedRows = 0;
+  const observations: Array<Record<string, unknown>> = [];
+  for (const row of rows.slice(0, PRIOR_USAGE_LIMIT)) {
+    let payload: Record<string, unknown> | null = null;
+    try { if (typeof row.payload === "string" && row.payload.length <= 65536) payload = objectRecord(JSON.parse(row.payload)); } catch { /* explicit malformed observation below */ }
+    if (!payload || !id(row.event_id) || row.stream_id !== actor.streamId || !id(row.correlation_id)
+      || !validDate(row.occurred_at) || !["GenerationUsageRecorded", "BudgetReleased"].includes(String(row.type))) {
+      malformedRows++; reasons.add("prior_usage_evidence_malformed"); continue;
+    }
+    const values: Record<string, number | null> = {};
+    let malformed = false;
+    for (const key of auditAmounts) {
+      if (payload[key] !== undefined && !integer(payload[key])) malformed = true;
+      values[key] = integer(payload[key]) ? payload[key] as number : null;
+    }
+    const reference = (key: string) => {
+      if (payload![key] === undefined || payload![key] === null) return null;
+      if (!id(payload![key])) { malformed = true; return null; }
+      return String(payload![key]);
+    };
+    const reservationId = reference("reservation_id"), costReservationId = reference("cost_reservation_id");
+    const plannerResponseId = reference("planner_response_id"), providerJobId = reference("provider_job_id");
+    const sourceJobId = reference("job_id");
+    if (malformed) { malformedRows++; reasons.add("prior_usage_evidence_malformed"); continue; }
+    const matchedBy: string[] = [];
+    if (row.correlation_id === job.correlation_id || row.correlation_id === job.job_id || String(row.correlation_id).startsWith(String(job.job_id) + ":attempt:")) matchedBy.push("job_attempt_correlation");
+    if (sourceJobId === job.job_id) matchedBy.push("job_id");
+    if (reservationId === tokenId) matchedBy.push("reservation_id");
+    if (costReservationId === costId) matchedBy.push("cost_reservation_id");
+    if (plannerResponseId !== null && plannerIds.has(plannerResponseId)) matchedBy.push("planner_response_id");
+    if (providerJobId !== null && mediaIds.has(providerJobId)) matchedBy.push("provider_job_id");
+    if (!matchedBy.length) { malformedRows++; reasons.add("prior_usage_evidence_malformed"); continue; }
+    const ledger = (prefix: "token" | "cost", referenceId: string | null) => {
+      if (referenceId === null) return { state: "not_referenced", reservationId: null };
+      if (row[prefix + "_join_id"] === null) return { state: "missing", reservationId: referenceId };
+      const status = row[prefix + "_status"], period = row[prefix + "_period"], reserved = row[prefix + "_reserved"], used = row[prefix + "_used"];
+      if (row[prefix + "_join_id"] !== referenceId || row[prefix + "_owner_id"] !== actor.userId || row[prefix + "_stream_id"] !== actor.streamId
+        || row[prefix + "_correlation_id"] !== row.correlation_id || row[prefix + "_operation"] !== "document-render:video"
+        || prefix === "cost" && row.cost_workspace_id !== "forma"
+        || typeof period !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/u.test(period)
+        || !["active", ...(prefix === "cost" ? ["executing"] : []), "settled", "released"].includes(String(status))
+        || !integer(reserved) || !integer(used) || ["active", "executing", "released"].includes(String(status)) && used !== 0) {
+        return { state: "binding_conflict", reservationId: referenceId };
+      }
+      return { state: "observed", reservationId: referenceId, period, status, reserved, used };
+    };
+    const tokenLedger = ledger("token", reservationId), dollarLedger = ledger("cost", costReservationId);
+    if (tokenLedger.state !== "observed" || dollarLedger.state !== "observed") reasons.add("prior_usage_join_unresolved");
+    reasons.add("prior_usage_observed");
+    observations.push({ eventId: row.event_id, correlationId: row.correlation_id, type: row.type, occurredAt: row.occurred_at,
+      matchedBy, reservationId, costReservationId, plannerResponseId, providerJobId, amounts: values,
+      tokenLedger, dollarLedger });
+  }
+  return { observation: { scope: "current_principal_personal_stream_all_periods", queryLimit: PRIOR_USAGE_LIMIT,
+    rowsRead: rows.length, truncated, malformedRows, rows: observations,
+    coverage: "supported_writer_fields_and_job_attempt_links_only",
+    globalPriorUseEstablished: false, otherJobPerCallAllocation: "not_acquired" },
+    reasons: [...reasons] };
+}
+
+async function accountingAcquisition(actor: PilotUser, job: Row, request: Record<string, unknown>, checkpoint: Record<string, unknown>,
+  priorRows: Row[], preview: Record<string, unknown>, calls: Array<Record<string, unknown>>) {
+  const reservations = preview.reservations as {period: string; tokens: {reservationId: string}; dollars: {reservationId: string}};
+  const prepaid = { request: prepaidObservation(request), checkpoint: prepaidObservation(checkpoint) };
+  const reasons = new Set<AcquisitionReason>(["external_billing_adjudication_not_acquired"]);
+  for (const source of Object.values(prepaid)) for (const marker of Object.values(source)) {
+    if (marker.state === "malformed") reasons.add("prepaid_marker_malformed");
+    if (marker.state === "value" && (marker.value === true || typeof marker.value === "number" && marker.value > 0 || Array.isArray(marker.value) && marker.value.length > 0)) reasons.add("prepaid_marker_present");
+  }
+  const prior = priorUsageObservation(priorRows, actor, job, reservations.tokens.reservationId, reservations.dollars.reservationId, calls);
+  prior.reasons.forEach(reason => reasons.add(reason));
+  // Existing validated current binding is observed server-side. It is not an
+  // approval, proof of global absence or a transferable browser capability.
+  const binding = { ownerId: actor.userId, streamId: actor.streamId, jobId: job.job_id, correlationId: job.correlation_id,
+    period: reservations.period, tokenReservationId: reservations.tokens.reservationId, costReservationId: reservations.dollars.reservationId };
+  let conditionalArithmetic: Record<string, unknown> | null = null;
+  let plannerRefusalReasons: string[] = [];
+  if (reasons.size === 1) {
+    const candidate = await planManagedVideoAccounting(preview);
+    plannerRefusalReasons = candidate.inputDisposition === "rejected_for_this_initial_slice" ? candidate.unresolvedReasons : [];
+    if (candidate.conditionalArithmetic) {
+      const value = candidate.conditionalArithmetic;
+      conditionalArithmetic = { basis: "hypothetical_exact_zero_and_no_prior_payment_not_established",
+        period: value.period, receiptSubtotalMicrousd: value.receiptSubtotalMicrousd,
+        hypotheticalVideoMicrousd: 0, hypotheticalTotalMicrousd: value.hypotheticalTotalMicrousd,
+        hypotheticalUnusedMicrousd: value.hypotheticalUnusedMicrousd, plannerInputTokens: value.plannerInputTokens,
+        plannerOutputTokens: value.plannerOutputTokens, hypotheticalTotalTokens: value.hypotheticalTotalTokens,
+        hypotheticalUnusedTokens: value.hypotheticalUnusedTokens };
+    }
+  }
+  const observed = { version: 1, status: "observations_only", binding, prepaid, priorUsage: prior.observation,
+    coverageLimitations: ["global_prior_use_not_established", "other_job_per_call_allocation_not_acquired"],
+    unresolvedReasons: acquisitionReasons.filter(reason => reasons.has(reason)), plannerRefusalReasons,
+    conditionalArithmetic, mutationAvailable: false, proposedSettlementMicrousd: null, proposedSettlementTokens: null };
+  return { ...observed, snapshotSha256: preview.snapshotSha256, evidenceSha256: await digest({ snapshotSha256: preview.snapshotSha256, ...observed }) };
+}
 
 /** Exact-job diagnostics only: every statement is SELECT. Never settle, repair, initialize or contact a provider. */
 export async function previewGenerationAccounting(env: DB, actor: PilotUser, jobId: string, now = Date.now()) {
@@ -64,6 +220,7 @@ export async function previewGenerationAccounting(env: DB, actor: PilotUser, job
         OR json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.cost_reservation_id')=?
         OR (?<>'' AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.planner_response_id')=?))
       ORDER BY event_id LIMIT 101`).bind(actor.streamId, job.correlation_id, tokenId, costId, plannerId, plannerId),
+    priorUsageStatement(env, actor, job, tokenId, costId, checkpoint),
   ]);
   if (rows.some(row => !row.success) || rows[0]?.results.length !== 1) return fail("accounting_snapshot_changed");
   if (rows[1]?.results.length !== 1 || rows[1].results[0]?.conflict !== 0) return fail("accounting_personal_unscoped_only");
@@ -162,8 +319,8 @@ export async function previewGenerationAccounting(env: DB, actor: PilotUser, job
   if (!integer(knownReceiptCostMicrousd)) return fail("accounting_usage_overflow");
   const legacyUncertain = checkpoint.providerSubmissionLegacyUncertain === true;
   const allCallsKnown = !legacyUncertain && callHistoryComplete && knownCalls.length === calls.length;
-  const before = { job, token, cost, tokenCounters, costCounters, audits: rows[6].results };
-  return { version: 1, kind: "read_only_generation_accounting_preview", observedAt: new Date(now).toISOString(), snapshotSha256: await digest(before),
+  const before = { job, token, cost, tokenCounters, costCounters, audits: rows[6].results, priorUsage: rows[7].results };
+  const preview = { version: 1, kind: "read_only_generation_accounting_preview", observedAt: new Date(now).toISOString(), snapshotSha256: await digest(before),
     mutationAvailable: false, providerCalls: 0, ledgerWrites: 0,
     job: { jobId, documentId: job.document_id, correlationId: job.correlation_id, status: job.status, attemptCount: job.attempt_count,
       completedAt: job.completed_at, checkpointUpdatedAt: job.updated_at, requestSha256: await digest(job.request_json), checkpointSha256: await digest(job.result_json) },
@@ -175,4 +332,6 @@ export async function previewGenerationAccounting(env: DB, actor: PilotUser, job
       knownReceiptCostMicrousd, unresolvedCallCount: calls.length - knownCalls.length,
       totalReceiptCostMicrousd: allCallsKnown ? knownReceiptCostMicrousd : null, proposedSettlementMicrousd: null,
       note: "Provider receipt costs are not a proposed charge. Prior settlements and external billing evidence require separate reconciliation; an accepted request is not proof of final billing." } };
+  const acquisition = await accountingAcquisition(actor, job, request, checkpoint, rows[7].results, preview, calls);
+  return { ...preview, acquisition };
 }
