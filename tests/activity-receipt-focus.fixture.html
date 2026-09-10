@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Isolated Activity receipt focus</title><link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/src/styles.css"><link rel="stylesheet" href="/src/design-system.css">
+  <link rel="stylesheet" href="/src/responsive-foundation.css">
+</head>
+<body>
+  <main style="box-sizing:border-box;max-width:60rem;margin:auto;padding:1rem">
+    <h1>Isolated Activity receipt focus</h1>
+    <p>Real Activity issue panel and Store; synthetic local reads only.</p>
+    <p id="activity-focus-ready" role="status">Preparing isolated fixture…</p>
+    <p>Detail reads: <output id="detail-reads">0</output>. Accounting reads: <output id="accounting-reads">0</output>. Blocked transports: <output id="blocked-reads">0</output>.</p>
+    <div id="activity-focus-owner"></div>
+  </main>
+  <script type="module" src="/tests/activity-receipt-focus.fixture.mjs"></script>
+</body>
+</html>

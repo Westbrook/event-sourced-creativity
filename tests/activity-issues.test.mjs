@@ -208,7 +208,16 @@ test("Activity issue notes remain actor-private and outside general content hydr
   assert.match(worker, /content\.owner_id=\? AND content\.kind='activity-issue-note'/u);
   assert.match(worker, /selection\.revoked_at IS NULL AND selection\.expires_at>\?/u);
   assert.match(worker, /anchor\.type='ProjectDocumentJobQueued'/u);
-  assert.match(policy, /kind NOT IN\('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview'\)/u);
+  // Additional private kinds must not invalidate this Activity exclusion check.
+  // Bind the assertion to ordinary hydration, not another query in the module.
+  const hydrationStart = policy.indexOf("export async function loadPrivateContent(");
+  const hydrationEnd = policy.indexOf("export async function loadPrivateProviderResponse(", hydrationStart);
+  assert.ok(hydrationStart >= 0 && hydrationEnd > hydrationStart);
+  const exclusions = [...policy.slice(hydrationStart, hydrationEnd).matchAll(/AND kind NOT IN\(([^)]*)\)/gu)];
+  assert.equal(exclusions.length, 1);
+  const excluded = exclusions[0][1].split(",").map(value => value.trim());
+  for (const kind of ["provider-response", "activity-issue-note", "execution-consent", "context-proposal", "authoring-preview"])
+    assert.ok(excluded.includes(`'${kind}'`), `Ordinary hydration excludes ${kind}`);
   assert.doesNotMatch(worker, /ActivityIssueNoted",\{[^}]*\bbody\s*:/u);
 });
 

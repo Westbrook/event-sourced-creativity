@@ -154,6 +154,15 @@ const exactReads = new Map([
 const readBodies = new Map([...exactReads].map(([key, value]) => [key, JSON.stringify(value)]));
 for (const [query, value] of eventPages) readBodies.set("/api/events" + query, JSON.stringify(value));
 for (const [query, value] of assistantReads) readBodies.set("/api/assistant" + query, JSON.stringify(value));
+
+// Focused renderer variants may derive their own explicitly declared immutable
+// response from these retained bytes. This exposes no mutable catalogue and
+// does not admit an additional request to the existing transport.
+export function syntheticReadBody(path) {
+  const body = readBodies.get(path);
+  if (typeof body !== "string") throw new Error("No declared synthetic read body: " + path);
+  return body;
+}
 const resumeBody = JSON.stringify({ action: "resume", projectId, documentId });
 const responseHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store",
   "x-forma-synthetic-network": SYNTHETIC_NETWORK_MARKER };

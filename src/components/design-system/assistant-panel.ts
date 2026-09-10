@@ -2,6 +2,10 @@ import { html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { ASSISTANT_CONTEXT_LIMITS,type AssistantContext } from "../../model/conversation-context.ts";
 import type { AssistantInteractionMode } from "../../model/assistant-route-policy.ts";
+import { libraryBlockEditorFromRoute } from "../../model/routes.ts";
+import type { FormaStore } from "../../state/store.ts";
+import type { LibraryBlockEditor } from "../library-block-editor.ts";
+import type { ContextBlock } from "../context-block.ts";
 import { icon } from "../icons.ts";
 import { FormaPresentationalElement } from "../presentational-element.ts";
 import type { AvailableConsequentialPreview } from "../../../worker/consequential-consent";
@@ -11,6 +15,84 @@ import { ensureNativeModalDialog } from "./native-dialog.ts";
 import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "../output-navigation-focus.ts";
 import "./conversation-composer.ts";
 import "./assistant-panel.css";
+
+/** Permission for the existing final gap search, never native-control focus authority. */
+export function captureLibraryInspectionArrivalGap(main: HTMLElement, current: () => boolean) {
+  const document = main.ownerDocument, view = document.defaultView;
+  if (!view) return null;
+  const read = () => {
+    if (!current() || !main.isConnected || main.ownerDocument !== document
+      || document.activeElement !== main || !main.matches('main#main-content[tabindex="-1"]')
+      || !main.matches(":focus-visible") || main.shadowRoot?.activeElement
+      || main.closest("[hidden], [inert], [aria-hidden='true']") || main.getAttribute("aria-busy") === "true"
+      || main.getClientRects().length !== 1) return null;
+    const width = view.innerWidth, height = view.innerHeight, box = main.getBoundingClientRect();
+    const style = view.getComputedStyle(main), stroke = Number.parseFloat(style.outlineWidth), offset = Number.parseFloat(style.outlineOffset);
+    if (![width, height, box.left, box.top, box.right, box.bottom, box.width, box.height, stroke, offset].every(Number.isFinite)
+      || width <= 0 || height <= 0 || box.width <= 0 || box.height <= 0
+      || style.outlineStyle !== "solid" || stroke <= 0 || offset < 0) return null;
+    const outer = stroke + offset;
+    const bands = [
+      { left: box.left - outer, top: box.top - outer, right: box.right + outer, bottom: box.top - offset },
+      { left: box.left - outer, top: box.bottom + offset, right: box.right + outer, bottom: box.bottom + outer },
+      { left: box.left - outer, top: box.top - offset, right: box.left - offset, bottom: box.bottom + offset },
+      { left: box.right + offset, top: box.top - offset, right: box.right + outer, bottom: box.bottom + offset },
+    ];
+    const viewportPaint = () => bands.some(band => Math.max(0, band.left) < Math.min(width, band.right)
+      && Math.max(0, band.top) < Math.min(height, band.bottom));
+    // This permission covers only an already offscreen painted perimeter;
+    // clipping must not manufacture eligibility for an otherwise visible ring.
+    if (viewportPaint()) return null;
+    const ancestors: HTMLElement[] = [], geometry: unknown[] = [width, height, stroke, offset, style.outlineColor];
+    const zeroRadius = (value: string) => /^0(?:\.0+)?(?:px|%)?(?:\s+0(?:\.0+)?(?:px|%)?)?$/u.test(value.trim());
+    for (let node: HTMLElement | null = main; node; node = node.parentElement) {
+      ancestors.push(node);
+      const computed = view.getComputedStyle(node), bounds = node.getBoundingClientRect();
+      const effects = [computed.transform, computed.translate, computed.rotate, computed.scale, computed.perspective,
+        computed.filter, computed.backdropFilter, computed.clipPath, computed.maskImage, computed.boxShadow, computed.textShadow];
+      if (!node.isConnected || node.getClientRects().length !== 1
+        || computed.display === "none" || computed.visibility !== "visible" || computed.opacity !== "1"
+        || !["static", "relative"].includes(computed.position)
+        || effects.some(value => typeof value !== "string" || value !== "none")
+        || !["normal", "1", "100%"].includes(computed.zoom) || computed.clip !== "auto"
+        || ![computed.borderTopLeftRadius, computed.borderTopRightRadius, computed.borderBottomLeftRadius, computed.borderBottomRightRadius].every(zeroRadius)
+        || computed.animationName !== "none" || computed.transitionDuration.split(",").some(value => Number.parseFloat(value) !== 0)
+        || ["::before", "::after"].some(pseudo => !["none", "normal"].includes(view.getComputedStyle(node, pseudo).content))) return null;
+      const overflow = [computed.overflowX, computed.overflowY];
+      if (overflow.some(value => !["visible", "auto", "scroll", "hidden", "clip"].includes(value))
+        || overflow.includes("clip") && computed.overflowClipMargin !== "0px"
+        || ![bounds.left, bounds.top, bounds.right, bounds.bottom, bounds.width, bounds.height,
+          node.clientLeft, node.clientTop, node.clientWidth, node.clientHeight].every(Number.isFinite)) return null;
+      geometry.push([bounds.left, bounds.top, bounds.right, bounds.bottom, bounds.width, bounds.height,
+        node.clientLeft, node.clientTop, node.clientWidth, node.clientHeight, computed.position, ...overflow]);
+      // Own overflow clips descendants, not main's outline. Supported ancestor
+      // overflow contributes only its ordinary rectangular client clip.
+      if (node !== main) for (const band of bands) {
+        if (computed.overflowX !== "visible") {
+          band.left = Math.max(band.left, bounds.left + node.clientLeft);
+          band.right = Math.min(band.right, bounds.left + node.clientLeft + node.clientWidth);
+        }
+        if (computed.overflowY !== "visible") {
+          band.top = Math.max(band.top, bounds.top + node.clientTop);
+          band.bottom = Math.min(band.bottom, bounds.top + node.clientTop + node.clientHeight);
+        }
+      }
+    }
+    if (viewportPaint()) return null;
+    return { ancestors, signature: JSON.stringify(geometry), width, height };
+  };
+  const captured = read();
+  if (!captured) return null;
+  return { clear: (candidate: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) => {
+    const next = read();
+    return Boolean(next && next.signature === captured.signature && next.ancestors.length === captured.ancestors.length
+      && next.ancestors.every((node, index) => node === captured.ancestors[index])
+      && [candidate.left, candidate.top, candidate.right, candidate.bottom, candidate.width, candidate.height].every(Number.isFinite)
+      && candidate.width > 0 && candidate.height > 0 && candidate.right - candidate.left === candidate.width
+      && candidate.bottom - candidate.top === candidate.height && candidate.left >= 0 && candidate.top >= 0
+      && candidate.right <= next.width && candidate.bottom <= next.height);
+  } };
+}
 
 export type AssistantDisplayedMessage = {
   id: string;
@@ -193,6 +275,30 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       this.#positionLauncher();
     });
   };
+  #librarySearchInput = (event: Event) => {
+    const search = event.target;
+    const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
+    const main = shell?.querySelector<HTMLElement>("#main-content");
+    if (!(search instanceof HTMLElement) || !search.matches("forma-ui-search.searchbox")
+      || !this.isConnected || !owner?.matches("forma-creative-assistant") || !shell || owner.parentElement !== shell
+      || this.closest("[hidden], [inert], [aria-hidden='true']") || shell.getAttribute("data-layout-intent") !== "browse"
+      || !main?.isConnected || main.parentElement !== shell || main.closest(".application-creative") !== shell
+      || main.closest("[hidden], [inert], [aria-hidden='true']") || main.getAttribute("aria-busy") === "true") return;
+    const panels = [...shell.querySelectorAll("forma-assistant-panel")]
+      .filter(panel => panel.closest(".application-creative") === shell);
+    const libraries = [...main.querySelectorAll<HTMLElement>("forma-library")]
+      .filter(library => library.closest("#main-content") === main && library.closest(".application-creative") === shell);
+    const library = libraries[0];
+    if (panels.length !== 1 || panels[0] !== this || libraries.length !== 1 || !library?.isConnected
+      || !search.isConnected || search.closest("forma-library") !== library
+      || search.closest("[hidden], [inert], [aria-hidden='true']")) return;
+    const primary = [...library.querySelectorAll(".library-main > .library-body > form.library-toolbar > forma-ui-search.searchbox")]
+      .filter(element => element.closest("forma-library") === library);
+    if (primary.length !== 1 || primary[0] !== search) return;
+    // The Library has queued its own render before this bubbling event arrives.
+    // Reuse the coalesced placement frame without retaining the search value.
+    this.#schedulePosition();
+  };
 
   constructor() {
     super();
@@ -223,6 +329,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     window.addEventListener("scroll", this.#schedulePosition, { capture: true, passive: true });
     window.addEventListener("focusin", this.#schedulePosition, { passive: true });
     window.addEventListener("transitionend", this.#schedulePosition, { passive: true });
+    window.addEventListener("forma-input", this.#librarySearchInput, { passive: true });
     this.#browsePointer = typeof window.matchMedia === "function" ? window.matchMedia("(pointer: coarse)") : null;
     this.#browsePointer?.addEventListener("change", this.#revalidateBrowseSlot);
   }
@@ -238,6 +345,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     window.removeEventListener("scroll", this.#schedulePosition, true);
     window.removeEventListener("focusin", this.#schedulePosition);
     window.removeEventListener("transitionend", this.#schedulePosition);
+    window.removeEventListener("forma-input", this.#librarySearchInput);
     if (this.#positionFrame) cancelAnimationFrame(this.#positionFrame);
     this.#positionFrame = 0;
     super.disconnectedCallback();
@@ -642,7 +750,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   }
 
   #ordinaryCopyObstacles() {
-    const obstacles: Array<{ element: HTMLElement; box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height"> }> = [];
+    const obstacles: Array<{ element: HTMLElement; box: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
+      inspection?: { main: HTMLElement; current: () => boolean } }> = [];
     const owner = this.parentElement;
     const shell = owner?.closest<HTMLElement>(".application-creative");
     if (!this.isConnected || !owner?.matches("forma-creative-assistant") || !shell) return obstacles;
@@ -658,6 +767,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const libraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
     const libraryWeightCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output`;
     const libraryWeightLabelCopySelector = `${libraryWeightFormSelector} > fieldset[aria-labelledby="library-block-content"] > label.library-weight`;
+    const libraryInspectionSelector = ".library-main > forma-library-block-editor > section.library-block-inspection";
+    const libraryInspectionCopySelector = `${libraryInspectionSelector} > forma-context-block[surface="library"] > section.context-decision[data-controls-open="false"] > div > article.context-block--summary > .block-body > p.block-copy[data-forma-content="primary"]`;
     const documentContextStatusSelector = '#document-context-panel forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] > article.context-block--summary > .block-body > .block-heading > .block-heading-state > .context-lock-state';
     const families = [
       ["forma-workspace-settings", [
@@ -678,6 +789,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         libraryOutputCopySelector,
         libraryWeightCopySelector,
         libraryWeightLabelCopySelector,
+        libraryInspectionCopySelector,
       ]],
       ["forma-reality-layers", [
         ':scope > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label:has(> input[name="weight"][type="range"])',
@@ -709,6 +821,68 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           || element.closest("[hidden], [inert], [aria-hidden='true']")) continue;
         const libraryWeightLabel = ownerSelector === "forma-library" && element.tagName === "LABEL"
           && element.matches(libraryWeightLabelCopySelector);
+        let inspectionWitness: { main: HTMLElement; current: () => boolean } | undefined;
+        if (ownerSelector === "forma-library" && element.matches(libraryInspectionCopySelector)) {
+          // This is painted source copy, not a focus target or an authoring surface.
+          // Read the existing organism-owned Store without importing its runtime.
+          type StoreOwner = HTMLElement & { store?: FormaStore };
+          const store = (owner as StoreOwner).store;
+          const editors = [...surface.querySelectorAll<LibraryBlockEditor>(".library-main > forma-library-block-editor")];
+          const inspections = [...surface.querySelectorAll<HTMLElement>(libraryInspectionSelector)];
+          const editor = editors[0], inspection = inspections[0];
+          const contexts = inspection ? [...inspection.querySelectorAll<ContextBlock>(':scope > forma-context-block[surface="library"]')] : [];
+          const context = contexts[0];
+          if (!store || owner.parentElement !== shell || main.parentElement !== shell
+            || (surface as StoreOwner).store !== store || editors.length !== 1 || !editor?.isConnected
+            || (editor as unknown as StoreOwner).store !== store || inspections.length !== 1
+            || inspection?.parentElement !== editor || contexts.length !== 1 || !context?.isConnected
+            || (context as unknown as StoreOwner).store !== store || context.readOnly !== true
+            || context.surface !== "library" || !store.routeDataReady()) continue;
+          const route = store.route.get(), target = libraryBlockEditorFromRoute(route);
+          const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();
+          const projection = store.projection.get();
+          const blocks = projection.libraryBlocks.filter(block => block.id === target?.blockId);
+          const block = blocks[0];
+          const summary = element.parentElement?.parentElement, content = summary?.parentElement;
+          // Route folds reconstruct blocks while the editor retains its subtree.
+          // Match the complete serialized block revision, including sourceEvents.
+          if (!target?.blockId || editor.blockId !== target.blockId || blocks.length !== 1 || !block
+            || JSON.stringify(context.block) !== JSON.stringify(block) || block.projectId !== projection.projectId
+            || summary?.getAttribute("data-block-id") !== block.id
+            || content?.id !== `context-controls-library-${block.id}`
+            || content.parentElement?.parentElement !== context
+            || context.querySelectorAll(':scope > section.context-decision[data-controls-open="false"] > div > article.context-block--summary > .block-body > p.block-copy[data-forma-content="primary"]').length !== 1
+            || !store.sourceOwnershipActive(source) || !store.authorizationScopeActive(authorization)
+            || store.route.get() !== route) continue;
+          const revision = JSON.stringify(block), copyText = element.textContent;
+          inspectionWitness = { main, current: () => {
+            const latest = store.projection.get().libraryBlocks.filter(candidate => candidate.id === block.id);
+            return this.isConnected && this.parentElement === owner && owner.isConnected && owner.parentElement === shell
+              && shell.isConnected && this.closest(".application-creative") === shell
+              && (owner as StoreOwner).store === store && main.isConnected && main.parentElement === shell
+              && main.closest(".application-creative") === shell && surface.closest(".application-creative") === shell
+              && shell.querySelector("#main-content") === main && main.getAttribute("aria-busy") !== "true"
+              && shell.querySelectorAll(":scope > main#main-content").length === 1
+              && [...shell.querySelectorAll("forma-assistant-panel")].filter(panel => panel.closest(".application-creative") === shell).length === 1
+              && main.querySelectorAll("forma-library").length === 1 && surface.isConnected && surface.closest("#main-content") === main
+              && (surface as StoreOwner).store === store && editor.isConnected && (editor as unknown as StoreOwner).store === store
+              && editor.blockId === block.id && inspection.isConnected && inspection.parentElement === editor
+              && context.isConnected && context.parentElement === inspection && (context as unknown as StoreOwner).store === store
+              && context.readOnly === true && context.surface === "library" && element.isConnected
+              && element.textContent === copyText && element.matches(libraryInspectionCopySelector) && element.closest("forma-library") === surface
+              && element.parentElement?.parentElement === summary && summary.getAttribute("data-block-id") === block.id
+              && summary.parentElement === content && content.id === `context-controls-library-${block.id}`
+              && content.parentElement?.parentElement === context
+              && !element.closest("[hidden], [inert], [aria-hidden='true']")
+              && surface.querySelectorAll(libraryInspectionCopySelector).length === 1
+              && surface.querySelectorAll(".library-main > forma-library-block-editor").length === 1
+              && surface.querySelectorAll(libraryInspectionSelector).length === 1
+              && inspection.querySelectorAll(":scope > forma-context-block").length === 1
+              && latest.length === 1 && JSON.stringify(latest[0]) === revision && JSON.stringify(context.block) === revision
+              && store.projection.get().projectId === block.projectId && store.route.get() === route && store.routeDataReady()
+              && store.sourceOwnershipActive(source) && store.authorizationScopeActive(authorization);
+          } };
+        }
         if (ownerSelector === "forma-workspace-settings" && element.tagName === "LABEL") {
           const field = element.querySelector<HTMLInputElement>(':scope > input[name="name"]');
           if (!(element instanceof HTMLLabelElement) || !field || element.control !== field
@@ -835,7 +1009,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             // Pointer-events does not determine whether ordinary text paints.
             if (displayed && right > left && bottom > top && bottom > 0 && top < innerHeight
               && right > 0 && left < innerWidth) {
-              obstacles.push({ element, box: { left, top, right, bottom, width: right - left, height: bottom - top } });
+              obstacles.push({ element, box: { left, top, right, bottom, width: right - left, height: bottom - top },
+                ...(inspectionWitness ? { inspection: inspectionWitness } : {}) });
             }
           }
         }
@@ -1003,7 +1178,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       .some(({ element }) => element === focused))) return;
     // Placement uses both lists; only native controls above authorize a
     // hovered move or establish exact current-focus paint.
-    const placementObstacles = [...controls, ...this.#ordinaryCopyObstacles()];
+    const ordinaryCopy = this.#ordinaryCopyObstacles();
+    const placementObstacles = [...controls, ...ordinaryCopy];
     const placementIntersections = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom">) =>
       placementObstacles.filter(({ box: obstacle }) => box.left < obstacle.right && box.right > obstacle.left
         && box.top < obstacle.bottom && box.bottom > obstacle.top);
@@ -1099,7 +1275,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
 
     // An upward boundary or the pass budget can leave a lower gap unexplored.
     // Complete the search from the same sampled owners, in the same lane.
-    if (!exactFocusPaint) return;
+    // The route-focused main remains outside the native control census. Only a
+    // current inspection with its genuine focus perimeter outside the viewport
+    // may use this final search; earlier hover/reservation rules stay unchanged.
+    const inspection = !exactFocusPaint ? ordinaryCopy.find(copy => copy.inspection?.main === focused)?.inspection : undefined;
+    const arrivalGap = inspection ? captureLibraryInspectionArrivalGap(inspection.main, inspection.current) : null;
+    if (!exactFocusPaint && !arrivalGap) return;
     const box = launcher.getBoundingClientRect();
     const finiteBox = (value: Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">) =>
       [value.left, value.top, value.right, value.bottom, value.width, value.height].every(Number.isFinite);
@@ -1137,6 +1318,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const previousTight = this.dataset.tightLauncher;
     const currentOffset = Number.parseFloat(previousOffset || "0");
     if (!Number.isFinite(currentOffset)) return;
+    if (arrivalGap && !arrivalGap.clear({ left: box.left, right: box.right, top: candidate.top,
+      bottom: candidate.top + box.height, width: box.width, height: box.height })) return;
     this.dataset.tightLauncher = "true";
     this.style.setProperty("--forma-assistant-obstacle-offset", `${currentOffset + box.top - candidate.top}px`);
     // Native layout may quantize the center. Accept only the observed body in
@@ -1145,7 +1328,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if (!finiteBox(actual) || !Number.isFinite(innerHeight)
       || actual.left !== box.left || actual.right !== box.right || actual.width !== box.width || actual.height !== box.height
       || actual.top < candidate.floor || actual.bottom > candidate.ceiling
-      || actual.top < 8 || actual.bottom > innerHeight - 8 || placementIntersections(actual).length) {
+      || actual.top < 8 || actual.bottom > innerHeight - 8 || placementIntersections(actual).length
+      || arrivalGap && !arrivalGap.clear(actual)) {
       this.style.setProperty("--forma-assistant-obstacle-offset", previousOffset);
       if (previousTight === undefined) delete this.dataset.tightLauncher;
       else this.dataset.tightLauncher = previousTight;

@@ -59,6 +59,8 @@ export class FormaLibrary extends FormaElement {
   #editorTargets=new Map<string,LibraryBlockEditor|undefined>();
   #editorScope="";
   #lastEditorId="";
+  #editorOrigin:{view:LibraryView;current:()=>boolean}|null=null;
+  #preparedEditorReturn:{current:()=>boolean}|null=null;
   #cancelLibraryReturnFocus:(()=>void)|null=null;
   #cancelPublisherCompletion:(()=>void)|null=null;
   #outputReuse:ManualOutputReuse={cancel:null};
@@ -66,7 +68,7 @@ export class FormaLibrary extends FormaElement {
   #importOwner:{id:number;pending:boolean;original?:LibraryImportOriginal;current:()=>boolean;close:()=>void;
     dismiss:(event?:Event)=>void;show:(dialog:HTMLDialogElement)=>void}|null=null;
 
-  override disconnectedCallback(){this.#outputReuse.cancel?.();this.#cancelPublisherCompletion?.();this.#importOwner?.close();this.#cancelLibraryReturnFocus?.();this.#artifactOpening?.disposeFocus();this.#artifactOpening=null;this.#openedArtifactId="";super.disconnectedCallback();}
+  override disconnectedCallback(){this.#editorOrigin=null;this.#preparedEditorReturn=null;this.#lastEditorId="";this.#outputReuse.cancel?.();this.#cancelPublisherCompletion?.();this.#importOwner?.close();this.#cancelLibraryReturnFocus?.();this.#artifactOpening?.disposeFocus();this.#artifactOpening=null;this.#openedArtifactId="";super.disconnectedCallback();}
 
   protected override willUpdate(){
     if(this.#importOwner&&!this.#importOwner.current())this.#importOwner.close();
@@ -82,7 +84,9 @@ export class FormaLibrary extends FormaElement {
         &&FormaElement.hasStoreIdentity(editor,this.store))this.#editorTargets.set(id,editor);
       if(scope!==this.#editorScope||!target||editor.blockId!==target.blockId)editor.suspendControls();
     }
-    if(scope!==this.#editorScope){this.#editorTargets.clear();this.#focusOrigin=null;this.#focusOriginHref="";this.#lastEditorId="";}
+    if(scope!==this.#editorScope){this.#editorTargets.clear();this.#focusOrigin=null;this.#focusOriginHref="";this.#lastEditorId="";this.#editorOrigin=null;this.#preparedEditorReturn=null;}
+    if(this.#editorOrigin&&!this.#editorOrigin.current())this.#editorOrigin=null;
+    if(this.#preparedEditorReturn&&!this.#preparedEditorReturn.current()){this.#preparedEditorReturn=null;this.#lastEditorId="";}
     for(const id of this.#editorTargets.keys())if(id!=="__new__"&&id!==target?.blockId
       &&!projection.libraryBlocks.some(block=>block.id===id))this.#editorTargets.delete(id);
     this.#editorScope=scope;
@@ -104,31 +108,47 @@ export class FormaLibrary extends FormaElement {
   }
 
   override connectedCallback(){super.connectedCallback();const view=String(this.store.ui.libraryView);if(["all","blocks","outputs","families"].includes(view))this.#view=view as LibraryView;this.#outputScope=this.store.ui.libraryOutputScope==="kept"?"kept":"recent";const focus=libraryFocusFromRoute(this.store.route.get());if(focus)this.#view=focus.kind==="block"?"blocks":focus.kind==="family"?"families":"outputs";}
-  async #restoreLibraryFocus(resolve:()=>HTMLElement|null){
+  #editorReturnTarget(id:string){
+    const controls=[...this.querySelectorAll<HTMLElement>(`[data-context-controls-id="${CSS.escape(id)}"]`)]
+      .filter(element=>element.closest("forma-library")===this);
+    if(controls.length)return controls.length===1?controls[0]!:null;
+    return this.querySelector<HTMLElement>(".library-toolbar input")??this.querySelector<HTMLElement>(".page-header--library h1");
+  }
+  async #restoreLibraryFocus(resolve:()=>HTMLElement|null,arrival?:{current:()=>boolean;focus:OutputNavigationFocusLease},reveal=false){
     this.#cancelLibraryReturnFocus?.();
-    const route=this.store.route.get(),scope=this.#editorScope,projectId=this.store.projection.get().projectId;
-    const source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope();
+    const store=this.store,route=store.route.get(),scope=this.#editorScope,projection=store.projection.get();
+    const projectId=projection.projectId,documentId=projection.documentId;
+    const source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
     const shell=this.closest<FormaElement>("forma-shell");
-    const scopeCurrent=()=>this.isConnected&&this.store.route.get()===route&&this.#editorScope===scope
-      &&this.store.projection.get().projectId===projectId&&this.store.sourceOwnershipActive(source)
-      &&this.store.authorizationScopeActive(authorization)&&!libraryBlockEditorFromRoute(route)&&!libraryFocusFromRoute(route)
+    const scopeCurrent=()=>this.isConnected&&this.store===store&&store.route.get()===route&&this.#editorScope===scope
+      &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId&&store.sourceOwnershipActive(source)
+      &&store.authorizationScopeActive(authorization)&&(!arrival||arrival.current())&&!libraryBlockEditorFromRoute(route)&&!libraryFocusFromRoute(route)
       &&!this.ownerDocument.querySelector("dialog[open]");
-    const focus=captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>scopeCurrent()
-      &&Boolean(shell?.isConnected&&FormaElement.hasStoreIdentity(shell,this.store)&&element===shell.querySelector("#main-content"))});
-    const dispose=()=>{unsubscribe();focus.dispose();if(this.#cancelLibraryReturnFocus===dispose)this.#cancelLibraryReturnFocus=null;};
+    const focus=arrival?.focus??captureOutputNavigationFocus(this.ownerDocument,{ownedRouteFocus:element=>scopeCurrent()
+      &&Boolean(shell?.isConnected&&FormaElement.hasStoreIdentity(shell,store)&&element===shell.querySelector("#main-content"))});
+    const dispose=()=>{unsubscribe();if(!arrival)focus.dispose();if(this.#cancelLibraryReturnFocus===dispose)this.#cancelLibraryReturnFocus=null;};
     const current=()=>this.#cancelLibraryReturnFocus===dispose&&scopeCurrent()&&focus.current();
-    const unsubscribe=this.store.subscribe(()=>{if(!current())dispose();});
+    const unsubscribe=store.subscribe(()=>{if(!current())dispose();});
     this.#cancelLibraryReturnFocus=dispose;
     try{
       if(!current())return;
       await this.updateComplete;
       if(!current())return;
       const target=resolve();
-      if(target?.isConnected)focus.run(target,()=>{if(!current())return false;target.focus({preventScroll:true});return current();});
+      const targetCurrent=()=>Boolean(target?.isConnected&&target.ownerDocument===this.ownerDocument
+        &&target.closest("forma-library")===this&&this.contains(target)&&resolve()===target
+        &&!target.closest("[hidden],[inert]")&&!target.matches(":disabled")&&target.getAttribute("aria-disabled")!=="true");
+      if(target&&targetCurrent())focus.run(target,()=>{
+        if(!current()||!targetCurrent())return false;
+        target.focus({preventScroll:true});
+        if(!current()||!targetCurrent()||this.ownerDocument.activeElement!==target)return false;
+        if(reveal)target.scrollIntoView({block:"nearest",inline:"nearest",behavior:"instant"});
+        return current()&&targetCurrent()&&this.ownerDocument.activeElement===target;
+      });
     }finally{dispose();}
   }
 
-  protected override updated(){const editor=libraryBlockEditorFromRoute(this.store.route.get());if(editor)this.#lastEditorId=editor.blockId??"__new__";else if(this.#lastEditorId){const id=this.#lastEditorId;this.#lastEditorId="";void this.#restoreLibraryFocus(()=>this.querySelector<HTMLElement>(`[data-context-controls-id="${CSS.escape(id)}"]`)??this.querySelector<HTMLElement>(".library-toolbar input")??this.querySelector<HTMLElement>(".page-header--library h1"));}this.querySelectorAll<HTMLDialogElement>("dialog.library-focus-dialog,dialog.family-lightbox").forEach((dialog)=>ensureModalDialog(dialog));for(const dialog of this.querySelectorAll<HTMLDialogElement>("dialog.library-import-dialog"))this.#importOwner?.show(dialog);const focus=libraryFocusFromRoute(this.store.route.get());if(focus){const view=focus.kind==="block"?"blocks":focus.kind==="family"?"families":"outputs";if(this.store.ui.libraryView!==view)this.store.patchUi({libraryView:view});}if(!this.store.loading.get()&&focus&&!this.#focusAvailable(focus.kind,focus.id)){this.store.setRoute(libraryRootRoute(this.store.route.get()),{replace:true});this.store.toast("That library item is no longer available.");return;}if(focus?.kind==="artifact"&&this.#focusAvailable(focus.kind,focus.id)){
+  protected override updated(){const editor=libraryBlockEditorFromRoute(this.store.route.get());if(editor)this.#lastEditorId=editor.blockId??"__new__";else if(this.#lastEditorId){const id=this.#lastEditorId;this.#lastEditorId="";if(!this.#preparedEditorReturn)void this.#restoreLibraryFocus(()=>this.#editorReturnTarget(id));}this.querySelectorAll<HTMLDialogElement>("dialog.library-focus-dialog,dialog.family-lightbox").forEach((dialog)=>ensureModalDialog(dialog));for(const dialog of this.querySelectorAll<HTMLDialogElement>("dialog.library-import-dialog"))this.#importOwner?.show(dialog);const focus=libraryFocusFromRoute(this.store.route.get());if(focus){const view=focus.kind==="block"?"blocks":focus.kind==="family"?"families":"outputs";if(this.store.ui.libraryView!==view)this.store.patchUi({libraryView:view});}if(!this.store.loading.get()&&focus&&!this.#focusAvailable(focus.kind,focus.id)){this.store.setRoute(libraryRootRoute(this.store.route.get()),{replace:true});this.store.toast("That library item is no longer available.");return;}if(focus?.kind==="artifact"&&this.#focusAvailable(focus.kind,focus.id)){
       const route=this.store.route.get(),key=route;
       if(key!==this.#openedArtifactId){
         this.#artifactOpening?.disposeFocus();
@@ -237,6 +257,7 @@ export class FormaLibrary extends FormaElement {
     const projectId=projection.projectId,documentId=projection.documentId,canAuthor=this.#canAuthor();
     const source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope(),base=libraryBaseRoute(route);
     const target=libraryBlockEditorFromRoute(path),focus=libraryFocusFromRoute(path);
+    const originalEditor=libraryBlockEditorFromRoute(route);
     const root=path===base||path===libraryRootRoute(route);
     if(!path.startsWith("/")||path.startsWith("//")||!isProjectTaskRoute(path)||libraryBaseRoute(path)!==base
       ||!root&&(!target&&!focus||target&&path!==libraryBlockEditorRoute(target.blockId??"",route)
@@ -259,19 +280,65 @@ export class FormaLibrary extends FormaElement {
         &&mounted.length===editors.length&&editors.every((editor,index)=>mounted[index]===editor);
     };
     if(!current())return null;
+    const originCurrent=()=>{
+      const pathname=store.route.get().split(/[?#]/,1)[0];
+      return this.isConnected&&this.store===store&&this.#editorScope===scope
+        &&store.sourceOwnershipActive(source)&&store.authorizationScopeActive(authorization)&&this.#canAuthor()===canAuthor
+        &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId
+        &&Boolean(pathname&&(pathname===base||pathname.startsWith(base+"/")));
+    };
+    let preparedReturn:{current:()=>boolean}|null=null;
+    let returnOrigin:{view:LibraryView;current:()=>boolean}|null=null;
     return {element:this,current,blocked:context=>this.#unretainedNavigationBlocked(context,true),
       reason:()=>this.captureCommandDeparture().reason(),prepare:()=>{
         if(!current())return false;
         // The existing keyed cache survives only these same-Library routes.
         // Prepare original local UI only after every sibling admitted departure.
-        if(target){store.patchUi({libraryView:"blocks"});if(editorGesture)window.scrollTo({top:0});}
-        if(root&&libraryBlockEditorFromRoute(route)){for(const editor of editors)editor.suspendControls();store.patchUi({libraryView:"blocks"});}
+        if(target){
+          // Capture the displayed list only after admission; editor-to-editor
+          // navigation keeps the first list's origin and all retained drafts.
+          if(!originalEditor)this.#editorOrigin={view:this.#view,current:originCurrent};
+          else if(this.#editorOrigin&&!this.#editorOrigin.current())this.#editorOrigin=null;
+          this.#preparedEditorReturn=null;
+          // The editor is route-selected. A refused first entry must leave
+          // the displayed list filter unchanged for the next genuine attempt.
+          if(originalEditor)store.patchUi({libraryView:"blocks"});if(editorGesture)window.scrollTo({top:0});
+        }
+        if(root&&originalEditor){
+          returnOrigin=this.#editorOrigin;
+          const view=returnOrigin?.current()?returnOrigin.view:"blocks";
+          preparedReturn={current:originCurrent};this.#preparedEditorReturn=preparedReturn;
+          for(const editor of editors)editor.suspendControls();
+          store.patchUi({libraryView:view});
+        }
         if(focus){
           if(active&&!active.closest("dialog")){this.#focusOrigin=active;this.#focusOriginHref=active.closest("a")?.getAttribute("href")??"";}
           if(focus.kind==="artifact"){this.#artifactOpening?.disposeFocus();this.#artifactOpening=null;this.#openedArtifactId="";this.#artifactOpenIssue="";}
         }
         return true;
-      }};
+      },afterCommit:root&&originalEditor?async arrival=>{
+        const pending=preparedReturn;
+        if(!pending||this.#preparedEditorReturn!==pending)return;
+        try{
+          if(!originCurrent()||!arrival.current()||store.route.get().split(/[?#]/,1)[0]!==base)return;
+          // Preparation may be refused before a route commits. Only this
+          // successful return consumes its still-identical originating list.
+          if(this.#editorOrigin===returnOrigin)this.#editorOrigin=null;
+          await this.#restoreLibraryFocus(()=>this.#editorReturnTarget(originalEditor.blockId??"__new__"),{
+            focus:arrival.focus,current:()=>this.#preparedEditorReturn===pending&&originCurrent()&&arrival.current(),
+          },true);
+        }finally{
+          if(this.#preparedEditorReturn===pending){
+            // A committed return also retires updated()'s old fallback when
+            // the original gesture lost focus. Never mint a replacement lease.
+            if(this.store===store&&this.#editorScope===scope
+              &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId
+              &&store.route.get().split(/[?#]/,1)[0]===base
+              &&this.#lastEditorId===(originalEditor.blockId??"__new__"))this.#lastEditorId="";
+            this.#preparedEditorReturn=null;
+          }
+        }
+      }:undefined};
   }
   async #followLifecycleAction(action:CreativeNextAction){
     const next=this.#nextContext(),route=this.store.route.get();
@@ -731,7 +798,7 @@ export class FormaLibrary extends FormaElement {
       ${!searchContentFirst?discoverySupplement:nothing}
       ${this.#artifactOpenIssue?html`<div class="library-review-priority"><p role="alert">${this.i18n.t("artifact.delivery.exactChanged","This exact output revision is no longer available. No review or export was performed.")}</p><a class="button secondary" href=${buildLibraryFocusRoute("artifact",this.#artifactOpenIssue,"",this.store.route.get())} @click=${(event:MouseEvent)=>this.#navigate(event,"artifact",this.#artifactOpenIssue)}>${this.i18n.t("artifact.delivery.openCurrent","Open current output")}</a></div>`:nothing}<div class="library-content">
         ${this.#view==="all"&&!searchBlocksFirst?resultsSection:nothing}
-        ${this.#view==="all"||this.#view==="blocks"?html`<section><div class="section-heading"><div><span class="eyebrow">Portable context</span><h2>${this.i18n.t("projects.reusableBlocks","Reusable blocks")}</h2><p class="section-note">${canAuthor?this.i18n.system("Independent project blocks can be edited here. Document-owned blocks can be forked before reuse."):this.i18n.t("projects.readOnlyLibrary","You can inspect shared project decisions and creative results.")}</p></div>${canAuthor?html`<button class="button secondary compact" @click=${()=>this.#openEditor()}>${this.i18n.t("projects.openBlockEditor","Open Block editor")}</button>`:nothing}</div><div class="asset-grid">${blocks.map((block)=>{const influenced=this.#blockOutputs(block,projection.libraryOutputs);const related=this.#relatedReferenceCount(block.id);const name=this.#blockName(block);const href=libraryFocusRoute("block",block.id,name);return html`<article class="asset-card"><a href=${href} class="asset-focus-trigger" aria-label=${this.i18n.t("projects.openPreviewNamed","Open focused preview of {name}",{name:`\u2068${name}\u2069`})} @click=${(event:MouseEvent)=>this.#navigate(event,"block",block.id,name)}>${this.#blockVisual(block)}<span>Focused preview · ${influenced.length} linked result${influenced.length===1?"":"s"}</span></a><span class="block-type">${this.i18n.system(blockTypeDefinition(block.type)?.label??block.type)} · ${block.scope==="library"?this.i18n.system("project decision"):this.i18n.system("document decision")}</span><span class="context-library-state">${this.i18n.system(BLOCK_INTENTS.find((item)=>item.id===blockIntentFor(block.type,block.properties))?.label??blockIntentFor(block.type,block.properties))} · ${this.i18n.t(block.locked?"context.controls.locked":"context.controls.unlocked",block.locked?"Locked":"Unlocked")}</span><h3 dir="auto">${name}</h3><p dir="auto">${String(block.properties.artifact_markdown??block.properties.text??block.properties.source_excerpt??block.properties.description??block.properties.label??"Reusable creative decision")}</p><div><span class="asset-card-receipts"><small class=${`authority ${String(block.properties.authority??"authored")}`}>${String(block.properties.authority??"authored")}</small>${related?html`<small>${related} related image${related===1?"":"s"}</small>`:nothing}</span>${canAuthor&&!block.properties.organization_context_package_binding_id?html`<span class="asset-card-actions"><button type="button" data-context-controls-id=${block.id} @click=${()=>this.#openEditor(block.id)} aria-label=${contextControlName(candidate=>this.i18n.t("context.controls.named","Controls for {name}",this.#namedValue(this.#blockName(candidate))),block,projection.libraryBlocks,this.i18n)}>${this.i18n.t("context.controls.named","Controls for {name}",this.#namedValue(name))}</button></span>`:block.properties.organization_context_package_binding_id?html`<span class="asset-card-actions">${this.i18n.system("Organization context")}</span>`:nothing}</div></article>`;})}</div></section>`:nothing}
+        ${this.#view==="all"||this.#view==="blocks"?html`<section><div class="section-heading"><div><span class="eyebrow">Portable context</span><h2>${this.i18n.t("projects.reusableBlocks","Reusable blocks")}</h2><p class="section-note">${canAuthor?this.i18n.system("Independent project blocks can be edited here. Document-owned blocks can be forked before reuse."):this.i18n.t("projects.readOnlyLibrary","You can inspect shared project decisions and creative results.")}</p></div>${canAuthor?html`<button class="button secondary compact" @click=${()=>this.#openEditor()}>${this.i18n.t("projects.openBlockEditor","Open Block editor")}</button>`:nothing}</div><div class="asset-grid">${blocks.map((block)=>{const influenced=this.#blockOutputs(block,projection.libraryOutputs);const related=this.#relatedReferenceCount(block.id);const name=this.#blockName(block);const href=libraryFocusRoute("block",block.id,name);const title=html`<h3 dir="auto">${name}</h3>`;const actions=canAuthor&&!block.properties.organization_context_package_binding_id?html`<span class="asset-card-actions"><button type="button" data-context-controls-id=${block.id} @click=${()=>this.#openEditor(block.id)} aria-label=${contextControlName(candidate=>this.i18n.t("context.controls.named","Controls for {name}",this.#namedValue(this.#blockName(candidate))),block,projection.libraryBlocks,this.i18n)}>${this.i18n.t("context.controls.named","Controls for {name}",this.#namedValue(name))}</button></span>`:block.properties.organization_context_package_binding_id?html`<span class="asset-card-actions">${this.i18n.system("Organization context")}</span>`:nothing;return html`<article class=${searchContentFirst?"asset-card asset-card--search-result":"asset-card"}>${searchContentFirst?html`<header class="asset-card-search-header">${title}${canAuthor&&!block.properties.organization_context_package_binding_id?actions:nothing}</header>`:nothing}<a href=${href} class="asset-focus-trigger" aria-label=${this.i18n.t("projects.openPreviewNamed","Open focused preview of {name}",{name:`\u2068${name}\u2069`})} @click=${(event:MouseEvent)=>this.#navigate(event,"block",block.id,name)}>${this.#blockVisual(block)}<span>Focused preview · ${influenced.length} linked result${influenced.length===1?"":"s"}</span></a><span class="block-type">${this.i18n.system(blockTypeDefinition(block.type)?.label??block.type)} · ${block.scope==="library"?this.i18n.system("project decision"):this.i18n.system("document decision")}</span><span class="context-library-state">${this.i18n.system(BLOCK_INTENTS.find((item)=>item.id===blockIntentFor(block.type,block.properties))?.label??blockIntentFor(block.type,block.properties))} · ${this.i18n.t(block.locked?"context.controls.locked":"context.controls.unlocked",block.locked?"Locked":"Unlocked")}</span>${searchContentFirst?nothing:title}<p dir="auto">${String(block.properties.artifact_markdown??block.properties.text??block.properties.source_excerpt??block.properties.description??block.properties.label??"Reusable creative decision")}</p><div><span class="asset-card-receipts"><small class=${`authority ${String(block.properties.authority??"authored")}`}>${String(block.properties.authority??"authored")}</small>${related?html`<small>${related} related image${related===1?"":"s"}</small>`:nothing}</span>${searchContentFirst&&canAuthor&&!block.properties.organization_context_package_binding_id?nothing:actions}</div></article>`;})}</div></section>`:nothing}
         ${this.#view==="all"&&!searchBlocksFirst?nothing:resultsSection}
         ${this.#view==="all"||this.#view==="families"?html`<section><div class="section-heading"><div><span class="eyebrow">Similar work, grouped for you</span><h2>${this.i18n.t("projects.visualFamilies","Aesthetic families")}</h2></div><span>${families.length}</span></div>${families.length?families.map((family)=>{const familyId=String(family.family_id);const familyLabel=String(family.label??"Related creative work");const familyHref=libraryFocusRoute("family",familyId,familyLabel);const members=records(family.members);const sourceRef=`family:${family.family_id}`;const familyOutputs=members.map((member)=>projection.libraryOutputs.find((item)=>item.id===String(member.object_id))).filter((item):item is CreativeOutput=>Boolean(item));return html`<article class="family-card"><a href=${familyHref} class="family-collage" aria-label=${this.i18n.t("projects.openFamilyNamed","Open all work in {name}",this.#namedValue(familyLabel))} @click=${(event:MouseEvent)=>this.#navigate(event,"family",familyId,familyLabel)}>${[0,1,2].map((tile)=>html`<i>${familyOutputs[tile]?html`<forma-output-visual .output=${familyOutputs[tile]} .compact=${true}></forma-output-visual>`:nothing}</i>`)}<span>Open family lightbox · ${members.length} image${members.length===1?"":"s"}</span></a><div><span class="authority inferred">Suggested · ${Math.round(Number(family.confidence??0)*100)}% match</span><h3 dir="auto">${familyLabel}</h3><p>${members.length} related image${members.length===1?"":"s"}.${canAuthor?" " + this.i18n.system("You can remove a suggestion or keep the whole group as a collection."):""}</p><div class="family-members">${members.map((member)=>{const output=projection.libraryOutputs.find((item)=>item.id===String(member.object_id));const outputHref=output?libraryFocusRoute("output",output.id):"";return output?html`<a href=${outputHref} title="Open this family member" @click=${(event:MouseEvent)=>this.#navigate(event,"output",output.id)}>${this.#outputName(output)} <small>${Math.round(Number(member.confidence??0)*100)}% match</small></a>`:html`<span aria-disabled="true" title="This image is no longer available">Image unavailable <small>${Math.round(Number(member.confidence??0)*100)}% match</small></span>`;})}</div><div class="family-actions">${canAuthor?html`<button class="button primary" ?disabled=${promoted.has(sourceRef)} @click=${()=>this.#promote(family)}>${promoted.has(sourceRef)?this.i18n.system("Kept as collection"):this.i18n.system("Keep as collection")}</button>`:nothing}<a href=${familyHref} class="button secondary" @click=${(event:MouseEvent)=>this.#navigate(event,"family",familyId,familyLabel)}>${this.i18n.t("projects.openLightbox","Open lightbox")}</a>${canAuthor&&!context?html`<button class="button ghost" ?disabled=${!members.length} @click=${()=>this.#correct(family)}>${this.i18n.t("projects.correctGrouping","Correct grouping")}</button>`:nothing}</div></div></article>`;}):html`<div class="family-empty"><span>${icon("branch")}</span><h3>No visual families yet</h3><p>Related work appears here after you create at least two images. Nothing is filed or changed automatically.</p></div>`}
           <div class="corpus-lab"><div><span class="eyebrow">Learn from what already worked</span><h3>Find a useful precedent</h3><p>Search accepted creative decisions, corrections, and saved results. Relevant matches can inform new work without changing anything.</p></div><form class="corpus-filters" @submit=${(event:SubmitEvent)=>{event.preventDefault();this.requestUpdate();}}><label>Search your work<div class="searchbox">${icon("search")}<input .value=${this.#corpusQuery} @input=${(event:InputEvent)=>{this.#corpusQuery=(event.target as HTMLInputElement).value;this.requestUpdate();}}></div></label><label>Collection<select .value=${this.#collectionFilter} @change=${(event:Event)=>{this.#collectionFilter=(event.target as HTMLSelectElement).value;this.requestUpdate();}}><option value="">All collections</option>${projection.collections.map((collection)=>html`<option value=${collection.id}>${collection.handle}</option>`)}</select></label></form><div class="corpus-results">${corpus.length?corpus.map((item)=>html`<article><span>${item.kind.replaceAll("-"," ")}</span><b>${item.label}</b><p>${item.summary}</p><small>${Math.round(item.score*100)}% related · ${item.citations.length} supporting decision${item.citations.length===1?"":"s"}</small></article>`):html`<p class="corpus-empty">No previous decisions match this search and collection.</p>`}</div></div>

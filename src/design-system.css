@@ -1013,6 +1013,24 @@ forma-project-rail {
   border: 0;
 }
 
+/* The reusable-block heading shares the Library's actual available width,
+   including the Assistant lane. Wrap the action before squeezing its words. */
+forma-library .library-content > section:has(> .asset-grid) > .section-heading {
+  flex-wrap: wrap;
+}
+
+forma-library .library-content > section:has(> .asset-grid) > .section-heading > div {
+  flex: 1 1 18rem;
+  min-inline-size: min(100%, 18rem);
+}
+
+forma-library .library-content > section:has(> .asset-grid) > .section-heading > button {
+  flex: 0 1 auto;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .collection-filter {
   margin-bottom: 3rem;
   padding: 1rem 0;
@@ -1118,6 +1136,39 @@ forma-project-rail {
 .asset-card p { min-height: 0; margin-bottom: 1rem; font-size: var(--type-small); }
 .asset-card > div:last-child { align-items: flex-end; }
 .asset-card-actions { gap: 1rem; }
+
+.asset-card-search-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem 1rem;
+  min-inline-size: 0;
+  margin-block-end: 1rem;
+}
+
+.asset-card-search-header > h3 {
+  flex: 1 1 16rem;
+  min-inline-size: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.asset-card-search-header > .asset-card-actions {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.asset-card-search-header .asset-card-actions > button {
+  min-inline-size: max(2.75rem, var(--forma-control-min-size, 2.75rem));
+  min-block-size: max(2.75rem, var(--forma-control-min-size, 2.75rem));
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+  scroll-margin: var(--forma-focus-clearance, .5rem);
+}
 
 .library-output-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(25rem, 100%), 1fr));

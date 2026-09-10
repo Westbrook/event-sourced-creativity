@@ -572,7 +572,7 @@ export class FormaActivityIssuePanel extends FormaElement {
         <p>${this.i18n.t(`activity.issue.step.${disposition}`, "Inspect the private generation receipt and copy a safe issue report if you need help.")}</p>
       </details>
       <div class="forma-activity-issue-actions">
-        <button type="button" class="button secondary compact" ?disabled=${Boolean(this.#busy)} @click=${() => void this.#inspectInputs(job)}>${this.i18n.t("activity.issue.inspectInputs", "Inspect request and receipt")}</button>
+        <button type="button" class="button secondary compact" ?disabled=${Boolean(this.#busy) && this.#busy !== "receipt"} aria-disabled=${this.#busy ? "true" : "false"} @click=${() => void this.#inspectInputs(job)}>${this.i18n.t("activity.issue.inspectInputs", "Inspect request and receipt")}</button>
         ${job.kind === "render_document" && job.result?.artifactKind === "slides"
           ? html`<button type="button" class="button secondary compact" ?disabled=${Boolean(this.#busy)} @click=${() => void this.#loadCandidates(job)}>${this.i18n.t("presentation.draft.review", "Review generated drafts")}</button>`
           : nothing}
