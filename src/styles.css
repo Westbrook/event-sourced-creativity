@@ -2513,6 +2513,25 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .document-artifact-view[data-output-focus="true"] :is(.artifact-reader-short_story,.artifact-reader-scene) > .artifact-prose { padding-block: clamp(1rem,4vb,2.75rem); }
 .document-artifact-view .artifact-storyboard img { object-fit: contain; background: var(--fixed-dark,#111613); }
 .document-artifact-view .artifact-reader-video .forma-video-reel-player { object-fit: contain; }
+/* Keep the native video full bleed; paint its keyboard ring inside that same grid cell. */
+.document-artifact-view .artifact-reader-video .forma-video-reel > video.forma-video-reel-player {
+  grid-area: 1 / 1;
+}
+.document-artifact-view .artifact-reader-video .forma-video-reel > video.forma-video-reel-player:focus-visible {
+  outline-offset: -3px;
+}
+.document-artifact-view .artifact-reader-video .forma-video-reel:has(> video.forma-video-reel-player:focus-visible)::before {
+  content: "";
+  grid-area: 1 / 1;
+  min-inline-size: 0;
+  min-block-size: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: var(--forma-radius-small,var(--radius-small));
+  outline: 3px solid var(--fixed-dark-copy,#fff);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 6px var(--fixed-dark,#111613);
+}
 @media (max-width: 720px) {
   .document-artifact-reader > .artifact-viewer-header { flex-direction: column; align-items: stretch; gap: .45rem; }
   .document-artifact-reader > .artifact-viewer-header h2 { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
