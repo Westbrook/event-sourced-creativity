@@ -17,6 +17,7 @@ import { audioFileExtension } from "../model/audio";
 import { captureOutputNavigationFocus } from "./output-navigation-focus";
 
 type DeckView="list"|"slideshow";
+type ExportCompletionOwner={current:()=>boolean;dispose:()=>void};
 type ExportFocusReturn={controller:AbortController;cancel:(event:MouseEvent)=>void;restore:(delivered:boolean)=>Promise<void>;dispose:()=>void};
 const DECK_VIEW_PREFERENCE="forma:slides:deck-view";
 const DECK_STYLE_PREFERENCE="forma:slides:style";
@@ -39,9 +40,10 @@ type DeckEvidence={sources:Array<{label:string;kind:"Source decision"|"Combined 
 export class PresentationDeck extends FormaElement{
   static properties={items:{attribute:false},presentation:{attribute:false},preferenceKey:{type:String,attribute:"preference-key"},deckTitle:{type:String,attribute:"deck-title"},documentId:{type:String,attribute:"document-id"},sourceSurface:{type:String,attribute:"source-surface"},releaseAllowed:{type:Boolean,attribute:false}};
   items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";deckTitle="";documentId="";sourceSurface="presentation-deck";releaseAllowed=true;#view:DeckView=readDeckView();#index=0;#indexKey="";#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;#exporting=false;#exportMenuId=`presentation-deck-export-${crypto.randomUUID()}`;#exportMenuOpen=false;#fullscreenActive=false;#touchStart:{x:number;y:number}|null=null;#followSoundtrackCues=false;#compactToolsOpen=false;#automaticReading=false;#visualOverflow=false;#readingOverride:boolean|null=null;#readingObserver?:ResizeObserver;#readingViewport?:HTMLElement;
-  #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"downloading"|"failed";completed:number;total:number;message?:string}|null=null;
+  #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"downloading"|"completed"|"failed";completed:number;total:number;message?:string}|null=null;
   #exportAbort?:AbortController;
   #exportFocus?:ExportFocusReturn;
+  #exportCompletion?:ExportCompletionOwner;
   #activeFitKey="";
   #popoverScope="";
   #stopExportPosition?:()=>void;
@@ -53,6 +55,7 @@ export class PresentationDeck extends FormaElement{
     this.#exportMenuOpen=false;
   }
   protected override willUpdate(){
+    if(this.#exportCompletion&&!this.#exportCompletion.current())this.#clearExportCompletion();
     const scope=JSON.stringify([this.store.captureAuthorizationScope()?.key??"",this.store.route.get(),this.documentId,this.preferenceKey,this.releaseAllowed]);
     if(scope!==this.#popoverScope)this.#closeDeckPopovers();
     this.#popoverScope=scope;
@@ -62,8 +65,11 @@ export class PresentationDeck extends FormaElement{
   #syncReadingPosture=(entries:ResizeObserverEntry[])=>{
     const entry=entries.find((candidate)=>candidate.target===this.#readingViewport);
     if(!entry)return;
-    const{width,height}=entry.contentRect;
-    if(width<1||height<1)return;
+    // Reading focus gutters must not shrink the viewport used to choose its posture.
+    const style=getComputedStyle(entry.target);
+    const width=entry.contentRect.width+Number.parseFloat(style.paddingLeft)+Number.parseFloat(style.paddingRight);
+    const height=entry.contentRect.height+Number.parseFloat(style.paddingTop)+Number.parseFloat(style.paddingBottom);
+    if(!Number.isFinite(width)||!Number.isFinite(height)||width<1||height<1)return;
     const reading=presentationRequiresReadingPosture(width,height);
     const postureChanged=reading!==this.#automaticReading;
     this.#automaticReading=reading;
@@ -80,7 +86,7 @@ export class PresentationDeck extends FormaElement{
     this.requestUpdate();
   };
   override connectedCallback(){super.connectedCallback();document.addEventListener("fullscreenchange",this.#fullscreenChanged);this.requestUpdate();}
-  override disconnectedCallback(){this.#closeDeckPopovers();this.#exportAbort?.abort();this.#exportFocus?.dispose();this.#exportFocus=undefined;document.removeEventListener("fullscreenchange",this.#fullscreenChanged);this.#readingObserver?.disconnect();this.#readingViewport=undefined;if(this.#postureFrame)cancelAnimationFrame(this.#postureFrame);this.#postureFrame=0;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#clearExportCompletion();this.#closeDeckPopovers();this.#exportAbort?.abort();this.#exportFocus?.dispose();this.#exportFocus=undefined;document.removeEventListener("fullscreenchange",this.#fullscreenChanged);this.#readingObserver?.disconnect();this.#readingViewport=undefined;if(this.#postureFrame)cancelAnimationFrame(this.#postureFrame);this.#postureFrame=0;super.disconnectedCallback();}
   protected override updated(){
     const viewport=this.#view==="slideshow"?this.querySelector<HTMLElement>(".presentation-deck-viewport"):null;
     if(viewport===this.#readingViewport)return;
@@ -144,6 +150,37 @@ export class PresentationDeck extends FormaElement{
     this.requestUpdate();
   }
   #exportFromMenu(format:"pdf"|"powerpoint"|"powerpoint-presenter",items:DocumentArtifactDraftItem[],presentation:SlidePresentation){const menu=this.querySelector<HTMLElement>(`#${this.#exportMenuId}`);if(menu?.matches(":popover-open"))menu.hidePopover();this.querySelector<HTMLButtonElement>(".presentation-deck-export")?.focus({preventScroll:true});return format==="pdf"?this.#downloadPdf(items,presentation):format==="powerpoint-presenter"?this.#downloadPresenterPowerPoint(items,presentation):this.#downloadPowerPoint(items,presentation);}
+  #clearExportCompletion(){
+    this.#exportCompletion?.dispose();this.#exportCompletion=undefined;
+    if(this.#exportProgress?.stage==="completed")this.#exportProgress=null;
+  }
+  #captureExportCompletion(authorization:NonNullable<ReturnType<PresentationDeck["store"]["captureAuthorizationScope"]>>):ExportCompletionOwner{
+    const store=this.store,owner=this.ownerDocument,source=store.captureSourceOwnership();
+    const route=store.route.get(),documentId=this.documentId,artifactId=this.preferenceKey,surface=this.sourceSurface;
+    const snapshot=()=>{
+      const projection=store.projection.get(),artifact=projection.libraryArtifacts.find(candidate=>candidate.id===artifactId);
+      const content=artifact?.contentRef?store.content.get()[artifact.contentRef]:null;
+      const revision=store.events.get().filter(event=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
+      return JSON.stringify([projection.documentId,artifact?.id,artifact?.documentId,artifact?.sourceEventId,artifact?.contentRef,artifact?.sequence,content,revision,this.items,this.presentation,this.activePresentation,this.#showFooterLabel,this.deckTitle]);
+    };
+    let original:string|undefined,retired=false;
+    try{original=snapshot();}catch{retired=true;}
+    const current=()=>{
+      try{if(!retired&&this.isConnected&&this.ownerDocument===owner&&this.store===store&&this.releaseAllowed
+        &&store.sourceOwnershipActive(source)&&store.authorizationScopeActive(authorization)&&store.route.get()===route
+        &&this.documentId===documentId&&this.preferenceKey===artifactId&&this.sourceSurface===surface&&snapshot()===original)return true;
+      }catch{/* A withdrawn deck cannot own a completion announcement. */}
+      retired=true;return false;
+    };
+    // Latch retirement at the store notification, even if it returns before the next render.
+    const unsubscribe=store.subscribe(()=>{
+      if(current())return;
+      if(this.#exportCompletion===completion){this.#clearExportCompletion();this.requestUpdate();}
+      else completion.dispose();
+    });
+    const completion={current,dispose:()=>{retired=true;unsubscribe();}};
+    return completion;
+  }
   #captureExportFocus(controller:AbortController,authorization:NonNullable<ReturnType<PresentationDeck["store"]["captureAuthorizationScope"]>>){
     const store=this.store,owner=this.ownerDocument,ownerWindow=owner.defaultView,source=store.captureSourceOwnership();
     const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");
@@ -197,7 +234,8 @@ export class PresentationDeck extends FormaElement{
   async #finishExport(controller:AbortController,focus:ExportFocusReturn|undefined,delivered:boolean){
     if(this.#exportAbort!==controller){focus?.dispose();return;}
     this.#exporting=false;
-    if(this.#exportProgress?.stage!=="failed")this.#exportProgress=null;
+    if(this.#exportProgress?.stage!=="failed"&&this.#exportProgress?.stage!=="completed")this.#exportProgress=null;
+    if(this.#exportProgress?.stage!=="completed")this.#clearExportCompletion();
     try{this.requestUpdate();await focus?.restore(delivered);}
     catch{/* A failed enabled-state render cannot replace the completed export. */}
     finally{
@@ -253,6 +291,9 @@ export class PresentationDeck extends FormaElement{
     if(this.#exporting||!this.releaseAllowed)return;
     const authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false,artifactId=this.preferenceKey,documentId=this.documentId||this.store.projection.get().documentId;
     if(!authorization||!artifactId)return;
+    this.#clearExportCompletion();
+    const completion=this.#captureExportCompletion(authorization);
+    this.#exportCompletion=completion;
     const controller=new AbortController();
     this.#exportFocus?.dispose();
     this.#exportAbort=controller;
@@ -298,7 +339,7 @@ export class PresentationDeck extends FormaElement{
       link.remove();
       delivered=true;
       window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
-      this.store.toast(this.i18n.system("{count}-page PDF downloaded.",{count:this.i18n.number(result.pageCount)}));
+      if(this.#exportCompletion===completion&&completion.current())this.#exportProgress={stage:"completed",completed:result.pageCount,total:result.pageCount};
     }catch(error){
       if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
       console.error("Slide PDF export failed",error);
@@ -322,6 +363,7 @@ export class PresentationDeck extends FormaElement{
   }
   async #downloadPowerPointVariant(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,includePresenterNotes:boolean){
     if(this.#exporting||!this.releaseAllowed)return;const authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false,artifactId=this.preferenceKey,documentId=this.documentId||this.store.projection.get().documentId;if(!authorization||scoped&&!artifactId)return;
+    this.#clearExportCompletion();
     const controller=new AbortController();
     this.#exportFocus?.dispose();
     this.#exportAbort=controller;
@@ -384,13 +426,13 @@ export class PresentationDeck extends FormaElement{
   #renderExportProgress(){
     const progress=this.#exportProgress;
     if(!progress)return nothing;
-    const failed=progress.stage==="failed",total=Math.max(0,progress.total),completed=Math.max(0,Math.min(progress.completed,total));
+    const failed=progress.stage==="failed",complete=progress.stage==="completed",total=Math.max(0,progress.total),completed=Math.max(0,Math.min(progress.completed,total));
     const count=total?this.i18n.system("{count} of {total}",{count:this.i18n.number(completed),total:this.i18n.number(total)}):"";
-    const label=progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):progress.stage==="finalizing"?this.i18n.t("job.progress.finalizing"):this.i18n.t("job.progress.downloading"));
+    const label=complete?this.i18n.system("{count}-page PDF downloaded.",{count:this.i18n.number(total)}):progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):progress.stage==="finalizing"?this.i18n.t("job.progress.finalizing"):this.i18n.t("job.progress.downloading"));
     const determinate=progress.stage!=="preparing"&&total>0;
     return html`<section id=${`${this.#exportMenuId}-status`} class="presentation-deck-export-status" data-export-stage=${progress.stage} role=${failed?"alert":"status"} aria-live=${failed?"assertive":"polite"} aria-atomic="true">
-      <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${(event:MouseEvent)=>{this.#exportFocus?.cancel(event);this.#exportAbort?.abort();}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>
-      ${failed?html`<button type="button" class="button secondary compact presentation-deck-export-retry" @click=${()=>{const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");trigger?.focus({preventScroll:true});trigger?.click();}}>${this.i18n.t("action.retry")}</button>`:determinate?html`<progress max=${total} value=${completed} aria-label=${this.i18n.t("status.progress")} aria-valuetext=${count}></progress>`:html`<progress aria-label=${this.i18n.t("status.progress")}></progress>`}
+      <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&!complete&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&!complete&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${(event:MouseEvent)=>{this.#exportFocus?.cancel(event);this.#exportAbort?.abort();}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>
+      ${complete?nothing:failed?html`<button type="button" class="button secondary compact presentation-deck-export-retry" @click=${()=>{const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");trigger?.focus({preventScroll:true});trigger?.click();}}>${this.i18n.t("action.retry")}</button>`:determinate?html`<progress max=${total} value=${completed} aria-label=${this.i18n.t("status.progress")} aria-valuetext=${count}></progress>`:html`<progress aria-label=${this.i18n.t("status.progress")}></progress>`}
     </section>`;
   }
   override render(){const items=this.items.map((item,index)=>normalizeSlideItem(item,index)),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=this.#syncIndex(total),current=items[index],preferenceFormId=`presentation-deck-preferences-${this.#styleKey()}`;const fitKey=current?presentationSlideRenderKey(current,presentation,index,total,this.#showFooterLabel,false,this.i18n.locale):"";if(fitKey!==this.#activeFitKey){this.#activeFitKey=fitKey;this.#visualOverflow=false;}const reading=this.#view==="slideshow"&&presentationUsesReadingView({contentOverflows:this.#visualOverflow,readingPreference:this.#readingOverride,viewportRequiresReading:this.#automaticReading});const readingLabel=this.i18n.system(reading?"Slide view":"Read slide");const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===this.preferenceKey);const soundtracks=soundtrackCompanions(artifact?.settings.soundtrack_assets);const renderSoundtrackCompanions=(value:Parameters<typeof renderAudioCompanions>[0],locale:Parameters<typeof renderAudioCompanions>[1],options:Parameters<typeof renderAudioCompanions>[2]={})=>renderAudioCompanions(value,locale,{...options,...(this.releaseAllowed?{onDownload:(asset:SoundtrackAsset)=>void this.#downloadSoundtrack(asset)}:{})});return html`<section class=${`presentation-deck presentation-deck--${this.#view}${this.#exportProgress?" presentation-deck--export-status":""}${reading?" presentation-deck--reading":""}${this.#fullscreenActive?" presentation-deck--fullscreen":""}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>

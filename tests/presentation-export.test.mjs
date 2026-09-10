@@ -115,7 +115,7 @@ test("presentation exports communicate staged progress, accessible completion co
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"downloading"\|"failed";completed:number;total:number;message\?:string\}\|null=null/u);
+  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"downloading"\|"completed"\|"failed";completed:number;total:number;message\?:string\}\|null=null/u);
   assert.match(deck, /class="presentation-deck-export-status" data-export-stage=\$\{progress\.stage\} role=\$\{failed\?"alert":"status"\} aria-live=\$\{failed\?"assertive":"polite"\} aria-atomic="true"/u);
   assert.match(deck, /<progress max=\$\{total\} value=\$\{completed\} aria-label=\$\{this\.i18n\.t\("status\.progress"\)\} aria-valuetext=\$\{count\}>/u);
   assert.match(deck, /<progress aria-label=\$\{this\.i18n\.t\("status\.progress"\)\}><\/progress>/u,"preparation remains truthfully indeterminate until page rendering begins");
@@ -125,7 +125,7 @@ test("presentation exports communicate staged progress, accessible completion co
   assert.match(deck, /this\.i18n\.t\("job\.progress\.downloading"\)/u);
   assert.match(deck, /aria-describedby=\$\{this\.#exportProgress\?`\$\{this\.#exportMenuId\}-status`:nothing\} aria-busy=\$\{String\(this\.#exporting\)\}/u);
   assert.match(deck, /#exportAbort\?:AbortController/u);
-  assert.match(deck, /override disconnectedCallback\(\)\{this\.#closeDeckPopovers\(\);this\.#exportAbort\?\.abort\(\)/u,"leaving the presentation closes native menus and cancels any unfinished export synchronously");
+  assert.match(deck, /override disconnectedCallback\(\)\{this\.#clearExportCompletion\(\);this\.#closeDeckPopovers\(\);this\.#exportAbort\?\.abort\(\)/u,"leaving the presentation clears its completion, closes native menus and cancels any unfinished export synchronously");
   assert.match(deck, /const result=await renderPresentationPdf\(items,presentation,options\)/u);
   const exportTree = ts.createSourceFile("presentation-deck.ts", deck, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const exportClass = exportTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "PresentationDeck");
@@ -244,23 +244,95 @@ let nativePresentationExportFixture;
 try { ({ nativePresentationExportFixture } = await import(exportFixtureModuleUrl.href)); }
 finally { exportFixtureHook.deregister(); }
 
-async function nativeExportFixture(t, locale) {
+// A separate module instance supplies only new completion-UI tests with an
+// explicitly finite PDF result. It never claims PDF capture, valid PDF bytes,
+// browser paint or export authorization; the real-converter fixture above stays
+// unchanged and all authorization/download/focus production methods still run.
+const finitePdfImport = 'import * as actualPdfExport from "../src/components/presentation-pdf-export.ts";';
+assert.equal(exportFixtureModule.split(finitePdfImport).length, 2);
+const finitePdfNamespace = `
+const finitePdfCalls = [];
+const actualPdfExport = { renderPresentationPdf(items, presentation, options) {
+  let settled = false, resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  const finish = (accepted, result) => {
+    if (settled) return; settled = true;
+    options.signal.removeEventListener("abort", abort);
+    if (accepted) resolve(result); else reject(result);
+  };
+  const abort = () => { const error = new Error("Finite PDF conversion canceled"); error.name = "AbortError"; finish(false, error); };
+  const call = { items, presentation, options, get settled() { return settled; },
+    complete: () => finish(true, { bytes: new TextEncoder().encode("FINITE PDF COMPLETION UI STIMULUS"), pageCount: items.length, filename: "finite-completion.pdf" }),
+    fail: error => finish(false, error) };
+  finitePdfCalls.push(call);
+  if (options.signal.aborted) abort(); else options.signal.addEventListener("abort", abort, { once: true });
+  return promise;
+} };
+`;
+let finitePdfFixtureModule = exportFixtureModule.replace(finitePdfImport, finitePdfNamespace);
+const finiteLocaleSeam = 'event.callback({ locale: f.locale, formatLocale: f.locale, direction: f.locale === "ar" ? "rtl" : "ltr", timeZone: "UTC", messages, revision: 0 }, () => {});';
+assert.equal(finitePdfFixtureModule.split(finiteLocaleSeam).length, 2);
+finitePdfFixtureModule = finitePdfFixtureModule.replace(finiteLocaleSeam,
+  'f.setCompletionLocale = locale => { f.locale = locale; event.callback({ locale, formatLocale: locale, direction: locale === "ar" ? "rtl" : "ltr", timeZone: "UTC", messages: { ...FORMA_DEFAULT_MESSAGES, ...localeCatalogs[locale] }, revision: 1 }, () => {}); }; ' + finiteLocaleSeam);
+// Only this finite module gets delivered ResizeObserver records and physical
+// computed padding. No CSS/layout measurement or production callback is mocked.
+const finiteReadingDefinitions = `
+const finiteReadingPorts = { observers: [], styles: new WeakMap(), frames: new Map(), sequence: 0 };
+class FiniteReadingResizeObserver {
+  constructor(callback) { this.callback = callback; this.fixture = activeFixture; this.targets = new Set(); finiteReadingPorts.observers.push(this); }
+  observe(target) { this.targets.add(target); }
+  disconnect() { this.targets.clear(); }
+}
+const finiteReadingStyle = node => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px",
+  paddingLeft: "0px", paddingRight: "0px", paddingTop: "0px", paddingBottom: "0px", ...finiteReadingPorts.styles.get(node) });
+const finiteReadingFrame = callback => { const id = ++finiteReadingPorts.sequence; finiteReadingPorts.frames.set(id, { callback, fixture: activeFixture }); return id; };
+const finiteReadingCancelFrame = id => finiteReadingPorts.frames.delete(id);
+`;
+const finiteReadingSeam = 'class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" })';
+assert.equal(finitePdfFixtureModule.split(finiteReadingSeam).length, 2);
+finitePdfFixtureModule = finiteReadingDefinitions + finitePdfFixtureModule.replace(finiteReadingSeam, "FiniteReadingResizeObserver, finiteReadingStyle");
+const finiteFrameParameters = '"matchMedia", "InputEvent", code)(';
+const finiteFrameArguments = '() => ({ matches: true }), class InputEvent {},';
+assert.equal(finitePdfFixtureModule.split(finiteFrameParameters).length, 2);
+assert.equal(finitePdfFixtureModule.split(finiteFrameArguments).length, 2);
+finitePdfFixtureModule = finitePdfFixtureModule.replace(finiteFrameParameters,
+  '"matchMedia", "InputEvent", "requestAnimationFrame", "cancelAnimationFrame", code)(').replace(finiteFrameArguments,
+  '() => ({ matches: true }), class InputEvent {}, finiteReadingFrame, finiteReadingCancelFrame,');
+finitePdfFixtureModule += "\nexport { finitePdfCalls, finiteReadingPorts };\n";
+const finitePdfFixtureModuleUrl = new URL(exportFixtureUrl);
+finitePdfFixtureModuleUrl.search = "?presentation-pdf-completion-status";
+const finitePdfFixtureHook = registerHooks({ load(url, context, next) {
+  return url === finitePdfFixtureModuleUrl.href ? { format: "module", source: finitePdfFixtureModule, shortCircuit: true } : next(url, context);
+} });
+let finitePdfFixture, finitePdfCalls, finiteReadingPorts;
+try { ({ nativePresentationExportFixture: finitePdfFixture, finitePdfCalls, finiteReadingPorts } = await import(finitePdfFixtureModuleUrl.href)); }
+finally { finitePdfFixtureHook.deregister(); }
+
+async function nativeExportFixture(t, locale, options = {}) {
   const forbiddenFetches = [];
   t.mock.method(globalThis, "fetch", async (...args) => {
     forbiddenFetches.push(args);
     assert.fail("No application or provider network is permitted in native export compatibility tests");
   });
-  const f = nativePresentationExportFixture("create", { artifact: true, locale });
+  const f = (options.factory ?? nativePresentationExportFixture)("create", { artifact: true, locale });
+  // This older Store port has no Signal subscription delivery. Model only its
+  // explicit subscribe/notify contract; no full Store or signal graph is claimed.
+  const subscriptions = new Set();
+  assert.equal(f.store.subscribe, undefined); assert.equal(f.store.notify, undefined);
+  f.store.subscribe = listener => { subscriptions.add(listener); return () => subscriptions.delete(listener); };
+  f.store.notify = () => subscriptions.forEach(listener => listener());
+  f.exportSubscriptionCount = () => subscriptions.size;
   t.after(() => {
     try { assert.equal(forbiddenFetches.length, 0, "caught converter errors cannot hide a forbidden fetch attempt"); }
     finally {
       for (const { instance } of f.renderer.instances.values()) if (instance.isConnected) { instance.isConnected = false; instance.disconnectedCallback(); }
       f.host.disconnectedCallback(); f.i18n.hostDisconnected();
+      assert.equal(subscriptions.size, 0, "all completed or canceled export subscriptions retire with their deck");
     }
   });
   const completed = f.state.events.find(event => event.type === "DocumentRenderCompleted");
-  const items = [{ id: "export-slide-a", title: "Exact audience title", body: "Exact audience evidence", notes: "Private presenter notes", image_prompt: "", context_group_ids: [] }];
-  completed.payload.artifact_kind = "slides"; completed.payload.items = items; completed.payload.item_count = 1;
+  const items = options.items ?? [{ id: "export-slide-a", title: "Exact audience title", body: "Exact audience evidence", notes: "Private presenter notes", image_prompt: "", context_group_ids: [] }];
+  completed.payload.artifact_kind = "slides"; completed.payload.items = items; completed.payload.item_count = items.length;
   f.state.content["content-A"] = JSON.stringify({ ...JSON.parse(f.state.content["content-A"]), items });
   assert.equal(await f.host.openArtifactById("artifact-A"), true); await f.flush();
   const deck = f.renderer.query(f.host, "forma-presentation-deck")[0];
@@ -660,4 +732,252 @@ for (const format of ["pdf", "powerpoint"]) test("native export completion " + f
   assert.equal(p.focusCalls.filter(call => call.node === p.original).length, callsBefore + 1);
   assert.equal(p.receipts.length, 0); assert.equal(p.downloads.length, 0); assert.equal(f.state.requests.length, 0);
   assert.deepEqual(f.state.events, originalEvents); assert.deepEqual(f.state.content, originalContent);
+});
+
+const finiteCompletionItems = [0, 1].map(index => ({ id: "finite-completion-slide-" + index,
+  title: "Retained completion slide " + (index + 1), body: "Exact retained audience evidence " + (index + 1),
+  notes: "Private completion fixture notes", image_prompt: "", context_group_ids: [] }));
+const finiteCompletionCopy = { en: "2-page PDF downloaded.", fr: "PDF de 2 pages téléchargé.",
+  ar: "تم تنزيل ملف PDF المكوّن من " + new Intl.NumberFormat("ar").format(2) + " صفحات.", ja: "2ページのPDFをダウンロードしました。" };
+
+async function finitePdfCompletionContext(t) {
+  const context = await nativeExportFixture(t, "en", { factory: finitePdfFixture, items: structuredClone(finiteCompletionItems) });
+  const p = exportCompletionPorts(t, context), { f, deck, trigger } = context;
+  const originalEvents = structuredClone(f.state.events), originalContent = structuredClone(f.state.content);
+  const begin = async () => {
+    const before = finitePdfCalls.length;
+    p.begin("pdf");
+    await p.waitFor(() => finitePdfCalls.length === before + 1, "the actual PDF handler reaches its declared finite converter");
+    assert.equal(f.exportSubscriptionCount(), 1);
+    return finitePdfCalls[before];
+  };
+  const settle = async () => {
+    await p.waitFor(() => !trigger()?.disabled, "the actual finalizer releases the Export button");
+    await new Promise(setImmediate); f.draw();
+  };
+  const complete = async () => {
+    const call = await begin(), before = p.receipts.length;
+    call.complete();
+    await p.waitFor(() => p.receipts.length === before + 1, "finite conversion still reaches the real export authorization call");
+    p.receipts[before].resolve(true); await settle();
+    assert.equal(call.settled, true);
+    return call;
+  };
+  const status = () => f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "completed");
+  const assertComplete = () => {
+    const row = status(); assert.ok(row, "the current deck owns the completed status inside its viewer");
+    assert.equal(row.attributes.role, "status"); assert.equal(row.attributes["aria-live"], "polite"); assert.equal(row.attributes["aria-atomic"], "true");
+    assert.equal(trigger().attributes["aria-describedby"], row.attributes.id);
+    assert.equal(trigger().disabled, false); assert.equal(String(trigger().attributes["aria-busy"]), "false");
+    const labels = f.renderer.ownNodes(deck, "span").filter(node => node.classList.contains("presentation-deck-export-status-label"));
+    assert.equal(labels.length, 1);
+    const start = deck.markup.indexOf(labels[0].full) + labels[0].full.length;
+    const label = deck.markup.slice(start, deck.markup.indexOf("</span>", start));
+    assert.equal(label, finiteCompletionCopy[f.i18n.locale]);
+    assert.equal(f.renderer.ownNodes(deck, "progress").length, 0, "completion is not ongoing work");
+    assert.equal(f.renderer.ownNodes(deck, "span").some(node => node.classList.contains("presentation-deck-export-status-count")), false);
+    assert.equal(f.renderer.ownNodes(deck, "button").some(node => node.classList.contains("presentation-deck-export-cancel") || node.classList.contains("presentation-deck-export-retry")), false);
+    assert.equal(f.trace.some(value => value.startsWith("toast:")), false, "the complete confirmation does not create a global overlay");
+    assert.equal(f.exportSubscriptionCount(), 1);
+    return label;
+  };
+  const assertRetired = () => {
+    assert.equal(status(), undefined, "a retired completion cannot describe the current deck");
+    assert.equal(f.exportSubscriptionCount(), 0, "retirement removes the exact completion subscription");
+  };
+  return { ...context, p, begin, complete, settle, status, assertComplete, assertRetired, originalEvents, originalContent };
+}
+
+test("finite PDF completion UI: localized confirmation survives normal slide navigation and locale changes", async t => {
+  const c = await finitePdfCompletionContext(t), { f, deck, p } = c;
+  await c.complete();
+  assert.equal(p.downloads.length, 1);
+  assert.equal(await p.downloads[0].blob.text(), "FINITE PDF COMPLETION UI STIMULUS", "this control explicitly does not supply captured PDF bytes");
+  assert.equal(p.receipts.length, 1); assert.equal(p.receipts[0].receipt.payload.page_count, 2);
+  assert.equal(p.owner.activeElement === p.original, true, "the existing successful focus return remains owned by Export");
+  const labels = [c.assertComplete()];
+  const next = f.renderer.ownNodes(deck, "button").find(node => node.attributes["aria-label"] === f.i18n.system("Next"));
+  assert.ok(next); assert.equal(next.disabled, false); next.click(); f.draw(); c.assertComplete();
+  const previous = f.renderer.ownNodes(deck, "button").find(node => node.attributes["aria-label"] === f.i18n.system("Previous"));
+  assert.ok(previous); assert.equal(previous.disabled, false); previous.click(); f.draw(); c.assertComplete();
+  const reading = f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-reading-toggle"));
+  assert.ok(reading); reading.click(); f.draw(); c.assertComplete();
+  for (const locale of ["fr", "ar", "ja"]) { f.setCompletionLocale(locale); f.draw(); labels.push(c.assertComplete()); }
+  assert.equal(new Set(labels).size, 4, "the retained numeric outcome is translated afresh for each current locale");
+  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+  assert.deepEqual(f.state.events, c.originalEvents); assert.deepEqual(f.state.content, c.originalContent);
+});
+
+for (const mode of ["source-aba", "authorization-aba", "route-aba", "content-aba", "revision", "document", "artifact", "disconnected"]) {
+  test("finite PDF completion UI: " + mode + " retires the completed owner without resurrection", async t => {
+    const c = await finitePdfCompletionContext(t), { f, deck, p } = c;
+    await c.complete(); c.assertComplete();
+    if (mode === "source-aba") { f.sourceOwnershipPort.retire(); f.store.notify(); f.sourceOwnershipPort.restore(); f.store.notify(); }
+    if (mode === "authorization-aba") { const original = f.state.authorization; f.state.authorization = "retired-completion-owner"; f.store.notify(); f.state.authorization = original; f.store.notify(); }
+    if (mode === "route-aba") { const original = f.store.route; f.store.route = { get: () => "/library?document=A" }; f.store.notify(); f.store.route = original; f.store.notify(); }
+    if (mode === "content-aba") { const original = f.state.content["content-A"]; f.state.content["content-A"] = original + " "; f.store.notify(); f.state.content["content-A"] = original; f.store.notify(); }
+    if (mode === "revision") { f.state.events.push({ ...f.state.events.at(-1), eventId: "completion-revision", sequence: f.state.events.length + 1,
+      type: "DocumentArtifactEdited", payload: { artifact_id: "artifact-A", document_id: "A", content_ref: "content-A", revision: 1 } }); f.store.notify(); }
+    if (mode === "document") deck.documentId = "B";
+    if (mode === "artifact") deck.preferenceKey = "another-artifact";
+    if (mode === "disconnected") {
+      const close = f.renderer.ownNodes(f.host, "button").find(node => node.attributes["aria-label"] === f.i18n.t("action.close", "Close"));
+      assert.ok(close); close.click();
+    }
+    f.draw(); c.assertRetired(); f.store.notify(); f.draw(); c.assertRetired();
+    if (mode === "disconnected") {
+      assert.equal(deck.isConnected, false);
+      assert.equal(await f.host.openArtifactById("artifact-A"), true); await f.flush();
+      const reopened = f.renderer.query(f.host, "forma-presentation-deck")[0]; assert.ok(reopened);
+      assert.equal(f.renderer.ownNodes(reopened, "section").some(node => node.attributes["data-export-stage"] === "completed"), false);
+    }
+    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+  });
+}
+
+for (const mode of ["source-generation", "source-content-aba"]) test("finite PDF completion UI: " + mode + " during pending authorization cannot publish a late confirmation", async t => {
+  const c = await finitePdfCompletionContext(t), { f, p } = c;
+  const call = await c.begin(); call.complete();
+  await p.waitFor(() => p.receipts.length === 1, "the PDF operation is pending at its actual authorization boundary");
+  if (mode === "source-generation") { f.sourceOwnershipPort.retire(); f.store.notify(); f.sourceOwnershipPort.restore(); f.store.notify(); }
+  else { const original = f.state.content["content-A"]; f.state.content["content-A"] = original + " "; f.store.notify(); f.state.content["content-A"] = original; f.store.notify(); }
+  assert.equal(f.exportSubscriptionCount(), 0);
+  p.receipts[0].resolve(true); await c.settle(); c.assertRetired();
+  assert.equal(p.downloads.length, 1, "notice retirement does not rewrite the existing authorized delivery semantics");
+  assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+});
+
+test("finite PDF completion UI: a new export replaces completion and focused Cancel clears its pending owner", async t => {
+  const c = await finitePdfCompletionContext(t), { f, deck, p } = c;
+  await c.complete(); c.assertComplete();
+  const call = await c.begin(); assert.equal(c.status(), undefined);
+  const cancel = f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-export-cancel"));
+  assert.ok(cancel); cancel.focus({ preventScroll: true }); cancel.click(); f.draw();
+  await c.settle(); c.assertRetired();
+  assert.equal(call.options.signal.aborted, true); assert.equal(call.settled, true);
+  assert.equal(p.owner.activeElement === p.original, true);
+  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+});
+
+test("finite PDF completion UI: refused release cannot publish a completed status", async t => {
+  const c = await finitePdfCompletionContext(t), { f, p } = c;
+  const call = await c.begin(); call.complete();
+  await p.waitFor(() => p.receipts.length === 1, "finite PDF conversion reaches release authorization");
+  p.receipts[0].resolve(false); await c.settle(); c.assertRetired();
+  assert.equal(p.downloads.length, 0); assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+});
+
+test("finite PDF completion UI: converter failure keeps the existing persistent recovery alert", async t => {
+  const errors = []; t.mock.method(console, "error", (...args) => errors.push(args));
+  const c = await finitePdfCompletionContext(t), { f, deck, p } = c;
+  const call = await c.begin(); call.fail(new Error("Declared finite PDF failure"));
+  await c.settle(); c.assertRetired();
+  const failed = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "failed");
+  assert.ok(failed); assert.equal(failed.attributes.role, "alert"); assert.equal(failed.attributes["aria-live"], "assertive");
+  assert.equal(f.renderer.ownNodes(deck, "button").filter(node => node.classList.contains("presentation-deck-export-retry")).length, 1);
+  assert.equal(errors.length, 1); assert.equal(p.downloads.length, 0); assert.equal(p.receipts.length, 0);
+  assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+});
+
+// Deliver declared content-box records to the actual registered Deck callback.
+// These dimensions model observer input; they are not browser geometry evidence.
+function finiteReadingContext(t, context) {
+  const { f, deck } = context;
+  const viewport = () => deck.querySelector(".presentation-deck-viewport");
+  const observer = () => {
+    const matches = finiteReadingPorts.observers.filter(value => value.fixture === f && value.targets.has(viewport()));
+    assert.equal(matches.length, 1, "the actual updated hook observes the current viewport exactly once");
+    return matches[0];
+  };
+  const frames = () => [...finiteReadingPorts.frames].filter(([, value]) => value.fixture === f);
+  const flush = () => {
+    for (const [id, value] of frames()) { finiteReadingPorts.frames.delete(id); value.callback(); }
+    f.draw();
+  };
+  const deliver = (width, height, padding = {}, target = viewport()) => {
+    finiteReadingPorts.styles.set(target, { paddingLeft: "0px", paddingRight: "0px", paddingTop: "0px", paddingBottom: "0px", ...padding });
+    // Rounded client metrics and transformed rects cannot define this callback's
+    // threshold; only the exact observer record and physical padding are inputs.
+    target.clientWidth = 1; target.clientHeight = 1;
+    observer().callback([{ target, contentRect: { width, height } }]);
+  };
+  const assertReading = reading => {
+    const stage = f.renderer.ownNodes(deck, "div").find(node => node.classList.contains("presentation-deck-stage"));
+    const toggle = f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-reading-toggle"));
+    assert.ok(stage && toggle);
+    assert.equal(stage.attributes["data-slide-posture"], reading ? "reading" : "visual");
+    assert.equal(String(toggle.attributes["aria-pressed"]), String(reading));
+    assert.equal(toggle.attributes["aria-label"], reading ? "Slide view" : "Read slide");
+    return toggle;
+  };
+  // The renderer already invokes updated after committing its declared nodes.
+  // An extra actual updated call must not register a duplicate observer.
+  deck.updated(); observer();
+  t.after(() => {
+    if (deck.isConnected) { deck.isConnected = false; deck.disconnectedCallback(); }
+    assert.equal(frames().length, 0, "disconnect cancels the exact pending posture frame");
+    for (const value of finiteReadingPorts.observers.filter(value => value.fixture === f)) assert.equal(value.targets.size, 0);
+  });
+  return { viewport, observer, frames, flush, deliver, assertReading };
+}
+
+test("finite PDF reading posture: a tall progress row can retire into a fitting completed slot without sticky reading", async t => {
+  const c = await finitePdfCompletionContext(t), { p } = c, posture = finiteReadingContext(t, c);
+  posture.deliver(800, 340); posture.flush(); posture.assertReading(false);
+  const call = await c.begin();
+  posture.deliver(800, 300); posture.flush(); posture.assertReading(true);
+  call.complete(); await p.waitFor(() => p.receipts.length === 1, "actual PDF authorization remains pending");
+  p.receipts[0].resolve(true); await c.settle(); c.assertComplete();
+  // Reading adds 16px on every side. The completed slot is 800x320 even
+  // though its delivered content-box height remains below 315.
+  posture.deliver(768, 288, { paddingLeft: "16px", paddingRight: "16px", paddingTop: "16px", paddingBottom: "16px" });
+  posture.flush(); posture.assertReading(false); c.assertComplete();
+  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1);
+});
+
+test("finite PDF reading posture: genuinely narrow and short padded slots retain automatic reading", async t => {
+  const c = await finitePdfCompletionContext(t), posture = finiteReadingContext(t, c);
+  const padding = { paddingLeft: "16px", paddingRight: "16px", paddingTop: "16px", paddingBottom: "16px" };
+  for (const [width, height] of [[527.75, 400], [700, 282.75]]) {
+    posture.deliver(width, height, padding); posture.flush(); posture.assertReading(true);
+  }
+  posture.deliver(700, 400, padding); posture.flush(); posture.assertReading(false);
+});
+
+test("finite PDF reading posture: fractional physical padding preserves strict 560 by 315 boundaries", async t => {
+  const c = await finitePdfCompletionContext(t), posture = finiteReadingContext(t, c);
+  const padding = { paddingLeft: "8.25px", paddingRight: "8.25px", paddingTop: "8.25px", paddingBottom: "8.25px" };
+  for (const [width, height, reading] of [[543.5, 298.5, false], [543.499, 298.5, true], [543.5, 298.499, true], [543.501, 298.501, false]]) {
+    posture.deliver(width, height, padding); posture.flush(); posture.assertReading(reading);
+  }
+});
+
+test("finite PDF reading posture: automatic resize preserves explicit Slide view and Read slide choices", async t => {
+  const c = await finitePdfCompletionContext(t), posture = finiteReadingContext(t, c);
+  posture.deliver(500, 300); posture.flush();
+  posture.assertReading(true).click(); await c.f.flush(); posture.assertReading(false);
+  posture.deliver(900, 500); posture.flush(); posture.assertReading(false);
+  posture.deliver(500, 300); posture.flush(); posture.assertReading(false);
+  posture.assertReading(false).click(); await c.f.flush(); posture.assertReading(true);
+  posture.deliver(900, 500); posture.flush(); posture.assertReading(true);
+});
+
+test("finite PDF reading posture: a retired viewport cannot alter the current target or queue a frame", async t => {
+  const c = await finitePdfCompletionContext(t), posture = finiteReadingContext(t, c);
+  posture.deliver(900, 500); posture.flush(); posture.assertReading(false);
+  const stale = posture.viewport(); c.f.draw();
+  assert.notEqual(posture.viewport(), stale, "this renderer explicitly replaces native node ports after a commit");
+  posture.deliver(300, 200, {}, stale);
+  assert.equal(posture.frames().length, 0); posture.flush(); posture.assertReading(false);
+  posture.deliver(300, 200); assert.equal(posture.frames().length, 1);
+  posture.flush(); posture.assertReading(true);
+});
+
+test("finite PDF reading posture: disconnect retires the actual observer and queued update", async t => {
+  const c = await finitePdfCompletionContext(t), posture = finiteReadingContext(t, c);
+  const observer = posture.observer();
+  posture.deliver(300, 200); assert.equal(posture.frames().length, 1);
+  c.deck.isConnected = false; c.deck.disconnectedCallback();
+  assert.equal(observer.targets.size, 0); assert.equal(posture.frames().length, 0);
 });

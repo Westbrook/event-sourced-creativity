@@ -2420,9 +2420,11 @@ forma-presentation-slide > .presentation-slide[data-presentation-artboard] { pos
 .presentation-slide.layout-cover .presentation-slide-body,.presentation-slide.layout-closing .presentation-slide-body { grid-template-columns: minmax(0,1fr); }
 .presentation-slide.layout-cover .presentation-slide-body > section,.presentation-slide.layout-closing .presentation-slide-body > section { z-index: 1; width: 50%; align-self: end; }
 .presentation-slide.layout-cover .presentation-slide-body > aside,.presentation-slide.layout-closing .presentation-slide-body > aside { position: absolute; z-index: -1; inset: 0 0 0 58%; opacity: .75; }
+.presentation-slide[data-presentation-artboard]:not(.compact):is(.layout-cover,.layout-closing).visual-hero-type .presentation-slide-body > aside { right: var(--presentation-safe-inline,40px); }
 .presentation-slide.layout-cover h3,.presentation-slide.layout-closing h3 { max-width: 14ch; font-size: clamp(1.2rem,6.6cqi,5rem); }
 .presentation-slide.layout-statement .presentation-slide-body { grid-template-columns: minmax(0,1fr); }
-.presentation-slide.layout-statement .presentation-slide-body > aside { max-height: 30%; place-items: end start; }
+.presentation-slide.layout-statement .presentation-slide-body > aside { max-height: 100%; place-items: end start; }
+.presentation-slide.layout-statement .presentation-visual-type strong { line-height: max(1.4,var(--forma-script-heading-line-height,1.4)); }
 .presentation-slide.layout-statement h3 { max-width: 22ch; }
 .presentation-slide.layout-columns .presentation-slide-body { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .presentation-slide.layout-metric .presentation-slide-body { grid-template-columns: minmax(0,.72fr) minmax(0,1.28fr); }
