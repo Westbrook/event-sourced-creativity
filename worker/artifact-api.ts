@@ -72,7 +72,7 @@ async function audioTrimSource(env: WorkerEnv, ownerId: string, url: string, exp
       bytes.set(next.value, offset); offset += next.value.byteLength;
     }
     return complete && await audioBytesSha256(bytes) === expectedHash ? bytes : null;
-  } finally { clearTimeout(timer); if (!complete) await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  } finally { clearTimeout(timer); if (!complete) void reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 const revisionHoldSql=(alias:string)=>`EXISTS(SELECT 1 FROM organization_retention_policies policy
     WHERE policy.organization_id=${alias}.organization_id AND policy.legal_hold=1)
