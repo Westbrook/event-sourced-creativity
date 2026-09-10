@@ -1,6 +1,9 @@
 import { outputNavigationMatches, type OutputNavigationReference, type OutputNavigationSection } from "../model/output-navigation";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { html, noChange, nothing, type PropertyValues } from "lit";
+import { createFilmCompositionDraft, isFilmCompositionDraftAsset, type FilmCompositionDraft } from "../model/film-composition-draft";
+import { renderOutputFilmComposer } from "./output-film-composer";
+import { filmCompositionMessage } from "./design-system/locales/film-composition-messages";
 import { repeat } from "lit/directives/repeat.js";
 import { FormaElement } from "./forma-element";
 import { copyInterfaceText } from "./design-system/clipboard";
@@ -89,6 +92,8 @@ export class FormaOutputRequirements extends FormaElement {
   #packageParts: string[] = [];
   #packageRelease: OutputReleaseCapture | null = null;
   #file: File | null = null;
+  #film: { draft: FilmCompositionDraft; targetId: string; current: () => boolean } | null = null;
+  #filmStaged: { file: File; current: () => boolean } | null = null;
   #rightsConfirmed = false;
   #uploadCommandId = "";
   #uploadRevision = "";
@@ -117,6 +122,7 @@ export class FormaOutputRequirements extends FormaElement {
       || this.store.sourceOwnershipActive(source)) return;
     // Retire private material, not this controller or its sole original operation owners.
     this.#clearRecipePresentation();
+    this.#clearFilmComposition(); this.#filmStaged = null;
     this.#viewEpoch += 1; this.#sourceRefreshEpoch += 1;
     this.#loading = false; this.#sourceRefreshing = false; this.#busy = "";
     this.#nativeViewEpoch += 1; this.#nativeRequestEpoch += 1; this.#nativeInspection = null;
@@ -146,6 +152,7 @@ export class FormaOutputRequirements extends FormaElement {
   override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.requestUpdate(); }
   override disconnectedCallback() {
     this.#clearRecipePresentation();
+    this.#clearFilmComposition(); this.#filmStaged = null;
     this.#viewEpoch += 1;
     this.#sourceRefreshEpoch += 1; this.#sourceRefreshing = false; this.#sourceRefreshScope = "";
     this.#nativeViewEpoch += 1; this.#nativeInspection = null; this.#lastNativeView = "";
@@ -190,6 +197,11 @@ export class FormaOutputRequirements extends FormaElement {
       this.#downloadUrls.clear();
     }
     const snapshot = this.#snapshot();
+    if (this.#film && !this.#film.current()) this.#clearFilmComposition();
+    if (this.#filmStaged && this.#busy !== "upload" && !this.#filmStaged.current()) {
+      if (this.#file === this.#filmStaged.file) { this.#file = null; this.#rightsConfirmed = false; }
+      this.#filmStaged = null; this.#notice = filmCompositionMessage(this.i18n.locale, "unavailable"); this.#noticeKind = "alert";
+    }
     // A successful command refreshes its cache through ready → refreshing → ready.
     if (this.#recipeDraft && !this.#viewCurrent(this.#recipeDraft.view)) this.#clearRecipePresentation();
     const recipeResource = this.store.outputRequirements.resource(this.documentId);
@@ -242,7 +254,7 @@ export class FormaOutputRequirements extends FormaElement {
   }
   #openPlan(opener: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) {
     const snapshot = this.#snapshot();
-    if (!snapshot || !snapshot.permissions.canAuthor || this.inspectionOnly) return;
+    if (!snapshot || !snapshot.permissions.canAuthor || this.inspectionOnly || this.#film) return;
     this.#observePlanning(snapshot);
     if (!this.#reviewPlan) this.#planOpener = { element: opener, viewKey: this.#planViewKey() };
     this.#reviewPlan = true; this.requestUpdate();
@@ -348,7 +360,7 @@ export class FormaOutputRequirements extends FormaElement {
     } finally { focus.dispose(); }
   }
   #recipeExistingWork() {
-    return Boolean(this.#recipeDraft || this.#busy || this.#unresolvedWrite()
+    return Boolean(this.#film || this.#recipeDraft || this.#busy || this.#unresolvedWrite()
       || this.#reviewPlan || this.#planning?.dirty || this.#file || this.#uncertainCommand || this.#preflight || this.#preflightIntent
       || this.ownerDocument.querySelector("dialog[open], .output-plan-review")
       || [...this.ownerDocument.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")].some(card => card.hasOpenDraft));
@@ -607,7 +619,7 @@ export class FormaOutputRequirements extends FormaElement {
   #writeNotAttempted() { this.#announce(this.#message("output_client_write_not_attempted")); }
   /** Local work only. A false value is not current Source, read, route, or authoring permission. */
   get navigationBlocked(): boolean {
-    return Boolean(!this.isConnected || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
+    return Boolean(!this.isConnected || this.#film || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
       || this.#uncertainCommand || this.#unresolvedWrite() || this.#preflight || this.#preflightIntent || this.#removeId
       || this.#recipeDraft || this.#recipeId || this.#recipeText || this.#recipeChoices.size || this.#recipeIncoming || this.#recipeComposing
       || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")]
@@ -615,7 +627,7 @@ export class FormaOutputRequirements extends FormaElement {
   }
   /** Departure protects local edits/in-flight work, not settled original metadata alone. */
   get commandDepartureBlocked():boolean {
-    return Boolean(!this.isConnected || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
+    return Boolean(!this.isConnected || this.#film || this.#busy || this.#reviewPlan || this.#planning?.dirty || this.#file
       || this.#unresolvedWrite()?.status === "pending" || this.#preflight || this.#preflightIntent || this.#removeId
       || this.#recipeDraft || this.#recipeId || this.#recipeText || this.#recipeChoices.size || this.#recipeIncoming || this.#recipeComposing
       || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")]
@@ -1148,9 +1160,139 @@ export class FormaOutputRequirements extends FormaElement {
     if (response) { this.#announce(this.#t("started", "The existing operations were queued. Repeating this action recovers the same operations.")); await this.store.syncDocumentJobs(); }
   }
 
+  #clearFilmComposition() { this.#film?.draft.retire(); this.#film = null; }
+  #filmSeconds(snapshot: OutputRequirementsSnapshot, target: OutputPlanTarget): number | null {
+    const row = snapshot.requirements.find(entry => entry.spec?.id === target.requirement_id);
+    if (row?.spec?.value_origins?.recipe_template?.text !== "forma-recipe:film-continuity@1"
+      || target.deliverable_id !== `${target.requirement_id}:composed-film` || target.media_kind !== "video") return null;
+    const policy = target.count_policy ?? target.content_quantity;
+    return policy?.kind === "exact" && policy.unit === "second" && Number.isFinite(policy.value) && policy.value > 0 ? policy.value : null;
+  }
+  #filmOtherWork() {
+    return Boolean(this.#busy || this.#loading || this.#sourceRefreshing || this.#reviewPlan || this.#planning?.dirty || this.#file
+      || this.#uncertainCommand || this.#unresolvedWrite() || this.#preflight || this.#preflightIntent || this.#removeId
+      || this.#uploadSourceRetired && !this.#uploadReceipt
+      || this.#recipeDraft || this.#recipeId || this.#recipeText || this.#recipeChoices.size || this.#recipeIncoming || this.#recipeComposing
+      || this.ownerDocument.querySelector("dialog[open]")
+      || [...this.querySelectorAll<FormaOutputRequirementCard>("forma-output-requirement-card")].some(card => card.isConnected && card.hasOpenDraft));
+  }
+  #filmContext(targetId: string): string | null {
+    const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
+    const target = snapshot?.confirmedPlan?.plan.targets.find(entry => entry.id === targetId);
+    const projection = this.store.projection.get();
+    if (!this.#viewCurrent(this.#captureView()) || this.blockId || this.inspectionOnly || this.surface === "project"
+      || projection.documentId !== this.documentId || !projection.documents.some(document => document.id === this.documentId && document.projectId === projection.projectId && !document.removed)
+      || resource.state !== "ready" || resource.accessLost || resource.privateUnavailable || !snapshot || !target
+      || snapshot.documentId !== this.documentId || snapshot.projectId !== projection.projectId
+      || !snapshot.permissions.canAuthor || !snapshot.permissions.canDownload || !snapshot.capabilities.ownedFileAdoption
+      || !outputDeliveryReadiness(snapshot).allowed || target.blocking_issues.length || this.#filmSeconds(snapshot, target) === null) return null;
+    return JSON.stringify([this.store.route.get(), this.surface, this.blockId, this.inspectionOnly, resource.privateRevision,
+      snapshot.documentId, snapshot.projectId, snapshot.scope, snapshot.revision, snapshot.sourceRevision, snapshot.requirementRevision,
+      snapshot.confirmedPlan!.revisionId, snapshot.confirmedPlan!.targetContractDigests[targetId], target,
+      snapshot.permissions, snapshot.capabilities.ownedFileAdoption, snapshot.assets]);
+  }
+  #filmElement(targetId: string, selector: string, clipId?: string): HTMLElement | null {
+    return [...this.querySelectorAll<HTMLElement>(selector)].find(element => (element.dataset.filmTarget === targetId
+      || element.closest<HTMLElement>("[data-film-target]")?.dataset.filmTarget === targetId)
+      && (!clipId || element.closest<HTMLElement>("[data-film-clip]")?.dataset.filmClip === clipId)) ?? null;
+  }
+  async #openFilm(targetId: string) {
+    if (this.#film || this.#filmOtherWork()) return;
+    const context = this.#filmContext(targetId), snapshot = this.#snapshot();
+    const target = snapshot?.confirmedPlan?.plan.targets.find(entry => entry.id === targetId);
+    if (!context || !snapshot || !target) return;
+    const view = this.#captureView();
+    const current = () => Boolean(this.#viewCurrent(view) && !this.#filmOtherWork() && this.#filmContext(targetId) === context);
+    const draftContext = { documentId: this.documentId, targetId, sourceRevision: snapshot.sourceRevision,
+      contractKey: snapshot.confirmedPlan!.targetContractDigests[targetId], durationSeconds: this.#filmSeconds(snapshot, target)! };
+    const draft = createFilmCompositionDraft({ context: draftContext,
+      ready: true, assets: snapshot.assets.filter(asset => isFilmCompositionDraftAsset(asset, draftContext)), current, download: async (asset, signal) => {
+        if (!current() || signal.aborted) return null;
+        const result = await this.store.outputRequirements.download(view.documentId, asset.downloadUrl, { signal });
+        return current() && !signal.aborted && result.status === "saved" ? result.body?.blob ?? null : null;
+      } });
+    if (!draft) return;
+    const focus = captureOutputNavigationFocus(this.ownerDocument);
+    this.#film = { draft, targetId, current: () => this.#film?.draft === draft && current() }; this.requestUpdate();
+    try {
+      await this.updateComplete;
+      const choice = this.#filmElement(targetId, "[data-film-choice]");
+      const select = choice && !(choice as HTMLSelectElement).disabled ? choice : this.#filmElement(targetId, "[data-film-heading]");
+      if (this.#film?.draft === draft && current() && select) focus.run(select, () => { select.focus(); return true; });
+    } finally { focus.dispose(); }
+  }
+  async #editFilm(action: () => void, returnSelector?: string, clipId?: string) {
+    const owned = this.#film;
+    if (!owned?.current()) return;
+    const focus = returnSelector ? captureOutputNavigationFocus(this.ownerDocument) : null;
+    action(); this.requestUpdate();
+    try {
+      if (!returnSelector) return;
+      await this.updateComplete;
+      const requested = this.#filmElement(owned.targetId, returnSelector, clipId);
+      const target = requested && !(requested as HTMLButtonElement).disabled ? requested : this.#filmElement(owned.targetId, "[data-film-rights]");
+      if (this.#film === owned && owned.current() && target && !(target as HTMLButtonElement).disabled) focus?.run(target, () => { target.focus(); return true; });
+    } finally { focus?.dispose(); }
+  }
+  async #discardFilm() {
+    const owned = this.#film;
+    if (!owned) return;
+    const focus = captureOutputNavigationFocus(this.ownerDocument), view = this.#captureView(), route = this.store.route.get();
+    this.#clearFilmComposition(); this.requestUpdate();
+    try {
+      await this.updateComplete;
+      const target = this.#filmElement(owned.targetId, "[data-film-open]");
+      if (this.#viewCurrent(view) && this.store.route.get() === route && !this.#film && target) focus.run(target, () => { target.focus(); return true; });
+    } finally { focus.dispose(); }
+  }
+  async #composeFilm() {
+    const owned = this.#film;
+    if (!owned?.current() || owned.draft.snapshot().status === "preparing") return;
+    const view = this.#captureView(), route = this.store.route.get(), context = this.#filmContext(owned.targetId);
+    const focus = captureOutputNavigationFocus(this.ownerDocument);
+    try {
+      const pending = owned.draft.prepare(); this.requestUpdate();
+      const result = await pending;
+      if (result.status !== "prepared" || !result.current() || !owned.current()) return;
+      const file = new File([result.film.bytes as BlobPart], "composed-film.mp4", { type: "video/mp4" });
+      if (!result.current() || !owned.current()) return;
+      const mutationId = crypto.randomUUID();
+      this.#file = file; this.#rightsConfirmed = false;
+      this.#filmStaged = { file, current: () => this.#viewCurrent(view) && this.#filmContext(owned.targetId) === context }; this.#uploadCommandId = mutationId;
+      this.#uploadRevision = this.#snapshot()!.revision; this.#uploadSourceRetired = false; this.#uploadReceipt = null; this.#uploadFailure = null;
+      this.querySelector<HTMLInputElement>('input[type="file"]')?.form?.reset();
+      this.#clearFilmComposition();
+      this.#announce(filmCompositionMessage(this.i18n.locale, "prepared"));
+      await this.updateComplete;
+      const target = this.querySelector<HTMLElement>('.output-file-upload input[type="checkbox"]');
+      if (this.#viewCurrent(view) && this.store.route.get() === route && this.#filmContext(owned.targetId) === context
+        && this.#file === file && this.#uploadCommandId === mutationId && target) focus.run(target, () => { target.focus(); return true; });
+    } catch {
+      if (this.#film === owned && owned.current()) this.#announce(filmCompositionMessage(this.i18n.locale, "unavailable"), true);
+    } finally { focus.dispose(); if (this.#viewCurrent(view)) this.requestUpdate(); }
+  }
+  #filmComposer(snapshot: OutputRequirementsSnapshot, target: OutputPlanTarget) {
+    const seconds = this.#filmSeconds(snapshot, target);
+    if (seconds === null) return nothing;
+    const owned = this.#film;
+    if (!owned || owned.targetId !== target.id) return html`<button type="button" class="button secondary compact" data-film-open data-film-target=${target.id}
+      aria-label=${this.#controlName(filmCompositionMessage(this.i18n.locale, "open"), this.#targetContext(snapshot, target))}
+      ?disabled=${Boolean(owned) || this.#filmOtherWork() || !this.#filmContext(target.id)} @click=${() => this.#openFilm(target.id)}>${filmCompositionMessage(this.i18n.locale, "open")}</button>`;
+    if (!owned.current()) return nothing;
+    return renderOutputFilmComposer({ targetId: target.id, targetLabel: target.label, locale: this.i18n.locale,
+      durationLabel: filmCompositionMessage(this.i18n.locale, "duration", { seconds: this.i18n.number(seconds) }), draft: owned.draft.snapshot(),
+      controlName: label => this.#controlName(label, this.#targetContext(snapshot, target)),
+      add: id => { void this.#editFilm(() => owned.draft.add(id), "[data-film-choice]"); },
+      move: (id, offset) => { void this.#editFilm(() => owned.draft.move(id, offset), offset < 0 ? '[data-film-move="earlier"]' : '[data-film-move="later"]', id); },
+      remove: id => { void this.#editFilm(() => owned.draft.remove(id), "[data-film-choice]"); },
+      rights: checked => { void this.#editFilm(() => owned.draft.setRightsConfirmed(checked)); },
+      compose: () => this.#composeFilm(), cancel: () => this.#discardFilm() });
+  }
+
   #setFile(event: Event) {
     if (!this.store.sourceOwnershipActive(this.store.captureSourceOwnership()) || this.#uploadSourceRetired && !this.#uploadReceipt) return;
     if (this.#unresolvedWrite()?.sourceRetired) { this.#writeNotAttempted(); return; }
+    this.#clearFilmComposition(); this.#filmStaged = null;
     this.#uploadSourceRetired = false; this.#uploadReceipt = null;
     this.#file = (event.target as HTMLInputElement).files?.[0] ?? null;
     this.#uploadFailure = null;
@@ -1165,6 +1307,8 @@ export class FormaOutputRequirements extends FormaElement {
     if (!this.#file || !this.#rightsConfirmed || this.#busy || outputUploadNeedsRestage(this.#uploadFailure) || resource.state !== "ready" || !resource.snapshot?.permissions.canAuthor || !resource.snapshot.capabilities.ownedFileAdoption) return;
     const gate = outputSourceReadiness(resource.snapshot);
     if (!gate.allowed) { this.#announce(this.#readinessMessage(gate), true); return; }
+    const stagedFilm = this.#filmStaged;
+    if (stagedFilm?.file === this.#file && !stagedFilm.current()) { this.#announce(filmCompositionMessage(this.i18n.locale, "unavailable"), true); return; }
     const view = this.#captureView(), route = this.store.route.get(), file = this.#file, mutationId = this.#uploadCommandId;
     if (!this.#viewCurrent(view) || this.#uploadSourceRetired) return;
     const original = this.#unresolvedWrite();
@@ -1172,7 +1316,8 @@ export class FormaOutputRequirements extends FormaElement {
     this.#busy = "upload"; this.requestUpdate();
     try {
       const result = await this.store.uploadOutputAsset(view.documentId, file, this.#uploadRevision, mutationId, true, {
-        current: () => this.#viewCurrent(view) && this.store.route.get() === route && this.#file === file && this.#uploadCommandId === mutationId && this.#rightsConfirmed,
+        current: () => this.#viewCurrent(view) && this.store.route.get() === route && this.#file === file && this.#uploadCommandId === mutationId && this.#rightsConfirmed
+          && (!stagedFilm || stagedFilm.file !== file || stagedFilm.current()),
       });
       if (!this.#viewCurrent(view)) {
         const receipt = this.#originalAcknowledgment(view, result, mutationId, "adopt");
@@ -1183,6 +1328,7 @@ export class FormaOutputRequirements extends FormaElement {
       const sameSelection = this.#file === file && this.#uploadCommandId === mutationId;
       if (result.status === "saved") {
         if (sameSelection) {
+          if (this.#filmStaged?.file === file) this.#filmStaged = null;
           this.#file = null; this.#rightsConfirmed = false; this.#uploadFailure = null;
           this.querySelector<HTMLInputElement>('.output-file-upload input[type="file"]')?.form?.reset();
         }
@@ -1200,12 +1346,14 @@ export class FormaOutputRequirements extends FormaElement {
   }
 
   async #restageUpload() {
+    if (this.#filmStaged?.file === this.#file && !this.#filmStaged.current()) { this.#announce(filmCompositionMessage(this.i18n.locale, "unavailable"), true); return; }
     if (!this.#file || !outputUploadNeedsRestage(this.#uploadFailure) || this.#busy) return;
     const view = this.#captureView(), file = this.#file, mutationId = this.#uploadCommandId, failure = this.#uploadFailure;
     this.#busy = "restage-upload"; this.requestUpdate();
     try {
       const resource = await this.store.outputRequirements.ensure(view.documentId, { force: true });
       if (!this.#viewCurrent(view) || this.#file !== file || this.#uploadCommandId !== mutationId) return;
+      if (this.#filmStaged?.file === file && !this.#filmStaged.current()) { this.#announce(filmCompositionMessage(this.i18n.locale, "unavailable"), true); return; }
       const snapshot = resource.snapshot;
       if (resource.state !== "ready" || !snapshot) {
         this.#announce(this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues), true); return;
@@ -1898,6 +2046,7 @@ export class FormaOutputRequirements extends FormaElement {
           <label>${this.#t("chooseNativeResult", "Completed native result")}<select aria-label=${this.#controlName(this.#t("chooseNativeResult", "Completed native result"), this.#targetContext(snapshot, target))} name="nativeJobId" required ?disabled=${blocked}><option value="">${this.#t("chooseNativePlaceholder", "Choose a completed attempt")}</option>${native.map(({ job }, index) => html`<option value=${job.jobId}>${this.#t("completedAttempt", "Completed attempt {attempt} · {date}", { attempt: index + 1, date: this.#when(job.completedAt ?? job.updatedAt) })}</option>`)}</select></label>
           <button aria-label=${this.#controlName(this.#t("checkNativeResult", "Match and check completed result · no generation"), this.#targetContext(snapshot, target))} type="submit" class="button secondary compact" ?disabled=${blocked}>${this.#t("checkNativeResult", "Match and check completed result · no generation")}</button>
         </form>` : html`<p>${this.#t("noCompletedNative", "No completed native result for this target and plan is available to match. Failed drafts cannot be adopted from the generation history.")}</p>`}
+        ${this.#filmComposer(snapshot, target)}
         <form class="output-bind-form" @submit=${(event: SubmitEvent) => this.#bind(event, target)}><label>${this.#t("matchFile", "Match an inspected file to this target")}<select aria-label=${this.#controlName(this.#t("matchFile", "Match an inspected file to this target"), this.#targetContext(snapshot, target))} name="assetId" required ?disabled=${blocked || !assets.length}><option value="">${this.#t("chooseFile", "Choose a file")}</option>${assets.map((asset, index) => html`<option value=${asset.id}>${this.#t("contextFile", "File {number}: {name}", { number: this.i18n.number(index + 1), name: this.#isolate(asset.name) })}</option>`)}</select></label><button aria-label=${this.#controlName(this.#t("checkFile", "Check file against target"), this.#targetContext(snapshot, target))} type="submit" class="button secondary compact" ?disabled=${blocked || !assets.length}>${this.#t("checkFile", "Check file against target")}</button></form>
         ${!assets.length ? html`<p>${this.#t("uploadBeforeMatch", "Upload a supported file you have rights to use in the owned-file section. Matching it never starts paid generation.")}</p>` : nothing}
         ${reusable.length ? html`<section class="output-reuse-acceptance"><h5>${this.#t("reusePriorReview", "Reuse an earlier acceptance")}</h5><p>${this.#t("reusePriorReviewCaveat", "This is a separate decision to include a previously accepted exact file in the current plan. The server rechecks its source, contract, bytes, rights, and approval; it does not create a new approval.")}</p>${reusable.map((result) => html`<p><span dir="auto">${snapshot.assets.find((asset) => asset.id === result.assetId)?.name ?? this.#t("file", "File")}</span> <button aria-label=${this.#controlName(this.#t("reuseExactAcceptance", "Verify and reuse this exact acceptance"), this.#resultContext(snapshot, result))} type="button" class="button secondary compact" ?disabled=${blocked} @click=${() => this.#reuseAcceptance(result.acceptanceId!, target)}>${this.#t("reuseExactAcceptance", "Verify and reuse this exact acceptance")}</button></p>`)}</section>` : nothing}
