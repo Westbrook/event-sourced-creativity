@@ -6191,4 +6191,9 @@ Object.assign(messages, {
   "system.auto.s14phq.151": "The host owns private access and Save. This leaf only displays verified PCM bytes and creates an explicitly requested local preview of its exact range.",
 });
 
+Object.assign(messages, {
+  "system.auto.1s1bf0d.46": "Model3d geometry editor application interface.",
+  "system.auto.10kzqe5.142": "Application-connected model3d geometry editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+});
+
 export default messages;
