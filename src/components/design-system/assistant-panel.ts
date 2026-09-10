@@ -687,6 +687,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > p.output-requirement-note:first-child + p:not([class])',
         '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card .output-requirement-card > form.output-requirement-form > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
+        '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card > .output-requirement-card > form.output-requirement-form > footer.output-requirement-form-footer > p',
       ]],
       ['.application-loading[role="status"]', [":scope > div > :is(b,p)"]],
       ["forma-document-generations", [

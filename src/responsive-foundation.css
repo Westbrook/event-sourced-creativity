@@ -2118,6 +2118,10 @@ forma-activity-issue-panel {
   inline-size: 100%;
 }
 
+.forma-deliver-card--visual > .forma-deliver-preview {
+  position: relative;
+}
+
 .forma-deliver-copy {
   padding-inline: .25rem;
 }

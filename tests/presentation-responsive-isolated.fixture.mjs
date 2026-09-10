@@ -8,7 +8,7 @@ import { classifyTestRequest } from "./browser/helpers/read-only-network.mjs";
  */
 export async function mountIsolatedPresentation({ surface, root, items, presentation, event, documentId, projectId }) {
   const parameters = new URLSearchParams(location.search);
-  if (!["shared", "document", "canvas", "library"].includes(surface)
+  if (!["shared", "document", "canvas", "library", "deliver"].includes(surface)
     || [...parameters.keys()].some(key => !["isolated", "locale"].includes(key))
     || items.length !== 2 || !root || root.children.length) throw new Error("Invalid isolated renderer fixture entry");
   const artifactId = "responsive-shared-artifact", canvasId = "board-a";
@@ -21,6 +21,16 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
     content_ref: null, item_count: items.length, items: structuredClone(items), presentation: structuredClone(presentation),
     provider: "fixture", model_id: "fixture", latency_ms: 0, source_surface: "responsive-fixture", requested_by_user_id: "fixture",
   } });
+  if (surface === "deliver") for (const [index, color] of ["#3854a5", "#a56f38"].entries()) {
+    // Nonrepresentational calibration images, not generated or private media.
+    const media = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240"><rect width="400" height="240" fill="${color}"/></svg>`)}`;
+    seed.push({ ...event, eventId: `fixture-deliver-image-${index}`, sequence: 5 + index, type: "GenerationCompleted", payload: {
+      project_id: projectId, document_id: documentId, object_ids: [`fixture-deliver-image-${index}`],
+      title: `Calibration image ${index + 1}`, generation_id: `fixture-generation-${index}`, provider: "fixture",
+      model_id: "fixture", media_url: media, media_type: "image/svg+xml", image_width: 400, image_height: 240,
+      focal_point: { x: .5, y: .5, confidence: 1, method: "saliency-grid-v1", sampleWidth: 1, sampleHeight: 1 },
+    } });
+  }
   if (surface === "canvas") seed.push(
     { ...event, eventId: "fixture-board-a", sequence: 5, type: "CanvasCreated",
       payload: { project_id: projectId, canvas_id: canvasId, name: "Board A", slug: "board-a" } },
@@ -75,11 +85,25 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
         return response({ documentId, jobs: [] });
       }
       const head = seed.at(-1).sequence;
-      if (surface === "canvas" && url.pathname === "/api/events" && !url.hash
+      if (["canvas", "deliver"].includes(surface) && url.pathname === "/api/events" && !url.hash
         && [`?after=${head}&limit=5000&content=0`, "?after=0&limit=5000&content=1"].includes(url.search)) {
         const after = Number(url.searchParams.get("after"));
-        reads.push({ ...receipt, fixture: "declared-canvas-event-read", after, head, status: 200 });
+        reads.push({ ...receipt, fixture: surface === "deliver" ? "declared-deliver-event-read" : "declared-canvas-event-read", after, head, status: 200 });
         return response({ events: seed.filter(item => item.sequence > after), content: {}, head, nextAfter: head, hasMore: false });
+      }
+      if (surface === "deliver" && url.pathname === "/api/output-requirements"
+        && url.search === `?documentId=${encodeURIComponent(documentId)}` && !url.hash) {
+        reads.push({ ...receipt, fixture: "declared-empty-delivery-read", status: 200 });
+        return response({ schemaVersion: 1, documentId, projectId,
+          scope: { kind: "personal", organizationId: null, projectAccessId: null, actorUserId: "fixture" },
+          revision: "fixture-delivery", requirementRevision: "fixture-requirements", sourceRevision: "fixture-source",
+          sourceVerification: { status: "unavailable", reasonCodes: ["synthetic_source_not_verified"],
+            capacity: { referenceCount: 0, distinctObjectCount: 0, countsComplete: false, ownedReadLimit: 0, nativeLimit: 0, sources: [], sourcesComplete: false } },
+          requirements: [], confirmedPlan: null, targetStates: [], summary: null, requirementSummaries: {}, requirementFileCounts: {},
+          assets: [], results: [], grants: [], scopeAmendments: [],
+          permissions: { canAuthor: false, canRequest: false, canReview: false, canDownload: false, independentReview: true },
+          capabilities: { nativeGeneration: false, ownedFileAdoption: false, supportedFileExtensions: [],
+            limitations: ["Synthetic renderer only"], limitationCodes: [] } });
       }
     }
     forbidden.push(receipt);
@@ -91,6 +115,7 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
   store.loading.set(false);
   if (surface === "canvas") store.route.set(`/canvas/${canvasId}/board-a`);
   if (surface === "library") store.route.set(`/library?document=${documentId}`);
+  if (surface === "deliver") store.route.set(`/deliver?document=${documentId}`);
   const source = surface === "shared" ? null : store.captureSourceOwnership();
   if (surface !== "shared" && !store.sourceOwnershipActive(source)) throw new Error("Synthetic source was not admitted by the real Store");
   let host, owner;
@@ -100,6 +125,9 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
   } else if (surface === "library") {
     await import("/src/components/forma-library.ts");
     host = document.createElement("forma-library");
+  } else if (surface === "deliver") {
+    await import("/src/components/forma-deliver.ts");
+    host = document.createElement("forma-deliver");
   } else if (surface === "document") {
     await import("/src/components/document-artifacts.ts");
     host = document.createElement("forma-document-artifacts"); host.documentId = documentId;
@@ -125,7 +153,8 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
       sourceActive: surface === "shared" ? null : store.sourceOwnershipActive(source),
       custody: { route: store.route.get(), session: store.session.get(), events: store.events.get(),
         optimisticEvents: store.optimisticEvents.get(), content: store.content.get(), head: store.head.get(),
-        artifacts: store.projection.get().libraryArtifacts, jobs: store.documentJobs.get() },
+        artifacts: store.projection.get().libraryArtifacts, jobs: store.documentJobs.get(),
+        ...(surface === "deliver" ? { outputs: store.projection.get().libraryOutputs } : {}) },
       authoredItems: items, reads, suppressedTelemetry, forbidden,
       limits: ["Synthetic data and declared read responses; not real account, authorization, share or provider evidence.",
         "Actual Canvas may use fresh-profile IndexedDB and localStorage; no claim of zero browser-local writes.",
