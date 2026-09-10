@@ -2111,6 +2111,12 @@ dialog.document-artifact-view[data-output-focus="false"] > .document-artifact-re
 .artifact-viewer-details > summary { display: flex; min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; cursor: pointer; font-weight: 600; }
 .artifact-viewer-details > div { display: grid; gap: .35rem; padding-block-end: .7rem; }
 .artifact-viewer-details > div > p { overflow-wrap: anywhere; }
+/* Slides evidence is secondary, after content, in the existing native popover system. */
+dialog.document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer { flex-wrap: wrap; }
+dialog.document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > forma-ui-popover { min-inline-size: 0; max-inline-size: 100%; }
+dialog.document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > .artifact-viewer-evidence-popover > .ui-popover > .ui-popover-trigger { max-inline-size: 100%; min-block-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); white-space: normal; overflow-wrap: anywhere; }
+dialog.document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-evidence-popover .artifact-viewer-details { min-inline-size: 0; }
+dialog.document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-evidence-popover .artifact-viewer-details > div { padding: var(--forma-focus-clearance,.5rem); }
 .document-artifact-reader-actions { gap: .35rem; }
 .document-artifact-reader-actions > .icon-button { min-inline-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); min-block-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); }
 .artifact-viewer-review-toggle { min-block-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); }
@@ -2243,6 +2249,7 @@ forma-video-reference-preflight { display: block; min-width: 0; }
 forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck { min-width: 0; background: var(--panel-2); }
 .presentation-deck:focus-visible { outline: var(--forma-focus-ring-width,.1875rem) solid var(--forma-focus-ring-color,var(--accent)); outline-offset: -.125rem; }
+dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-stage:focus-visible { outline: var(--forma-focus-ring-width,.1875rem) solid var(--forma-focus-ring-color,var(--accent)); outline-offset: calc(-1 * var(--forma-focus-ring-width,.1875rem)); }
 .presentation-deck-toolbar { position: sticky; z-index: 3; inset-block-start: 0; display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem var(--page-gutter); border-block-end: 1px solid var(--line); background: color-mix(in srgb,var(--paper) 94%,transparent); backdrop-filter: blur(12px); }
 .presentation-deck-toolbar > div { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; }
 .presentation-deck-toolbar > div:first-child { flex-wrap: wrap; }

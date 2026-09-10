@@ -8,7 +8,7 @@ import { classifyTestRequest } from "./browser/helpers/read-only-network.mjs";
  */
 export async function mountIsolatedPresentation({ surface, root, items, presentation, event, documentId, projectId }) {
   const parameters = new URLSearchParams(location.search);
-  if (!["shared", "document", "canvas"].includes(surface)
+  if (!["shared", "document", "canvas", "library"].includes(surface)
     || [...parameters.keys()].some(key => !["isolated", "locale"].includes(key))
     || items.length !== 2 || !root || root.children.length) throw new Error("Invalid isolated renderer fixture entry");
   const artifactId = "responsive-shared-artifact", canvasId = "board-a";
@@ -69,7 +69,7 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
           blocks: [], outputs: [], artifacts: [artifact] }, share: { expiresAt: "2030-01-01T00:00:00.000Z" } });
       }
       // The real gallery discovers actor-private preserved drafts on its first update.
-      if (surface === "document" && url.pathname === "/api/document-jobs/presentation-candidates"
+      if (["document", "library"].includes(surface) && url.pathname === "/api/document-jobs/presentation-candidates"
         && url.search === `?document=${encodeURIComponent(documentId)}` && !url.hash) {
         reads.push({ ...receipt, fixture: "declared-empty-preserved-candidate-read", documentId, status: 200 });
         return response({ documentId, jobs: [] });
@@ -90,12 +90,16 @@ export async function mountIsolatedPresentation({ surface, root, items, presenta
   store.head.set(seed.at(-1).sequence);
   store.loading.set(false);
   if (surface === "canvas") store.route.set(`/canvas/${canvasId}/board-a`);
+  if (surface === "library") store.route.set(`/library?document=${documentId}`);
   const source = surface === "shared" ? null : store.captureSourceOwnership();
   if (surface !== "shared" && !store.sourceOwnershipActive(source)) throw new Error("Synthetic source was not admitted by the real Store");
   let host, owner;
   if (surface === "shared") {
     await import("/src/components/forma-shared-view.ts");
     host = document.createElement("forma-shared-view"); host.token = "responsive-fixture";
+  } else if (surface === "library") {
+    await import("/src/components/forma-library.ts");
+    host = document.createElement("forma-library");
   } else if (surface === "document") {
     await import("/src/components/document-artifacts.ts");
     host = document.createElement("forma-document-artifacts"); host.documentId = documentId;
