@@ -6170,4 +6170,9 @@ Object.assign(messages, {
   "system.auto.1x2k3lt.139": "L’hôte gère l’accès privé et l’enregistrement. Ce composant sans lecture sélectionne une limite exacte d’échantillon encodé sans charger, décoder ni lire de média."
 });
 
+Object.assign(messages, {
+  "system.auto.pqvhl5.45": "Interface applicative de l’éditeur d’images générées.",
+  "system.auto.1wr7im1.141": "Interface de l’éditeur d’images générées connectée à l’application. Examinez ses attributs, propriétés JavaScript et événements réels avant de la composer.",
+});
+
 export default messages;

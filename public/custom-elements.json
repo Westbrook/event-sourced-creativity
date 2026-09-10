@@ -13781,6 +13781,66 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/generated-image-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "GeneratedImageEditor",
+          "tagName": "forma-generated-image-editor",
+          "customElement": true,
+          "summary": "Generated image editor application interface.",
+          "description": "Application-connected generated image editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "opening",
+              "type": {
+                "text": "Readonly<{ token: object; ownerId: string; projectId: string; documentId: string; outputId: string; current(): boolean; read(): Promise<GeneratedImageEditSnapshot | null>; capture(sourceId: string): Promise<CurrentGeneratedImageEdit | null>; adopt(): Promise<boolean>; save(request: GeneratedImageEditRequest, privatePNG: Uint8Array): Promise<GeneratedImageEditAcknowledgment>; check(operationSHA: string): Promise<GeneratedImageEditAcknowledgment>; }> | null"
+              },
+              "default": "null"
+            }
+          ],
+          "events": [
+            {
+              "name": "generated-image-editor-close",
+              "type": {
+                "text": "CustomEvent<{ opening: Readonly<{ token: object; ownerId: string; projectId: string; documentId: string; outputId: string; current(): boolean; read(): Promise<GeneratedImageEditSnapshot | null>; capture(sourceId: string): Promise<CurrentGeneratedImageEdit | null>; adopt(): Promise<boolean>; save(request: GeneratedImageEditRequest, privatePNG: Uint8Array): Promise<GeneratedImageEditAcknowledgment>; check(operationSHA: string): Promise<GeneratedImageEditAcknowledgment>; }>; reason: \"cancel\" | \"done\"; } | { opening: Readonly<{ token: object; ownerId: string; projectId: string; documentId: string; outputId: string; current(): boolean; read(): Promise<GeneratedImageEditSnapshot | null>; capture(sourceId: string): Promise<CurrentGeneratedImageEdit | null>; adopt(): Promise<boolean>; save(request: GeneratedImageEditRequest, privatePNG: Uint8Array): Promise<GeneratedImageEditAcknowledgment>; check(operationSHA: string): Promise<GeneratedImageEditAcknowledgment>; }>; reason: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-generated-image-editor",
+          "declaration": {
+            "name": "GeneratedImageEditor",
+            "module": "src/components/generated-image-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "GeneratedImageEditor",
+          "declaration": {
+            "name": "GeneratedImageEditor",
+            "module": "src/components/generated-image-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/generation-actions.ts",
       "declarations": [
         {
@@ -15921,6 +15981,14 @@
                 "text": "readonly ReferenceCompositionSource[]"
               },
               "default": "[]"
+            },
+            {
+              "kind": "field",
+              "name": "usageHint",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
             }
           ],
           "attributes": [
