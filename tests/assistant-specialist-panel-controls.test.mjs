@@ -2389,562 +2389,6 @@ test('E11 Layers rejects copy outside its current native association', { concurr
     } finally { for (const undo of cleanup.reverse()) undo(); }
   }
 });
-
-// Retained browse-lane geometry helper reuse only. The current complete panel
-// class above remains the code under test; these ports are synthetic CSSOM.
-// F Comparison reuses the Studio/native-frame fixture. The original touch
-// copy, image and action rectangles below are retained observations; the new
-// navigation cell and its five reflowed links are declared CSSOM inputs, not
-// browser paint, native text fit or a replay of the private failed placement.
-const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
-const fBrowseHostSelector = ':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]';
-function fBrowseSlot(t, { rtl = false, coarse = false, rail = false } = {}) {
-  const x = e3StudioSlot(t, { rtl, coarse }), shell = x.main.parentElement;
-  const host = x.host, nav = host.querySelector('.studio-mode-nav');
-  const state = Object.assign(x.state, { intent: 'browse', eligible: true, top: 733, width: 320,
-    vertical: false, foreign: false, labelOverflow: false, targetNarrow: false, linkCount: 5,
-    rail, railWidth: 72, railHeight: 350.5, viewportWidth: 419, navFullHeight: false, malformedRows: false,
-    borderLeft: 0, borderRight: 1, borderTop: 0, borderBottom: 0,
-    paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 8, launcherShift: 0,
-    visual: { height: 398.5, scale: 1, offsetTop: 0, offsetLeft: 0 } });
-  if (rail) {
-    state.top = 48;
-    // The existing D411 teardown restores these globals. These are the saved
-    // layout/visual viewport inputs, not a browser zoom or viewport mutation.
-    globalThis.innerWidth = 419; globalThis.innerHeight = 398;
-    x.f.nativeWindow.visualViewport = state.visual;
-  }
-  const size = () => state.coarse ? 48 : 44;
-  const reserved = () => x.f.panel.dataset.browseSlot === 'true';
-  const hostBox = () => state.rail
-    ? d411Rect(state.rtl ? state.viewportWidth - state.railWidth : 0, state.top, state.railWidth, state.railHeight)
-    : d411Rect(0, state.top, state.width, 67);
-  const railContentWidth = () => state.railWidth - state.borderLeft - state.borderRight - state.paddingLeft - state.paddingRight;
-  const railNavHeight = () => state.railHeight - state.borderTop - state.borderBottom - state.paddingTop - state.paddingBottom - size() - 8;
-  const navBox = () => state.rail
-    ? d411Rect(hostBox().left + state.borderLeft + state.paddingLeft, state.top + state.borderTop + state.paddingTop,
-      railContentWidth(), state.navFullHeight ? state.railHeight : railNavHeight())
-    : d411Rect(reserved() && state.rtl ? size() + 16 : 0,
-      state.top + 1, state.width - (reserved() ? size() + 16 : 0), 66);
-  host.parentElement = shell; host.getBoundingClientRect = hostBox;
-  nav.parentElement = host; nav.getBoundingClientRect = navBox;
-  const list = x.ancestor(navBox(), { parentElement: nav, isConnected: true });
-  const links = Array.from({ length: 5 }, (_, index) => {
-    const li = x.ancestor(navBox(), { parentElement: list, tagName: 'LI' });
-    const link = x.control(d411Rect(0, 0, 1, 1), { tagName: 'A', parentElement: li, isConnected: true });
-    link.getBoundingClientRect = () => {
-      const box = navBox(), width = (box.width - 16) / 5;
-      if (state.rail) {
-        const height = (box.height - 16 - 8) / 5;
-        return d411Rect(box.left + 8, box.top + 8 + index * (height + 2),
-          state.targetNarrow ? 43 : box.width - 16, height);
-      }
-      return d411Rect(box.left + 4 + (state.rtl ? 4 - index : index) * (width + 2), box.top,
-        state.targetNarrow ? 43 : width, box.height);
-    };
-    Object.defineProperties(link, {
-      clientWidth: { get: () => Math.round(link.getBoundingClientRect().width) },
-      scrollWidth: { get: () => Math.round(link.getBoundingClientRect().width) + Number(state.labelOverflow) },
-      clientHeight: { get: () => state.rail ? Math.round(link.getBoundingClientRect().height) : 66 },
-      scrollHeight: { get: () => state.rail ? Math.round(link.getBoundingClientRect().height) : 66 },
-    });
-    return link;
-  });
-  shell.querySelectorAll = selector => selector === 'forma-assistant-panel' ? [x.f.panel]
-    : (assert.equal(selector, fBrowseHostSelector), state.duplicate ? [host, host] : [host]);
-  host.closest = selector => selector === '.application-creative' ? state.foreign ? {} : shell
-    : (assert.equal(selector, "[hidden], [inert], [aria-hidden='true']"), state.hidden ? shell : null);
-  host.querySelectorAll = selector => (assert.equal(selector, ':scope > .ui-audience-navigation'), [nav]);
-  nav.querySelectorAll = selector => (assert.equal(selector, ':scope > .ui-audience-navigation-list'), [list]);
-  list.querySelectorAll = selector => (assert.equal(selector, ':scope > li > a[href]'), links.slice(0, state.linkCount));
-  const style = getComputedStyle;
-  globalThis.getComputedStyle = element => ({ ...style(element),
-    ...(element === x.f.panel ? { getPropertyValue: name => name === '--forma-assistant-browse-slot' && state.eligible ? state.rail ? 'rail' : '1' : '0' } : {}),
-    ...(element === host ? { display: reserved() ? 'grid' : 'block',
-      gridTemplateColumns: state.vertical ? '56px' : `${state.width - size() - 16}px ${size()}px`,
-      columnGap: '8px', paddingLeft: state.rtl ? '8px' : '0px', paddingRight: state.rtl ? '0px' : '8px',
-      transform: state.transform, overflowY: state.clip ? 'hidden' : 'visible',
-      borderTopLeftRadius: state.radius ?? '0px',
-      ...(state.rail ? { gridTemplateColumns: `${railContentWidth()}px`,
-        gridTemplateRows: state.malformedRows ? `${railNavHeight()}px` : `${railNavHeight()}px ${size()}px`, rowGap: '8px',
-        borderLeftWidth: `${state.borderLeft}px`, borderRightWidth: `${state.borderRight}px`,
-        borderTopWidth: `${state.borderTop}px`, borderBottomWidth: `${state.borderBottom}px`,
-        paddingLeft: `${state.paddingLeft}px`, paddingRight: `${state.paddingRight}px`,
-        paddingTop: `${state.paddingTop}px`, paddingBottom: `${state.paddingBottom}px` } : {}) } : {}),
-  });
-  const fallbackBox = x.launcher.getBoundingClientRect;
-  x.launcher.getBoundingClientRect = () => x.f.panel.dataset.browseLauncher === 'true'
-    ? d411Rect(Number(x.values.get('--forma-assistant-browse-left')?.replace('px', '')),
-      Number(x.values.get('--forma-assistant-browse-top')?.replace('px', '')) + state.launcherShift,
-      Number(x.values.get('--forma-assistant-browse-size')?.replace('px', '')),
-      Number(x.values.get('--forma-assistant-browse-size')?.replace('px', '')))
-    : fallbackBox();
-  // Existing Library whole-copy ownership is retained, not a new selector.
-  // RTL is a declared horizontal mirror of this LTR saved scene, not a second
-  // observed failure. Navigation order stays unchanged in either direction.
-  const scene = (left, top, width, height) => d411Rect(state.rail && state.rtl
-    ? state.viewportWidth - left - width : left, top, width, height);
-  const library = x.ancestor(d411Rect(0, -1606, 320, 3728), { parentElement: x.main, isConnected: true });
-  library.closest = selector => selector === '#main-content' ? x.main
-    : (assert.equal(selector, '.application-creative'), shell);
-  const copyBox = state.rail ? scene(105.7578125, 58.3046875, 279.484375, 109.09375)
-    : d411Rect(33, 259.578125, 254, 108.578125);
-  const copy = x.ancestor(copyBox, { parentElement: library, isConnected: true, tagName: 'DIV',
-    textContent: 'Take 1 · 80 × 60 · Latency 1.1s. Decide whether to pin, save, export, or record what should change next time.' });
-  copy.closest = selector => selector === 'forma-library' ? library : null;
-  copy.matches = selector => (assert.equal(selector, libraryOutputCopySelector), true);
-  library.querySelectorAll = selector => selector === libraryOutputCopySelector ? [copy] : [];
-  const mainQuery = x.main.querySelectorAll;
-  x.main.querySelectorAll = selector => selector === 'forma-library' ? [library] : mainQuery(selector);
-  const more = x.control(state.rail ? scene(273.875, 177.3984375, 111.3671875, 44)
-    : d411Rect(175.625, 378.15625, 111.375, 44), {
-    tagName: 'BUTTON', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px' });
-  const observed = state.rail ? [scene(91.7578125, -305.6953125, 307.484375, 352),
-    scene(104.7578125, 249.9921875, 281.484375, 44), scene(104.7578125, 301.9921875, 281.484375, 44),
-    scene(88.7578125, 377.9921875, 313.484375, 264.078125)] : [d411Rect(19, -104.421875, 282, 352), d411Rect(32, 450.75, 256, 44),
-    d411Rect(32, 502.75, 256, 44), d411Rect(16, 578.75, 288, 264.0625)];
-  x.controls.splice(0, x.controls.length, ...observed.map(box => x.control(box, { tagName: 'BUTTON' })), more, ...links);
-  x.regions.length = 0; x.f.document.activeElement = more;
-  return Object.assign(x, { state, shell, nav, list, links, more, copyBox, scene,
-    expectedBrowse: () => state.rail
-      ? d411Rect(hostBox().left + state.borderLeft + state.paddingLeft + (railContentWidth() - size()) / 2,
-        hostBox().bottom - state.borderBottom - state.paddingBottom - size(), size(), size())
-      : d411Rect(state.rtl ? 8 : state.width - size() - 8,
-      state.top + 1 + (66 - size()) / 2, size(), size()) });
-}
-
-// Synthetic CSSOM reflow over the existing complete-class F fixture. Only the
-// LTR pre-reservation rectangles are saved native observations; the marker-driven
-// resize, RTL mirror and native quantization below are explicit regression inputs,
-// not a browser layout, paint, focus-ring or accessibility acceptance claim.
-function fBrowseReservedLane(t, options = {}) {
-  const x = fBrowseSlot(t, options), { panel } = x.f, owner = panel.parentElement;
-  const property = '--forma-assistant-browse-lane-base-inset';
-  Object.assign(x.state, { eligible: false, laneAvailable: true, laneBase: 0, laneGap: 10,
-    laneQuantization: 0, laneWidthExtra: 0, copyOverflow: false, displacedFocus: false,
-    mainHidden: false, panelHidden: false, foreignOwner: false, mismatchedDirection: false });
-  const size = () => x.state.coarse ? 48 : 44;
-  const reserved = () => panel.dataset.browseLane === 'true';
-  // At the declared 16px root size the actual rule's max(.625rem, .5rem, 0px)
-  // is 10px. The separate enlarged-safe-inset case explicitly supplies 40px.
-  // Default cases retain the CSS's actual 64/68px strip.
-  const strip = () => size() + 2 * x.state.laneGap;
-  const mainValues = new Map(), priorities = new Map(), mainWrites = [];
-  x.main.style = {
-    getPropertyValue: name => mainValues.get(name) ?? '',
-    getPropertyPriority: name => priorities.get(name) ?? '',
-    setProperty(name, value, priority = '') {
-      mainWrites.push({ name, value, priority }); mainValues.set(name, value); priorities.set(name, priority);
-    },
-    removeProperty(name) { const value = mainValues.get(name) ?? ''; mainValues.delete(name); priorities.delete(name); return value; },
-  };
-  x.main.isConnected = true; owner.parentElement = x.shell;
-  x.launcher.assistantOwned = true; // The same direct native child satisfies the existing contains port.
-  owner.matches = selector => selector === 'forma-creative-assistant' && !x.state.foreignOwner;
-  const hiddenSelector = "[hidden], [inert], [aria-hidden='true']";
-  const panelClosest = panel.closest, mainClosest = x.main.closest;
-  panel.closest = selector => selector === hiddenSelector ? x.state.panelHidden ? owner : null : panelClosest(selector);
-  x.main.closest = selector => selector === hiddenSelector ? x.state.mainHidden ? x.shell : null : mainClosest(selector);
-  const previousStyle = getComputedStyle;
-  globalThis.getComputedStyle = element => {
-    const style = previousStyle(element);
-    return { ...style,
-      ...(element === panel ? { direction: x.state.mismatchedDirection ? x.state.rtl ? 'ltr' : 'rtl' : style.direction,
-        getPropertyValue: name => name === '--forma-assistant-browse-lane-available'
-          ? x.state.laneAvailable ? '1' : '0' : style.getPropertyValue(name) } : {}),
-      ...(element === x.main ? { borderTopWidth: '0px', borderBottomWidth: '0px',
-        paddingLeft: `${x.state.rtl ? x.state.laneBase + (reserved() ? strip() : 0) : 0}px`,
-        paddingRight: `${x.state.rtl ? 0 : x.state.laneBase + (reserved() ? strip() : 0)}px` } : {}),
-    };
-  };
-  const library = x.main.querySelectorAll('forma-library')[0];
-  const copy = library.querySelectorAll(libraryOutputCopySelector)[0];
-  const rawCopy = copy.getBoundingClientRect(), copyText = copy.textContent;
-  const mainControls = x.controls.filter(control => !x.links.includes(control));
-  const rawControls = mainControls.map(control => control.getBoundingClientRect());
-  const controlReads = [], copyReads = [];
-  const mirror = box => x.state.rtl ? d411Rect(320 - box.right, box.top, box.width, box.height) : box;
-  mainControls.forEach((control, index) => {
-    control.getBoundingClientRect = () => {
-      const raw = rawControls[index];
-      // The native More retains its full target width; only its inline position
-      // moves. Other main boxes reflow in the narrowed content area. The five
-      // real navigation links are outside main and are never rewritten here.
-      let box = reserved() ? control === x.more
-        ? d411Rect(raw.left - strip(), x.state.displacedFocus ? -100 : raw.top, raw.width, raw.height)
-        : d411Rect(raw.left, raw.top, raw.width - strip(), raw.height) : raw;
-      box = mirror(box); controlReads.push({ control, reserved: reserved(), box }); return box;
-    };
-  });
-  copy.getBoundingClientRect = () => {
-    const box = reserved() && x.state.copyOverflow ? d411Rect(0, 0, 320, 800)
-      : mirror(reserved() ? d411Rect(rawCopy.left, rawCopy.top, rawCopy.width - strip(), rawCopy.height) : rawCopy);
-    copyReads.push({ reserved: reserved(), box }); return box;
-  };
-  const previousLauncherBox = x.launcher.getBoundingClientRect;
-  x.launcher.getBoundingClientRect = () => {
-    // The later native cell position rule wins if both markers briefly coexist
-    // during recovery; clearing the lane then revalidates that actual cell.
-    if (panel.dataset.browseLauncher === 'true' || panel.dataset.studioLauncher === 'true') return previousLauncherBox();
-    if (reserved()) return d411Rect(
-      Number.parseFloat(x.values.get('--forma-assistant-browse-lane-left') ?? '8px') + x.state.laneQuantization,
-      Number.parseFloat(x.values.get('--forma-assistant-browse-lane-top') ?? '8px'), size() + x.state.laneWidthExtra, size());
-    const raw = previousLauncherBox(), width = panel.dataset.compactLauncher === 'true' ? size() : raw.width;
-    return mirror(d411Rect(310 - width, raw.top, width, size()));
-  };
-  return Object.assign(x, { property, mainValues, priorities, mainWrites, mainControls, rawControls,
-    rawCopy, copy, copyText, controlReads, copyReads, size, strip,
-    assertLane(box) {
-      assert.equal(panel.dataset.browseLane, 'true');
-      assert.equal(panel.dataset.browseSlot, undefined); assert.equal(panel.dataset.browseLauncher, undefined);
-      assert.equal(box.width, size()); assert.equal(box.height, size());
-      const padding = x.state.laneBase + strip();
-      const contentEdge = x.state.rtl ? padding : 320 - padding;
-      assert.ok(x.state.rtl ? box.left >= 8 && box.right <= contentEdge - 8
-        : box.left >= contentEdge + 8 && box.right <= 312, 'the whole native button has at least eight pixels on each side');
-      assert.ok(box.top >= 63 && box.bottom <= 792);
-      assert.equal(x.main.style.getPropertyValue(property), `${x.state.laneBase}px`);
-      assert.equal(x.main.style.getPropertyPriority(property), '');
-      assert.equal(copy.textContent, copyText); assert.equal(copy.parentElement, library);
-      assert.deepEqual(x.links, x.controls.slice(-5)); x.custody();
-    },
-    assertRetired() {
-      assert.equal(panel.dataset.browseLane, undefined);
-      for (const name of ['left', 'top']) assert.equal(x.values.has('--forma-assistant-browse-lane-' + name), false);
-    },
-  });
-}
-
-// Case-local current-document ports for the retained helper. No browser focus,
-// scrolling or CSS layout is implemented here: geometry changes remain explicit.
-function r3BrowseReservedLane(t, options = {}) {
-  const x = fBrowseReservedLane(t, options), document = x.f.document, view = x.f.nativeWindow;
-  view.location = { href: 'https://fixture.invalid/library/project-a' };
-  view.innerWidth = innerWidth; view.innerHeight = innerHeight;
-  view.getComputedStyle = element => getComputedStyle(element);
-  document.defaultView = view; document.location = view.location;
-  x.main.contains = element => {
-    for (let node = element; node; node = node.parentElement) if (node === x.main) return true;
-    return false;
-  };
-  document.body = { isConnected: true }; document.documentElement = { isConnected: true };
-  document.hasFocus = () => x.state.foreground !== false;
-  document.visibilityState = 'visible';
-  for (const node of [x.f.panel, x.f.panel.parentElement, x.shell, x.main, ...x.controls]) node.ownerDocument = document;
-  const events = new EventTarget(), listeners = new Map();
-  document.addEventListener = (name, callback, options) => {
-    if (!listeners.has(name)) listeners.set(name, new Set());
-    listeners.get(name).add(callback);
-    events.addEventListener(name, callback, typeof options === 'boolean' ? { capture: options } : options);
-  };
-  document.removeEventListener = (name, callback, options) => {
-    listeners.get(name)?.delete(callback);
-    events.removeEventListener(name, callback, typeof options === 'boolean' ? { capture: options } : options);
-  };
-  const scrolls = [], focusCalls = [], nativeState = { revealed: false, readsAfterScroll: 0 };
-  const beforeElement = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement');
-  class NativeElementPort {}
-  Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, writable: true, value: NativeElementPort });
-  t.after(() => {
-    if (beforeElement) Object.defineProperty(globalThis, 'HTMLElement', beforeElement);
-    else delete globalThis.HTMLElement;
-  });
-  const setInset = x.main.style.setProperty;
-  x.main.style.setProperty = (name, value, priority = '') => {
-    setInset(name, value, priority);
-    if (name === x.property) x.onReservation?.();
-  };
-  const nativeFocus = ({ before = d411Rect(90, 700, 180, 44), after = d411Rect(80, 785, 112, 44) } = {}) => {
-    const focused = x.more;
-    Object.setPrototypeOf(focused, NativeElementPort.prototype);
-    focused.isConnected = true; focused.ownerDocument = document; focused.parentElement = x.main;
-    focused.matches = selector => {
-      if (selector === 'a[href], button, input, textarea, select, summary') return true;
-      if (selector === ':focus-visible') return nativeState.focusVisible !== false;
-      if (selector === ':disabled') return nativeState.disabled === true;
-      assert.fail('unexpected native focus selector ' + selector);
-    };
-    const closest = focused.closest;
-    focused.closest = selector => selector === '#main-content' ? x.main : closest.call(focused, selector);
-    focused.getBoundingClientRect = () => {
-      if (scrolls.length) nativeState.readsAfterScroll++;
-      const box = x.f.panel.dataset.browseLane === 'true' ? after : before;
-      return nativeState.revealed ? d411Rect(box.left, 700, box.width, box.height) : box;
-    };
-    focused.getClientRects = () => { x.beforeRevealRead?.(); return [focused.getBoundingClientRect()]; };
-    focused.focus = () => { focusCalls.push(focused); assert.fail('placement must not call focus'); };
-    focused.scrollIntoView = options => {
-      scrolls.push({ control: focused, options, lane: x.f.panel.dataset.browseLane });
-      x.onScroll?.();
-      if (nativeState.scrollError) throw new Error('declared native scroll failure');
-      nativeState.revealed = true;
-    };
-    document.activeElement = focused;
-    return focused;
-  };
-  return Object.assign(x, { document, view, scrolls, focusCalls, nativeState, nativeFocus,
-    dispatchDocumentGesture: name => events.dispatchEvent(new Event(name)),
-    assertLeaseDisposed() {
-      assert.equal([...listeners.values()].reduce((sum, callbacks) => sum + callbacks.size, 0), 0);
-      assert.deepEqual(focusCalls, []); assert.deepEqual(x.f.emitted, []);
-    } });
-}
-
-const r3LaneCase = 'Assistant stable browse: ';
-test(r3LaneCase + 'compact RTL main reserves before first traversal even when an ordinary floating gap is clear', { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), listeners = new Map();
-  // Deliberately clear the initial floating gap. These are synthetic ports,
-  // not additional native observations attached to the retained donor scene.
-  x.rawControls[3] = d411Rect(16, 560, 288, 44);
-  x.document.activeElement = x.document.body;
-  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
-  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
-  x.f.nativeWindow.matchMedia = () => new EventTarget();
-  x.f.panel.connectedCallback();
-  x.state.laneAvailable = false;
-  const temporary = x.run(); x.assertRetired();
-  assert.equal(x.overlap(temporary, [x.copy.getBoundingClientRect(), ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
-  assert.equal(x.f.panel.dataset.compactLauncher, undefined, 'the ordinary floating path succeeds without exhausting a compact search');
-  x.state.laneAvailable = true;
-  const held = x.run(); x.assertLane(held);
-  assert.equal(x.document.activeElement, x.document.body, 'reserve before any main control receives keyboard focus');
-  const activations = x.mainWrites.length, padding = getComputedStyle(x.main).paddingLeft, width = x.copy.getBoundingClientRect().width;
-  for (const index of [1, 2, 3]) {
-    const focused = x.mainControls[index];
-    Object.assign(focused, { outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px' });
-    if (index === 3) x.rawControls[index] = d411Rect(16, 530, 288, 274);
-    x.document.activeElement = focused;
-    listeners.get('focusin')(); listeners.get('scroll')();
-    assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0); assert.equal(x.f.frames.length, 0);
-    assert.deepEqual(x.launcher.getBoundingClientRect(), held); x.assertLane(held);
-    assert.equal(x.document.activeElement, focused);
-    assert.equal(getComputedStyle(x.main).paddingLeft, padding); assert.equal(x.copy.getBoundingClientRect().width, width);
-    assert.equal(x.mainWrites.length, activations); assert.deepEqual(x.focuses, []); assert.deepEqual(x.scrolls, []);
-  }
-  x.f.panel.disconnectedCallback(); x.assertRetired(); assert.equal(listeners.size, 0); x.assertLeaseDisposed(); x.custody();
-});
-
-test(r3LaneCase + 'page focus at the viewport edge retains an inline-clear main lane without accepting unknown or overlapping paint', { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { coarse: true }), listeners = new Map();
-  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
-  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
-  x.f.nativeWindow.matchMedia = () => new EventTarget();
-  x.f.panel.connectedCallback();
-  const held = x.run(), launcher = x.launcher; x.assertLane(held);
-  // R16's saved anchor was y746.046875..1010.109375 before native scroll
-  // 1790 -> 2000. Model that viewport-edge body and its known 3px + 3px
-  // outline in the existing CSSOM ports; this is not native scroll or paint.
-  const focused = x.control(d411Rect(16, 536.046875, 220, 264.0625), {
-    tagName: 'A', parentElement: x.main, outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
-  });
-  x.controls.splice(x.controls.length - x.links.length, 0, focused);
-  const ring = d411Rect(10, 530.046875, 232, 276.0625);
-  assert.ok(ring.bottom > innerHeight); assert.ok(ring.right < held.left);
-  const copy = x.copy.getBoundingClientRect(), padding = getComputedStyle(x.main).paddingRight;
-  const activations = x.mainWrites.length;
-  x.f.document.activeElement = focused;
-  for (const event of ['focusin', 'scroll', 'focusin']) {
-    listeners.get(event)(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
-    assert.equal(x.f.frames.length, 0);
-    assert.deepEqual(x.launcher.getBoundingClientRect(), held); x.assertLane(held);
-    assert.equal(x.launcher, launcher); assert.equal(x.f.document.activeElement, focused);
-    assert.deepEqual(x.copy.getBoundingClientRect(), copy);
-    assert.equal(getComputedStyle(x.main).paddingRight, padding);
-    assert.equal(x.mainWrites.length, activations, 'keyboard travel must not clear and reacquire the main reservation');
-    assert.deepEqual(x.focuses, []);
-  }
-  x.f.document.activeElement = launcher;
-  listeners.get('focusin')(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
-  assert.deepEqual(x.launcher.getBoundingClientRect(), held); x.assertLane(held);
-  assert.equal(x.f.document.activeElement, launcher); assert.deepEqual(x.focuses, []);
-
-  // Inline separation never makes an automatic outline exactly measurable.
-  focused.outlineStyle = 'auto'; x.f.document.activeElement = focused;
-  listeners.get('focusin')(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
-  x.assertRetired(); assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []);
-
-  focused.outlineStyle = 'solid'; x.f.document.activeElement = x.more;
-  const restored = x.run(); x.assertLane(restored);
-  // The body only touches the lane edge, but its six-pixel focus envelope
-  // actually overlaps. The same placement flow must still retire this lane.
-  focused.getBoundingClientRect = () => d411Rect(restored.left - 12, restored.top + 6, 12, 44);
-  assert.equal(x.overlap(restored, [focused.getBoundingClientRect()]).length, 0);
-  assert.equal(x.overlap(restored, [d411Rect(restored.left - 18, restored.top, 24, 56)]).length, 1);
-  x.f.document.activeElement = focused;
-  listeners.get('focusin')(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
-  x.assertRetired(); assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []);
-  x.f.panel.disconnectedCallback(); assert.equal(listeners.size, 0); x.custody();
-});
-
-test(r3LaneCase + 'main lane retains open/close custody and restores its prior main value and priority on disconnect', { concurrency: false }, async t => {
-  const x = r3BrowseReservedLane(t), listeners = new Map(), pointer = new EventTarget();
-  x.main.style.setProperty(x.property, '7px', 'important');
-  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
-  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
-  x.f.nativeWindow.matchMedia = query => (assert.equal(query, '(pointer: coarse)'), pointer);
-  x.f.panel.connectedCallback(); x.assertLane(x.run());
-  x.f.panel.open = true; x.f.panel.updated(new Map([['open', false]])); await Promise.resolve();
-  for (const frame of x.f.frames.splice(0)) frame(0);
-  assert.equal(x.f.panel.dataset.browseLane, 'true'); assert.equal(x.mainValues.get(x.property), '0px');
-  x.state.coarse = true; pointer.dispatchEvent(new Event('change'));
-  assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
-  assert.equal(x.f.panel.dataset.browseLane, 'true', 'the live open owner retains its reserved main padding');
-  x.f.panel.open = false; x.f.panel.updated(new Map([['open', true]])); await Promise.resolve();
-  for (const frame of x.f.frames.splice(0)) frame(0);
-  x.assertLane(x.launcher.getBoundingClientRect());
-  assert.equal(x.focuses.length, 1); assert.equal(x.f.document.activeElement, x.launcher);
-  assert.deepEqual(x.focuses[0].box, x.launcher.getBoundingClientRect());
-  x.f.panel.disconnectedCallback(); x.assertRetired();
-  assert.equal(x.mainValues.get(x.property), '7px'); assert.equal(x.priorities.get(x.property), 'important');
-  assert.equal(listeners.size, 0); x.custody();
-});
-
-test(r3LaneCase + 'a reflowed copy overflow or displaced current focus cannot receive reserved-lane clearance', { concurrency: false }, () => {
-  for (const defect of ['copy-overflow', 'displaced-focus']) {
-    const cleanup = [];
-    try {
-      const x = r3BrowseReservedLane({ after: undo => cleanup.push(undo) }), focused = x.more;
-      x.state.copyOverflow = defect === 'copy-overflow'; x.state.displacedFocus = defect === 'displaced-focus';
-      x.run(); x.assertRetired();
-      assert.equal(x.queries.length, 3, 'initial sample, failed reserved sample and one final unreserved fallback; no reserve/clear loop');
-      assert.ok(x.copyReads.some(row => row.reserved), 'retain fresh copy evidence even on refusal');
-      if (defect === 'displaced-focus') assert.ok(x.controlReads.some(row => row.control === focused && row.reserved && row.box.bottom < 0),
-        'the focused native owner remains recorded even when it falls out of the visible obstacle set');
-      assert.equal(x.mainValues.has(x.property), false);
-      assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []); x.custody();
-    } finally { for (const undo of cleanup.reverse()) undo(); }
-  }
-});
-
-test(r3LaneCase + 'repeated scroll, focus and transition events cannot reactivate the same rejected main reservation', { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t), listeners = new Map();
-  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
-  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
-  x.f.nativeWindow.matchMedia = query => (assert.equal(query, '(pointer: coarse)'), new EventTarget());
-  let mainTop = 63;
-  x.main.getBoundingClientRect = () => d411Rect(0, mainTop, 320, 737);
-  x.state.displacedFocus = true; x.f.panel.connectedCallback();
-  const activations = () => x.mainWrites.filter(row => row.name === x.property).length;
-  x.run(); x.assertRetired(); assert.equal(activations(), 1); assert.equal(x.queries.length, 3);
-  for (const name of ['scroll', 'focusin', 'transitionend', 'scroll', 'focusin', 'transitionend']) {
-    // Top-only scroll changes do not change the rejected width/height/focus key.
-    mainTop -= 0.125;
-    const copyStart = x.copyReads.length; x.queries.length = 0;
-    listeners.get(name)(); listeners.get(name)();
-    assert.equal(x.f.frames.length, 1, 'the retained scheduler coalesces duplicate native events');
-    x.f.frames.shift()(0);
-    assert.equal(x.f.frames.length, 0); x.assertRetired();
-    assert.equal(activations(), 1, name + ': no new width reservation or reserve/clear cycle');
-    assert.equal(x.queries.length, 1, 'only one ordinary floating qualification occurs');
-    assert.ok(x.copyReads.length > copyStart);
-    assert.ok(x.copyReads.slice(copyStart).every(row => !row.reserved));
-    assert.equal(x.f.document.activeElement, x.more); assert.deepEqual(x.focuses, []); x.custody();
-  }
-  // A genuinely different visible native focus owner changes the refusal key.
-  // The formerly focused More still moves offscreen in this synthetic reflow;
-  // it cannot be misrepresented as the current focus that now must remain visible.
-  x.f.document.activeElement = x.mainControls[1];
-  x.assertLane(x.run()); assert.equal(activations(), 2); assert.equal(x.queries.length, 2);
-  assert.equal(x.f.document.activeElement, x.mainControls[1]); assert.deepEqual(x.focuses, []);
-  x.f.panel.disconnectedCallback(); x.assertRetired(); assert.equal(listeners.size, 0); x.custody();
-});
-
-test(r3LaneCase + 'late readiness reveals the previously complete exact native main control once', { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), focused = x.nativeFocus();
-  x.state.busy = true; x.run(); x.assertRetired(); assert.deepEqual(x.scrolls, []);
-  x.state.busy = false;
-  const held = x.run(); x.assertLane(held);
-  assert.deepEqual(x.scrolls, [{ control: focused, options: { block: 'nearest', inline: 'nearest', behavior: 'instant' }, lane: 'true' }]);
-  assert.equal(x.document.activeElement, focused); assert.ok(x.nativeState.readsAfterScroll > 0, 'the existing placement collector rechecks after scrolling');
-  const revealed = focused.getBoundingClientRect();
-  assert.ok(revealed.top >= 6 && revealed.bottom <= innerHeight - 6);
-  assert.equal(x.overlap(held, [d411Rect(revealed.left - 6, revealed.top - 6, revealed.width + 12, revealed.height + 12)]).length, 0);
-  const writes = x.mainWrites.length;
-  x.run(); assert.equal(x.scrolls.length, 1); assert.equal(x.mainWrites.length, writes);
-  x.assertLeaseDisposed(); x.custody();
-});
-
-for (const mode of ['prior-partial', 'post-overheight', 'already-visible']) test(r3LaneCase + 'late reveal stays bounded / ' + mode, { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true });
-  const before = mode === 'prior-partial' ? d411Rect(90, 785, 180, 44) : d411Rect(90, 700, 180, 44);
-  const after = mode === 'post-overheight' ? d411Rect(80, 0, 112, 810)
-    : mode === 'already-visible' ? d411Rect(80, 700, 112, 44) : d411Rect(80, 785, 112, 44);
-  const focused = x.nativeFocus({ before, after });
-  x.state.busy = true; x.run(); x.state.busy = false;
-  x.run(); assert.deepEqual(x.scrolls, []); assert.equal(x.document.activeElement, focused);
-  if (mode === 'prior-partial') x.assertRetired();
-  else x.assertLane(x.launcher.getBoundingClientRect());
-  x.assertLeaseDisposed(); x.custody();
-});
-
-for (const change of ['route', 'context', 'scope', 'focus', 'disconnected', 'gesture', 'direction', 'posture']) test(r3LaneCase + 'late reveal rejects changed ownership / ' + change, { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), focused = x.nativeFocus();
-  const other = x.mainControls[1];
-  x.state.busy = true; x.run(); x.state.busy = false;
-  x.beforeRevealRead = () => {
-    if (change === 'direction') x.state.rtl = false;
-    if (change === 'posture') x.state.short = true;
-  };
-  x.onReservation = () => {
-    if (change === 'route') x.view.location.href = 'https://fixture.invalid/library/project-b';
-    if (change === 'context') x.f.panel.context = { route: '/library/project-b' };
-    if (change === 'scope') x.f.panel.conversationScope = 'scope-b';
-    if (change === 'focus') x.document.activeElement = other;
-    if (change === 'disconnected') focused.isConnected = false;
-    if (change === 'gesture') x.dispatchDocumentGesture('keydown');
-  };
-  x.run(); assert.deepEqual(x.scrolls, []);
-  assert.equal(x.document.activeElement, change === 'focus' ? other : focused);
-  x.assertLeaseDisposed();
-  assert.deepEqual(x.focuses, []); assert.deepEqual(x.f.emitted, []);
-});
-
-for (const mode of ['scroll-error', 'focus-reentry']) test(r3LaneCase + 'native scroll failure or reentry still revalidates without retry / ' + mode, { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), focused = x.nativeFocus();
-  const other = x.mainControls[1];
-  x.state.busy = true; x.run(); x.state.busy = false;
-  if (mode === 'scroll-error') x.nativeState.scrollError = true;
-  else x.onScroll = () => { x.document.activeElement = other; };
-  x.run();
-  assert.equal(x.scrolls.length, 1); assert.equal(x.scrolls[0].control, focused);
-  assert.equal(x.document.activeElement, mode === 'focus-reentry' ? other : focused);
-  assert.ok(x.nativeState.readsAfterScroll > 0, 'the actual placement collector still runs after the native operation');
-  x.run(); assert.equal(x.scrolls.length, 1, 'settled validation never retries the scroll');
-  x.assertLeaseDisposed(); x.custody();
-});
-
-for (const change of ['main-replacement', 'owner-replacement', 'owner-withdrawal', 'route', 'direction', 'posture']) test(r3LaneCase + 'accepted stable ownership retires before own-focus freeze / ' + change, { concurrency: false }, t => {
-  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), owner = x.f.panel.parentElement;
-  x.main.style.setProperty(x.property, '7px', 'important');
-  const held = x.run(); x.assertLane(held);
-  const launcher = x.launcher, reservations = () => x.mainWrites.filter(row => row.name === x.property && row.priority === '').length;
-  const before = reservations();
-  x.document.activeElement = launcher; x.hovered = true;
-  let replacement;
-  if (change === 'main-replacement') {
-    replacement = x.ancestor(d411Rect(0, 63, 320, 737), { parentElement: x.shell, isConnected: true, ownerDocument: x.document,
-      getAttribute: name => (assert.equal(name, 'aria-busy'), 'false'),
-      closest: selector => selector === '.application-creative' ? x.shell
-        : (assert.equal(selector, "[hidden], [inert], [aria-hidden='true']"), null),
-      style: { getPropertyValue: () => 'replacement-owned', getPropertyPriority: () => 'important',
-        setProperty() { assert.fail('retirement must not write the replacement main'); },
-        removeProperty() { assert.fail('retirement must not remove replacement-owned style'); } },
-    });
-    x.shell.querySelector = selector => (assert.equal(selector, '#main-content'), replacement);
-  }
-  if (change === 'owner-replacement') x.f.panel.parentElement = { ...owner, parentElement: x.shell, ownerDocument: x.document };
-  if (change === 'owner-withdrawal') owner.parentElement = null;
-  if (change === 'route') x.view.location.href = 'https://fixture.invalid/library/project-b';
-  if (change === 'direction') x.state.rtl = false;
-  if (change === 'posture') x.state.short = true;
-  x.run(); x.assertRetired();
-  assert.equal(x.mainValues.get(x.property), '7px'); assert.equal(x.priorities.get(x.property), 'important');
-  assert.equal(reservations(), before, 'own-focus retirement does not acquire another width reservation');
-  assert.equal(x.launcher, launcher); assert.equal(x.document.activeElement, launcher);
-  assert.deepEqual(x.focuses, []); assert.deepEqual(x.scrolls, []); assert.deepEqual(x.f.emitted, []);
-  if (replacement) assert.equal(replacement.style.getPropertyValue(x.property), 'replacement-owned');
-  x.assertLeaseDisposed();
-});
 test('E11 Layers copy does not acquire native authority to move a hovered Ask', { concurrency: false }, t => {
   const state = e11LayersWeightPlacement(t), { x, measured } = state;
   x.hovered = true;
@@ -3799,4 +3243,560 @@ test('F weight direct label copy retains current-owner, connected OUTPUT, associ
       fCopyOmissionUnchanged(state, box);
     } finally { for (const undo of cleanup.reverse()) undo(); }
   }
+});
+
+// Retained browse-lane geometry helper reuse only. The current complete panel
+// class above remains the code under test; these ports are synthetic CSSOM.
+// F Comparison reuses the Studio/native-frame fixture. The original touch
+// copy, image and action rectangles below are retained observations; the new
+// navigation cell and its five reflowed links are declared CSSOM inputs, not
+// browser paint, native text fit or a replay of the private failed placement.
+const libraryOutputCopySelector = ".library-main > .library-body > .library-content > section > .library-output-grid > article.library-output > forma-output-card > article.output-card > .output-info > div:first-child";
+const fBrowseHostSelector = ':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]';
+function fBrowseSlot(t, { rtl = false, coarse = false, rail = false } = {}) {
+  const x = e3StudioSlot(t, { rtl, coarse }), shell = x.main.parentElement;
+  const host = x.host, nav = host.querySelector('.studio-mode-nav');
+  const state = Object.assign(x.state, { intent: 'browse', eligible: true, top: 733, width: 320,
+    vertical: false, foreign: false, labelOverflow: false, targetNarrow: false, linkCount: 5,
+    rail, railWidth: 72, railHeight: 350.5, viewportWidth: 419, navFullHeight: false, malformedRows: false,
+    borderLeft: 0, borderRight: 1, borderTop: 0, borderBottom: 0,
+    paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 8, launcherShift: 0,
+    visual: { height: 398.5, scale: 1, offsetTop: 0, offsetLeft: 0 } });
+  if (rail) {
+    state.top = 48;
+    // The existing D411 teardown restores these globals. These are the saved
+    // layout/visual viewport inputs, not a browser zoom or viewport mutation.
+    globalThis.innerWidth = 419; globalThis.innerHeight = 398;
+    x.f.nativeWindow.visualViewport = state.visual;
+  }
+  const size = () => state.coarse ? 48 : 44;
+  const reserved = () => x.f.panel.dataset.browseSlot === 'true';
+  const hostBox = () => state.rail
+    ? d411Rect(state.rtl ? state.viewportWidth - state.railWidth : 0, state.top, state.railWidth, state.railHeight)
+    : d411Rect(0, state.top, state.width, 67);
+  const railContentWidth = () => state.railWidth - state.borderLeft - state.borderRight - state.paddingLeft - state.paddingRight;
+  const railNavHeight = () => state.railHeight - state.borderTop - state.borderBottom - state.paddingTop - state.paddingBottom - size() - 8;
+  const navBox = () => state.rail
+    ? d411Rect(hostBox().left + state.borderLeft + state.paddingLeft, state.top + state.borderTop + state.paddingTop,
+      railContentWidth(), state.navFullHeight ? state.railHeight : railNavHeight())
+    : d411Rect(reserved() && state.rtl ? size() + 16 : 0,
+      state.top + 1, state.width - (reserved() ? size() + 16 : 0), 66);
+  host.parentElement = shell; host.getBoundingClientRect = hostBox;
+  nav.parentElement = host; nav.getBoundingClientRect = navBox;
+  const list = x.ancestor(navBox(), { parentElement: nav, isConnected: true });
+  const links = Array.from({ length: 5 }, (_, index) => {
+    const li = x.ancestor(navBox(), { parentElement: list, tagName: 'LI' });
+    const link = x.control(d411Rect(0, 0, 1, 1), { tagName: 'A', parentElement: li, isConnected: true });
+    link.getBoundingClientRect = () => {
+      const box = navBox(), width = (box.width - 16) / 5;
+      if (state.rail) {
+        const height = (box.height - 16 - 8) / 5;
+        return d411Rect(box.left + 8, box.top + 8 + index * (height + 2),
+          state.targetNarrow ? 43 : box.width - 16, height);
+      }
+      return d411Rect(box.left + 4 + (state.rtl ? 4 - index : index) * (width + 2), box.top,
+        state.targetNarrow ? 43 : width, box.height);
+    };
+    Object.defineProperties(link, {
+      clientWidth: { get: () => Math.round(link.getBoundingClientRect().width) },
+      scrollWidth: { get: () => Math.round(link.getBoundingClientRect().width) + Number(state.labelOverflow) },
+      clientHeight: { get: () => state.rail ? Math.round(link.getBoundingClientRect().height) : 66 },
+      scrollHeight: { get: () => state.rail ? Math.round(link.getBoundingClientRect().height) : 66 },
+    });
+    return link;
+  });
+  shell.querySelectorAll = selector => selector === 'forma-assistant-panel' ? [x.f.panel]
+    : (assert.equal(selector, fBrowseHostSelector), state.duplicate ? [host, host] : [host]);
+  host.closest = selector => selector === '.application-creative' ? state.foreign ? {} : shell
+    : (assert.equal(selector, "[hidden], [inert], [aria-hidden='true']"), state.hidden ? shell : null);
+  host.querySelectorAll = selector => (assert.equal(selector, ':scope > .ui-audience-navigation'), [nav]);
+  nav.querySelectorAll = selector => (assert.equal(selector, ':scope > .ui-audience-navigation-list'), [list]);
+  list.querySelectorAll = selector => (assert.equal(selector, ':scope > li > a[href]'), links.slice(0, state.linkCount));
+  const style = getComputedStyle;
+  globalThis.getComputedStyle = element => ({ ...style(element),
+    ...(element === x.f.panel ? { getPropertyValue: name => name === '--forma-assistant-browse-slot' && state.eligible ? state.rail ? 'rail' : '1' : '0' } : {}),
+    ...(element === host ? { display: reserved() ? 'grid' : 'block',
+      gridTemplateColumns: state.vertical ? '56px' : `${state.width - size() - 16}px ${size()}px`,
+      columnGap: '8px', paddingLeft: state.rtl ? '8px' : '0px', paddingRight: state.rtl ? '0px' : '8px',
+      transform: state.transform, overflowY: state.clip ? 'hidden' : 'visible',
+      borderTopLeftRadius: state.radius ?? '0px',
+      ...(state.rail ? { gridTemplateColumns: `${railContentWidth()}px`,
+        gridTemplateRows: state.malformedRows ? `${railNavHeight()}px` : `${railNavHeight()}px ${size()}px`, rowGap: '8px',
+        borderLeftWidth: `${state.borderLeft}px`, borderRightWidth: `${state.borderRight}px`,
+        borderTopWidth: `${state.borderTop}px`, borderBottomWidth: `${state.borderBottom}px`,
+        paddingLeft: `${state.paddingLeft}px`, paddingRight: `${state.paddingRight}px`,
+        paddingTop: `${state.paddingTop}px`, paddingBottom: `${state.paddingBottom}px` } : {}) } : {}),
+  });
+  const fallbackBox = x.launcher.getBoundingClientRect;
+  x.launcher.getBoundingClientRect = () => x.f.panel.dataset.browseLauncher === 'true'
+    ? d411Rect(Number(x.values.get('--forma-assistant-browse-left')?.replace('px', '')),
+      Number(x.values.get('--forma-assistant-browse-top')?.replace('px', '')) + state.launcherShift,
+      Number(x.values.get('--forma-assistant-browse-size')?.replace('px', '')),
+      Number(x.values.get('--forma-assistant-browse-size')?.replace('px', '')))
+    : fallbackBox();
+  // Existing Library whole-copy ownership is retained, not a new selector.
+  // RTL is a declared horizontal mirror of this LTR saved scene, not a second
+  // observed failure. Navigation order stays unchanged in either direction.
+  const scene = (left, top, width, height) => d411Rect(state.rail && state.rtl
+    ? state.viewportWidth - left - width : left, top, width, height);
+  const library = x.ancestor(d411Rect(0, -1606, 320, 3728), { parentElement: x.main, isConnected: true });
+  library.closest = selector => selector === '#main-content' ? x.main
+    : (assert.equal(selector, '.application-creative'), shell);
+  const copyBox = state.rail ? scene(105.7578125, 58.3046875, 279.484375, 109.09375)
+    : d411Rect(33, 259.578125, 254, 108.578125);
+  const copy = x.ancestor(copyBox, { parentElement: library, isConnected: true, tagName: 'DIV',
+    textContent: 'Take 1 · 80 × 60 · Latency 1.1s. Decide whether to pin, save, export, or record what should change next time.' });
+  copy.closest = selector => selector === 'forma-library' ? library : null;
+  copy.matches = selector => (assert.equal(selector, libraryOutputCopySelector), true);
+  library.querySelectorAll = selector => selector === libraryOutputCopySelector ? [copy] : [];
+  const mainQuery = x.main.querySelectorAll;
+  x.main.querySelectorAll = selector => selector === 'forma-library' ? [library] : mainQuery(selector);
+  const more = x.control(state.rail ? scene(273.875, 177.3984375, 111.3671875, 44)
+    : d411Rect(175.625, 378.15625, 111.375, 44), {
+    tagName: 'BUTTON', outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px' });
+  const observed = state.rail ? [scene(91.7578125, -305.6953125, 307.484375, 352),
+    scene(104.7578125, 249.9921875, 281.484375, 44), scene(104.7578125, 301.9921875, 281.484375, 44),
+    scene(88.7578125, 377.9921875, 313.484375, 264.078125)] : [d411Rect(19, -104.421875, 282, 352), d411Rect(32, 450.75, 256, 44),
+    d411Rect(32, 502.75, 256, 44), d411Rect(16, 578.75, 288, 264.0625)];
+  x.controls.splice(0, x.controls.length, ...observed.map(box => x.control(box, { tagName: 'BUTTON' })), more, ...links);
+  x.regions.length = 0; x.f.document.activeElement = more;
+  return Object.assign(x, { state, shell, nav, list, links, more, copyBox, scene,
+    expectedBrowse: () => state.rail
+      ? d411Rect(hostBox().left + state.borderLeft + state.paddingLeft + (railContentWidth() - size()) / 2,
+        hostBox().bottom - state.borderBottom - state.paddingBottom - size(), size(), size())
+      : d411Rect(state.rtl ? 8 : state.width - size() - 8,
+      state.top + 1 + (66 - size()) / 2, size(), size()) });
+}
+
+// Synthetic CSSOM reflow over the existing complete-class F fixture. Only the
+// LTR pre-reservation rectangles are saved native observations; the marker-driven
+// resize, RTL mirror and native quantization below are explicit regression inputs,
+// not a browser layout, paint, focus-ring or accessibility acceptance claim.
+function fBrowseReservedLane(t, options = {}) {
+  const x = fBrowseSlot(t, options), { panel } = x.f, owner = panel.parentElement;
+  const property = '--forma-assistant-browse-lane-base-inset';
+  Object.assign(x.state, { eligible: false, laneAvailable: true, laneBase: 0, laneGap: 10,
+    laneQuantization: 0, laneWidthExtra: 0, copyOverflow: false, displacedFocus: false,
+    mainHidden: false, panelHidden: false, foreignOwner: false, mismatchedDirection: false });
+  const size = () => x.state.coarse ? 48 : 44;
+  const reserved = () => panel.dataset.browseLane === 'true';
+  // At the declared 16px root size the actual rule's max(.625rem, .5rem, 0px)
+  // is 10px. The separate enlarged-safe-inset case explicitly supplies 40px.
+  // Default cases retain the CSS's actual 64/68px strip.
+  const strip = () => size() + 2 * x.state.laneGap;
+  const mainValues = new Map(), priorities = new Map(), mainWrites = [];
+  x.main.style = {
+    getPropertyValue: name => mainValues.get(name) ?? '',
+    getPropertyPriority: name => priorities.get(name) ?? '',
+    setProperty(name, value, priority = '') {
+      mainWrites.push({ name, value, priority }); mainValues.set(name, value); priorities.set(name, priority);
+    },
+    removeProperty(name) { const value = mainValues.get(name) ?? ''; mainValues.delete(name); priorities.delete(name); return value; },
+  };
+  x.main.isConnected = true; owner.parentElement = x.shell;
+  x.launcher.assistantOwned = true; // The same direct native child satisfies the existing contains port.
+  owner.matches = selector => selector === 'forma-creative-assistant' && !x.state.foreignOwner;
+  const hiddenSelector = "[hidden], [inert], [aria-hidden='true']";
+  const panelClosest = panel.closest, mainClosest = x.main.closest;
+  panel.closest = selector => selector === hiddenSelector ? x.state.panelHidden ? owner : null : panelClosest(selector);
+  x.main.closest = selector => selector === hiddenSelector ? x.state.mainHidden ? x.shell : null : mainClosest(selector);
+  const previousStyle = getComputedStyle;
+  globalThis.getComputedStyle = element => {
+    const style = previousStyle(element);
+    return { ...style,
+      ...(element === panel ? { direction: x.state.mismatchedDirection ? x.state.rtl ? 'ltr' : 'rtl' : style.direction,
+        getPropertyValue: name => name === '--forma-assistant-browse-lane-available'
+          ? x.state.laneAvailable ? '1' : '0' : style.getPropertyValue(name) } : {}),
+      ...(element === x.main ? { borderTopWidth: '0px', borderBottomWidth: '0px',
+        paddingLeft: `${x.state.rtl ? x.state.laneBase + (reserved() ? strip() : 0) : 0}px`,
+        paddingRight: `${x.state.rtl ? 0 : x.state.laneBase + (reserved() ? strip() : 0)}px` } : {}),
+    };
+  };
+  const library = x.main.querySelectorAll('forma-library')[0];
+  const copy = library.querySelectorAll(libraryOutputCopySelector)[0];
+  const rawCopy = copy.getBoundingClientRect(), copyText = copy.textContent;
+  const mainControls = x.controls.filter(control => !x.links.includes(control));
+  const rawControls = mainControls.map(control => control.getBoundingClientRect());
+  const controlReads = [], copyReads = [];
+  const mirror = box => x.state.rtl ? d411Rect(320 - box.right, box.top, box.width, box.height) : box;
+  mainControls.forEach((control, index) => {
+    control.getBoundingClientRect = () => {
+      const raw = rawControls[index];
+      // The native More retains its full target width; only its inline position
+      // moves. Other main boxes reflow in the narrowed content area. The five
+      // real navigation links are outside main and are never rewritten here.
+      let box = reserved() ? control === x.more
+        ? d411Rect(raw.left - strip(), x.state.displacedFocus ? -100 : raw.top, raw.width, raw.height)
+        : d411Rect(raw.left, raw.top, raw.width - strip(), raw.height) : raw;
+      box = mirror(box); controlReads.push({ control, reserved: reserved(), box }); return box;
+    };
+  });
+  copy.getBoundingClientRect = () => {
+    const box = reserved() && x.state.copyOverflow ? d411Rect(0, 0, 320, 800)
+      : mirror(reserved() ? d411Rect(rawCopy.left, rawCopy.top, rawCopy.width - strip(), rawCopy.height) : rawCopy);
+    copyReads.push({ reserved: reserved(), box }); return box;
+  };
+  const previousLauncherBox = x.launcher.getBoundingClientRect;
+  x.launcher.getBoundingClientRect = () => {
+    // The later native cell position rule wins if both markers briefly coexist
+    // during recovery; clearing the lane then revalidates that actual cell.
+    if (panel.dataset.browseLauncher === 'true' || panel.dataset.studioLauncher === 'true') return previousLauncherBox();
+    if (reserved()) return d411Rect(
+      Number.parseFloat(x.values.get('--forma-assistant-browse-lane-left') ?? '8px') + x.state.laneQuantization,
+      Number.parseFloat(x.values.get('--forma-assistant-browse-lane-top') ?? '8px'), size() + x.state.laneWidthExtra, size());
+    const raw = previousLauncherBox(), width = panel.dataset.compactLauncher === 'true' ? size() : raw.width;
+    return mirror(d411Rect(310 - width, raw.top, width, size()));
+  };
+  return Object.assign(x, { property, mainValues, priorities, mainWrites, mainControls, rawControls,
+    rawCopy, copy, copyText, controlReads, copyReads, size, strip,
+    assertLane(box) {
+      assert.equal(panel.dataset.browseLane, 'true');
+      assert.equal(panel.dataset.browseSlot, undefined); assert.equal(panel.dataset.browseLauncher, undefined);
+      assert.equal(box.width, size()); assert.equal(box.height, size());
+      const padding = x.state.laneBase + strip();
+      const contentEdge = x.state.rtl ? padding : 320 - padding;
+      assert.ok(x.state.rtl ? box.left >= 8 && box.right <= contentEdge - 8
+        : box.left >= contentEdge + 8 && box.right <= 312, 'the whole native button has at least eight pixels on each side');
+      assert.ok(box.top >= 63 && box.bottom <= 792);
+      assert.equal(x.main.style.getPropertyValue(property), `${x.state.laneBase}px`);
+      assert.equal(x.main.style.getPropertyPriority(property), '');
+      assert.equal(copy.textContent, copyText); assert.equal(copy.parentElement, library);
+      assert.deepEqual(x.links, x.controls.slice(-5)); x.custody();
+    },
+    assertRetired() {
+      assert.equal(panel.dataset.browseLane, undefined);
+      for (const name of ['left', 'top']) assert.equal(x.values.has('--forma-assistant-browse-lane-' + name), false);
+    },
+  });
+}
+
+// Case-local current-document ports for the retained helper. No browser focus,
+// scrolling or CSS layout is implemented here: geometry changes remain explicit.
+function r3BrowseReservedLane(t, options = {}) {
+  const x = fBrowseReservedLane(t, options), document = x.f.document, view = x.f.nativeWindow;
+  view.location = { href: 'https://fixture.invalid/library/project-a' };
+  view.innerWidth = innerWidth; view.innerHeight = innerHeight;
+  view.getComputedStyle = element => getComputedStyle(element);
+  document.defaultView = view; document.location = view.location;
+  x.main.contains = element => {
+    for (let node = element; node; node = node.parentElement) if (node === x.main) return true;
+    return false;
+  };
+  document.body = { isConnected: true }; document.documentElement = { isConnected: true };
+  document.hasFocus = () => x.state.foreground !== false;
+  document.visibilityState = 'visible';
+  for (const node of [x.f.panel, x.f.panel.parentElement, x.shell, x.main, ...x.controls]) node.ownerDocument = document;
+  const events = new EventTarget(), listeners = new Map();
+  document.addEventListener = (name, callback, options) => {
+    if (!listeners.has(name)) listeners.set(name, new Set());
+    listeners.get(name).add(callback);
+    events.addEventListener(name, callback, typeof options === 'boolean' ? { capture: options } : options);
+  };
+  document.removeEventListener = (name, callback, options) => {
+    listeners.get(name)?.delete(callback);
+    events.removeEventListener(name, callback, typeof options === 'boolean' ? { capture: options } : options);
+  };
+  const scrolls = [], focusCalls = [], nativeState = { revealed: false, readsAfterScroll: 0 };
+  const beforeElement = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement');
+  class NativeElementPort {}
+  Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, writable: true, value: NativeElementPort });
+  t.after(() => {
+    if (beforeElement) Object.defineProperty(globalThis, 'HTMLElement', beforeElement);
+    else delete globalThis.HTMLElement;
+  });
+  const setInset = x.main.style.setProperty;
+  x.main.style.setProperty = (name, value, priority = '') => {
+    setInset(name, value, priority);
+    if (name === x.property) x.onReservation?.();
+  };
+  const nativeFocus = ({ before = d411Rect(90, 700, 180, 44), after = d411Rect(80, 785, 112, 44) } = {}) => {
+    const focused = x.more;
+    Object.setPrototypeOf(focused, NativeElementPort.prototype);
+    focused.isConnected = true; focused.ownerDocument = document; focused.parentElement = x.main;
+    focused.matches = selector => {
+      if (selector === 'a[href], button, input, textarea, select, summary') return true;
+      if (selector === ':focus-visible') return nativeState.focusVisible !== false;
+      if (selector === ':disabled') return nativeState.disabled === true;
+      assert.fail('unexpected native focus selector ' + selector);
+    };
+    const closest = focused.closest;
+    focused.closest = selector => selector === '#main-content' ? x.main : closest.call(focused, selector);
+    focused.getBoundingClientRect = () => {
+      if (scrolls.length) nativeState.readsAfterScroll++;
+      const box = x.f.panel.dataset.browseLane === 'true' ? after : before;
+      return nativeState.revealed ? d411Rect(box.left, 700, box.width, box.height) : box;
+    };
+    focused.getClientRects = () => { x.beforeRevealRead?.(); return [focused.getBoundingClientRect()]; };
+    focused.focus = () => { focusCalls.push(focused); assert.fail('placement must not call focus'); };
+    focused.scrollIntoView = options => {
+      scrolls.push({ control: focused, options, lane: x.f.panel.dataset.browseLane });
+      x.onScroll?.();
+      if (nativeState.scrollError) throw new Error('declared native scroll failure');
+      nativeState.revealed = true;
+    };
+    document.activeElement = focused;
+    return focused;
+  };
+  return Object.assign(x, { document, view, scrolls, focusCalls, nativeState, nativeFocus,
+    dispatchDocumentGesture: name => events.dispatchEvent(new Event(name)),
+    assertLeaseDisposed() {
+      assert.equal([...listeners.values()].reduce((sum, callbacks) => sum + callbacks.size, 0), 0);
+      assert.deepEqual(focusCalls, []); assert.deepEqual(x.f.emitted, []);
+    } });
+}
+
+const r3LaneCase = 'Assistant stable browse: ';
+test(r3LaneCase + 'compact RTL main reserves before first traversal even when an ordinary floating gap is clear', { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), listeners = new Map();
+  // Deliberately clear the initial floating gap. These are synthetic ports,
+  // not additional native observations attached to the retained donor scene.
+  x.rawControls[3] = d411Rect(16, 560, 288, 44);
+  x.document.activeElement = x.document.body;
+  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
+  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
+  x.f.nativeWindow.matchMedia = () => new EventTarget();
+  x.f.panel.connectedCallback();
+  x.state.laneAvailable = false;
+  const temporary = x.run(); x.assertRetired();
+  assert.equal(x.overlap(temporary, [x.copy.getBoundingClientRect(), ...x.controls.map(control => control.getBoundingClientRect())]).length, 0);
+  assert.equal(x.f.panel.dataset.compactLauncher, undefined, 'the ordinary floating path succeeds without exhausting a compact search');
+  x.state.laneAvailable = true;
+  const held = x.run(); x.assertLane(held);
+  assert.equal(x.document.activeElement, x.document.body, 'reserve before any main control receives keyboard focus');
+  const activations = x.mainWrites.length, padding = getComputedStyle(x.main).paddingLeft, width = x.copy.getBoundingClientRect().width;
+  for (const index of [1, 2, 3]) {
+    const focused = x.mainControls[index];
+    Object.assign(focused, { outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px' });
+    if (index === 3) x.rawControls[index] = d411Rect(16, 530, 288, 274);
+    x.document.activeElement = focused;
+    listeners.get('focusin')(); listeners.get('scroll')();
+    assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0); assert.equal(x.f.frames.length, 0);
+    assert.deepEqual(x.launcher.getBoundingClientRect(), held); x.assertLane(held);
+    assert.equal(x.document.activeElement, focused);
+    assert.equal(getComputedStyle(x.main).paddingLeft, padding); assert.equal(x.copy.getBoundingClientRect().width, width);
+    assert.equal(x.mainWrites.length, activations); assert.deepEqual(x.focuses, []); assert.deepEqual(x.scrolls, []);
+  }
+  x.f.panel.disconnectedCallback(); x.assertRetired(); assert.equal(listeners.size, 0); x.assertLeaseDisposed(); x.custody();
+});
+
+test(r3LaneCase + 'page focus at the viewport edge retains an inline-clear main lane without accepting unknown or overlapping paint', { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { coarse: true }), listeners = new Map();
+  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
+  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
+  x.f.nativeWindow.matchMedia = () => new EventTarget();
+  x.f.panel.connectedCallback();
+  const held = x.run(), launcher = x.launcher; x.assertLane(held);
+  // R16's saved anchor was y746.046875..1010.109375 before native scroll
+  // 1790 -> 2000. Model that viewport-edge body and its known 3px + 3px
+  // outline in the existing CSSOM ports; this is not native scroll or paint.
+  const focused = x.control(d411Rect(16, 536.046875, 220, 264.0625), {
+    tagName: 'A', parentElement: x.main, outlineStyle: 'solid', outlineWidth: '3px', outlineOffset: '3px',
+  });
+  x.controls.splice(x.controls.length - x.links.length, 0, focused);
+  const ring = d411Rect(10, 530.046875, 232, 276.0625);
+  assert.ok(ring.bottom > innerHeight); assert.ok(ring.right < held.left);
+  const copy = x.copy.getBoundingClientRect(), padding = getComputedStyle(x.main).paddingRight;
+  const activations = x.mainWrites.length;
+  x.f.document.activeElement = focused;
+  for (const event of ['focusin', 'scroll', 'focusin']) {
+    listeners.get(event)(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
+    assert.equal(x.f.frames.length, 0);
+    assert.deepEqual(x.launcher.getBoundingClientRect(), held); x.assertLane(held);
+    assert.equal(x.launcher, launcher); assert.equal(x.f.document.activeElement, focused);
+    assert.deepEqual(x.copy.getBoundingClientRect(), copy);
+    assert.equal(getComputedStyle(x.main).paddingRight, padding);
+    assert.equal(x.mainWrites.length, activations, 'keyboard travel must not clear and reacquire the main reservation');
+    assert.deepEqual(x.focuses, []);
+  }
+  x.f.document.activeElement = launcher;
+  listeners.get('focusin')(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
+  assert.deepEqual(x.launcher.getBoundingClientRect(), held); x.assertLane(held);
+  assert.equal(x.f.document.activeElement, launcher); assert.deepEqual(x.focuses, []);
+
+  // Inline separation never makes an automatic outline exactly measurable.
+  focused.outlineStyle = 'auto'; x.f.document.activeElement = focused;
+  listeners.get('focusin')(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
+  x.assertRetired(); assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []);
+
+  focused.outlineStyle = 'solid'; x.f.document.activeElement = x.more;
+  const restored = x.run(); x.assertLane(restored);
+  // The body only touches the lane edge, but its six-pixel focus envelope
+  // actually overlaps. The same placement flow must still retire this lane.
+  focused.getBoundingClientRect = () => d411Rect(restored.left - 12, restored.top + 6, 12, 44);
+  assert.equal(x.overlap(restored, [focused.getBoundingClientRect()]).length, 0);
+  assert.equal(x.overlap(restored, [d411Rect(restored.left - 18, restored.top, 24, 56)]).length, 1);
+  x.f.document.activeElement = focused;
+  listeners.get('focusin')(); assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
+  x.assertRetired(); assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []);
+  x.f.panel.disconnectedCallback(); assert.equal(listeners.size, 0); x.custody();
+});
+
+test(r3LaneCase + 'main lane retains open/close custody and restores its prior main value and priority on disconnect', { concurrency: false }, async t => {
+  const x = r3BrowseReservedLane(t), listeners = new Map(), pointer = new EventTarget();
+  x.main.style.setProperty(x.property, '7px', 'important');
+  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
+  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
+  x.f.nativeWindow.matchMedia = query => (assert.equal(query, '(pointer: coarse)'), pointer);
+  x.f.panel.connectedCallback(); x.assertLane(x.run());
+  x.f.panel.open = true; x.f.panel.updated(new Map([['open', false]])); await Promise.resolve();
+  for (const frame of x.f.frames.splice(0)) frame(0);
+  assert.equal(x.f.panel.dataset.browseLane, 'true'); assert.equal(x.mainValues.get(x.property), '0px');
+  x.state.coarse = true; pointer.dispatchEvent(new Event('change'));
+  assert.equal(x.f.frames.length, 1); x.f.frames.shift()(0);
+  assert.equal(x.f.panel.dataset.browseLane, 'true', 'the live open owner retains its reserved main padding');
+  x.f.panel.open = false; x.f.panel.updated(new Map([['open', true]])); await Promise.resolve();
+  for (const frame of x.f.frames.splice(0)) frame(0);
+  x.assertLane(x.launcher.getBoundingClientRect());
+  assert.equal(x.focuses.length, 1); assert.equal(x.f.document.activeElement, x.launcher);
+  assert.deepEqual(x.focuses[0].box, x.launcher.getBoundingClientRect());
+  x.f.panel.disconnectedCallback(); x.assertRetired();
+  assert.equal(x.mainValues.get(x.property), '7px'); assert.equal(x.priorities.get(x.property), 'important');
+  assert.equal(listeners.size, 0); x.custody();
+});
+
+test(r3LaneCase + 'a reflowed copy overflow or displaced current focus cannot receive reserved-lane clearance', { concurrency: false }, () => {
+  for (const defect of ['copy-overflow', 'displaced-focus']) {
+    const cleanup = [];
+    try {
+      const x = r3BrowseReservedLane({ after: undo => cleanup.push(undo) }), focused = x.more;
+      x.state.copyOverflow = defect === 'copy-overflow'; x.state.displacedFocus = defect === 'displaced-focus';
+      x.run(); x.assertRetired();
+      assert.equal(x.queries.length, 3, 'initial sample, failed reserved sample and one final unreserved fallback; no reserve/clear loop');
+      assert.ok(x.copyReads.some(row => row.reserved), 'retain fresh copy evidence even on refusal');
+      if (defect === 'displaced-focus') assert.ok(x.controlReads.some(row => row.control === focused && row.reserved && row.box.bottom < 0),
+        'the focused native owner remains recorded even when it falls out of the visible obstacle set');
+      assert.equal(x.mainValues.has(x.property), false);
+      assert.equal(x.f.document.activeElement, focused); assert.deepEqual(x.focuses, []); x.custody();
+    } finally { for (const undo of cleanup.reverse()) undo(); }
+  }
+});
+
+test(r3LaneCase + 'repeated scroll, focus and transition events cannot reactivate the same rejected main reservation', { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t), listeners = new Map();
+  x.f.nativeWindow.addEventListener = (name, callback) => listeners.set(name, callback);
+  x.f.nativeWindow.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
+  x.f.nativeWindow.matchMedia = query => (assert.equal(query, '(pointer: coarse)'), new EventTarget());
+  let mainTop = 63;
+  x.main.getBoundingClientRect = () => d411Rect(0, mainTop, 320, 737);
+  x.state.displacedFocus = true; x.f.panel.connectedCallback();
+  const activations = () => x.mainWrites.filter(row => row.name === x.property).length;
+  x.run(); x.assertRetired(); assert.equal(activations(), 1); assert.equal(x.queries.length, 3);
+  for (const name of ['scroll', 'focusin', 'transitionend', 'scroll', 'focusin', 'transitionend']) {
+    // Top-only scroll changes do not change the rejected width/height/focus key.
+    mainTop -= 0.125;
+    const copyStart = x.copyReads.length; x.queries.length = 0;
+    listeners.get(name)(); listeners.get(name)();
+    assert.equal(x.f.frames.length, 1, 'the retained scheduler coalesces duplicate native events');
+    x.f.frames.shift()(0);
+    assert.equal(x.f.frames.length, 0); x.assertRetired();
+    assert.equal(activations(), 1, name + ': no new width reservation or reserve/clear cycle');
+    assert.equal(x.queries.length, 1, 'only one ordinary floating qualification occurs');
+    assert.ok(x.copyReads.length > copyStart);
+    assert.ok(x.copyReads.slice(copyStart).every(row => !row.reserved));
+    assert.equal(x.f.document.activeElement, x.more); assert.deepEqual(x.focuses, []); x.custody();
+  }
+  // A genuinely different visible native focus owner changes the refusal key.
+  // The formerly focused More still moves offscreen in this synthetic reflow;
+  // it cannot be misrepresented as the current focus that now must remain visible.
+  x.f.document.activeElement = x.mainControls[1];
+  x.assertLane(x.run()); assert.equal(activations(), 2); assert.equal(x.queries.length, 2);
+  assert.equal(x.f.document.activeElement, x.mainControls[1]); assert.deepEqual(x.focuses, []);
+  x.f.panel.disconnectedCallback(); x.assertRetired(); assert.equal(listeners.size, 0); x.custody();
+});
+
+test(r3LaneCase + 'late readiness reveals the previously complete exact native main control once', { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), focused = x.nativeFocus();
+  x.state.busy = true; x.run(); x.assertRetired(); assert.deepEqual(x.scrolls, []);
+  x.state.busy = false;
+  const held = x.run(); x.assertLane(held);
+  assert.deepEqual(x.scrolls, [{ control: focused, options: { block: 'nearest', inline: 'nearest', behavior: 'instant' }, lane: 'true' }]);
+  assert.equal(x.document.activeElement, focused); assert.ok(x.nativeState.readsAfterScroll > 0, 'the existing placement collector rechecks after scrolling');
+  const revealed = focused.getBoundingClientRect();
+  assert.ok(revealed.top >= 6 && revealed.bottom <= innerHeight - 6);
+  assert.equal(x.overlap(held, [d411Rect(revealed.left - 6, revealed.top - 6, revealed.width + 12, revealed.height + 12)]).length, 0);
+  const writes = x.mainWrites.length;
+  x.run(); assert.equal(x.scrolls.length, 1); assert.equal(x.mainWrites.length, writes);
+  x.assertLeaseDisposed(); x.custody();
+});
+
+for (const mode of ['prior-partial', 'post-overheight', 'already-visible']) test(r3LaneCase + 'late reveal stays bounded / ' + mode, { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true });
+  const before = mode === 'prior-partial' ? d411Rect(90, 785, 180, 44) : d411Rect(90, 700, 180, 44);
+  const after = mode === 'post-overheight' ? d411Rect(80, 0, 112, 810)
+    : mode === 'already-visible' ? d411Rect(80, 700, 112, 44) : d411Rect(80, 785, 112, 44);
+  const focused = x.nativeFocus({ before, after });
+  x.state.busy = true; x.run(); x.state.busy = false;
+  x.run(); assert.deepEqual(x.scrolls, []); assert.equal(x.document.activeElement, focused);
+  if (mode === 'prior-partial') x.assertRetired();
+  else x.assertLane(x.launcher.getBoundingClientRect());
+  x.assertLeaseDisposed(); x.custody();
+});
+
+for (const change of ['route', 'context', 'scope', 'focus', 'disconnected', 'gesture', 'direction', 'posture']) test(r3LaneCase + 'late reveal rejects changed ownership / ' + change, { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), focused = x.nativeFocus();
+  const other = x.mainControls[1];
+  x.state.busy = true; x.run(); x.state.busy = false;
+  x.beforeRevealRead = () => {
+    if (change === 'direction') x.state.rtl = false;
+    if (change === 'posture') x.state.short = true;
+  };
+  x.onReservation = () => {
+    if (change === 'route') x.view.location.href = 'https://fixture.invalid/library/project-b';
+    if (change === 'context') x.f.panel.context = { route: '/library/project-b' };
+    if (change === 'scope') x.f.panel.conversationScope = 'scope-b';
+    if (change === 'focus') x.document.activeElement = other;
+    if (change === 'disconnected') focused.isConnected = false;
+    if (change === 'gesture') x.dispatchDocumentGesture('keydown');
+  };
+  x.run(); assert.deepEqual(x.scrolls, []);
+  assert.equal(x.document.activeElement, change === 'focus' ? other : focused);
+  x.assertLeaseDisposed();
+  assert.deepEqual(x.focuses, []); assert.deepEqual(x.f.emitted, []);
+});
+
+for (const mode of ['scroll-error', 'focus-reentry']) test(r3LaneCase + 'native scroll failure or reentry still revalidates without retry / ' + mode, { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), focused = x.nativeFocus();
+  const other = x.mainControls[1];
+  x.state.busy = true; x.run(); x.state.busy = false;
+  if (mode === 'scroll-error') x.nativeState.scrollError = true;
+  else x.onScroll = () => { x.document.activeElement = other; };
+  x.run();
+  assert.equal(x.scrolls.length, 1); assert.equal(x.scrolls[0].control, focused);
+  assert.equal(x.document.activeElement, mode === 'focus-reentry' ? other : focused);
+  assert.ok(x.nativeState.readsAfterScroll > 0, 'the actual placement collector still runs after the native operation');
+  x.run(); assert.equal(x.scrolls.length, 1, 'settled validation never retries the scroll');
+  x.assertLeaseDisposed(); x.custody();
+});
+
+for (const change of ['main-replacement', 'owner-replacement', 'owner-withdrawal', 'route', 'direction', 'posture']) test(r3LaneCase + 'accepted stable ownership retires before own-focus freeze / ' + change, { concurrency: false }, t => {
+  const x = r3BrowseReservedLane(t, { rtl: true, coarse: true }), owner = x.f.panel.parentElement;
+  x.main.style.setProperty(x.property, '7px', 'important');
+  const held = x.run(); x.assertLane(held);
+  const launcher = x.launcher, reservations = () => x.mainWrites.filter(row => row.name === x.property && row.priority === '').length;
+  const before = reservations();
+  x.document.activeElement = launcher; x.hovered = true;
+  let replacement;
+  if (change === 'main-replacement') {
+    replacement = x.ancestor(d411Rect(0, 63, 320, 737), { parentElement: x.shell, isConnected: true, ownerDocument: x.document,
+      getAttribute: name => (assert.equal(name, 'aria-busy'), 'false'),
+      closest: selector => selector === '.application-creative' ? x.shell
+        : (assert.equal(selector, "[hidden], [inert], [aria-hidden='true']"), null),
+      style: { getPropertyValue: () => 'replacement-owned', getPropertyPriority: () => 'important',
+        setProperty() { assert.fail('retirement must not write the replacement main'); },
+        removeProperty() { assert.fail('retirement must not remove replacement-owned style'); } },
+    });
+    x.shell.querySelector = selector => (assert.equal(selector, '#main-content'), replacement);
+  }
+  if (change === 'owner-replacement') x.f.panel.parentElement = { ...owner, parentElement: x.shell, ownerDocument: x.document };
+  if (change === 'owner-withdrawal') owner.parentElement = null;
+  if (change === 'route') x.view.location.href = 'https://fixture.invalid/library/project-b';
+  if (change === 'direction') x.state.rtl = false;
+  if (change === 'posture') x.state.short = true;
+  x.run(); x.assertRetired();
+  assert.equal(x.mainValues.get(x.property), '7px'); assert.equal(x.priorities.get(x.property), 'important');
+  assert.equal(reservations(), before, 'own-focus retirement does not acquire another width reservation');
+  assert.equal(x.launcher, launcher); assert.equal(x.document.activeElement, launcher);
+  assert.deepEqual(x.focuses, []); assert.deepEqual(x.scrolls, []); assert.deepEqual(x.f.emitted, []);
+  if (replacement) assert.equal(replacement.style.getPropertyValue(x.property), 'replacement-owned');
+  x.assertLeaseDisposed();
 });
