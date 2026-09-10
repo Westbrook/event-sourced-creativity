@@ -145,7 +145,72 @@ export type DocumentArtifactDraft = {
   content_markdown: string;
   presentation: SlidePresentation | null;
   items: DocumentArtifactDraftItem[];
+  audio_revision?: AudioMediaRevision;
 };
+
+/** Immutable authored clip provenance; the enclosing edit event identifies its current revision. */
+export type AudioMediaRevision = {
+  schemaVersion: 1; operation: "trim";
+  media: { url: string; mediaType: "audio/wav"; sha256: string; byteLength: number };
+  source: { url: string; sha256: string; revision: number; contentSha256: string; frameCount: number };
+  startFrame: number; endFrame: number; sampleRate: number; channels: 1 | 2; bitsPerSample: 16;
+  frameCount: number; durationSeconds: number;
+};
+export type AudioTrimEditRequest = {
+  expectedRevision: number; expectedContentSha256: string;
+  audioTrim: { sourceMediaSha256: string; sourceFrameCount: number; startFrame: number; endFrame: number; resultMediaSha256: string };
+};
+export type AudioTrimEditCode = "saved" | "unchanged" | "source_changed" | "invalid_range" | "unsupported" | "unavailable" | "access_denied" | "unconfirmed" | "retired";
+export type AudioTrimEditResult =
+  | { status: "saved"; code: "saved"; revision: number; contentSha256: string; audioRevision: AudioMediaRevision }
+  | { status: "unchanged"; code: "unchanged" }
+  | { status: "conflict"; code: "source_changed" }
+  | { status: "refused"; code: "invalid_range" | "unsupported" | "unavailable" | "access_denied" }
+  | { status: "unconfirmed"; code: "unconfirmed" }
+  | { status: "retired"; code: "retired" };
+
+/** Closed, non-coercing parser. A malformed present override must never select the original media. */
+export function parseAudioMediaRevision(value: unknown): AudioMediaRevision | null {
+  const closed = (candidate: unknown, names: readonly string[]): Record<string, unknown> | null => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const prototype = Object.getPrototypeOf(candidate);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const keys = Reflect.ownKeys(candidate);
+    if (keys.length !== names.length || keys.some(key => typeof key !== "string" || !names.includes(key))) return null;
+    if (names.some(key => { const property = Object.getOwnPropertyDescriptor(candidate, key); return !property?.enumerable || !Object.hasOwn(property, "value"); })) return null;
+    return candidate as Record<string, unknown>;
+  };
+  const mediaUrl = (candidate: unknown): candidate is string => {
+    if (typeof candidate !== "string" || candidate.length > 2048 || !/^\/api\/media\/(?:[A-Za-z0-9._~!'()*-]|%[A-Fa-f0-9]{2})+$/u.test(candidate)) return false;
+    try {
+      const segment = candidate.slice("/api/media/".length), key = decodeURIComponent(segment);
+      return !!key && encodeURIComponent(key) === segment
+        && ![...key].some(character => { const code = character.charCodeAt(0); return code < 0x20 || code === 0x7f || code === 0x5c; })
+        && !key.split("/").some(part => part === "." || part === "..");
+    } catch { return false; }
+  };
+  const integer = (candidate: unknown, minimum: number): candidate is number => typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= minimum;
+  const digest = (candidate: unknown): candidate is string => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);
+  try {
+    const row = closed(value, ["schemaVersion", "operation", "media", "source", "startFrame", "endFrame", "sampleRate", "channels", "bitsPerSample", "frameCount", "durationSeconds"]);
+    if (!row || row.schemaVersion !== 1 || row.operation !== "trim") return null;
+    const media = closed(row.media, ["url", "mediaType", "sha256", "byteLength"]), source = closed(row.source, ["url", "sha256", "revision", "contentSha256", "frameCount"]);
+    if (!media || !source || !mediaUrl(media.url) || !mediaUrl(source.url) || media.mediaType !== "audio/wav"
+      || !digest(media.sha256) || !digest(source.sha256) || !digest(source.contentSha256)
+      || !integer(media.byteLength, 45) || media.byteLength > 25 * 1024 * 1024 || !integer(source.revision, 0)
+      || !integer(source.frameCount, 1) || !integer(row.startFrame, 0) || !integer(row.endFrame, 1)
+      || !integer(row.sampleRate, 1) || !integer(row.frameCount, 1) || row.channels !== 1 && row.channels !== 2
+      || row.bitsPerSample !== 16 || row.endFrame > source.frameCount || row.startFrame >= row.endFrame
+      || row.frameCount !== row.endFrame - row.startFrame || row.frameCount >= source.frameCount
+      || row.sampleRate * row.channels * 2 > 0xffffffff || 44 + source.frameCount * row.channels * 2 > 25 * 1024 * 1024
+      || media.byteLength !== 44 + row.frameCount * row.channels * 2
+      || row.durationSeconds !== row.frameCount / row.sampleRate || media.url === source.url) return null;
+    return { schemaVersion: 1, operation: "trim", media: { url: media.url, mediaType: "audio/wav", sha256: media.sha256, byteLength: media.byteLength },
+      source: { url: source.url, sha256: source.sha256, revision: source.revision, contentSha256: source.contentSha256, frameCount: source.frameCount },
+      startFrame: row.startFrame, endFrame: row.endFrame, sampleRate: row.sampleRate, channels: row.channels, bitsPerSample: 16,
+      frameCount: row.frameCount, durationSeconds: row.durationSeconds as number };
+  } catch { return null; }
+}
 
 export const documentArtifactDefinition = (kind: DocumentArtifactKind) => ({
   short_story: { label: "Short story", description: "A complete narrative shaped by the document’s intent, characters, setting, and constraints." },
@@ -674,6 +739,8 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
   try {
     const parsed = JSON.parse(value) as Partial<DocumentArtifactDraft>;
     if (!parsed || typeof parsed !== "object" || typeof parsed.title !== "string" || typeof parsed.content_markdown !== "string" || !Array.isArray(parsed.items)) return null;
+    const audioRevision = Object.hasOwn(parsed, "audio_revision") ? parseAudioMediaRevision(parsed.audio_revision) : undefined;
+    if (audioRevision === null) return null;
     const presentation=normalizeSlidePresentation(parsed.presentation);if(presentation&&!presentation.footerLabel){const fallback=text(parsed.title);if(fallback&&!processDerivedSlideLabel(fallback))presentation.footerLabel=fallback;}
     return {
       title: parsed.title,
@@ -681,6 +748,7 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
       content_markdown: parsed.content_markdown,
       presentation,
       items:parsed.items.map((item,index)=>normalizeSlideItem(item,index)),
+      ...(audioRevision ? { audio_revision: audioRevision } : {}),
     };
   } catch { return null; }
 }

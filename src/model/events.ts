@@ -1,7 +1,7 @@
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
-import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, type DocumentArtifact } from "./document-artifacts.ts";
+import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, parseAudioMediaRevision, type DocumentArtifact } from "./document-artifacts.ts";
 
 export type EventActor = "user" | `worker:${string}` | `model:${string}`;
 
@@ -231,6 +231,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const membership: Record<string, { collectionId: string; position: string }> = {};
   const outputs = new Map<string, CreativeOutput>();
   const artifacts = new Map<string, DocumentArtifact>();
+  const originalAudio = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
   const generationCanvas = new Map<string,{canvasId:string;contextSetId:string}>();
   const documentCompiles = new Map<string, Record<string, unknown>>();
   const previewOutputByEvent = new Map<string, string>();
@@ -366,6 +367,31 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
           provider: String(p.provider ?? "openai"), modelId: String(p.model_id ?? "adapter-neutral"), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, library: false,
           sourceEventId: event.eventId, sourceSurface: p.source_surface ? String(p.source_surface) : null, settings: asRecord(p.settings), presentation:normalizeSlidePresentation(p.presentation),
         });
+        if (kind === "audio") { const audio = artifacts.get(id)!; originalAudio.set(id, { mediaUrl: audio.mediaUrl, mediaType: audio.mediaType, settings: { ...audio.settings } }); }
+        break;
+      }
+      case "DocumentArtifactEdited": {
+        const artifact = artifacts.get(String(p.artifact_id ?? ""));
+        if (!artifact || artifact.kind !== "audio" || !Object.hasOwn(p, "audio_revision")
+          || p.document_id !== artifact.documentId || p.content_ref !== artifact.contentRef
+          || p.project_id !== documents.get(artifact.documentId)?.projectId) break;
+        const revised = parseAudioMediaRevision(p.audio_revision);
+        if (revised && Number.isSafeInteger(p.revision) && revised.source.revision < Number(p.revision)) {
+          artifact.mediaUrl = revised.media.url; artifact.mediaType = revised.media.mediaType;
+          artifact.settings = { ...artifact.settings, source_media_sha256: revised.media.sha256,
+            duration_seconds: revised.durationSeconds, estimated_duration_seconds: null, duration_basis: "media-container",
+            duration_media_url: revised.media.url, duration_media_sha256: revised.media.sha256 };
+        } else if (p.audio_revision === null && p.revision_action === "restore" && p.source_surface === "document-artifact-history"
+          && Number.isSafeInteger(p.restored_from_revision) && Number(p.restored_from_revision) >= 0
+          && Number(p.restored_from_revision) < Number(p.revision) && originalAudio.has(artifact.id)) {
+          const original = originalAudio.get(artifact.id)!;
+          artifact.mediaUrl = original.mediaUrl; artifact.mediaType = original.mediaType; artifact.settings = { ...original.settings };
+        } else {
+          // A malformed edited binding is unavailable; never relabel the original file as this revision.
+          artifact.mediaUrl = null; artifact.mediaType = null;
+          artifact.settings = { ...artifact.settings, source_media_sha256: null, duration_seconds: null,
+            estimated_duration_seconds: null, duration_media_url: null, duration_media_sha256: null };
+        }
         break;
       }
       case "OutputRenamed": {

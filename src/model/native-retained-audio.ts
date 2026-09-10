@@ -1,4 +1,5 @@
 import { AUDIO_ROLES, SAFE_AUDIO_MIME_TYPES, audioPlaybackTiming, type AudioRole, type AudioPlaybackTiming } from "./audio.ts";
+import { parseAudioMediaRevision } from "./document-artifacts.ts";
 
 export type NativeRetainedAudioContent = Readonly<{
   content_markdown: string;
@@ -78,8 +79,9 @@ function finish(markdown: unknown, lyrics: unknown, role: unknown, retainedMedia
 }
 
 // The enclosing native projector first captures bounded JSON. Only the exact
-// completion envelope supplies media; prose and an input plan never imply a file.
-export function projectNativeRetainedAudio(markdown: unknown, receipt: unknown): NativeRetainedAudioContent | null {
+// completion envelope supplies the original media and input. An explicitly
+// witnessed authored revision may replace only playable media and its timing.
+export function projectNativeRetainedAudio(markdown: unknown, receipt: unknown, audioRevision?: unknown): NativeRetainedAudioContent | null {
   try {
     const row = record(receipt);
     if (own(row, "artifact_kind") !== "audio") invalid();
@@ -92,9 +94,17 @@ export function projectNativeRetainedAudio(markdown: unknown, receipt: unknown):
     for (const key of ["duration_seconds", "estimated_duration_seconds", "duration_basis", "duration_media_url", "duration_media_sha256", "source_media_sha256"])
       if (Object.getOwnPropertyDescriptor(settings, key)) timingProperties[key] = own(settings, key);
     const role = own(settings, "audio_role", false), lyrics = own(settings, "lyrics", false), watermark = own(settings, "audio_synthid_watermarked", false);
-    return finish(markdown, lyrics === undefined ? "" : lyrics, role === undefined ? null : role,
+    const original = finish(markdown, lyrics === undefined ? "" : lyrics, role === undefined ? null : role,
       retainedMedia, retainedMedia ? audioPlaybackTiming(timingProperties, retainedMedia.url) : null,
       watermark === undefined ? false : watermark, own(row, "input_ref"));
+    if (audioRevision === undefined) return original;
+    const revision = parseAudioMediaRevision(audioRevision);
+    if (!revision || !original.media) invalid();
+    if (revision.source.revision === 0 && (revision.source.url !== original.media.url
+      || revision.source.sha256 !== original.media.sha256)) invalid();
+    return finish(original.content_markdown, original.lyrics, original.role,
+      { url: revision.media.url, mediaType: revision.media.mediaType, sha256: revision.media.sha256 },
+      { seconds: revision.durationSeconds, basis: "measured" }, original.synthIdWatermarked, original.inputRef);
   } catch { return null; }
 }
 

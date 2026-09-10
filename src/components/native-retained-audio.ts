@@ -1,4 +1,5 @@
 import "./native-retained-audio.css";
+import { audioTrimCopy } from "./design-system/locales/audio-trim-messages.ts";
 import { html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import type { FormaLocaleController } from "./design-system/localization.ts";
@@ -7,7 +8,7 @@ import { readNativeRetainedAudioMedia } from "../model/native-retained-audio-med
 import { FormaPresentationalElement } from "./presentational-element";
 
 type AudioResult = Extract<NativeRetainedOutputDto, { output: "audio" }>;
-type AudioLocale = Pick<FormaLocaleController, "system" | "t" | "number">;
+type AudioLocale = Pick<FormaLocaleController, "system" | "t" | "number"> & Partial<Pick<FormaLocaleController, "locale">>;
 type AudioRecovery = { result: AudioResult; audio: HTMLAudioElement; document: Document };
 
 /* The host owns retained-source access. This leaf owns only the explicit media
@@ -166,7 +167,7 @@ export class NativeRetainedAudio extends FormaPresentationalElement {
         @blur=${(event: Event) => this.#audioBlur(event)}></audio></section>` : nothing}
       ${duration ? html`<p class="forma-audio-description">${duration}</p>` : nothing}
       ${content.synthIdWatermarked ? html`<p>${locale.t("audio.generation.watermark", "Generated audio includes an embedded SynthID watermark.")}</p>` : nothing}
-      <p>${locale.system("Audio editing is not available in Forma.")}</p>
+      <p>${audioTrimCopy(locale.locale ?? this.i18n.locale).nativeHint}</p>
       <details class="forma-audio-transcript"><summary>${locale.t("audio.reference.transcript", "Transcript or listening notes")}</summary>
         <pre dir="auto" translate="no">${content.content_markdown}</pre></details>
       ${content.lyrics ? html`<details class="forma-audio-transcript"><summary>${locale.t("audio.generation.lyrics", "Lyrics and production notes")}</summary>
