@@ -42,3 +42,41 @@ test("Library search puts matching content before next-action suggestions", asyn
   expect((await page.evaluate(()=>globalThis.formaIsolatedPresentation.snapshot())).forbidden).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test("Library history stays in its slot across empty Kept and Recent", async ({ page }, testInfo) => {
+  const errors=[]; page.on("pageerror",error=>errors.push(String(error)));
+  await page.route("**/*",route=>new URL(route.request().url()).origin==="http://127.0.0.1:4186"?route.continue():route.abort());
+  await page.goto("http://127.0.0.1:4186/tests/presentation-responsive.fixture.html?isolated=library");
+  const kept=page.getByRole("button",{name:"Kept 0",exact:true});
+  const recent=page.getByRole("button",{name:"Recent 1",exact:true});
+  await expect(recent).toHaveAttribute("aria-pressed","true");
+  await kept.scrollIntoViewIfNeeded();
+  const history=await kept.evaluateHandle(button=>button.closest("forma-ui-segmented-control"));
+  const before=await kept.boundingBox();
+  await kept.click();
+  await expect(kept).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByRole("heading",{name:"No kept outputs match",exact:true})).toBeVisible();
+  expect(await kept.evaluate((button,original)=>button.closest("forma-ui-segmented-control")===original,history)).toBe(true);
+  await expect(kept).toBeFocused();
+  const empty=await kept.boundingBox();
+  expect(Math.abs(empty.y-before.y)).toBeLessThanOrEqual(1);
+  await page.keyboard.press("Shift+Tab");
+  await expect(recent).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(recent).toHaveAttribute("aria-pressed","true");
+  await expect(recent).toBeFocused();
+  expect(await recent.evaluate((button,original)=>button.closest("forma-ui-segmented-control")===original,history)).toBe(true);
+  const restored=await kept.boundingBox();
+  expect(Math.abs(restored.y-before.y)).toBeLessThanOrEqual(1);
+  const snapshot=await page.evaluate(()=>globalThis.formaIsolatedPresentation.snapshot());
+  expect(snapshot.forbidden).toEqual([]);
+  expect(snapshot.custody.events.some(event=>event.type==="ObjectExported")).toBe(false);
+  const dpr=await page.evaluate(()=>devicePixelRatio),viewport=page.viewportSize();
+  const png=await page.screenshot({path:testInfo.outputPath("library-history-stable.png"),scale:"device"});
+  expect(png.readUInt32BE(16)).toBe(Math.round(viewport.width*dpr));
+  expect(png.readUInt32BE(20)).toBe(Math.round(viewport.height*dpr));
+  await testInfo.attach("history-slot-geometry",{contentType:"application/json",body:JSON.stringify({before,empty,restored,viewport,dpr,
+    scope:"real Library/Store with synthetic corpus; pointer Kept and keyboard Recent; not the original CUA export incident"})});
+  expect(errors).toEqual([]);
+  await history.dispose();
+});

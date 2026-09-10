@@ -2051,6 +2051,8 @@ forma-document-artifacts { display: block; min-width: 0; }
 .generation-input-dialog > article { display: grid; grid-template-rows: auto minmax(0,1fr) auto; height: min(52rem,calc(100dvh - 2rem)); min-height: 0; }
 .generation-input-dialog > article > header,.generation-input-dialog > article > footer { display: flex; align-items: start; justify-content: space-between; gap: 1.5rem; padding: 1.25rem var(--page-gutter); background: var(--paper); }
 .generation-input-dialog > article > header { border-block-end: 1px solid var(--line); }
+.generation-input-dialog > article > header > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.generation-input-dialog > article > header > .icon-button { flex: none; }
 .generation-input-dialog > article > footer { align-items: center; border-block-start: 1px solid var(--line); }
 .generation-input-dialog > article > header h2 { margin: .2rem 0; font: 600 clamp(1.4rem,3vw,2rem)/1.08 var(--sans); letter-spacing: -.03em; }
 .generation-input-dialog > article > header p,.generation-input-dialog section header p { max-width: 48rem; margin: 0; color: var(--muted); }
@@ -2060,14 +2062,21 @@ forma-document-artifacts { display: block; min-width: 0; }
 .managed-production-inputs summary { min-block-size: var(--forma-control-min-size,44px); align-content: center; cursor: pointer; font-weight: 600; }
 .generation-input-dialog section { padding-block: 1.35rem; }
 .generation-input-dialog section + section { border-block-start: 1px solid var(--line); }
-.generation-input-dialog section > header { display: flex; align-items: start; justify-content: space-between; gap: 1.5rem; margin-block-end: .8rem; }
+.generation-input-dialog section > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.5rem; margin-block-end: .8rem; }
+.generation-input-dialog section > header > div { flex: 1 1 18rem; min-width: min(100%,18rem); overflow-wrap: anywhere; }
+.generation-input-dialog section > header > .button { flex: 0 1 auto; max-width: 100%; }
 .generation-input-dialog section h3 { margin: 0 0 .2rem; font: 600 var(--type-body) var(--sans); }
 .generation-receipt-summary dl { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(14rem,100%),1fr)); gap: .85rem 1rem; margin: 0; }
 .generation-receipt-summary dl > div { display: grid; gap: .2rem; min-width: 0; }
 .generation-receipt-summary dt { color: var(--muted); font-size: var(--type-caption); }
 .generation-receipt-summary dd { margin: 0; overflow-wrap: anywhere; font-size: var(--type-body); }
 .generation-receipt-summary > p { margin: .9rem 0 0; color: var(--muted); }
+.generation-accounting-preview .generation-accounting-calls { margin-block-start: 1rem; }
+.generation-accounting-preview dt { overflow-wrap: anywhere; }
+.generation-accounting-receipt-label { display: grid; gap: .5rem; margin-block-start: 1rem; min-width: 0; }
 .generation-input-dialog textarea { display: block; width: 100%; min-height: 10rem; max-height: 22rem; resize: vertical; padding: 1rem; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font: 400 var(--type-caption)/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.generation-input-dialog textarea:focus-visible { outline: var(--forma-focus-ring-width,.1875rem) solid var(--forma-focus-ring-color,var(--accent)); outline-offset: 3px; }
+@media (forced-colors: active) { .generation-input-dialog textarea:focus-visible { outline-color: Highlight; } }
 .generation-input-dialog .generation-input-receipt { min-height: 18rem; }
 .saved-storyboard-inspection > h4 { margin: 0 0 .4rem; font: 600 1.25rem/1.25 var(--sans); }
 .saved-storyboard-inspection > p { max-width: 60ch; }

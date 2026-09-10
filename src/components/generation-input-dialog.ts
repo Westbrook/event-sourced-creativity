@@ -8,6 +8,9 @@ import { savedStoryboardInspection } from "../model/saved-storyboard-inspection"
 import { model3dPromptLength } from "../model/model3d";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
+import { createGenerationAccountingReader, generationAccountingTarget, type GenerationAccountingTarget } from "../model/generation-accounting-inspection.ts";
+
+type AccountingInspectionOwner = { inspection: GenerationInputInspection; scopeKey: string; route: string; target: GenerationAccountingTarget };
 
 export class GenerationInputDialog extends FormaElement {
   static properties={open:{type:Boolean},inspection:{attribute:false},openingCurrent:{attribute:false}};
@@ -15,7 +18,13 @@ export class GenerationInputDialog extends FormaElement {
   openingCurrent:(()=>boolean)|null=null;
   open=false;inspection:GenerationInputInspection|null=null;#unavailableFrames=new Set<string>();#titleId=`generation-input-${crypto.randomUUID()}`;
   #inspectionScope="";
+  #accounting = createGenerationAccountingReader();
+  #accountingOwner: AccountingInspectionOwner | null = null;
+  #accountingUnsubscribe?: () => void;
+  #retireAccounting=()=>{this.#accounting.cancel();this.#accountingOwner=null;};
+  #accountingScopeChanged=()=>{if(this.#accountingOwner&&!this.#accountingCurrent(this.#accountingOwner)){this.#retireAccounting();this.requestUpdate();}};
   protected override willUpdate(){
+    this.#accountingScopeChanged();
     const scope=this.store.captureAuthorizationScope()?.key??"";
     if((!scope||this.#inspectionScope&&scope!==this.#inspectionScope)&&(this.open||this.inspection))this.#clearPrivatePreview();
     this.#inspectionScope=scope;
@@ -29,12 +38,46 @@ export class GenerationInputDialog extends FormaElement {
     }
     if(!this.open&&dialog?.open)dialog.close();
   }
-  #close(){this.open=false;this.#unavailableFrames.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
+  #close(){this.#retireAccounting();this.open=false;this.#unavailableFrames.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
   #clearPrivatePreview=()=>{this.#unavailableFrames.clear();this.inspection=null;this.#close();};
-  override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivatePreview);}
-  override disconnectedCallback(){window.removeEventListener("forma-authorization-changed",this.#clearPrivatePreview);this.open=false;this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.#unavailableFrames.clear();this.inspection=null;this.#inspectionScope="";super.disconnectedCallback();}
+  override connectedCallback(){super.connectedCallback();this.#accountingUnsubscribe?.();this.#accountingUnsubscribe=this.store.subscribe(this.#accountingScopeChanged);window.addEventListener("forma-authorization-changed",this.#clearPrivatePreview);}
+  override disconnectedCallback(){this.#accountingUnsubscribe?.();this.#accountingUnsubscribe=undefined;this.#retireAccounting();window.removeEventListener("forma-authorization-changed",this.#clearPrivatePreview);this.open=false;this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.#unavailableFrames.clear();this.inspection=null;this.#inspectionScope="";super.disconnectedCallback();}
   #frameUnavailable(url:string){this.#unavailableFrames.add(url);this.requestUpdate();}
   #backdrop(event:MouseEvent){if(event.target===event.currentTarget)this.#close();}
+  #accountingTarget(){const session=this.store.session.get(),scope=this.store.captureAuthorizationScope();return scope?generationAccountingTarget(this.inspection,{role:session?.user.role,shared:scope.shared||Boolean(session?.projectContext),impersonating:Boolean(session?.impersonation)}):null;}
+  #accountingCurrent(owner:AccountingInspectionOwner){
+    try{
+      const target=this.#accountingTarget();
+      return this.isConnected&&this.open&&this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.open===true&&this.inspection===owner.inspection
+        &&this.#accountingOwner===owner&&this.store.captureAuthorizationScope()?.key===owner.scopeKey&&this.store.route.get()===owner.route
+        &&(!this.openingCurrent||this.openingCurrent())&&target!==null&&target.jobId===owner.target.jobId&&target.documentId===owner.target.documentId&&target.attemptCount===owner.target.attemptCount&&target.status===owner.target.status;
+    }catch{return false;}
+  }
+  async #readAccounting(){
+    const target=this.#accountingTarget(),inspection=this.inspection,scope=this.store.captureAuthorizationScope();
+    if(!target||!inspection||!scope||this.#accounting.state().status==="loading")return;
+    this.#retireAccounting();
+    const owner={inspection,scopeKey:scope.key,route:this.store.route.get(),target};this.#accountingOwner=owner;
+    await this.#accounting.read(target,{current:()=>this.#accountingCurrent(owner),changed:()=>this.requestUpdate(),
+      fetch:(url,init,current)=>this.store.guardedFetch(url,init,"inspect accounting",{current})});
+  }
+  #accountingTemplate(){
+    if(!this.#accountingTarget())return nothing;
+    const state=this.#accounting.state(),preview=state.preview;
+    const dollars=(value:number|null)=>value===null?this.i18n.t("generation.accounting.unconfirmed","Not yet confirmed"):this.i18n.number(value/1_000_000,{style:"currency",currency:"USD",minimumFractionDigits:6,maximumFractionDigits:6});
+    return html`<section class="generation-receipt-summary generation-accounting-preview" aria-label=${this.i18n.t("generation.accounting.heading","Accounting inspection")} aria-busy=${state.status==="loading"?"true":"false"}>
+      <header><div><h3>${this.i18n.t("generation.accounting.heading","Accounting inspection")}</h3><p>${this.i18n.t("generation.accounting.help","Read current Forma accounting and retained provider receipts. This does not contact a provider or change any balance.")}</p></div>
+        <button type="button" class="button secondary compact" aria-disabled=${state.status==="loading"?"true":"false"} @click=${()=>void this.#readAccounting()}>${state.status==="loading"?this.i18n.t("generation.accounting.loading","Reading accounting…"):state.status==="ready"?this.i18n.t("generation.accounting.refresh","Refresh accounting"):this.i18n.t("generation.accounting.inspect","Inspect accounting")}</button></header>
+      <p role="status">${state.status==="unavailable"?this.i18n.t("generation.accounting.unavailable","Accounting details could not be loaded. The original receipt is unchanged; no settlement or release was made."):state.status==="ready"?this.i18n.t("generation.accounting.readOnly","Read-only snapshot. No provider request, settlement, budget reset or release was made."):state.status==="loading"?this.i18n.t("generation.accounting.loading","Reading accounting…"):nothing}</p>
+      ${preview?html`<dl>
+        <div><dt>${this.i18n.t("generation.accounting.reservation","Current Forma reservation")}</dt><dd>${dollars(preview.reservations.dollars.reservedMicrousd)} · ${this.i18n.system(preview.reservations.dollars.status.replaceAll("_"," "))}</dd></div>
+        <div><dt>${this.i18n.t("generation.accounting.recordedUsage","Current Forma recorded usage")}</dt><dd>${dollars(preview.reservations.dollars.usedMicrousd)}</dd></div>
+        <div><dt>${this.i18n.t("generation.accounting.knownCosts","Known provider receipt costs")}</dt><dd>${dollars(preview.accounting.knownReceiptCostMicrousd)}</dd></div>
+      </dl><p>${this.i18n.t("generation.accounting.subtotal","Recorded provider costs are a subtotal, not a proposed charge or confirmation that the entire attempt was free.")}</p>
+      <dl class="generation-accounting-calls">${preview.calls.map(call=>html`<div><dt>${call.operation==="planning"?this.i18n.t("generation.accounting.planning","Planning"):call.operation==="image"?this.i18n.t("generation.accounting.image","Image"):this.i18n.t("generation.accounting.video","Video")} · ${call.provider} · ${call.model}</dt><dd><code>${call.providerRequestId??this.i18n.t("generation.accounting.unconfirmed","Not yet confirmed")}</code><br>${dollars(call.costMicrousd)} · ${call.accountingReason?this.i18n.t("generation.accounting.incomplete","Accounting incomplete"):this.i18n.t("generation.accounting.recorded","Receipt recorded")}</dd></div>`)}</dl>
+      <label class="generation-accounting-receipt-label">${this.i18n.t("generation.accounting.receipt","Accounting diagnostic receipt")}<textarea dir="ltr" readonly spellcheck="false" .value=${JSON.stringify(preview,null,2)} aria-label=${this.i18n.t("generation.accounting.receipt","Accounting diagnostic receipt")}></textarea></label>`:nothing}
+    </section>`;
+  }
   async #copy(value:string,label:string){const copied=await copyTextToClipboard(value);this.store.toast(copied?this.i18n.system("{label} copied.",{label:this.i18n.system(label)}):this.i18n.system("{label} could not be copied.",{label:this.i18n.system(label)}));}
   override render(){
     if(!this.inspection||!this.store.captureAuthorizationScope())return nothing;
@@ -90,7 +133,7 @@ export class GenerationInputDialog extends FormaElement {
       ["Failure stage",accounting.failure_stage?status(accounting.failure_stage):null],
     ].filter((entry):entry is [string,string]=>entry[1]!==null);
     const description=inspection.retained?failed?this.i18n.system("These are the retained inputs captured before the attempt failed. They are not rebuilt from the document’s current state."):running?this.i18n.system("These are the immutable private inputs captured when this in-progress generation was accepted."):this.i18n.system("This is the retained input receipt for the completed output. It is not rebuilt from the document’s current state."):failed?this.i18n.system("Only the surviving job and event receipt is available; private inputs expired or were not captured for this earlier failure."):running?this.i18n.system("The accepted generation receipt is available, but its private inputs have not been loaded."):this.i18n.system("Only the surviving public receipt is available for this older output.");
-    return html`<dialog class="generation-input-dialog" aria-labelledby=${this.#titleId} closedby="any" @click=${this.#backdrop} @close=${(event:Event)=>{if(this.open&&event.currentTarget===this.renderRoot.querySelector("dialog")&&!(event.currentTarget as HTMLDialogElement).open){this.open=false;this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}}}>
+    return html`<dialog class="generation-input-dialog" aria-labelledby=${this.#titleId} closedby="any" @click=${this.#backdrop} @close=${(event:Event)=>{if(this.open&&event.currentTarget===this.renderRoot.querySelector("dialog")&&!(event.currentTarget as HTMLDialogElement).open){this.#retireAccounting();this.open=false;this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}}}>
       <article><header><div><span>${subtitle}</span><h2 id=${this.#titleId}>${title}</h2><p>${description}</p></div><button class="icon-button" aria-label="Close generation inputs" @click=${()=>this.#close()}>${icon("close")}</button></header>
       <div class="generation-input-body">
         ${storyboard?html`<section class="saved-storyboard-inspection" aria-label=${this.i18n.system("Saved storyboard preview")}>
@@ -107,6 +150,7 @@ export class GenerationInputDialog extends FormaElement {
           </li>`)}</ol>
         </section>`:nothing}
         ${facts.length?html`<section class="generation-receipt-summary"><header><div><h3>Generation receipt</h3><p>Verified provider, source-transmission, slide-count, reservation, and settlement details for this attempt.</p></div></header><dl>${facts.map(([label,value])=>html`<div><dt>${this.i18n.system(label)}</dt><dd>${value}</dd></div>`)}</dl>${accounting.slide_count_mismatch===true?html`<p role="status">The requested slide count intentionally differs from the authored outline.</p>`:nothing}${accounting.reservation_is_application_hard_cap===true?html`<p>Forma checks the remaining application spending ceiling before every provider request or repair. This is not a provider-enforced spending cap.</p>`:accounting.reservation_is_provider_hard_cap===false?html`<p>A reservation is an application estimate, not a provider-enforced spending cap. Bounded repair calls may add billable usage.</p>`:nothing}</section>`:nothing}
+        ${this.#accountingTemplate()}
         ${model3d?html`<section class="model3d-input-receipt"><header><div><h3>${this.i18n.t("model3d.receipt.heading","3D generation inputs")}</h3><p>${this.i18n.t("model3d.receipt.help","The retained prompt, image order, and provider settings identify this attempt. Inspecting them does not start or retry generation.")}</p></div></header><dl>
           <div><dt>${this.i18n.t("model3d.receipt.promptCharacters","Prompt characters")}</dt><dd>${this.i18n.number(model3dPromptLength(prompt))}</dd></div>
           <div><dt>${this.i18n.t("model3d.receipt.referenceCount","Ordered image references")}</dt><dd>${this.i18n.number(references.length)}</dd></div>
