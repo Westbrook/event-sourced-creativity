@@ -243,3 +243,72 @@ test("full revision validation and size refusal happen before staging any edited
   assert.equal(puts,0);assert.equal(f.revision(),0);assert.equal(f.currentRaw(),raw);assert.equal((await f.env.MEDIA.list()).objects.length,1);assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM artifact_revisions").get().n,0);
  });
 });
+
+async function audioCancelWithin(promise, milliseconds, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label)), milliseconds); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+test("native stream cancellation closes pending reads before underlying cancellation settles", { timeout: 4000 }, async () => {
+  let releaseCancel;
+  const cancelGate = new Promise(resolve => { releaseCancel = resolve; });
+  const reader = new ReadableStream({ cancel() { return cancelGate; } }).getReader();
+  const pendingRead = reader.read();
+  let firstCancelSettled = false;
+  const firstCancel = reader.cancel().then(() => { firstCancelSettled = true; });
+  try {
+    assert.deepEqual(await audioCancelWithin(pendingRead, 1000, "native pending read did not close"), { value: undefined, done: true });
+    await audioCancelWithin(reader.cancel(), 1000, "second cancellation of closed stream did not settle");
+    assert.equal(firstCancelSettled, false, "underlying cancellation remains explicitly held");
+  } finally {
+    releaseCancel();
+    await audioCancelWithin(firstCancel, 1000, "released native cancellation did not settle");
+    reader.releaseLock();
+  }
+});
+
+test("overlong owned Audio source refusal does not await held underlying cancellation", { timeout: 4000 }, async t => {
+  const f = await fixture(t);
+  const get = f.env.MEDIA.get.bind(f.env.MEDIA);
+  const objectsBefore = (await f.env.MEDIA.list()).objects;
+  let releaseCancel, enteredCancel, cancelCalls = 0, reads = 0;
+  const cancelGate = new Promise(resolve => { releaseCancel = resolve; });
+  const cancelEntered = new Promise(resolve => { enteredCancel = resolve; });
+  f.env.MEDIA.get = async key => {
+    const object = await get(key);
+    if (!object) return object;
+    return { ...object, body: new ReadableStream({
+      pull(controller) { reads++; controller.enqueue(new Uint8Array(f.originalBytes.length + 1)); },
+      cancel() { cancelCalls++; enteredCancel(); return cancelGate; },
+    }) };
+  };
+  // Convert both outcomes to a fulfilled observation before any deadline race.
+  const operation = f.edit().then(response => ({ response }), error => ({ error }));
+  let refusedBeforeCancelRelease = false;
+  try {
+    await audioCancelWithin(cancelEntered, 1000, "overlong source did not reach native cancellation");
+    // This finite diagnostic window is not a production performance guarantee.
+    // Baseline waits on the explicitly held gate and fails here; cleanup below releases it.
+    const observed = await audioCancelWithin(operation, 250, "Audio refusal awaits underlying cancellation after clearing its timer");
+    if (observed.error) throw observed.error;
+    assert.equal(observed.response.status, 404);
+    refusedBeforeCancelRelease = true;
+  } finally {
+    releaseCancel();
+    const final = await audioCancelWithin(operation, 1000, "Audio operation did not settle after releasing cancellation");
+    assert.ifError(final.error);
+    assert.equal(final.response.status, 404);
+    assert.equal(f.revision(), 0);
+    assert.equal(f.currentRaw(), f.raw);
+    assert.deepEqual((await f.env.MEDIA.list()).objects, objectsBefore);
+    assert.equal(cancelCalls, 1);
+    assert.ok(reads <= 3);
+    t.diagnostic(JSON.stringify({ refusedBeforeCancelRelease, finalStatus: final.response.status,
+      cancelCalls, reads, revision: f.revision(), retainedObjectCount: objectsBefore.length }));
+  }
+});
