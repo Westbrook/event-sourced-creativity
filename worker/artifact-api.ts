@@ -467,13 +467,11 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     if (trimAdmission) return Response.json({error:"audio_trim_unconfirmed"},{status:503});
     throw error;
   }
-  // D1 includes trigger writes in changes; every guarded Audio statement must still write.
-  const incompleteWrite = trimAdmission
-    ? !Array.isArray(results) || results.length !== statements.length || statements.some((_, index) => {
-      const changes = results[index]?.meta?.changes;
-      return results[index]?.success !== true || typeof changes !== "number" || !Number.isSafeInteger(changes) || changes <= 0;
-    })
-    : results.some((result) => Number(result.meta.changes ?? 0) !== 1);
+  // D1 includes trigger writes in changes; every guarded personal statement must still write.
+  const incompleteWrite = !Array.isArray(results) || results.length !== statements.length || statements.some((_, index) => {
+    const changes = results[index]?.meta?.changes;
+    return results[index]?.success !== true || typeof changes !== "number" || !Number.isSafeInteger(changes) || changes <= 0;
+  });
   if (incompleteWrite) {
     if (trimAdmission) {
       try {
