@@ -39,7 +39,8 @@ import { OUTCOME_ARRANGEMENT_ENDPOINT, type OutcomeArrangementCommand, type Outc
 import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas-document-target";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { documentArtifactRevision, isDocumentArtifactKind, parseAudioMediaRevision, parseDocumentArtifactContent, type AudioTrimEditRequest, type AudioTrimEditResult, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
+import { documentArtifactRevision, isDocumentArtifactKind, parseAudioMediaRevision, parseDocumentArtifactContent, parseVideoMediaRevision, parseVideoTrimEditRequest, videoArtifactMediaItem, type AudioTrimEditRequest, type AudioTrimEditResult, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId, type VideoTrimEditRequest, type VideoTrimEditResult } from "../model/document-artifacts";
+import { ownerMediaNamespace } from "../model/media-ownership";
 import { artifactContextEvents, imageOutputContextEvents, model3dArtifactContextReadiness } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType, CONTEXT_CONTAINS_RELATION, isContextCompositionRelation, normalizeActionBlockReferences } from "../model/combined-context";
@@ -171,7 +172,9 @@ type EventSourceRead = { source:CapturedSourceOwnership; id:number; profile:Acco
 type ProjectContextCookieRequest = { ready:Promise<void>; settled:boolean; admitted:boolean; current:()=>boolean; matches:(session:PilotSession|null)=>boolean; reconciliation:Promise<void>|null };
 type EventSourcePage = { events:CreativeEvent[]; content:Record<string,string>; head:number; read:EventSourceRead };
 type AudioTrimObservation = { artifactId:string; request:AudioTrimEditRequest; contentRef:string; documentId:string; projectId:string; sourceMediaUrl:string; sourceRaw:string; sourceRevision:number };
-type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation };
+type VideoTrimObservation = { artifactId:string; request:VideoTrimEditRequest; contentRef:string; documentId:string; projectId:string; route:string; ownerUserId:string;
+  sourceMediaUrl:string; sourceMediaType:string; sourceItemId:string; sourceItemsRaw:string; sourceSettingsRaw:string; sourceHashPresent:boolean; sourceMediaSha256:unknown; sourceEventId:string; sourceRaw:string; sourceRevision:number };
+type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation; videoTrim?:VideoTrimObservation };
 const EVENT_WRITE_SCOPE_CAPACITY=32, EVENT_WRITE_STORE_CAPACITY=128;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
@@ -4170,8 +4173,10 @@ export class FormaStore {
 
   /** Correct the durable deliverable itself without invoking a generation provider. */
   async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest):Promise<AudioTrimEditResult>;
+  async reviseDocumentArtifact(artifactId:string,input:VideoTrimEditRequest):Promise<VideoTrimEditResult>;
   async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<boolean>;
-  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<AudioTrimEditResult|boolean>{
+  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|VideoTrimEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<AudioTrimEditResult|VideoTrimEditResult|boolean>{
+    if ("videoTrim" in input) return this.#reviseVideoDocumentArtifact(artifactId,input);
     const requestInput=JSON.parse(JSON.stringify(input)) as typeof input;
     const trimInput = "audioTrim" in requestInput ? requestInput : null;
     const textInput = "markdown" in requestInput ? requestInput : null;
@@ -4350,6 +4355,188 @@ export class FormaStore {
       const saved=await this.#validatedAudioTrimSave(snapshot,result,receipt.appended);
       if(!current())return retired;
       if(!saved||receipt.appended[0]?.payload.audio_trim_request_sha256!==fingerprint)return unconfirmed;
+      this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+      this.#mergeConfirmed(receipt.appended,receipt.head);
+      this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});
+      return saved;
+    }catch{return current()?unconfirmed:retired;}
+  }
+
+  #videoTrimSourceCurrent(snapshot:VideoTrimObservation):boolean{
+    const artifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===snapshot.artifactId);
+    const item=artifact?videoArtifactMediaItem(artifact):null;
+    return !this.session.get()?.projectContext && this.route.get()===snapshot.route && this.projection.get().projectId===snapshot.projectId
+      && artifact?.kind==="video" && artifact.documentId===snapshot.documentId && artifact.contentRef===snapshot.contentRef
+      && artifact.mediaUrl===snapshot.sourceMediaUrl && artifact.mediaType===snapshot.sourceMediaType && artifact.sourceEventId===snapshot.sourceEventId
+      && item?.id===snapshot.sourceItemId && item.mediaUrl===snapshot.sourceMediaUrl && item.mediaType===snapshot.sourceMediaType
+      && JSON.stringify(artifact.items)===snapshot.sourceItemsRaw && JSON.stringify(artifact.settings)===snapshot.sourceSettingsRaw
+      && Object.hasOwn(artifact.settings,"source_media_sha256")===snapshot.sourceHashPresent && artifact.settings.source_media_sha256===snapshot.sourceMediaSha256
+      && this.session.get()?.user.userId===snapshot.ownerUserId
+      && documentArtifactRevision(this.events.get(),snapshot.artifactId)===snapshot.sourceRevision && this.content.get()[snapshot.contentRef]===snapshot.sourceRaw;
+  }
+
+  #videoTrimWrites=new Set<string>();
+  /** One owned Video write; an uncertain acknowledgment is observed separately, never retried here. */
+  async #reviseVideoDocumentArtifact(artifactId:string,input:VideoTrimEditRequest):Promise<VideoTrimEditResult>{
+    if(this.#videoTrimWrites.has(artifactId))return{status:"unconfirmed",code:"unconfirmed"};
+    this.#videoTrimWrites.add(artifactId);
+    try{return await this.#performVideoDocumentArtifact(artifactId,input);}
+    finally{this.#videoTrimWrites.delete(artifactId);}
+  }
+
+  async #performVideoDocumentArtifact(artifactId:string,input:VideoTrimEditRequest):Promise<VideoTrimEditResult>{
+    const failure=(status:"conflict"|"refused"|"unconfirmed"|"retired",code:"source_changed"|"invalid_range"|"unsupported"|"unavailable"|"access_denied"|"unconfirmed"|"retired")=>
+      ({status,code} as VideoTrimEditResult);
+    const request=parseVideoTrimEditRequest(input);
+    if(!request)return failure("refused","invalid_range");
+    const artifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
+    if(!artifact||artifact.kind!=="video"||this.session.get()?.projectContext)return failure("refused","unsupported");
+    const item=videoArtifactMediaItem(artifact),contentRef=artifact.contentRef??"",sourceRaw=this.content.get()[contentRef];
+    const draft=parseDocumentArtifactContent(sourceRaw);
+    if(!item||!artifact.mediaUrl||!artifact.mediaType||!contentRef||typeof sourceRaw!=="string"||!draft||draft.audio_revision)return failure("refused","unavailable");
+    const snapshot:VideoTrimObservation={artifactId,request,contentRef,documentId:artifact.documentId,projectId:this.projection.get().projectId,route:this.route.get(),ownerUserId:this.session.get()?.user.userId??"",
+      sourceMediaUrl:artifact.mediaUrl,sourceMediaType:artifact.mediaType,sourceItemId:item.id,sourceItemsRaw:JSON.stringify(artifact.items),
+      sourceSettingsRaw:JSON.stringify(artifact.settings),sourceHashPresent:Object.hasOwn(artifact.settings,"source_media_sha256"),sourceMediaSha256:artifact.settings.source_media_sha256,
+      sourceEventId:artifact.sourceEventId,sourceRaw,sourceRevision:documentArtifactRevision(this.events.get(),artifactId)};
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const current=()=>this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&this.#videoTrimSourceCurrent(snapshot);
+    if(!current())return failure("retired","retired");
+    let sourceDigest:string;
+    try{sourceDigest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(sourceRaw))),byte=>byte.toString(16).padStart(2,"0")).join("");}
+    catch{return current()?failure("unconfirmed","unconfirmed"):failure("retired","retired");}
+    if(!current())return failure("retired","retired");
+    if(snapshot.sourceRevision!==request.expectedRevision||sourceDigest!==request.expectedContentSha256
+      ||snapshot.sourceHashPresent&&snapshot.sourceMediaSha256!==request.videoTrim.sourceMediaSha256)return failure("conflict","source_changed");
+    if(draft.video_revision&&(draft.video_revision.media.url!==snapshot.sourceMediaUrl||draft.video_revision.media.mediaType!==snapshot.sourceMediaType
+      ||draft.video_revision.source.itemId!==snapshot.sourceItemId||draft.video_revision.media.sha256!==request.videoTrim.sourceMediaSha256))return failure("conflict","source_changed");
+    if([...this.#eventWriteObservations.values()].some(value=>value.videoTrim?.artifactId===artifactId&&this.sourceOwnershipActive(value.source)
+      &&JSON.stringify(value.videoTrim.request)===JSON.stringify(request)))return failure("unconfirmed","unconfirmed");
+    const unchanged=request.videoTrim.endSample===request.videoTrim.sourceSampleCount&&request.videoTrim.resultMediaSha256===request.videoTrim.sourceMediaSha256;
+    const admission=await this.#admitEventWrite([{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],"append"),observation=admission.observation;
+    if(!admission.admitted){
+      if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!current()},[],current()?"none":"withheld",{silent:true});
+      return current()?failure("unconfirmed","unconfirmed"):failure("retired","retired");
+    }
+    observation.videoTrim=snapshot;
+    const owned=()=>current()&&this.sourceOwnershipActive(observation.source)&&!observation.paused;
+    const edit=async():Promise<VideoTrimEditResult>=>{
+      if(!owned()){
+        this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");
+        return failure("retired","retired");
+      }
+      this.busy.set("DocumentArtifactEdited");this.notify();let dispatched=false;observation.attempted=true;
+      try{
+        const response=await this.guardedFetch("/api/artifacts/"+encodeURIComponent(artifactId),
+          {method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(request)},"save a correction to this finished output",
+          {current:()=>dispatched||owned(),onDispatch:()=>{dispatched=true;}});
+        this.#assertAuthorizationScope(authorization);
+        const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;revision?:number;error?:string};
+        this.#assertAuthorizationScope(authorization);
+        if(!response.ok){
+          const refused:VideoTrimEditResult|null=response.status===409&&["artifact_revision_conflict","video_trim_source_changed"].includes(result.error??"")?failure("conflict","source_changed")
+            :response.status===400&&result.error==="video_trim_invalid_range"?failure("refused","invalid_range")
+            :response.status===400&&result.error==="video_trim_unsupported"?failure("refused","unsupported")
+            :response.status===400&&["invalid_artifact_revision","artifact_revision_too_large"].includes(result.error??"")?failure("refused","unavailable")
+            :response.status===404?failure("refused","unavailable")
+            :response.status===401||response.status===403?failure("refused","access_denied"):null;
+          if(refused){
+            const active=owned();
+            this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:!active},[],active?"none":"withheld",{silent:true});
+            this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);
+            return active?refused:failure("retired","retired");
+          }
+          throw new Error("video_trim_unconfirmed");
+        }
+        const noChange=response.status===200&&unchanged&&result&&typeof result==="object"&&!Array.isArray(result)
+          &&Object.keys(result).sort().join(",")==="appended,content,revision"
+          &&Array.isArray(result.appended)&&result.appended.length===0&&result.revision===request.expectedRevision
+          &&result.content&&typeof result.content==="object"&&!Array.isArray(result.content)
+          &&Object.keys(result.content).length===1&&Object.hasOwn(result.content,contentRef)&&result.content[contentRef]===sourceRaw&&owned();
+        if(noChange){
+          this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:false},[],"none",{silent:true});
+          this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);
+          return{status:"unchanged",code:"unchanged"};
+        }
+        const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+        if(!receipt||!receipt.committed.some(event=>event.type==="DocumentArtifactEdited"))throw new Error("video_trim_unconfirmed");
+        const saved=await this.#validatedVideoTrimSave(snapshot,result,receipt.appended);
+        if(!saved)throw new Error("video_trim_unconfirmed");
+        const active=owned(),patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,
+          outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!active};
+        if(!active){this.#finishEventWrite(observation,patch,[],"withheld");return failure("retired","retired");}
+        if(!receipt.complete||receipt.rejected.length){this.#finishEventWrite(observation,patch,[],"none",{silent:true});return failure("unconfirmed","unconfirmed");}
+        this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+        this.#mergeConfirmed(receipt.appended,receipt.head);
+        this.#finishEventWrite(observation,patch,receipt.appended,"published",{silent:true});
+        return saved;
+      }catch(error){
+        if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;
+        const active=owned();
+        this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!active},[],active?"none":"withheld",{silent:true});
+        return active?failure("unconfirmed","unconfirmed"):failure("retired","retired");
+      }finally{if(this.sourceOwnershipScopeActive(sourceOwner)){this.busy.set("");this.notify();}}
+    };
+    const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  async #validatedVideoTrimSave(snapshot:VideoTrimObservation,result:{content?:Record<string,string>;revision?:number},appended:CreativeEvent[]):Promise<Extract<VideoTrimEditResult,{status:"saved"}>|null>{
+    const input=snapshot.request,raw=result.content?.[snapshot.contentRef],parsed=parseDocumentArtifactContent(raw),video=parsed?.video_revision;
+    const original=parseDocumentArtifactContent(snapshot.sourceRaw),event=appended.find(value=>value.type==="DocumentArtifactEdited"&&value.payload.artifact_id===snapshot.artifactId);
+    if(typeof raw!=="string"||!parsed||!video||!original||!event||appended.length!==1||!result.content||Array.isArray(result.content)||Object.keys(result.content).length!==1
+      ||!Object.hasOwn(result.content,snapshot.contentRef)||result.revision!==snapshot.sourceRevision+1||event.payload.revision!==result.revision
+      ||event.payload.artifact_kind!=="video"||event.payload.document_id!==snapshot.documentId||event.payload.project_id!==snapshot.projectId||event.payload.content_ref!==snapshot.contentRef
+      ||event.payload.source_surface!=="document-artifact-video-trim"||JSON.stringify(event.payload.changed_fields)!==JSON.stringify(["video_revision"])
+      ||event.payload.edited_by_user_id!==snapshot.ownerUserId
+      ||video.source.url!==snapshot.sourceMediaUrl||video.source.itemId!==snapshot.sourceItemId||video.source.sha256!==input.videoTrim.sourceMediaSha256
+      ||video.source.revision!==snapshot.sourceRevision||video.source.contentSha256!==input.expectedContentSha256||video.source.sampleCount!==input.videoTrim.sourceSampleCount
+      ||video.startSample!==input.videoTrim.startSample||video.endSample!==input.videoTrim.endSample||video.media.sha256!==input.videoTrim.resultMediaSha256
+      ||JSON.stringify(parseVideoMediaRevision(event.payload.video_revision))!==JSON.stringify(video))return null;
+    const unchangedRawFields=(value:string):string|null=>{
+      try{
+        const object:unknown=JSON.parse(value);
+        if(!object||typeof object!=="object"||Array.isArray(object))return null;
+        const fields={...object as Record<string,unknown>};delete fields.video_revision;
+        return JSON.stringify(fields);
+      }catch{return null;}
+    };
+    const sourceFields=unchangedRawFields(snapshot.sourceRaw);
+    if(sourceFields===null||sourceFields!==unchangedRawFields(raw))return null;
+    let mediaKey:string;
+    try{mediaKey=decodeURIComponent(video.media.url.slice("/api/media/".length));}catch{return null;}
+    const mediaPrefix=`${ownerMediaNamespace(snapshot.ownerUserId)}/generated/`;
+    if(!mediaKey.startsWith(mediaPrefix)||!/^video-trim-[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.mp4$/u.test(mediaKey.slice(mediaPrefix.length)))return null;
+    const digest=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),byte=>byte.toString(16).padStart(2,"0")).join("");
+    const [contentSha256,fingerprint]=await Promise.all([digest(raw),digest(JSON.stringify(input))]);
+    if(event.payload.content_sha256!==contentSha256||event.payload.video_trim_request_sha256!==fingerprint)return null;
+    return{status:"saved",code:"saved",revision:result.revision,contentSha256,videoRevision:video};
+  }
+
+  /** Explicit observation of the same original Video operation; this method issues only a GET. */
+  async checkVideoTrimOperation(artifactId:string,input:VideoTrimEditRequest):Promise<VideoTrimEditResult>{
+    const unconfirmed:VideoTrimEditResult={status:"unconfirmed",code:"unconfirmed"},retired:VideoTrimEditResult={status:"retired",code:"retired"};
+    const request=parseVideoTrimEditRequest(input);
+    if(!request)return unconfirmed;
+    const fingerprintInput=JSON.stringify(request);
+    const observation=[...this.#eventWriteObservations.values()].find(value=>value.videoTrim?.artifactId===artifactId&&JSON.stringify(value.videoTrim.request)===fingerprintInput);
+    if(!observation?.videoTrim||observation.pending)return unconfirmed;
+    const snapshot=observation.videoTrim,source=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const current=()=>this.sourceOwnershipActive(source)&&this.sourceOwnershipActive(observation.source)&&!observation.paused
+      &&this.#scopeStillActive(authorization)&&this.#videoTrimSourceCurrent(snapshot);
+    if(!current())return retired;
+    try{
+      const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(fingerprintInput))),byte=>byte.toString(16).padStart(2,"0")).join("");
+      if(!current())return retired;
+      const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}?videoTrimOperation=${fingerprint}&expectedRevision=${request.expectedRevision}`,
+        {method:"GET",cache:"no-store"},"check an existing Video save",{current});
+      if(!current())return retired;
+      const result=await response.json() as {content?:Record<string,string>;revision?:number;error?:string};
+      if(!current())return retired;
+      if(!response.ok)return response.status===409&&result.error==="artifact_revision_conflict"?{status:"conflict",code:"source_changed"}:unconfirmed;
+      const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+      if(!receipt||!receipt.complete||receipt.rejected.length)return unconfirmed;
+      const saved=await this.#validatedVideoTrimSave(snapshot,result,receipt.appended);
+      if(!current())return retired;
+      if(!saved||receipt.appended[0]?.payload.video_trim_request_sha256!==fingerprint)return unconfirmed;
       this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
       this.#mergeConfirmed(receipt.appended,receipt.head);
       this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});

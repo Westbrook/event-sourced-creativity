@@ -16787,6 +16787,93 @@
           }
         }
       ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/video-trim-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "VideoTrimEditor",
+          "tagName": "forma-video-trim-editor",
+          "customElement": true,
+          "summary": "Video trim editor application interface.",
+          "description": "The host owns private access and Save. This quiet leaf selects an exact\nencoded sample boundary without loading, decoding or playing media.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "selection",
+              "type": {
+                "text": "Readonly<{ info: VideoPrefixInfo; startSample: 0; endSample: number; }> | null"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            }
+          ],
+          "events": [
+            {
+              "name": "video-trim-change",
+              "type": {
+                "text": "CustomEvent<{ startSample: number; endSample: number; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "video-trim-invalid",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-video-trim-editor",
+          "declaration": {
+            "name": "VideoTrimEditor",
+            "module": "src/components/video-trim-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "VideoTrimEditor",
+          "declaration": {
+            "name": "VideoTrimEditor",
+            "module": "src/components/video-trim-editor.ts"
+          }
+        }
+      ]
     }
   ]
 }

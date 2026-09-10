@@ -6165,4 +6165,9 @@ Object.assign(messages, {
   "system.auto.10kzqe5.142": "アプリケーションに接続された3D形状エディターのインターフェース。組み込む前に、実際の属性、JavaScriptプロパティ、およびイベントを確認してください。",
 });
 
+Object.assign(messages, {
+  "system.auto.1qxwyl2.40": "動画トリミングエディターのアプリケーションインターフェース。",
+  "system.auto.1x2k3lt.139": "ホストが非公開アクセスと保存を管理します。この静かなコンポーネントは、メディアの読み込み、デコード、再生を行わずに、符号化サンプルの正確な境界を選択します。"
+});
+
 export default messages;
