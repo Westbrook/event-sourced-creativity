@@ -395,7 +395,54 @@ test("Slides declared reviewed revision one downloads one audience PowerPoint fi
     expect(finalFocus.documentHasFocus).toBe(true); expect(finalFocus.ownedByCurrentDialog).toBe(true);
     expect(finalFocus.connected).toBe(true); expect(finalFocus.disabled).toBe(false);
     const currentFocus = dialog.locator(":focus"); await expect(currentFocus).toHaveCount(1);
-    await verifyFocus(page, currentFocus, testInfo, "slides-audience-after-download-focus", { checkVisibleControls: false });
+    const completeSelector = 'dialog.document-artifact-view[data-artifact-kind="slides"]:modal .presentation-deck-export-status[data-export-stage="completed"]';
+    const readSelector = 'dialog.document-artifact-view[data-artifact-kind="slides"]:modal .presentation-deck-reading-toggle';
+    const completedStatus = page.locator(completeSelector), readSlide = page.locator(readSelector);
+    await expect(completedStatus).toBeVisible();
+    await expect(completedStatus).toHaveAttribute("role", "status");
+    await expect(completedStatus).toHaveAttribute("aria-live", "polite");
+    await expect(completedStatus).toHaveAttribute("aria-atomic", "true");
+    await expect(completedStatus).toHaveText("2 audience-safe editable PowerPoint slides downloaded.");
+    await expect(completedStatus.locator("button, progress")).toHaveCount(0);
+    await expect(readSlide).toBeVisible(); await expect(readSlide).toBeEnabled();
+    await expect(readSlide).toHaveAccessibleName("Read slide");
+    await expect(page.locator(".toast")).toHaveCount(0);
+    // Retain the original settled native-focus assertion. The added regions are
+    // observed in that same posture, without focusing, scrolling or clicking them.
+    const completionGeometry = await verifyFocus(page, currentFocus, testInfo, "slides-audience-after-download-focus", {
+      checkVisibleControls: false, regionSelectors: [completeSelector, readSelector],
+      overlaySelectors: [".forma-assistant-launcher", ":popover-open", ":modal", ".toast", completeSelector],
+    });
+    expect(completionGeometry.regions).toHaveLength(2);
+    for (const region of completionGeometry.regions) {
+      expect(region.paintedBox, "Completion status and Read slide must be painted").toBe(true);
+      expect(region.visible, "The complete region must fit the current clipping and viewport bounds").toEqual(region.raw);
+      expect(region.unknown, "Unsupported region geometry is not a pass").toEqual([]);
+      expect(region.collisions, "Completion status and Read slide must have no foreign overlay collision").toEqual([]);
+    }
+    const readSlideHits = await readSlide.evaluate(button => {
+      const rect = button.getBoundingClientRect(), doc = button.ownerDocument;
+      const dx = Math.min(2, rect.width / 4), dy = Math.min(2, rect.height / 4);
+      const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
+      return [[x, rect.top + dy], [rect.right - dx, y], [x, rect.bottom - dy], [rect.left + dx, y], [x, y]]
+        .map(([sampleX, sampleY]) => {
+          let top = doc.elementFromPoint(sampleX, sampleY);
+          for (;;) {
+            const next = top?.shadowRoot?.elementFromPoint?.(sampleX, sampleY);
+            if (!next || next === top) break;
+            top = next;
+          }
+          return { x: sampleX, y: sampleY, owned: Boolean(top && button.contains(top)),
+            top: top ? { tag: top.tagName, id: top.id || null, className: top.getAttribute("class") } : null };
+        });
+    });
+    await attachJSON(testInfo, "slides-completed-status-and-read-slide-clearance", {
+      regions: completionGeometry.regions, readSlideHits,
+      scope: "Same settled Download posture: full region clipping bounds and finite Read slide hit samples; no extra native action, full pixel-paint or assistive-technology claim.",
+      toastObservation: "No global toast exists at this settled observation; this is not a continuous transient-toast audit.",
+    });
+    expect(readSlideHits).toHaveLength(5);
+    expect(readSlideHits.every(sample => sample.owned), "Every observed Read slide hit must belong to its native button").toBe(true);
     const final = nativePart(await api.inspect());
     expect(final).toEqual({ ...before, eventCount: 10, eventTypes: [...before.eventTypes, "DocumentArtifactExported"],
       events: [...before.events, exported], exportReceipt: exported, download: final.download });

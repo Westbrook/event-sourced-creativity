@@ -4,6 +4,7 @@ import { artifactReviewState, artifactSourceVersions } from "../model/context-he
 import { documentArtifactRevision, parseDocumentArtifactContent, type DocumentArtifact } from "../model/document-artifacts";
 import { documentJobFailure, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
 import { failedGenerationInputInspection } from "../model/generation-inputs";
+import { createActivityInspectionCache, sameActivityInspectionJob } from "../model/activity-inspection-cache.ts";
 import type { PresentationCandidateDetail, PresentationCandidateSummary } from "../model/presentation-candidates";
 import type {
   ActivityIssueNote,
@@ -42,6 +43,7 @@ export class FormaActivityIssuePanel extends FormaElement {
   documentName = "";
 
   #inspectionJob: DocumentJob | null = null;
+  #inspectionCache = createActivityInspectionCache();
   #actorContent: Record<string, string> = {};
   #candidates: PresentationCandidateSummary[] | null = null;
   #candidate: PresentationCandidateDetail | null = null;
@@ -114,12 +116,20 @@ export class FormaActivityIssuePanel extends FormaElement {
     this.requestUpdate();
   };
 
-  protected override willUpdate() { this.#retireCorrection(); }
+  protected override willUpdate() {
+    this.#retireCorrection();
+    if (this.#inspectionJob && !sameActivityInspectionJob(this.job, this.#inspectionJob)) this.#clearInspection();
+  }
+
+  #clearInspection() {
+    this.#inspectionJob = null;
+    this.#actorContent = {};
+    this.#inspectionCache.clear();
+  }
 
   readonly #clearPrivateState = () => {
     this.#releaseCorrectionOwner();
-    this.#inspectionJob = null;
-    this.#actorContent = {};
+    this.#clearInspection();
     this.#candidates = null;
     this.#candidate = null;
     this.#notes = null;
@@ -154,7 +164,7 @@ export class FormaActivityIssuePanel extends FormaElement {
     const scope = this.store.captureAuthorizationScope();
     if (!scope || this.#busy) return;
     this.#busy = "receipt";
-    this.#actorContent = {};
+    this.#clearInspection();
     this.requestUpdate();
     try {
       let detail: DocumentJob;
@@ -549,10 +559,10 @@ export class FormaActivityIssuePanel extends FormaElement {
     const guidance = generationFailureGuidance(detail, job.error ?? "", job);
     const retryableImage = guidance.retryAllowed && ["preview", "generate", "prompt_fan"].includes(job.kind)
       && this.store.projection.get().documentId === job.documentId;
-    const failedInput = this.#inspectionJob
+    const failedInput = this.#inspectionCache.select(this.#inspectionJob
       ? failedGenerationInputInspection(this.#inspectionJob, this.store.events.get(),
         this.store.session.get()?.projectContext ? this.#actorContent : this.store.content.get())
-      : null;
+      : null);
 
     return html`<section class="forma-activity-issue-panel" aria-label=${this.i18n.t("activity.issue.heading", "What needs attention")}>
       ${evidence.length ? html`<h4>${this.i18n.t("activity.issue.heading", "What needs attention")}</h4><ol class="forma-activity-issue-list">${evidence.map((issue) => html`<li>
@@ -596,7 +606,7 @@ export class FormaActivityIssuePanel extends FormaElement {
         </form>
       </details>
       ${failedInput ? html`<forma-generation-input-dialog .open=${true} .inspection=${failedInput}
-        @generation-input-close=${() => { this.#inspectionJob = null; this.#actorContent = {}; this.requestUpdate(); }}></forma-generation-input-dialog>` : nothing}
+        @generation-input-close=${() => { this.#clearInspection(); this.requestUpdate(); }}></forma-generation-input-dialog>` : nothing}
     </section>`;
   }
 
