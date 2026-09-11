@@ -12,6 +12,10 @@ export class VideoReconciliationError extends Error {
   constructor(code: string, status = 409) { super(code); this.code = code; this.status = status; }
 }
 const fail = (code: string, status = 409): never => { throw new VideoReconciliationError(code, status); };
+async function observedRead<T>(stage: string, operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) { console.error("video_reconciliation_read_failed", { stage }); throw error; }
+}
 const rowProof = (table: string, row: Row): OutputSqlAssertion => ({
   sql: `EXISTS(SELECT 1 FROM ${table} WHERE ${Object.keys(row).map(key => `${key} IS ?`).join(" AND ")})`, bindings: Object.values(row),
 });
@@ -56,7 +60,7 @@ async function authority(env: WorkerEnv, actor: PilotUser) {
   if (actor.fictional || actor.projectExecution || actor.billingUserId && actor.billingUserId !== actor.userId)
     return fail("reconciliation_principal_owner_required", 403);
   const auth = holdAdministratorAuthority(actor), admission = configuredPilotAdmissionGuard(env, actor), schema = videoReconciliationSchemaProof();
-  if (!await env.DB.prepare("SELECT 1 AS ready WHERE " + schema.sql).bind(...schema.bindings).first()) {
+  if (!await observedRead("schema-proof", () => env.DB.prepare("SELECT 1 AS ready WHERE " + schema.sql).bind(...schema.bindings).first())) {
     // Only fixed schema object names and match flags: never log source rows,
     // request bodies, identities, credentials or the stored SQL itself.
     try {
@@ -68,17 +72,20 @@ async function authority(env: WorkerEnv, actor: PilotUser) {
     } catch { console.error("video_reconciliation_schema_diagnostic_unavailable"); }
     return fail("reconciliation_schema_not_ready", 503);
   }
-  if (!await env.DB.prepare("SELECT 1 AS ok WHERE " + auth.sql + " AND " + admission.sql).bind(...auth.bindings!, ...admission.bindings!).first())
+  if (!await observedRead("authority-proof", () => env.DB.prepare("SELECT 1 AS ok WHERE " + auth.sql + " AND " + admission.sql).bind(...auth.bindings!, ...admission.bindings!).first()))
     return fail("reconciliation_authority_changed", 403);
   return [schema, auth, admission];
 }
 const exactScope = (actor: PilotUser): OutputSqlAssertion => ({
-  sql: `EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND output_slot_id IS NULL AND lease_expires_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND NOT EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=?)`,
-  bindings: [VIDEO_TREATMENT.jobId, actor.userId, actor.streamId, VIDEO_TREATMENT.jobId, VIDEO_TREATMENT.tokenReservationId, VIDEO_TREATMENT.costReservationId],
+  sql: `EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND lease_expires_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    AND NOT EXISTS(SELECT 1 FROM output_operation_slots WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=?)
+    AND NOT EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=?)`,
+  bindings: [VIDEO_TREATMENT.jobId, actor.userId, actor.streamId, VIDEO_TREATMENT.jobId, VIDEO_TREATMENT.tokenReservationId, VIDEO_TREATMENT.costReservationId,
+    VIDEO_TREATMENT.jobId, VIDEO_TREATMENT.tokenReservationId, VIDEO_TREATMENT.costReservationId],
 });
 
 async function snapshot(env: WorkerEnv, actor: PilotUser) {
-  const captured = await acquireGenerationAccounting(env, actor, VIDEO_TREATMENT.jobId);
+  const captured = await observedRead("accounting-evidence", () => acquireGenerationAccounting(env, actor, VIDEO_TREATMENT.jobId));
   const { preview: p, before: s } = captured, t = VIDEO_TREATMENT;
   const arithmetic = p.acquisition.conditionalArithmetic;
   const planner = p.calls.find(c => c.operation === "planning"), anchor = p.calls.find(c => c.operation === "image"), video = p.calls.find(c => c.operation === "video");
@@ -105,21 +112,21 @@ async function snapshot(env: WorkerEnv, actor: PilotUser) {
     || reserved.reservation_id !== t.tokenReservationId || reserved.cost_reservation_id !== t.costReservationId
     || reserved.reserved_tokens !== t.reservedTokens || reserved.reserved_microusd !== t.reservedMicrousd)
     return fail("reconciliation_reservation_audit_conflict");
-  const failure = await env.DB.prepare("SELECT event_id,stream_id,correlation_id,type,payload,occurred_at FROM events WHERE event_id=? AND stream_id=? AND correlation_id=? AND type='DocumentRenderFailed' AND length(payload)<=65536")
-    .bind("01a040b8-a890-7be6-9f26-a5fa670e3179", actor.streamId, p.job.correlationId).first<Row>();
+  const failure = await observedRead("original-failure", () => env.DB.prepare("SELECT event_id,stream_id,correlation_id,type,payload,occurred_at FROM events WHERE event_id=? AND stream_id=? AND correlation_id=? AND type='DocumentRenderFailed' AND length(payload)<=65536")
+    .bind("01a040b8-a890-7be6-9f26-a5fa670e3179", actor.streamId, p.job.correlationId).first<Row>());
   if (!failure) return fail("reconciliation_failure_evidence_unavailable");
   const error = JSON.parse(String(failure.payload)) as Record<string, unknown>;
   if (error.http_status !== 422 || error.provider_request_id !== t.videoId || error.error_code !== "fal_content_policy_violation" || error.retryable !== false)
     return fail("reconciliation_failure_evidence_conflict");
   const scope = exactScope(actor);
-  if (!await env.DB.prepare("SELECT 1 AS ok WHERE " + scope.sql).bind(...scope.bindings!).first()) return fail("reconciliation_scope_conflict");
+  if (!await observedRead("exact-scope", () => env.DB.prepare("SELECT 1 AS ok WHERE " + scope.sql).bind(...scope.bindings!).first())) return fail("reconciliation_scope_conflict");
   for (const [rows, unit, used] of [[s.tokenCounters, "tokens", t.usedTokens], [s.costCounters, "microusd", t.usedMicrousd]] as const)
     if (rows.some(row => !integer(Number(row["used_" + unit]) + used))) return fail("reconciliation_counter_overflow");
   return { ...captured, failure, scope };
 }
 
-const existing = (env: WorkerEnv, actor: PilotUser) => env.DB.prepare("SELECT * FROM managed_video_reconciliations WHERE reconciliation_id=? AND operator_id=?")
-  .bind(VIDEO_TREATMENT.id, actor.userId).first<Row>();
+const existing = (env: WorkerEnv, actor: PilotUser) => observedRead("existing-operation", () => env.DB.prepare("SELECT * FROM managed_video_reconciliations WHERE reconciliation_id=? AND operator_id=?")
+  .bind(VIDEO_TREATMENT.id, actor.userId).first<Row>());
 
 export async function previewManagedVideoReconciliation(env: WorkerEnv, actor: PilotUser) {
   await authority(env, actor);
@@ -276,8 +283,9 @@ export async function verifyManagedVideoReconciliation(env: WorkerEnv, actor: Pi
   if (await holdHash(current.before.audits.filter(event => !eventIds.has(String(event.event_id)))) !== record.originalAuditsSha256
     || current.before.priorUsage.length !== 4 || current.before.priorUsage.some(event => !eventIds.has(String(event.event_id))))
     drift.push("additional_accounting_requires_review");
-  if (!await env.DB.prepare("SELECT 1 AS ok FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND output_slot_id IS NULL")
-    .bind(t.jobId, actor.userId, actor.streamId).first()) drift.push("job_scope_changed");
+  if (!await env.DB.prepare(`SELECT 1 AS ok FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=?
+    AND NOT EXISTS(SELECT 1 FROM output_operation_slots WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=?)`)
+    .bind(t.jobId, actor.userId, actor.streamId, t.jobId, t.tokenReservationId, t.costReservationId).first()) drift.push("job_scope_changed");
   const countersUnchanged = await holdHash(current.before.tokenCounters) === await holdHash(record.after.tokenCounters)
     && await holdHash(current.before.costCounters) === await holdHash(record.after.costCounters);
   if (!countersUnchanged) drift.push("counters_changed_since_transaction");

@@ -26,6 +26,10 @@ const { PRINCIPAL_WITH_ACCESS_SQL } = await load('worker/access-policy.ts');
 const { POLICY_VERSION } = await load('worker/pilot-policy.ts');
 const { EVENT_WRITE_STAGE_TRIGGER_SQL } = await load('worker/runtime.ts');
 const migration = readFileSync(`${APP}/drizzle/0037_managed_video_reconciliation.sql`, 'utf8');
+// Use the application's real table declaration, not an invented slot column.
+const documentJobsSchema = readFileSync(`${APP}/worker/runtime.ts`, 'utf8')
+  .match(/env\.DB\.prepare\("(CREATE TABLE IF NOT EXISTS document_jobs [^"\n]+)"\)/u)?.[1];
+assert(documentJobsSchema && !documentJobsSchema.includes('output_slot_id'));
 
 class Statement {
   constructor(db, sql, bindings = []) { this.db = db; this.sql = sql; this.bindings = bindings; }
@@ -84,7 +88,7 @@ CREATE TABLE pilot_cost_reservation_scopes(reservation_id TEXT);
 CREATE TABLE output_operation_slots(job_id TEXT,token_reservation_id TEXT,cost_reservation_id TEXT);
 CREATE TABLE consequential_execution_steps(token_reservation_id TEXT,cost_reservation_id TEXT);
 CREATE TABLE budget_hold_dispositions(job_id TEXT,token_reservation_id TEXT,cost_reservation_id TEXT);
-CREATE TABLE document_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT,stream_id TEXT,document_id TEXT,kind TEXT,status TEXT,correlation_id TEXT,request_json TEXT,result_json TEXT,attempt_count INTEGER,started_at TEXT,completed_at TEXT,lease_expires_at TEXT,expires_at TEXT,updated_at TEXT,output_slot_id TEXT);
+${documentJobsSchema};
 CREATE TABLE budget_counters(scope TEXT NOT NULL,scope_id TEXT NOT NULL,period TEXT NOT NULL,used_tokens INTEGER NOT NULL DEFAULT 0,reserved_tokens INTEGER NOT NULL DEFAULT 0,hard_limit_tokens INTEGER NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(scope,scope_id,period));
 CREATE TABLE cost_budget_counters(scope TEXT NOT NULL,scope_id TEXT NOT NULL,period TEXT NOT NULL,used_microusd INTEGER NOT NULL DEFAULT 0,reserved_microusd INTEGER NOT NULL DEFAULT 0,hard_limit_microusd INTEGER NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(scope,scope_id,period));
 CREATE TABLE budget_reservations(reservation_id TEXT PRIMARY KEY NOT NULL,owner_id TEXT NOT NULL,stream_id TEXT NOT NULL,correlation_id TEXT NOT NULL,operation TEXT NOT NULL,period TEXT NOT NULL,reserved_tokens INTEGER NOT NULL,used_tokens INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,settlement_reason TEXT,created_at TEXT NOT NULL,settled_at TEXT,updated_at TEXT NOT NULL);
@@ -125,7 +129,7 @@ function fixture() {
     productionSceneReceipts: { [T.sceneId]: { sceneId: T.sceneId, providerJobId: T.videoId, providerSubmissionId: 'synthetic:video', status: 'submitted', durationSeconds: 15 } },
     generationReceipt: { actual_provider_call_count: 3 },
   };
-  insert(db, 'document_jobs', { job_id: T.jobId, owner_id: actor.userId, stream_id: actor.streamId, document_id: T.documentId, kind: 'render_document', status: 'failed', correlation_id: `${T.jobId}:attempt:1`, request_json: JSON.stringify({ artifactKind: 'video', productionMode: 'managed' }), result_json: JSON.stringify(checkpoint), attempt_count: 1, started_at: at, completed_at: at, lease_expires_at: null, expires_at: '2099-01-01T00:00:00.000Z', updated_at: at, output_slot_id: null });
+  insert(db, 'document_jobs', { job_id: T.jobId, owner_id: actor.userId, stream_id: actor.streamId, document_id: T.documentId, kind: 'render_document', status: 'failed', source_surface: 'document', requested_sequence: 1, requested_at: at, correlation_id: `${T.jobId}:attempt:1`, request_json: JSON.stringify({ artifactKind: 'video', productionMode: 'managed' }), result_json: JSON.stringify(checkpoint), attempt_count: 1, started_at: at, completed_at: at, lease_expires_at: null, expires_at: '2099-01-01T00:00:00.000Z', updated_at: at });
   const common = { owner_id: actor.userId, stream_id: actor.streamId, correlation_id: `${T.jobId}:attempt:1`, operation: 'document-render:video', period: T.period, created_at: at, settled_at: null, updated_at: at };
   insert(db, 'budget_reservations', { reservation_id: T.tokenReservationId, ...common, reserved_tokens: T.reservedTokens, used_tokens: 0, status: 'active', settlement_reason: null });
   insert(db, 'cost_budget_reservations', { reservation_id: T.costReservationId, ...common, workspace_id: 'forma', reserved_microusd: T.reservedMicrousd, used_microusd: 0, status: 'executing', allow_user_overage: 0 });
@@ -236,11 +240,19 @@ await run('independent verification rejects a self-consistent but malformed befo
   f.db.exec(VIDEO_RECONCILIATION_SCHEMA.find(sql => sql.startsWith('CREATE TRIGGER managed_video_reconciliations_no_update ')));
   await rejectCode(() => verify(f.env, f.actor), 'reconciliation_counter_evidence_conflict');
 });
-await run('terminal video job cannot become project/Output work inside the commit window', async f => {
-  const c = await command(f); let concurrent;
-  f.DB.beforeWriteBatch = () => { f.db.exec("UPDATE document_jobs SET output_slot_id='synthetic-protected-slot'"); concurrent = snapshot(f); };
-  await rejectCode(() => apply(f.env, f.actor, c), 'reconciliation_write_conflict'); assert.deepEqual(snapshot(f), concurrent);
-});
+for (const [field, value] of [['job_id', T.jobId], ['token_reservation_id', T.tokenReservationId], ['cost_reservation_id', T.costReservationId]]) {
+  await run(`governed slot linked by ${field} refuses before preview`, async f => {
+    insert(f.db, 'output_operation_slots', { [field]: value });
+    const before = snapshot(f);
+    await rejectCode(() => preview(f.env, f.actor), 'accounting_personal_unscoped_only');
+    assert.deepEqual(snapshot(f), before);
+  });
+  await run(`governed slot linked by ${field} in commit window aborts atomically`, async f => {
+    const c = await command(f); let concurrent;
+    f.DB.beforeWriteBatch = () => { insert(f.db, 'output_operation_slots', { [field]: value }); concurrent = snapshot(f); };
+    await rejectCode(() => apply(f.env, f.actor, c), 'reconciliation_write_conflict'); assert.deepEqual(snapshot(f), concurrent);
+  });
+}
 await run('HTTP preview/apply/separate verification preserve exact principal and no-store', async f => {
   const { createVideoReconciliationHandler } = await load('worker/managed-video-reconciliation-api.ts');
   const handler = createVideoReconciliationHandler(async () => ({ user: f.actor, response: null }));
@@ -268,6 +280,21 @@ await run('HTTP method/origin/body/extra-field and final-authority failures stay
   let calls = 0;
   const changed = createVideoReconciliationHandler(async () => ({ user: ++calls === 1 ? f.actor : { ...f.actor, streamId: 'creative:other' }, response: null }));
   const refused = await changed(new Request(base + '?jobId=' + T.jobId), f.env); assert.equal(refused.status, 409);
+  assert.deepEqual(snapshot(f), before);
+});
+await run('diagnostics preserve schema refusal and never echo arbitrary error text', async f => {
+  const { reconciliationFailureCategory } = await load('worker/managed-video-reconciliation-api.ts');
+  assert.deepEqual(reconciliationFailureCategory(new Error('D1_ERROR: private source body', {
+    cause: new Error('no such column: private_column SQLITE_ERROR secret-value'),
+  })), ['d1_error', 'sqlite_error', 'no such column']);
+  assert.deepEqual(reconciliationFailureCategory(new Error('private token-only data')), []);
+  f.db.exec('DROP TRIGGER managed_video_reconciliations_no_replace');
+  const before = snapshot(f), execute = f.DB.execute.bind(f.DB);
+  f.DB.execute = statement => {
+    if (statement.sql.startsWith('SELECT name,sql FROM sqlite_schema')) throw new Error('synthetic diagnostic query failure');
+    return execute(statement);
+  };
+  await rejectCode(() => preview(f.env, f.actor), 'reconciliation_schema_not_ready');
   assert.deepEqual(snapshot(f), before);
 });
 assert.equal(networkAttempts, 0); assert.deepEqual(pins(), beforePins, 'Declared source changed during the run');

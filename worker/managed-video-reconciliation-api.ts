@@ -5,6 +5,20 @@ import { HoldDispositionError } from "./budget-hold-dispositions.ts";
 import { applyManagedVideoReconciliation, previewManagedVideoReconciliation, verifyManagedVideoReconciliation, VideoReconciliationError, VIDEO_TREATMENT } from "./managed-video-reconciliation.ts";
 
 type Authorize = typeof requireExistingHoldAdministrator;
+/** Fixed diagnostics only; never echo a database message, SQL or bound value. */
+export function reconciliationFailureCategory(error: unknown): string[] {
+  const messages: string[] = [];
+  let current = error;
+  for (let depth = 0; depth < 3 && current instanceof Error; depth++) {
+    messages.push(current.message); current = current.cause;
+  }
+  const text = messages.join(" ").toLowerCase();
+  return ["d1_error", "d1_type_error", "sqlite_error", "sqlite_auth", "sqlite_constraint",
+    "not authorized", "no such table", "no such column", "no such function", "syntax error",
+    "too many sql variables", "too many subrequests", "too many terms", "malformed json",
+    "string or blob too big", "datatype mismatch", "database is locked", "interrupted"]
+    .filter(value => text.includes(value));
+}
 /** Injected authority is a test seam, never caller-configurable. */
 export function createVideoReconciliationHandler(authorize: Authorize = requireExistingHoldAdministrator) {
   return async (request: Request, env: WorkerEnv): Promise<Response> => {
@@ -57,7 +71,7 @@ export function createVideoReconciliationHandler(authorize: Authorize = requireE
       if (error instanceof SyntaxError) return response({ error: "invalid_json" }, 400);
       // The UI must verify the stable operation before treating an ambiguous POST as failed.
       console.error("video_reconciliation_unavailable", { method: request.method,
-        category: error instanceof Error ? error.message.match(/\b(?:D1_ERROR|D1_TYPE_ERROR|SQLITE_ERROR|SQLITE_AUTH|SQLITE_CONSTRAINT)\b/u)?.[0] ?? "unexpected_error" : "unexpected_error" });
+        categories: reconciliationFailureCategory(error) });
       return response({ error: "reconciliation_unavailable_verify_original_operation" }, 503);
     }
   };
