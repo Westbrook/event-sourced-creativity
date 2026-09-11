@@ -11,6 +11,7 @@ import { ensureModalDialog } from "./modal-dialog";
 import { FormaElement } from "./forma-element";
 import { copyInterfaceText } from "./design-system/clipboard";
 import { outputOperationSupportReceipt } from "./output-operation-support-receipt";
+import { outputPackageInventory, readOutputRecordedPackage, type OutputRecordedPackage } from "./output-recorded-package";
 import { compileOutputPlan, type OutputPlanSummary, type OutputPlanTarget } from "../model/output-plan";
 import { inspectOutputRequirement, type OutputCountPolicy, type OutputQuantity, type OutputRequirementSpec } from "../model/output-requirements";
 import { buildOutcomeRecipeDraft, outcomeRecipe, outcomeRecipeFileChoices, OUTCOME_RECIPE_IDS, type OutcomeRecipeDraft, type OutcomeRecipeId, type OutcomeRecipeInput, type OutcomeRecipeInputSource } from "../model/outcome-recipes";
@@ -42,6 +43,8 @@ type SaveIntent = { scope: { authorizationScopeKey: string; documentId: string }
 type PlanIntent = { scope: { authorizationScopeKey: string; documentId: string }; requirementId: string; planSuggestions: OutputCardPlanSuggestions };
 type Command = OutputRequirementCommand extends infer C ? C extends OutputRequirementCommand ? Omit<C, "documentId" | "expectedRevision" | "clientMutationId"> : never : never;
 type OutputPrivateView = { authorization: CapturedAuthorizationScope | null; source: CapturedSourceOwnership | null; documentId: string; epoch: number };
+type OutputExportOwner = { release: OutputReleaseCapture; view: OutputPrivateView; route: string; privateRevision: number; inventory: string };
+type OutputPackageOwner = OutputRecordedPackage & OutputExportOwner;
 type OutputReviewPreview = { resultId: string; identity: string; view: OutputPrivateView; route: string;
   privateRevision: number; controller: AbortController; status: "loading" | "ready" | "unavailable"; url: string | null;
   lease: { release: () => void; settle: () => void }; kind: "image" | "audio" | "video"; manualImage: boolean };
@@ -95,8 +98,11 @@ export class FormaOutputRequirements extends FormaElement {
   #nativeInspectionSerial = 0;
   #authorizationAcknowledged = false;
   #allowPartial = false;
-  #packageParts: string[] = [];
-  #packageRelease: OutputReleaseCapture | null = null;
+  #recordedPackage: OutputPackageOwner | null = null;
+  #packageReceiptOnly: OutputExportOwner | null = null;
+  #packageDownload: { owner: OutputPackageOwner; controller: AbortController } | null = null;
+  #packageDownloadState: "recorded" | "requested" | "failed" = "recorded";
+  #packageBlobUrls = new Set<string>();
   #file: File | null = null;
   #film: { draft: FilmCompositionDraft; targetId: string; current: () => boolean } | null = null;
   #filmStaged: { file: File; current: () => boolean } | null = null;
@@ -148,7 +154,7 @@ export class FormaOutputRequirements extends FormaElement {
     this.#lastSourceContract = ""; this.#lastNativeIntentContract = ""; this.#lastNativeView = "";
     this.#retirePreflight(); this.#planning = null; this.#planOpener = null; this.#reviewPlan = false;
     this.#selectedTargets.clear(); this.#planRevision = ""; this.#allowPartial = false; this.#removeId = "";
-    this.#packageParts = []; this.#packageRelease = null;
+    this.#retirePackage();
     this.#file = null; this.#rightsConfirmed = false;
     if (this.#uploadCommandId) { this.#uploadSourceRetired = true; if (!this.#uploadReceipt) this.#uploadFailure = { kind: "uncertain", code: null }; }
     if (this.#uncertainCommand) this.#uncertainCommand = { ...this.#uncertainCommand, sourceRetired: true };
@@ -184,8 +190,8 @@ export class FormaOutputRequirements extends FormaElement {
     this.#loading = false; this.#busy = ""; this.#editors.clear();
     this.#preflight = null; this.#authorizationAcknowledged = false; this.#runSelectionCleared = false;
     this.#paidActivation.clear();
-    this.#uncertainCommand = null; this.#planning = null; this.#planOpener = null; this.#packageRelease = null;
-    this.#file = null; this.#rightsConfirmed = false; this.#packageParts = []; this.#removeId = ""; this.#notice = "";
+    this.#uncertainCommand = null; this.#planning = null; this.#planOpener = null; this.#retirePackage();
+    this.#file = null; this.#rightsConfirmed = false; this.#removeId = ""; this.#notice = "";
     this.#lastSourceContract = ""; this.#lastNativeIntentContract = ""; this.#selectedTargets.clear();
     // In-flight identifiers and validated acknowledgments belong to the existing
     // Store transport. A detached view retains no upload bytes or private editor.
@@ -214,13 +220,15 @@ export class FormaOutputRequirements extends FormaElement {
       this.#authorizationAcknowledged = false; this.#uploadCommandId = ""; this.#removeId = "";
       this.#reviewPlan = false; this.#allowPartial = false; this.#planRevision = "";
       this.#planning = null; this.#planOpener = null;
-      this.#packageParts = []; this.#packageRelease = null;
+      this.#retirePackage();
       this.#uncertainCommand = null;
       this.#selectedTargets.clear(); this.#runSelectionCleared = false;
       for (const url of this.#downloadUrls) URL.revokeObjectURL(url);
       this.#downloadUrls.clear();
     }
     const snapshot = this.#snapshot();
+    if (this.#recordedPackage && !this.#packageOwned(this.#recordedPackage)) this.#retirePackage();
+    if (this.#packageReceiptOnly && !this.#packageOwned(this.#packageReceiptOnly)) this.#retirePackage();
     for (const preview of this.#reviewPreviews.values()) if (!this.#reviewPreviewCurrent(preview)) this.#clearReviewPreview(preview.resultId);
     if (this.#film && !this.#film.current()) this.#clearFilmComposition();
     if (this.#filmStaged && this.#busy !== "upload" && !this.#filmStaged.current()) {
@@ -1040,6 +1048,9 @@ export class FormaOutputRequirements extends FormaElement {
     }
     const view = this.#captureView(), route = this.store.route.get();
     if (!this.#viewCurrent(view)) return null;
+    const exportRelease = command.action === "export" ? captureOutputRelease(snapshot, "package") : null;
+    const exportOwner = exportRelease ? { release: exportRelease, view, route,
+      privateRevision: this.store.outputRequirements.resource(this.documentId).privateRevision ?? 0, inventory: outputPackageInventory(snapshot) } : null;
     const original = this.#unresolvedWrite();
     if (original && (original.status === "pending" || original.sourceRetired || original.clientMutationId !== this.#uncertainCommand?.id)) { this.#writeNotAttempted(); return null; }
     if (planCapture && captureOutputPlanProposalBase(snapshot, this.#lastScope).semanticKey !== planCapture.semanticKey) {
@@ -1079,6 +1090,10 @@ export class FormaOutputRequirements extends FormaElement {
       }
       if (result.status !== "unavailable") this.#uncertainCommand = null;
       if (result.status !== "saved") { this.#announce(this.#failure(result), true); return null; }
+      if (exportOwner && !result.body) {
+        if (this.#packageOwned(exportOwner)) this.#packageReceiptOnly = exportOwner;
+        this.#announce(this.#t("packageReceiptOnly", "Export recorded, but package details are unavailable. No download was started. Refresh checks; do not repeat the export to recover it."));
+      }
       return result.body;
     } finally { if (this.#viewCurrent(view)) { this.#busy = ""; this.requestUpdate(); } }
   }
@@ -1742,50 +1757,117 @@ export class FormaOutputRequirements extends FormaElement {
     </section>`;
   }
 
+  #retirePackage() {
+    this.#packageDownload?.controller.abort(); this.#packageDownload = null;
+    for (const url of this.#packageBlobUrls) { URL.revokeObjectURL(url); this.#downloadUrls.delete(url); }
+    this.#packageBlobUrls.clear();
+    this.#recordedPackage = null; this.#packageReceiptOnly = null; this.#packageDownloadState = "recorded";
+  }
+
+  #packageOwned(owner: OutputExportOwner) {
+    const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
+    return this.#viewCurrent(owner.view) && this.store.route.get() === owner.route
+      && !resource.accessLost && !resource.privateUnavailable && (resource.privateRevision ?? 0) === owner.privateRevision
+      // A transient refresh is not a new scope. Never rebase a recorded manifest onto a new one.
+      && (!snapshot || snapshot.permissions.canDownload && snapshot.documentId === owner.release.documentId
+        && snapshot.sourceRevision === owner.release.sourceRevision && snapshot.requirementRevision === owner.release.requirementRevision
+        && snapshot.confirmedPlan?.revisionId === owner.release.planRevisionId && outputPackageInventory(snapshot) === owner.inventory);
+  }
+
+  #packageReady(owner: OutputPackageOwner) {
+    const resource = this.store.outputRequirements.resource(this.documentId);
+    return this.#recordedPackage === owner && this.#packageOwned(owner) && resource.state === "ready"
+      && Boolean(resource.snapshot?.permissions.canDownload) && outputReleaseStillAllowed(owner.release, resource.snapshot);
+  }
+
+  #packageRecovery() {
+    const owner = this.#recordedPackage;
+    if (this.#packageReceiptOnly && this.#packageOwned(this.#packageReceiptOnly)) return html`<p role="status">${this.#t("packageReceiptOnly", "Export recorded, but package details are unavailable. No download was started. Refresh checks; do not repeat the export to recover it.")}</p>`;
+    if (!owner || !this.#packageOwned(owner)) return nothing;
+    const available = this.#packageReady(owner), pending = Boolean(this.#packageDownload);
+    const disabled = !available || pending || Boolean(this.#busy);
+    const status = pending ? this.#t("packageDownloading", "Downloading the recorded package…")
+      : !available ? this.#t("packageChecksPending", "Package recorded. Refresh checks to download it. No new export is needed; keep this page open.")
+        : this.#packageDownloadState === "requested" ? this.#t("packageDownloadRequested", "Download requested. Check your browser’s downloads. You can download this same package again.")
+          : this.#packageDownloadState === "failed" ? this.#t("packageDownloadFailed", "The download did not finish. Download this same recorded package again; no new export is needed.")
+            : this.#t("packageRecorded", "Package recorded. Download it below; file delivery is not yet confirmed. Keep this page open until the download finishes.");
+    return html`<section class="output-package-recovery" aria-label=${this.#controlName(this.#t("recordedPackage", "Recorded package"))}>
+      <p role="status">${status}</p>
+      ${owner.paths.length > 1 ? html`<p>${this.#t("packageEveryPart", "Download every part below. A single part is not the whole package.")}</p>` : nothing}
+      <ol class="output-package-parts">${owner.paths.map((path, index) => {
+        const label = owner.paths.length === 1 ? this.#t("downloadRecordedPackage", "Download recorded package")
+          : this.#t("downloadPart", "Download part {part} of {total}", { part: index + 1, total: owner.paths.length });
+        return html`<li><button type="button" class="button secondary" aria-label=${this.#controlName(label)}
+          aria-disabled=${disabled ? "true" : "false"} @click=${() => { if (!disabled) void this.#download(path, "package"); }}>${label}</button></li>`;
+      })}</ol>
+    </section>`;
+  }
+
   async #download(path: string, kind: OutputReleaseCapture["kind"] = "file") {
     const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
+    const owner = kind === "package" ? this.#recordedPackage : null;
+    if (kind === "package" && (!owner || !this.#packageReady(owner) || this.#packageDownload || this.#busy || !owner.paths.includes(path))) return;
     if (resource.state !== "ready" || !snapshot?.permissions.canDownload) return;
     const gate = kind === "package" ? outputPackageReadiness(snapshot) : outputSourceReadiness(snapshot);
     if (!gate.allowed) { this.#announce(this.#readinessMessage(gate), true); return; }
-    const captured = kind === "package" ? this.#packageRelease : captureOutputRelease(snapshot, kind);
+    const captured = owner ? owner.release : captureOutputRelease(snapshot, kind);
     const asset = kind === "file" ? snapshot.assets.find((entry) => entry.downloadUrl === path && entry.available) : null;
-    if (!captured || !outputReleaseStillAllowed(captured, snapshot) || kind === "file" && !asset || kind === "package" && !this.#packageParts.includes(path)) {
+    if (!captured || !outputReleaseStillAllowed(captured, snapshot) || kind === "file" && !asset) {
       this.#announce(this.#t("releaseChanged", "The source, exact file, or package plan changed. Refresh and request the current file or package again."), true); return;
     }
     const view = this.#captureView();
-    const result = await this.store.outputRequirements.download(view.documentId, path);
-    if (!this.#viewCurrent(view)) return;
-    if (result.status !== "saved") { this.#announce(this.#failure(result), true); return; }
-    const currentResource = this.store.outputRequirements.resource(view.documentId), current = currentResource.snapshot;
-    if (currentResource.state !== "ready" || !current?.permissions.canDownload || !outputReleaseStillAllowed(captured, current)
-      || asset && !current.assets.some((entry) => entry.id === asset.id && entry.sha256 === asset.sha256 && entry.available && entry.downloadUrl === path)) {
-      const currentGate = kind === "package" ? outputPackageReadiness(current) : outputSourceReadiness(current);
-      this.#announce(!currentGate.allowed ? this.#readinessMessage(currentGate) : this.#t("releaseChanged", "The source, exact file, or package plan changed. Refresh and request the current file or package again."), true); return;
+    const request = owner ? { owner, controller: new AbortController() } : null;
+    if (request) { this.#packageDownload = request; this.requestUpdate(); }
+    try {
+      const result = await this.store.outputRequirements.download(view.documentId, path, request ? { signal: request.controller.signal } : {});
+      if (!this.#viewCurrent(view) || request && (this.#packageDownload !== request || request.controller.signal.aborted
+        || !this.#packageReady(request.owner))) return;
+      if (result.status !== "saved") { if (request) this.#packageDownloadState = "failed"; this.#announce(this.#failure(result), true); return; }
+      const currentResource = this.store.outputRequirements.resource(view.documentId), current = currentResource.snapshot;
+      if (currentResource.state !== "ready" || !current?.permissions.canDownload || !outputReleaseStillAllowed(captured, current)
+        || asset && !current.assets.some((entry) => entry.id === asset.id && entry.sha256 === asset.sha256 && entry.available && entry.downloadUrl === path)) {
+        const currentGate = kind === "package" ? outputPackageReadiness(current) : outputSourceReadiness(current);
+        this.#announce(!currentGate.allowed ? this.#readinessMessage(currentGate) : this.#t("releaseChanged", "The source, exact file, or package plan changed. Refresh and request the current file or package again."), true); return;
+      }
+      const url = URL.createObjectURL(result.body.blob); this.#downloadUrls.add(url);
+      if (request) this.#packageBlobUrls.add(url);
+      const anchor = document.createElement("a"); anchor.href = url; anchor.download = result.body.filename;
+      anchor.hidden = true; this.append(anchor); anchor.click(); anchor.remove();
+      if (request) this.#packageDownloadState = "requested";
+      // Bytes are released only after the current source and exact resource are checked again.
+    } finally {
+      if (request && this.#packageDownload === request) {
+        this.#packageDownload = null;
+        if (!this.#packageOwned(request.owner)) this.#retirePackage();
+        this.requestUpdate();
+      }
     }
-    const url = URL.createObjectURL(result.body.blob); this.#downloadUrls.add(url);
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = result.body.filename;
-    anchor.hidden = true; this.append(anchor); anchor.click(); anchor.remove();
-    // Bytes are released only after the current source and exact resource are checked again.
   }
 
   async #export(event: SubmitEvent) {
     event.preventDefault();
     const snapshot = this.#snapshot();
+    if (this.#recordedPackage && !this.#packageOwned(this.#recordedPackage)) this.#retirePackage();
+    if (this.#packageReceiptOnly && !this.#packageOwned(this.#packageReceiptOnly)) this.#retirePackage();
+    if (this.#recordedPackage || this.#packageReceiptOnly || this.#busy || this.#packageDownload) return;
     if (!snapshot?.confirmedPlan || !snapshot.permissions.canDownload) return;
     const capture = captureOutputRelease(snapshot, "package");
     if (!capture) { this.#announce(this.#readinessMessage(outputPackageReadiness(snapshot)), true); return; }
     if (!snapshot.summary?.delivery_ready && !this.#allowPartial) return;
+    const view = this.#captureView(), route = this.store.route.get();
+    const privateRevision = this.store.outputRequirements.resource(this.documentId).privateRevision ?? 0;
+    const exportOwner = { release: capture, view, route, privateRevision, inventory: outputPackageInventory(snapshot) };
     const response = await this.#command({ action: "export", planRevisionId: snapshot.confirmedPlan.revisionId, allowPartial: this.#allowPartial });
     if (!response) return;
-    if (!outputReleaseStillAllowed(capture, this.#snapshot())) {
-      const gate = outputPackageReadiness(this.#snapshot());
-      this.#announce(gate.allowed ? this.#t("releaseChanged", "The source, exact file, or package plan changed. Refresh and request the current file or package again.") : this.#readinessMessage(gate), true); return;
+    const record = readOutputRecordedPackage(response.command, view.documentId);
+    if (!record) {
+      if (this.#packageOwned(exportOwner)) this.#packageReceiptOnly = exportOwner;
+      this.#announce(this.#t("packageReceiptOnly", "Export recorded, but package details are unavailable. No download was started. Refresh checks; do not repeat the export to recover it.")); return;
     }
-    const command = response.command as typeof response.command & { downloadUrls?: string[] };
-    this.#packageParts = command.downloadUrls ?? (command.downloadUrl ? [command.downloadUrl] : []);
-    this.#packageRelease = capture;
-    if (this.#packageParts.length === 1) await this.#download(this.#packageParts[0], "package");
-    else if (this.#packageParts.length > 1) this.#announce(this.#t("packageParts", "The checked package has {count} parts. Download every part below; each manifest records the whole assignment and the contents of that part.", { count: this.#packageParts.length }));
+    const owner = Object.freeze({ ...record, ...exportOwner });
+    if (!this.#packageOwned(owner)) return;
+    this.#recordedPackage = owner; this.#packageDownloadState = "recorded";
+    if (owner.paths.length === 1 && this.#packageReady(owner)) await this.#download(owner.paths[0], "package");
     this.requestUpdate();
   }
 
@@ -2382,7 +2464,7 @@ export class FormaOutputRequirements extends FormaElement {
     const resource = this.store.outputRequirements.resource(this.documentId);
     const snapshot = resource.snapshot;
     const ready = resource.state === "ready";
-    if (!snapshot) return html`${this.#transportReceipt()}<section class="output-requirements" aria-busy=${resource.state === "loading" || this.#sourceRefreshing ? "true" : "false"}><h2 tabindex="-1" data-output-plan-focus-return>${this.#t("title", "Outputs")}</h2><p role="status">${resource.state === "loading" ? this.#t("loading", "Loading the complete delivery scope…") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p>${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>` : nothing}${this.#recipeEntry(null)}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}${this.#refreshControl("button secondary")}</section>`;
+    if (!snapshot) return html`${this.#transportReceipt()}<section class="output-requirements" aria-busy=${resource.state === "loading" || this.#sourceRefreshing ? "true" : "false"}><h2 tabindex="-1" data-output-plan-focus-return>${this.#t("title", "Outputs")}</h2><p role="status">${resource.state === "loading" ? this.#t("loading", "Loading the complete delivery scope…") : this.#t("scopeUnknown", "Delivery scope is unknown. Refresh before acting.")}</p>${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>` : nothing}${this.#recipeEntry(null)}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}${this.#packageRecovery()}${this.#refreshControl("button secondary")}</section>`;
     const rows = this.blockId ? snapshot.requirements.filter((row) => row.blockId === this.blockId) : snapshot.requirements;
     const packageGate = outputPackageReadiness(snapshot), historyUnverified = snapshot.capabilities.limitationCodes?.includes("output_scope_history_reason_unverified") === true;
     if (this.blockId) return html`${this.#transportReceipt()}${rows.map((row) => this.#card(snapshot, row, ready))}${resource.error ? html`<p role="alert">${this.#message(resource.errorCode ?? "output_client_load_failed", resource.errorValues)}</p>${this.#refreshControl("button secondary")}` : nothing}${this.#notice ? html`<p role=${this.#noticeKind}>${this.#notice}</p>` : nothing}`;
@@ -2409,7 +2491,7 @@ export class FormaOutputRequirements extends FormaElement {
         ${snapshot.confirmedPlan ? html`<div class="output-targets">${repeat(snapshot.confirmedPlan.plan.targets, (target) => target.id, (target) => this.#target(snapshot, target, ready))}</div>` : html`<p>${this.#t("notConfirmed", "Review and confirm requirements to establish the delivery scope. This does not generate files.")}</p>`}
         ${snapshot.permissions.canAuthor && (snapshot.capabilities.ownedFileAdoption || this.#file) ? html`<section class="output-adoption" tabindex="-1" aria-label=${this.#controlName(this.#t("adoptTitle", "Use a file you own"))}><h3>${this.#t("adoptTitle", "Use a file you own")}</h3><p>${this.#t("adoptDetail", "Upload a finished file. Forma inspects the bytes; matching, content review, current rights, and acceptance are separate steps.")}</p><p>${snapshot.capabilities.supportedFileExtensions.join(", ")}</p><form class="output-file-upload" @submit=${this.#upload}><label>${this.#t("file", "File")}<input aria-label=${this.#controlName(this.#t("file", "File"))} type="file" ?required=${!this.#file} accept=${snapshot.capabilities.supportedFileExtensions.map((extension) => extension.startsWith(".") ? extension : `.${extension}`).join(",")} @change=${this.#setFile}></label><label><input aria-label=${this.#controlName(this.#t("ownedRights", "I own or have permission to use this file and its contents."))} type="checkbox" required .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}>${this.#t("ownedRights", "I own or have permission to use this file and its contents.")}</label><button aria-label=${this.#controlName(this.#t("uploadInspect", "Upload and inspect · no generation"))} type="submit" class="button secondary" ?disabled=${!ready || !snapshot.capabilities.ownedFileAdoption || !outputSourceReadiness(snapshot).allowed || Boolean(this.#busy) || outputUploadNeedsRestage(this.#uploadFailure) || !this.#file || !this.#rightsConfirmed}>${this.#t("uploadInspect", "Upload and inspect · no generation")}</button></form>${this.#file ? html`<p><b>${this.#t("file", "File")}:</b> <span dir="auto">${this.#file.name}</span></p>` : nothing}${this.#uploadFailure ? html`<p role="status">${this.#uploadFailure.kind === "revision" ? this.#t("uploadRevisionConflict", "The saved Document revision changed before this upload. Your selected file is retained; refresh and review the current source before restaging it.") : this.#uploadFailure.kind === "authority" ? this.#t("uploadAuthorityChanged", "The upload’s source or authorization checks changed. Your selected file is retained; recheck current access and source evidence before restaging it.") : this.#t("uploadFileRetained", "Your selected file is retained. Resolve the reported issue before uploading again. Changing the revision alone does not resolve capacity, rights, evidence, or inspection failures.")}</p>${outputUploadNeedsRestage(this.#uploadFailure) ? html`<button aria-label=${this.#controlName(this.#t("recheckUpload", "Refresh checks before restaging this file"))} type="button" class="button secondary" ?disabled=${Boolean(this.#busy) || !snapshot.permissions.canAuthor} @click=${this.#restageUpload}>${this.#t("recheckUpload", "Refresh checks before restaging this file")}</button>` : nothing}` : nothing}<ul>${(snapshot.capabilities.limitationCodes ?? ["output_client_load_failed"]).map((limitation) => html`<li>${this.#message(limitation)}</li>`)}</ul></section>` : nothing}
         ${this.#execution(snapshot, ready)}
-        ${snapshot.confirmedPlan ? html`<form class="output-export" aria-label=${this.#controlName(this.#t("downloadPackage", "Download checked deliverables"))} @submit=${this.#export}><h3>${this.#t("downloadPackage", "Download checked deliverables")}</h3>${historyUnverified ? html`<p class="output-package-history-warning" role="status">${this.#message("output_scope_history_reason_unverified")}</p>` : nothing}${!historyUnverified && !snapshot.summary?.delivery_ready ? html`<label><input aria-label=${this.#controlName(this.#t("partialExplicit", "Download a partial package with its missing-work manifest. This does not complete the assignment."))} type="checkbox" .checked=${this.#allowPartial} @change=${(event: Event) => { if (this.#snapshot()?.capabilities.limitationCodes?.includes("output_scope_history_reason_unverified")) return; this.#allowPartial = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}>${this.#t("partialExplicit", "Download a partial package with its missing-work manifest. This does not complete the assignment.")}</label>` : nothing}<button aria-label=${this.#controlName(this.#t("downloadFiles", "Download files and manifest"))} type="submit" class="button primary" ?disabled=${!ready || !packageGate.allowed || !snapshot.permissions.canDownload || Boolean(this.#busy) || !snapshot.summary?.delivery_ready && !this.#allowPartial}>${this.#t("downloadFiles", "Download files and manifest")}</button></form>${this.#packageParts.length > 1 ? html`<ol class="output-package-parts">${this.#packageParts.map((path, index) => html`<li><button aria-label=${this.#controlName(this.#t("downloadPart", "Download part {part} of {total}", { part: index + 1, total: this.#packageParts.length }))} type="button" class="button secondary" ?disabled=${!ready || !packageGate.allowed || !snapshot.permissions.canDownload || !this.#packageRelease || !outputReleaseStillAllowed(this.#packageRelease, snapshot)} @click=${() => this.#download(path, "package")}>${this.#t("downloadPart", "Download part {part} of {total}", { part: index + 1, total: this.#packageParts.length })}</button></li>`)}</ol>` : nothing}` : nothing}
+        ${snapshot.confirmedPlan ? html`<form class="output-export" aria-label=${this.#controlName(this.#t("downloadPackage", "Download checked deliverables"))} @submit=${this.#export}><h3>${this.#t("downloadPackage", "Download checked deliverables")}</h3>${historyUnverified ? html`<p class="output-package-history-warning" role="status">${this.#message("output_scope_history_reason_unverified")}</p>` : nothing}${!historyUnverified && !snapshot.summary?.delivery_ready ? html`<label><input aria-label=${this.#controlName(this.#t("partialExplicit", "Download a partial package with its missing-work manifest. This does not complete the assignment."))} type="checkbox" .checked=${this.#allowPartial} @change=${(event: Event) => { if (this.#snapshot()?.capabilities.limitationCodes?.includes("output_scope_history_reason_unverified")) return; this.#allowPartial = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}>${this.#t("partialExplicit", "Download a partial package with its missing-work manifest. This does not complete the assignment.")}</label>` : nothing}<button aria-label=${this.#controlName((this.#recordedPackage || this.#packageReceiptOnly) ? this.#t("recordedPackage", "Recorded package") : this.#t("downloadFiles", "Download files and manifest"))} type="submit" class="button primary" aria-disabled=${(this.#recordedPackage || this.#packageReceiptOnly) ? "true" : nothing} ?disabled=${!ready || !packageGate.allowed || !snapshot.permissions.canDownload || Boolean(this.#busy) || !snapshot.summary?.delivery_ready && !this.#allowPartial}>${(this.#recordedPackage || this.#packageReceiptOnly) ? this.#t("recordedPackage", "Recorded package") : this.#t("downloadFiles", "Download files and manifest")}</button></form>${this.#packageRecovery()}` : nothing}
       `}
       `}
     </section>`;

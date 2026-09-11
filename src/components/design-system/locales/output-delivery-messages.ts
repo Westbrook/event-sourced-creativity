@@ -3,6 +3,40 @@ import { FORMA_OUTPUT_DELIVERY_CYCLE_MESSAGES } from "./output-delivery-cycle-me
 
 /** Output delivery interface copy. Tuple order is English, French, Arabic, Japanese. */
 const entries = {
+  "output.delivery.packageEveryPart": ["Download every part below. A single part is not the whole package.", "Téléchargez chaque partie ci-dessous. Une seule partie ne constitue pas le paquet entier.", "نزّل جميع الأجزاء أدناه. الجزء الواحد ليس الحزمة الكاملة.", "以下のすべてのパートをダウンロードしてください。1つのパートだけではパッケージ全体になりません。"],
+  "output.delivery.recordedPackage": ["Recorded package", "Paquet enregistré", "الحزمة المسجّلة", "記録済みパッケージ"],
+  "output.delivery.downloadRecordedPackage": ["Download recorded package", "Télécharger le paquet enregistré", "تنزيل الحزمة المسجّلة", "記録済みパッケージをダウンロード"],
+  "output.delivery.packageDownloading": ["Downloading the recorded package…", "Téléchargement du paquet enregistré…", "جارٍ تنزيل الحزمة المسجّلة…", "記録済みパッケージをダウンロード中…"],
+  "output.delivery.packageRecorded": [
+    "Package recorded. Download it below; file delivery is not yet confirmed. Keep this page open until the download finishes.",
+    "Paquet enregistré. Téléchargez-le ci-dessous ; la réception du fichier n’est pas encore confirmée. Gardez cette page ouverte jusqu’à la fin du téléchargement.",
+    "تم تسجيل الحزمة. نزّلها أدناه؛ لم يُؤكَّد استلام الملف بعد. أبقِ هذه الصفحة مفتوحة حتى يكتمل التنزيل.",
+    "パッケージを記録しました。下からダウンロードしてください。ファイルの受け取りはまだ確認されていません。完了するまでこのページを開いたままにしてください。",
+  ],
+  "output.delivery.packageChecksPending": [
+    "Package recorded. Refresh checks to download it. No new export is needed; keep this page open.",
+    "Paquet enregistré. Actualisez les vérifications pour le télécharger. Aucun nouvel export n’est nécessaire ; gardez cette page ouverte.",
+    "تم تسجيل الحزمة. حدّث الفحوص لتنزيلها. لا حاجة إلى تصدير جديد؛ أبقِ هذه الصفحة مفتوحة.",
+    "パッケージを記録しました。チェックを更新してダウンロードしてください。再エクスポートは不要です。このページを開いたままにしてください。",
+  ],
+  "output.delivery.packageDownloadRequested": [
+    "Download requested. Check your browser’s downloads. You can download this same package again.",
+    "Téléchargement demandé. Vérifiez les téléchargements de votre navigateur. Vous pouvez télécharger à nouveau ce même paquet.",
+    "تم طلب التنزيل. تحقّق من تنزيلات المتصفح. يمكنك تنزيل الحزمة نفسها مجددًا.",
+    "ダウンロードを開始しました。ブラウザーのダウンロードを確認してください。同じパッケージを再度ダウンロードできます。",
+  ],
+  "output.delivery.packageDownloadFailed": [
+    "The download did not finish. Download this same recorded package again; no new export is needed.",
+    "Le téléchargement n’a pas abouti. Téléchargez à nouveau ce même paquet enregistré ; aucun nouvel export n’est nécessaire.",
+    "لم يكتمل التنزيل. نزّل الحزمة المسجّلة نفسها مجددًا؛ لا حاجة إلى تصدير جديد.",
+    "ダウンロードが完了しませんでした。同じ記録済みパッケージを再度ダウンロードしてください。再エクスポートは不要です。",
+  ],
+  "output.delivery.packageReceiptOnly": [
+    "Export recorded, but package details are unavailable. No download was started. Refresh checks; do not repeat the export to recover it.",
+    "Export enregistré, mais les détails du paquet sont indisponibles. Aucun téléchargement n’a démarré. Actualisez les vérifications ; ne répétez pas l’export pour le récupérer.",
+    "تم تسجيل التصدير، لكن تفاصيل الحزمة غير متاحة. لم يبدأ أي تنزيل. حدّث الفحوص؛ لا تكرّر التصدير لاستعادته.",
+    "エクスポートを記録しましたが、パッケージの詳細を利用できません。ダウンロードは開始していません。チェックを更新してください。復旧のために再エクスポートしないでください。",
+  ],
   "output.delivery.model3dExactPrompt": ["Exact prompt sent to Rodin", "Instruction exacte envoyée à Rodin", "النص الدقيق المرسل إلى Rodin", "Rodinに送信する正確なプロンプト"],
   "output.delivery.model3dSettings": ["3D settings: {format}; {tier}; materials {material}; mesh {mesh}.", "Réglages 3D : {format} ; {tier} ; matériaux {material} ; maillage {mesh}.", "إعدادات النموذج ثلاثي الأبعاد: {format}؛ {tier}؛ المواد {material}؛ الشبكة {mesh}.", "3D設定：{format}、{tier}、マテリアル{material}、メッシュ{mesh}。"],
   "output.delivery.model3dDefaults": ["Automatic texture detail, random seed, no paid add-ons. Review each mesh and its materials; generated models may need cleanup before production use.", "Détail des textures automatique, graine aléatoire, aucun supplément payant. Vérifiez chaque maillage et ses matériaux ; les modèles générés peuvent nécessiter des retouches avant utilisation.", "تفاصيل نسيج تلقائية وبذرة عشوائية دون إضافات مدفوعة. راجع كل شبكة وموادها؛ قد تحتاج النماذج المولدة إلى تنقيح قبل استخدامها في الإنتاج.", "テクスチャの詳細は自動、シードはランダム、有料追加機能はありません。各メッシュとマテリアルを確認してください。生成モデルは本番利用前に修正が必要な場合があります。"],
