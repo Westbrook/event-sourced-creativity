@@ -150,11 +150,13 @@ export class PresentationSlide extends FormaPresentationalElement {
   #fitGeneration = 0;
   #renderKey = "";
   #fitDensity: PresentationLayoutDensity | null = null;
+  #heroFitSize: "6.4cqi" | "4.2cqi" | null = null;
 
   get fitKey() { return presentationSlideRenderKey(this.item, this.presentation, this.index, this.total, this.showFooterLabel, this.compact, this.i18n.locale); }
 
   #fontsChanged = () => {
     this.#fitDensity = null;
+    this.#heroFitSize = null;
     this.#scheduleFitMeasurement();
     this.requestUpdate();
   };
@@ -199,7 +201,19 @@ export class PresentationSlide extends FormaPresentationalElement {
       const surfaces = Array.from(this.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR));
       // A hidden or not-yet-rendered slide is pending, never a successful fit.
       if (!artboard || !artboard.clientWidth || !artboard.clientHeight || !surfaces.length) return;
-      const contentFits = surfaces.every((surface) => surface.clientWidth > 0 && surface.clientHeight > 0
+      // Whole hero words use the actual rendered font and column width. Retain
+      // the existing type tiers; do not break words or guess their glyph widths.
+      const hero = this.querySelector<HTMLElement>(".presentation-slide.visual-hero-type .presentation-visual-type > strong");
+      const heroOverflows = Boolean(hero && hero.scrollWidth > hero.clientWidth + 1);
+      if (heroOverflows) {
+        const size = hero?.parentElement?.style.getPropertyValue("--slide-visual-size").trim();
+        if (size === "10cqi" || size === "6.4cqi") {
+          this.#heroFitSize = size === "10cqi" ? "6.4cqi" : "4.2cqi";
+          this.requestUpdate();
+          return;
+        }
+      }
+      const contentFits = !heroOverflows && surfaces.every((surface) => surface.clientWidth > 0 && surface.clientHeight > 0
           && surface.scrollHeight <= surface.clientHeight + 1
           && surface.scrollWidth <= surface.clientWidth + 1,
       );
@@ -384,6 +398,7 @@ export class PresentationSlide extends FormaPresentationalElement {
         // Use the existing middle tier without splitting or replacing its text.
         if (longWord) size = "6.4cqi";
       }
+      if (kind === "hero-type" && this.#heroFitSize && Number.parseFloat(this.#heroFitSize) < Number.parseFloat(size)) size = this.#heroFitSize;
       return html`<div class="presentation-visual-type" style=${`--slide-visual-size:${size}`}>
         <strong dir="auto">${value}</strong>
         ${visual.label ? html`<span dir="auto">${visual.label}</span>` : nothing}
@@ -431,6 +446,7 @@ export class PresentationSlide extends FormaPresentationalElement {
       this.#renderKey = renderKey;
       this.#fitGeneration++;
       this.#fitDensity = null;
+      this.#heroFitSize = null;
     }
     const presentation = normalizeSlidePresentation(this.presentation) ?? defaultSlidePresentation();
     const originalItem = normalizeSlideItem(this.item, this.index);

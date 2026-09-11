@@ -2351,9 +2351,6 @@ forma-presentation-deck:fullscreen .presentation-deck-viewport > .presentation-d
 forma-presentation-slide { position: relative; display: block; width: 100%; min-width: 0; aspect-ratio: 16 / 9; overflow: clip; container: presentation-slide-host / size; }
 .presentation-slide { position: relative; display: grid; box-sizing: border-box; width: 100%; min-width: 0; aspect-ratio: 16/9; grid-template-rows: auto minmax(0,1fr) auto; gap: clamp(.35rem,1.3cqi,1rem); overflow: hidden; padding: clamp(.65rem,3.4cqi,2.5rem); color: var(--slide-ink); background: var(--slide-bg); font-family: var(--slide-font,inherit); container: presentation-slide / inline-size; isolation: isolate; }
 forma-presentation-slide > .presentation-slide[data-presentation-artboard] { position: absolute; top: 50%; left: 50%; width: 960px; height: 540px; min-width: 960px; max-width: none; aspect-ratio: 16 / 9; gap: clamp(.35rem,12.48px,1rem); margin: 0; border: 0; border-radius: 0; padding-block: var(--presentation-safe-block,32px); padding-inline: var(--presentation-safe-inline,40px); color: var(--slide-ink); background: var(--slide-bg); translate: -50% -50%; scale: var(--presentation-slide-scale,1); transform-origin: center; }
-@supports (scale: calc(100cqi / 960px)) {
-  forma-presentation-slide > .presentation-slide[data-presentation-artboard] { scale: min(calc(100cqi / 960px),calc(100cqb / 540px)); }
-}
 .presentation-slide::before { position: absolute; z-index: -1; inset: 0; background: radial-gradient(circle at 86% 14%,color-mix(in srgb,var(--slide-accent) 24%,transparent),transparent 32%),linear-gradient(135deg,transparent 55%,color-mix(in srgb,var(--slide-surface) 72%,transparent)); content: ""; }
 .presentation-slide.style-gallery::before { background: radial-gradient(circle at 86% 14%,color-mix(in srgb,var(--slide-accent) 20%,transparent),transparent 32%),linear-gradient(135deg,transparent 55%,color-mix(in srgb,var(--slide-surface) 72%,transparent)); }
 .presentation-slide.style-gallery h3 { font-weight: 570; }
@@ -2379,6 +2376,8 @@ forma-presentation-slide > .presentation-slide[data-presentation-artboard] { pos
 .presentation-slide-body > aside { display: grid; height: 100%; max-height: 100%; place-items: center; overflow: clip; }
 .presentation-visual-type { display: grid; width: 100%; align-content: center; gap: .35rem; }
 .presentation-visual-type strong { display: block; max-height: none; color: var(--slide-accent-ink,var(--slide-ink)); font: 700 clamp(1rem,var(--slide-visual-size,10cqi),7rem)/var(--forma-script-heading-line-height,1.2) var(--slide-font,var(--forma-font-family,var(--sans))); letter-spacing: var(--forma-script-letter-spacing,-.045em); overflow-wrap: anywhere; }
+/* The bounded measured hero tiers preserve complete words in the evidence column. */
+.presentation-slide.visual-hero-type .presentation-visual-type > strong { min-inline-size: 0; overflow-wrap: normal; }
 .presentation-visual-type span { color: var(--slide-muted); font-size: clamp(.8125rem,1.5cqi,1rem); }
 .presentation-visual-bars { display: grid; width: 100%; gap: clamp(.25rem,1cqi,.7rem); }
 .presentation-visual-bars > div,.presentation-slide__chart-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(3.5rem,.9fr); gap: .2rem .6rem; align-items: center; font-size: clamp(.75rem,1.35cqi,.9rem); }

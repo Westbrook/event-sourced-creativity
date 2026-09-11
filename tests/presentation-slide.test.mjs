@@ -685,7 +685,7 @@ test("a short numeric displayValue retains its large tier despite a long underly
   assert.deepEqual(slide,original);
 });
 
-function fitHarness(context) {
+function fitHarness(context, options = {}) {
   const descriptors = Object.fromEntries(["document", "requestAnimationFrame", "cancelAnimationFrame"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const frames = new Map(), events = [], fonts = new EventTarget();
   fonts.status = "loaded";
@@ -714,17 +714,26 @@ function fitHarness(context) {
     clientWidth: { value: 960 },
     clientHeight: { value: 540 },
   });
-  element.querySelector = () => hasArtboard ? artboard : null;
+  // Optional exact hero scroll metrics exercise the real bounded fit lifecycle;
+  // they are declared native geometry inputs, not font or browser measurements.
+  let heroSize = "";
+  const hero = options.hero ? { clientWidth: options.hero.width, clientHeight: 180,
+    scrollWidth: options.hero.scrollWidth, scrollHeight: 180,
+    parentElement: { style: { getPropertyValue: name => name === "--slide-visual-size" ? heroSize : "" } } } : null;
+  element.querySelector = selector => !hasArtboard ? null : selector === ".presentation-slide" ? artboard
+    : selector === ".presentation-slide.visual-hero-type .presentation-visual-type > strong" ? hero : null;
   element.querySelectorAll = () => hasArtboard ? [artboard, section] : [];
   element.dispatchEvent = (event) => { events.push(event.detail); return true; };
   element.requestUpdate = () => {};
   const render = () => {
     const markup = renderMarkup(element.render());
     artboard.dataset.layoutDensity = markup.match(/data-layout-density=(\w+)/)[1];
+    heroSize = markup.match(/--slide-visual-size:([\d.]+cqi)/)?.[1] ?? "";
     element.updated();
+    return markup;
   };
   const flush = () => { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback()); };
-  return { element, artboard, section, events, fonts, frames, render, flush,
+  return { element, artboard, section, hero, events, fonts, frames, render, flush,
     connect: (value) => { connected = value; }, show: (value) => { hasArtboard = value; } };
 }
 
@@ -809,4 +818,68 @@ test("empty and hidden artboards remain pending but collapsed visible content is
   assert.equal(fit.events.length, 1);
   assert.equal(fit.events[0].contentFits, false);
   assert.equal(fit.events[0].density, "dense");
+});
+
+
+const setHeroValue = (fit, value, kind = "hero-type") => {
+  fit.element.item = { ...fit.element.item, slide: { ...fit.element.item.slide,
+    visual: { ...fit.element.item.slide.visual, kind, value } } };
+};
+
+test("actual hero width overflow selects the next existing tier without splitting The Context Company", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 420 } });
+  setHeroValue(fit, "The Context Company");
+  const original = structuredClone(fit.element.item);
+  assert.match(fit.render(), /--slide-visual-size:10cqi/u); fit.flush();
+  assert.equal(fit.events.length, 0, "an overflowing large tier cannot publish a fitting receipt");
+  fit.hero.scrollWidth = 355;
+  const markup = fit.render(); fit.flush();
+  assert.match(markup, /--slide-visual-size:6\.4cqi/u);
+  assert.ok(markup.includes('<strong dir="auto">The Context Company</strong>'));
+  assert.deepEqual(fit.element.item, original, "measurement never rewrites the original proposition");
+  assert.equal(fit.events.at(-1).contentFits, true);
+});
+
+test("a fitting short hero retains its authored large tier", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 355 } });
+  setHeroValue(fit, "Set sail");
+  for (let observation = 0; observation < 3; observation++) {
+    assert.match(fit.render(), /--slide-visual-size:10cqi/u); fit.flush();
+  }
+  assert.equal(fit.events.length, 3); assert.ok(fit.events.every(event => event.contentFits));
+});
+
+test("an already capped hero uses only the remaining existing tier when its actual word is still too wide", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 410 } });
+  setHeroValue(fit, "Safe departures");
+  assert.match(fit.render(), /--slide-visual-size:6\.4cqi/u); fit.flush();
+  assert.equal(fit.events.length, 0);
+  fit.hero.scrollWidth = 355;
+  assert.match(fit.render(), /--slide-visual-size:4\.2cqi/u); fit.flush();
+  assert.equal(fit.events.at(-1).contentFits, true);
+});
+
+test("residual hero overflow stays a failure at the existing minimum even when every ancestor fits", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 700 } });
+  setHeroValue(fit, "The Context Company");
+  const tiers = [];
+  for (let observation = 0; observation < 5; observation++) {
+    tiers.push(fit.render().match(/--slide-visual-size:([\d.]+cqi)/)[1]); fit.flush();
+  }
+  assert.deepEqual(tiers, ["10cqi", "6.4cqi", "4.2cqi", "4.2cqi", "4.2cqi"]);
+  assert.deepEqual(fit.events.map(({ contentFits, density }) => ({ contentFits, density })),
+    [{ contentFits: false, density: "dense" }]);
+  assert.equal(fit.element.dataset.presentationFitState, "overflow");
+});
+
+test("changed hero content retires its old measured size instead of inheriting an unnecessary reduction", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 420 } });
+  setHeroValue(fit, "The Context Company");
+  fit.render(); fit.flush(); fit.hero.scrollWidth = 355;
+  assert.match(fit.render(), /--slide-visual-size:6\.4cqi/u); fit.flush();
+  const priorKey = fit.events.at(-1).renderKey;
+  setHeroValue(fit, "Set sail");
+  assert.match(fit.render(), /--slide-visual-size:10cqi/u); fit.flush();
+  assert.notEqual(fit.events.at(-1).renderKey, priorKey);
+  assert.equal(fit.events.at(-1).contentFits, true);
 });
