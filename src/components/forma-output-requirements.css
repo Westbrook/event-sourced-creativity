@@ -27,6 +27,14 @@ forma-output-requirements summary:focus-visible { outline:3px solid var(--forma-
 .output-target { border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; padding:1rem; min-inline-size:0; }
 .output-result { border:1px solid var(--forma-color-border-strong, GrayText); margin-block:1rem; padding:.7rem 1rem; }
 .output-result-review { margin-block-start:.9rem; }
+.output-exact-preview { min-inline-size:0; margin-block:1rem; padding:.75rem; border:1px solid var(--forma-color-border, GrayText); border-radius:.6rem; background:var(--forma-color-surface-subtle, Canvas); }
+.output-exact-preview h5 { margin:0 0 .65rem; font-size:1rem; }
+.output-exact-preview figure { display:grid; gap:.5rem; min-inline-size:0; margin:.75rem 0 0; }
+.output-exact-preview :is(img,video,audio) { display:block; inline-size:100%; max-inline-size:100%; min-inline-size:0; border-radius:.35rem; }
+.output-exact-preview :is(img,video) { block-size:auto; max-block-size:28rem; object-fit:contain; }
+.output-exact-preview figcaption { overflow-wrap:anywhere; font-size:.875rem; }
+.output-exact-preview p { margin-block:.65rem 0; }
+.output-exact-preview .output-actions { align-items:stretch; }
 .output-plan-review, .output-adoption, .output-execution, .output-export { margin-block-start:1.4rem; border-block-start:1px solid var(--forma-color-border, GrayText); padding-block-start:1.2rem; }
 .output-actions { display:flex; gap:.65rem; flex-wrap:wrap; }
 .output-provider-disclosure { background:var(--forma-color-surface-subtle, Canvas); padding:1rem; margin-block:1rem; border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; }

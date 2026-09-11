@@ -5,6 +5,8 @@ import { createFilmCompositionDraft, isFilmCompositionDraftAsset, type FilmCompo
 import { renderOutputFilmComposer } from "./output-film-composer";
 import { filmCompositionMessage } from "./design-system/locales/film-composition-messages";
 import { repeat } from "lit/directives/repeat.js";
+import { OUTPUT_REVIEW_PREVIEW_MAX_BYTES, outputReviewPreviewIdentity, outputReviewPreviewKind } from "../model/output-review-preview";
+import { outputReviewPreviewMessage } from "./design-system/locales/output-review-preview-messages";
 import { FormaElement } from "./forma-element";
 import { copyInterfaceText } from "./design-system/clipboard";
 import { outputOperationSupportReceipt } from "./output-operation-support-receipt";
@@ -39,6 +41,8 @@ type SaveIntent = { scope: { authorizationScopeKey: string; documentId: string }
 type PlanIntent = { scope: { authorizationScopeKey: string; documentId: string }; requirementId: string; planSuggestions: OutputCardPlanSuggestions };
 type Command = OutputRequirementCommand extends infer C ? C extends OutputRequirementCommand ? Omit<C, "documentId" | "expectedRevision" | "clientMutationId"> : never : never;
 type OutputPrivateView = { authorization: CapturedAuthorizationScope | null; source: CapturedSourceOwnership | null; documentId: string; epoch: number };
+type OutputReviewPreview = { resultId: string; identity: string; view: OutputPrivateView; route: string;
+  privateRevision: number; controller: AbortController; status: "loading" | "ready" | "unavailable"; url: string | null };
 type OutputNativeIntent = OutputPrivateView & {
   requestEpoch: number;
   targetIds: string[]; targetScopeKey: string; selectionKey: string; alternativeOfSlotId: string | null;
@@ -107,6 +111,7 @@ export class FormaOutputRequirements extends FormaElement {
   #paidActivation = new OutputDirectActivationLatch();
   #uploadFailure: OutputUploadFailure | null = null;
   #downloadUrls = new Set<string>();
+  #reviewPreview: OutputReviewPreview | null = null;
   #uncertainCommand: { signature: string; id: string; expectedRevision: string; sourceRetired?: true; receipt?: OutputCommittedReceipt } | null = null;
   #planRequest = (event: Event) => {
     const detail = (event as CustomEvent<PlanIntent>).detail;
@@ -121,6 +126,7 @@ export class FormaOutputRequirements extends FormaElement {
       || !this.store.sourceOwnershipScopeActive(detail.source) || !source || source.generation !== detail.generation
       || this.store.sourceOwnershipActive(source)) return;
     // Retire private material, not this controller or its sole original operation owners.
+    this.#clearReviewPreview();
     this.#clearRecipePresentation();
     this.#clearFilmComposition(); this.#filmStaged = null;
     this.#viewEpoch += 1; this.#sourceRefreshEpoch += 1;
@@ -151,6 +157,7 @@ export class FormaOutputRequirements extends FormaElement {
   constructor() { super(); this.documentId = ""; this.documentName = ""; this.blockId = ""; this.surface = "document"; this.inspectionOnly = false; }
   override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.requestUpdate(); }
   override disconnectedCallback() {
+    this.#clearReviewPreview();
     this.#clearRecipePresentation();
     this.#clearFilmComposition(); this.#filmStaged = null;
     this.#viewEpoch += 1;
@@ -197,6 +204,7 @@ export class FormaOutputRequirements extends FormaElement {
       this.#downloadUrls.clear();
     }
     const snapshot = this.#snapshot();
+    if (this.#reviewPreview && !this.#reviewPreviewCurrent(this.#reviewPreview)) this.#clearReviewPreview();
     if (this.#film && !this.#film.current()) this.#clearFilmComposition();
     if (this.#filmStaged && this.#busy !== "upload" && !this.#filmStaged.current()) {
       if (this.#file === this.#filmStaged.file) { this.#file = null; this.#rightsConfirmed = false; }
@@ -1498,6 +1506,102 @@ export class FormaOutputRequirements extends FormaElement {
     if (response) this.#announce(approve ? this.#t("accepted", "This exact result was accepted for this target. Other work remains unchanged.") : this.#t("changesRequested", "Changes requested. This file does not fulfill the target."));
   }
 
+  #reviewPreviewIdentity(resultId: string): string | null {
+    const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
+    return resource.state === "ready" && snapshot && !resource.privateUnavailable && !resource.accessLost
+      && outputDeliveryReadiness(snapshot).allowed && this.#viewCurrent(this.#captureView())
+      ? outputReviewPreviewIdentity(snapshot, resultId) : null;
+  }
+
+  #reviewPreviewCurrent(preview: OutputReviewPreview): boolean {
+    return this.#reviewPreview === preview && !preview.controller.signal.aborted && this.#viewCurrent(preview.view)
+      && this.store.route.get() === preview.route
+      && (this.store.outputRequirements.resource(this.documentId).privateRevision ?? 0) === preview.privateRevision
+      && this.#reviewPreviewIdentity(preview.resultId) === preview.identity;
+  }
+
+  #clearReviewPreview() {
+    const preview = this.#reviewPreview;
+    this.#reviewPreview = null;
+    preview?.controller.abort();
+    for (const media of this.querySelectorAll<HTMLMediaElement>(".output-exact-preview audio, .output-exact-preview video")) {
+      media.pause(); media.removeAttribute("src"); media.load();
+    }
+    for (const image of this.querySelectorAll<HTMLImageElement>(".output-exact-preview img")) image.removeAttribute("src");
+    if (preview?.url) URL.revokeObjectURL(preview.url);
+  }
+
+  async #openReviewPreview(resultId: string) {
+    const snapshot = this.#snapshot(), identity = this.#reviewPreviewIdentity(resultId);
+    const result = snapshot?.results.find((entry) => entry.id === resultId);
+    const asset = snapshot?.assets.find((entry) => entry.id === result?.assetId);
+    if (!identity || !asset || !outputReviewPreviewKind(asset.mimeType)
+      || asset.byteLength < 1 || asset.byteLength > OUTPUT_REVIEW_PREVIEW_MAX_BYTES) return;
+    this.#clearReviewPreview();
+    const preview: OutputReviewPreview = { resultId, identity, view: this.#captureView(), route: this.store.route.get(),
+      privateRevision: this.store.outputRequirements.resource(this.documentId).privateRevision ?? 0,
+      controller: new AbortController(), status: "loading", url: null };
+    this.#reviewPreview = preview; this.requestUpdate();
+    try {
+      const response = await this.store.outputRequirements.download(preview.view.documentId, asset.downloadUrl,
+        { signal: preview.controller.signal }, asset);
+      if (!this.#reviewPreviewCurrent(preview)) return;
+      if (response.status !== "saved") { preview.status = "unavailable"; return; }
+      preview.url = URL.createObjectURL(response.body.blob);
+      preview.status = "ready";
+    } catch {
+      if (this.#reviewPreviewCurrent(preview)) preview.status = "unavailable";
+    } finally {
+      if (this.#reviewPreview === preview) {
+        if (!this.#reviewPreviewCurrent(preview)) this.#clearReviewPreview();
+        this.requestUpdate();
+      }
+    }
+  }
+
+  #previewDecodeFailed(preview: OutputReviewPreview, event: Event) {
+    if (!this.#reviewPreviewCurrent(preview)) return;
+    const failed = event.currentTarget as HTMLElement;
+    if (this.ownerDocument.activeElement === failed) {
+      const toggle = failed.closest(".output-exact-preview")?.querySelector<HTMLButtonElement>("[data-output-preview-toggle]");
+      if (toggle?.isConnected && !toggle.disabled) toggle.focus({ preventScroll: true });
+      // Keep a focused failed player connected if the browser declined the handoff.
+      if (this.ownerDocument.activeElement === failed) { preview.status = "unavailable"; this.requestUpdate(); return; }
+    }
+    const url = preview.url;
+    preview.url = null; preview.status = "unavailable";
+    if (url) URL.revokeObjectURL(url);
+    this.requestUpdate();
+  }
+
+  #exactReviewPreview(snapshot: OutputRequirementsSnapshot, result: OutputResultRow) {
+    const asset = snapshot.assets.find((entry) => entry.id === result.assetId);
+    if (!asset) return nothing;
+    const text = (key: Parameters<typeof outputReviewPreviewMessage>[1]) => outputReviewPreviewMessage(this.i18n.locale, key);
+    const context = this.#resultContext(snapshot, result);
+    const kind = outputReviewPreviewKind(asset.mimeType);
+    const supported = kind && asset.byteLength > 0 && asset.byteLength <= OUTPUT_REVIEW_PREVIEW_MAX_BYTES;
+    const preview = this.#reviewPreview?.resultId === result.id && this.#reviewPreviewCurrent(this.#reviewPreview) ? this.#reviewPreview : null;
+    const name = outputReviewPreviewMessage(this.i18n.locale, "mediaName", { name: asset.name });
+    return html`<section class="output-exact-preview" aria-label=${this.#controlName(text("title"), context)}>
+      <h5>${text("title")}</h5>
+      ${!supported ? html`<p>${text("unsupported")}</p>` : html`
+        <div class="output-actions"><button type="button" class="button secondary compact" data-output-preview-toggle
+          aria-label=${this.#controlName(text(preview ? "close" : "open"), context)}
+          ?disabled=${!this.#reviewPreviewIdentity(result.id)}
+          @click=${() => { if (preview) { this.#clearReviewPreview(); this.requestUpdate(); } else void this.#openReviewPreview(result.id); }}>
+          ${text(preview ? "close" : "open")}</button></div>
+        <p role="status">${text(!preview ? "hint" : preview.status === "loading" ? "loading" : preview.status === "unavailable" ? "unavailable" : "verified")}</p>
+        ${preview?.url ? html`<figure>
+          ${kind === "image" ? html`<img src=${preview.url} alt=${name} @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}>`
+            : kind === "audio" ? html`<audio src=${preview.url} aria-label=${name} controls preload="none" @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}></audio>`
+              : html`<video src=${preview.url} aria-label=${name} controls playsinline preload="none" @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}></video>`}
+          <figcaption dir="auto">${asset.name}</figcaption>
+        </figure>` : nothing}
+      `}
+    </section>`;
+  }
+
   async #download(path: string, kind: OutputReleaseCapture["kind"] = "file") {
     const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
     if (resource.state !== "ready" || !snapshot?.permissions.canDownload) return;
@@ -2066,6 +2170,7 @@ export class FormaOutputRequirements extends FormaElement {
     return html`<section class="output-result" tabindex="-1" data-output-result=${result.id} aria-labelledby=${`output-result-${this.documentId}-${result.id} output-result-context-${this.documentId}-${result.id}`}><b id=${`output-result-${this.documentId}-${result.id}`} dir="auto">${asset?.name ?? this.#t("file", "File")}</b><span class="sr-only" id=${`output-result-context-${this.documentId}-${result.id}`}>${this.#documentContext()} · ${this.#resultContext(snapshot, result)}</span><p>${this.#resultLabel(result)}</p>
       ${!current ? html`<p>${this.#t("resultNotCurrent", "This result is not verified as current and available for this target. Recheck the plan and file before accepting or delivering it.")}</p>` : nothing}
       ${result.problems.length ? html`<ul>${result.problems.map((problem) => html`<li>${this.#problem(problem)}</li>`)}</ul>` : nothing}
+      ${this.#exactReviewPreview(snapshot, result)}
       ${asset ? html`${this.#assetFacts(asset, this.#resultContext(snapshot, result))}<button aria-label=${this.#controlName(this.#t("downloadReview", "Download exact file for review"), this.#resultContext(snapshot, result))} type="button" class="button secondary compact" ?disabled=${!ready || !outputSourceReadiness(snapshot).allowed || !snapshot.permissions.canDownload || !asset.available} @click=${() => this.#download(asset.downloadUrl)}>${this.#t("downloadReview", "Download exact file for review")}</button>` : nothing}
       ${target ? html`<details><summary aria-label=${this.#controlName(this.#t("reviewAcceptanceContract", "Review the acceptance contract again"), this.#resultContext(snapshot, result))}>${this.#t("reviewAcceptanceContract", "Review the acceptance contract again")}</summary>${this.#acceptanceContract(snapshot, target)}</details>` : nothing}
       ${snapshot.permissions.canReview && typeof eligibility.reviewAllowed !== "boolean" ? html`<p>${this.#t("reviewEligibilityUnknown", "Review eligibility for this exact result is unavailable. Refresh outputs before reviewing it.")}</p>` : nothing}

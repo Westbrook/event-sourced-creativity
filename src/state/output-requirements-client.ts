@@ -1,4 +1,5 @@
 import type { CapturedSourceOwnership } from "./store";
+import { readOutputReviewPreview, type OutputPreviewFile } from "../model/output-review-preview";
 
 /** A scoped transport cache. It never infers delivery, rebases author edits, or starts a provider. */
 export type OutputClientScope = { key: string; projectId: string | null };
@@ -455,7 +456,7 @@ export class OutputRequirementsClient<T> {
     }
   }
 
-  async download(documentId: string, path: string, init: RequestInit = {}): Promise<OutputCommandResult<{ blob: Blob; filename: string }>> {
+  async download(documentId: string, path: string, init: RequestInit = {}, preview?: OutputPreviewFile): Promise<OutputCommandResult<{ blob: Blob; filename: string }>> {
     const scope = this.#capture();
     if (!scope) return { status: "forbidden", body: null, error: "Sign in before downloading deliverables." };
     const epoch = this.#epoch, source = this.#source();
@@ -481,7 +482,7 @@ export class OutputRequirementsClient<T> {
     if (!validPath) return { status: "invalid", body: null, error: "The download must belong to this Document's Output requirements." };
     let unavailableStatus: number | null = null;
     try {
-      const response = await this.#options.fetch(path, init, "download checked deliverables");
+      const response = await this.#options.fetch(path, preview ? { ...init, redirect: "error" } : init, "download checked deliverables");
       if (!this.#active(scope, epoch)) return changed();
       if (!response.ok) {
         const withheld = privateResponseUnavailable(response.status);
@@ -497,7 +498,7 @@ export class OutputRequirementsClient<T> {
         const body = withheld || this.#resources.get(documentId)?.privateUnavailable ? errorBody(parsed) : parsed;
         return { status: response.status === 409 ? "conflict" : accessDenied(response.status) ? "forbidden" : "unavailable", body, error: message(body, "The current files could not be downloaded.") };
       }
-      const blob = await response.blob();
+      const blob = preview ? await readOutputReviewPreview(response, preview, init.signal ?? undefined) : await response.blob();
       if (!active() || this.#resources.get(documentId)?.privateUnavailable) return changed();
       const filename = outputDownloadFilename(response.headers.get("content-disposition"));
       return { status: "saved", body: { blob, filename } };
