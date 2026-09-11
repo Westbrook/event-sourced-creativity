@@ -2074,6 +2074,8 @@ forma-document-artifacts { display: block; min-width: 0; }
 .generation-accounting-preview .generation-accounting-calls { margin-block-start: 1rem; }
 .generation-accounting-preview dt { overflow-wrap: anywhere; }
 .generation-accounting-receipt-label { display: grid; gap: .5rem; margin-block-start: 1rem; min-width: 0; }
+.generation-reconciliation-ack { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: .75rem; min-block-size: 2.75rem; margin-block-start: 1rem; }
+.generation-reconciliation-ack > input[type="checkbox"] { inline-size: 1.125rem; block-size: 1.125rem; margin-block-start: .2rem; accent-color: var(--accent); }
 .generation-input-dialog textarea { display: block; width: 100%; min-height: 10rem; max-height: 22rem; resize: vertical; padding: 1rem; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font: 400 var(--type-caption)/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 .generation-input-dialog textarea:focus-visible { outline: var(--forma-focus-ring-width,.1875rem) solid var(--forma-focus-ring-color,var(--accent)); outline-offset: 3px; }
 @media (forced-colors: active) { .generation-input-dialog textarea:focus-visible { outline-color: Highlight; } }

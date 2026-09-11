@@ -10,6 +10,20 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "generation.reconciliation.heading": "تصحيح محاسبي مصرّح به",
+  "generation.reconciliation.help": "قرار مستقل من المشغّل لهذه المحاولة الأصلية الفاشلة لإنشاء الفيديو. يبقى إيصال المزوّد دون تغيير.",
+  "generation.reconciliation.inspect": "مراجعة التصحيح المصرّح به",
+  "generation.reconciliation.verify": "التحقق من التصحيح الأصلي",
+  "generation.reconciliation.working": "جارٍ التحقق من المحاسبة…",
+  "generation.reconciliation.complete": "طُبّق تصحيح أغسطس وتم التحقق منه بشكل مستقل. لم يحدث أي اتصال بالمزوّد أو إنفاق جديد.",
+  "generation.reconciliation.uncertain": "انقطعت الاستجابة. تحقّق من هذا التصحيح الأصلي قبل اتخاذ أي إجراء آخر؛ لا ترسل تعديلاً آخر.",
+  "generation.reconciliation.review": "يحتاج التصحيح السابق إلى مراجعة. لم يُرسل أي تعديل إضافي.",
+  "generation.reconciliation.unavailable": "تعذّر إعداد التصحيح أو التحقق منه. لم يرسل هذا الفحص أي تعديل جديد.",
+  "generation.reconciliation.amounts": "الفترة الأصلية: أغسطس 2026. تسجيل 0.098484 دولار أمريكي و15,580 رمزاً للتحضير؛ واستعادة 19.545516 دولار أمريكي و136,420 رمزاً غير مستخدم.",
+  "generation.reconciliation.limits": "حُدّدت قيمة الفيديو الفاشل بصفر دولار بقرار من المشغّل استناداً إلى لقطة الشاشة المحفوظة، وليس بفواتير تحقّق منها المزوّد. هذا ليس استرداداً مالياً أو تغييراً لحد الميزانية.",
+  "generation.reconciliation.acknowledge": "أقرّ بهذا الإجراء المحاسبي المحدد والمصرّح به سابقاً.",
+  "generation.reconciliation.apply": "تطبيق التصحيح المصرّح به",
+  "generation.reconciliation.receipt": "إيصال التصحيح المحاسبي",
   "generation.accounting.heading": "فحص المحاسبة",
   "generation.accounting.help": "اطّلع على محاسبة Forma الحالية وإيصالات المزوّدين المحفوظة. لا يتم الاتصال بأي مزوّد أو تغيير أي رصيد.",
   "generation.accounting.loading": "جارٍ قراءة المحاسبة…",

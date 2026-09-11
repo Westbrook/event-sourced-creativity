@@ -9,6 +9,7 @@ import { model3dPromptLength } from "../model/model3d";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { createGenerationAccountingReader, generationAccountingTarget, type GenerationAccountingTarget } from "../model/generation-accounting-inspection.ts";
+import { createVideoReconciliationController, VIDEO_RECONCILIATION_JOB } from "../model/managed-video-reconciliation.ts";
 
 type AccountingInspectionOwner = { inspection: GenerationInputInspection; scopeKey: string; route: string; target: GenerationAccountingTarget };
 
@@ -21,7 +22,9 @@ export class GenerationInputDialog extends FormaElement {
   #accounting = createGenerationAccountingReader();
   #accountingOwner: AccountingInspectionOwner | null = null;
   #accountingUnsubscribe?: () => void;
-  #retireAccounting=()=>{this.#accounting.cancel();this.#accountingOwner=null;};
+  #reconciliation=createVideoReconciliationController();
+  #reconciliationAcknowledged=false;
+  #retireAccounting=()=>{this.#accounting.cancel();this.#reconciliation.cancel();this.#reconciliationAcknowledged=false;this.#accountingOwner=null;};
   #accountingScopeChanged=()=>{if(this.#accountingOwner&&!this.#accountingCurrent(this.#accountingOwner)){this.#retireAccounting();this.requestUpdate();}};
   protected override willUpdate(){
     this.#accountingScopeChanged();
@@ -76,8 +79,33 @@ export class GenerationInputDialog extends FormaElement {
       </dl><p>${this.i18n.t("generation.accounting.subtotal","Recorded provider costs are a subtotal, not a proposed charge or confirmation that the entire attempt was free.")}</p>
       <dl class="generation-accounting-calls">${preview.calls.map(call=>html`<div><dt>${call.operation==="planning"?this.i18n.t("generation.accounting.planning","Planning"):call.operation==="image"?this.i18n.t("generation.accounting.image","Image"):this.i18n.t("generation.accounting.video","Video")} · ${call.provider} · ${call.model}</dt><dd><code>${call.providerRequestId??this.i18n.t("generation.accounting.unconfirmed","Not yet confirmed")}</code><br>${dollars(call.costMicrousd)} · ${call.accountingReason?this.i18n.t("generation.accounting.incomplete","Accounting incomplete"):this.i18n.t("generation.accounting.recorded","Receipt recorded")}</dd></div>`)}</dl>
       <label class="generation-accounting-receipt-label">${this.i18n.t("generation.accounting.receipt","Accounting diagnostic receipt")}<textarea dir="ltr" readonly spellcheck="false" .value=${JSON.stringify(preview,null,2)} aria-label=${this.i18n.t("generation.accounting.receipt","Accounting diagnostic receipt")}></textarea></label>`:nothing}
+    </section>${this.#reconciliationTemplate()}`;
+  }
+  async #runReconciliation(mode:"read"|"verify"|"apply"){
+    const owner=this.#accountingOwner;
+    if(!owner||owner.target.jobId!==VIDEO_RECONCILIATION_JOB||!this.#accountingCurrent(owner)||mode==="apply"&&!this.#reconciliationAcknowledged)return;
+    this.#reconciliationAcknowledged=false;
+    await this.#reconciliation[mode]({ownerId:this.store.session.get()?.user.userId??"",current:()=>this.#accountingCurrent(owner),changed:()=>this.requestUpdate(),
+      fetch:(url,init,current)=>this.store.guardedFetch(url,init,"review the authorized accounting correction",{current})});
+    if(this.#accountingCurrent(owner)&&this.#reconciliation.state().status==="verified")this.#accounting.cancel();
+    this.requestUpdate();
+  }
+  #reconciliationTemplate(){
+    const owner=this.#accountingOwner;
+    if(!owner||owner.target.jobId!==VIDEO_RECONCILIATION_JOB||!this.#accountingCurrent(owner))return nothing;
+    const state=this.#reconciliation.state(),busy=state.status==="loading"||state.status==="applying";
+    const t=(key:string)=>this.i18n.t("generation.reconciliation."+key);
+    return html`<section class="generation-receipt-summary generation-accounting-preview" aria-label=${t("heading")} aria-busy=${busy?"true":"false"}>
+      <header><div><h3>${t("heading")}</h3><p>${t("help")}</p></div>
+        <button type="button" class="button secondary compact" aria-disabled=${busy?"true":"false"} @click=${()=>void this.#runReconciliation(state.status==="uncertain"||state.status==="review"||state.status==="verified"?"verify":"read")}>${busy?t("working"):state.status==="idle"?t("inspect"):t("verify")}</button></header>
+      <p role="status">${state.status==="verified"?t("complete"):state.status==="uncertain"?t("uncertain"):state.status==="review"?t("review"):state.status==="unavailable"?t("unavailable"):busy?t("working"):nothing}</p>
+      ${state.status==="ready"?html`<p>${t("amounts")}</p><p>${t("limits")}</p>
+        <label class="generation-reconciliation-ack"><input type="checkbox" .checked=${this.#reconciliationAcknowledged} @change=${(event:Event)=>{this.#setReconciliationAcknowledged((event.target as HTMLInputElement).checked);}}><span>${t("acknowledge")}</span></label>
+        <p><button type="button" class="button secondary" aria-disabled=${this.#reconciliationAcknowledged?"false":"true"} @click=${()=>void this.#runReconciliation("apply")}>${t("apply")}</button></p>`:nothing}
+      ${state.receipt?html`<label class="generation-accounting-receipt-label">${t("receipt")}<textarea dir="ltr" readonly spellcheck="false" .value=${JSON.stringify(state.receipt,null,2)} aria-label=${t("receipt")}></textarea></label>`:nothing}
     </section>`;
   }
+  #setReconciliationAcknowledged(value:boolean){this.#reconciliationAcknowledged=value;this.requestUpdate();}
   async #copy(value:string,label:string){const copied=await copyTextToClipboard(value);this.store.toast(copied?this.i18n.system("{label} copied.",{label:this.i18n.system(label)}):this.i18n.system("{label} could not be copied.",{label:this.i18n.system(label)}));}
   override render(){
     if(!this.inspection||!this.store.captureAuthorizationScope())return nothing;

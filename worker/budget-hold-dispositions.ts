@@ -23,7 +23,7 @@ const object = (v: unknown): Record<string, unknown> => {
 const rowProof = (table: string, row: Row): OutputSqlAssertion => ({
   sql: `EXISTS(SELECT 1 FROM ${table} WHERE ${Object.keys(row).map(key => `${key} IS ?`).join(" AND ")})`, bindings: Object.values(row),
 });
-const authority = (actor: PilotUser): OutputSqlAssertion => {
+export const holdAdministratorAuthority = (actor: PilotUser): OutputSqlAssertion => {
   const p=actor.authorizationSnapshot;
   if (!p || actor.role!=="admin" || actor.streamId!==`creative:${actor.userId}` || actor.access.identityPolicyDeniedCustody) return fail("hold_principal_administrator_required",403);
   return {
@@ -128,7 +128,7 @@ export function validateHoldCommand(value: unknown): HoldDispositionCommand {
 export async function applyHoldDisposition(env: WorkerEnv, actor: PilotUser, input: HoldDispositionCommand) {
   if (env.FORMA_HOLD_DISPOSITION_ENABLED !== "true") return fail("hold_administration_disabled", 403);
   const command = validateHoldCommand(input), commandSha256 = await holdHash({ actor: actor.userId, command });
-  const auth = authority(actor), admission = configuredPilotAdmissionGuard(env, actor);
+  const auth = holdAdministratorAuthority(actor), admission = configuredPilotAdmissionGuard(env, actor);
   const authorized = await env.DB.prepare("SELECT 1 AS ok WHERE " + auth.sql + " AND " + admission.sql).bind(...auth.bindings!, ...admission.bindings!).first();
   if (!authorized || actor.fictional || actor.projectExecution || actor.billingUserId && actor.billingUserId !== actor.userId) return fail("hold_principal_administrator_required", 403);
   const existing = async () => env.DB.prepare("SELECT * FROM budget_hold_dispositions WHERE disposition_id=? AND operator_id=? AND command_sha256=?")

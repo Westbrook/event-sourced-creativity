@@ -18,6 +18,20 @@ export type FormaMessageCatalog = Readonly<Record<string, string>>;
 export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
+  "generation.reconciliation.heading": "Authorized accounting correction",
+  "generation.reconciliation.help": "A separate operator decision for this original failed video. The provider receipt stays unchanged.",
+  "generation.reconciliation.inspect": "Review authorized correction",
+  "generation.reconciliation.verify": "Verify original correction",
+  "generation.reconciliation.working": "Checking accounting…",
+  "generation.reconciliation.complete": "The August correction is applied and independently verified. No provider call or new spending occurred.",
+  "generation.reconciliation.uncertain": "The response was interrupted. Verify this original correction before taking any further action; do not submit another adjustment.",
+  "generation.reconciliation.review": "The historical correction needs review. No additional adjustment was submitted.",
+  "generation.reconciliation.unavailable": "The correction could not be prepared or verified. No new adjustment was submitted by this check.",
+  "generation.reconciliation.amounts": "Original period: August 2026. Record $0.098484 and 15,580 preparation tokens; restore $19.545516 and 136,420 unused tokens.",
+  "generation.reconciliation.limits": "The failed video is valued at $0 by operator adjudication from the retained screenshot—not provider-verified billing. This is not a refund or budget-limit change.",
+  "generation.reconciliation.acknowledge": "I acknowledge this exact, previously authorized accounting treatment.",
+  "generation.reconciliation.apply": "Apply authorized correction",
+  "generation.reconciliation.receipt": "Accounting correction receipt",
   "generation.accounting.heading": "Accounting inspection",
   "generation.accounting.help": "Read current Forma accounting and retained provider receipts. This does not contact a provider or change any balance.",
   "generation.accounting.loading": "Reading accounting…",

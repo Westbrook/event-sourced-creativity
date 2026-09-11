@@ -10,6 +10,20 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "generation.reconciliation.heading": "Correction comptable autorisée",
+  "generation.reconciliation.help": "Une décision distincte de l’opérateur pour cette vidéo d’origine ayant échoué. Le justificatif fournisseur reste inchangé.",
+  "generation.reconciliation.inspect": "Examiner la correction autorisée",
+  "generation.reconciliation.verify": "Vérifier la correction d’origine",
+  "generation.reconciliation.working": "Vérification comptable…",
+  "generation.reconciliation.complete": "La correction d’août est appliquée et vérifiée indépendamment. Aucun appel fournisseur ni nouvelle dépense.",
+  "generation.reconciliation.uncertain": "La réponse a été interrompue. Vérifiez cette correction d’origine avant toute autre action ; ne soumettez pas un autre ajustement.",
+  "generation.reconciliation.review": "La correction historique nécessite un examen. Aucun ajustement supplémentaire n’a été soumis.",
+  "generation.reconciliation.unavailable": "La correction n’a pas pu être préparée ou vérifiée. Cette vérification n’a soumis aucun nouvel ajustement.",
+  "generation.reconciliation.amounts": "Période d’origine : août 2026. Comptabiliser 0,098484 USD et 15 580 jetons de préparation ; restituer 19,545516 USD et 136 420 jetons inutilisés.",
+  "generation.reconciliation.limits": "La vidéo échouée est évaluée à 0 USD par décision de l’opérateur fondée sur la capture conservée, et non par une facturation vérifiée auprès du fournisseur. Ce n’est ni un remboursement ni une modification du plafond budgétaire.",
+  "generation.reconciliation.acknowledge": "Je reconnais ce traitement comptable exact, précédemment autorisé.",
+  "generation.reconciliation.apply": "Appliquer la correction autorisée",
+  "generation.reconciliation.receipt": "Justificatif de correction comptable",
   "generation.accounting.heading": "Inspection comptable",
   "generation.accounting.help": "Consultez la comptabilité actuelle de Forma et les justificatifs conservés des fournisseurs. Aucun fournisseur n’est contacté et aucun solde n’est modifié.",
   "generation.accounting.loading": "Lecture de la comptabilité…",

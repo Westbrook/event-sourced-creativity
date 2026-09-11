@@ -2178,3 +2178,12 @@ export const budgetHoldDispositions = sqliteTable("budget_hold_dispositions", {
   commandSha256: text("command_sha256").notNull(), recordSha256: text("record_sha256").notNull(), recordJson: text("record_json").notNull(),
   eventId: text("event_id").notNull().unique(), createdAt: text("created_at").notNull(),
 }, table => [uniqueIndex("idx_hold_dispositions_job_attempt").on(table.jobId, table.correlationId)]);
+
+/** Explicit operator-adjudicated usage is distinct from unknown-outcome hold release. */
+export const managedVideoReconciliations = sqliteTable("managed_video_reconciliations", {
+  reconciliationId: text("reconciliation_id").primaryKey(), operatorId: text("operator_id").notNull(),
+  jobId: text("job_id").notNull(), correlationId: text("correlation_id").notNull(),
+  tokenReservationId: text("token_reservation_id").notNull().unique(), costReservationId: text("cost_reservation_id").notNull().unique(),
+  commandSha256: text("command_sha256").notNull(), treatmentSha256: text("treatment_sha256").notNull(),
+  recordSha256: text("record_sha256").notNull(), recordJson: text("record_json").notNull(), createdAt: text("created_at").notNull(),
+}, table => [uniqueIndex("idx_video_reconciliations_job_attempt").on(table.jobId, table.correlationId)]);

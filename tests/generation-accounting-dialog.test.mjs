@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import * as accounting from "../src/model/generation-accounting-inspection.ts";
+import * as reconciliation from "../src/model/managed-video-reconciliation.ts";
 import { inputInspection, accountingResponse, deferred } from "./helpers/generation-accounting-fixture.mjs";
 
 // Actual component class/handlers and accounting reader; native modal, Lit
@@ -35,6 +36,7 @@ new Function("exports", "require", "window", "customElements", code)(moduleExpor
   if (specifier.endsWith("/forma-element")) return { FormaElement: ElementPort, icon: () => nothing, copyTextToClipboard: async () => { active.copies++; return true; } };
   if (specifier.endsWith("/modal-dialog")) return { ensureModalDialog: dialog => { dialog.open = true; } };
   if (specifier.endsWith("/generation-accounting-inspection.ts")) return accounting;
+  if (specifier.endsWith("/managed-video-reconciliation.ts")) return reconciliation;
   throw new Error(`Unexpected actual component dependency: ${specifier}`);
 }, windowPort, { get: name => registry.get(name), define: (name, constructor) => registry.set(name, constructor) });
 

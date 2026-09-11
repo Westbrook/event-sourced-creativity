@@ -44,13 +44,13 @@ const validDate = (value: unknown): value is string => typeof value === "string"
 const objectRecord = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 /** Only identities from the retained, bounded checkpoint can shape this query. */
-function priorUsageStatement(env: DB, actor: PilotUser, job: Row, tokenId: string, costId: string, checkpoint: Record<string, unknown>) {
+function priorUsageQuery(actor: PilotUser, job: Row, tokenId: string, costId: string, checkpoint: Record<string, unknown>) {
   const entries = objectRecord(checkpoint.providerSubmissions);
   const calls = entries && Object.keys(entries).length <= 64 ? Object.values(entries).map(objectRecord).filter(value => value !== null) : [];
   const plannerIds = calls.filter(call => call.provider === "openai" && call.operation === "planning" && id(call.providerRequestId)).map(call => call.providerRequestId);
   const mediaIds = calls.filter(call => call.provider === "fal" && ["image", "video"].includes(String(call.operation)) && id(call.providerRequestId)).map(call => call.providerRequestId);
   const payload = "CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END";
-  return env.DB.prepare(
+  return { sql:
     "SELECT e.event_id,e.stream_id,e.correlation_id,e.type,e.occurred_at,CASE WHEN length(e.payload)<=65536 THEN e.payload ELSE NULL END AS payload,"
     + "t.reservation_id AS token_join_id,t.owner_id AS token_owner_id,t.stream_id AS token_stream_id,t.correlation_id AS token_correlation_id,t.operation AS token_operation,t.period AS token_period,t.status AS token_status,t.reserved_tokens AS token_reserved,t.used_tokens AS token_used,"
     + "c.reservation_id AS cost_join_id,c.owner_id AS cost_owner_id,c.workspace_id AS cost_workspace_id,c.stream_id AS cost_stream_id,c.correlation_id AS cost_correlation_id,c.operation AS cost_operation,c.period AS cost_period,c.status AS cost_status,c.reserved_microusd AS cost_reserved,c.used_microusd AS cost_used "
@@ -62,9 +62,9 @@ function priorUsageStatement(env: DB, actor: PilotUser, job: Row, tokenId: strin
     + "OR json_extract(" + payload + ",'$.reservation_id')=? OR json_extract(" + payload + ",'$.cost_reservation_id')=? "
     + "OR json_extract(" + payload + ",'$.planner_response_id') IN(SELECT value FROM json_each(?)) "
     + "OR json_extract(" + payload + ",'$.provider_job_id') IN(SELECT value FROM json_each(?))) "
-    + "ORDER BY e.event_id LIMIT 33")
-    .bind(actor.userId, actor.userId, actor.streamId, job.correlation_id, job.job_id, job.job_id,
-      job.job_id, tokenId, costId, JSON.stringify(plannerIds), JSON.stringify(mediaIds));
+    + "ORDER BY e.event_id LIMIT 33",
+    bindings: [actor.userId, actor.userId, actor.streamId, job.correlation_id, job.job_id, job.job_id,
+      job.job_id, tokenId, costId, JSON.stringify(plannerIds), JSON.stringify(mediaIds)] };
 }
 
 function prepaidObservation(source: Record<string, unknown>) {
@@ -187,7 +187,7 @@ async function accountingAcquisition(actor: PilotUser, job: Row, request: Record
 }
 
 /** Exact-job diagnostics only: every statement is SELECT. Never settle, repair, initialize or contact a provider. */
-export async function previewGenerationAccounting(env: DB, actor: PilotUser, jobId: string, now = Date.now()) {
+export async function acquireGenerationAccounting(env: DB, actor: PilotUser, jobId: string, now = Date.now()) {
   if (!id(jobId)) return fail("accounting_job_id_required", 400);
   if (actor.role !== "admin" || actor.streamId !== `creative:${actor.userId}` || actor.fictional || actor.projectExecution
     || actor.billingUserId && actor.billingUserId !== actor.userId || !actor.authorizationSnapshot || actor.access.identityPolicyDeniedCustody) return fail("accounting_principal_administrator_required", 403);
@@ -204,6 +204,13 @@ export async function previewGenerationAccounting(env: DB, actor: PilotUser, job
   const plannerId = id(checkpoint.plannerResponseId) ? checkpoint.plannerResponseId : "";
   const sameJobSQL = `SELECT 1 AS matches FROM document_jobs WHERE ${Object.keys(job).map(key => `${key} IS ?`).join(" AND ")} LIMIT 1`;
   const scopeBindings = [jobId, job.document_id, tokenId, costId, costId, jobId, tokenId, costId, tokenId, costId, jobId, tokenId, costId];
+  const priorQuery = priorUsageQuery(actor, job, tokenId, costId, checkpoint);
+  const auditQuery = { sql: `SELECT event_id,stream_id,correlation_id,type,CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,occurred_at FROM events WHERE stream_id=?
+      AND type IN('BudgetReserved','GenerationUsageRecorded','BudgetReleased')
+      AND (correlation_id=? OR json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.reservation_id')=?
+        OR json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.cost_reservation_id')=?
+        OR (?<>'' AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.planner_response_id')=?))
+      ORDER BY event_id LIMIT 101`, bindings: [actor.streamId, job.correlation_id, tokenId, costId, plannerId, plannerId] };
   // This batch pins the selected job version and reads all ledgers in one read-only snapshot.
   const rows = await env.DB.batch<Row>([
     env.DB.prepare(sameJobSQL).bind(...Object.values(job)),
@@ -214,13 +221,8 @@ export async function previewGenerationAccounting(env: DB, actor: PilotUser, job
       WHERE period=(SELECT period FROM budget_reservations WHERE reservation_id=?) AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma')) ORDER BY scope LIMIT 3`).bind(tokenId, actor.userId),
     env.DB.prepare(`SELECT scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at FROM cost_budget_counters
       WHERE period=(SELECT period FROM cost_budget_reservations WHERE reservation_id=?) AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma')) ORDER BY scope LIMIT 3`).bind(costId, actor.userId),
-    env.DB.prepare(`SELECT event_id,stream_id,correlation_id,type,CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,occurred_at FROM events WHERE stream_id=?
-      AND type IN('BudgetReserved','GenerationUsageRecorded','BudgetReleased')
-      AND (correlation_id=? OR json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.reservation_id')=?
-        OR json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.cost_reservation_id')=?
-        OR (?<>'' AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.planner_response_id')=?))
-      ORDER BY event_id LIMIT 101`).bind(actor.streamId, job.correlation_id, tokenId, costId, plannerId, plannerId),
-    priorUsageStatement(env, actor, job, tokenId, costId, checkpoint),
+    env.DB.prepare(auditQuery.sql).bind(...auditQuery.bindings),
+    env.DB.prepare(priorQuery.sql).bind(...priorQuery.bindings),
   ]);
   if (rows.some(row => !row.success) || rows[0]?.results.length !== 1) return fail("accounting_snapshot_changed");
   if (rows[1]?.results.length !== 1 || rows[1].results[0]?.conflict !== 0) return fail("accounting_personal_unscoped_only");
@@ -333,5 +335,16 @@ export async function previewGenerationAccounting(env: DB, actor: PilotUser, job
       totalReceiptCostMicrousd: allCallsKnown ? knownReceiptCostMicrousd : null, proposedSettlementMicrousd: null,
       note: "Provider receipt costs are not a proposed charge. Prior settlements and external billing evidence require separate reconciliation; an accepted request is not proof of final billing." } };
   const acquisition = await accountingAcquisition(actor, job, request, checkpoint, rows[7].results, preview, calls);
-  return { ...preview, acquisition };
+  // Internal commit proofs reuse the identical bounded queries, including their
+  // collection membership. Never expose raw job/source rows to an API caller.
+  return { preview: { ...preview, acquisition }, before, collectionProofs: [
+    { sql: `NOT EXISTS(SELECT 1 FROM (${scopeSQL}) WHERE conflict<>0)`, bindings: scopeBindings },
+    { sql: `(SELECT COUNT(*) FROM (${auditQuery.sql}))=?`, bindings: [...auditQuery.bindings, rows[6].results.length] },
+    { sql: `(SELECT COUNT(*) FROM (${priorQuery.sql}))=?`, bindings: [...priorQuery.bindings, rows[7].results.length] },
+  ] };
+}
+
+/** Public diagnostic projection remains SELECT-only and never includes source rows. */
+export async function previewGenerationAccounting(env: DB, actor: PilotUser, jobId: string, now = Date.now()) {
+  return (await acquireGenerationAccounting(env, actor, jobId, now)).preview;
 }

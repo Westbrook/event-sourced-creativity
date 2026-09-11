@@ -10,6 +10,20 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "generation.reconciliation.heading": "承認済みの会計修正",
+  "generation.reconciliation.help": "失敗した元の動画に対する、運用担当者による別個の判断です。プロバイダーの記録は変更しません。",
+  "generation.reconciliation.inspect": "承認済み修正を確認",
+  "generation.reconciliation.verify": "元の修正を検証",
+  "generation.reconciliation.working": "会計を確認中…",
+  "generation.reconciliation.complete": "8月分の修正を適用し、独立した検証が完了しました。プロバイダーへの呼び出しや新たな支出はありません。",
+  "generation.reconciliation.uncertain": "応答が途切れました。次の操作の前に、この元の修正を検証してください。別の調整を送信しないでください。",
+  "generation.reconciliation.review": "過去の修正について確認が必要です。追加の調整は送信していません。",
+  "generation.reconciliation.unavailable": "修正の準備または検証ができませんでした。この確認では新たな調整を送信していません。",
+  "generation.reconciliation.amounts": "元の対象期間：2026年8月。準備費用0.098484米ドルと15,580トークンを記録し、未使用の19.545516米ドルと136,420トークンを戻します。",
+  "generation.reconciliation.limits": "失敗した動画の費用は、保存されたスクリーンショットに基づく運用担当者の判断で0米ドルとします。プロバイダーに確認済みの請求額ではありません。返金や予算上限の変更ではありません。",
+  "generation.reconciliation.acknowledge": "事前に承認された、この会計処理の正確な内容を確認しました。",
+  "generation.reconciliation.apply": "承認済み修正を適用",
+  "generation.reconciliation.receipt": "会計修正の記録",
   "generation.accounting.heading": "会計情報の確認",
   "generation.accounting.help": "Formaの現在の会計情報と保存済みのプロバイダー受領記録を確認します。プロバイダーへの接続や残高の変更は行いません。",
   "generation.accounting.loading": "会計情報を読み込み中…",
