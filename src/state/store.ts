@@ -539,10 +539,13 @@ export class FormaStore {
   #publishAppended(events:CreativeEvent[],read?:EventSourceRead,readOnly=false){
     return this.#nativeImageMutation(()=>{
     this.#reconcileNativeImageScopes();
-    if(!events.length)return;
     if(this.#sourceRetired)return;
-    if(!read)this.#sourcePublishedRead=++this.#sourceReadSequence;
-    if (events.some((event) => event.type.startsWith("Output") || /^(?:Block|Document|Rights|Artifact|GenerationCompleted)/.test(event.type))) this.outputRequirements.invalidate();
+    if(events.length&&!read)this.#sourcePublishedRead=++this.#sourceReadSequence;
+    // Output commands compare the whole owner-stream revision, not only source
+    // edits. Even a publication with no fresh event bodies can advance that head.
+    // Keep the local source-read fence above the synchronous cache notification.
+    this.outputRequirements.invalidate();
+    if(!events.length)return;
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
     if(readOnly)return;
     if(session?.projectContext&&events.some((event)=>["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","DocumentArtifactEdited","DocumentRenderCompleted","BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","RightsAsserted"].includes(event.type))){void this.syncProjectNotifications();void this.syncReviewInbox();}
