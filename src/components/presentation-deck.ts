@@ -40,7 +40,7 @@ type DeckEvidence={sources:Array<{label:string;kind:"Source decision"|"Combined 
 export class PresentationDeck extends FormaElement{
   static properties={items:{attribute:false},presentation:{attribute:false},preferenceKey:{type:String,attribute:"preference-key"},deckTitle:{type:String,attribute:"deck-title"},documentId:{type:String,attribute:"document-id"},sourceSurface:{type:String,attribute:"source-surface"},releaseAllowed:{type:Boolean,attribute:false}};
   items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";deckTitle="";documentId="";sourceSurface="presentation-deck";releaseAllowed=true;#view:DeckView=readDeckView();#index=0;#indexKey="";#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;#exporting=false;#exportMenuId=`presentation-deck-export-${crypto.randomUUID()}`;#exportMenuOpen=false;#fullscreenActive=false;#touchStart:{x:number;y:number}|null=null;#followSoundtrackCues=false;#compactToolsOpen=false;#automaticReading=false;#visualOverflow=false;#readingOverride:boolean|null=null;#readingObserver?:ResizeObserver;#readingViewport?:HTMLElement;
-  #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"downloading"|"completed"|"failed";completed:number;total:number;message?:string}|null=null;
+  #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"downloading"|"completed"|"failed";completed:number;total:number;message?:string;format?:"powerpoint"|"powerpoint-presenter"}|null=null;
   #exportAbort?:AbortController;
   #exportFocus?:ExportFocusReturn;
   #exportCompletion?:ExportCompletionOwner;
@@ -364,6 +364,8 @@ export class PresentationDeck extends FormaElement{
   async #downloadPowerPointVariant(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,includePresenterNotes:boolean){
     if(this.#exporting||!this.releaseAllowed)return;const authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false,artifactId=this.preferenceKey,documentId=this.documentId||this.store.projection.get().documentId;if(!authorization||scoped&&!artifactId)return;
     this.#clearExportCompletion();
+    const completion=this.#captureExportCompletion(authorization);
+    this.#exportCompletion=completion;
     const controller=new AbortController();
     this.#exportFocus?.dispose();
     this.#exportAbort=controller;
@@ -403,7 +405,8 @@ export class PresentationDeck extends FormaElement{
       if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
       this.#exportProgress={stage:"downloading",completed:items.length,total:items.length};
       this.requestUpdate();
-      const blob=new Blob([bytes as Uint8Array<ArrayBuffer>],{type:POWERPOINT_DOCUMENT_MIME}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=presentationEditableExportFilename(this.deckTitle.trim()||this.i18n.system("Slide deck"),this.i18n.locale);document.body.append(link);link.click();link.remove();delivered=true;window.setTimeout(()=>URL.revokeObjectURL(url),60_000);this.store.toast(includePresenterNotes?(items.length===1?this.i18n.system("{count} editable PowerPoint slide and speaker notes downloaded.",{count:this.i18n.number(items.length)}):this.i18n.system("{count} editable PowerPoint slides and speaker notes downloaded.",{count:this.i18n.number(items.length)})):this.i18n.t("presentation.export.audienceDownloaded","",{count:this.i18n.number(items.length)}));
+      const blob=new Blob([bytes as Uint8Array<ArrayBuffer>],{type:POWERPOINT_DOCUMENT_MIME}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=presentationEditableExportFilename(this.deckTitle.trim()||this.i18n.system("Slide deck"),this.i18n.locale);document.body.append(link);link.click();link.remove();delivered=true;window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
+      if(this.#exportCompletion===completion&&completion.current())this.#exportProgress={stage:"completed",completed:items.length,total:items.length,format:includePresenterNotes?"powerpoint-presenter":"powerpoint"};
     }catch(error){
       if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
       console.error("Editable slide export failed",error);
@@ -428,7 +431,7 @@ export class PresentationDeck extends FormaElement{
     if(!progress)return nothing;
     const failed=progress.stage==="failed",complete=progress.stage==="completed",total=Math.max(0,progress.total),completed=Math.max(0,Math.min(progress.completed,total));
     const count=total?this.i18n.system("{count} of {total}",{count:this.i18n.number(completed),total:this.i18n.number(total)}):"";
-    const label=complete?this.i18n.system("{count}-page PDF downloaded.",{count:this.i18n.number(total)}):progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):progress.stage==="finalizing"?this.i18n.t("job.progress.finalizing"):this.i18n.t("job.progress.downloading"));
+    const label=complete?(progress.format==="powerpoint"?this.i18n.t("presentation.export.audienceDownloaded","",{count:this.i18n.number(total)}):progress.format==="powerpoint-presenter"?(total===1?this.i18n.system("{count} editable PowerPoint slide and speaker notes downloaded.",{count:this.i18n.number(total)}):this.i18n.system("{count} editable PowerPoint slides and speaker notes downloaded.",{count:this.i18n.number(total)})):this.i18n.system("{count}-page PDF downloaded.",{count:this.i18n.number(total)})):progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):progress.stage==="finalizing"?this.i18n.t("job.progress.finalizing"):this.i18n.t("job.progress.downloading"));
     const determinate=progress.stage!=="preparing"&&total>0;
     return html`<section id=${`${this.#exportMenuId}-status`} class="presentation-deck-export-status" data-export-stage=${progress.stage} role=${failed?"alert":"status"} aria-live=${failed?"assertive":"polite"} aria-atomic="true">
       <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&!complete&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&!complete&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${(event:MouseEvent)=>{this.#exportFocus?.cancel(event);this.#exportAbort?.abort();}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>

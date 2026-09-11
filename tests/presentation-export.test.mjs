@@ -115,7 +115,7 @@ test("presentation exports communicate staged progress, accessible completion co
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"downloading"\|"completed"\|"failed";completed:number;total:number;message\?:string\}\|null=null/u);
+  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"downloading"\|"completed"\|"failed";completed:number;total:number;message\?:string;format\?:"powerpoint"\|"powerpoint-presenter"\}\|null=null/u);
   assert.match(deck, /class="presentation-deck-export-status" data-export-stage=\$\{progress\.stage\} role=\$\{failed\?"alert":"status"\} aria-live=\$\{failed\?"assertive":"polite"\} aria-atomic="true"/u);
   assert.match(deck, /<progress max=\$\{total\} value=\$\{completed\} aria-label=\$\{this\.i18n\.t\("status\.progress"\)\} aria-valuetext=\$\{count\}>/u);
   assert.match(deck, /<progress aria-label=\$\{this\.i18n\.t\("status\.progress"\)\}><\/progress>/u,"preparation remains truthfully indeterminate until page rendering begins");
@@ -137,6 +137,8 @@ test("presentation exports communicate staged progress, accessible completion co
     visit(method);
     assert.ok(calls.includes("this.#captureExportFocus") && calls.includes("this.#finishExport"),
       name + " binds the shared focus owner and finalizer; PDF success still requires browser observation");
+    assert.ok(calls.includes("this.#captureExportCompletion"), name + " captures the same guarded completion lifecycle");
+    assert.equal(calls.includes("this.store.toast"), false, name + " keeps successful completion in the deck, clear of its reading controls");
   }
   assert.match(deck, /const bytes=await createPowerPointDocumentAsync\(items,presentation,/u,"large editable exports use the same cooperative asynchronous pipeline");
   assert.ok((deck.match(/onProgress,signal:controller\.signal/gu)??[]).length>=2,"PDF and editable presentations both stream real slide progress and honor cancellation");
@@ -234,6 +236,28 @@ const exportSourceOwnershipSeam = "  installSourceOwnershipPort(f.store);";
 assert.equal(exportFixtureModule.split(exportSourceOwnershipSeam).length, 2);
 exportFixtureModule = exportFixtureModule.replace(exportSourceOwnershipSeam,
   "  f.sourceOwnershipPort = installSourceOwnershipPort(f.store);");
+// The current Slides opening path uses native modal autofocus. Reuse the finite
+// focus/visibility/autofocus contract in document-slides-content-first-focus tests
+// around the actual complete component renderer. No production guard or opening
+// method is replaced; these ports do not establish browser paint or physical input.
+const exportOpeningSeam0 = "documentPort.defaultView=windowPort;";
+assert.equal(exportFixtureModule.split(exportOpeningSeam0).length, 2);
+exportFixtureModule = exportFixtureModule.replace(exportOpeningSeam0, "documentPort.defaultView=windowPort;\n// Declared finite window posture. The later export focus tests supply their own\n// focused/hidden transitions through configurable descriptors on this same owner.\nObject.defineProperties(documentPort, {\n  hasFocus: { configurable: true, value: () => activeFixture?.exportDocumentPosture?.focused === true },\n  visibilityState: { configurable: true, get: () => activeFixture?.exportDocumentPosture?.visibilityState ?? \"hidden\" },\n  hidden: { configurable: true, get: () => documentPort.visibilityState === \"hidden\" },\n});");
+const exportOpeningSeam1 = "      instance.eventBindings = props.handlers;";
+assert.equal(exportFixtureModule.split(exportOpeningSeam1).length, 2);
+exportFixtureModule = exportFixtureModule.replace(exportOpeningSeam1, "      instance.eventBindings = props.handlers;\n      // The renderer's component-owner links omit intervening native containers.\n      // Resolve this actual deck's rendered modal, never an unrelated dialog.\n      if (tag === \"forma-presentation-deck\") instance.closest = selector => selector === \"dialog\"\n        ? this.query(owner, \"dialog.document-artifact-view\")[0] ?? null\n        : ElementPort.prototype.closest.call(instance, selector);");
+const exportOpeningSeam2 = "      node.setAttribute = (name, value) => { node.attributes[name] = String(value); };";
+assert.equal(exportFixtureModule.split(exportOpeningSeam2).length, 2);
+exportFixtureModule = exportFixtureModule.replace(exportOpeningSeam2, "      node.setAttribute = (name, value) => { node.attributes[name] = String(value); };\n      node.removeAttribute = name => { delete node.attributes[name]; };\n      node.getClientRects = () => {\n        const dialog = node.owner?.closest?.(\"dialog\");\n        return node.isConnected && (!dialog || dialog.open) && !Object.hasOwn(node.attributes, \"hidden\")\n          ? [node.getBoundingClientRect()] : [];\n      };\n      // Finite rendered-box visibility for the existing declared native port;\n      // no CSS paint or real browser visibility is inferred by these controls.\n      node.checkVisibility = () => node.getClientRects().length > 0;\n      Object.defineProperty(node, \"disabled\", { configurable: true,\n        get: () => Object.hasOwn(node.attributes, \"disabled\") });");
+const exportOpeningSeam3 = "      node.focus = () => this.fixture.trace.push(\"focus:\" + (node.attributes.class ?? node.tag));";
+assert.equal(exportFixtureModule.split(exportOpeningSeam3).length, 2);
+exportFixtureModule = exportFixtureModule.replace(exportOpeningSeam3, "      node.focus = () => {\n        if (!node.isConnected || Object.hasOwn(node.attributes, \"disabled\")) return;\n        this.fixture.trace.push(\"focus:\" + (node.attributes.class ?? node.tag));\n        documentPort.activeElement = node;\n        for (const listener of [...(this.fixture.listeners.get(\"focusin\") ?? [])]) listener({ type: \"focusin\", target: node });\n      };");
+const exportOpeningSeam4 = "      this.nodes.push(node);";
+assert.equal(exportFixtureModule.split(exportOpeningSeam4).length, 2);
+exportFixtureModule = exportFixtureModule.replace(exportOpeningSeam4, "      const nativeMatches = node.matches;\n      node.matches = selector => selector === \":disabled\" ? Object.hasOwn(node.attributes, \"disabled\") : nativeMatches(selector);\n      // Lit preserves the same modal shell for an unchanged native template.\n      // Other native nodes keep this renderer's existing replacement semantics.\n      if (node.tag === \"dialog\" && node.classList.contains(\"document-artifact-view\")) {\n        const previous = (this.previousNodes ?? []).find(candidate => candidate.isConnected\n          && candidate.owner === owner && candidate.tag === \"dialog\" && candidate.classList.contains(\"document-artifact-view\"));\n        if (previous) {\n          for (const key of [\"attributes\", \"properties\", \"propertyParts\", \"handlers\", \"full\"]) previous[key] = node[key];\n          previous.isConnected = true; node.isConnected = false; this.nodes.push(previous); continue;\n        }\n        const matches = node.matches, close = node.close;\n        node.matches = selector => selector === \":modal\" ? node.open && node.modal === true : matches(selector);\n        node.close = () => { node.modal = false; close(); };\n      }\n      this.nodes.push(node);");
+const exportOpeningSeam5 = "if (!dialog.open) { dialog.open = true; activeFixture.trace.push(\"open:\" + dialog.attributes.class); }";
+assert.equal(exportFixtureModule.split(exportOpeningSeam5).length, 2);
+exportFixtureModule = exportFixtureModule.replace(exportOpeningSeam5, "if (!dialog.open) {\n    dialog.open = true; dialog.modal = true; activeFixture.trace.push(\"open:\" + dialog.attributes.class);\n    // Model the native modal autofocus step used by the accepted Slides opening\n    // controls. This executes only after product code sets the target attribute.\n    const targets = activeFixture.renderer.nodes.filter(node => node.isConnected\n      && Object.hasOwn(node.attributes, \"autofocus\") && node.owner?.closest?.(\"dialog\") === dialog);\n    assert.ok(targets.length <= 1, \"the declared export modal has at most one autofocus target\");\n    targets[0]?.focus();\n  }");
 exportFixtureModule += "\nexport { fixture as nativePresentationExportFixture };\n";
 const exportFixtureModuleUrl = new URL(exportFixtureUrl);
 exportFixtureModuleUrl.search = "?presentation-export-compat";
@@ -315,13 +339,13 @@ async function nativeExportFixture(t, locale, options = {}) {
     assert.fail("No application or provider network is permitted in native export compatibility tests");
   });
   const f = (options.factory ?? nativePresentationExportFixture)("create", { artifact: true, locale });
+  f.exportDocumentPosture = { focused: true, visibilityState: "visible" };
   // This older Store port has no Signal subscription delivery. Model only its
   // explicit subscribe/notify contract; no full Store or signal graph is claimed.
   const subscriptions = new Set();
   assert.equal(f.store.subscribe, undefined); assert.equal(f.store.notify, undefined);
   f.store.subscribe = listener => { subscriptions.add(listener); return () => subscriptions.delete(listener); };
   f.store.notify = () => subscriptions.forEach(listener => listener());
-  f.exportSubscriptionCount = () => subscriptions.size;
   t.after(() => {
     try { assert.equal(forbiddenFetches.length, 0, "caught converter errors cannot hide a forbidden fetch attempt"); }
     finally {
@@ -335,6 +359,21 @@ async function nativeExportFixture(t, locale, options = {}) {
   completed.payload.artifact_kind = "slides"; completed.payload.items = items; completed.payload.item_count = items.length;
   f.state.content["content-A"] = JSON.stringify({ ...JSON.parse(f.state.content["content-A"]), items });
   assert.equal(await f.host.openArtifactById("artifact-A"), true); await f.flush();
+  // The actual current artifact viewer mounts one closed input dialog whose
+  // accounting-scope observer subscribes in connectedCallback. Capture those
+  // exact existing identities before Export; completion owns only later additions.
+  const inputDialogs = f.renderer.query(f.host, "forma-generation-input-dialog");
+  assert.equal(inputDialogs.length, 1, "this fixture mounts its one actual input-inspection owner");
+  const inputDialog = inputDialogs[0];
+  assert.equal(inputDialog.isConnected, true); assert.equal(inputDialog.store, f.store);
+  assert.equal(inputDialog.open, false, "the baseline accounting observer does not open or read accounting");
+  assert.equal(subscriptions.size, 1, "the current connected input dialog owns its one baseline subscription before export");
+  const existingSubscriptions = new Set(subscriptions);
+  f.exportSubscriptionCount = () => {
+    for (const listener of existingSubscriptions) assert.equal(subscriptions.has(listener), inputDialog.isConnected,
+      "the exact baseline observer remains while its component is connected and retires with it");
+    return [...subscriptions].filter(listener => !existingSubscriptions.has(listener)).length;
+  };
   const deck = f.renderer.query(f.host, "forma-presentation-deck")[0];
   assert.ok(deck, "the actual artifact viewer mounts the complete production deck");
   const trigger = () => f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-export"));
@@ -394,8 +433,8 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
 
 
 // Local browser contracts for the existing actual-component fixture. Preserve
-// only its unchanged Export button across commits, as Lit does; all other native
-// nodes retain the supplier's normal replacement behavior. These ports establish
+// its unchanged Export button across commits, alongside the modal shell modeled
+// above; other native nodes retain the supplier's normal replacement behavior. These ports establish
 // focus/event ordering and delivered bytes, not browser paint or Office rendering.
 function exportCompletionPorts(t, context) {
   const { f, deck, trigger } = context, owner = deck.ownerDocument, view = owner.defaultView;
@@ -596,6 +635,10 @@ for (const mode of ["current", "moved", "moved-back", "pointer", "key", "window"
       const bytes = new Uint8Array(await p.downloads[0].blob.arrayBuffer());
       assert.deepEqual([...bytes.slice(0, 4)], [80, 75, 3, 4], "the downloaded payload is the real Office ZIP");
     } else assert.equal(p.downloads.length, 0);
+    const completedStatus = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "completed");
+    const completionRetired = ["authorization", "source", "document", "artifact", "route", "disconnected", "refused"].includes(mode);
+    assert.equal(Boolean(completedStatus), !completionRetired, "only the current authorized deck can retain the success announcement");
+    assert.equal(f.trace.some(value => value.startsWith("toast:")), false, "neither success nor refused/stale completion creates a global toast");
     assert.equal(f.state.requests.length, 0);
     if (mode !== "artifact") assert.deepEqual(f.state.events, originalEvents);
     assert.deepEqual(f.state.content, originalContent);
@@ -980,4 +1023,136 @@ test("finite PDF reading posture: disconnect retires the actual observer and que
   posture.deliver(300, 200); assert.equal(posture.frames().length, 1);
   c.deck.isConnected = false; c.deck.disconnectedCallback();
   assert.equal(observer.targets.size, 0); assert.equal(posture.frames().length, 0);
+});
+
+
+// Exact component/native-port completion controls. The actual Office converter
+// creates the delivered Blob; these checks do not claim browser paint or Office
+// application rendering. The four locale cases reuse the existing finite PDF
+// fixture only for its locale callback; its Office converter remains real and no
+// PDF conversion is requested by those cases. The existing focus, cancellation and failure cases above
+// remain complete, including delivery semantics after a focus-only invalidation.
+// Reuse the dedicated audience-export ZIP STORE decoder to inspect the actual
+// notes entry; package part presence alone does not establish private content.
+function completedPptxParts(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const footer = bytes.byteLength - 22;
+  assert.equal(view.getUint32(footer, true), 0x06054b50, "PowerPoint has a valid ZIP footer");
+
+  const count = view.getUint16(footer + 10, true);
+  const directoryLength = view.getUint32(footer + 12, true);
+  let central = view.getUint32(footer + 16, true);
+  assert.equal(central + directoryLength, footer, "ZIP central-directory boundaries remain valid");
+
+  const entries = new Map();
+  for (let index = 0; index < count; index += 1) {
+    assert.equal(view.getUint32(central, true), 0x02014b50, "every package part has a central entry");
+    const nameLength = view.getUint16(central + 28, true);
+    const extraLength = view.getUint16(central + 30, true);
+    const commentLength = view.getUint16(central + 32, true);
+    const name = new TextDecoder().decode(bytes.slice(central + 46, central + 46 + nameLength));
+    const local = view.getUint32(central + 42, true);
+    const size = view.getUint32(central + 24, true);
+
+    assert.equal(view.getUint32(local, true), 0x04034b50, `${name} has a valid local header`);
+    assert.equal(view.getUint16(local + 8, true), 0, `${name} is an interoperable ZIP STORE entry`);
+    const offset = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    entries.set(name, new TextDecoder().decode(bytes.slice(offset, offset + size)));
+    central += 46 + nameLength + extraLength + commentLength;
+  }
+
+  assert.equal(central, footer, "every declared ZIP entry was inspected");
+  return entries;
+}
+
+const completedPptxStatus = ({ f, deck }) => f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "completed");
+const completedPptxLabel = ({ f, deck }) => {
+  const labels = f.renderer.ownNodes(deck, "span").filter(node => node.classList.contains("presentation-deck-export-status-label"));
+  assert.equal(labels.length, 1);
+  const start = deck.markup.indexOf(labels[0].full) + labels[0].full.length;
+  return deck.markup.slice(start, deck.markup.indexOf("</span>", start));
+};
+async function completePptx(context, ports, format = "powerpoint") {
+  const before = ports.receipts.length;
+  ports.begin(format);
+  await ports.waitFor(() => ports.receipts.length === before + 1, "actual Office bytes reach the existing release authorization boundary");
+  ports.receipts[before].resolve(true);
+  await ports.waitFor(() => !context.trigger().disabled, "the completed download releases Export");
+  await new Promise(setImmediate); context.f.draw();
+  assert.ok(completedPptxStatus(context));
+}
+
+for (const format of ["powerpoint", "powerpoint-presenter"]) for (const total of [1, 2]) {
+  test("PowerPoint completion UI: " + format + " / " + total + " keeps format-specific translated completion inside the deck", async t => {
+    const items = Array.from({ length: total }, (_, index) => ({ id: "completion-slide-" + index,
+      title: "Exact completion decision " + (index + 1), body: "Exact audience evidence",
+      notes: "Private presenter notes", image_prompt: "", context_group_ids: [] }));
+    const context = await nativeExportFixture(t, "en", { factory: finitePdfFixture, items }), { f, deck, trigger } = context;
+    const p = exportCompletionPorts(t, context);
+    await completePptx(context, p, format);
+    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1);
+    assert.equal(p.receipts[0].receipt.payload.presenter_notes_included, format === "powerpoint-presenter");
+    assert.equal(p.owner.activeElement === p.original, true, "the same successful Export focus return is retained");
+    const parts = completedPptxParts(new Uint8Array(await p.downloads[0].blob.arrayBuffer()));
+    const notes = parts.get("ppt/notesSlides/notesSlide1.xml");
+    assert.equal(typeof notes, "string", "the compatible notes part exists for both privacy variants");
+    const noteText = [...notes.matchAll(/<a:t(?:\s[^>]*)?>([^<]*)<\/a:t>/gu)].map(([, value]) => value.trim()).filter(Boolean);
+    if (format === "powerpoint-presenter") assert.ok(noteText.includes("Private presenter notes"), "the message matches the exact private text in the decoded notes entry");
+    else assert.deepEqual(noteText, [], "the audience message corresponds to an empty decoded notes entry");
+    const labels = [];
+    for (const locale of ["en", "fr", "ar", "ja"]) {
+      if (locale !== "en") { f.setCompletionLocale(locale); f.draw(); }
+      const status = completedPptxStatus(context); assert.ok(status);
+      assert.equal(status.attributes.role, "status"); assert.equal(status.attributes["aria-live"], "polite"); assert.equal(status.attributes["aria-atomic"], "true");
+      assert.equal(trigger().attributes["aria-describedby"], status.attributes.id);
+      assert.equal(trigger().disabled, false); assert.equal(String(trigger().attributes["aria-busy"]), "false");
+      const expected = format === "powerpoint" ? f.i18n.t("presentation.export.audienceDownloaded", "", { count: f.i18n.number(total) })
+        : f.i18n.system(total === 1 ? "{count} editable PowerPoint slide and speaker notes downloaded." : "{count} editable PowerPoint slides and speaker notes downloaded.", { count: f.i18n.number(total) });
+      const label = completedPptxLabel(context); assert.equal(label, expected); assert.doesNotMatch(label, /PDF/u); labels.push(label);
+      assert.equal(f.renderer.ownNodes(deck, "progress").length, 0);
+      assert.equal(f.renderer.ownNodes(deck, "span").some(node => node.classList.contains("presentation-deck-export-status-count")), false);
+      assert.equal(f.renderer.ownNodes(deck, "button").some(node => node.classList.contains("presentation-deck-export-cancel") || node.classList.contains("presentation-deck-export-retry")), false);
+      assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+      assert.equal(f.exportSubscriptionCount(), 1);
+    }
+    assert.equal(new Set(labels).size, 4, "a retained completion is translated anew when the interface locale changes");
+    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+  });
+}
+
+for (const mode of ["source-aba", "authorization-aba", "route-aba", "content-aba", "revision", "release-withdrawn"]) {
+  test("PowerPoint completion UI: " + mode + " retires its success status without resurrection", async t => {
+    const context = await nativeExportFixture(t, "en"), { f, deck } = context;
+    const p = exportCompletionPorts(t, context);
+    await completePptx(context, p);
+    assert.equal(f.exportSubscriptionCount(), 1);
+    if (mode === "source-aba") { f.sourceOwnershipPort.retire(); f.store.notify(); f.sourceOwnershipPort.restore(); f.store.notify(); }
+    if (mode === "authorization-aba") { const original = f.state.authorization; f.state.authorization = "retired-pptx-completion"; f.store.notify(); f.state.authorization = original; f.store.notify(); }
+    if (mode === "route-aba") { const original = f.store.route; f.store.route = { get: () => "/library?document=A" }; f.store.notify(); f.store.route = original; f.store.notify(); }
+    if (mode === "content-aba") { const original = f.state.content["content-A"]; f.state.content["content-A"] = original + " "; f.store.notify(); f.state.content["content-A"] = original; f.store.notify(); }
+    if (mode === "revision") { f.state.events.push({ ...f.state.events.at(-1), eventId: "pptx-completion-revision", sequence: f.state.events.length + 1,
+      type: "DocumentArtifactEdited", payload: { artifact_id: "artifact-A", document_id: "A", content_ref: "content-A", revision: 1 } }); f.store.notify(); }
+    if (mode === "release-withdrawn") { deck.releaseAllowed = false; f.store.notify(); deck.releaseAllowed = true; f.store.notify(); }
+    f.draw(); assert.equal(completedPptxStatus(context), undefined); assert.equal(f.exportSubscriptionCount(), 0);
+    f.store.notify(); f.draw(); assert.equal(completedPptxStatus(context), undefined, "later notifications cannot revive the old owner");
+    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+  });
+}
+
+test("PowerPoint completion UI: a new export replaces success and focused Cancel disposes the new completion owner", async t => {
+  const context = await nativeExportFixture(t, "en"), { f, deck, trigger } = context;
+  const p = exportCompletionPorts(t, context);
+  await completePptx(context, p);
+  p.begin("powerpoint");
+  assert.equal(completedPptxStatus(context), undefined);
+  assert.equal(f.exportSubscriptionCount(), 1, "only the new operation owns a pending completion");
+  const cancel = f.renderer.ownNodes(deck, "button").find(node => node.classList.contains("presentation-deck-export-cancel"));
+  assert.ok(cancel); cancel.focus({ preventScroll: true }); cancel.click(); f.draw();
+  await p.waitFor(() => !trigger().disabled, "explicit Cancel settles the new operation");
+  await new Promise(setImmediate); f.draw();
+  assert.equal(completedPptxStatus(context), undefined); assert.equal(f.exportSubscriptionCount(), 0);
+  assert.equal(p.owner.activeElement === p.original, true);
+  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+  assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
 });
