@@ -50,10 +50,14 @@ export function createVideoReconciliationHandler(authorize: Authorize = requireE
       const command: unknown = JSON.parse(text);
       return confirmedResponse(await applyManagedVideoReconciliation(env, auth.user, command));
     } catch (error) {
-      if (error instanceof VideoReconciliationError || error instanceof GenerationAccountingPreviewError || error instanceof HoldDispositionError)
+      if (error instanceof VideoReconciliationError || error instanceof GenerationAccountingPreviewError || error instanceof HoldDispositionError) {
+        console.error("video_reconciliation_refused", { method: request.method, code: error.code });
         return response({ error: error.code }, error.status);
+      }
       if (error instanceof SyntaxError) return response({ error: "invalid_json" }, 400);
       // The UI must verify the stable operation before treating an ambiguous POST as failed.
+      console.error("video_reconciliation_unavailable", { method: request.method,
+        category: error instanceof Error ? error.message.match(/\b(?:D1_ERROR|D1_TYPE_ERROR|SQLITE_ERROR|SQLITE_AUTH|SQLITE_CONSTRAINT)\b/u)?.[0] ?? "unexpected_error" : "unexpected_error" });
       return response({ error: "reconciliation_unavailable_verify_original_operation" }, 503);
     }
   };

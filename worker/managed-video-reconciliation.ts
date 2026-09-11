@@ -56,7 +56,18 @@ async function authority(env: WorkerEnv, actor: PilotUser) {
   if (actor.fictional || actor.projectExecution || actor.billingUserId && actor.billingUserId !== actor.userId)
     return fail("reconciliation_principal_owner_required", 403);
   const auth = holdAdministratorAuthority(actor), admission = configuredPilotAdmissionGuard(env, actor), schema = videoReconciliationSchemaProof();
-  if (!await env.DB.prepare("SELECT 1 AS ready WHERE " + schema.sql).bind(...schema.bindings).first()) return fail("reconciliation_schema_not_ready", 503);
+  if (!await env.DB.prepare("SELECT 1 AS ready WHERE " + schema.sql).bind(...schema.bindings).first()) {
+    // Only fixed schema object names and match flags: never log source rows,
+    // request bodies, identities, credentials or the stored SQL itself.
+    try {
+      const names = schema.bindings.filter((_, index) => index % 2 === 0);
+      const rows = await env.DB.prepare(`SELECT name,sql FROM sqlite_schema WHERE name IN(${names.map(() => "?").join(",")})`).bind(...names).all<{ name: string; sql: string }>();
+      console.error("video_reconciliation_schema_not_ready", names.map((name, index) => ({ name,
+        present: rows.results.some(row => row.name === name),
+        matches: rows.results.some(row => row.name === name && row.sql === schema.bindings[index * 2 + 1]) })));
+    } catch { console.error("video_reconciliation_schema_diagnostic_unavailable"); }
+    return fail("reconciliation_schema_not_ready", 503);
+  }
   if (!await env.DB.prepare("SELECT 1 AS ok WHERE " + auth.sql + " AND " + admission.sql).bind(...auth.bindings!, ...admission.bindings!).first())
     return fail("reconciliation_authority_changed", 403);
   return [schema, auth, admission];
