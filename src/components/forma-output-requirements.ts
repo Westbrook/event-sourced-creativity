@@ -5,8 +5,9 @@ import { createFilmCompositionDraft, isFilmCompositionDraftAsset, type FilmCompo
 import { renderOutputFilmComposer } from "./output-film-composer";
 import { filmCompositionMessage } from "./design-system/locales/film-composition-messages";
 import { repeat } from "lit/directives/repeat.js";
-import { OUTPUT_REVIEW_PREVIEW_MAX_BYTES, outputReviewPreviewIdentity, outputReviewPreviewKind } from "../model/output-review-preview";
+import { OUTPUT_REVIEW_PREVIEW_MAX_BYTES, outputReviewPreviewBudget, outputReviewPreviewIdentity, outputReviewPreviewKind, outputReviewPreviewResourceAllows } from "../model/output-review-preview";
 import { outputReviewPreviewMessage } from "./design-system/locales/output-review-preview-messages";
+import { ensureModalDialog } from "./modal-dialog";
 import { FormaElement } from "./forma-element";
 import { copyInterfaceText } from "./design-system/clipboard";
 import { outputOperationSupportReceipt } from "./output-operation-support-receipt";
@@ -42,7 +43,8 @@ type PlanIntent = { scope: { authorizationScopeKey: string; documentId: string }
 type Command = OutputRequirementCommand extends infer C ? C extends OutputRequirementCommand ? Omit<C, "documentId" | "expectedRevision" | "clientMutationId"> : never : never;
 type OutputPrivateView = { authorization: CapturedAuthorizationScope | null; source: CapturedSourceOwnership | null; documentId: string; epoch: number };
 type OutputReviewPreview = { resultId: string; identity: string; view: OutputPrivateView; route: string;
-  privateRevision: number; controller: AbortController; status: "loading" | "ready" | "unavailable"; url: string | null };
+  privateRevision: number; controller: AbortController; status: "loading" | "ready" | "unavailable"; url: string | null;
+  lease: { release: () => void; settle: () => void }; kind: "image" | "audio" | "video"; manualImage: boolean };
 type OutputNativeIntent = OutputPrivateView & {
   requestEpoch: number;
   targetIds: string[]; targetScopeKey: string; selectionKey: string; alternativeOfSlotId: string | null;
@@ -111,7 +113,18 @@ export class FormaOutputRequirements extends FormaElement {
   #paidActivation = new OutputDirectActivationLatch();
   #uploadFailure: OutputUploadFailure | null = null;
   #downloadUrls = new Set<string>();
-  #reviewPreview: OutputReviewPreview | null = null;
+  #reviewPreviews = new Map<string, OutputReviewPreview>();
+  #previewObserver: IntersectionObserver | null = null;
+  #previewObserved = new Map<HTMLElement, string>();
+  #visiblePreviews = new Set<string>();
+  #offscreenPreviews = new Set<string>();
+  #failedPreviews = new Set<string>();
+  #previewBudgetUnsubscribe?: () => void;
+  #previewDialog: { dialog: HTMLDialogElement; preview: OutputReviewPreview; opener: HTMLButtonElement } | null = null;
+  #previewFocusDeparted = (event: FocusEvent) => {
+    if (!(event.target instanceof Element) || !event.target.closest(".output-exact-preview, .output-exact-image-dialog")) return;
+    queueMicrotask(() => { if (this.isConnected) { this.#evictOffscreenReviewImages(); this.requestUpdate(); } });
+  };
   #uncertainCommand: { signature: string; id: string; expectedRevision: string; sourceRetired?: true; receipt?: OutputCommittedReceipt } | null = null;
   #planRequest = (event: Event) => {
     const detail = (event as CustomEvent<PlanIntent>).detail;
@@ -155,8 +168,12 @@ export class FormaOutputRequirements extends FormaElement {
   };
 
   constructor() { super(); this.documentId = ""; this.documentName = ""; this.blockId = ""; this.surface = "document"; this.inspectionOnly = false; }
-  override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.requestUpdate(); }
+  override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.addEventListener("focusout", this.#previewFocusDeparted); this.#previewBudgetUnsubscribe = outputReviewPreviewBudget.subscribe(() => this.requestUpdate()); this.requestUpdate(); }
   override disconnectedCallback() {
+    this.#previewBudgetUnsubscribe?.(); this.#previewBudgetUnsubscribe = undefined;
+    this.#previewObserver?.disconnect(); this.#previewObserver = null;
+    this.#previewObserved.clear(); this.#visiblePreviews.clear(); this.#offscreenPreviews.clear(); this.#failedPreviews.clear();
+    this.removeEventListener("focusout", this.#previewFocusDeparted);
     this.#clearReviewPreview();
     this.#clearRecipePresentation();
     this.#clearFilmComposition(); this.#filmStaged = null;
@@ -204,7 +221,7 @@ export class FormaOutputRequirements extends FormaElement {
       this.#downloadUrls.clear();
     }
     const snapshot = this.#snapshot();
-    if (this.#reviewPreview && !this.#reviewPreviewCurrent(this.#reviewPreview)) this.#clearReviewPreview();
+    for (const preview of this.#reviewPreviews.values()) if (!this.#reviewPreviewCurrent(preview)) this.#clearReviewPreview(preview.resultId);
     if (this.#film && !this.#film.current()) this.#clearFilmComposition();
     if (this.#filmStaged && this.#busy !== "upload" && !this.#filmStaged.current()) {
       if (this.#file === this.#filmStaged.file) { this.#file = null; this.#rightsConfirmed = false; }
@@ -287,6 +304,7 @@ export class FormaOutputRequirements extends FormaElement {
   }
 
   protected override updated() {
+    this.#observeReviewPreviews();
     if (!this.documentId || this.#loading || this.#sourceRefreshing) return;
     const resource = this.store.outputRequirements.resource(this.documentId);
     if (resource.state === "loading" || resource.state === "refreshing") void this.#refresh();
@@ -1506,70 +1524,181 @@ export class FormaOutputRequirements extends FormaElement {
     if (response) this.#announce(approve ? this.#t("accepted", "This exact result was accepted for this target. Other work remains unchanged.") : this.#t("changesRequested", "Changes requested. This file does not fulfill the target."));
   }
 
-  #reviewPreviewIdentity(resultId: string): string | null {
+  #reviewPreviewIdentity(resultId: string, retained = false): string | null {
     const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
-    return resource.state === "ready" && snapshot && !resource.privateUnavailable && !resource.accessLost
+    return outputReviewPreviewResourceAllows(resource.state, retained) && snapshot && !resource.privateUnavailable && !resource.accessLost
       && outputDeliveryReadiness(snapshot).allowed && this.#viewCurrent(this.#captureView())
       ? outputReviewPreviewIdentity(snapshot, resultId) : null;
   }
 
   #reviewPreviewCurrent(preview: OutputReviewPreview): boolean {
-    return this.#reviewPreview === preview && !preview.controller.signal.aborted && this.#viewCurrent(preview.view)
+    return this.#reviewPreviews.get(preview.resultId) === preview && !preview.controller.signal.aborted && this.#viewCurrent(preview.view)
       && this.store.route.get() === preview.route
       && (this.store.outputRequirements.resource(this.documentId).privateRevision ?? 0) === preview.privateRevision
-      && this.#reviewPreviewIdentity(preview.resultId) === preview.identity;
+      && this.#reviewPreviewIdentity(preview.resultId, true) === preview.identity;
   }
 
-  #clearReviewPreview() {
-    const preview = this.#reviewPreview;
-    this.#reviewPreview = null;
-    preview?.controller.abort();
-    for (const media of this.querySelectorAll<HTMLMediaElement>(".output-exact-preview audio, .output-exact-preview video")) {
-      media.pause(); media.removeAttribute("src"); media.load();
+  #clearReviewPreview(resultId?: string, previousRegion?: HTMLElement) {
+    if (!resultId) this.#failedPreviews.clear();
+    for (const preview of [...this.#reviewPreviews.values()]) {
+      if (resultId && preview.resultId !== resultId) continue;
+      this.#reviewPreviews.delete(preview.resultId);
+      if (this.#previewDialog?.preview === preview) this.#closeReviewDialog(false);
+      preview.controller.abort();
+      const candidate = previousRegion ?? [...this.querySelectorAll<HTMLElement>(".output-exact-preview")].find((el) => el.dataset.previewResult === preview.resultId);
+      const region = candidate?.dataset.previewResult === preview.resultId ? candidate : null;
+      for (const media of region?.querySelectorAll<HTMLMediaElement>("audio, video") ?? []) {
+        media.pause(); media.removeAttribute("src"); media.load();
+      }
+      for (const image of region?.querySelectorAll<HTMLImageElement>("img") ?? []) image.removeAttribute("src");
+      if (preview.url) URL.revokeObjectURL(preview.url);
+      preview.lease.release();
     }
-    for (const image of this.querySelectorAll<HTMLImageElement>(".output-exact-preview img")) image.removeAttribute("src");
-    if (preview?.url) URL.revokeObjectURL(preview.url);
   }
 
-  async #openReviewPreview(resultId: string) {
+  #observeReviewPreviews() {
+    if (!this.isConnected) return;
+    const bindings = new Map([...this.querySelectorAll<HTMLElement>(".output-exact-preview[data-preview-result]")]
+      .map((region) => [region, region.dataset.previewResult!] as const));
+    const changed = bindings.size !== this.#previewObserved.size
+      || [...bindings].some(([region, id]) => this.#previewObserved.get(region) !== id);
+    if (!changed && this.#previewObserver) { this.#loadVisibleReviewImages(); return; }
+    this.#previewObserver?.disconnect();
+    // Removed or recycled regions no longer own their old media, even if the
+    // result remains in the snapshot. Retained nodes allow detached-player cleanup.
+    for (const [region, id] of this.#previewObserved) {
+      if (bindings.get(region) !== id) this.#clearReviewPreview(id, region);
+    }
+    this.#previewObserved = bindings; this.#visiblePreviews.clear(); this.#offscreenPreviews.clear();
+    const observer = new IntersectionObserver((entries) => {
+      if (!this.isConnected || this.#previewObserver !== observer) return;
+      for (const entry of entries) {
+        const region = entry.target as HTMLElement, id = bindings.get(region);
+        if (!id || !region.isConnected || !this.contains(region) || region.dataset.previewResult !== id) continue;
+        if (entry.isIntersecting) { this.#visiblePreviews.add(id); this.#offscreenPreviews.delete(id); }
+        else {
+          this.#visiblePreviews.delete(id);
+          this.#offscreenPreviews.add(id);
+        }
+      }
+      this.#evictOffscreenReviewImages();
+      this.#loadVisibleReviewImages(); this.requestUpdate();
+    }, { rootMargin: "120px" });
+    this.#previewObserver = observer;
+    for (const region of bindings.keys()) observer.observe(region);
+    this.#loadVisibleReviewImages();
+  }
+
+  #evictOffscreenReviewImages() {
+    for (const id of this.#offscreenPreviews) {
+      const region = [...this.#previewObserved].find(([element, resultId]) => resultId === id
+        && element.isConnected && this.contains(element) && element.dataset.previewResult === id)?.[0];
+      const preview = this.#reviewPreviews.get(id);
+      if (region && preview?.kind === "image" && this.#previewDialog?.preview !== preview
+        && !region.contains(this.ownerDocument.activeElement)) this.#clearReviewPreview(id);
+    }
+  }
+
+  #loadVisibleReviewImages() {
+    const snapshot = this.#snapshot();
+    for (const id of this.#visiblePreviews) {
+      const result = snapshot?.results.find((entry) => entry.id === id);
+      const asset = snapshot?.assets.find((entry) => entry.id === result?.assetId);
+      const identity = this.#reviewPreviewIdentity(id);
+      if (identity && asset && outputReviewPreviewKind(asset.mimeType) === "image"
+        && !this.#reviewPreviews.has(id) && !this.#failedPreviews.has(identity)) void this.#openReviewPreview(id, true);
+    }
+  }
+
+  async #openReviewPreview(resultId: string, automatic = false) {
     const snapshot = this.#snapshot(), identity = this.#reviewPreviewIdentity(resultId);
     const result = snapshot?.results.find((entry) => entry.id === resultId);
     const asset = snapshot?.assets.find((entry) => entry.id === result?.assetId);
-    if (!identity || !asset || !outputReviewPreviewKind(asset.mimeType)
+    const kind = asset && outputReviewPreviewKind(asset.mimeType);
+    if (!identity || !asset || !kind
       || asset.byteLength < 1 || asset.byteLength > OUTPUT_REVIEW_PREVIEW_MAX_BYTES) return;
-    this.#clearReviewPreview();
+    if (automatic && (this.#reviewPreviews.has(resultId) || this.#failedPreviews.has(identity))) return;
+    this.#clearReviewPreview(resultId);
+    const lease = outputReviewPreviewBudget.reserve(asset.byteLength);
+    if (!lease) return;
+    this.#failedPreviews.delete(identity);
     const preview: OutputReviewPreview = { resultId, identity, view: this.#captureView(), route: this.store.route.get(),
       privateRevision: this.store.outputRequirements.resource(this.documentId).privateRevision ?? 0,
-      controller: new AbortController(), status: "loading", url: null };
-    this.#reviewPreview = preview; this.requestUpdate();
+      controller: new AbortController(), status: "loading", url: null, lease, kind, manualImage: kind === "image" && !automatic };
+    this.#reviewPreviews.set(resultId, preview); this.requestUpdate();
     try {
       const response = await this.store.outputRequirements.download(preview.view.documentId, asset.downloadUrl,
         { signal: preview.controller.signal }, asset);
       if (!this.#reviewPreviewCurrent(preview)) return;
-      if (response.status !== "saved") { preview.status = "unavailable"; return; }
+      if (response.status !== "saved") { preview.status = "unavailable"; this.#failedPreviews.add(identity); return; }
       preview.url = URL.createObjectURL(response.body.blob);
       preview.status = "ready";
     } catch {
-      if (this.#reviewPreviewCurrent(preview)) preview.status = "unavailable";
+      if (this.#reviewPreviewCurrent(preview)) { preview.status = "unavailable"; this.#failedPreviews.add(identity); }
     } finally {
-      if (this.#reviewPreview === preview) {
-        if (!this.#reviewPreviewCurrent(preview)) this.#clearReviewPreview();
+      if (this.#reviewPreviews.get(resultId) === preview) {
+        if (!this.#reviewPreviewCurrent(preview)) this.#clearReviewPreview(resultId);
+        else if (preview.status === "ready") lease.settle();
+        else lease.release();
         this.requestUpdate();
       }
     }
   }
 
+  #closeReviewDialog(restore: boolean) {
+    const owned = this.#previewDialog;
+    if (!owned) return;
+    this.#previewDialog = null;
+    const { dialog, preview, opener } = owned;
+    const canRestore = restore && this.#reviewPreviewCurrent(preview) && opener.isConnected && !opener.disabled
+      && dialog.contains(this.ownerDocument.activeElement)
+      && ![...this.ownerDocument.querySelectorAll("dialog[open]")].some((other) => other !== dialog);
+    if (canRestore) {
+      const focus = captureOutputNavigationFocus(this.ownerDocument, { ownedRouteFocus: (element) => dialog.contains(element) });
+      try { focus.run(opener, () => { dialog.close(); dialog.remove(); if (this.#reviewPreviewCurrent(preview) && focus.current()) opener.focus({ preventScroll: true }); return true; }); }
+      finally { focus.dispose(); }
+    }
+    dialog.remove(); dialog.replaceChildren();
+    this.#evictOffscreenReviewImages();
+    this.requestUpdate();
+  }
+
+  #enlargeReviewImage(preview: OutputReviewPreview, opener: HTMLButtonElement, name: string) {
+    if (!this.#reviewPreviewCurrent(preview) || preview.status !== "ready" || !preview.url || !opener.isConnected || this.ownerDocument.querySelector("dialog[open]")) return;
+    const dialog = this.ownerDocument.createElement("dialog");
+    dialog.className = "output-exact-image-dialog";
+    dialog.lang = this.i18n.locale; dialog.dir = this.i18n.direction;
+    const heading = this.ownerDocument.createElement("h2"), close = this.ownerDocument.createElement("button"), image = this.ownerDocument.createElement("img");
+    heading.id = `output-preview-heading-${crypto.randomUUID()}`; heading.textContent = name;
+    dialog.setAttribute("aria-labelledby", heading.id);
+    close.type = "button"; close.className = "button secondary";
+    close.textContent = outputReviewPreviewMessage(this.i18n.locale, "closeLarge");
+    image.src = preview.url; image.alt = outputReviewPreviewMessage(this.i18n.locale, "mediaName", { name });
+    const header = this.ownerDocument.createElement("header"); header.append(heading, close); dialog.append(header, image);
+    this.#previewDialog = { dialog, preview, opener };
+    close.addEventListener("click", () => this.#closeReviewDialog(true));
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.#closeReviewDialog(true); });
+    dialog.addEventListener("close", () => { if (this.#previewDialog?.dialog === dialog) this.#closeReviewDialog(false); });
+    this.append(dialog);
+    if (!this.#reviewPreviewCurrent(preview) || !ensureModalDialog(dialog) || !this.#reviewPreviewCurrent(preview)) { this.#closeReviewDialog(false); return; }
+    close.focus({ preventScroll: true });
+  }
+
   #previewDecodeFailed(preview: OutputReviewPreview, event: Event) {
     if (!this.#reviewPreviewCurrent(preview)) return;
     const failed = event.currentTarget as HTMLElement;
-    if (this.ownerDocument.activeElement === failed) {
-      const toggle = failed.closest(".output-exact-preview")?.querySelector<HTMLButtonElement>("[data-output-preview-toggle]");
+    const focusOwner = failed.closest(".output-review-thumbnail") ?? failed;
+    if (this.ownerDocument.activeElement === focusOwner) {
+      const region = failed.closest<HTMLElement>(".output-exact-preview");
+      const toggle = region?.querySelector<HTMLButtonElement>("[data-output-preview-toggle]");
       if (toggle?.isConnected && !toggle.disabled) toggle.focus({ preventScroll: true });
+      else region?.focus({ preventScroll: true });
       // Keep a focused failed player connected if the browser declined the handoff.
-      if (this.ownerDocument.activeElement === failed) { preview.status = "unavailable"; this.requestUpdate(); return; }
+      if (this.ownerDocument.activeElement === focusOwner) { preview.status = "unavailable"; this.requestUpdate(); return; }
     }
     const url = preview.url;
     preview.url = null; preview.status = "unavailable";
+    this.#failedPreviews.add(preview.identity); preview.lease.release();
     if (url) URL.revokeObjectURL(url);
     this.requestUpdate();
   }
@@ -1581,23 +1710,34 @@ export class FormaOutputRequirements extends FormaElement {
     const context = this.#resultContext(snapshot, result);
     const kind = outputReviewPreviewKind(asset.mimeType);
     const supported = kind && asset.byteLength > 0 && asset.byteLength <= OUTPUT_REVIEW_PREVIEW_MAX_BYTES;
-    const preview = this.#reviewPreview?.resultId === result.id && this.#reviewPreviewCurrent(this.#reviewPreview) ? this.#reviewPreview : null;
+    const owned = this.#reviewPreviews.get(result.id);
+    const preview = owned && this.#reviewPreviewCurrent(owned) ? owned : null;
     const name = outputReviewPreviewMessage(this.i18n.locale, "mediaName", { name: asset.name });
-    return html`<section class="output-exact-preview" aria-label=${this.#controlName(text("title"), context)}>
+    const image = kind === "image";
+    const failed = preview?.status === "unavailable" || this.#failedPreviews.has(this.#reviewPreviewIdentity(result.id, true) ?? "");
+    // A user-triggered retry keeps its focused control until they move on.
+    const retainedRetry = preview?.manualImage && (preview.status !== "ready"
+      || [...this.querySelectorAll<HTMLElement>("[data-output-preview-toggle]")].some((button) => (button === this.ownerDocument.activeElement || button === this.#previewDialog?.opener)
+        && button.closest<HTMLElement>(".output-exact-preview")?.dataset.previewResult === result.id));
+    const controlLabel = image ? preview?.status === "ready" ? "enlarge" : "retry" : preview ? "close" : "open";
+    return html`<section class="output-exact-preview" tabindex="-1" data-preview-result=${result.id} aria-label=${this.#controlName(text("title"), context)}>
       <h5>${text("title")}</h5>
       ${!supported ? html`<p>${text("unsupported")}</p>` : html`
-        <div class="output-actions"><button type="button" class="button secondary compact" data-output-preview-toggle
-          aria-label=${this.#controlName(text(preview ? "close" : "open"), context)}
-          ?disabled=${!this.#reviewPreviewIdentity(result.id)}
-          @click=${() => { if (preview) { this.#clearReviewPreview(); this.requestUpdate(); } else void this.#openReviewPreview(result.id); }}>
-          ${text(preview ? "close" : "open")}</button></div>
-        <p role="status">${text(!preview ? "hint" : preview.status === "loading" ? "loading" : preview.status === "unavailable" ? "unavailable" : "verified")}</p>
+        ${!image || failed || retainedRetry ? html`<div class="output-actions"><button type="button" class="button secondary compact" data-output-preview-toggle
+          aria-label=${this.#controlName(text(controlLabel), context)} aria-disabled=${image && preview?.status === "loading" ? "true" : nothing}
+          ?disabled=${!preview && !this.#reviewPreviewIdentity(result.id)}
+          @click=${(event: MouseEvent) => { if (image && preview?.status === "loading") return;
+            if (image && preview?.status === "ready") this.#enlargeReviewImage(preview, event.currentTarget as HTMLButtonElement, asset.name);
+            else if (preview && !image) { this.#clearReviewPreview(result.id); this.requestUpdate(); } else void this.#openReviewPreview(result.id); }}>
+          ${text(controlLabel)}</button></div>` : nothing}
         ${preview?.url ? html`<figure>
-          ${kind === "image" ? html`<img src=${preview.url} alt=${name} @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}>`
+          ${image ? html`<button type="button" class="output-review-thumbnail" aria-label=${this.#controlName(text("enlarge"), context)}
+            @click=${(event: MouseEvent) => this.#enlargeReviewImage(preview, event.currentTarget as HTMLButtonElement, asset.name)}>
+            <img src=${preview.url} alt=${name} @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}><span>${text("enlarge")}</span></button>`
             : kind === "audio" ? html`<audio src=${preview.url} aria-label=${name} controls preload="none" @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}></audio>`
               : html`<video src=${preview.url} aria-label=${name} controls playsinline preload="none" @error=${(event: Event) => this.#previewDecodeFailed(preview, event)}></video>`}
-          <figcaption dir="auto">${asset.name}</figcaption>
-        </figure>` : nothing}
+        </figure>` : image ? html`<div class="output-review-placeholder" aria-hidden="true"></div>` : nothing}
+        <p role="status">${text(failed ? "unavailable" : preview?.url ? image ? "inlineVerified" : "verified" : preview?.status === "loading" ? "loading" : image ? this.#reviewPreviewIdentity(result.id) ? "waiting" : "refresh" : "hint")}</p>
       `}
     </section>`;
   }

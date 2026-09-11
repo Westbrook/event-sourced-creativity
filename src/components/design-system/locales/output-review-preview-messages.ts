@@ -1,4 +1,10 @@
 const copy = {
+  enlarge: ["Enlarge exact file", "Agrandir le fichier exact", "تكبير الملف نفسه", "実際のファイルを拡大"],
+  closeLarge: ["Close image", "Fermer l’image", "إغلاق الصورة", "画像を閉じる"],
+  inlineVerified: ["Exact file · select the image for a closer look", "Fichier exact · sélectionnez l’image pour l’agrandir", "الملف نفسه · اختر الصورة لإلقاء نظرة أقرب", "実際のファイル · 画像を選択して拡大"],
+  waiting: ["Preparing the inline preview…", "Préparation de l’aperçu intégré…", "جارٍ إعداد المعاينة المضمنة…", "インラインプレビューを準備しています…"],
+  refresh: ["Refresh Outputs to load the current file preview.", "Actualisez les livrables pour charger l’aperçu du fichier actuel.", "حدّث المخرجات لتحميل معاينة الملف الحالي.", "成果物を更新して現在のファイルのプレビューを読み込んでください。"],
+  retry: ["Retry image preview", "Réessayer l’aperçu", "إعادة محاولة معاينة الصورة", "画像プレビューを再試行"],
   title: ["The file you are reviewing", "Le fichier que vous examinez", "الملف الذي تراجعه", "レビュー対象のファイル"],
   open: ["Preview exact file", "Aperçu du fichier exact", "معاينة الملف نفسه", "実際のファイルをプレビュー"],
   close: ["Close preview", "Fermer l’aperçu", "إغلاق المعاينة", "プレビューを閉じる"],

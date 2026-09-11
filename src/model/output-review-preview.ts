@@ -2,6 +2,29 @@ import type { OutputRequirementsSnapshot } from "./output-delivery-contract.ts";
 
 export const OUTPUT_REVIEW_PREVIEW_MAX_BYTES = 24 * 1024 * 1024;
 export type OutputPreviewFile = { byteLength: number; sha256: string; mimeType: string };
+export function outputReviewPreviewResourceAllows(state: string, retained: boolean): boolean {
+  return state === "ready" || retained && state === "refreshing";
+}
+
+/** Shared across result controllers: bound reserved/retained bytes and concurrent reads. */
+export class OutputReviewPreviewBudget {
+  #owners = new Map<object, { bytes: number; loading: boolean }>();
+  #listeners = new Set<() => void>();
+  subscribe(listener: () => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; }
+  reserve(bytes: number): { release: () => void; settle: () => void } | null {
+    const owners = [...this.#owners.values()];
+    if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > OUTPUT_REVIEW_PREVIEW_MAX_BYTES
+      || owners.length >= 4 || owners.filter((owner) => owner.loading).length >= 2
+      || owners.reduce((total, owner) => total + owner.bytes, bytes) > 2 * OUTPUT_REVIEW_PREVIEW_MAX_BYTES) return null;
+    const id = {}, owner = { bytes, loading: true }; this.#owners.set(id, owner);
+    const changed = () => { for (const listener of this.#listeners) listener(); };
+    return {
+      release: () => { if (this.#owners.delete(id)) changed(); },
+      settle: () => { if (this.#owners.has(id) && owner.loading) { owner.loading = false; changed(); } },
+    };
+  }
+}
+export const outputReviewPreviewBudget = new OutputReviewPreviewBudget();
 export function outputReviewPreviewKind(mime: string): "image" | "audio" | "video" | null {
   if (mime === "image/jpeg" || mime === "image/png") return "image";
   if (mime === "audio/mpeg" || mime === "audio/wav" || mime === "audio/x-wav") return "audio";

@@ -35,6 +35,17 @@ forma-output-requirements summary:focus-visible { outline:3px solid var(--forma-
 .output-exact-preview figcaption { overflow-wrap:anywhere; font-size:.875rem; }
 .output-exact-preview p { margin-block:.65rem 0; }
 .output-exact-preview .output-actions { align-items:stretch; }
+.output-exact-preview .output-review-thumbnail { display:grid; gap:.35rem; justify-self:start; inline-size:min(100%,24rem); min-inline-size:0; padding:.4rem; border:1px solid var(--forma-color-border-strong,GrayText); border-radius:.4rem; background:var(--forma-color-surface,Canvas); color:inherit; text-align:start; cursor:zoom-in; }
+.output-exact-preview .output-review-thumbnail img { inline-size:100%; block-size:12rem; max-block-size:12rem; object-fit:contain; }
+.output-review-thumbnail span { font-size:.875rem; overflow-wrap:anywhere; }
+.output-review-placeholder { inline-size:min(100%,24rem); block-size:12rem; border-radius:.35rem; background:var(--forma-color-surface,Canvas); }
+.output-exact-image-dialog { box-sizing:border-box; inline-size:min(76rem,calc(100dvi - 2rem)); max-inline-size:calc(100dvi - 2rem); block-size:min(56rem,calc(100dvb - 2rem)); max-block-size:calc(100dvb - 2rem); padding:1rem; border:1px solid var(--forma-color-border-strong,GrayText); border-radius:.75rem; background:var(--forma-color-surface,Canvas); color:var(--forma-color-text,CanvasText); }
+.output-exact-image-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr); gap:1rem; }
+.output-exact-image-dialog::backdrop { background:rgb(0 0 0 / 70%); }
+.output-exact-image-dialog > header { display:flex; align-items:start; flex-wrap:wrap; gap:.75rem; min-inline-size:0; }
+.output-exact-image-dialog h2 { flex:1 1 16rem; min-inline-size:0; margin:0; font-size:1.125rem; overflow-wrap:anywhere; }
+.output-exact-image-dialog button { min-block-size:2.75rem; flex:0 0 auto; }
+.output-exact-image-dialog > img { inline-size:100%; block-size:100%; min-block-size:0; object-fit:contain; }
 .output-plan-review, .output-adoption, .output-execution, .output-export { margin-block-start:1.4rem; border-block-start:1px solid var(--forma-color-border, GrayText); padding-block-start:1.2rem; }
 .output-actions { display:flex; gap:.65rem; flex-wrap:wrap; }
 .output-provider-disclosure { background:var(--forma-color-surface-subtle, Canvas); padding:1rem; margin-block:1rem; border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; }
