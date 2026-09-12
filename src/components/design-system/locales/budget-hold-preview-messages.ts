@@ -1,0 +1,73 @@
+const en = {
+  "settings.holdPreview.heading": "Read-only hold preview",
+  "settings.holdPreview.help": "Inspect one retained slideshow attempt using your signed-in administrator account. This makes no provider request and changes no balance.",
+  "settings.holdPreview.jobId": "Exact job ID",
+  "settings.holdPreview.inspect": "Inspect hold",
+  "settings.holdPreview.loading": "Reading hold…",
+  "settings.holdPreview.ready": "Read-only response received. No hold was released.",
+  "settings.holdPreview.failed": "The hold preview was not available. No hold was released.",
+  "settings.holdPreview.receipt": "Private hold-preview receipt (JSON)",
+  "settings.holdPreview.caution": "This preview is not approval or provider billing evidence. Any administrative release requires separate approval.",
+  "settings.holdPreview.invalid": "Enter an exact job UUID.",
+  "settings.holdPreview.enabledWarning": "Adjustments are enabled on the server. This read-only control cannot apply them.",
+  "settings.holdPreview.httpStatus": "HTTP status",
+  "settings.holdPreview.observedAt": "Observed at",
+  "settings.holdPreview.malformed": "The response did not match this job and account.",
+  "settings.holdPreview.clear": "Clear preview",
+};
+
+const fr: Record<keyof typeof en, string> = {
+  "settings.holdPreview.heading": "Aperçu du montant réservé en lecture seule",
+  "settings.holdPreview.help": "Examinez une tentative de diaporama conservée avec votre compte administrateur connecté. Cette opération n’envoie aucune demande à un fournisseur et ne modifie aucun solde.",
+  "settings.holdPreview.jobId": "Identifiant exact de la tâche",
+  "settings.holdPreview.inspect": "Examiner le montant réservé",
+  "settings.holdPreview.loading": "Lecture du montant réservé…",
+  "settings.holdPreview.ready": "Réponse en lecture seule reçue. Aucun montant réservé n’a été libéré.",
+  "settings.holdPreview.failed": "L’aperçu du montant réservé n’était pas disponible. Aucun montant réservé n’a été libéré.",
+  "settings.holdPreview.receipt": "Reçu privé de l’aperçu du montant réservé (JSON)",
+  "settings.holdPreview.caution": "Cet aperçu ne constitue ni une approbation ni une preuve de facturation du fournisseur. Toute libération administrative nécessite une approbation distincte.",
+  "settings.holdPreview.invalid": "Saisissez l’UUID exact d’une tâche.",
+  "settings.holdPreview.enabledWarning": "Les ajustements sont activés sur le serveur. Cette commande en lecture seule ne peut pas les appliquer.",
+  "settings.holdPreview.httpStatus": "Statut HTTP",
+  "settings.holdPreview.observedAt": "Date d’observation",
+  "settings.holdPreview.malformed": "La réponse ne correspondait pas à cette tâche et à ce compte.",
+  "settings.holdPreview.clear": "Effacer l’aperçu",
+};
+
+const ar: Record<keyof typeof en, string> = {
+  "settings.holdPreview.heading": "معاينة المبلغ المحجوز للقراءة فقط",
+  "settings.holdPreview.help": "افحص محاولة عرض شرائح محفوظة باستخدام حساب المسؤول الذي سجّلت الدخول به. لا يُرسل أي طلب إلى مزوّد ولا يتغيّر أي رصيد.",
+  "settings.holdPreview.jobId": "معرّف المهمة الدقيق",
+  "settings.holdPreview.inspect": "فحص المبلغ المحجوز",
+  "settings.holdPreview.loading": "جارٍ قراءة المبلغ المحجوز…",
+  "settings.holdPreview.ready": "تم استلام استجابة للقراءة فقط. لم يتم تحرير أي مبلغ محجوز.",
+  "settings.holdPreview.failed": "لم تكن معاينة المبلغ المحجوز متاحة. لم يتم تحرير أي مبلغ محجوز.",
+  "settings.holdPreview.receipt": "إيصال خاص بمعاينة المبلغ المحجوز (JSON)",
+  "settings.holdPreview.caution": "هذه المعاينة ليست موافقة ولا دليلًا على فوترة المزوّد. أي تحرير إداري للمبلغ المحجوز يتطلب موافقة منفصلة.",
+  "settings.holdPreview.invalid": "أدخل معرّف UUID الدقيق للمهمة.",
+  "settings.holdPreview.enabledWarning": "التعديلات مفعّلة على الخادم. لا يمكن لهذه الأداة المخصّصة للقراءة فقط تطبيقها.",
+  "settings.holdPreview.httpStatus": "حالة HTTP",
+  "settings.holdPreview.observedAt": "وقت الرصد",
+  "settings.holdPreview.malformed": "لم تتطابق الاستجابة مع هذه المهمة وهذا الحساب.",
+  "settings.holdPreview.clear": "مسح المعاينة",
+};
+
+const ja: Record<keyof typeof en, string> = {
+  "settings.holdPreview.heading": "予約額のプレビュー（読み取り専用）",
+  "settings.holdPreview.help": "ログイン中の管理者アカウントで、保存されたスライドショーの試行を1件確認します。プロバイダーへのリクエストや残高の変更は行いません。",
+  "settings.holdPreview.jobId": "正確なジョブID",
+  "settings.holdPreview.inspect": "予約額を確認",
+  "settings.holdPreview.loading": "予約額を読み込み中…",
+  "settings.holdPreview.ready": "読み取り専用の応答を受信しました。予約額の解放は行われていません。",
+  "settings.holdPreview.failed": "予約額のプレビューを利用できませんでした。予約額の解放は行われていません。",
+  "settings.holdPreview.receipt": "予約額プレビューの非公開記録（JSON）",
+  "settings.holdPreview.caution": "このプレビューは承認やプロバイダーの請求を証明するものではありません。管理者による予約額の解放には、別途承認が必要です。",
+  "settings.holdPreview.invalid": "ジョブの正確なUUIDを入力してください。",
+  "settings.holdPreview.enabledWarning": "サーバーでは調整が有効になっています。この読み取り専用の操作では調整を適用できません。",
+  "settings.holdPreview.httpStatus": "HTTPステータス",
+  "settings.holdPreview.observedAt": "確認日時",
+  "settings.holdPreview.malformed": "応答がこのジョブおよびアカウントと一致しませんでした。",
+  "settings.holdPreview.clear": "プレビューを消去",
+};
+
+export const FORMA_BUDGET_HOLD_PREVIEW_MESSAGES = { en, fr, ar, ja } as const;

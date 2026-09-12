@@ -5,21 +5,100 @@ import { outcomeMoney, personalUsageReceiptDisclosure } from "./outcome-telemetr
 import { FormaElement, icon } from "./forma-element";
 import { navigateInApp } from "./command-departure";
 import { requestDialogConfirmation } from "./modal-dialog.ts";
+import { holdPreviewErrorCode, readHoldPreviewBody, validateHoldPreviewResponse, validHoldPreviewJobId } from "../model/budget-hold-preview.ts";
 
 /** Creator-owned controls remain available without entering platform administration. */
 export class FormaAccountSettings extends FormaElement {
+  #holdJobId = "";
+  #holdContextKey = "";
+  #holdRead: { controller: AbortController; current: () => boolean } | null = null;
+  #holdStatus: "idle" | "loading" | "ready" | "failed" | "invalid" | "malformed" = "idle";
+  #holdReceipt = "";
+  #holdHttpStatus: number | null = null;
+  #holdObservedAt = "";
+  #holdApplyEnabled = false;
+  #holdContext() {
+    const session = this.store.session.get(), scope = this.store.captureAuthorizationScope(), route = this.store.route.get();
+    if (!this.isConnected || route.split(/[?#]/u)[0] !== "/settings" || !session?.policy.accepted || session.user.role !== "admin" || session.impersonation || session.projectContext || !scope || scope.shared) return "";
+    return JSON.stringify([scope.key, session.user.userId, session.policy.version, route, this.store.projection.get().projectId]);
+  }
+  #retireHold(clearInput = false) {
+    this.#holdRead?.controller.abort(); this.#holdRead = null;
+    this.#holdReceipt = ""; this.#holdHttpStatus = null; this.#holdObservedAt = ""; this.#holdApplyEnabled = false; this.#holdStatus = "idle";
+    if (clearInput) this.#holdJobId = "";
+  }
+  #checkHold = () => {
+    const context = this.#holdContext();
+    if (this.#holdContextKey !== context || this.#holdRead && !this.#holdRead.current()) {
+      this.#retireHold(true); this.#holdContextKey = context; this.requestUpdate();
+    }
+  };
+  #holdAuthorityChanged = () => { this.#retireHold(true); this.#holdContextKey = this.#holdContext(); this.requestUpdate(); };
+  #setHoldJobId(event: Event) {
+    this.#checkHold();
+    if (!this.#holdContextKey) return;
+    this.#retireHold(); this.#holdJobId = (event.currentTarget as HTMLInputElement).value; this.requestUpdate();
+  }
+  async #inspectHold() {
+    this.#checkHold();
+    const context = this.#holdContextKey, jobId = this.#holdJobId, ownerId = this.store.session.get()?.user.userId;
+    if (!context || !ownerId || this.#holdStatus === "loading") return;
+    this.#retireHold();
+    if (!validHoldPreviewJobId(jobId)) { this.#holdStatus = "invalid"; this.requestUpdate(); return; }
+    const controller = new AbortController();
+    const read = { controller, current: (): boolean => this.#holdRead === read && !controller.signal.aborted && this.#holdContext() === context && this.#holdJobId === jobId };
+    this.#holdRead = read; this.#holdStatus = "loading"; this.requestUpdate();
+    try {
+      const response = await this.store.guardedFetch("/api/admin/budget-hold-dispositions", {
+        method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal,
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "preview", jobId }),
+      }, "inspect a read-only hold preview", { current: read.current });
+      if (!read.current()) return;
+      this.#holdHttpStatus = response.status; this.#holdObservedAt = new Date().toISOString();
+      const text = await readHoldPreviewBody(response);
+      if (!read.current()) return;
+      const body: unknown = JSON.parse(text);
+      if (!response.ok) {
+        this.#holdStatus = "failed";
+        // Preserve the exact source-free error response, not a guessed diagnosis.
+        if (holdPreviewErrorCode(body)) this.#holdReceipt = text;
+      } else if (validateHoldPreviewResponse(body, jobId, ownerId)) {
+        this.#holdReceipt = text; this.#holdApplyEnabled = body.applyEnabled; this.#holdStatus = "ready";
+      } else this.#holdStatus = "malformed";
+    } catch { if (read.current()) this.#holdStatus = "failed"; }
+    finally { if (read.current()) this.requestUpdate(); }
+  }
+  #holdPreviewTemplate() {
+    if (!this.#holdContextKey) return nothing;
+    return html`<section class="settings-hold-preview" aria-labelledby="settings-hold-preview-heading" aria-busy=${this.#holdStatus === "loading" ? "true" : "false"}>
+      <h3 id="settings-hold-preview-heading">${this.i18n.t("settings.holdPreview.heading", "Read-only hold preview")}</h3>
+      <p>${this.i18n.t("settings.holdPreview.help", "Inspect one retained slideshow attempt using your signed-in administrator account. This makes no provider request and changes no balance.")}</p>
+      <label>${this.i18n.t("settings.holdPreview.jobId", "Exact job ID")}<input type="text" dir="ltr" autocomplete="off" spellcheck="false" maxlength="100" .value=${this.#holdJobId} @input=${(event: Event) => this.#setHoldJobId(event)}></label>
+      <button type="button" class="button secondary compact" aria-disabled=${this.#holdStatus === "loading" ? "true" : "false"} @click=${() => void this.#inspectHold()}>${this.i18n.t("settings.holdPreview.inspect", "Inspect hold")}</button>
+      <button type="button" class="button ghost compact" @click=${() => { this.#retireHold(true); this.requestUpdate(); }}>${this.i18n.t("settings.holdPreview.clear", "Clear preview")}</button>
+      <p role="status">${this.#holdStatus === "idle" ? nothing : this.i18n.t(`settings.holdPreview.${this.#holdStatus}`)}</p>
+      ${this.#holdApplyEnabled ? html`<p role="alert">${this.i18n.t("settings.holdPreview.enabledWarning", "Adjustments are enabled on the server. This read-only control cannot apply them.")}</p>` : nothing}
+      ${this.#holdHttpStatus === null ? nothing : html`<p>${this.i18n.t("settings.holdPreview.httpStatus", "HTTP status")}: <bdi>${String(this.#holdHttpStatus)}</bdi> · ${this.i18n.t("settings.holdPreview.observedAt", "Observed at")}: <bdi>${this.#holdObservedAt}</bdi></p>`}
+      ${this.#holdReceipt ? html`<label class="generation-accounting-receipt-label">${this.i18n.t("settings.holdPreview.receipt", "Private hold-preview receipt (JSON)")}<textarea rows="18" dir="ltr" readonly spellcheck="false" .value=${this.#holdReceipt}></textarea></label>` : nothing}
+      <p class="creator-settings-budget-note">${this.i18n.t("settings.holdPreview.caution", "This preview is not approval or provider billing evidence. Any administrative release requires separate approval.")}</p>
+    </section>`;
+  }
   #privacyConfirmation: { controller: AbortController; current: () => boolean; sent: boolean } | null = null;
   #unsubscribeConfirmation?: () => void;
   #checkConfirmation = () => {
+    this.#checkHold();
     const pending = this.#privacyConfirmation;
     if (pending && !pending.current()) pending.controller.abort();
   };
   override connectedCallback() {
     super.connectedCallback();
     this.#unsubscribeConfirmation = this.store.subscribe(this.#checkConfirmation);
+    window.addEventListener("forma-authorization-changed", this.#holdAuthorityChanged);
     void this.store.loadShares();
   }
   override disconnectedCallback() {
+    this.#retireHold(true); this.#holdContextKey = "";
+    window.removeEventListener("forma-authorization-changed", this.#holdAuthorityChanged);
     this.#privacyConfirmation?.controller.abort();
     this.#unsubscribeConfirmation?.(); this.#unsubscribeConfirmation = undefined;
     super.disconnectedCallback();
@@ -59,6 +138,7 @@ export class FormaAccountSettings extends FormaElement {
   }
 
   override render() {
+    this.#checkHold();
     const session = this.store.session.get();
     if (!session) return nothing;
 
@@ -113,6 +193,7 @@ export class FormaAccountSettings extends FormaElement {
           <p class="creator-settings-budget-note">${this.i18n.t("outcome.currentPeriodOnly", "", { period: session.costBudgets?.period ?? session.budgets.period })}</p>
           ${personalUsageReceiptDisclosure(events, session.user.userId, this.i18n)}
           ` : html`<p class="creator-settings-empty">${this.i18n.t("outcome.personalUnavailable")}</p>`}
+          ${this.#holdPreviewTemplate()}
         </section>
 
         ${this.store.canManageProjectShares()?html`<section class="creator-settings-card" aria-labelledby="settings-sharing-heading">

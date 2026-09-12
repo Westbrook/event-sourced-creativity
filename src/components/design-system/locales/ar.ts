@@ -1,5 +1,6 @@
 import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./output-delivery-messages.ts";
 import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages.ts";
+import { FORMA_BUDGET_HOLD_PREVIEW_MESSAGES } from "./budget-hold-preview-messages.ts";
 import systemMessages from "./system-ar.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
@@ -91,6 +92,7 @@ const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.ar,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.ar,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ar,
+  ...FORMA_BUDGET_HOLD_PREVIEW_MESSAGES.ar,
   "generation.history.imageLabel": "سجل توليد الصور",
   "generation.history.imageEmpty": "لا توجد عمليات توليد صور في هذا السجل",
   "generation.reservationUncertainty": "الفشل لا يثبت عدم ترتّب تكلفة. قد يبقى الحجز قائمًا ما دام قبول المزوّد أو التكلفة النهائية غير مؤكّد. راجع الإيصال الأصلي.",

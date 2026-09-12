@@ -1,5 +1,6 @@
 import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./locales/output-delivery-messages.ts";
 import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./locales/output-requirement-messages.ts";
+import { FORMA_BUDGET_HOLD_PREVIEW_MESSAGES } from "./locales/budget-hold-preview-messages.ts";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { formaSystemMessageId } from "./system-message-id.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./locales/responsive-messages.ts";
@@ -99,6 +100,7 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   ...FORMA_RESPONSIVE_MESSAGES.en,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.en,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.en,
+  ...FORMA_BUDGET_HOLD_PREVIEW_MESSAGES.en,
   "generation.history.imageLabel": "Image generation history",
   "generation.history.imageEmpty": "No image generations in this history",
   "generation.reservationUncertainty": "Failure does not prove that no cost was incurred. A reservation can remain held while provider acceptance or final cost is unconfirmed. Check the original receipt.",

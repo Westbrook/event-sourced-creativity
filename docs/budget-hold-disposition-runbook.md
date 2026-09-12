@@ -23,6 +23,8 @@ Preview body:
 {"action":"preview","jobId":"EXACT_RETAINED_JOB_ID"}
 ```
 
+In the signed-in principal administrator's personal **Account Settings → Your production spending**, use **Read-only hold preview**: enter the exact job UUID and select **Inspect hold** once. This uses the existing authenticated same-origin session; it does not accept identity headers, enable adjustments, or expose an apply action. Review the HTTP status and copy the complete private JSON receipt. The receipt is cleared when the job, route, project or authority changes, or by **Clear preview**. A successful read does not release anything; an error is not evidence that a reservation is absent. Repeat explicitly for each exact job. Do not use the account's aggregate reserved balance as the amount for an individual decision.
+
 Review the owner, stream, document, attempt correlation, both reservation IDs, original month, token/dollar release amounts, counters, zero used-counter deltas and `previewSha256`. The preview hash is a state binding, **not approval**. Check the external evidence digest separately. Do not put source content or credentials in approval/support references or rationale.
 
 ## Separately approved execution

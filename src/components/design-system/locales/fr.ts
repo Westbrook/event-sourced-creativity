@@ -1,5 +1,6 @@
 import { FORMA_OUTPUT_DELIVERY_MESSAGES } from "./output-delivery-messages.ts";
 import { FORMA_OUTPUT_REQUIREMENT_MESSAGES } from "./output-requirement-messages.ts";
+import { FORMA_BUDGET_HOLD_PREVIEW_MESSAGES } from "./budget-hold-preview-messages.ts";
 import systemMessages from "./system-fr.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
@@ -91,6 +92,7 @@ const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.fr,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.fr,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.fr,
+  ...FORMA_BUDGET_HOLD_PREVIEW_MESSAGES.fr,
   "generation.history.imageLabel": "Historique des générations d’images",
   "generation.history.imageEmpty": "Aucune génération d’images dans cet historique",
   "generation.reservationUncertainty": "Un échec ne prouve pas l’absence de frais. Une réservation peut rester bloquée tant que l’acceptation par le fournisseur ou le coût final n’est pas confirmé. Consultez le reçu d’origine.",
