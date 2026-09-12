@@ -51,8 +51,8 @@ forma-output-requirements summary:focus-visible { outline:3px solid var(--forma-
 .output-package-recovery { min-inline-size:0; margin-block:1rem; padding:1rem; border:1px solid var(--forma-color-border,GrayText); border-radius:.6rem; }
 .output-package-recovery p { margin-block:0 1rem; overflow-wrap:anywhere; }
 .output-package-parts { display:grid; gap:.75rem; min-inline-size:0; margin:0; padding:0; list-style:none; }
-.output-package-parts li { min-inline-size:0; }
-.output-package-parts button { max-inline-size:100%; overflow-wrap:anywhere; }
+.output-package-parts li { display:flex; flex-wrap:wrap; align-items:stretch; gap:.75rem; min-inline-size:0; }
+.output-package-parts :is(button,a) { box-sizing:border-box; max-inline-size:100%; min-inline-size:0; min-block-size:2.75rem; white-space:normal; overflow-wrap:anywhere; }
 .output-package-recovery [aria-disabled="true"], .output-export [aria-disabled="true"] { cursor:not-allowed; opacity:.7; }
 .output-provider-disclosure { background:var(--forma-color-surface-subtle, Canvas); padding:1rem; margin-block:1rem; border:1px solid var(--forma-color-border, GrayText); border-radius:.7rem; }
 .output-provider-disclosure li, .output-unresolved li { margin-block:.6rem; }

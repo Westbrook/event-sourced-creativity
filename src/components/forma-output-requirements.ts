@@ -45,6 +45,7 @@ type Command = OutputRequirementCommand extends infer C ? C extends OutputRequir
 type OutputPrivateView = { authorization: CapturedAuthorizationScope | null; source: CapturedSourceOwnership | null; documentId: string; epoch: number };
 type OutputExportOwner = { release: OutputReleaseCapture; view: OutputPrivateView; route: string; privateRevision: number; inventory: string };
 type OutputPackageOwner = OutputRecordedPackage & OutputExportOwner;
+type OutputPreparedPackage = { owner: OutputPackageOwner; path: string; url: string; filename: string };
 type OutputReviewPreview = { resultId: string; identity: string; view: OutputPrivateView; route: string;
   privateRevision: number; controller: AbortController; status: "loading" | "ready" | "unavailable"; url: string | null;
   lease: { release: () => void; settle: () => void }; kind: "image" | "audio" | "video"; manualImage: boolean };
@@ -101,8 +102,9 @@ export class FormaOutputRequirements extends FormaElement {
   #recordedPackage: OutputPackageOwner | null = null;
   #packageReceiptOnly: OutputExportOwner | null = null;
   #packageDownload: { owner: OutputPackageOwner; controller: AbortController } | null = null;
-  #packageDownloadState: "recorded" | "requested" | "failed" = "recorded";
+  #packageDownloadState: "recorded" | "prepared" | "requested" | "failed" = "recorded";
   #packageBlobUrls = new Set<string>();
+  #preparedPackage: OutputPreparedPackage | null = null;
   #file: File | null = null;
   #film: { draft: FilmCompositionDraft; targetId: string; current: () => boolean } | null = null;
   #filmStaged: { file: File; current: () => boolean } | null = null;
@@ -127,9 +129,16 @@ export class FormaOutputRequirements extends FormaElement {
   #failedPreviews = new Set<string>();
   #previewBudgetUnsubscribe?: () => void;
   #previewDialog: { dialog: HTMLDialogElement; preview: OutputReviewPreview; opener: HTMLButtonElement } | null = null;
+  #previewFocusFrame = 0;
   #previewFocusDeparted = (event: FocusEvent) => {
     if (!(event.target instanceof Element) || !event.target.closest(".output-exact-preview, .output-exact-image-dialog")) return;
-    queueMicrotask(() => { if (this.isConnected) { this.#evictOffscreenReviewImages(); this.requestUpdate(); } });
+    const view = this.#captureView(), route = this.store.route.get(), window = this.ownerDocument.defaultView;
+    if (this.#previewFocusFrame) window?.cancelAnimationFrame(this.#previewFocusFrame);
+    // Native Tab finishes its focus transition before offscreen ownership is assessed.
+    this.#previewFocusFrame = window?.requestAnimationFrame(() => {
+      this.#previewFocusFrame = 0;
+      if (this.#viewCurrent(view) && this.store.route.get() === route && this.#evictOffscreenReviewImages()) this.requestUpdate();
+    }) ?? 0;
   };
   #uncertainCommand: { signature: string; id: string; expectedRevision: string; sourceRetired?: true; receipt?: OutputCommittedReceipt } | null = null;
   #planRequest = (event: Event) => {
@@ -176,6 +185,8 @@ export class FormaOutputRequirements extends FormaElement {
   constructor() { super(); this.documentId = ""; this.documentName = ""; this.blockId = ""; this.surface = "document"; this.inspectionOnly = false; }
   override connectedCallback() { super.connectedCallback(); window.addEventListener("forma-output-show-plan", this.#planRequest); window.addEventListener("forma-event-source-retired", this.#sourceRetired); this.addEventListener("focusout", this.#previewFocusDeparted); this.#previewBudgetUnsubscribe = outputReviewPreviewBudget.subscribe(() => this.requestUpdate()); this.requestUpdate(); }
   override disconnectedCallback() {
+    if (this.#previewFocusFrame) this.ownerDocument.defaultView?.cancelAnimationFrame(this.#previewFocusFrame);
+    this.#previewFocusFrame = 0;
     this.#previewBudgetUnsubscribe?.(); this.#previewBudgetUnsubscribe = undefined;
     this.#previewObserver?.disconnect(); this.#previewObserver = null;
     this.#previewObserved.clear(); this.#visiblePreviews.clear(); this.#offscreenPreviews.clear(); this.#failedPreviews.clear();
@@ -1605,13 +1616,15 @@ export class FormaOutputRequirements extends FormaElement {
   }
 
   #evictOffscreenReviewImages() {
+    let evicted = false;
     for (const id of this.#offscreenPreviews) {
       const region = [...this.#previewObserved].find(([element, resultId]) => resultId === id
         && element.isConnected && this.contains(element) && element.dataset.previewResult === id)?.[0];
       const preview = this.#reviewPreviews.get(id);
       if (region && preview?.kind === "image" && this.#previewDialog?.preview !== preview
-        && !region.contains(this.ownerDocument.activeElement)) this.#clearReviewPreview(id);
+        && !region.contains(this.ownerDocument.activeElement)) { this.#clearReviewPreview(id); evicted = true; }
     }
+    return evicted;
   }
 
   #loadVisibleReviewImages() {
@@ -1759,9 +1772,27 @@ export class FormaOutputRequirements extends FormaElement {
 
   #retirePackage() {
     this.#packageDownload?.controller.abort(); this.#packageDownload = null;
+    this.#clearPreparedPackage();
+    this.#recordedPackage = null; this.#packageReceiptOnly = null; this.#packageDownloadState = "recorded";
+  }
+
+  #clearPreparedPackage() {
     for (const url of this.#packageBlobUrls) { URL.revokeObjectURL(url); this.#downloadUrls.delete(url); }
     this.#packageBlobUrls.clear();
-    this.#recordedPackage = null; this.#packageReceiptOnly = null; this.#packageDownloadState = "recorded";
+    this.#preparedPackage = null;
+  }
+
+  #savePreparedPackage(event: MouseEvent, prepared: OutputPreparedPackage) {
+    // A fresh native link activation: no asynchronous work or synthetic click.
+    if (event.type !== "click" || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      event.preventDefault(); return;
+    }
+    if (this.#preparedPackage !== prepared || !this.#packageReady(prepared.owner)
+      || !prepared.owner.paths.includes(prepared.path) || this.#packageDownload || this.#busy) {
+      event.preventDefault(); this.requestUpdate(); return;
+    }
+    this.#packageDownloadState = "requested";
+    this.requestUpdate();
   }
 
   #packageOwned(owner: OutputExportOwner) {
@@ -1786,19 +1817,27 @@ export class FormaOutputRequirements extends FormaElement {
     if (!owner || !this.#packageOwned(owner)) return nothing;
     const available = this.#packageReady(owner), pending = Boolean(this.#packageDownload);
     const disabled = !available || pending || Boolean(this.#busy);
-    const status = pending ? this.#t("packageDownloading", "Downloading the recorded package…")
+    const status = pending ? this.#t("packageDownloading", "Preparing the recorded package…")
       : !available ? this.#t("packageChecksPending", "Package recorded. Refresh checks to download it. No new export is needed; keep this page open.")
-        : this.#packageDownloadState === "requested" ? this.#t("packageDownloadRequested", "Download requested. Check your browser’s downloads. You can download this same package again.")
+        : this.#packageDownloadState === "requested" ? this.#t("packageDownloadRequested", "Save requested. Check your browser’s downloads. The prepared file remains available below.")
+          : this.#packageDownloadState === "prepared" ? this.#t("packagePrepared", "Package prepared. Use the save link below to save the file to your device.")
           : this.#packageDownloadState === "failed" ? this.#t("packageDownloadFailed", "The download did not finish. Download this same recorded package again; no new export is needed.")
             : this.#t("packageRecorded", "Package recorded. Download it below; file delivery is not yet confirmed. Keep this page open until the download finishes.");
     return html`<section class="output-package-recovery" aria-label=${this.#controlName(this.#t("recordedPackage", "Recorded package"))}>
       <p role="status">${status}</p>
       ${owner.paths.length > 1 ? html`<p>${this.#t("packageEveryPart", "Download every part below. A single part is not the whole package.")}</p>` : nothing}
       <ol class="output-package-parts">${owner.paths.map((path, index) => {
-        const label = owner.paths.length === 1 ? this.#t("downloadRecordedPackage", "Download recorded package")
-          : this.#t("downloadPart", "Download part {part} of {total}", { part: index + 1, total: owner.paths.length });
+        const prepared = this.#preparedPackage?.owner === owner && this.#preparedPackage.path === path ? this.#preparedPackage : null;
+        const label = owner.paths.length === 1 ? this.#t("downloadRecordedPackage", "Prepare recorded package")
+          : this.#t("preparePackagePart", "Prepare part {part} of {total}", { part: index + 1, total: owner.paths.length });
+        const saveLabel = owner.paths.length === 1 ? this.#t("savePreparedPackage", "Save prepared package")
+          : this.#t("savePreparedPart", "Save prepared part {part} of {total}", { part: index + 1, total: owner.paths.length });
         return html`<li><button type="button" class="button secondary" aria-label=${this.#controlName(label)}
-          aria-disabled=${disabled ? "true" : "false"} @click=${() => { if (!disabled) void this.#download(path, "package"); }}>${label}</button></li>`;
+          aria-disabled=${disabled || prepared ? "true" : "false"} @click=${() => { if (!disabled && !prepared) void this.#download(path, "package"); }}>${label}</button>
+          ${prepared ? html`<a class="button primary" href=${disabled ? nothing : prepared.url} download=${prepared.filename}
+            tabindex="0" aria-disabled=${disabled ? "true" : "false"} aria-label=${this.#controlName(saveLabel)}
+            @click=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}
+            @auxclick=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}>${saveLabel}</a>` : nothing}</li>`;
       })}</ol>
     </section>`;
   }
@@ -1807,6 +1846,7 @@ export class FormaOutputRequirements extends FormaElement {
     const resource = this.store.outputRequirements.resource(this.documentId), snapshot = resource.snapshot;
     const owner = kind === "package" ? this.#recordedPackage : null;
     if (kind === "package" && (!owner || !this.#packageReady(owner) || this.#packageDownload || this.#busy || !owner.paths.includes(path))) return;
+    if (owner && this.#preparedPackage?.owner === owner && this.#preparedPackage.path === path) return;
     if (resource.state !== "ready" || !snapshot?.permissions.canDownload) return;
     const gate = kind === "package" ? outputPackageReadiness(snapshot) : outputSourceReadiness(snapshot);
     if (!gate.allowed) { this.#announce(this.#readinessMessage(gate), true); return; }
@@ -1830,10 +1870,15 @@ export class FormaOutputRequirements extends FormaElement {
         this.#announce(!currentGate.allowed ? this.#readinessMessage(currentGate) : this.#t("releaseChanged", "The source, exact file, or package plan changed. Refresh and request the current file or package again."), true); return;
       }
       const url = URL.createObjectURL(result.body.blob); this.#downloadUrls.add(url);
-      if (request) this.#packageBlobUrls.add(url);
-      const anchor = document.createElement("a"); anchor.href = url; anchor.download = result.body.filename;
-      anchor.hidden = true; this.append(anchor); anchor.click(); anchor.remove();
-      if (request) this.#packageDownloadState = "requested";
+      if (request) {
+        // Keep only one prepared part in memory; replace it only after the new GET is checked.
+        this.#clearPreparedPackage(); this.#packageBlobUrls.add(url);
+        this.#preparedPackage = { owner: request.owner, path, url, filename: result.body.filename };
+        this.#packageDownloadState = "prepared";
+      } else {
+        const anchor = document.createElement("a"); anchor.href = url; anchor.download = result.body.filename;
+        anchor.hidden = true; this.append(anchor); anchor.click(); anchor.remove();
+      }
       // Bytes are released only after the current source and exact resource are checked again.
     } finally {
       if (request && this.#packageDownload === request) {
@@ -2377,7 +2422,7 @@ export class FormaOutputRequirements extends FormaElement {
         ${!assets.length ? html`<p>${this.#t("uploadBeforeMatch", "Upload a supported file you have rights to use in the owned-file section. Matching it never starts paid generation.")}</p>` : nothing}
         ${reusable.length ? html`<section class="output-reuse-acceptance"><h5>${this.#t("reusePriorReview", "Reuse an earlier acceptance")}</h5><p>${this.#t("reusePriorReviewCaveat", "This is a separate decision to include a previously accepted exact file in the current plan. The server rechecks its source, contract, bytes, rights, and approval; it does not create a new approval.")}</p>${reusable.map((result) => html`<p><span dir="auto">${snapshot.assets.find((asset) => asset.id === result.assetId)?.name ?? this.#t("file", "File")}</span> <button aria-label=${this.#controlName(this.#t("reuseExactAcceptance", "Verify and reuse this exact acceptance"), this.#resultContext(snapshot, result))} type="button" class="button secondary compact" ?disabled=${blocked} @click=${() => this.#reuseAcceptance(result.acceptanceId!, target)}>${this.#t("reuseExactAcceptance", "Verify and reuse this exact acceptance")}</button></p>`)}</section>` : nothing}
       </details>` : nothing}
-      ${results.map((result) => this.#result(snapshot, result, ready))}
+      ${repeat(results, (result) => result.id, (result) => this.#result(snapshot, result, ready))}
     </article>`;
   }
 

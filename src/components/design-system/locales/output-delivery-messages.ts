@@ -5,8 +5,12 @@ import { FORMA_OUTPUT_DELIVERY_CYCLE_MESSAGES } from "./output-delivery-cycle-me
 const entries = {
   "output.delivery.packageEveryPart": ["Download every part below. A single part is not the whole package.", "Téléchargez chaque partie ci-dessous. Une seule partie ne constitue pas le paquet entier.", "نزّل جميع الأجزاء أدناه. الجزء الواحد ليس الحزمة الكاملة.", "以下のすべてのパートをダウンロードしてください。1つのパートだけではパッケージ全体になりません。"],
   "output.delivery.recordedPackage": ["Recorded package", "Paquet enregistré", "الحزمة المسجّلة", "記録済みパッケージ"],
-  "output.delivery.downloadRecordedPackage": ["Download recorded package", "Télécharger le paquet enregistré", "تنزيل الحزمة المسجّلة", "記録済みパッケージをダウンロード"],
-  "output.delivery.packageDownloading": ["Downloading the recorded package…", "Téléchargement du paquet enregistré…", "جارٍ تنزيل الحزمة المسجّلة…", "記録済みパッケージをダウンロード中…"],
+  "output.delivery.downloadRecordedPackage": ["Prepare recorded package", "Préparer le paquet enregistré", "تجهيز الحزمة المسجّلة", "記録済みパッケージを準備"],
+  "output.delivery.packageDownloading": ["Preparing the recorded package…", "Préparation du paquet enregistré…", "جارٍ تجهيز الحزمة المسجّلة…", "記録済みパッケージを準備中…"],
+  "output.delivery.savePreparedPackage": ["Save prepared package", "Enregistrer le paquet préparé", "حفظ الحزمة المجهّزة", "準備済みパッケージを保存"],
+  "output.delivery.preparePackagePart": ["Prepare part {part} of {total}", "Préparer la partie {part} sur {total}", "تجهيز الجزء {part} من {total}", "パート{part}/{total}を準備"],
+  "output.delivery.savePreparedPart": ["Save prepared part {part} of {total}", "Enregistrer la partie préparée {part} sur {total}", "حفظ الجزء المجهّز {part} من {total}", "準備済みパート{part}/{total}を保存"],
+  "output.delivery.packagePrepared": ["Package prepared. Use the save link below to save the file to your device.", "Paquet préparé. Utilisez le lien ci-dessous pour enregistrer le fichier sur votre appareil.", "تم تجهيز الحزمة. استخدم رابط الحفظ أدناه لحفظ الملف على جهازك.", "パッケージの準備ができました。下の保存リンクから端末にファイルを保存してください。"],
   "output.delivery.packageRecorded": [
     "Package recorded. Download it below; file delivery is not yet confirmed. Keep this page open until the download finishes.",
     "Paquet enregistré. Téléchargez-le ci-dessous ; la réception du fichier n’est pas encore confirmée. Gardez cette page ouverte jusqu’à la fin du téléchargement.",
@@ -20,10 +24,10 @@ const entries = {
     "パッケージを記録しました。チェックを更新してダウンロードしてください。再エクスポートは不要です。このページを開いたままにしてください。",
   ],
   "output.delivery.packageDownloadRequested": [
-    "Download requested. Check your browser’s downloads. You can download this same package again.",
-    "Téléchargement demandé. Vérifiez les téléchargements de votre navigateur. Vous pouvez télécharger à nouveau ce même paquet.",
-    "تم طلب التنزيل. تحقّق من تنزيلات المتصفح. يمكنك تنزيل الحزمة نفسها مجددًا.",
-    "ダウンロードを開始しました。ブラウザーのダウンロードを確認してください。同じパッケージを再度ダウンロードできます。",
+    "Save requested. Check your browser’s downloads. The prepared file remains available below.",
+    "Enregistrement demandé. Vérifiez les téléchargements de votre navigateur. Le fichier préparé reste disponible ci-dessous.",
+    "تم طلب الحفظ. تحقّق من تنزيلات المتصفح. يظل الملف المجهّز متاحًا أدناه.",
+    "保存を要求しました。ブラウザーのダウンロードを確認してください。準備済みファイルは引き続き下から保存できます。",
   ],
   "output.delivery.packageDownloadFailed": [
     "The download did not finish. Download this same recorded package again; no new export is needed.",

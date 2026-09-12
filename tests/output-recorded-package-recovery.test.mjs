@@ -36,7 +36,7 @@ const storeMethod = methods(source('src/state/store.ts'), 'FormaStore', ['output
 const componentSource = source('src/components/forma-output-requirements.ts');
 const controllerMethods = methods(componentSource, 'FormaOutputRequirements', [
   '#command', '#export', '#download', '#snapshot', '#captureView', '#viewScopeCurrent', '#viewCurrent',
-  '#originalAcknowledgment', '#announce', '#retirePackage', '#packageOwned', '#packageReady', '#packageRecovery',
+  '#originalAcknowledgment', '#announce', '#retirePackage', '#clearPreparedPackage', '#savePreparedPackage', '#packageOwned', '#packageReady', '#packageRecovery',
 ]);
 const doc = 'recovery-document';
 const path = '/api/output-requirements/deliveries/recovery-manifest?documentId=recovery-document';
@@ -50,7 +50,7 @@ const flatten = value => Array.isArray(value) ? value.map(flatten).join('') : ty
 const html = (strings, ...values) => strings.map((s, i) => s + flatten(values[i])).join('');
 
 async function fixture(options = {}) {
-  const ledger = [], anchors = [], revoked = [];
+  const ledger = [], anchors = [], revoked = [], created = [];
   let outputReads = 0, sourceActive = true, authorizationActive = true, route = '/recovery', current = snapshot(), client;
   const sourceOwner = { generation: 1, key: 'recovery-source' }, authorization = { key: 'recovery-auth', projectId: 'recovery-project' };
   const response = body => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
@@ -90,20 +90,21 @@ async function fixture(options = {}) {
   const { ControllerHarness } = moduleFrom(`export class ControllerHarness {
     documentId = '${doc}'; isConnected = true; _viewEpoch = 0; _busy = ''; _notice = ''; _noticeKind = 'status';
     _uncertainCommand = null; _preflight = null; _authorizationAcknowledged = false; _paidActivation = new Set();
-    _allowPartial = false; _recordedPackage = null; _packageReceiptOnly = null; _packageDownload = null; _packageDownloadState = 'recorded'; _downloadUrls = new Set(); _packageBlobUrls = new Set();
+    _allowPartial = false; _recordedPackage = null; _packageReceiptOnly = null; _packageDownload = null; _packageDownloadState = 'recorded'; _downloadUrls = new Set(); _packageBlobUrls = new Set(); _preparedPackage = null;
     _t(_key, fallback, values = {}) { return fallback.replace(/\\{(\\w+)\\}/g, (_, key) => String(values[key])); }
     _controlName(label) { return label; } _readinessMessage(gate) { return gate.reason; }
     _failure(result) { return result.error ?? result.status; } _unresolvedWrite() { return null; }
     _writeNotAttempted() { this._announce('not-attempted', true); } requestUpdate() {} append() {}
     ${controllerMethods}
   }`, { ...readiness, readOutputRecordedPackage, outputPackageInventory, html, nothing: '',
-    URL: { createObjectURL: () => 'blob:synthetic-package', revokeObjectURL: url => revoked.push(url) },
+    URL: { createObjectURL: () => { const url = 'blob:synthetic-package' + (created.length || ''); created.push(url); return url; }, revokeObjectURL: url => revoked.push(url) },
     document: { createElement(tag) { assert.equal(tag, 'a'); return { click() { anchors.push(this.download); }, remove() {} }; } } });
   const controller = new ControllerHarness(); controller.store = store;
   await client.ensure(doc);
   const exportPackage = () => controller._export({ preventDefault() {} });
   const restore = async patch => { if (patch) current = { ...current, ...patch }; await client.ensure(doc, { force: true }); };
-  return { controller, client, ledger, anchors, revoked, exportPackage, restore,
+  const save = (prepared = controller._preparedPackage, options = {}) => { const event = { type: 'click', button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...options }; controller._savePreparedPackage(event, prepared); return event; };
+  return { controller, client, ledger, anchors, revoked, created, save, exportPackage, restore,
     downloads: () => ledger.filter(row => row.path.startsWith(path)), posts: () => ledger.filter(row => row.method === 'POST'),
     route: value => { route = value; }, source: value => { sourceActive = value; }, authorization: value => { authorizationActive = value; } };
 }
@@ -131,22 +132,25 @@ for (const refresh of ['failed', 'superseded']) test(`ACK + ${refresh} refresh: 
   const f = await fixture({ refresh }); await f.exportPackage();
   const owner = f.controller._recordedPackage;
   assert.ok(owner); assert.equal(f.downloads().length, 0);
-  assert.match(f.controller._packageRecovery(), /Download recorded package/);
+  assert.match(f.controller._packageRecovery(), /Prepare recorded package/);
   assert.match(f.controller._packageRecovery(), /aria-disabled=true/);
   await f.controller._download(path, 'package'); assert.equal(f.downloads().length, 0);
   await f.restore(); assert.equal(f.controller._recordedPackage, owner); assert.equal(f.downloads().length, 0);
   assert.match(f.controller._packageRecovery(), /aria-disabled=false/);
   await f.controller._download(path, 'package');
-  assert.equal(f.downloads().length, 1); assert.equal(f.posts().length, 1); assert.deepEqual(f.anchors, ['recovery.zip']);
+  assert.equal(f.downloads().length, 1); assert.equal(f.posts().length, 1); assert.deepEqual(f.anchors, []);
+  assert.match(f.controller._packageRecovery(), /Save prepared package/);
+  assert.equal(f.save().defaultPrevented, false);
   assert.match(f.controller._packageRecovery(), /Check your browser/);
   await f.exportPackage(); assert.equal(f.posts().length, 1);
 });
 
-test('ready export hands off once, leaves explicit recovery; multipart does not auto-download', async () => {
-  const single = await fixture(); await single.exportPackage(); assert.equal(single.anchors.length, 1);
+test('ready export prepares one native save link; multipart does not auto-download', async () => {
+  const single = await fixture(); await single.exportPackage(); assert.equal(single.anchors.length, 0);
+  assert.ok(single.controller._preparedPackage); assert.equal(single.controller._packageDownloadState, 'prepared');
   const multi = await fixture({ parts: 2 }); await multi.exportPackage(); assert.equal(multi.downloads().length, 0);
-  assert.match(multi.controller._packageRecovery(), /Download part 1 of 2/);
-  assert.match(multi.controller._packageRecovery(), /Download part 2 of 2/);
+  assert.match(multi.controller._packageRecovery(), /Prepare part 1 of 2/);
+  assert.match(multi.controller._packageRecovery(), /Prepare part 2 of 2/);
   for (const part of multi.controller._recordedPackage.paths) await multi.controller._download(part, 'package');
   assert.equal(multi.downloads().length, 2); assert.equal(multi.posts().length, 1);
 });
@@ -230,7 +234,7 @@ test('GET failure retains exact recovery without another export', async () => {
   await f.exportPackage(); const owner = f.controller._recordedPackage;
   assert.match(f.controller._packageRecovery(), /download did not finish/);
   await f.controller._download(path, 'package'); assert.equal(f.controller._recordedPackage, owner);
-  assert.equal(f.anchors.length, 1); assert.equal(f.posts().length, 1);
+  assert.equal(f.anchors.length, 0); assert.ok(f.controller._preparedPackage); assert.equal(f.posts().length, 1);
 });
 
 test('retiring a recorded package releases its temporary Blob URLs', async () => {
@@ -239,6 +243,70 @@ test('retiring a recorded package releases its temporary Blob URLs', async () =>
   f.controller._retirePackage();
   assert.deepEqual(f.revoked, ['blob:synthetic-package']);
   assert.equal(f.controller._packageBlobUrls.size, 0); assert.equal(f.controller._downloadUrls.size, 0);
+  assert.equal(f.controller._preparedPackage, null);
+});
+
+test('native save reuses checked bytes without GET, export, allocation, or synthetic click', async () => {
+  const f = await fixture(); await f.exportPackage();
+  const prepared = f.controller._preparedPackage;
+  assert.equal(prepared.path, path); assert.equal(prepared.filename, 'recovery.zip');
+  assert.match(f.controller._packageRecovery(), /href=blob:synthetic-package download=recovery.zip/);
+  assert.equal(f.save().defaultPrevented, false); assert.equal(f.save().defaultPrevented, false);
+  await f.controller._download(path, 'package');
+  assert.equal(f.controller._preparedPackage, prepared);
+  assert.equal(f.downloads().length, 1); assert.equal(f.posts().length, 1);
+  assert.equal(f.created.length, 1); assert.deepEqual(f.revoked, []); assert.deepEqual(f.anchors, []);
+});
+
+test('ordinary refresh keeps prepared bytes but removes href and blocks native save until ready', async () => {
+  const f = await fixture(); await f.exportPackage(); const prepared = f.controller._preparedPackage;
+  for (const state of ['loading', 'unavailable']) {
+    f.client.resource(doc).state = state;
+    assert.equal(f.save().defaultPrevented, true);
+    assert.doesNotMatch(f.controller._packageRecovery(), /href=blob:/);
+    assert.equal(f.controller._preparedPackage, prepared); assert.deepEqual(f.revoked, []);
+  }
+  await f.restore(); assert.equal(f.save().defaultPrevented, false);
+  assert.equal(f.downloads().length, 1); assert.equal(f.created.length, 1);
+});
+
+test('auxiliary and modified clicks do not claim or initiate native saving', async () => {
+  const f = await fixture(); await f.exportPackage();
+  for (const options of [{ type: 'auxclick', button: 1 }, { type: 'auxclick', button: 2 }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {
+    assert.equal(f.save(f.controller._preparedPackage, options).defaultPrevented, true);
+    assert.equal(f.controller._packageDownloadState, 'prepared');
+  }
+  assert.equal(f.downloads().length, 1); assert.equal(f.anchors.length, 0);
+});
+
+for (const changed of ['route', 'source', 'authorization', 'privateRevision', 'permission', 'busy', 'part', 'successor']) {
+  test(`native save synchronously refuses a stale ${changed} link`, async () => {
+    const f = await fixture(); await f.exportPackage(); const prepared = f.controller._preparedPackage;
+    if (changed === 'route') f.route('/changed');
+    if (changed === 'source') f.source(false);
+    if (changed === 'authorization') f.authorization(false);
+    if (changed === 'privateRevision') f.client.resource(doc).privateRevision++;
+    if (changed === 'permission') await f.restore({ permissions: { canDownload: false } });
+    if (changed === 'busy') f.controller._busy = 'other';
+    if (changed === 'part') prepared.path += '&part=2';
+    if (changed === 'successor') f.controller._preparedPackage = { ...prepared };
+    assert.equal(f.save(prepared).defaultPrevented, true);
+    assert.equal(f.downloads().length, 1); assert.equal(f.posts().length, 1); assert.equal(f.anchors.length, 0);
+  });
+}
+
+test('multipart preparation retains only the latest checked part and retires old links', async () => {
+  const f = await fixture({ parts: 2 }); await f.exportPackage();
+  const paths = f.controller._recordedPackage.paths;
+  await f.controller._download(paths[0], 'package'); const old = f.controller._preparedPackage;
+  assert.match(f.controller._packageRecovery(), /Save prepared part 1 of 2/);
+  await f.controller._download(paths[1], 'package');
+  assert.equal(f.controller._preparedPackage.path, paths[1]); assert.equal(f.save(old).defaultPrevented, true);
+  assert.equal(f.save().defaultPrevented, false); assert.deepEqual(f.revoked, [old.url]);
+  assert.equal(f.controller._packageBlobUrls.size, 1); assert.equal(f.controller._downloadUrls.size, 1);
+  assert.match(f.controller._packageRecovery(), /Save prepared part 2 of 2/);
+  assert.doesNotMatch(f.controller._packageRecovery(), /Save prepared part 1 of 2/);
+  assert.equal(f.posts().length, 1); assert.equal(f.downloads().length, 2);
 });
 
 test('lifecycle and full surface render wire the reviewed recovery methods', () => {

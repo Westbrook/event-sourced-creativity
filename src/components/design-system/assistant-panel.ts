@@ -1085,11 +1085,23 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.#clearBrowseLauncher();
     const stable = this.#browseLane?.stable === true && this.#positionInBrowseLane(launcher ?? undefined);
     const shell = this.parentElement?.closest(".application-creative");
-    const preferStableLane = stable || Boolean(allowReservation && launcher
+    const main = shell?.querySelector<HTMLElement>(":scope > #main-content");
+    const deliver = main?.querySelector<HTMLElement>("forma-deliver > .forma-deliver-page");
+    const navigation = shell?.querySelector<HTMLElement>(':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]');
+    // Deliver's fixed navigation can host Ask without narrowing the entire page.
+    // The existing slot measurement still validates every target and can refuse it.
+    const preferDeliverSlot = Boolean(allowReservation && launcher && main && deliver
+      && deliver.closest("#main-content") === main
+      && shell?.getAttribute("data-layout-intent") === "browse"
+      && shell.getAttribute("data-nav-posture") === "compact"
+      && navigation && getComputedStyle(navigation).position === "fixed"
+      && getComputedStyle(this).getPropertyValue("--forma-assistant-browse-slot").trim() === "1"
+      && !launcher.contains(focused) && !launcher.matches(":hover"));
+    const preferStableLane = !preferDeliverSlot && (stable || Boolean(allowReservation && launcher
       && getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-lane-available")?.trim() === "1"
       && shell?.getAttribute("data-layout-intent") === "browse"
       && shell.getAttribute("data-nav-posture") === "compact"
-      && !launcher.contains(focused) && !launcher.matches(":hover"));
+      && !launcher.contains(focused) && !launcher.matches(":hover")));
     // An accepted compact browse gutter belongs to the current main, not to a
     // temporary floating gap or a navigation cell that can scroll out of view.
     // Other postures keep following their existing reserved cell.
