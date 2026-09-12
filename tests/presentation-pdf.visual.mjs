@@ -43,10 +43,33 @@ const browser=await chromium.launch({headless:true,channel:"chrome"});
 const context=await browser.newContext({viewport:{width:1100,height:700},deviceScaleFactor:2});
 const page=await context.newPage();
 const failures=[];
+const unexpectedApiRequests=[];
+await page.route("**/api/**",route=>{unexpectedApiRequests.push(route.request().url());return route.abort();});
 
 try{
   await page.goto(`${origin}/tests/presentation-pdf.fixture.html`,{waitUntil:"domcontentloaded"});
   await page.waitForFunction(()=>typeof window.configurePresentationPdfFixture==="function",null,{timeout:15_000});
+  // Local UI/renderer test only: this old visual fixture does not sign in or
+  // create a real artifact. Keep authorization finite and forbid all API calls;
+  // the PDF converter, persistent native save link and browser download are real.
+  await page.evaluate(async()=>{
+    const {store}=await import("/src/state/store.ts");
+    const scope={key:"local-pdf-fidelity-fixture",shared:false},source={fixture:true};
+    store.captureAuthorizationScope=()=>scope;
+    store.authorizationScopeActive=value=>value===scope;
+    store.captureSourceOwnership=()=>source;
+    store.sourceOwnershipActive=value=>value===source;
+    store.session.get=()=>({user:{userId:"local-pdf-fidelity-fixture",role:"creator"},impersonation:null});
+    const deck=document.querySelector("#deck");
+    deck.preferenceKey="local-pdf-fidelity-fixture";
+    deck.documentId="local-pdf-fidelity-document";
+    store.authorizeProjectExport=async(receipt,authorization)=>{
+      if(authorization!==scope||receipt.type!=="DocumentArtifactExported"||receipt.payload.artifact_id!==deck.preferenceKey
+        ||receipt.payload.document_id!==deck.documentId||receipt.payload.format!=="application/pdf"
+        ||receipt.payload.page_count!==deck.items.length)throw new Error("invalid_local_pdf_fixture_release");
+      return true;
+    };
+  });
   for(const entry of cases){
     const name=Object.values(entry).join("-");
     const screenshot=resolve(output,`browser-${name}.png`);
@@ -78,9 +101,12 @@ try{
     }
     if(entry.via==="deck"){
       await page.getByRole("button",{name:"Export"}).click();
+      await page.getByRole("button",{name:"Download PDF"}).click();
+      const save=page.getByRole("link",{name:"Save prepared PDF",exact:true});
+      await save.waitFor({state:"visible",timeout:60_000});
       const [download]=await Promise.all([
         page.waitForEvent("download",{timeout:60_000}),
-        page.getByRole("button",{name:"Download PDF"}).click(),
+        save.click(),
       ]);
       await download.saveAs(pdf);
       const pageInfo=execFileSync("pdfinfo",[pdf],{encoding:"utf8"});
@@ -99,12 +125,17 @@ try{
       const browserImage=screenshot.replace(/\.png$/,`${suffix}.png`);
       const exportedPrefix=`${prefix}${suffix}`;
       const diffImage=diff.replace(/\.png$/,`${suffix}.png`);
-      await slides.nth(index).screenshot({path:browserImage,animations:"disabled"});
+      await slides.nth(index).scrollIntoViewIfNeeded();
+      const bounds=await slides.nth(index).boundingBox();
+      if(!bounds)throw new Error(`${name}${suffix}: the preview slide has no bounds.`);
+      // Keep the requested clip at the slide's exact size: locator screenshots
+      // round fractional page offsets outward and can add a non-slide pixel row.
+      await page.screenshot({path:browserImage,animations:"disabled",clip:bounds});
       execFileSync("pdftoppm",["-f",String(index+1),"-singlefile","-r","144","-png",pdf,exportedPrefix]);
 
       const actual=PNG.sync.read(await readFile(browserImage));
       const exported=PNG.sync.read(await readFile(`${exportedPrefix}.png`));
-      if(actual.width!==exported.width||actual.height!==exported.height)throw new Error(`${name}${suffix}: browser and PDF dimensions differ (${actual.width}×${actual.height} vs. ${exported.width}×${exported.height}).`);
+      if(actual.width!==exported.width||actual.height!==exported.height)throw new Error(`${name}${suffix}: browser and PDF dimensions differ (${actual.width}×${actual.height} vs. ${exported.width}×${exported.height}); bounds=${JSON.stringify(bounds)}.`);
 
       const comparison=new PNG({width:actual.width,height:actual.height});
       const changed=pixelmatch(actual.data,exported.data,comparison.data,actual.width,actual.height,{threshold:.1,includeAA:false});
@@ -133,6 +164,7 @@ try{
   await browser.close();
 }
 
+if(unexpectedApiRequests.length)throw new Error("Local PDF fidelity fixture attempted an API request: "+unexpectedApiRequests.join(", "));
 if(failures.length){
   throw new Error(`${failures.length} slideshow PDF comparison${failures.length===1?"":"s"} exceeded the 1.25% visual-difference budget.`);
 }
