@@ -44,7 +44,7 @@ export async function readHoldPreviewBody(response: Response): Promise<string> {
     while (true) {
       const chunk = await reader.read(); if (chunk.done) break;
       bytes += chunk.value.byteLength;
-      if (bytes > 65_536) { await reader.cancel(); throw new Error("hold_preview_response_invalid"); }
+      if (bytes > 65_536) { void reader.cancel().catch(() => {}); throw new Error("hold_preview_response_invalid"); }
       text += decoder.decode(chunk.value, { stream: true });
     }
     return text + decoder.decode();

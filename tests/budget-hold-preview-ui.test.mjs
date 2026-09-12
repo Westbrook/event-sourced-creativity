@@ -149,3 +149,19 @@ test("wire reader rejects HTML and cancels oversized JSON", async () => {
   await assert.rejects(preview.readHoldPreviewBody(new Response(body, { headers: { "content-type": "application/json" } })));
   assert.equal(canceled, true);
 });
+
+for (const cancellation of ["never settles", "rejects"]) {
+  test(`oversized JSON rejects promptly when cancellation ${cancellation}`, { timeout: 1000 }, async () => {
+    let canceled = false;
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(65537)); },
+      cancel() {
+        canceled = true;
+        return cancellation === "never settles" ? new Promise(() => {}) : Promise.reject(new Error("cancel failed"));
+      },
+    });
+    await assert.rejects(preview.readHoldPreviewBody(new Response(body, { headers: { "content-type": "application/json" } })), /hold_preview_response_invalid/u);
+    assert.equal(canceled, true);
+    assert.equal(body.locked, false);
+  });
+}
