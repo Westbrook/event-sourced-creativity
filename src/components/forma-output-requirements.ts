@@ -1837,8 +1837,15 @@ export class FormaOutputRequirements extends FormaElement {
           ${prepared ? html`<a class="button primary" href=${disabled ? nothing : prepared.url} download=${prepared.filename}
             tabindex="0" aria-disabled=${disabled ? "true" : "false"} aria-label=${this.#controlName(saveLabel)}
             @click=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}
-            @auxclick=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}>${saveLabel}</a>` : nothing}</li>`;
+            @auxclick=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}>${saveLabel}</a>
+            ${this.#packageDownloadState === "requested" ? html`<a class="button secondary"
+              href=${disabled ? nothing : prepared.path} target="_blank" rel="noopener" download=${prepared.filename}
+              tabindex="0" aria-disabled=${disabled ? "true" : "false"}
+              aria-label=${this.#controlName(this.#t("browserDownload", "Download through browser"), saveLabel)}
+              @click=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}
+              @auxclick=${(event: MouseEvent) => this.#savePreparedPackage(event, prepared)}>${this.#t("browserDownload", "Download through browser")}</a>` : nothing}` : nothing}</li>`;
       })}</ol>
+      ${this.#preparedPackage && this.#packageDownloadState === "requested" ? html`<p>${this.#t("browserDownloadHelp", "If saving does not start, use Download through browser. It requests the same recorded package again with fresh server checks, without creating another export. Your browser may show an error in a separate tab.")}</p>` : nothing}
     </section>`;
   }
 

@@ -270,6 +270,27 @@ test('ordinary refresh keeps prepared bytes but removes href and blocks native s
   assert.equal(f.downloads().length, 1); assert.equal(f.created.length, 1);
 });
 
+test('browser fallback exposes only the exact prepared ACK path after an ordinary save request', async () => {
+  const f = await fixture(); await f.exportPackage();
+  assert.doesNotMatch(f.controller._packageRecovery(), /href=\/api\/output-requirements\/deliveries\//);
+  f.save();
+  const rendered=f.controller._packageRecovery();
+  assert.ok(rendered.includes(`href=${path} target="_blank" rel="noopener" download=recovery.zip`));
+  assert.match(rendered,/fresh server checks, without creating another export/);
+  assert.equal(f.downloads().length,1);assert.equal(f.posts().length,1);
+  for(const state of ['refreshing','unavailable']){
+    f.client.resource(doc).state=state;
+    assert.doesNotMatch(f.controller._packageRecovery(), /href=\/api\/output-requirements\/deliveries\//);
+    assert.equal(f.save().defaultPrevented,true);
+  }
+});
+
+test('both native link modes use the same synchronous owner guard', () => {
+  const rendered=methods(componentSource,'FormaOutputRequirements',['#packageRecovery']);
+  assert.equal((rendered.match(/@click=\$\{\(event: MouseEvent\) => this\._savePreparedPackage\(event, prepared\)\}/g)??[]).length,2);
+  assert.equal((rendered.match(/@auxclick=\$\{\(event: MouseEvent\) => this\._savePreparedPackage\(event, prepared\)\}/g)??[]).length,2);
+});
+
 test('auxiliary and modified clicks do not claim or initiate native saving', async () => {
   const f = await fixture(); await f.exportPackage();
   for (const options of [{ type: 'auxclick', button: 1 }, { type: 'auxclick', button: 2 }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {

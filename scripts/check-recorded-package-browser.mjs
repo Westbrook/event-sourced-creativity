@@ -55,10 +55,14 @@ const store={subscribe:()=>()=>{},captureAuthorizationScope:()=>auth,authorizati
 element.store=store;element.documentId=doc;element.documentName='Isolated recovery';element.surface='deliver';document.querySelector('main').append(element);
 if(previewMode){const reorder=document.createElement('button');reorder.textContent='Reorder local results';reorder.onclick=()=>{snapshot.results.reverse();element.requestUpdate();};document.querySelector('main').prepend(reorder);}
 </script></html>`;
+let browserPackageGets=0;
 const server = createServer((req, res) => {
   const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
   if (pathname === '/') { res.writeHead(200, { 'content-type': 'text/html' }); res.end(fixture); return; }
   if (pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+  if (req.url === '/api/output-requirements/deliveries/recovery-manifest?documentId=recovery-document') {
+    browserPackageGets++;res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="recovery-synthetic.zip"','cache-control':'no-store'});res.end('synthetic package bytes');return;
+  }
   if (!pathname.startsWith('/assets/')) { res.writeHead(404); res.end(); return; }
   const file = resolve(dist, '.' + pathname);
   if (!file.startsWith(dist + '/assets/')) { res.writeHead(404); res.end(); return; }
@@ -134,7 +138,12 @@ try {
     const repeated=page.waitForEvent('download');await page.keyboard.press('Enter');await repeated;
     assert.equal(await save.getAttribute('href'),originalBlob);
     assert.match(await page.locator('#test-ledger').innerText(),/Exports: 1; downloads: 1/);
-    receipts.push({profile,layout,captured,exportPosts:1,downloadGets:1,nativeSaves:downloadsObserved,keyboardFocus:'preserved',actualBrowserDownload:'exact synthetic fixture bytes only; not a production ZIP',blockedFontRequests:foreign.length});
+    const direct=page.getByRole('link',{name:/^Download through browser/}),beforeDirect=browserPackageGets;
+    await page.keyboard.press('Tab');assert.equal(await direct.evaluate(node=>node===document.activeElement),true);
+    const directDownload=page.waitForEvent('download');await page.keyboard.press('Enter');const directFile=await directDownload;
+    assert.equal(readFileSync(await directFile.path(),'utf8'),'synthetic package bytes');assert.equal(browserPackageGets,beforeDirect+1);
+    assert.equal(page.url(),origin+'/');assert.match(await page.locator('#test-ledger').innerText(),/Exports: 1; downloads: 1/);
+    receipts.push({profile,layout,captured,exportPosts:1,downloadGets:1,nativeSaves:downloadsObserved,browserFallbackGets:1,keyboardFocus:'preserved',actualBrowserDownload:'exact synthetic fixture bytes only; not a production ZIP',blockedFontRequests:foreign.length});
     await context.close();
   }
   for(const profile of [{width:360,height:900,dpr:2},{width:1280,height:900,dpr:1}]){
