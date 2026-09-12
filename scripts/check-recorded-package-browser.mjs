@@ -143,6 +143,8 @@ try {
     const directDownload=page.waitForEvent('download');await page.keyboard.press('Enter');const directFile=await directDownload;
     assert.equal(readFileSync(await directFile.path(),'utf8'),'synthetic package bytes');assert.equal(browserPackageGets,beforeDirect+1);
     assert.equal(page.url(),origin+'/');assert.match(await page.locator('#test-ledger').innerText(),/Exports: 1; downloads: 1/);
+    await direct.scrollIntoViewIfNeeded();
+    if(evidence)await page.screenshot({scale:'device',path:resolve(evidence,`fallback-${profile.width}-dpr${profile.dpr}.png`)});
     receipts.push({profile,layout,captured,exportPosts:1,downloadGets:1,nativeSaves:downloadsObserved,browserFallbackGets:1,keyboardFocus:'preserved',actualBrowserDownload:'exact synthetic fixture bytes only; not a production ZIP',blockedFontRequests:foreign.length});
     await context.close();
   }
