@@ -5,7 +5,8 @@ import { outcomeMoney, personalUsageReceiptDisclosure } from "./outcome-telemetr
 import { FormaElement, icon } from "./forma-element";
 import { navigateInApp } from "./command-departure";
 import { requestDialogConfirmation } from "./modal-dialog.ts";
-import { holdPreviewErrorCode, readHoldPreviewBody, validateHoldPreviewResponse, validHoldPreviewJobId } from "../model/budget-hold-preview.ts";
+import { holdPreviewErrorCode, readHoldPreviewBody, validateHoldPreviewResponse, validHoldPreviewJobId,
+  parsedHoldOperatorCommand, validHoldDispositionId, validateHoldApplyResponse, validateHoldVerificationResponse } from "../model/budget-hold-preview.ts";
 
 /** Creator-owned controls remain available without entering platform administration. */
 export class FormaAccountSettings extends FormaElement {
@@ -17,6 +18,126 @@ export class FormaAccountSettings extends FormaElement {
   #holdHttpStatus: number | null = null;
   #holdObservedAt = "";
   #holdApplyEnabled = false;
+  #holdCommandText = "";
+  #holdAcknowledged = false;
+  #holdDecisionId = "";
+  #holdSubmitted: { text: string; id: string; recordSha256?: string } | null = null;
+  #holdOperation: { controller: AbortController; current: () => boolean } | null = null;
+  #holdOperatorStatus: "idle" | "invalid" | "submitting" | "ambiguous" | "acknowledged" | "verifying" | "verified" | "review" | "unavailable" | "notSent" = "idle";
+  #holdApplyReceipt = "";
+  #holdVerificationReceipt = "";
+  #holdVerificationUnbound = false;
+  #holdOperatorHttpStatus: number | null = null;
+  #holdOperatorObservedAt = "";
+  #holdOperatorRetire() {
+    this.#holdOperation?.controller.abort(); this.#holdOperation = null;
+    this.#holdCommandText = ""; this.#holdAcknowledged = false; this.#holdDecisionId = ""; this.#holdSubmitted = null;
+    this.#holdApplyReceipt = ""; this.#holdVerificationReceipt = ""; this.#holdVerificationUnbound = false; this.#holdOperatorStatus = "idle";
+    this.#holdOperatorHttpStatus = null; this.#holdOperatorObservedAt = "";
+  }
+  #holdApplyTarget() {
+    if (!this.#holdCommandText || !this.#holdContextKey || this.#holdSubmitted || this.#holdOperation || this.#holdStatus !== "ready" || !this.#holdApplyEnabled) return null;
+    const command = parsedHoldOperatorCommand(this.#holdCommandText), preview: unknown = JSON.parse(this.#holdReceipt);
+    const owner = this.store.session.get()?.user.userId;
+    if (!command || !owner || !validateHoldPreviewResponse(preview, this.#holdJobId, owner)
+      || command.command.jobId !== this.#holdJobId || command.command.previewSha256 !== preview.preview.previewSha256) return null;
+    return { command, preview: preview.preview };
+  }
+  #holdEditCommand(event: Event) {
+    this.#checkHold(); if (!this.#holdContextKey || this.#holdOperation || this.#holdSubmitted) return;
+    this.#holdCommandText = (event.currentTarget as HTMLTextAreaElement).value; this.#holdAcknowledged = false;
+    this.#holdOperatorStatus = "idle"; this.requestUpdate();
+  }
+  #holdSetAcknowledgement(event: Event) {
+    this.#checkHold(); if (!this.#holdContextKey || this.#holdOperation || this.#holdSubmitted) return;
+    this.#holdAcknowledged = Boolean((event.currentTarget as HTMLInputElement).checked); this.requestUpdate();
+  }
+  #holdEditDecisionId(event: Event) {
+    this.#checkHold(); if (!this.#holdContextKey || this.#holdOperation || this.#holdSubmitted) return;
+    this.#holdDecisionId = (event.currentTarget as HTMLInputElement).value;
+    this.#holdVerificationReceipt = ""; this.#holdVerificationUnbound = false; this.#holdOperatorStatus = "idle";
+    this.#holdOperatorHttpStatus = null; this.#holdOperatorObservedAt = ""; this.requestUpdate();
+  }
+  async #holdOperate(kind: "apply" | "verify") {
+    this.#checkHold();
+    if (!this.#holdContextKey || this.#holdOperation || kind === "apply" && (this.#holdStatus === "loading" || this.#holdSubmitted)) return;
+    const target = kind === "apply" ? this.#holdApplyTarget() : null;
+    const id = kind === "apply" ? target?.command.command.dispositionId : this.#holdSubmitted?.id ?? this.#holdDecisionId;
+    if (!id || !validHoldDispositionId(id) || kind === "apply" && (!target || !this.#holdAcknowledged)) {
+      this.#holdOperatorStatus = "invalid"; this.requestUpdate(); return;
+    }
+    const context = this.#holdContextKey, owner = this.store.session.get()!.user.userId;
+    const submitted = kind === "apply" ? { text: this.#holdCommandText, id } : this.#holdSubmitted;
+    const controller = new AbortController(); let invoked = false;
+    const operation = { controller, current: () => this.#holdOperation === operation && this.#holdContext() === context };
+    this.#holdOperation = operation; this.#holdAcknowledged = false;
+    this.#holdOperatorStatus = kind === "apply" ? "submitting" : "verifying";
+    this.#holdOperatorHttpStatus = null; this.#holdOperatorObservedAt = "";
+    if (kind === "verify") { this.#holdVerificationReceipt = ""; this.#holdVerificationUnbound = false; }
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    this.requestUpdate();
+    try {
+      const response = await this.store.guardedFetch(kind === "apply" ? "/api/admin/budget-hold-dispositions" : `/api/admin/budget-hold-dispositions?dispositionId=${encodeURIComponent(id)}`, {
+        method: kind === "apply" ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal,
+        ...(kind === "apply" ? { headers: { "content-type": "application/json" }, body: submitted!.text } : {}),
+      }, kind === "apply" ? "submit the separately approved hold release" : "verify the saved hold decision", {
+        current: () => operation.current() && !controller.signal.aborted,
+        onInvoke: () => {
+          invoked = true;
+          if (kind === "apply") { this.#holdSubmitted = submitted; this.#holdDecisionId = id; }
+        },
+      });
+      if (!operation.current() || controller.signal.aborted) return;
+      this.#holdOperatorHttpStatus = response.status; this.#holdOperatorObservedAt = new Date().toISOString();
+      const raw = await readHoldPreviewBody(response);
+      if (!operation.current() || controller.signal.aborted) return;
+      const body: unknown = JSON.parse(raw);
+      if (kind === "apply") {
+        this.#holdOperatorStatus = "ambiguous";
+        if (response.ok && validateHoldApplyResponse(body, id)) {
+          submitted!.recordSha256 = body.recordSha256; this.#holdApplyReceipt = raw; this.#holdOperatorStatus = "acknowledged";
+        } else if (holdPreviewErrorCode(body)) this.#holdApplyReceipt = raw;
+      } else {
+        this.#holdOperatorStatus = "unavailable";
+        if (response.ok && validateHoldVerificationResponse(body, id, owner, submitted?.recordSha256)) {
+          this.#holdVerificationReceipt = raw;
+          this.#holdVerificationUnbound = body.verified && !submitted?.recordSha256;
+          // Without an acknowledged apply digest, GET does not bind this record to an external command.
+          this.#holdOperatorStatus = body.verified && Boolean(submitted?.recordSha256) ? "verified" : "review";
+        } else if (holdPreviewErrorCode(body)) this.#holdVerificationReceipt = raw;
+      }
+    } catch {
+      if (operation.current()) this.#holdOperatorStatus = kind === "apply" ? invoked ? "ambiguous" : "notSent" : "unavailable";
+    } finally {
+      clearTimeout(timeout);
+      if (operation.current()) {
+        if (controller.signal.aborted) this.#holdOperatorStatus = kind === "apply" ? invoked ? "ambiguous" : "notSent" : "unavailable";
+        this.#holdOperation = null; this.requestUpdate();
+      }
+    }
+  }
+  #holdOperatorTemplate() {
+    if (!this.#holdContextKey) return nothing;
+    const target = this.#holdApplyTarget(), locked = Boolean(this.#holdSubmitted || this.#holdOperation);
+    return html`<section class="settings-hold-preview settings-hold-operator" aria-labelledby="settings-hold-operator-heading" aria-busy=${this.#holdOperation ? "true" : "false"}>
+      <h3 id="settings-hold-operator-heading">${this.i18n.t("settings.holdOperator.heading")}</h3>
+      <p>${this.i18n.t("settings.holdOperator.commandHelp")}</p>
+      <label>${this.i18n.t("settings.holdOperator.command")}<textarea rows="12" dir="ltr" spellcheck="false" maxlength="8192" ?readonly=${locked} .value=${this.#holdCommandText} @input=${(event: Event) => this.#holdEditCommand(event)}></textarea></label>
+      ${target ? html`<p>${this.i18n.t("settings.holdOperator.release", "", { amount: this.i18n.number(Number(target.preview.releaseMicrousd) / 1_000_000, { minimumFractionDigits: 6, maximumFractionDigits: 6 }), tokens: this.i18n.number(Number(target.preview.releaseTokens)), period: String(target.preview.period) })}</p>` : nothing}
+      <label class="generation-reconciliation-ack"> <input type="checkbox" ?disabled=${locked || !target} .checked=${this.#holdAcknowledged} @change=${(event: Event) => this.#holdSetAcknowledgement(event)}>${this.i18n.t("settings.holdOperator.acknowledgement")}</label>
+      <button type="button" class="button secondary compact" aria-disabled=${!target || !this.#holdAcknowledged ? "true" : "false"} @click=${() => void this.#holdOperate("apply")}>${this.i18n.t("settings.holdOperator.apply")}</button>
+      ${this.#holdSubmitted ? html`<label>${this.i18n.t("settings.holdOperator.reviewCommand")}<textarea rows="12" dir="ltr" readonly spellcheck="false" .value=${this.#holdSubmitted.text}></textarea></label>` : nothing}
+      <p>${this.i18n.t("settings.holdOperator.recovery")}</p>
+      <label>${this.i18n.t("settings.holdOperator.decisionId")}<input type="text" dir="ltr" autocomplete="off" spellcheck="false" maxlength="100" ?readonly=${locked} .value=${this.#holdSubmitted?.id ?? this.#holdDecisionId} @input=${(event: Event) => this.#holdEditDecisionId(event)}></label>
+      <button type="button" class="button secondary compact" aria-disabled=${this.#holdOperation ? "true" : "false"} @click=${() => void this.#holdOperate("verify")}>${this.i18n.t("settings.holdOperator.verify")}</button>
+      <p role="status">${this.#holdOperatorStatus === "idle" ? nothing : this.i18n.t(`settings.holdOperator.${this.#holdOperatorStatus}`)}</p>
+      ${this.#holdVerificationUnbound ? html`<p>${this.i18n.t("settings.holdOperator.unboundVerification")}</p>` : nothing}
+      ${this.#holdOperatorHttpStatus === null ? nothing : html`<p>${this.i18n.t("settings.holdPreview.httpStatus")}: <bdi>${String(this.#holdOperatorHttpStatus)}</bdi> · ${this.i18n.t("settings.holdPreview.observedAt")}: <bdi>${this.#holdOperatorObservedAt}</bdi></p>`}
+      ${this.#holdApplyReceipt ? html`<label>${this.i18n.t("settings.holdOperator.receipt")}<textarea rows="8" dir="ltr" readonly spellcheck="false" .value=${this.#holdApplyReceipt}></textarea></label>` : nothing}
+      ${this.#holdVerificationReceipt ? html`<label>${this.i18n.t("settings.holdOperator.verificationReceipt")}<textarea rows="18" dir="ltr" readonly spellcheck="false" .value=${this.#holdVerificationReceipt}></textarea></label>` : nothing}
+      ${this.#holdOperatorStatus === "verified" ? html`<button type="button" class="button secondary compact" @click=${() => { this.#checkHold(); if (this.#holdContextKey && !this.#holdOperation && this.#holdOperatorStatus === "verified") { this.#holdOperatorRetire(); this.#retireHold(true); this.requestUpdate(); } }}>${this.i18n.t("settings.holdOperator.next")}</button>` : nothing}
+    </section>`;
+  }
   #holdContext() {
     const session = this.store.session.get(), scope = this.store.captureAuthorizationScope(), route = this.store.route.get();
     if (!this.isConnected || route.split(/[?#]/u)[0] !== "/settings" || !session?.policy.accepted || session.user.role !== "admin" || session.impersonation || session.projectContext || !scope || scope.shared) return "";
@@ -25,24 +146,26 @@ export class FormaAccountSettings extends FormaElement {
   #retireHold(clearInput = false) {
     this.#holdRead?.controller.abort(); this.#holdRead = null;
     this.#holdReceipt = ""; this.#holdHttpStatus = null; this.#holdObservedAt = ""; this.#holdApplyEnabled = false; this.#holdStatus = "idle";
+    this.#holdAcknowledged = false;
     if (clearInput) this.#holdJobId = "";
   }
   #checkHold = () => {
     const context = this.#holdContext();
     if (this.#holdContextKey !== context || this.#holdRead && !this.#holdRead.current()) {
+      this.#holdOperatorRetire();
       this.#retireHold(true); this.#holdContextKey = context; this.requestUpdate();
     }
   };
-  #holdAuthorityChanged = () => { this.#retireHold(true); this.#holdContextKey = this.#holdContext(); this.requestUpdate(); };
+  #holdAuthorityChanged = () => { this.#holdOperatorRetire(); this.#retireHold(true); this.#holdContextKey = this.#holdContext(); this.requestUpdate(); };
   #setHoldJobId(event: Event) {
     this.#checkHold();
-    if (!this.#holdContextKey) return;
-    this.#retireHold(); this.#holdJobId = (event.currentTarget as HTMLInputElement).value; this.requestUpdate();
+    if (!this.#holdContextKey || this.#holdSubmitted || this.#holdOperation) return;
+    this.#holdCommandText = ""; this.#retireHold(); this.#holdJobId = (event.currentTarget as HTMLInputElement).value; this.requestUpdate();
   }
   async #inspectHold() {
     this.#checkHold();
     const context = this.#holdContextKey, jobId = this.#holdJobId, ownerId = this.store.session.get()?.user.userId;
-    if (!context || !ownerId || this.#holdStatus === "loading") return;
+    if (!context || !ownerId || this.#holdStatus === "loading" || this.#holdSubmitted || this.#holdOperation) return;
     this.#retireHold();
     if (!validHoldPreviewJobId(jobId)) { this.#holdStatus = "invalid"; this.requestUpdate(); return; }
     const controller = new AbortController();
@@ -73,15 +196,15 @@ export class FormaAccountSettings extends FormaElement {
     return html`<section class="settings-hold-preview" aria-labelledby="settings-hold-preview-heading" aria-busy=${this.#holdStatus === "loading" ? "true" : "false"}>
       <h3 id="settings-hold-preview-heading">${this.i18n.t("settings.holdPreview.heading", "Read-only hold preview")}</h3>
       <p>${this.i18n.t("settings.holdPreview.help", "Inspect one retained slideshow attempt using your signed-in administrator account. This makes no provider request and changes no balance.")}</p>
-      <label>${this.i18n.t("settings.holdPreview.jobId", "Exact job ID")}<input type="text" dir="ltr" autocomplete="off" spellcheck="false" maxlength="100" .value=${this.#holdJobId} @input=${(event: Event) => this.#setHoldJobId(event)}></label>
-      <button type="button" class="button secondary compact" aria-disabled=${this.#holdStatus === "loading" ? "true" : "false"} @click=${() => void this.#inspectHold()}>${this.i18n.t("settings.holdPreview.inspect", "Inspect hold")}</button>
-      <button type="button" class="button ghost compact" @click=${() => { this.#retireHold(true); this.requestUpdate(); }}>${this.i18n.t("settings.holdPreview.clear", "Clear preview")}</button>
+      <label>${this.i18n.t("settings.holdPreview.jobId", "Exact job ID")}<input type="text" dir="ltr" autocomplete="off" spellcheck="false" maxlength="100" ?readonly=${Boolean(this.#holdSubmitted || this.#holdOperation)} .value=${this.#holdJobId} @input=${(event: Event) => this.#setHoldJobId(event)}></label>
+      <button type="button" class="button secondary compact" aria-disabled=${this.#holdStatus === "loading" || this.#holdSubmitted || this.#holdOperation ? "true" : "false"} @click=${() => void this.#inspectHold()}>${this.i18n.t("settings.holdPreview.inspect", "Inspect hold")}</button>
+      <button type="button" class="button ghost compact" aria-disabled=${this.#holdSubmitted || this.#holdOperation ? "true" : "false"} @click=${() => { if (!this.#holdSubmitted && !this.#holdOperation) { this.#holdCommandText = ""; this.#retireHold(true); this.requestUpdate(); } }}>${this.i18n.t("settings.holdPreview.clear", "Clear preview")}</button>
       <p role="status">${this.#holdStatus === "idle" ? nothing : this.i18n.t(`settings.holdPreview.${this.#holdStatus}`)}</p>
       ${this.#holdApplyEnabled ? html`<p role="alert">${this.i18n.t("settings.holdPreview.enabledWarning", "Adjustments are enabled on the server. This read-only control cannot apply them.")}</p>` : nothing}
       ${this.#holdHttpStatus === null ? nothing : html`<p>${this.i18n.t("settings.holdPreview.httpStatus", "HTTP status")}: <bdi>${String(this.#holdHttpStatus)}</bdi> · ${this.i18n.t("settings.holdPreview.observedAt", "Observed at")}: <bdi>${this.#holdObservedAt}</bdi></p>`}
       ${this.#holdReceipt ? html`<label class="generation-accounting-receipt-label">${this.i18n.t("settings.holdPreview.receipt", "Private hold-preview receipt (JSON)")}<textarea rows="18" dir="ltr" readonly spellcheck="false" .value=${this.#holdReceipt}></textarea></label>` : nothing}
       <p class="creator-settings-budget-note">${this.i18n.t("settings.holdPreview.caution", "This preview is not approval or provider billing evidence. Any administrative release requires separate approval.")}</p>
-    </section>`;
+    </section>${this.#holdOperatorTemplate()}`;
   }
   #privacyConfirmation: { controller: AbortController; current: () => boolean; sent: boolean } | null = null;
   #unsubscribeConfirmation?: () => void;
@@ -97,6 +220,7 @@ export class FormaAccountSettings extends FormaElement {
     void this.store.loadShares();
   }
   override disconnectedCallback() {
+    this.#holdOperatorRetire();
     this.#retireHold(true); this.#holdContextKey = "";
     window.removeEventListener("forma-authorization-changed", this.#holdAuthorityChanged);
     this.#privacyConfirmation?.controller.abort();
