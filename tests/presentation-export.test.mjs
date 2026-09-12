@@ -64,6 +64,9 @@ test("the unified compatible presentation export, recovery, and import instructi
     "presentation.export.pdfClipped",
     "presentation.export.pdfFailed",
     "presentation.export.powerpointFailed",
+    "presentation.export.pdfPrepared", "presentation.export.audiencePrepared", "presentation.export.presenterPrepared",
+    "presentation.export.savePreparedPdf", "presentation.export.savePreparedPowerpoint", "presentation.export.savePreparedPresenter",
+    "presentation.export.preparedHint", "presentation.export.saveRequested",
   ];
   for (const [locale, messages] of Object.entries(FORMA_RESPONSIVE_MESSAGES)) {
     for (const key of keys) assert.ok(messages[key]?.trim(), `${locale} translates ${key}`);
@@ -115,14 +118,14 @@ test("presentation exports communicate staged progress, accessible completion co
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"downloading"\|"completed"\|"failed";completed:number;total:number;message\?:string;format\?:"powerpoint"\|"powerpoint-presenter"\}\|null=null/u);
+  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"prepared"\|"save-requested"\|"failed";completed:number;total:number;message\?:string;format\?:"pdf"\|"powerpoint"\|"powerpoint-presenter"\}\|null=null/u);
   assert.match(deck, /class="presentation-deck-export-status" data-export-stage=\$\{progress\.stage\} role=\$\{failed\?"alert":"status"\} aria-live=\$\{failed\?"assertive":"polite"\} aria-atomic="true"/u);
   assert.match(deck, /<progress max=\$\{total\} value=\$\{completed\} aria-label=\$\{this\.i18n\.t\("status\.progress"\)\} aria-valuetext=\$\{count\}>/u);
   assert.match(deck, /<progress aria-label=\$\{this\.i18n\.t\("status\.progress"\)\}><\/progress>/u,"preparation remains truthfully indeterminate until page rendering begins");
   assert.match(deck, /this\.i18n\.system\("\{count\} of \{total\}",\{count:this\.i18n\.number\(completed\),total:this\.i18n\.number\(total\)\}\)/u,"slide counts use existing translated labels and locale-aware numerals");
   assert.match(deck, /this\.i18n\.t\("job\.progress\.rendering"\)/u);
   assert.match(deck, /this\.i18n\.t\("job\.progress\.finalizing"\)/u);
-  assert.match(deck, /this\.i18n\.t\("job\.progress\.downloading"\)/u);
+  assert.match(deck, /presentation-deck-export-save/u, "prepared exports expose an explicit native Save link");
   assert.match(deck, /aria-describedby=\$\{this\.#exportProgress\?`\$\{this\.#exportMenuId\}-status`:nothing\} aria-busy=\$\{String\(this\.#exporting\)\}/u);
   assert.match(deck, /#exportAbort\?:AbortController/u);
   assert.match(deck, /override disconnectedCallback\(\)\{this\.#clearExportCompletion\(\);this\.#closeDeckPopovers\(\);this\.#exportAbort\?\.abort\(\)/u,"leaving the presentation clears its completion, closes native menus and cancels any unfinished export synchronously");
@@ -271,7 +274,7 @@ finally { exportFixtureHook.deregister(); }
 // A separate module instance supplies only new completion-UI tests with an
 // explicitly finite PDF result. It never claims PDF capture, valid PDF bytes,
 // browser paint or export authorization; the real-converter fixture above stays
-// unchanged and all authorization/download/focus production methods still run.
+// unchanged and all authorization/preparation/focus production methods still run.
 const finitePdfImport = 'import * as actualPdfExport from "../src/components/presentation-pdf-export.ts";';
 assert.equal(exportFixtureModule.split(finitePdfImport).length, 2);
 const finitePdfNamespace = `
@@ -438,9 +441,9 @@ for (const locale of ["en", "fr", "ar", "ja"]) {
 // focus/event ordering and delivered bytes, not browser paint or Office rendering.
 function exportCompletionPorts(t, context) {
   const { f, deck, trigger } = context, owner = deck.ownerDocument, view = owner.defaultView;
-  const original = trigger(), downloads = [], focusCalls = [], receipts = [], releases = [], downloadUrls = [], heldUpdates = new Set();
+  const original = trigger(), preparedFiles = [], saveRequests = [], createdUrls = [], revokedUrls = [], focusCalls = [], receipts = [], heldUpdates = new Set();
   const outside = { isConnected: true, tagName: "BUTTON" }, body = { isConnected: true, tagName: "BODY", append() {} };
-  let windowFocused = true, hidden = false, replaceTrigger = false, holdUpdate = null, failDownload = false, rejectUpdate = false, throwFocus = false, preparingUpdateFailure = false, enabledUpdateFailureAt = null;
+  let windowFocused = true, hidden = false, replaceTrigger = false, holdUpdate = null, failBlobCreation = false, rejectUpdate = false, throwFocus = false, preparingUpdateFailure = false, enabledUpdateFailureAt = null;
   const originals = new Map(), save = (object, key, descriptor) => {
     const keys = originals.get(object) ?? new Map(); originals.set(object, keys);
     if (!keys.has(key)) keys.set(key, Object.getOwnPropertyDescriptor(object, key));
@@ -474,35 +477,46 @@ function exportCompletionPorts(t, context) {
   save(owner, "hasFocus", { value: () => windowFocused });
   save(owner, "hidden", { get: () => hidden });
   save(owner, "visibilityState", { get: () => hidden ? "hidden" : "visible" });
-  save(owner, "createElement", { value: tag => {
-    assert.equal(tag, "a", "the Deck only creates a native download anchor in this port");
-    return { href: "", download: "", remove() {}, click() {
-      downloadUrls.push(this.href);
-      const blob = resolveObjectURL(this.href);
-      assert.ok(blob instanceof Blob, "download resolves the actual converter's Blob");
-      if (failDownload) throw new Error("Native download dispatch failed");
-      downloads.push({ filename: this.download, blob });
-    } };
-  } });
-  save(view, "setTimeout", { value: (callback, delay) => {
-    assert.equal(delay, 60_000, "retain the production Blob cleanup schedule without a live long timer");
-    releases.push(callback); return releases.length;
-  } });
-  save(deck, "contains", { value: node => node === original || f.renderer.ownNodes(deck, "button").includes(node) });
+  save(owner, "createElement", { value: () => assert.fail("presentation preparation must not dispatch a synthetic download anchor") });
+  save(view, "setTimeout", { value: () => assert.fail("prepared URLs live until explicit retirement, not a fixed cleanup timer") });
+  const createObjectURL = URL.createObjectURL.bind(URL), revokeObjectURL = URL.revokeObjectURL.bind(URL);
+  t.mock.method(URL, "createObjectURL", blob => {
+    if (failBlobCreation) { failBlobCreation = false; throw new Error("Native Blob preparation failed"); }
+    const url = createObjectURL(blob); createdUrls.push(url); return url;
+  });
+  t.mock.method(URL, "revokeObjectURL", url => { revokedUrls.push(url); return revokeObjectURL(url); });
+  save(deck, "contains", { value: node => node === original || [...f.renderer.ownNodes(deck, "button"), ...f.renderer.ownNodes(deck, "a")].includes(node) });
   const requestUpdate = deck.requestUpdate;
   save(deck, "requestUpdate", { value: function(...args) {
     if (preparingUpdateFailure) { preparingUpdateFailure = false; throw new Error("Native preparing update failed"); }
-    if (enabledUpdateFailureAt !== null && downloads.length >= enabledUpdateFailureAt) {
+    if (enabledUpdateFailureAt !== null && createdUrls.length >= enabledUpdateFailureAt) {
       enabledUpdateFailureAt = null; throw new Error("Native enabled requestUpdate failed");
     }
     return requestUpdate.apply(this, args);
   } });
   const collect = f.renderer.collect.bind(f.renderer);
+  let retainedSaveAnchor;
   f.renderer.collect = (markup, component) => {
     const start = f.renderer.nodes.length;
     collect(markup, component);
     if (component !== deck) return;
-    for (const node of f.renderer.nodes.slice(start)) if (node.tag === "button") install(node);
+    for (const node of f.renderer.nodes.slice(start)) if (node.tag === "button" || node.tag === "a") install(node);
+    const saveIndex = f.renderer.nodes.findIndex((node, index) => index >= start && node.tag === "a" && node.classList.contains("presentation-deck-export-save"));
+    if (saveIndex >= 0) {
+      let anchor = f.renderer.nodes[saveIndex];
+      if (retainedSaveAnchor?.attributes.href === anchor.attributes.href) {
+        for (const key of ["attributes", "properties", "propertyParts", "handlers", "full"]) retainedSaveAnchor[key] = anchor[key];
+        retainedSaveAnchor.isConnected = true; anchor.isConnected = false; anchor = retainedSaveAnchor;
+        f.renderer.nodes[saveIndex] = anchor;
+      } else retainedSaveAnchor = anchor;
+      Object.defineProperties(anchor, {
+        href: { configurable: true, get: () => anchor.attributes.href },
+        download: { configurable: true, get: () => anchor.attributes.download },
+      });
+      const url = anchor.href, blob = resolveObjectURL(url);
+      assert.ok(blob instanceof Blob, "the rendered native Save anchor retains the actual converter's Blob");
+      if (!preparedFiles.some(file => file.url === url)) preparedFiles.push({ url, filename: anchor.download, blob });
+    } else retainedSaveAnchor = undefined;
     const index = f.renderer.nodes.findIndex((node, index) => index >= start && node.tag === "button" && node.classList.contains("presentation-deck-export"));
     if (index < 0) return;
     const next = f.renderer.nodes[index];
@@ -541,8 +555,7 @@ function exportCompletionPorts(t, context) {
   t.after(() => {
     for (const call of receipts) call.resolve?.(false);
     for (const held of heldUpdates) held.resolve();
-    for (const release of releases) release();
-    for (const url of downloadUrls) URL.revokeObjectURL(url);
+    for (const url of createdUrls) revokeObjectURL(url);
     f.renderer.collect = collect; f.tick = tick; f.draw = draw;
     owner.activeElement = null;
     for (const [object, keys] of originals) for (const [key, descriptor] of keys) {
@@ -564,18 +577,33 @@ function exportCompletionPorts(t, context) {
     trigger().focus({ preventScroll: true });
     action.click(); f.draw();
   };
-  return { owner, original, outside, body, downloads, focusCalls, receipts, begin, waitFor,
+  const saveAnchor = () => f.renderer.ownNodes(deck, "a").find(node => node.classList.contains("presentation-deck-export-save"));
+  const requestSave = (anchor = saveAnchor(), extra = {}) => {
+    assert.ok(anchor, "a native Save anchor is required");
+    const event = { type: "click", target: anchor, currentTarget: anchor, button: 0, metaKey: false, ctrlKey: false,
+      shiftKey: false, altKey: false, defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...extra };
+    const result = anchor.handlers[event.type].call(deck, event);
+    assert.equal(result instanceof Promise, false, "Save must preserve a synchronous native gesture without another authorization round trip");
+    if (!event.defaultPrevented) {
+      const blob = resolveObjectURL(anchor.href);
+      assert.ok(blob instanceof Blob, "an accepted native Save request resolves its still-live prepared URL");
+      saveRequests.push({ url: anchor.href, filename: anchor.download, blob });
+    }
+    return event;
+  };
+  return { owner, original, outside, body, preparedFiles, saveRequests, createdUrls, revokedUrls, saveAnchor, requestSave, focusCalls, receipts, begin, waitFor,
     move: () => focus(outside),
     returnToBody: () => focus(body),
     interact: type => emit(type, body),
     leaveWindow: () => { windowFocused = false; emit("blur", view); windowFocused = true; },
     hideDocument: () => { hidden = true; emit("visibilitychange", owner); hidden = false; },
     replace: () => { replaceTrigger = true; f.draw(); },
-    failDownload: () => { failDownload = true; },
+    failBlobCreation: () => { failBlobCreation = true; },
     rejectEnabledUpdate: () => { rejectUpdate = true; },
     throwReturningFocus: () => { throwFocus = true; },
     failPreparingUpdate: () => { preparingUpdateFailure = true; },
-    failEnabledRequestUpdate: () => { enabledUpdateFailureAt = downloads.length + 1; },
+    failEnabledRequestUpdate: () => { enabledUpdateFailureAt = createdUrls.length + 1; },
     deferUpdate: () => {
       let entered, resolve, enteredAlready = false;
       const reached = new Promise(done => { entered = () => { enteredAlready = true; done(); }; });
@@ -622,20 +650,20 @@ for (const mode of ["current", "moved", "moved-back", "pointer", "key", "window"
     await new Promise(setImmediate);
     const returned = p.focusCalls.filter(call => call.node === p.original).length - callsBefore;
     if (mode === "current") {
-      assert.equal(p.owner.activeElement === p.original, true, "successful delivery restores the original enabled Export button");
+      assert.equal(p.owner.activeElement === p.original, true, "successful preparation restores the original enabled Export button");
       assert.equal(p.original.isConnected, true); assert.equal(p.original.disabled, false);
       assert.equal(returned, 1, "only the exact completed operation returns focus once");
     } else {
       assert.equal(returned, 0, "an invalidated or unsuccessful operation cannot restore the old trigger");
       if (mode === "moved") assert.equal(p.owner.activeElement === p.outside, true, "new user focus remains untouched");
     }
-    if (!["authorization", "disconnected", "refused"].includes(mode)) {
-      assert.equal(p.downloads.length, 1, "these focus-only invalidations do not rewrite existing delivery semantics");
-      assert.equal(p.downloads[0].blob.type, POWERPOINT_DOCUMENT_MIME);
-      const bytes = new Uint8Array(await p.downloads[0].blob.arrayBuffer());
-      assert.deepEqual([...bytes.slice(0, 4)], [80, 75, 3, 4], "the downloaded payload is the real Office ZIP");
-    } else assert.equal(p.downloads.length, 0);
-    const completedStatus = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "completed");
+    if (!["authorization", "source", "document", "artifact", "route", "disconnected", "refused"].includes(mode)) {
+      assert.equal(p.preparedFiles.length, 1, "focus-only invalidations preserve the authorized prepared bytes");
+      assert.equal(p.preparedFiles[0].blob.type, POWERPOINT_DOCUMENT_MIME);
+      const bytes = new Uint8Array(await p.preparedFiles[0].blob.arrayBuffer());
+      assert.deepEqual([...bytes.slice(0, 4)], [80, 75, 3, 4], "the prepared payload is the real Office ZIP");
+    } else assert.equal(p.preparedFiles.length, 0);
+    const completedStatus = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "prepared");
     const completionRetired = ["authorization", "source", "document", "artifact", "route", "disconnected", "refused"].includes(mode);
     assert.equal(Boolean(completedStatus), !completionRetired, "only the current authorized deck can retain the success announcement");
     assert.equal(f.trace.some(value => value.startsWith("toast:")), false, "neither success nor refused/stale completion creates a global toast");
@@ -655,7 +683,7 @@ test("native export completion powerpoint: a newer export owns its own enabled u
   p.receipts[0].resolve(true);
   await p.waitFor(deferred.isReached, "the finishing update must expose its real completion barrier");
   assert.equal(trigger().disabled, false, "the old enabled DOM has committed while its updateComplete is pending");
-  assert.equal(p.downloads.length, 1);
+  assert.equal(p.preparedFiles.length, 1);
   p.begin("powerpoint");
   const callsBefore = p.focusCalls.filter(call => call.node === p.original).length;
   assert.equal(trigger().disabled, true);
@@ -666,7 +694,7 @@ test("native export completion powerpoint: a newer export owns its own enabled u
   p.receipts[1].resolve(true);
   await p.waitFor(() => !trigger().disabled, "the newer operation completes its own enabled update");
   await new Promise(setImmediate);
-  assert.equal(p.downloads.length, 2);
+  assert.equal(p.preparedFiles.length, 2);
   assert.equal(p.owner.activeElement === p.original, true);
   assert.equal(p.focusCalls.filter(call => call.node === p.original).length, callsBefore + 1, "only the newer current operation returns focus");
   assert.equal(f.state.requests.length, 0);
@@ -686,20 +714,20 @@ for (const format of ["pdf", "powerpoint"]) test("native export completion " + f
   await new Promise(setImmediate);
   assert.equal(p.owner.activeElement === p.original, true, "the explicit removal of focused Cancel preserves its owned return");
   assert.equal(p.focusCalls.filter(call => call.node === p.original).length, callsBefore + 1);
-  assert.equal(p.receipts.length, 0); assert.equal(p.downloads.length, 0); assert.equal(f.state.requests.length, 0);
+  assert.equal(p.receipts.length, 0); assert.equal(p.preparedFiles.length, 0); assert.equal(f.state.requests.length, 0);
 });
 
-test("native export completion powerpoint: a real download-dispatch error keeps recovery explicit", async t => {
+test("native export completion powerpoint: a Blob-URL preparation error keeps recovery explicit", async t => {
   const context = await nativeExportFixture(t, "en"), { f, deck, trigger } = context;
   const p = exportCompletionPorts(t, context), errors = [];
   t.mock.method(console, "error", (...args) => errors.push(args));
   p.begin("powerpoint");
   await p.waitFor(() => p.receipts.length === 1, "the real converter reaches authorization before the native failure");
   const callsBefore = p.focusCalls.filter(call => call.node === p.original).length;
-  p.failDownload(); p.receipts[0].resolve(true);
+  p.failBlobCreation(); p.receipts[0].resolve(true);
   await p.waitFor(() => !trigger().disabled, "the failed attempt releases its busy state");
   await new Promise(setImmediate);
-  assert.equal(p.downloads.length, 0); assert.equal(errors.length, 1);
+  assert.equal(p.preparedFiles.length, 0); assert.equal(errors.length, 1);
   assert.equal(p.focusCalls.filter(call => call.node === p.original).length, callsBefore, "failure does not masquerade as a successful automatic focus return");
   assert.ok(f.renderer.ownNodes(deck, "section").some(node => node.attributes["data-export-stage"] === "failed"));
   assert.ok(f.renderer.ownNodes(deck, "button").some(node => node.classList.contains("presentation-deck-export-retry")), "the unchanged explicit Retry remains available");
@@ -716,14 +744,14 @@ for (const failure of ["requestUpdate", "update", "focus"]) test("native export 
   p.receipts[0].resolve(true);
   await p.waitFor(() => !trigger().disabled, "failed return still releases the completed operation's busy state");
   await new Promise(setImmediate);
-  assert.equal(p.downloads.length, 1, "a failed focus return does not erase or repeat successful delivery");
+  assert.equal(p.preparedFiles.length, 1, "a failed focus return does not erase or repeat successful preparation");
   assert.equal(p.owner.activeElement === p.body, true);
   p.begin("powerpoint");
   await p.waitFor(() => p.receipts.length === 2, "explicit retry starts another actual conversion after failed return cleanup");
   p.receipts[1].resolve(true);
   await p.waitFor(() => !trigger().disabled, "the explicit retry completes its own enabled update");
   await new Promise(setImmediate);
-  assert.equal(p.downloads.length, 2);
+  assert.equal(p.preparedFiles.length, 2);
   assert.equal(p.owner.activeElement === p.original, true, "no retired controller or lease strands the later explicit export");
 });
 
@@ -735,7 +763,7 @@ for (const format of ["pdf", "powerpoint"]) test("native export completion " + f
   p.failPreparingUpdate(); p.begin(format);
   await p.waitFor(() => !trigger().disabled, "preparing failure must settle before any converter or receipt");
   await new Promise(setImmediate);
-  assert.equal(errors.length, 1); assert.equal(p.receipts.length, 0); assert.equal(p.downloads.length, 0);
+  assert.equal(errors.length, 1); assert.equal(p.receipts.length, 0); assert.equal(p.preparedFiles.length, 0);
   assert.ok(f.renderer.ownNodes(deck, "section").some(node => node.attributes["data-export-stage"] === "failed"));
   p.move();
   const callsBefore = p.focusCalls.filter(call => call.node === p.original).length;
@@ -747,7 +775,7 @@ for (const format of ["pdf", "powerpoint"]) test("native export completion " + f
   p.receipts[0].resolve(true);
   await p.waitFor(() => !trigger().disabled, "the later explicit operation can settle normally");
   await new Promise(setImmediate);
-  assert.equal(p.downloads.length, 1); assert.equal(p.owner.activeElement === p.original, true);
+  assert.equal(p.preparedFiles.length, 1); assert.equal(p.owner.activeElement === p.original, true);
 });
 
 
@@ -773,15 +801,14 @@ for (const format of ["pdf", "powerpoint"]) test("native export completion " + f
   assert.equal(trigger() === p.original, true); assert.equal(p.original.isConnected, true);
   assert.equal(p.owner.activeElement === p.original, true, "focused Cancel owns a fresh return after the earlier window departure");
   assert.equal(p.focusCalls.filter(call => call.node === p.original).length, callsBefore + 1);
-  assert.equal(p.receipts.length, 0); assert.equal(p.downloads.length, 0); assert.equal(f.state.requests.length, 0);
+  assert.equal(p.receipts.length, 0); assert.equal(p.preparedFiles.length, 0); assert.equal(f.state.requests.length, 0);
   assert.deepEqual(f.state.events, originalEvents); assert.deepEqual(f.state.content, originalContent);
 });
 
 const finiteCompletionItems = [0, 1].map(index => ({ id: "finite-completion-slide-" + index,
   title: "Retained completion slide " + (index + 1), body: "Exact retained audience evidence " + (index + 1),
   notes: "Private completion fixture notes", image_prompt: "", context_group_ids: [] }));
-const finiteCompletionCopy = { en: "2-page PDF downloaded.", fr: "PDF de 2 pages téléchargé.",
-  ar: "تم تنزيل ملف PDF المكوّن من " + new Intl.NumberFormat("ar").format(2) + " صفحات.", ja: "2ページのPDFをダウンロードしました。" };
+
 
 async function finitePdfCompletionContext(t) {
   const context = await nativeExportFixture(t, "en", { factory: finitePdfFixture, items: structuredClone(finiteCompletionItems) });
@@ -806,7 +833,7 @@ async function finitePdfCompletionContext(t) {
     assert.equal(call.settled, true);
     return call;
   };
-  const status = () => f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "completed");
+  const status = () => f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "prepared");
   const assertComplete = () => {
     const row = status(); assert.ok(row, "the current deck owns the completed status inside its viewer");
     assert.equal(row.attributes.role, "status"); assert.equal(row.attributes["aria-live"], "polite"); assert.equal(row.attributes["aria-atomic"], "true");
@@ -816,7 +843,7 @@ async function finitePdfCompletionContext(t) {
     assert.equal(labels.length, 1);
     const start = deck.markup.indexOf(labels[0].full) + labels[0].full.length;
     const label = deck.markup.slice(start, deck.markup.indexOf("</span>", start));
-    assert.equal(label, finiteCompletionCopy[f.i18n.locale]);
+    assert.equal(label, f.i18n.t("presentation.export.pdfPrepared", "", { count: f.i18n.number(2) }));
     assert.equal(f.renderer.ownNodes(deck, "progress").length, 0, "completion is not ongoing work");
     assert.equal(f.renderer.ownNodes(deck, "span").some(node => node.classList.contains("presentation-deck-export-status-count")), false);
     assert.equal(f.renderer.ownNodes(deck, "button").some(node => node.classList.contains("presentation-deck-export-cancel") || node.classList.contains("presentation-deck-export-retry")), false);
@@ -834,8 +861,8 @@ async function finitePdfCompletionContext(t) {
 test("finite PDF completion UI: localized confirmation survives normal slide navigation and locale changes", async t => {
   const c = await finitePdfCompletionContext(t), { f, deck, p } = c;
   await c.complete();
-  assert.equal(p.downloads.length, 1);
-  assert.equal(await p.downloads[0].blob.text(), "FINITE PDF COMPLETION UI STIMULUS", "this control explicitly does not supply captured PDF bytes");
+  assert.equal(p.preparedFiles.length, 1);
+  assert.equal(await p.preparedFiles[0].blob.text(), "FINITE PDF COMPLETION UI STIMULUS", "this control explicitly does not supply captured PDF bytes");
   assert.equal(p.receipts.length, 1); assert.equal(p.receipts[0].receipt.payload.page_count, 2);
   assert.equal(p.owner.activeElement === p.original, true, "the existing successful focus return remains owned by Export");
   const labels = [c.assertComplete()];
@@ -847,7 +874,7 @@ test("finite PDF completion UI: localized confirmation survives normal slide nav
   assert.ok(reading); reading.click(); f.draw(); c.assertComplete();
   for (const locale of ["fr", "ar", "ja"]) { f.setCompletionLocale(locale); f.draw(); labels.push(c.assertComplete()); }
   assert.equal(new Set(labels).size, 4, "the retained numeric outcome is translated afresh for each current locale");
-  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+  assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
   assert.deepEqual(f.state.events, c.originalEvents); assert.deepEqual(f.state.content, c.originalContent);
 });
 
@@ -855,6 +882,7 @@ for (const mode of ["source-aba", "authorization-aba", "route-aba", "content-aba
   test("finite PDF completion UI: " + mode + " retires the completed owner without resurrection", async t => {
     const c = await finitePdfCompletionContext(t), { f, deck, p } = c;
     await c.complete(); c.assertComplete();
+    const preparedUrl = p.saveAnchor().href;
     if (mode === "source-aba") { f.sourceOwnershipPort.retire(); f.store.notify(); f.sourceOwnershipPort.restore(); f.store.notify(); }
     if (mode === "authorization-aba") { const original = f.state.authorization; f.state.authorization = "retired-completion-owner"; f.store.notify(); f.state.authorization = original; f.store.notify(); }
     if (mode === "route-aba") { const original = f.store.route; f.store.route = { get: () => "/library?document=A" }; f.store.notify(); f.store.route = original; f.store.notify(); }
@@ -868,13 +896,16 @@ for (const mode of ["source-aba", "authorization-aba", "route-aba", "content-aba
       assert.ok(close); close.click();
     }
     f.draw(); c.assertRetired(); f.store.notify(); f.draw(); c.assertRetired();
+    assert.equal(resolveObjectURL(preparedUrl), undefined, "retired ownership revokes the prepared Blob URL");
+    assert.equal(p.revokedUrls.filter(url => url === preparedUrl).length, 1, "retirement cleanup is idempotent");
     if (mode === "disconnected") {
       assert.equal(deck.isConnected, false);
       assert.equal(await f.host.openArtifactById("artifact-A"), true); await f.flush();
       const reopened = f.renderer.query(f.host, "forma-presentation-deck")[0]; assert.ok(reopened);
-      assert.equal(f.renderer.ownNodes(reopened, "section").some(node => node.attributes["data-export-stage"] === "completed"), false);
+      assert.equal(f.renderer.ownNodes(reopened, "section").some(node => node.attributes["data-export-stage"] === "prepared"), false);
     }
-    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(p.saveRequests.length, 0, "preparation never synthesizes a Save request");
     assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
   });
 }
@@ -887,7 +918,8 @@ for (const mode of ["source-generation", "source-content-aba"]) test("finite PDF
   else { const original = f.state.content["content-A"]; f.state.content["content-A"] = original + " "; f.store.notify(); f.state.content["content-A"] = original; f.store.notify(); }
   assert.equal(f.exportSubscriptionCount(), 0);
   p.receipts[0].resolve(true); await c.settle(); c.assertRetired();
-  assert.equal(p.downloads.length, 1, "notice retirement does not rewrite the existing authorized delivery semantics");
+  assert.equal(p.preparedFiles.length, 0, "retired ownership cannot expose a late prepared Save link");
+  assert.equal(p.createdUrls.length, 0, "late preparation does not allocate a stale export URL");
   assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
 });
 
@@ -900,7 +932,7 @@ test("finite PDF completion UI: a new export replaces completion and focused Can
   await c.settle(); c.assertRetired();
   assert.equal(call.options.signal.aborted, true); assert.equal(call.settled, true);
   assert.equal(p.owner.activeElement === p.original, true);
-  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+  assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
 });
 
 test("finite PDF completion UI: refused release cannot publish a completed status", async t => {
@@ -908,7 +940,7 @@ test("finite PDF completion UI: refused release cannot publish a completed statu
   const call = await c.begin(); call.complete();
   await p.waitFor(() => p.receipts.length === 1, "finite PDF conversion reaches release authorization");
   p.receipts[0].resolve(false); await c.settle(); c.assertRetired();
-  assert.equal(p.downloads.length, 0); assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+  assert.equal(p.preparedFiles.length, 0); assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
 });
 
 test("finite PDF completion UI: converter failure keeps the existing persistent recovery alert", async t => {
@@ -919,7 +951,7 @@ test("finite PDF completion UI: converter failure keeps the existing persistent 
   const failed = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "failed");
   assert.ok(failed); assert.equal(failed.attributes.role, "alert"); assert.equal(failed.attributes["aria-live"], "assertive");
   assert.equal(f.renderer.ownNodes(deck, "button").filter(node => node.classList.contains("presentation-deck-export-retry")).length, 1);
-  assert.equal(errors.length, 1); assert.equal(p.downloads.length, 0); assert.equal(p.receipts.length, 0);
+  assert.equal(errors.length, 1); assert.equal(p.preparedFiles.length, 0); assert.equal(p.receipts.length, 0);
   assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
 });
 
@@ -976,7 +1008,7 @@ test("finite PDF reading posture: a tall progress row can retire into a fitting 
   // though its delivered content-box height remains below 315.
   posture.deliver(768, 288, { paddingLeft: "16px", paddingRight: "16px", paddingTop: "16px", paddingBottom: "16px" });
   posture.flush(); posture.assertReading(false); c.assertComplete();
-  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1);
+  assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1);
 });
 
 test("finite PDF reading posture: genuinely narrow and short padded slots retain automatic reading", async t => {
@@ -1027,7 +1059,7 @@ test("finite PDF reading posture: disconnect retires the actual observer and que
 
 
 // Exact component/native-port completion controls. The actual Office converter
-// creates the delivered Blob; these checks do not claim browser paint or Office
+// creates the prepared Blob; these checks do not claim browser paint or Office
 // application rendering. The four locale cases reuse the existing finite PDF
 // fixture only for its locale callback; its Office converter remains real and no
 // PDF conversion is requested by those cases. The existing focus, cancellation and failure cases above
@@ -1065,7 +1097,7 @@ function completedPptxParts(bytes) {
   return entries;
 }
 
-const completedPptxStatus = ({ f, deck }) => f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "completed");
+const completedPptxStatus = ({ f, deck }) => f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "prepared");
 const completedPptxLabel = ({ f, deck }) => {
   const labels = f.renderer.ownNodes(deck, "span").filter(node => node.classList.contains("presentation-deck-export-status-label"));
   assert.equal(labels.length, 1);
@@ -1090,10 +1122,12 @@ for (const format of ["powerpoint", "powerpoint-presenter"]) for (const total of
     const context = await nativeExportFixture(t, "en", { factory: finitePdfFixture, items }), { f, deck, trigger } = context;
     const p = exportCompletionPorts(t, context);
     await completePptx(context, p, format);
-    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1);
+    assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1);
     assert.equal(p.receipts[0].receipt.payload.presenter_notes_included, format === "powerpoint-presenter");
+    if (format === "powerpoint-presenter") assert.match(p.preparedFiles[0].filename, /-presenter\.pptx$/u, "private copies remain distinguishable after saving");
+    else assert.doesNotMatch(p.preparedFiles[0].filename, /-presenter\.pptx$/u, "audience filenames do not masquerade as private presenter copies");
     assert.equal(p.owner.activeElement === p.original, true, "the same successful Export focus return is retained");
-    const parts = completedPptxParts(new Uint8Array(await p.downloads[0].blob.arrayBuffer()));
+    const parts = completedPptxParts(new Uint8Array(await p.preparedFiles[0].blob.arrayBuffer()));
     const notes = parts.get("ppt/notesSlides/notesSlide1.xml");
     assert.equal(typeof notes, "string", "the compatible notes part exists for both privacy variants");
     const noteText = [...notes.matchAll(/<a:t(?:\s[^>]*)?>([^<]*)<\/a:t>/gu)].map(([, value]) => value.trim()).filter(Boolean);
@@ -1106,8 +1140,7 @@ for (const format of ["powerpoint", "powerpoint-presenter"]) for (const total of
       assert.equal(status.attributes.role, "status"); assert.equal(status.attributes["aria-live"], "polite"); assert.equal(status.attributes["aria-atomic"], "true");
       assert.equal(trigger().attributes["aria-describedby"], status.attributes.id);
       assert.equal(trigger().disabled, false); assert.equal(String(trigger().attributes["aria-busy"]), "false");
-      const expected = format === "powerpoint" ? f.i18n.t("presentation.export.audienceDownloaded", "", { count: f.i18n.number(total) })
-        : f.i18n.system(total === 1 ? "{count} editable PowerPoint slide and speaker notes downloaded." : "{count} editable PowerPoint slides and speaker notes downloaded.", { count: f.i18n.number(total) });
+      const expected = f.i18n.t(format === "powerpoint" ? "presentation.export.audiencePrepared" : "presentation.export.presenterPrepared", "", { count: f.i18n.number(total) });
       const label = completedPptxLabel(context); assert.equal(label, expected); assert.doesNotMatch(label, /PDF/u); labels.push(label);
       assert.equal(f.renderer.ownNodes(deck, "progress").length, 0);
       assert.equal(f.renderer.ownNodes(deck, "span").some(node => node.classList.contains("presentation-deck-export-status-count")), false);
@@ -1116,7 +1149,7 @@ for (const format of ["powerpoint", "powerpoint-presenter"]) for (const total of
       assert.equal(f.exportSubscriptionCount(), 1);
     }
     assert.equal(new Set(labels).size, 4, "a retained completion is translated anew when the interface locale changes");
-    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
   });
 }
 
@@ -1125,6 +1158,7 @@ for (const mode of ["source-aba", "authorization-aba", "route-aba", "content-aba
     const context = await nativeExportFixture(t, "en"), { f, deck } = context;
     const p = exportCompletionPorts(t, context);
     await completePptx(context, p);
+    const preparedUrl = p.saveAnchor().href;
     assert.equal(f.exportSubscriptionCount(), 1);
     if (mode === "source-aba") { f.sourceOwnershipPort.retire(); f.store.notify(); f.sourceOwnershipPort.restore(); f.store.notify(); }
     if (mode === "authorization-aba") { const original = f.state.authorization; f.state.authorization = "retired-pptx-completion"; f.store.notify(); f.state.authorization = original; f.store.notify(); }
@@ -1134,8 +1168,11 @@ for (const mode of ["source-aba", "authorization-aba", "route-aba", "content-aba
       type: "DocumentArtifactEdited", payload: { artifact_id: "artifact-A", document_id: "A", content_ref: "content-A", revision: 1 } }); f.store.notify(); }
     if (mode === "release-withdrawn") { deck.releaseAllowed = false; f.store.notify(); deck.releaseAllowed = true; f.store.notify(); }
     f.draw(); assert.equal(completedPptxStatus(context), undefined); assert.equal(f.exportSubscriptionCount(), 0);
+    assert.equal(resolveObjectURL(preparedUrl), undefined, "retired ownership revokes the prepared Blob URL");
+    assert.equal(p.revokedUrls.filter(url => url === preparedUrl).length, 1, "retirement cleanup is idempotent");
     f.store.notify(); f.draw(); assert.equal(completedPptxStatus(context), undefined, "later notifications cannot revive the old owner");
-    assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+    assert.equal(p.saveRequests.length, 0, "preparation never synthesizes a Save request");
     assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
   });
 }
@@ -1153,6 +1190,150 @@ test("PowerPoint completion UI: a new export replaces success and focused Cancel
   await new Promise(setImmediate); f.draw();
   assert.equal(completedPptxStatus(context), undefined); assert.equal(f.exportSubscriptionCount(), 0);
   assert.equal(p.owner.activeElement === p.original, true);
-  assert.equal(p.downloads.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
+  assert.equal(p.preparedFiles.length, 1); assert.equal(p.receipts.length, 1); assert.equal(f.state.requests.length, 0);
   assert.equal(f.trace.some(value => value.startsWith("toast:")), false);
+});
+
+
+for (const format of ["pdf", "powerpoint", "powerpoint-presenter"]) test("prepared native save: " + format + " retries only the same authorized bytes", async t => {
+  const context = await nativeExportFixture(t, "en", { factory: finitePdfFixture }), { f, deck } = context;
+  const p = exportCompletionPorts(t, context), originalEvents = structuredClone(f.state.events), originalContent = structuredClone(f.state.content);
+  const converterBefore = finitePdfCalls.length;
+  if (format === "pdf") {
+    p.begin(format);
+    await p.waitFor(() => finitePdfCalls.length === converterBefore + 1, "PDF preparation reaches the declared finite converter");
+    finitePdfCalls[converterBefore].complete();
+    await p.waitFor(() => p.receipts.length === 1, "PDF preparation authorizes its one release");
+    p.receipts[0].resolve(true);
+    await p.waitFor(() => !context.trigger().disabled, "PDF preparation releases the busy control");
+    await new Promise(setImmediate); f.draw();
+  } else await completePptx(context, p, format);
+  assert.equal(p.createdUrls.length, 1); assert.equal(p.preparedFiles.length, 1); assert.equal(p.saveRequests.length, 0);
+  const anchor = p.saveAnchor(), file = p.preparedFiles[0], beforeFocus = p.focusCalls.length;
+  assert.equal(anchor.href, file.url); assert.equal(anchor.download, file.filename);
+  assert.equal(p.requestSave(anchor).defaultPrevented, false);
+  f.draw();
+  assert.equal(p.saveAnchor(), anchor, "the native Save link retains its identity during the same prepared outcome");
+  assert.equal(p.requestSave(anchor).defaultPrevented, false);
+  f.draw();
+  const status = f.renderer.ownNodes(deck, "section").find(node => node.attributes["data-export-stage"] === "save-requested");
+  assert.ok(status, "native default dispatch is only a Save request, not confirmed delivery");
+  assert.match(deck.markup, /Save requested/u); assert.doesNotMatch(deck.markup, /downloaded\./iu);
+  assert.equal(p.saveRequests.length, 2); assert.equal(p.createdUrls.length, 1); assert.equal(p.revokedUrls.length, 0);
+  assert.equal(p.receipts.length, 1, "repeated Save never reauthorizes or adds a receipt");
+  assert.equal(finitePdfCalls.length, converterBefore + (format === "pdf" ? 1 : 0), "Save never repeats PDF conversion");
+  assert.equal(p.focusCalls.length, beforeFocus, "Save does not force focus back to Export or away from its link");
+  for (const request of p.saveRequests) { assert.equal(request.url, file.url); assert.deepEqual(new Uint8Array(await request.blob.arrayBuffer()), new Uint8Array(await file.blob.arrayBuffer())); }
+  assert.equal(f.state.requests.length, 0); assert.deepEqual(f.state.events, originalEvents); assert.deepEqual(f.state.content, originalContent);
+});
+
+for (const mode of ["authorization", "source", "route", "content", "items", "settings", "document", "artifact", "release", "role", "capabilities", "policy", "impersonation", "project-context"]) {
+  test("prepared native save: " + mode + " is rechecked synchronously even before a render or notification", async t => {
+    const context = await nativeExportFixture(t, "en"), { f, deck } = context;
+    const p = exportCompletionPorts(t, context); await completePptx(context, p, "powerpoint-presenter");
+    const anchor = p.saveAnchor(), url = anchor.href, originalSession = f.store.session.get();
+    if (mode === "authorization") f.state.authorization = "withdrawn-before-save";
+    if (mode === "source") f.sourceOwnershipPort.retire();
+    if (mode === "route") f.store.route = { get: () => "/library?document=A" };
+    if (mode === "content") f.state.content["content-A"] += " ";
+    if (mode === "items") deck.items[0].notes += " Changed private note";
+    if (mode === "settings") {
+      const projection = f.store.projection.get;
+      f.store.projection.get = () => { const value = projection(); return { ...value,
+        libraryArtifacts: value.libraryArtifacts.map(artifact => artifact.id === "artifact-A"
+          ? { ...artifact, settings: { ...artifact.settings, independent_review_required: true } } : artifact) }; };
+    }
+    if (mode === "document") deck.documentId = "B";
+    if (mode === "artifact") deck.preferenceKey = "B";
+    if (mode === "release") deck.releaseAllowed = false;
+    if (mode === "role") f.store.session.get = () => ({ ...originalSession, user: { ...originalSession.user, role: "viewer" } });
+    if (mode === "capabilities") f.store.session.get = () => ({ ...originalSession, capabilities: [] });
+    if (mode === "policy") f.store.session.get = () => ({ ...originalSession, policy: { allowExport: false } });
+    if (mode === "impersonation") f.store.session.get = () => ({ ...originalSession, impersonation: { userId: "other" } });
+    if (mode === "project-context") f.store.session.get = () => ({ ...originalSession, projectContext: { projectId: "different-project", permissions: [] } });
+    assert.equal(p.requestSave(anchor).defaultPrevented, true, "a stale native gesture cannot use retained authorized bytes");
+    assert.equal(resolveObjectURL(url), undefined, "the invalidated private Blob URL is synchronously revoked");
+    f.draw();
+    assert.equal(p.saveAnchor(), undefined); assert.equal(f.exportSubscriptionCount(), 0);
+    assert.equal(p.saveRequests.length, 0); assert.equal(p.receipts.length, 1);
+    assert.equal(p.requestSave(anchor).defaultPrevented, true, "an old detached handler cannot resurrect the retired save");
+    assert.equal(p.revokedUrls.filter(value => value === url).length, 1);
+  });
+}
+
+test("prepared native save: a replaced private export cannot authorize its stale link", async t => {
+  const context = await nativeExportFixture(t, "en"), { f } = context;
+  const p = exportCompletionPorts(t, context); await completePptx(context, p, "powerpoint-presenter");
+  const privateAnchor = p.saveAnchor(), privateUrl = privateAnchor.href;
+  p.begin("powerpoint");
+  assert.equal(resolveObjectURL(privateUrl), undefined, "starting another variant immediately retires the private buffer");
+  assert.equal(p.requestSave(privateAnchor).defaultPrevented, true);
+  await p.waitFor(() => p.receipts.length === 2, "the explicit audience preparation owns its separate receipt");
+  p.receipts[1].resolve(true); await p.waitFor(() => !context.trigger().disabled, "the audience preparation finishes");
+  await new Promise(setImmediate); f.draw();
+  const audienceAnchor = p.saveAnchor(); assert.ok(audienceAnchor); assert.notEqual(audienceAnchor.href, privateUrl);
+  assert.equal(p.requestSave(privateAnchor).defaultPrevented, true, "old closure cannot clear or dispatch the replacement");
+  assert.equal(p.saveAnchor(), audienceAnchor); assert.ok(resolveObjectURL(audienceAnchor.href));
+  assert.equal(p.requestSave(audienceAnchor).defaultPrevented, false); assert.equal(p.receipts.length, 2);
+  const parts = completedPptxParts(new Uint8Array(await p.saveRequests[0].blob.arrayBuffer()));
+  assert.doesNotMatch(parts.get("ppt/notesSlides/notesSlide1.xml"), /Private presenter notes/u);
+});
+
+
+test("prepared native save: non-primary or modified activation cannot bypass the guarded download gesture", async t => {
+  const context = await nativeExportFixture(t, "en"), { f } = context;
+  const p = exportCompletionPorts(t, context); await completePptx(context, p);
+  const anchor = p.saveAnchor(), url = anchor.href;
+  for (const event of [{ button: 1 }, { type: "auxclick", button: 1 }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }]) {
+    assert.equal(p.requestSave(anchor, event).defaultPrevented, true);
+    assert.deepEqual(new Uint8Array(await resolveObjectURL(url).arrayBuffer()), new Uint8Array(await p.preparedFiles[0].blob.arrayBuffer()), "blocked alternate activation does not erase an otherwise current preparation");
+  }
+  f.draw(); assert.ok(completedPptxStatus(context));
+  assert.equal(p.saveRequests.length, 0); assert.equal(p.receipts.length, 1);
+  assert.equal(p.requestSave(p.saveAnchor()).defaultPrevented, false, "normal pointer or keyboard click retains native save semantics");
+});
+
+test("prepared native save: project-context expiry is checked without a new render or notification", async t => {
+  const context = await nativeExportFixture(t, "en"), { f } = context;
+  const p = exportCompletionPorts(t, context), session = f.store.session.get();
+  let now = Date.now(); t.mock.method(Date, "now", () => now);
+  const expiresAt = new Date(now + 60_000).toISOString();
+  f.store.session.get = () => ({ ...session, projectContext: { projectId: "p", permissions: ["project.read", "project.author", "project.output.request"], expiresAt } });
+  await completePptx(context, p, "powerpoint-presenter");
+  const anchor = p.saveAnchor(), url = anchor.href;
+  now += 60_001;
+  assert.equal(p.requestSave(anchor).defaultPrevented, true);
+  assert.equal(resolveObjectURL(url), undefined);
+  assert.equal(p.saveRequests.length, 0); assert.equal(p.receipts.length, 1);
+});
+
+
+for (const mode of ["role", "revision"]) test("pending PDF preparation: " + mode + " withdrawal prevents even an export receipt", async t => {
+  const c = await finitePdfCompletionContext(t), { f, p } = c;
+  const call = await c.begin();
+  if (mode === "role") {
+    const session = f.store.session.get();
+    f.store.session.get = () => ({ ...session, user: { ...session.user, role: "viewer" } });
+  } else f.state.events.push({ ...f.state.events.at(-1), eventId: "pending-pdf-revision", sequence: f.state.events.length + 1,
+    type: "DocumentArtifactEdited", payload: { artifact_id: "artifact-A", document_id: "A", content_ref: "content-A", revision: 1 } });
+  call.complete(); await c.settle(); c.assertRetired();
+  assert.equal(p.receipts.length, 0, "ownership is rechecked after asynchronous conversion and before export authorization");
+  assert.equal(p.createdUrls.length, 0); assert.equal(p.preparedFiles.length, 0); assert.equal(p.saveRequests.length, 0);
+});
+
+test("pending presenter authorization: changed generating-creator eligibility cannot prepare private bytes", async t => {
+  const context = await nativeExportFixture(t, "en"), { f } = context;
+  const p = exportCompletionPorts(t, context), session = f.store.session.get();
+  f.store.session.get = () => ({ ...session, projectContext: { projectId: "p", permissions: ["project.read", "project.author", "project.output.request"] } });
+  p.begin("powerpoint-presenter");
+  await p.waitFor(() => p.receipts.length === 1, "the original generating creator reaches export authorization");
+  const completion = f.state.events.find(event => event.type === "DocumentRenderCompleted");
+  const originalCreator = completion.payload.requested_by_user_id;
+  completion.payload.requested_by_user_id = "another-creator"; f.store.notify();
+  completion.payload.requested_by_user_id = originalCreator; f.store.notify();
+  p.receipts[0].resolve(true);
+  await p.waitFor(() => !context.trigger().disabled, "the retired authorization settles without a prepared output");
+  await new Promise(setImmediate); f.draw();
+  assert.equal(p.preparedFiles.length, 0); assert.equal(p.createdUrls.length, 0); assert.equal(p.saveRequests.length, 0);
+  assert.equal(f.exportSubscriptionCount(), 0); assert.equal(p.receipts.length, 1);
 });

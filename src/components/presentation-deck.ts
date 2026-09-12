@@ -18,7 +18,8 @@ import { captureOutputNavigationFocus } from "./output-navigation-focus";
 
 type DeckView="list"|"slideshow";
 type ExportCompletionOwner={current:()=>boolean;dispose:()=>void};
-type ExportFocusReturn={controller:AbortController;cancel:(event:MouseEvent)=>void;restore:(delivered:boolean)=>Promise<void>;dispose:()=>void};
+type PreparedPresentationExport={owner:ExportCompletionOwner;url:string;filename:string;format:"pdf"|"powerpoint"|"powerpoint-presenter"};
+type ExportFocusReturn={controller:AbortController;cancel:(event:MouseEvent)=>void;restore:(prepared:boolean)=>Promise<void>;dispose:()=>void};
 const DECK_VIEW_PREFERENCE="forma:slides:deck-view";
 const DECK_STYLE_PREFERENCE="forma:slides:style";
 const DECK_SLIDE_PREFERENCE="forma:slides:current";
@@ -40,10 +41,11 @@ type DeckEvidence={sources:Array<{label:string;kind:"Source decision"|"Combined 
 export class PresentationDeck extends FormaElement{
   static properties={items:{attribute:false},presentation:{attribute:false},preferenceKey:{type:String,attribute:"preference-key"},deckTitle:{type:String,attribute:"deck-title"},documentId:{type:String,attribute:"document-id"},sourceSurface:{type:String,attribute:"source-surface"},releaseAllowed:{type:Boolean,attribute:false}};
   items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";deckTitle="";documentId="";sourceSurface="presentation-deck";releaseAllowed=true;#view:DeckView=readDeckView();#index=0;#indexKey="";#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;#exporting=false;#exportMenuId=`presentation-deck-export-${crypto.randomUUID()}`;#exportMenuOpen=false;#fullscreenActive=false;#touchStart:{x:number;y:number}|null=null;#followSoundtrackCues=false;#compactToolsOpen=false;#automaticReading=false;#visualOverflow=false;#readingOverride:boolean|null=null;#readingObserver?:ResizeObserver;#readingViewport?:HTMLElement;
-  #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"downloading"|"completed"|"failed";completed:number;total:number;message?:string;format?:"powerpoint"|"powerpoint-presenter"}|null=null;
+  #exportProgress:{stage:"preparing"|"rendering"|"finalizing"|"prepared"|"save-requested"|"failed";completed:number;total:number;message?:string;format?:"pdf"|"powerpoint"|"powerpoint-presenter"}|null=null;
   #exportAbort?:AbortController;
   #exportFocus?:ExportFocusReturn;
   #exportCompletion?:ExportCompletionOwner;
+  #preparedExport:PreparedPresentationExport|null=null;
   #activeFitKey="";
   #popoverScope="";
   #stopExportPosition?:()=>void;
@@ -135,11 +137,11 @@ export class PresentationDeck extends FormaElement{
     const extension=audioFileExtension(String(asset.media_type??""))??"mp3",link=document.createElement("a");link.href=url;link.download=`${asset.label??artifact.title}.${extension}`;document.body.append(link);link.click();link.remove();
   }
   #syncIndex(total:number){const key=this.#styleKey();if(this.#indexKey!==key){this.#index=readDeckIndex(key);this.#indexKey=key;this.#visualOverflow=false;this.#activeFitKey="";}this.#index=Math.max(0,Math.min(this.#index,Math.max(0,total-1)));return this.#index;}
-  #toggleFooter(event:Event){this.#showFooterLabel=(event.target as HTMLInputElement).checked;writeSlideFooterLabelPreference(this.#showFooterLabel);this.requestUpdate();}
+  #toggleFooter(event:Event){const value=(event.target as HTMLInputElement).checked;if(value!==this.#showFooterLabel)this.#clearExportCompletion();this.#showFooterLabel=value;writeSlideFooterLabelPreference(this.#showFooterLabel);this.requestUpdate();}
   #styleKey(){return this.preferenceKey.trim()||"unscoped";}
   #selectedStyle(presentation:SlidePresentation){const key=this.#styleKey();return this.#styleOverride?.key===key?this.#styleOverride.value:readDeckStyle(key)??presentation.stylePreset;}
   get activePresentation(){const presentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery");return applySlideStylePreset(presentation,this.#selectedStyle(presentation));}
-  #setStyle(event:Event){const value=(event.target as HTMLSelectElement).value;if(!isSlideStylePresetId(value))return;const key=this.#styleKey();this.#styleOverride={key,value};this.#visualOverflow=false;writeDeckStyle(key,value);this.dispatchEvent(new CustomEvent("slide-style-changed",{bubbles:true,composed:true,detail:{preferenceKey:this.preferenceKey,stylePreset:value}}));this.requestUpdate();}
+  #setStyle(event:Event){const value=(event.target as HTMLSelectElement).value;if(!isSlideStylePresetId(value))return;if(value!==this.activePresentation.stylePreset)this.#clearExportCompletion();const key=this.#styleKey();this.#styleOverride={key,value};this.#visualOverflow=false;writeDeckStyle(key,value);this.dispatchEvent(new CustomEvent("slide-style-changed",{bubbles:true,composed:true,detail:{preferenceKey:this.preferenceKey,stylePreset:value}}));this.requestUpdate();}
   #positionExportMenu(event:MouseEvent){const menu=this.querySelector<HTMLElement>(`#${this.#exportMenuId}`);if(menu)positionNativePopover(event.currentTarget as HTMLButtonElement,menu);}
   #toggleExportMenu(event:ToggleEvent){
     const panel=event.currentTarget as HTMLElement;
@@ -152,24 +154,41 @@ export class PresentationDeck extends FormaElement{
   #exportFromMenu(format:"pdf"|"powerpoint"|"powerpoint-presenter",items:DocumentArtifactDraftItem[],presentation:SlidePresentation){const menu=this.querySelector<HTMLElement>(`#${this.#exportMenuId}`);if(menu?.matches(":popover-open"))menu.hidePopover();this.querySelector<HTMLButtonElement>(".presentation-deck-export")?.focus({preventScroll:true});return format==="pdf"?this.#downloadPdf(items,presentation):format==="powerpoint-presenter"?this.#downloadPresenterPowerPoint(items,presentation):this.#downloadPowerPoint(items,presentation);}
   #clearExportCompletion(){
     this.#exportCompletion?.dispose();this.#exportCompletion=undefined;
-    if(this.#exportProgress?.stage==="completed")this.#exportProgress=null;
+    if(this.#preparedExport)URL.revokeObjectURL(this.#preparedExport.url);
+    this.#preparedExport=null;
+    if(this.#exportProgress?.stage==="prepared"||this.#exportProgress?.stage==="save-requested")this.#exportProgress=null;
   }
-  #captureExportCompletion(authorization:NonNullable<ReturnType<PresentationDeck["store"]["captureAuthorizationScope"]>>):ExportCompletionOwner{
+  #savePreparedExport(event:MouseEvent,prepared:PreparedPresentationExport){
+    // Default activation of this persistent native link owns the save gesture.
+    // It reuses authorized bytes without conversion, a new receipt, or a synthetic click.
+    if(event.type!=="click"||event.button!==0||event.altKey||event.ctrlKey||event.metaKey||event.shiftKey){event.preventDefault();return;}
+    if(this.#preparedExport!==prepared||this.#exportCompletion!==prepared.owner||this.#exporting||!prepared.owner.current()){
+      event.preventDefault();
+      if(this.#preparedExport===prepared)this.#clearExportCompletion();
+      this.requestUpdate();return;
+    }
+    if(this.#exportProgress)this.#exportProgress={...this.#exportProgress,stage:"save-requested"};
+    this.requestUpdate();
+  }
+  #captureExportCompletion(authorization:NonNullable<ReturnType<PresentationDeck["store"]["captureAuthorizationScope"]>>,includePresenterNotes=false):ExportCompletionOwner{
     const store=this.store,owner=this.ownerDocument,source=store.captureSourceOwnership();
     const route=store.route.get(),documentId=this.documentId,artifactId=this.preferenceKey,surface=this.sourceSurface;
     const snapshot=()=>{
       const projection=store.projection.get(),artifact=projection.libraryArtifacts.find(candidate=>candidate.id===artifactId);
-      const content=artifact?.contentRef?store.content.get()[artifact.contentRef]:null;
+      const content=artifact?.contentRef?store.content.get()[artifact.contentRef]:null,session=store.session.get();
       const revision=store.events.get().filter(event=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
-      return JSON.stringify([projection.documentId,artifact?.id,artifact?.documentId,artifact?.sourceEventId,artifact?.contentRef,artifact?.sequence,content,revision,this.items,this.presentation,this.activePresentation,this.#showFooterLabel,this.deckTitle]);
+      return JSON.stringify([projection.documentId,artifact?.id,artifact?.documentId,artifact?.sourceEventId,artifact?.contentRef,artifact?.sequence,artifact?.title,artifact?.settings,content,revision,this.items,this.presentation,this.activePresentation,this.#showFooterLabel,this.deckTitle,
+        session?.user.userId,session?.user.role,session?.capabilities,session?.policy,session?.projectContext,session?.impersonation]);
     };
     let original:string|undefined,retired=false;
     try{original=snapshot();}catch{retired=true;}
     const current=()=>{
       try{if(!retired&&this.isConnected&&this.ownerDocument===owner&&this.store===store&&this.releaseAllowed
         &&store.sourceOwnershipActive(source)&&store.authorizationScopeActive(authorization)&&store.route.get()===route
-        &&this.documentId===documentId&&this.preferenceKey===artifactId&&this.sourceSurface===surface&&snapshot()===original)return true;
-      }catch{/* A withdrawn deck cannot own a completion announcement. */}
+        &&this.documentId===documentId&&this.preferenceKey===artifactId&&this.sourceSurface===surface&&snapshot()===original
+        &&(!store.session.get()?.projectContext?.expiresAt||Date.parse(store.session.get()!.projectContext!.expiresAt)>Date.now())
+        &&(!includePresenterNotes||this.#presenterExportAllowed()))return true;
+      }catch{/* A withdrawn deck cannot keep or save previously prepared bytes. */}
       retired=true;return false;
     };
     // Latch retirement at the store notification, even if it returns before the next render.
@@ -220,10 +239,10 @@ export class PresentationDeck extends FormaElement{
         // Deliberate Cancel removes its own focused control; it owns a fresh return.
         focus?.dispose();departed=false;focus=captureOutputNavigationFocus(owner);canceled=true;
       },
-      restore:async(delivered:boolean)=>{
+      restore:async(prepared:boolean)=>{
         try{
           await this.updateComplete;
-          if(!delivered&&!canceled)return;
+          if(!prepared&&!canceled)return;
           const ready=()=>!departed&&current()&&!this.#exporting&&!trigger.disabled&&visible()&&Boolean(focus?.current());
           if(ready())focus!.run(trigger,()=>{if(!ready())return false;trigger.focus({preventScroll:true});return ready()&&owner.activeElement===trigger;});
         }catch{/* Failed or withdrawn UI cannot acquire focus or replace the export outcome. */}
@@ -231,13 +250,18 @@ export class PresentationDeck extends FormaElement{
       },
     };
   }
-  async #finishExport(controller:AbortController,focus:ExportFocusReturn|undefined,delivered:boolean){
+  async #finishExport(controller:AbortController,focus:ExportFocusReturn|undefined,preparedReady:boolean){
     if(this.#exportAbort!==controller){focus?.dispose();return;}
     this.#exporting=false;
-    if(this.#exportProgress?.stage!=="failed"&&this.#exportProgress?.stage!=="completed")this.#exportProgress=null;
-    if(this.#exportProgress?.stage!=="completed")this.#clearExportCompletion();
-    try{this.requestUpdate();await focus?.restore(delivered);}
-    catch{/* A failed enabled-state render cannot replace the completed export. */}
+    const prepared=this.#preparedExport&&this.#exportCompletion===this.#preparedExport.owner&&this.#preparedExport.owner.current();
+    if(this.#exportProgress?.stage!=="failed"&&!prepared)this.#exportProgress=null;
+    if(!prepared)this.#clearExportCompletion();
+    try{this.requestUpdate();await focus?.restore(preparedReady);}
+    catch{
+      // Retry only the enabled-state render, never conversion or authorization.
+      // A failed render must not strand a prepared file behind a disabled trigger.
+      if(this.#exportAbort===controller)try{this.requestUpdate();}catch{/* A persistent render failure keeps its exact bytes until owner retirement. */}
+    }
     finally{
       if(this.#exportAbort===controller)this.#exportAbort=undefined;
       if(this.#exportFocus===focus)this.#exportFocus=undefined;
@@ -301,7 +325,7 @@ export class PresentationDeck extends FormaElement{
     this.#exportFocus=focus;
     this.#exporting=true;
     this.#exportProgress={stage:"preparing",completed:0,total:items.length};
-    let delivered=false;
+    let preparedReady=false;
     try{
       this.requestUpdate();
       const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId),retained=artifact?.contentRef?this.store.content.get()[artifact.contentRef]:"";
@@ -312,9 +336,9 @@ export class PresentationDeck extends FormaElement{
       }
       const revision=this.store.events.get().filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
       const{renderPresentationPdf}=await import("./presentation-pdf-export");
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       const onProgress=(progress:{stage:"preparing"|"rendering"|"finalizing";completed:number;total:number})=>{
-        if(!this.store.authorizationScopeActive(authorization)){
+        if(!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current()){
           controller.abort();
           return;
         }
@@ -323,32 +347,25 @@ export class PresentationDeck extends FormaElement{
       };
       const audience=this.#audienceLocalization(items),options={title:this.deckTitle.trim()||audience.translate("Slide deck"),showFooterLabel:this.#showFooterLabel,...audience,onProgress,signal:controller.signal};
       const result=await renderPresentationPdf(items,presentation,options);
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       const digest=retained?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained))),(byte)=>byte.toString(16).padStart(2,"0")).join(""):"";
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       const receipt={type:"DocumentArtifactExported",payload:{artifact_id:artifactId,artifact_kind:"slides",document_id:documentId,format:"application/pdf",destination_kind:"pdf",page_count:result.pageCount,artifact_revision:revision,...(digest?{content_sha256:digest}:{}),style_preset:presentation.stylePreset,render_mode:"browser-slide-capture",source_surface:this.sourceSurface}};
       if(!await this.store.authorizeProjectExport(receipt,authorization))return;
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
-      this.#exportProgress={stage:"downloading",completed:result.pageCount,total:result.pageCount};
-      this.requestUpdate();
-      const blob=new Blob([result.bytes as Uint8Array<ArrayBuffer>],{type:"application/pdf"}),url=URL.createObjectURL(blob),link=document.createElement("a");
-      link.href=url;
-      link.download=result.filename;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      delivered=true;
-      window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
-      if(this.#exportCompletion===completion&&completion.current())this.#exportProgress={stage:"completed",completed:result.pageCount,total:result.pageCount};
+      if(controller.signal.aborted||this.#exportCompletion!==completion||!completion.current())return;
+      const blob=new Blob([result.bytes as Uint8Array<ArrayBuffer>],{type:"application/pdf"}),url=URL.createObjectURL(blob);
+      this.#preparedExport={owner:completion,url,filename:result.filename,format:"pdf"};
+      this.#exportProgress={stage:"prepared",completed:result.pageCount,total:result.pageCount,format:"pdf"};
+      preparedReady=true;
     }catch(error){
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       console.error("Slide PDF export failed",error);
       const message=error instanceof Error&&/visible clipping/.test(error.message)
         ?this.i18n.t("presentation.export.pdfClipped")
         :this.i18n.t("presentation.export.pdfFailed");
       this.#exportProgress={stage:"failed",completed:this.#exportProgress?.completed??0,total:items.length,message};
     }finally{
-      await this.#finishExport(controller,focus,delivered);
+      await this.#finishExport(controller,focus,preparedReady);
     }
   }
   async #downloadPowerPoint(items:DocumentArtifactDraftItem[],presentation:SlidePresentation){return this.#downloadPowerPointVariant(items,presentation,false);}
@@ -364,7 +381,7 @@ export class PresentationDeck extends FormaElement{
   async #downloadPowerPointVariant(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,includePresenterNotes:boolean){
     if(this.#exporting||!this.releaseAllowed)return;const authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false,artifactId=this.preferenceKey,documentId=this.documentId||this.store.projection.get().documentId;if(!authorization||scoped&&!artifactId)return;
     this.#clearExportCompletion();
-    const completion=this.#captureExportCompletion(authorization);
+    const completion=this.#captureExportCompletion(authorization,includePresenterNotes);
     this.#exportCompletion=completion;
     const controller=new AbortController();
     this.#exportFocus?.dispose();
@@ -373,7 +390,7 @@ export class PresentationDeck extends FormaElement{
     this.#exportFocus=focus;
     this.#exporting=true;
     this.#exportProgress={stage:"preparing",completed:0,total:items.length};
-    let delivered=false;
+    let preparedReady=false;
     try{
       this.requestUpdate();
       const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId);
@@ -386,10 +403,10 @@ export class PresentationDeck extends FormaElement{
       const events=this.store.events.get(),revision=events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
       if(includePresenterNotes&&!this.#presenterExportAllowed(artifact))return;
       const{createPowerPointDocumentAsync,POWERPOINT_DOCUMENT_MIME}=await import("../model/office-documents");
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       const audience=this.#audienceLocalization(items);
       const onProgress=(progress:{stage:"preparing"|"rendering"|"finalizing";completed:number;total:number})=>{
-        if(!this.store.authorizationScopeActive(authorization)){
+        if(!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current()){
           controller.abort();
           return;
         }
@@ -397,23 +414,25 @@ export class PresentationDeck extends FormaElement{
         this.requestUpdate();
       };
       const bytes=await createPowerPointDocumentAsync(items,presentation,{title:this.deckTitle.trim()||audience.translate("Slide deck"),showFooterLabel:this.#showFooterLabel,includePresenterNotes,...audience,onProgress,signal:controller.signal});
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       const digest=retained?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained))),(byte)=>byte.toString(16).padStart(2,"0")).join(""):"";
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       const receipt={type:"DocumentArtifactExported",payload:{artifact_id:artifactId,artifact_kind:"slides",document_id:documentId,format:POWERPOINT_DOCUMENT_MIME,destination_kind:"powerpoint",page_count:items.length,artifact_revision:revision,...(digest?{content_sha256:digest}:{}),style_preset:presentation.stylePreset,render_mode:"editable-office-shapes",presenter_notes_included:includePresenterNotes,source_surface:this.sourceSurface}};
       if(!await this.store.authorizeProjectExport(receipt,authorization))return;
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
-      this.#exportProgress={stage:"downloading",completed:items.length,total:items.length};
-      this.requestUpdate();
-      const blob=new Blob([bytes as Uint8Array<ArrayBuffer>],{type:POWERPOINT_DOCUMENT_MIME}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=presentationEditableExportFilename(this.deckTitle.trim()||this.i18n.system("Slide deck"),this.i18n.locale);document.body.append(link);link.click();link.remove();delivered=true;window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
-      if(this.#exportCompletion===completion&&completion.current())this.#exportProgress={stage:"completed",completed:items.length,total:items.length,format:includePresenterNotes?"powerpoint-presenter":"powerpoint"};
+      if(controller.signal.aborted||this.#exportCompletion!==completion||!completion.current())return;
+      const blob=new Blob([bytes as Uint8Array<ArrayBuffer>],{type:POWERPOINT_DOCUMENT_MIME}),url=URL.createObjectURL(blob);
+      const format=includePresenterNotes?"powerpoint-presenter":"powerpoint";
+      const audienceFilename=presentationEditableExportFilename(this.deckTitle.trim()||this.i18n.system("Slide deck"),this.i18n.locale);
+      this.#preparedExport={owner:completion,url,filename:includePresenterNotes?audienceFilename.replace(/\.pptx$/u,"-presenter.pptx"):audienceFilename,format};
+      this.#exportProgress={stage:"prepared",completed:items.length,total:items.length,format};
+      preparedReady=true;
     }catch(error){
-      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization))return;
+      if(controller.signal.aborted||!this.store.authorizationScopeActive(authorization)||this.#exportCompletion!==completion||!completion.current())return;
       console.error("Editable slide export failed",error);
       const message=this.i18n.t("presentation.export.powerpointFailed");
       this.#exportProgress={stage:"failed",completed:this.#exportProgress?.completed??0,total:items.length,message};
     }finally{
-      await this.#finishExport(controller,focus,delivered);
+      await this.#finishExport(controller,focus,preparedReady);
     }
   }
   #key(event:KeyboardEvent,total:number){
@@ -429,13 +448,17 @@ export class PresentationDeck extends FormaElement{
   #renderExportProgress(){
     const progress=this.#exportProgress;
     if(!progress)return nothing;
-    const failed=progress.stage==="failed",complete=progress.stage==="completed",total=Math.max(0,progress.total),completed=Math.max(0,Math.min(progress.completed,total));
+    const failed=progress.stage==="failed",prepared=this.#preparedExport,ready=progress.stage==="prepared"||progress.stage==="save-requested",total=Math.max(0,progress.total),completed=Math.max(0,Math.min(progress.completed,total));
     const count=total?this.i18n.system("{count} of {total}",{count:this.i18n.number(completed),total:this.i18n.number(total)}):"";
-    const label=complete?(progress.format==="powerpoint"?this.i18n.t("presentation.export.audienceDownloaded","",{count:this.i18n.number(total)}):progress.format==="powerpoint-presenter"?(total===1?this.i18n.system("{count} editable PowerPoint slide and speaker notes downloaded.",{count:this.i18n.number(total)}):this.i18n.system("{count} editable PowerPoint slides and speaker notes downloaded.",{count:this.i18n.number(total)})):this.i18n.system("{count}-page PDF downloaded.",{count:this.i18n.number(total)})):progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):progress.stage==="finalizing"?this.i18n.t("job.progress.finalizing"):this.i18n.t("job.progress.downloading"));
+    const label=ready?this.i18n.t(progress.format==="powerpoint"?"presentation.export.audiencePrepared":progress.format==="powerpoint-presenter"?"presentation.export.presenterPrepared":"presentation.export.pdfPrepared","",{count:this.i18n.number(total)}):progress.message??(failed?this.i18n.t("job.progress.failed"):progress.stage==="preparing"?this.i18n.system("Preparing export…"):progress.stage==="rendering"?this.i18n.t("job.progress.rendering"):this.i18n.t("job.progress.finalizing"));
+    const saveAllowed=Boolean(ready&&prepared&&this.#exportCompletion===prepared.owner&&!this.#exporting&&prepared.owner.current());
+    const saveLabel=this.i18n.t(prepared?.format==="powerpoint"?"presentation.export.savePreparedPowerpoint":prepared?.format==="powerpoint-presenter"?"presentation.export.savePreparedPresenter":"presentation.export.savePreparedPdf");
     const determinate=progress.stage!=="preparing"&&total>0;
     return html`<section id=${`${this.#exportMenuId}-status`} class="presentation-deck-export-status" data-export-stage=${progress.stage} role=${failed?"alert":"status"} aria-live=${failed?"assertive":"polite"} aria-atomic="true">
-      <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&!complete&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&!complete&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${(event:MouseEvent)=>{this.#exportFocus?.cancel(event);this.#exportAbort?.abort();}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>
-      ${complete?nothing:failed?html`<button type="button" class="button secondary compact presentation-deck-export-retry" @click=${()=>{const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");trigger?.focus({preventScroll:true});trigger?.click();}}>${this.i18n.t("action.retry")}</button>`:determinate?html`<progress max=${total} value=${completed} aria-label=${this.i18n.t("status.progress")} aria-valuetext=${count}></progress>`:html`<progress aria-label=${this.i18n.t("status.progress")}></progress>`}
+      <div class="presentation-deck-export-status-heading"><span class="presentation-deck-export-status-label">${label}</span>${!failed&&!ready&&total?html`<span class="presentation-deck-export-status-count">${count}</span>`:nothing}${!failed&&!ready&&this.#exporting?html`<button type="button" class="button secondary compact presentation-deck-export-cancel" @click=${(event:MouseEvent)=>{this.#exportFocus?.cancel(event);this.#exportAbort?.abort();}}>${this.i18n.t("action.cancel")}</button>`:nothing}</div>
+      ${ready&&prepared?html`<a class="button primary presentation-deck-export-save" href=${saveAllowed?prepared.url:nothing} download=${prepared.filename} aria-disabled=${String(!saveAllowed)} tabindex="0"
+        @click=${(event:MouseEvent)=>this.#savePreparedExport(event,prepared)} @auxclick=${(event:MouseEvent)=>this.#savePreparedExport(event,prepared)}>${saveLabel}</a>
+        <p>${this.i18n.t(progress.stage==="save-requested"?"presentation.export.saveRequested":"presentation.export.preparedHint")}</p>`:failed?html`<button type="button" class="button secondary compact presentation-deck-export-retry" @click=${()=>{const trigger=this.querySelector<HTMLButtonElement>(".presentation-deck-export");trigger?.focus({preventScroll:true});trigger?.click();}}>${this.i18n.t("action.retry")}</button>`:determinate?html`<progress max=${total} value=${completed} aria-label=${this.i18n.t("status.progress")} aria-valuetext=${count}></progress>`:html`<progress aria-label=${this.i18n.t("status.progress")}></progress>`}
     </section>`;
   }
   override render(){const items=this.items.map((item,index)=>normalizeSlideItem(item,index)),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=this.#syncIndex(total),current=items[index],preferenceFormId=`presentation-deck-preferences-${this.#styleKey()}`;const fitKey=current?presentationSlideRenderKey(current,presentation,index,total,this.#showFooterLabel,false,this.i18n.locale):"";if(fitKey!==this.#activeFitKey){this.#activeFitKey=fitKey;this.#visualOverflow=false;}const reading=this.#view==="slideshow"&&presentationUsesReadingView({contentOverflows:this.#visualOverflow,readingPreference:this.#readingOverride,viewportRequiresReading:this.#automaticReading});const readingLabel=this.i18n.system(reading?"Slide view":"Read slide");const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===this.preferenceKey);const soundtracks=soundtrackCompanions(artifact?.settings.soundtrack_assets);const renderSoundtrackCompanions=(value:Parameters<typeof renderAudioCompanions>[0],locale:Parameters<typeof renderAudioCompanions>[1],options:Parameters<typeof renderAudioCompanions>[2]={})=>renderAudioCompanions(value,locale,{...options,...(this.releaseAllowed?{onDownload:(asset:SoundtrackAsset)=>void this.#downloadSoundtrack(asset)}:{})});return html`<section class=${`presentation-deck presentation-deck--${this.#view}${this.#exportProgress?" presentation-deck--export-status":""}${reading?" presentation-deck--reading":""}${this.#fullscreenActive?" presentation-deck--fullscreen":""}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>
