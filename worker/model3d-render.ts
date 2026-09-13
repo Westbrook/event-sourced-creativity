@@ -5,6 +5,7 @@ import type { EventExecutionControl } from "./events-api.ts";
 import { generateFalModel3d, type Model3dPreparedReceipt } from "./fal-model3d-adapter.ts";
 import { storeGeneratedMedia } from "./media-api.ts";
 import type { PreparedModel3dRequest } from "./model3d-request.ts";
+import { readOutputModel3dPayload, type qualifyOutputModel3dCompletion } from "./output-model3d-execution.ts";
 import {
   claimCostBudgetReservation, costBudgetReservation, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget,
   settleBudget, settleCostBudget, settleDocumentGenerationBudgets, storePrivateContent,
@@ -69,6 +70,9 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
   const { user, body, sourceEvents, projection, ownerId, storageOwnerId, billingOwnerId, streamId, client, corr,
     userActor, projectBudgetScope, executionScope, execution, appendOperationEvents, settleOperationOutputBudgets, prepared } = input;
   const env = execution?.output?.guardedEnvironment ?? input.env;
+  const nativeModel3d = Object.hasOwn(body, "outputModel3d") ? await readOutputModel3dPayload(body) : null;
+  if ((Object.hasOwn(body, "outputModel3d") || execution?.output?.model3d) && (!nativeModel3d || !execution?.output?.model3d))
+    return Response.json({ error: "output_model3d_contract_unsupported" }, { status: 403 });
   const artifactId = text(body.artifactId) || uuidV7();
   const sourceSurface = text(body.sourceSurface) || "document";
   const sourceBlockVersions = Array.isArray(body.sourceBlockVersions) ? body.sourceBlockVersions : [];
@@ -233,6 +237,7 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
     await appendOperationEvents(env, budgeted ? [requestEvent, budgeted] : [requestEvent]);
 
     const files: StoredModel3dFile[] = [];
+    let staticReceipt: Awaited<ReturnType<typeof qualifyOutputModel3dCompletion>> | null = null;
     phase = "provider";
     const generated = await generateFalModel3d(env, prepared.prompt, {
       settings: prepared.settings, references: prepared.references, estimatedCostMicrousd: costReservationMicrousd,
@@ -258,6 +263,9 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
         files[index] = { url: stored.url, mimeType: asset.mimeType, fileName: asset.fileName, fileSize: asset.fileSize,
           format: asset.format, role: asset.role, sha256: stored.contentHash,
           ...(stored.previewSupported !== undefined ? { previewSupported: stored.previewSupported } : {}) };
+        // Retain the exact paid original first. Static refusal does not erase its
+        // bytes/receipt, invent success, or authorize another provider request.
+        if (index === 0 && nativeModel3d) staticReceipt = await execution!.output!.model3d!.qualify(asset, activeProviderJobId);
         phase = "provider";
       },
       ...(execution?.output ? {
@@ -266,6 +274,7 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
         onBeforeProviderDispatch: execution.output.beforeProviderDispatch,
       } : {}),
       onPrepared: async receipt => {
+        if (nativeModel3d) await execution!.output!.model3d!.prepare(receipt);
         preparedReceipt = receipt;
         Object.assign(body, checkpoint());
         await execution?.progress("prepared", "The exact Rodin prompt, settings, and ordered reference views are saved.", checkpoint());
@@ -297,6 +306,8 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
     phase = "persistence";
     if (!files[0] || files.length !== 1 + generated.additionalMeshes.length + generated.textures.length) throw new Error("model3d_private_files_incomplete");
     const primary = files[0]!;
+    if (nativeModel3d && !staticReceipt) throw Error("output_model3d_qualification_missing");
+    const nativeCompletion = nativeModel3d ? await execution!.output!.model3d!.complete(artifactId, files, staticReceipt!) : null;
     const plan = {
       title: projection.documentTitle ? `${projection.documentTitle} · 3D model` : "3D model",
       summary: prepared.prompt || "3D model generated from the selected image views.",
@@ -304,6 +315,7 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
     };
     const inputReceipt = {
       schema_version: 1, artifact_id: artifactId, artifact_kind: "model3d", ...sourceReceipt, captured_at: new Date().toISOString(),
+      ...(nativeCompletion && nativeModel3d ? { output_model3d: nativeCompletion, model3d_preparation: nativeModel3d.description } : {}),
       request: { ...workflowLineage, model3d_prompt: prepared.prompt, model3d_settings: prepared.settings,
         model3d_reference_block_ids: prepared.referenceBlockIds, source_surface: sourceSurface,
         ...(body.model3dPromptSource === "document" ? { model3d_prompt_source: "document", model3d_adaptation: body.model3dAdaptation } : {}),
@@ -335,6 +347,7 @@ export async function handleModel3dRender(input: Model3dRenderInput): Promise<Re
       reference_inputs: preparedReceipt.referenceInputs, used_reference_pixels: preparedReceipt.usedReferencePixels,
       latency_ms: generated.latencyMs, source_surface: sourceSurface,
       settings: { model3d: prepared.settings, model3d_settings: prepared.settings, model3d_files: files, seed: generated.seed,
+        ...(nativeCompletion ? { production_mode: "manual", output_model3d: nativeCompletion } : {}),
         adapter_version: RODIN_ADAPTER_VERSION, reserved_cost_microusd: costReservationMicrousd, settled_cost_microusd: actualCostMicrousd,
         source_media_sha256: primary.sha256, ...(body.workflowId ? { production_workflow: { id: body.workflowId, stage_id: body.workflowStageId, sources: body.workflowSources ?? [] } } : {}) },
     }, { causationId: requestEvent.eventId });

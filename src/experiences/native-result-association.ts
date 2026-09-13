@@ -1,3 +1,4 @@
+import { captureExperienceModel3dEvidence, type ExperienceModel3dEvidence } from "./model3d-native-result.ts";
 import { captureExperienceAudioEvidence, type ExperienceAudioEvidence } from "./audio-native-result.ts";
 import { nativeRetainedAudioMediaUrl } from "../model/native-retained-audio.ts";
 import { captureExperienceStoryEvidence, type ExperienceStoryEvidence } from "./story-result.ts";
@@ -7,7 +8,7 @@ import { captureExperienceStoryboardEvidence, experienceStoryboardItemsMatch, ty
  * quality acceptance. The caller supplies current server-bound identity and an
  * exact passive job inspection, then uses the canonical private result reader. */
 export type ExperienceResultIdentity = Readonly<{
-  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio"; documentId: string; projectId: string;
+  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d"; documentId: string; projectId: string;
   ownerUserId: string; jobId: string; correlationId: string; expiresAt: string;
 }>;
 export type ExperienceResultCandidate = Readonly<{
@@ -31,6 +32,9 @@ export type ExperienceResultCandidate = Readonly<{
 }> | Readonly<{
   output: "audio"; documentId: string; projectId: string; jobId: string; eventId: string; artifactId: string;
   contentRef: string; inputRef: string; mediaUrl: string; plannerResponseId: string; expiresAt: string; audio: ExperienceAudioEvidence;
+}> | Readonly<{
+  output: "model3d"; documentId: string; projectId: string; jobId: string; eventId: string; artifactId: string;
+  contentRef: string; inputRef: string; mediaUrl: string; expiresAt: string; model3d: ExperienceModel3dEvidence;
 }>;
 type Row = Record<string, unknown>;
 const row = (value: unknown): value is Row => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -43,7 +47,7 @@ export function captureExperienceNativeResult(identity: ExperienceResultIdentity
   events: readonly unknown[]; outputs: readonly unknown[]; artifacts: readonly unknown[];
 }, now = Date.now()): ExperienceResultCandidate | null {
   try {
-    if (!identity || !["image", "slides", "short_story", "scene", "storyboard", "audio"].includes(identity.output) || !Number.isFinite(now)
+    if (!identity || !["image", "slides", "short_story", "scene", "storyboard", "audio", "model3d"].includes(identity.output) || !Number.isFinite(now)
       || ![identity.documentId, identity.projectId, identity.ownerUserId, identity.jobId, identity.correlationId].every(id)
       || !expiry(identity.expiresAt, now) || current.documentId !== identity.documentId || current.projectId !== identity.projectId
       || !row(job) || job.jobId !== identity.jobId || job.documentId !== identity.documentId
@@ -66,8 +70,8 @@ export function captureExperienceNativeResult(identity: ExperienceResultIdentity
     if (payload.document_id !== identity.documentId || payload.source_surface !== "outputs"
       || (payload.project_id !== undefined && payload.project_id !== identity.projectId)) return null;
     const common = { documentId: identity.documentId, projectId: identity.projectId, jobId: identity.jobId, eventId: event.eventId, expiresAt: identity.expiresAt };
-    if (identity.output === "slides" || identity.output === "short_story" || identity.output === "scene" || identity.output === "storyboard" || identity.output === "audio") {
-      const story = identity.output === "short_story", expectedItems = story ? 3 : identity.output === "scene" || identity.output === "audio" ? 1 : identity.output === "storyboard" ? 4 : 5;
+    if (identity.output === "slides" || identity.output === "short_story" || identity.output === "scene" || identity.output === "storyboard" || identity.output === "audio" || identity.output === "model3d") {
+      const story = identity.output === "short_story", expectedItems = identity.output === "model3d" ? 0 : story ? 3 : identity.output === "scene" || identity.output === "audio" ? 1 : identity.output === "storyboard" ? 4 : 5;
       const artifactId = payload.artifact_id;
       if (!id(artifactId) || !id(payload.content_ref) || payload.project_id !== identity.projectId || payload.artifact_kind !== identity.output || payload.item_count !== expectedItems
         || payload.requested_by_user_id !== identity.ownerUserId || job.result.artifactId !== artifactId || job.result.artifactKind !== identity.output
@@ -77,6 +81,21 @@ export function captureExperienceNativeResult(identity: ExperienceResultIdentity
       const artifact = matches[0];
       if (artifact.documentId !== identity.documentId || artifact.kind !== identity.output || artifact.itemCount !== expectedItems
         || artifact.sourceEventId !== event.eventId || artifact.sourceSurface !== "outputs" || artifact.contentRef !== payload.content_ref) return null;
+      if (identity.output === "model3d") {
+        const model3d = captureExperienceModel3dEvidence(payload.settings), projected = captureExperienceModel3dEvidence(artifact.settings);
+        if (!model3d || !projected || JSON.stringify(model3d) !== JSON.stringify(projected) || !id(payload.input_ref)
+          || artifact.inputRef !== payload.input_ref || !expiry(payload.content_expires_at, now) || !expiry(payload.input_expires_at, now)
+          || model3d.jobId !== identity.jobId || model3d.actorUserId !== identity.ownerUserId || model3d.documentId !== identity.documentId
+          || model3d.projectId !== identity.projectId || model3d.artifactId !== artifactId || payload.provider !== "fal"
+          || payload.model_id !== model3d.costPreview.model || payload.provider_job_id !== model3d.receipt.providerRequestId
+          || payload.planner_model_id !== null || payload.planner_response_id !== null || payload.presentation !== null
+          || payload.media_type !== "model/gltf-binary" || payload.media_url !== model3d.files[0]?.url || artifact.mediaUrl !== payload.media_url
+          || payload.used_reference_pixels !== Boolean(model3d.contract.reference)
+          || !Array.isArray(payload.reference_inputs) || payload.reference_inputs.length !== (model3d.contract.reference ? 1 : 0)) return null;
+        const expiresAt = new Date(Math.min(Date.parse(identity.expiresAt), Date.parse(payload.content_expires_at), Date.parse(payload.input_expires_at))).toISOString();
+        return Object.freeze({ ...common, output: "model3d", artifactId, contentRef: payload.content_ref, inputRef: payload.input_ref,
+          mediaUrl: model3d.files[0]!.url, expiresAt, model3d });
+      }
       if (identity.output === "audio") {
         const audio = captureExperienceAudioEvidence(payload.settings), projected = captureExperienceAudioEvidence(artifact.settings);
         const mediaUrl = nativeRetainedAudioMediaUrl(payload.media_url);

@@ -23,9 +23,9 @@ const authorImage = runtime => {
   runtime.change('ratio', { width: 1, height: 1 });
 };
 
-test('registered Image, Slides, Short story and Scene; context qualification is not a generation grant', async () => {
-  assert.deepEqual(experienceIds, ['image', 'slides', 'short-story', 'scene']);
-  assert.equal(await registeredExperience('video'), null);
+test('all eight registered experiences retain context qualification, not a generation grant', async () => {
+  assert.deepEqual(experienceIds, ['image', 'slides', 'short-story', 'scene', 'model3d', 'storyboard', 'audio', 'video']);
+  assert.equal(await registeredExperience('unregistered'), null);
   for (const id of experienceIds) { const release = await registeredExperience(id); assert.equal(release.qualification, 'context-authoring'); assert.equal(release.releaseHash, (await registeredExperience(id)).releaseHash); assert.ok(Object.isFrozen(release)); }
   const retired = { ...contextCatalog, version: 'forma-experience-fixture@1', qualification: 'fixture' };
   assert.equal((await compileExperience(definitions[0], retired)).ok, false);
@@ -109,7 +109,8 @@ test('invalid or ambiguous entry recovery cannot silently become a new draft', a
   const { parseExperienceEntryRoute } = await import('../src/experiences/intake.ts');
   const draft = 'experience-draft-' + 'a'.repeat(64), url = value => new URL(value, 'https://forma.local');
   assert.deepEqual(parseExperienceEntryRoute(url('/experiences/slides?draft=' + draft)), { output: 'slides', draftId: draft });
-  for (const value of ['/experiences/slides?draft=bad', '/experiences/slides?draft=', '/experiences/slides?draft=' + draft + '&draft=' + draft, '/experiences/slides?draft=' + draft + '&intent=' + crypto.randomUUID(), '/experiences/slides?job=caller', '/experiences?draft=' + draft, '/make/slides', '/experiences/video']) assert.equal(parseExperienceEntryRoute(url(value)), null);
+  assert.deepEqual(parseExperienceEntryRoute(url('/experiences/video')), { output: 'video' });
+  for (const value of ['/experiences/slides?draft=bad', '/experiences/slides?draft=', '/experiences/slides?draft=' + draft + '&draft=' + draft, '/experiences/slides?draft=' + draft + '&intent=' + crypto.randomUUID(), '/experiences/slides?job=caller', '/experiences?draft=' + draft, '/make/slides', '/experiences/unregistered', '/experiences/video?job=caller']) assert.equal(parseExperienceEntryRoute(url(value)), null);
 });
 
 test('Continue carries only closed host selectors and existing report return flag', async () => {

@@ -85,7 +85,7 @@ function input(withReference = false) {
     sourceEvents: [], sourceDigest: "3".repeat(64), requirementsDigest: "4".repeat(64),
     observed: () => ({ reads, bindings }) };
 }
-test("non-admitting preflight carries current proof only on the exact server object after both declared I/O ports", async () => {
+test("read-only quote carries current proof and requires configuration plus separate approval, never a grant", async () => {
   const value = input(), seen = [], expiry = new Date(Date.now() + 60_000).toISOString();
   ports.resolve = async received => { assert.equal(received, value); seen.push("source"); return { plan: { draftId: source.draftId }, requestId: "model3d-" + "5".repeat(64), expiresAt: expiry,
     sourceAssertions: [{ sql: "? = ?", bindings: [7, 7] }] }; };
@@ -94,11 +94,24 @@ test("non-admitting preflight carries current proof only on the exact server obj
     return { ...request(false, received.prompt), adaptation: received.adaptation }; };
   const result = await preflightOutputModel3dMiniAppTarget(value);
   assert.deepEqual(seen, ["source", "private-preparation"]); assert.equal(value.observed().reads, 1);
-  assert.equal(result.available, false); assert.equal(result.reasonCode, "output_model3d_execution_not_connected");
-  assert.equal(result.maximumMicrousd, 0); assert.equal(result.settings.executionAvailable, false); assert.equal(result.settings.preparationOnly, true);
+  assert.equal(result.available, false); assert.equal(result.reasonCode, "output_native_model3d_unconfigured");
+  assert.equal(result.maximumMicrousd, request(false).estimatedCostMicrousd); assert.ok(result.maximumMicrousd > 0);
+  assert.equal(result.settings.executionAvailable, false); assert.equal(result.settings.preparationOnly, false);
+  assert.equal(result.settings.explicitCostAndTransferApprovalRequired, true);
+  assert.equal(result.transferCode, "output_transfer_model3d_not_yet_authorized");
+  assert.equal(result.settings.payload.paidMediaConfirmed, undefined); assert.equal(result.settings.payload.outputExecution, undefined);
+  assert.equal(result.settings.costPreview.confirmed, undefined); assert.equal(result.settings.costPreview.providerTransferConfirmed, undefined);
   assert.equal(result.settings.original.expiresAt, expiry); assert.equal(result.settings.description.maximumCalls, 1);
   const proof = outputModel3dPreflightAssertions(result); assert.equal(proof.length, 2); assert.deepEqual(proof[0].bindings, [7, 7]);
   assert.equal(proof[1].deadlineMs, Date.parse(expiry)); assert.equal(outputModel3dPreflightAssertions(structuredClone(result)), null);
+  value.env.FAL_KEY = "local-configuration-flag-only";
+  const configured = await preflightOutputModel3dMiniAppTarget(value);
+  assert.equal(configured.available, true); assert.equal(configured.reasonCode, "output_model3d_ready_for_separate_approval");
+  assert.equal(configured.settings.executionAvailable, true); assert.equal(configured.settings.explicitCostAndTransferApprovalRequired, true);
+  assert.equal(configured.transferCode, "output_transfer_model3d_not_yet_authorized");
+  assert.deepEqual(configured.settings.costPreview, result.settings.costPreview);
+  assert.equal(configured.settings.payload.paidMediaConfirmed, undefined); assert.equal(configured.settings.payload.outputExecution, undefined);
+  assert.deepEqual(seen, ["source", "private-preparation", "source", "private-preparation"]); assert.equal(value.observed().reads, 2);
 });
 test("unsupported shape, expired original, changed final source or private preparation refusal never grants readiness", async () => {
   const value = input(); let sourceReads = 0, preparationReads = 0;
@@ -143,7 +156,7 @@ test("102 aggregate reference-proof bindings stay in individual SQLite reads wit
     ports.resolve = async () => ({ plan: { draftId: source.draftId }, requestId: "model3d-" + "5".repeat(64), expiresAt, sourceAssertions: assertions });
     ports.prepare = async received => request(true, received.prompt);
     const result = await preflightOutputModel3dMiniAppTarget(value);
-    assert.equal(result.reasonCode, "output_model3d_execution_not_connected"); assert.equal(result.available, false);
+    assert.equal(result.reasonCode, "output_native_model3d_unconfigured"); assert.equal(result.available, false);
     assert.equal(batches, 1); assert.equal(batchSize, 10); assert.equal(largest, 23);
     assert.deepEqual(outputModel3dPreflightAssertions(result).slice(0, assertions.length), assertions, "all original atomic-command assertions retained without truncation");
     db.exec("INSERT INTO events VALUES(8,'creative:owner')");

@@ -1,4 +1,5 @@
-import { preflightOutputModel3dMiniAppTarget } from "./output-model3d-preflight.ts";
+import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
+import { preflightOutputModel3dMiniAppTarget, outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { readOutputAudioPayload, requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
 import { preflightOutputAudioTarget, outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
@@ -88,11 +89,20 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const target=input.confirmedPlan.plan.targets.find(target=>target.id===slot.targetId);
   const frozen=input.preflight.targets.find(target=>target.targetId===slot.targetId);
   if(!target||!frozen?.available)throw new OutputConflictError("output_target_not_admissible");
-  if(Object.hasOwn(target,"model3d_contract"))throw new OutputConflictError("output_model3d_execution_unavailable",409);
   if(Object.hasOwn(target,"video_contract"))throw new OutputConflictError("output_video_execution_unavailable",409);
   const current=await preflightOutputNativeTarget({...input,target});
   if(!current.available||await outputDigest(current)!==slot.routeDigest||await outputDigest(frozen)!==slot.routeDigest)throw new OutputConflictError("output_route_changed");
   const settings=current.settings as OutputNativeSettings;
+  const nativeModel3d=Object.hasOwn(target,"model3d_contract")?await readOutputModel3dPayload(settings.payload):null;
+  if(Object.hasOwn(target,"model3d_contract")&&!nativeModel3d)throw new OutputConflictError("output_model3d_contract_unsupported",403);
+  const refreshModel3d=async()=>{
+   const refreshed=await preflightOutputModel3dMiniAppTarget({...input,target}),proof=outputModel3dPreflightAssertions(refreshed);
+   const offer=refreshed.available?await readOutputModel3dPayload((refreshed.settings as OutputNativeSettings).payload):null;
+   if(!nativeModel3d||!proof?.length||!offer||input.scope.kind!=="personal"||input.scope.contextId||await outputDigest(refreshed)!==slot.routeDigest
+    ||offer.preview.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_model3d_original_attempt_required",403);
+   requireModel3dMiniAppCostApproval(input.model3dCostConsent,nativeModel3d.preview,offer.preview);sceneAssertions.push(...proof);return offer;
+  };
+  if(nativeModel3d)await refreshModel3d();
   const nativeStoryboard=Object.hasOwn(target,"storyboard_contract")?readStoryboardExecutionOffer(current):null;
   if(Object.hasOwn(target,"storyboard_contract")&&!nativeStoryboard)throw new OutputConflictError("output_storyboard_offer_invalid",409);
   const refreshStoryboard=async()=>{
@@ -124,11 +134,12 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
    return proof.prepared;
   };
   const scenePrepared=nativeScene?await refreshScene():null;
-  const admissionPayload=nativeAudio?{...settings.payload,audioCostConsent:input.audioCostConsent,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeScene?{...settings.payload,sceneCostConsent:input.sceneCostConsent}:settings.payload;
+  const admissionPayload=nativeModel3d?{...settings.payload,model3dCostConsent:input.model3dCostConsent,sourceSurface:"outputs",paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeAudio?{...settings.payload,audioCostConsent:input.audioCostConsent,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeScene?{...settings.payload,sceneCostConsent:input.sceneCostConsent}:settings.payload;
   const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
   const job=await prepareOutputDocumentJob(input.request,input.env,{documentId:input.scope.documentId,kind:settings.kind,payload:admissionPayload},{jobId:slot.jobId,outputExecution:reference,readScope,
    ...(nativeScene&&scenePrepared?{outputScene:{payload:nativeScene,prepared:scenePrepared,refresh:refreshScene}}:{}),
    ...(nativeAudio?{outputAudio:{payload:admissionPayload,refresh:refreshAudio}}:{}),
+   ...(nativeModel3d?{outputModel3d:{payload:admissionPayload,refresh:refreshModel3d}}:{}),
    ...(nativeStoryboard?{outputStoryboard:{payload:admissionPayload,maximumMicrousd:nativeStoryboard.maximumMicrousd,refresh:refreshStoryboard}}:{}),
    maximumMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls,...(settings.imageRender?{outputImageRender:settings.imageRender}:{}),
    compile:async trusted=>{if(trusted.documentRevision!==input.context.documentRevision||await outputDigest(trusted.snapshot)!==await outputDigest(input.context.snapshot))throw new OutputConflictError("output_source_changed");return admissionPayload;}});

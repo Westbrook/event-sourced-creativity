@@ -77,7 +77,7 @@ test("registered Model3D context is one static GLB object, with bounded text onl
   assert.equal(await registeredExperience("model3d-upload"), null);
 });
 
-test("all four existing registrations retain their exact pre-increment release hashes and order", async () => {
+test("the four original registrations retain exact release hashes and order within the expanded catalog", async () => {
   const prior = {
   "image": {
     "definitionHash": "sha256:fa586999b2f7f311b6da26f81d831a7ef36da31fd579466b261c77e612614fc8",
@@ -96,7 +96,7 @@ test("all four existing registrations retain their exact pre-increment release h
     "releaseHash": "sha256:4e45539677493899545f3e1132ed7934d846cd417c51357d2aeee87c1cf8f7eb"
   }
 };
-  assert.deepEqual(definitions.map(d => d.id), [...Object.keys(prior), "model3d"]);
+  assert.deepEqual(definitions.map(d => d.id), [...Object.keys(prior), "model3d", "storyboard", "audio", "video"]);
   for (const [id, expected] of Object.entries(prior)) {
     const current = await registeredExperience(id);
     assert.deepEqual({ definitionHash: current.definitionHash, releaseHash: current.releaseHash }, expected);
@@ -195,26 +195,37 @@ test("reference-shaped, getter and extra inputs fail closed; a URL in prose neve
   assert.ok(plan.events.filter(e => e.type === "BlockCreated").every(e => !["reference", "model3d"].includes(e.payload.type)));
 });
 
-test("entry selector admits only bounded authoring; Model3D remains outside native generation admission", async () => {
+test("entry and native selectors admit bounded Model3D identity without issuing execution authority", async () => {
   assert.deepEqual(parseExperienceEntryRoute(new URL("https://forma.invalid/experiences/model3d")), { output: "model3d" });
   assert.deepEqual(parseExperienceEntryRoute(new URL("https://forma.invalid/experiences/model3d?intent=" + intentId)), { output: "model3d", intentId });
   for (const suffix of ["#main", "?ref=https://example.invalid/x.png", "?intent=x", "?intent=" + intentId + "&intent=" + intentId, "/mesh"]) {
     assert.equal(parseExperienceEntryRoute(new URL("https://forma.invalid/experiences/model3d" + suffix)), null);
   }
   const plan = await buildExperiencePlan("synthetic-model3d-author", request(), release);
-  assert.throws(() => experienceOutputSettings(plan), /experience_output_unsupported/u);
-  assert.equal(parseExperienceHostRoute("/document/" + plan.documentId + "/3d-object?experience=model3d&experience-draft=" + plan.draftId), null);
+  const settings = experienceOutputSettings(plan);
+  assert.deepEqual(settings, { output: "model3d", kind: "render_document", productionMode: "manual", artifactKind: "model3d", itemCount: 1 });
+  assert.equal(Object.isFrozen(settings), true);
+  assert.equal("grantId" in settings, false); assert.equal("paidMediaConfirmed" in settings, false);
+  const documentRoute = "/document/" + plan.documentId + "/3d-object";
+  assert.deepEqual(parseExperienceHostRoute(documentRoute + "?experience=model3d&experience-draft=" + plan.draftId),
+    { output: "model3d", draftId: plan.draftId, documentId: plan.documentId, documentRoute });
+  for (const suffix of ["&grantId=forged", "&paidMediaConfirmed=true", "&experience=model3d", "#mesh"]) {
+    assert.equal(parseExperienceHostRoute(documentRoute + "?experience=model3d&experience-draft=" + plan.draftId + suffix), null);
+  }
 });
 
-test("view source names the unavailable reference/creation boundary and renders plain direction text", () => {
+test("view separates checked reference context from adapter-gated generation and renders plain direction text", () => {
   // Source policy only: this is not browser, layout, focus or assistive-technology evidence.
   const source = readFileSync(fileURLToPath(new URL("src/experiences/view.ts", root)), "utf8");
-  assert.ok(source.includes("Text-only intake. One owned image or saved 3D view is unavailable here."));
-  assert.ok(source.includes("URLs and uploaded meshes are not accepted as reference inputs."));
-  assert.ok(source.includes("Text direction only. Saving creates Document context, not a 3D file. Generation unavailable."));
+  assert.ok(source.includes("new Model3dReferencePicker((selection, ready) => this.runtime.changeReference(selection, ready), readModel3dReferenceIntent(this.runtime.state.draft.reference) ?? undefined)"));
+  assert.ok(source.includes("Saving creates Document context, not a 3D file."));
+  assert.ok(source.includes("A selected reference is rechecked before Save; it does not authorize generation."));
+  const reference = readFileSync(fileURLToPath(new URL("src/experiences/model3d-reference.ts", root)), "utf8");
+  assert.ok(reference.includes("URLs, files, owner claims and inferred permission are not inputs."));
   const branch = source.slice(source.indexOf('} else if (this.runtime.release.output.output === "model3d")'), source.indexOf('} else if (this.runtime.release.output.output === "short_story")'));
   assert.match(branch, /this\.#summary\(\)/u);
   assert.doesNotMatch(branch, /innerHTML|createObjectURL|<img|fetch|iframe|canvas/u);
   const native = source.slice(source.indexOf("async #native()"));
-  assert.doesNotMatch(native, /"model3d"/u);
+  assert.match(native, /if \(!this\.#adapter \|\| !\[[^\]]*"model3d"\]\.includes\(this\.runtime\.release\.output\.output\)\)/u);
+  assert.match(native, /this\.#adapter\.mount\(target, Object\.freeze\(\{ plan, receipt, settings: experienceOutputSettings\(plan\) \}\), this\.#abort\.signal\)/u);
 });

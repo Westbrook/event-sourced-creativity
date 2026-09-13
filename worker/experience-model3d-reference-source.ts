@@ -3,7 +3,7 @@ import { readModel3dReferencePlan, type Model3dReferencePlan } from "../src/expe
 import type { Model3dReferenceIntent } from "../src/experiences/model3d-reference.ts";
 import type { ExperiencePlan } from "../src/experiences/intake.ts";
 import { inspectModel3dReferenceCustody } from "./model3d-reference-custody.ts";
-import { loadOutputTrustedContext } from "./output-requirements-api.ts";
+import { continueOutputTrustedContext } from "./output-trusted-context.ts";
 import { projectIntakeAuthority, type ProjectIntakeAuthorization } from "./intake-authority.ts";
 import { outputActiveSourceDeadlineAssertions } from "./output-disclosure-proof.ts";
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
@@ -15,7 +15,9 @@ type PreparedSource = Readonly<{ reference: Model3dReferencePlan; head: number; 
 /** New request-owned read; previous inspection responses are never accepted here. */
 export async function prepareExperienceModel3dReference(request: Request, env: WorkerEnv,
   auth: ProjectIntakeAuthorization, selection: Model3dReferenceIntent): Promise<PreparedSource> {
-  const trusted = await loadOutputTrustedContext(request, env, selection.sourceDocumentId, "read");
+  // Reuse the actual captured principal in a server continuation. A queue-owned
+  // request has no HTTP authentication headers; do not synthesize those headers.
+  const trusted = await continueOutputTrustedContext(request, env, selection.sourceDocumentId, "read", auth);
   if (trusted instanceof Response) fail("model3d_reference_source_unavailable", trusted.status);
   const inspection = await inspectModel3dReferenceCustody(trusted, auth, selection);
   const block = trusted.projection.libraryBlocks.find(candidate => candidate.id === selection.sourceBlockId);

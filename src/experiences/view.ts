@@ -169,9 +169,9 @@ export class ExperienceView {
     } else if (this.runtime.release.output.output === "audio") {
       this.#stage.append(el("h2", "Instrumental track · about 20 seconds"), this.#summary(), el("p", "Saving creates musical direction in a Document. Continue to review cost and source transfer before creating audio. The 20-second target is a request, not a measured recording.", "experience-reference-status"));
     } else if (this.runtime.release.output.output === "storyboard") {
-      this.#stage.append(el("h2", "Four-frame storyboard"), this.#summary(), el("p", "These are authored directions, not generated frames. Saving creates Document context for a four-frame storyboard. Generation unavailable.", "experience-reference-status"));
+      this.#stage.append(el("h2", "Four-frame storyboard"), this.#summary(), el("p", "These are authored directions, not generated frames. Saving creates Document context for a four-frame storyboard; it does not authorize generation. After saving, Continue to review cost and source transfer. Creation requires separate approval.", "experience-reference-status"));
     } else if (this.runtime.release.output.output === "model3d") {
-      this.#stage.append(el("h2", "One static GLB object"), this.#summary(), el("p", "Saving creates Document context, not a 3D file. A selected reference is rechecked before Save; it does not authorize generation. Generation unavailable.", "experience-reference-status"));
+      this.#stage.append(el("h2", "One static GLB object"), this.#summary(), el("p", "Saving creates Document context, not a 3D file. A selected reference is rechecked before Save; it does not authorize generation. After saving, Continue to review cost and source transfer. Creation requires separate approval.", "experience-reference-status"));
     } else if (this.runtime.release.output.output === "short_story") {
       const structure = el("ol", undefined, "experience-story-structure");
       structure.setAttribute("aria-label", "Story structure");
@@ -279,7 +279,7 @@ export class ExperienceView {
       return;
     }
     this.#stage.replaceChildren(el("h2", "Document saved")); this.#actions.append(link);
-    if (!this.#adapter || !["image", "slides", "short_story", "scene", "storyboard", "audio"].includes(this.runtime.release.output.output)) { this.#stage.append(el("p", "Generation unavailable")); return; }
+    if (!this.#adapter || !["image", "slides", "short_story", "scene", "storyboard", "audio", "model3d"].includes(this.runtime.release.output.output)) { this.#stage.append(el("p", "Generation unavailable")); return; }
     const target = el("div", undefined, "experience-native-host"); this.#stage.append(target);
     try {
       const session = await this.#adapter.mount(target, Object.freeze({ plan, receipt, settings: experienceOutputSettings(plan) }), this.#abort.signal);

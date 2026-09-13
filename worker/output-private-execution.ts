@@ -7,7 +7,7 @@ const privateWrite = (sql: string) => /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE
   || /\bUPDATE\s+document_jobs\s+SET\b[\s\S]*(?:result_json|request_json|lease_expires_at)/iu.test(sql);
 
 /** Existing writers run unchanged, with the same transaction guarding their private writes. */
-export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined}={}): WorkerEnv {
+export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined}={}): WorkerEnv {
   const nativeKeys = new Map<string, string>();
   // The private-content INSERT also checks this exact policy version in its
   // transaction. Reusing one request-local read never bypasses a policy change.
@@ -22,6 +22,7 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
     // event's self-described settings alone cannot retain native storage.
     // Audio separately binds its original approved job/slot and settled calls.
     const storyboardCompletion=options.storyboardCompletionJson?.()??null;
+    const model3dCompletion=options.model3dCompletionJson?.()??null;
     const publication = guards.length ? [...nativeKeys].map(([storageKey, hash]) => env.DB.prepare(`UPDATE output_native_storage_writes SET publication_event_id=(
       SELECT completed.event_id FROM events completed JOIN event_private_payloads body ON body.private_event_id=completed.event_id
       JOIN output_operation_slots slot ON slot.scope_key=? AND slot.slot_id=? JOIN document_jobs job ON job.job_id=slot.job_id
@@ -53,6 +54,37 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
            OR json_extract(item.value,'$.height') IS NOT json_extract(frame.value,'$.height'))
         AND EXISTS(SELECT 1 FROM json_each(body.private_json,'$.settings.output_storyboard.frames') frame
           WHERE json_extract(frame.value,'$.mediaUrl')=? AND json_extract(frame.value,'$.sha256')=?)
+        OR completed.type='DocumentRenderCompleted' AND completed.actor='worker:renderer'
+        AND ?='personal' AND job.owner_id=? AND job.kind='render_document'
+        AND output_native_storage_writes.write_acknowledged=1 AND body.owner_id=job.owner_id AND body.document_id=job.document_id
+        AND json_extract(body.private_json,'$.artifact_kind')='model3d'
+        AND json_extract(body.private_json,'$.source_surface')='outputs'
+        AND json_extract(body.private_json,'$.requested_by_user_id')=job.owner_id
+        AND json_extract(body.private_json,'$.artifact_id')=json_extract(job.result_json,'$.artifactId')
+        AND json_extract(body.private_json,'$.settings.output_model3d')=json(?)
+        AND json_extract(body.private_json,'$.settings.output_model3d.jobId')=job.job_id
+        AND json_extract(body.private_json,'$.settings.output_model3d.actorUserId')=job.owner_id
+        AND json_extract(body.private_json,'$.settings.output_model3d.documentId')=job.document_id
+        AND json_extract(body.private_json,'$.settings.output_model3d.artifactId')=json_extract(body.private_json,'$.artifact_id')
+        AND json_extract(body.private_json,'$.settings.output_model3d.contract')=json_extract(job.request_json,'$.outputModel3d')
+        AND json_extract(body.private_json,'$.settings.output_model3d.execution')=json_extract(job.request_json,'$.outputExecution')
+        AND json_extract(body.private_json,'$.settings.output_model3d.execution.slotId')=slot.slot_id
+        AND json_extract(body.private_json,'$.settings.output_model3d.execution.targetContractDigest')=slot.target_contract_digest
+        AND json_extract(body.private_json,'$.settings.output_model3d.execution.sourceDigest')=slot.source_digest
+        AND json_extract(job.request_json,'$.model3dCostConsent.requestId')=job.job_id
+        AND json_type(job.request_json,'$.model3dCostConsent.confirmed')='true'
+        AND json_type(job.request_json,'$.model3dCostConsent.providerTransferConfirmed')='true'
+        AND EXISTS(SELECT 1 FROM json_each(body.private_json,'$.settings.output_model3d.files') file
+          WHERE json_extract(file.value,'$.url')=? AND json_extract(file.value,'$.sha256')=?)
+        AND (SELECT COUNT(*) FROM output_provider_calls call WHERE call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id)=1
+        AND EXISTS(SELECT 1 FROM output_provider_calls call WHERE call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id
+          AND call.call_key='model3d:initial' AND call.stage_key='model3d:initial' AND call.provider='fal'
+          AND call.model=json_extract(job.request_json,'$.model3dCostConsent.model')
+          AND call.status='settled' AND call.used_microusd=json_extract(job.request_json,'$.model3dCostConsent.maximumMicrousd')
+          AND call.client_request_id=json_extract(body.private_json,'$.settings.output_model3d.receipt.mediaCallId')
+          AND call.provider_response_id=json_extract(body.private_json,'$.settings.output_model3d.receipt.providerRequestId')
+          AND call.provider_response_id=json_extract(body.private_json,'$.provider_job_id')
+          AND call.request_digest=json_extract(body.private_json,'$.settings.output_model3d.receipt.requestDigest'))
         OR completed.type='DocumentRenderCompleted' AND completed.actor='worker:renderer'
         AND ?='personal' AND job.owner_id=? AND job.kind='render_document'
         AND output_native_storage_writes.write_acknowledged=1
@@ -117,7 +149,7 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
           AND call.request_digest=json_extract(body.private_json,'$.settings.output_audio_receipt.requestDigest')))
       ORDER BY completed.sequence DESC LIMIT 1),updated_at=?
       WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' AND publication_event_id IS NULL`)
-      .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
+      .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,model3dCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
     const result = await env.DB.batch([...guards, ...unwrapped.map(input => input.statement), ...publication]);
     return result.slice(guards.length,guards.length+inputs.length);
   };

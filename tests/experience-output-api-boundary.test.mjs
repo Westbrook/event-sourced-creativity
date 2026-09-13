@@ -39,7 +39,7 @@ const actualAPIImports = new Set(["../src/experiences/compiler.ts", "../src/expe
   "../src/model/output-storyboard-contract.ts", "../src/model/output-storyboard-offer.ts",
   "../src/model/output-scene-contract.ts", "../src/model/scene-mini-app-consent.ts",
   "./output-scene-preflight-contract.ts", "../src/model/output-narrative-contract.ts",
-  "./experience-model3d-recipe.ts"]);
+  "./experience-model3d-recipe.ts", "../src/model/model3d-mini-app-consent.ts", "./output-model3d-execution.ts"]);
 const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   const parent = context.parentURL && new URL(context.parentURL);
   const apiBoundary = parent?.pathname === apiURL.pathname && parent.searchParams.has("boundary");

@@ -1,9 +1,12 @@
+import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } from "../model/model3d-mini-app-consent.ts";
+import { readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
+import type { ExperienceModel3dCostApproval } from "./output-binding-contract.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState, ExperienceNativeUnavailable } from "./output-binding-contract.ts";
 import { parseSceneMiniAppCostPreview, sceneMiniAppCostApprovalMatches, type SceneMiniAppCostApproval } from "../model/scene-mini-app-consent.ts";
 
 import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches } from "../model/audio-mini-app-consent.ts";
 
-export type ExperienceBindingIdentity = Readonly<{ draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string; output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio"; actorUserId: string }>;
+export type ExperienceBindingIdentity = Readonly<{ draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string; output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d"; actorUserId: string }>;
 export type ExperienceBindingResponse = ExperienceNativeState | ExperienceNativeUnavailable;
 export type ExperienceBindingAction = "prepare" | "authorize" | "run" | "resumeRun" | "recoverResult";
 const status = new Set(["absent", "preparing", "review", "authorized", "queued", "running", "succeeded", "failed", "cancelled", "partial", "uncertain", "unavailable"]);
@@ -87,6 +90,24 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
       }
       if (record(original) && (!preview || preview.requestId !== original.jobId)) return null;
     } else if (Object.hasOwn(value, "audioCostPreview")) return null;
+    if (value.output === "model3d") {
+      if (!Object.hasOwn(value, "model3dCostPreview")) return null;
+      const preview = value.model3dCostPreview === null ? null : parseModel3dMiniAppCostPreview(value.model3dCostPreview);
+      if (value.model3dCostPreview !== null && (!preview || preview.actorUserId !== identity.actorUserId
+        || preview.documentId !== identity.documentId || preview.projectId !== identity.projectId
+        || preview.draftId !== identity.draftId || preview.sourceDigest !== value.current.sourceDigest
+        || preview.requirementsDigest !== value.current.requirementsDigest)) return null;
+      if (permitted.authorize || permitted.run || permitted.resumeRun) {
+        if (!preview || !record(preflight) || preview.maximumMicrousd !== preflight.maximumMicrousd
+          || preview.maximumCalls !== preflight.maximumCalls) return null;
+      }
+      if (record(original) && (!preview || preview.requestId !== original.jobId)) return null;
+      if (preview) {
+        const target = record(preflight) && Array.isArray(preflight.targets) ? preflight.targets[0] : null;
+        const payload = record(target) && record(target.settings) ? readModel3dExecutionPayload(target.settings.payload) : null;
+        if (!payload || bindingJson(payload.preview) !== bindingJson(preview)) return null;
+      }
+    } else if (Object.hasOwn(value, "model3dCostPreview")) return null;
     if (plan !== null && (!record(plan) || !["revisionId", "targetId", "targetContractDigest", "sourceDigest", "requirementsDigest"].every(key => text(plan[key]))
       || plan.sourceDigest !== value.current.sourceDigest || plan.requirementsDigest !== value.current.requirementsDigest)) return null;
     if (preflight !== null) {
@@ -158,7 +179,7 @@ export class ExperienceOutputBindingClient {
   get pending() { return this.#pending; }
   dispose() { this.#epoch++; this.#abort?.abort(); this.#state = unavailableBinding("withdrawn"); this.#pending = false; }
   async read() { return this.#request("GET"); }
-  async command(action: ExperienceBindingAction, shown: ExperienceNativeState, sceneApproval?: SceneMiniAppCostApproval, audioApproval?: ExperienceAudioCostApproval) {
+  async command(action: ExperienceBindingAction, shown: ExperienceNativeState, sceneApproval?: SceneMiniAppCostApproval, audioApproval?: ExperienceAudioCostApproval, model3dApproval?: ExperienceModel3dCostApproval) {
     if (this.#pending || shown !== this.#state || !shown.permitted[action] || !this.#controls.current()) return this.#state;
     // Never manufacture Scene consent from a server preview. It is a separate
     // explicit host action, sent only with Authorize and tied to this exact state.
@@ -168,9 +189,12 @@ export class ExperienceOutputBindingClient {
     if (shown.output === "audio" && action === "authorize") {
       if (!audioMiniAppCostApprovalMatches(audioApproval, shown.audioCostPreview)) return this.#state;
     } else if (audioApproval !== undefined) return this.#state;
+    if (shown.output === "model3d" && action === "authorize") {
+      if (!model3dMiniAppCostApprovalMatches(model3dApproval, shown.model3dCostPreview)) return this.#state;
+    } else if (model3dApproval !== undefined) return this.#state;
     const body = action === "prepare" ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true }
       : action === "authorize" && shown.preflight ? { draftHash: this.identity.draftHash, termsDigest: shown.preflight.termsDigest, maximumMicrousd: shown.preflight.maximumMicrousd, explicitAuthorization: true,
-        ...(shown.output === "scene" ? {sceneCostConsent: sceneApproval} : {}), ...(shown.output === "audio" ? {audioCostConsent: audioApproval} : {}) }
+        ...(shown.output === "scene" ? {sceneCostConsent: sceneApproval} : {}), ...(shown.output === "audio" ? {audioCostConsent: audioApproval} : {}), ...(shown.output === "model3d" ? {model3dCostConsent: model3dApproval} : {}) }
       : action === "recoverResult" && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, jobId: shown.original.jobId, explicitRecovery: true }
       : (action === "run" || action === "resumeRun") && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, explicitRun: true } : null;
     if (!body) return this.#state;
@@ -225,7 +249,7 @@ export function experienceResultGrantCurrent(state:ExperienceNativeState,now:num
   const spendingDeadline=Date.parse(state.original.expiresAt);
   if(!Number.isFinite(spendingDeadline))return false;
   if(spendingDeadline>now)return true;
-  return ["image","slides","short_story","scene","storyboard","audio"].includes(state.output)&&state.status==="succeeded"
+  return ["image","slides","short_story","scene","storyboard","audio","model3d"].includes(state.output)&&state.status==="succeeded"
     &&state.disposition==="original_run_recorded"&&commandIdentity(state.original.run)&&state.original.jobStatus==="completed"
     &&state.original.slotStatus==="succeeded"&&state.original.grantStatus==="completed"&&state.grant.status==="completed"
     &&!state.permitted.prepare&&!state.permitted.authorize&&!state.permitted.run&&!state.permitted.resumeRun&&!state.permitted.recoverResult

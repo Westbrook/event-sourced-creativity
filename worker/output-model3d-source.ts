@@ -1,3 +1,4 @@
+import { MODEL3D_REFERENCE_HEAD_SQL } from "./output-model3d-publication-head.ts";
 import { experienceModel3dOutputContract } from "./experience-model3d-recipe.ts";
 import { prepareExperienceModel3dReference } from "./experience-model3d-reference-source.ts";
 import { readModel3dReferenceIntent } from "../src/experiences/model3d-reference.ts";
@@ -118,7 +119,7 @@ export async function resolveOutputModel3dSource(input: OutputBridgeTargetInput)
   if (!identity || !exactIso(retained.expiresAt) || Date.parse(identity.expiresAt) > Date.parse(retained.expiresAt)) fail("output_model3d_original_expired");
   const draft = join(projectIntakeAuthority(input.env, auth, plan), experienceDraftGuard(auth, plan, retained.content));
   const sourceAssertions = [...input.sourceAssertions, draft, receiptAssertion(input, receipt), ...(original ? [original.guard, {
-    sql: "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?", bindings: [principal.streamId, original.head],
+    sql: MODEL3D_REFERENCE_HEAD_SQL, bindings: [principal.streamId, original.head],
   }] : [])].map(assertion => ({
     ...assertion, bindings: [...(assertion.bindings ?? [])],
   }));

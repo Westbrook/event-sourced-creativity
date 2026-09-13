@@ -1,3 +1,5 @@
+import type { Model3dMiniAppCostPreview } from "../model/model3d-mini-app-consent.ts";
+export type ExperienceModel3dCostApproval = Model3dMiniAppCostPreview & Readonly<{ confirmed: true; providerTransferConfirmed: true }>;
 import type { OutputGrantRow, OutputPreflight } from "../model/output-delivery-contract.ts";
 import type { SceneMiniAppCostPreview, SceneMiniAppCostApproval } from "../model/scene-mini-app-consent.ts";
 import type { AudioMiniAppCostPreview } from "../model/audio-mini-app-consent.ts";
@@ -14,11 +16,12 @@ export type ExperienceNativeOriginal = {
 };
 export type ExperienceNativeState = {
   version: 1; draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string;
-  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio"; sourceSurface: "outputs";
+  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d"; sourceSurface: "outputs";
   /** Scene-only original disclosure; omission on other outputs preserves their wire shape. */
   sceneCostPreview?: SceneMiniAppCostPreview | null;
   /** Audio-only original cost and source-transfer disclosure. */
   audioCostPreview?: AudioMiniAppCostPreview | null;
+  model3dCostPreview?: Model3dMiniAppCostPreview | null;
   status: "absent" | "preparing" | "review" | "authorized" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "partial" | "uncertain" | "unavailable";
   recovery?: "pending" | "completed";
   disposition: "never_admitted" | "prepared" | "original_authorized" | "original_run_recorded";
@@ -35,7 +38,7 @@ export type ExperienceNativeUnavailable = {
   permitted: { prepare: false; authorize: false; run: false; resumeRun: false; recoverResult?: false };
 };
 export type ExperienceNativePrepareRequest = { draftHash: string; explicitRequirementsConfirmation: true };
-export type ExperienceNativeAuthorizeRequest = { draftHash: string; termsDigest: string; maximumMicrousd: number; explicitAuthorization: true; sceneCostConsent?: SceneMiniAppCostApproval; audioCostConsent?: ExperienceAudioCostApproval };
+export type ExperienceNativeAuthorizeRequest = { draftHash: string; termsDigest: string; maximumMicrousd: number; explicitAuthorization: true; sceneCostConsent?: SceneMiniAppCostApproval; audioCostConsent?: ExperienceAudioCostApproval; model3dCostConsent?: ExperienceModel3dCostApproval };
 export type ExperienceNativeRunRequest = { draftHash: string; grantId: string; explicitRun: true };
 
 // GET /api/experiences/drafts/:id/output: passive exact original-intent lookup.

@@ -1,3 +1,4 @@
+import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
 import { requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
@@ -78,7 +79,7 @@ export type OutputPreparedAdmission = {
 export interface OutputExecutionBridge {
   preflight(input: OutputBridgeTargetInput): Promise<OutputNativeTargetPreflight>;
   prepareAdmission(input: Omit<OutputBridgeTargetInput, "target"> & {
-    grantId: string; preflight: OutputPreflight; slots: OutputOperationSlot[]; governanceWitness?: OutputGovernanceWitness; sceneCostConsent?: unknown; audioCostConsent?: unknown;
+    grantId: string; preflight: OutputPreflight; slots: OutputOperationSlot[]; governanceWitness?: OutputGovernanceWitness; sceneCostConsent?: unknown; audioCostConsent?: unknown; model3dCostConsent?: unknown;
   }): Promise<OutputPreparedAdmission>;
   /** May schedule existing admitted job IDs only. The runner rechecks slot/grant/current authority before every call. */
   dispatch(input: { request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser; executionContext: WorkerExecutionContext; slots: OutputOperationSlot[] }): Promise<void>;
@@ -453,7 +454,7 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
     }
     const result = await bridge.preflight(bridgeTarget(trusted, plan, target));
     if (result.targetId !== target.id) fail("bridge_target_mismatch", 500);
-    if (Object.hasOwn(target, "model3d_contract") && result.reasonCode === "output_model3d_execution_not_connected") {
+    if (Object.hasOwn(target, "model3d_contract") && (result.available || result.reasonCode === "output_native_model3d_unconfigured")) {
       const proof = outputModel3dPreflightAssertions(result);
       const deadlines = proof?.flatMap(value => value.deadlineMs === undefined ? [] : [value.deadlineMs]);
       if (!proof?.length || !deadlines?.length || deadlines.some(value => !Number.isFinite(value))) fail("output_model3d_original_unavailable", 409);
@@ -509,6 +510,10 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
   if (!preflight.targets.length || preflight.targets.some((target) => !target.available)) fail("unavailable_selected_output_route", 409);
   if (preflight.maximumMicrousd > Number(body.maximumMicrousd) || Number(body.maximumMicrousd) > 1_000_000_000_000) fail("output_authorization_ceiling_insufficient", 403);
   const plan = currentPlan(trusted, await readConfirmedPlan(trusted, preflight.planRevisionId));
+  const model3dTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"model3d_contract"));
+  if(model3dTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
+    ||model3dTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("model3d_mini_app_route_required",403);
+  if(Boolean(model3dTargets.length)!==Object.hasOwn(body,"model3dCostConsent"))fail("model3d_mini_app_confirmation_required",403);
   const audioTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"audio_contract"));
   if(audioTargets.length&&!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname))fail("audio_mini_app_route_required",403);
   if(audioTargets.length>1||audioTargets.length&&preflight.targets.length!==1||Boolean(audioTargets.length)!==Object.hasOwn(body,"audioCostConsent"))fail("audio_mini_app_confirmation_required",403);
@@ -529,6 +534,14 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     const attempt = preflight.operationAttempts[target.id];
     if (!attempt || !Number.isSafeInteger(attempt.ordinal) || attempt.ordinal < 0) fail("output_attempt_identity_missing", 409);
     let jobId = uuidV7();
+    if(Object.hasOwn(target,"model3d_contract")){
+      const original=await readOutputModel3dPayload(record(offered.settings).payload),fresh=await readOutputModel3dPayload(record(current.settings).payload),proof=outputModel3dPreflightAssertions(current);
+      if(!original||!fresh||!proof?.length||attempt.ordinal!==0||attempt.previousSlotId||fresh.preview.actorUserId!==trusted.scope.actorUserId
+        ||fresh.preview.documentId!==trusted.scope.documentId||fresh.preview.projectId!==trusted.scope.projectId
+        ||fresh.preview.sourceDigest!==trusted.sourceDigest||fresh.preview.requirementsDigest!==trusted.requirementsDigest)fail("output_model3d_original_attempt_required",403);
+      requireModel3dMiniAppCostApproval(body.model3dCostConsent,original.preview,fresh.preview);
+      jobId=fresh.preview.requestId;sceneExpiresAt=fresh.preview.expiresAt;trusted.sourceAssertions.push(...proof);
+    }
     if(Object.hasOwn(target,"storyboard_contract")){
       const original=readStoryboardExecutionOffer(offered),offer=readStoryboardExecutionOffer(current),proof=outputStoryboardPreflightProof(current);
       if(!original||!offer||!proof?.sourceAssertions.length||attempt.ordinal!==0||attempt.previousSlotId
@@ -558,7 +571,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId, costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
-  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}) });
+  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
   // Preserve the original Scene quote deadline through final atomic admission.
   if (sceneExpiresAt && Date.parse(sceneExpiresAt) <= Date.now()) fail("scene_mini_app_confirmation_required", 403);

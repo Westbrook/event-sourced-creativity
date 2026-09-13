@@ -1,6 +1,7 @@
 .artifact-model3d-scale {
   min-inline-size: 0;
   padding: var(--forma-focus-clearance, .5rem);
+  padding-inline: clamp(.8rem,2.5vi,2rem);
   overflow-wrap: anywhere;
 }
 .artifact-model3d-scale-field {

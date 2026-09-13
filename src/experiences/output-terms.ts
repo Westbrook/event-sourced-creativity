@@ -1,3 +1,6 @@
+import { readModel3dExecutionOffer } from "../model/output-model3d-offer.ts";
+import type { Model3dOutputContract } from "../model/output-model3d-contract.ts";
+import type { Model3dMiniAppCostPreview } from "../model/model3d-mini-app-consent.ts";
 import { EXPERIENCE_AUDIO_INTENT } from "./contracts.ts";
 import { parseAudioOutputContract, type AudioOutputContract } from "../model/output-audio-contract.ts";
 import { parseAudioMiniAppCostPreview, type AudioMiniAppCostPreview } from "../model/audio-mini-app-consent.ts";
@@ -48,7 +51,7 @@ export type OutputTerms = Readonly<{
 }>;
 export type OutputTermsOptions = Readonly<{
   now: number;
-  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio";
+  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d";
   targetId: string;
   grant?: OutputGrantRow | null;
   /** Display eligibility only. Host separately proves server permission and the exact original recorded run. */
@@ -60,6 +63,8 @@ export type OutputTermsOptions = Readonly<{
   expectedSceneContract?: SceneOutputContract;
   expectedSceneContractDigest?: string;
   sceneCostPreview?: SceneMiniAppCostPreview | null;
+  expectedModel3dContract?: Model3dOutputContract;
+  model3dCostPreview?: Model3dMiniAppCostPreview | null;
   expectedAudioContract?: AudioOutputContract;
   audioCostPreview?: AudioMiniAppCostPreview | null;
   expectedStoryboard?: Readonly<{ source: StoryboardOutputSource; actorUserId: string; projectId: string; documentId: string }>;
@@ -276,6 +281,23 @@ function audioSettings(settings: Data, payload: Data, target: Data, options: Out
 }
 
 function targetProjection(target: Data, options: OutputTermsOptions): OutputTermsTarget | null {
+  if (options.output === "model3d") {
+    const checked = readModel3dExecutionOffer(target);
+    if (!checked || target.targetId !== options.targetId || !options.expectedModel3dContract || !options.model3dCostPreview
+      || canonicalJson(checked.contract) !== canonicalJson(options.expectedModel3dContract)
+      || canonicalJson(checked.preview) !== canonicalJson(options.model3dCostPreview)) return null;
+    const preview = checked.preview;
+    return Object.freeze({ targetId: options.targetId, settings: JSON.stringify(checked.settings, null, 2),
+      calls: Object.freeze([Object.freeze({ stage: "model3d:initial", rows: rows(row("Provider", "fal.ai / Hyper3D"), row("Model", preview.model), moneyRow("Maximum spend", preview.maximumMicrousd)) })]),
+      rows: rows(row("Output", "1 static GLB assembly"), row("Generation calls", "1 Rodin request · No planner or automatic retry"),
+        row("Subject", "One requested object; structural checks do not prove semantic object count"),
+        row("Original job", preview.requestId), row("Approval deadline", preview.expiresAt),
+        row("Source files", preview.sourceFilesTransferred ? "1 owned image or saved PNG view; no mesh transfer" : "None"),
+        ...(preview.referenceSha256 ? [row("Exact reference SHA-256", preview.referenceSha256), row("Reference bytes", preview.referenceBytes), row("Reference type", preview.referenceMimeType!)] : []),
+        row("Submitted prompt", checked.description.prompt), row("Settings", "Gen-2.5-High · GLB · Auto mesh · No HD pack"),
+        row("Result review", "Static rooted assembly, not semantic-object or visual-quality acceptance"),
+        row("After uncertain response", "No additional paid request")) });
+  }
   if(options.output==="storyboard"){
     const parsed=readStoryboardExecutionOffer(target),expected=options.expectedStoryboard;
     if(!parsed||!expected||target.targetId!==options.targetId||canonicalJson(parsed.contract.source)!==canonicalJson(expected.source)
@@ -423,15 +445,16 @@ function grantProjection(value: Json, offer: Data, targetId: string, now: number
 }
 
 function summaryProjection(offer: Data, target: Data, options: OutputTermsOptions, usage: OutputTermsSummary["usage"]): OutputTermsSummary | undefined {
-  if (!["image", "slides", "short_story", "scene", "audio", "storyboard"].includes(options.output)) return undefined;
+  if (!["image", "slides", "short_story", "scene", "audio", "storyboard", "model3d"].includes(options.output)) return undefined;
   // Called only after targetProjection validates these exact snapshotted settings.
   // Do not select, omit or reinterpret terms by their translated display labels.
   const settings = record(target.settings)!, calls = settings.calls as Data[];
-  const image = options.output === "image", audio = options.output === "audio", storyboard = options.output === "storyboard", fal = image && target.provider === "fal";
+  const model3d = options.output === "model3d", image = options.output === "image", audio = options.output === "audio", storyboard = options.output === "storyboard", fal = image && target.provider === "fal";
   const story = options.output === "short_story", scene = options.output === "scene";
-  const output = storyboard ? "Exactly 4 storyboard frames" : audio ? "1 instrumental track · about 20 seconds" : scene ? "1 written scene · 2 characters · 1 location · 1–2 pages" : story ? "1 story · 600–800 words" : image ? "1 image" : "5 slides";
+  const output = model3d ? "1 static GLB assembly" : storyboard ? "Exactly 4 storyboard frames" : audio ? "1 instrumental track · about 20 seconds" : scene ? "1 written scene · 2 characters · 1 location · 1–2 pages" : story ? "1 story · 600–800 words" : image ? "1 image" : "5 slides";
   const constraints: OutputTermsRow[] = [];
-  if (storyboard) constraints.push(row("Image size", "1536 × 1024 · PNG"), row("Reference pixels", "None"));
+  if (model3d) constraints.push(row("Format", "GLB · Static rooted assembly"), row("Reference files", options.model3dCostPreview?.sourceFilesTransferred ? "1 owned image or saved PNG view; no mesh transfer" : "None"));
+  else if (storyboard) constraints.push(row("Image size", "1536 × 1024 · PNG"), row("Reference pixels", "None"));
   else if (audio) constraints.push(row("Duration", "20-second request; measured duration only after media inspection"), row("Source files", "None"));
   else if (image) {
     const render = record(settings.imageRender)!, ratio = record(record(render.format)!.aspect_ratio)!;
@@ -446,15 +469,16 @@ function summaryProjection(offer: Data, target: Data, options: OutputTermsOption
     "A timeout does not confirm provider cancellation; unresolved allowance remains held.",
     "This is Forma’s admission cap; provider billing and account limits are separate.",
   ];
-  if (fal || audio || storyboard) caveats.push("Costs use a published-rate estimate, not invoice precision.", "After an uncertain response, no additional paid request; recover the original request only.");
+  if (fal || audio || storyboard || model3d) caveats.push("Costs use a published-rate estimate, not invoice precision.", "After an uncertain response, no additional paid request; recover the original request only.");
   else if (image) caveats.push("Cost accounting uses provider receipts. No additional request after overrun or an uncertain response.", "The separate safety check is free in the retained native disclosure.");
+  if (model3d) caveats.push("Structural checks do not prove semantic object count or visual quality. Inspect the resulting model.");
   if (storyboard) caveats.push("No repair request or automatic retry. Review all four resulting images.");
   const recipients = [...new Map(calls.map(call => [JSON.stringify([call.provider, call.model]),
     Object.freeze({ provider: call.provider === "openai" ? "OpenAI" : "fal.ai", model: String(call.model) })])).values()];
   return Object.freeze({ output, constraints: Object.freeze(constraints),
     maximumSpend: outputTermsMoney(offer.maximumMicrousd)!, maximumGenerationCalls: offer.maximumCalls as number,
-    requests: storyboard ? "1 planner; 4 images · 5 paid stages" : audio ? "1 planning call; at most 1 repair; 1 audio request" : image ? "1 direction; 1 image" : story || scene ? "1 initial · No automatic repair" : "1 initial; at most 1 repair",
-    source: storyboard ? "Current Document context goes to OpenAI for planning; each planned frame direction goes to fal.ai / Ideogram 4" : audio ? "Document context goes to OpenAI for planning; musical direction goes to fal.ai, with no lyrics, spoken script or source files" : "Authorized Document context; selected target instructions",
+    requests: model3d ? "1 Rodin request · No planner or automatic retry" : storyboard ? "1 planner; 4 images · 5 paid stages" : audio ? "1 planning call; at most 1 repair; 1 audio request" : image ? "1 direction; 1 image" : story || scene ? "1 initial · No automatic repair" : "1 initial; at most 1 repair",
+    source: model3d ? "The displayed Document-derived prompt, fixed settings and listed owned image or saved PNG view go to fal.ai / Hyper3D Rodin; original mesh bytes are not transferred" : storyboard ? "Current Document context goes to OpenAI for planning; each planned frame direction goes to fal.ai / Ideogram 4" : audio ? "Document context goes to OpenAI for planning; musical direction goes to fal.ai, with no lyrics, spoken script or source files" : "Authorized Document context; selected target instructions",
     transfer: "Transfer starts after authorization and Create. Check cost sends no source content.",
     recipients: Object.freeze(recipients), safety: image || storyboard ? Object.freeze({ maximumChecks: storyboard ? 4 : 1, provider: "OpenAI", model: "omni-moderation-latest",
       input: storyboard ? "Exact final text prompt before each image" : fal ? "Exact adapted image prompt; text" : "Exact final image prompt; text" }) : null,
@@ -479,7 +503,7 @@ export function outputTermsNotice(terms: OutputTerms | null, state: {
 
 export function outputTerms(preflight: OutputPreflight, options: OutputTermsOptions): OutputTerms {
   try {
-    if (!options || !Number.isFinite(options.now) || options.now < 0 || !["image", "slides", "short_story", "scene", "storyboard", "audio"].includes(options.output)
+    if (!options || !Number.isFinite(options.now) || options.now < 0 || !["image", "slides", "short_story", "scene", "storyboard", "audio", "model3d"].includes(options.output)
       || typeof options.targetId !== "string" || !options.targetId.trim()) return unknownTerms;
     // The closed Scene response schema reaches depth 19 in the quoted offer.
     // Keep the same node/string bounds and preserve other output limits.
@@ -496,19 +520,29 @@ export function outputTerms(preflight: OutputPreflight, options: OutputTermsOpti
     const attempt = record(record(offer.operationAttempts)?.[options.targetId]);
     if (!attempt || !ceiling(attempt.ordinal) || attempt.previousSlotId !== null
       || Object.keys(record(offer.operationAttempts)!).length !== 1) return unknownTerms;
-    if (target.provider === "fal" && (offer.maximumMicrousd !== target.maximumMicrousd || offer.maximumCalls !== (options.output==="storyboard"?5:options.output==="audio"?3:2) || attempt.ordinal !== 0)) return unknownTerms;
+    if (target.provider === "fal" && (offer.maximumMicrousd !== target.maximumMicrousd || offer.maximumCalls !== (options.output==="storyboard"?5:options.output==="audio"?3:options.output==="model3d"?1:2) || attempt.ordinal !== 0)) return unknownTerms;
     if(options.output==="storyboard"){
       const checked=readStoryboardExecutionOffer(target);
       if(!checked||checked.original.sourceDigest!==offer.sourceDigest||checked.original.requirementsDigest!==offer.requirementsDigest
         ||expiry>Date.parse(String(checked.original.expiresAt)))return unknownTerms;
     }
     if ((options.output === "short_story" || options.output === "scene") && (offer.maximumMicrousd !== target.maximumMicrousd || offer.maximumCalls !== 1 || attempt.ordinal !== 0)) return unknownTerms;
+    if (options.output === "model3d") {
+      const checked = readModel3dExecutionOffer(target);
+      if (!checked || checked.preview.sourceDigest !== offer.sourceDigest || checked.preview.requirementsDigest !== offer.requirementsDigest
+        || expiry > Date.parse(checked.preview.expiresAt)) return unknownTerms;
+    }
     const projected = targetProjection(target, options);
     if (!projected) return unknownTerms;
     const grantData=options.grant==null?null:snapshot(options.grant,options.output==="scene"?24:14);
     if(options.output==="storyboard"&&grantData){
       const checked=readStoryboardExecutionOffer(target),g=record(grantData),operation=Array.isArray(g?.operations)?record(g.operations[0]):null;
       if(!checked||!g||operation?.jobId!==checked.original.requestId||stamp(g.expiresAt)===null||(stamp(g.expiresAt)??Infinity)>Date.parse(String(checked.original.expiresAt)))return unknownTerms;
+    }
+    if (options.output === "model3d" && grantData) {
+      const checked = readModel3dExecutionOffer(target), g = record(grantData), operation = Array.isArray(g?.operations) ? record(g.operations[0]) : null;
+      if (!checked || !g || operation?.jobId !== checked.preview.requestId || stamp(g.expiresAt) === null
+        || (stamp(g.expiresAt) ?? Infinity) > Date.parse(checked.preview.expiresAt)) return unknownTerms;
     }
     const grant = grantData===null?null:grantProjection(grantData, offer, options.targetId, options.now, options.allowRecordedResume === true);
     const available = expiry > options.now;

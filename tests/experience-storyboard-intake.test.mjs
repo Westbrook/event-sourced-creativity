@@ -175,9 +175,10 @@ test("Storyboard copy exposes planned output and retained native reading without
   assert(source.includes('runtime.release.output.output === "storyboard" ?'));
   assert(source.includes("Planned output: "));
   assert(source.includes("Describe the key moments in order and the framing and composition to carry across four frames."));
-  assert(source.includes("These are authored directions, not generated frames. Saving creates Document context for a four-frame storyboard. Generation unavailable."));
-  assert(source.includes('!["image", "slides", "short_story", "scene", "storyboard"].includes(this.runtime.release.output.output)'));
+  assert(source.includes("These are authored directions, not generated frames. Saving creates Document context for a four-frame storyboard; it does not authorize generation. After saving, Continue to review cost and source transfer. Creation requires separate approval."));
+  assert(source.includes('!["image", "slides", "short_story", "scene", "storyboard", "audio", "model3d"].includes(this.runtime.release.output.output)'));
   const terms = await readFile(new URL("../src/experiences/output-terms.ts", import.meta.url), "utf8");
-  assert(terms.includes('if(options?.output==="storyboard")return unknownTerms;'));
+  assert(terms.includes('if(options.output==="storyboard"){'));
+  assert(terms.includes("readStoryboardExecutionOffer(target)"));
   assert(source.includes("item.textContent = text"));
 });

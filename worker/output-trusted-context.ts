@@ -12,6 +12,7 @@ import { readEvents, streamHead } from "./event-stream-read.ts";
 import { serializeEvent } from "./event-read-primitives.ts";
 import { outputScopeAuthority, OutputConflictError, type OutputCommandPermission, type OutputScope, type OutputSqlAssertion } from "./output-command-core.ts";
 import { record, fail, json, outputDigest, captureOutputPrivateSources, verifyOutputSourceRead } from "./output-disclosure-proof.ts";
+import type { ProjectIntakeAuthorization } from "./intake-authority.ts";
 import type { requireUser } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
@@ -102,9 +103,10 @@ export async function continueOutputTrustedContext(
   env: WorkerEnv,
   documentId: string,
   permission: OutputCommandPermission,
-  auth: Awaited<ReturnType<typeof requireUser>>,
+  auth: Awaited<ReturnType<typeof requireUser>> | ProjectIntakeAuthorization,
 ): Promise<OutputTrustedContext | Response> {
-  if (auth.response || !auth.user) return auth.response ?? json({ error: "authentication_required" }, 401);
+  if ("response" in auth && auth.response) return auth.response;
+  if (!auth.user) return json({ error: "authentication_required" }, 401);
   const principal = auth.user, consent = requireConsent(principal);
   if (consent) return consent;
   const selected = await readProjectRequestContext(request, env, principal);

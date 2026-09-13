@@ -4,7 +4,7 @@ import { isStandaloneExperienceRoute, parseExperienceHostRoute } from '../src/ex
 import { parseExperienceEntryRoute } from '../src/experiences/intake.ts';
 import { resolveServerRoute } from '../src/platform/applications.ts';
 
-test('Model3D resolves to the standalone authoring entry without enabling a native host', () => {
+test('Model3D resolves to standalone authoring and a bounded native selector, not authority', () => {
   const draft = 'experience-draft-' + 'a'.repeat(64);
   const path = '/experiences/model3d?draft=' + draft + '&progress-report';
   assert.equal(isStandaloneExperienceRoute(path), true);
@@ -15,5 +15,12 @@ test('Model3D resolves to the standalone authoring entry without enabling a nati
   for (const path of ['/experiences/model3d/mesh', '/experiences/model3d#fragment', 'https://other.test/experiences/model3d']) {
     assert.equal(isStandaloneExperienceRoute(path), false);
   }
-  assert.equal(parseExperienceHostRoute('/document/model/model?experience=model3d&experience-draft=' + draft), null);
+  const native = '/document/model/model?experience=model3d&experience-draft=' + draft;
+  assert.deepEqual(parseExperienceHostRoute(native), {
+    output: 'model3d', draftId: draft, documentId: 'model', documentRoute: '/document/model/model',
+  });
+  for (const path of [native + '&experience=model3d', native + '&grantId=forged', native + '#mesh',
+    native.replace(draft, 'invalid-draft'), 'https://other.test' + native]) {
+    assert.equal(parseExperienceHostRoute(path), null);
+  }
 });

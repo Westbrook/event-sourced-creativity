@@ -5,6 +5,9 @@ import { prepareModel3dRequest } from "./model3d-request.ts";
 import { describeModel3dPreparation } from "./output-model3d-preparation.ts";
 import { resolveOutputModel3dSource } from "./output-model3d-source.ts";
 import { outputProofReadStatements, assertOutputProofRead } from "./output-disclosure-proof.ts";
+import { parseModel3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
+import { OUTPUT_MODEL3D_EXECUTION_POLICY } from "../src/model/output-execution-policy.ts";
+import { readOutputModel3dPayload } from "./output-model3d-execution.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import type { OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
@@ -17,9 +20,8 @@ const unavailable = (targetId: string, code: string): OutputNativeTargetPrefligh
 const proofs = new WeakMap<OutputNativeTargetPreflight, readonly OutputSqlAssertion[]>();
 export const outputModel3dPreflightAssertions = (value: OutputNativeTargetPreflight) => proofs.get(value) ?? null;
 
-/** Connected read-only preparation. Until the exact original-job dispatch and
- * static-result join are implemented, this path deliberately cannot authorize
- * an operation, including through the general Document Model3D bridge. */
+/** Read-only original-source quote. Admission, transfer and dispatch independently
+ * require this exact source, explicit approval and the original durable job. */
 export async function preflightOutputModel3dMiniAppTarget(input: OutputBridgeTargetInput): Promise<OutputNativeTargetPreflight> {
   const { target } = input, contract = parseModel3dOutputContract(target.model3d_contract);
   if (!contract || target.media_kind !== "model3d" || !target.selected || target.blocking_issues.length
@@ -49,13 +51,33 @@ export async function preflightOutputModel3dMiniAppTarget(input: OutputBridgeTar
   assertOutputProofRead(await input.env.DB.batch(outputProofReadStatements(input.env, assertions)), assertions.length);
   if (assertions.some(value => value.deadlineMs !== undefined && Date.now() >= value.deadlineMs))
     return unavailable(target.id, "output_model3d_source_changed");
+  const selected = description.references[0];
+  const costPreview = parseModel3dMiniAppCostPreview({ version: "model3d-mini-app-cost-v1", requestId: source.requestId,
+    expiresAt: source.expiresAt, draftId: source.plan.draftId, actorUserId: input.scope.actorUserId,
+    projectId: input.scope.projectId, documentId: input.scope.documentId, sourceDigest: input.sourceDigest,
+    requirementsDigest: input.requirementsDigest, preparationDigest: description.preparationDigest,
+    maximumMicrousd: description.maximumMicrousd, maximumCalls: 1, maximumTokens: 1, model: prepared.model,
+    sourceFilesTransferred: selected ? 1 : 0, sourceKind: contract.reference?.selection.kind ?? null,
+    referenceSha256: selected?.sha256 ?? null, referenceBytes: selected?.byteLength ?? 0, referenceMimeType: selected?.mimeType ?? null });
+  if (!costPreview) return unavailable(target.id, "output_model3d_quote_unavailable");
+  const payload = { productionMode: "manual", artifactKind: "model3d", itemCount: 1,
+    outputModel3d: contract, model3dPreparation: description, model3dCostPreview: costPreview,
+    model3dPrompt: prepared.prompt, model3dPromptSource: "document", model3dAdaptation: prepared.adaptation ?? null,
+    model3dSettings: prepared.settings, model3dReferenceBlockIds: referenceBlockIds };
+  if (!await readOutputModel3dPayload(payload)) return unavailable(target.id, "output_model3d_quote_unavailable");
+  const configured = Boolean(input.env.FAL_KEY?.trim());
   const result: OutputNativeTargetPreflight = freeze({
-    ...unavailable(target.id, "output_model3d_execution_not_connected"),
-    reason: "Current source prepared for one static GLB target; Start is not connected yet. Static assembly checks cannot prove that the model depicts one semantic object.",
-    provider: "fal", model: prepared.model, route: "model3d-mini-app-preparation-v1",
-    transferDescription: "This check sends nothing. A later separately authorized Start would send the displayed adapted prompt and fixed settings to fal.ai / Hyper3D Rodin, with only the listed owned image or saved PNG view. Original mesh bytes are not sent. No generation, grant or cost reservation is created by preparation.",
-    settings: { preparationOnly: true, executionAvailable: false, explicitCostAndTransferApprovalRequired: true,
-      description, original: { requestId: source.requestId, expiresAt: source.expiresAt, draftId: source.plan.draftId,
+    targetId: target.id, available: configured, reasonCode: configured ? "output_model3d_ready_for_separate_approval" : "output_native_model3d_unconfigured",
+    reason: "One original Rodin request for a static GLB. Static assembly checks do not prove one semantic object or visual quality; review the retained model.",
+    provider: "fal", model: prepared.model, route: "model3d-mini-app-static-glb-v1",
+    maximumMicrousd: description.maximumMicrousd, maximumCalls: 1, maximumTokens: 1,
+    transferCode: "output_transfer_model3d_not_yet_authorized",
+    transferDescription: "This check sends nothing. After separate approval and Start, the displayed adapted prompt and fixed settings go to fal.ai / Hyper3D Rodin, with only the listed owned image or saved PNG view. Original mesh bytes are not sent. Prices are estimates, not provider billing evidence. An uncertain request is not automatically resubmitted.",
+    settings: { kind: "render_document", payload,
+      calls: [{ stage: "model3d:initial", provider: "fal", model: prepared.model, maximumMicrousd: description.maximumMicrousd }],
+      executionPolicy: OUTPUT_MODEL3D_EXECUTION_POLICY, preparationOnly: false, executionAvailable: configured,
+      explicitCostAndTransferApprovalRequired: true, costPreview, description,
+      original: { requestId: source.requestId, expiresAt: source.expiresAt, draftId: source.plan.draftId,
         actorUserId: input.scope.actorUserId, projectId: input.scope.projectId, documentId: input.scope.documentId,
         sourceDigest: input.sourceDigest, requirementsDigest: input.requirementsDigest } },
   });

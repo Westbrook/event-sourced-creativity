@@ -10,7 +10,7 @@ export function experienceSourceMatches(plan: ExperiencePlan, receipt: Experienc
   relations: readonly unknown[]; events: readonly unknown[];
 }): boolean {
   try {
-    if (!["image", "slides", "short_story", "scene", "audio", "storyboard", "video"].includes(plan.release.output.output) || current.documentId !== plan.documentId || current.projectId !== plan.projectId
+    if (!["image", "slides", "short_story", "scene", "audio", "storyboard", "video", "model3d"].includes(plan.release.output.output) || current.documentId !== plan.documentId || current.projectId !== plan.projectId
       || receipt.documentId !== plan.documentId || receipt.projectId !== plan.projectId || receipt.draftHash !== plan.draftHash || receipt.draftId !== plan.draftId) return false;
     const documents = current.documents.filter(value => row(value) && value.id === plan.documentId);
     if (documents.length !== 1 || !row(documents[0]) || documents[0].removed !== false || documents[0].projectId !== plan.projectId || documents[0].title !== plan.title) return false;

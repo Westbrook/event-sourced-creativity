@@ -1,3 +1,5 @@
+import { model3dMiniAppCostApprovalMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
+import { readOutputModel3dPayload } from "./output-model3d-execution.ts";
 import { experienceModel3dOutputContract } from "./experience-model3d-recipe.ts";
 import { prepareExperienceModel3dReference } from "./experience-model3d-reference-source.ts";
 import { prepareExperienceVideoOutputSource } from "./experience-video-output-source.ts";
@@ -139,7 +141,7 @@ async function confirmed(loaded: Loaded) {
 }
 
 /** Audio preparation wire shape is server-only while the native client selector stays closed. */
-type ExperiencePreparedState = (ExperienceNativeState | (Omit<ExperienceNativeState, "output"> & { output: "audio" | "storyboard" | "model3d" | "video" })) & { audioCostPreview?: AudioMiniAppCostPreview | null };
+type ExperiencePreparedState = (ExperienceNativeState | (Omit<ExperienceNativeState, "output"> & { output: "audio" | "storyboard" | "model3d" | "video" })) & { audioCostPreview?: AudioMiniAppCostPreview | null; model3dCostPreview?: Model3dMiniAppCostPreview | null };
 async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   const { trusted, binding, originals } = loaded, plan = await confirmed(loaded);
   const preflightValue = originals.preflight?.receipt.payload.preflight;
@@ -164,7 +166,14 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     result.audioCostPreview=parseAudioMiniAppCostPreview(record(preflight?.targets[0]?.settings)?preflight!.targets[0]!.settings.costPreview:null);
     if(!result.audioCostPreview||Date.parse(result.audioCostPreview.expiresAt)<=Date.now())result.permitted.authorize=false;
   }
-  if (binding.output === "model3d") result.permitted.authorize = false;
+  if(binding.output==="model3d"){
+    const settings=preflight?.targets[0]?.settings,payload=record(settings)?await readOutputModel3dPayload(settings.payload):null;
+    if(preflight?.targets[0]?.available&&(!payload||canonicalJson(payload.contract)!==canonicalJson(loaded.recipe.spec.deliverables[0]?.model3d_contract)
+      ||payload.preview.actorUserId!==trusted.scope.actorUserId||payload.preview.documentId!==binding.documentId||payload.preview.projectId!==binding.projectId
+      ||payload.preview.sourceDigest!==trusted.sourceDigest||payload.preview.requirementsDigest!==trusted.requirementsDigest))error("experience_model3d_preflight_unavailable",410);
+    result.model3dCostPreview=payload?.preview??null;
+    if(!result.model3dCostPreview||Date.parse(result.model3dCostPreview.expiresAt)<=Date.now())result.permitted.authorize=false;
+  }
   if (binding.output === "storyboard") {
     const offered=preflight?.targets[0],storyboard=readStoryboardExecutionOffer(offered);
     if(offered?.available&&(!storyboard||canonicalJson(storyboard.contract)!==canonicalJson(loaded.recipe.spec.deliverables[0]?.storyboard_contract)
@@ -193,6 +202,7 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   const evidence = await outputExperienceCommands.readGrantEvidence(trusted.env, trusted.scope, grantId, true);
   if (evidence.slots.length !== 1 || canonicalJson(evidence.confirmedPlan) !== canonicalJson(plan) || canonicalJson(evidence.preflight) !== canonicalJson(preflight)) error("experience_output_original_operation_changed");
   const slot = evidence.slots[0]!, authorizedTargets = authorization.receipt.payload.authorized_targets;
+  if(binding.output==="model3d"&&(!result.model3dCostPreview||Date.parse(result.model3dCostPreview.expiresAt)<=Date.now())){result.permitted.run=false;result.permitted.resumeRun=false;}
   if (binding.output === "scene" && (!result.sceneCostPreview || slot.jobId !== result.sceneCostPreview.requestId
     // Equality of an already indexed original action, not synthesized approval.
     || canonicalJson(authorization.envelope.sceneCostConsent ?? null) !== canonicalJson({ ...result.sceneCostPreview, confirmed: true }))) error("experience_scene_original_consent_unavailable", 410);
@@ -205,6 +215,8 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   if (!job || !job.correlation_id || !Number.isFinite(Date.parse(job.expires_at)) || Date.parse(job.expires_at) <= Date.now()) error("experience_output_original_job_unavailable", 410);
   trusted.sourceAssertions.push({ sql: "EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND status=? AND expires_at=? AND correlation_id=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
     bindings: [slot.jobId, trusted.scope.actorUserId, binding.streamId, binding.documentId, job.status, job.expires_at, job.correlation_id], deadlineMs: Date.parse(job.expires_at) });
+  if(binding.output==="model3d"&&(!result.model3dCostPreview||slot.jobId!==result.model3dCostPreview.requestId||slot.attemptOrdinal!==0||slot.previousSlotId
+    ||canonicalJson(authorization.envelope.model3dCostConsent)!==canonicalJson({...result.model3dCostPreview,confirmed:true,providerTransferConfirmed:true})))error("experience_model3d_original_consent_unavailable",410);
   if(binding.output==="audio"&&(!result.audioCostPreview||slot.jobId!==result.audioCostPreview.requestId||slot.attemptOrdinal!==0||slot.previousSlotId||canonicalJson(authorization.envelope.audioCostConsent)!==canonicalJson({...result.audioCostPreview,confirmed:true,providerTransferConfirmed:true})))error("experience_audio_original_consent_unavailable",410);
   const run = originals.run;
   if (run && (run.envelope.grantId !== grantId || run.envelope.explicitRun !== true || run.receipt.payload.grant_id !== grantId
@@ -286,7 +298,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       const origin = request.headers.get("origin");
       if (origin && origin !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") return unavailable("same_origin_required", 403);
       const value = await readExperienceBody(request);
-      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation"] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
+      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation"] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "model3dCostConsent") ? ["model3dCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
       if (!record(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) return unavailable("experience_output_request_invalid", 400);
       body = value;
     }
@@ -295,7 +307,10 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     if (loaded.binding.output === "video" && ["authorize", "run", "recover-result"].includes(action ?? "")) error("experience_video_execution_unavailable", 409);
     if (loaded.binding.output === "audio" && action === "recover-result") error("experience_audio_recovery_unavailable", 409);
     if(action==="authorize"&&(loaded.binding.output==="audio")!==Object.hasOwn(body,"audioCostConsent"))error("experience_audio_confirmation_required",403);
-    if (loaded.binding.output === "model3d" && action && action !== "prepare") error("experience_model3d_execution_unavailable", 409);
+    if(action==="authorize"&&(loaded.binding.output==="model3d")!==Object.hasOwn(body,"model3dCostConsent"))error("experience_model3d_confirmation_required",403);
+    // This image-specific recovery endpoint must not be used for a Rodin result.
+    // Native durable job recovery keeps its original provider identity.
+    if(loaded.binding.output==="model3d"&&action==="recover-result")error("experience_model3d_image_recovery_forbidden",409);
     if (loaded.binding.output === "storyboard" && action === "recover-result") error("experience_storyboard_recovery_unavailable", 409);
     if (action && body.draftHash !== loaded.binding.draftHash) error("experience_review_stale");
     if (action === "authorize" && (loaded.binding.output === "scene") !== Object.hasOwn(body, "sceneCostConsent")) error("experience_scene_confirmation_required", 403);
@@ -327,7 +342,9 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
           : canonicalJson(body.sceneCostConsent) !== canonicalJson(loaded.originals.authorize.envelope.sceneCostConsent))) error("experience_scene_confirmation_required", 403);
       }
       if(loaded.binding.output==="audio"&&(!current.audioCostPreview||(!loaded.originals.authorize?!audioMiniAppCostApprovalMatches(body.audioCostConsent,current.audioCostPreview):canonicalJson(body.audioCostConsent)!==canonicalJson(loaded.originals.authorize.envelope.audioCostConsent))))error("experience_audio_confirmation_required",403);
+      if(loaded.binding.output==="model3d"&&(!current.model3dCostPreview||(!loaded.originals.authorize?!model3dMiniAppCostApprovalMatches(body.model3dCostConsent,current.model3dCostPreview):canonicalJson(body.model3dCostConsent)!==canonicalJson(loaded.originals.authorize.envelope.model3dCostConsent))))error("experience_model3d_confirmation_required",403);
       await execute(loaded, "authorize", { ...confirmation, preflightId: current.preflight.id,
+        ...(loaded.binding.output==="model3d"?{model3dCostConsent:body.model3dCostConsent}:{}),
         ...(loaded.binding.output==="audio"?{audioCostConsent:body.audioCostConsent}:{}),
         ...(loaded.binding.output === "scene" ? { sceneCostConsent: body.sceneCostConsent } : {}) }, bridge, executionContext);
     } else if (action === "run") {
