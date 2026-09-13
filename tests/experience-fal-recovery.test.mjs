@@ -44,7 +44,7 @@ test("existing progress and finish SQL preserve the privately retained checkpoin
   const source=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
   // Execute the two production SQL expressions, not a reimplementation. This is
   // metadata-only merge coverage, not a fabricated admission/provider journey.
-  for(const name of ["persistedResult","resultAssignment"]){
+  for(const name of ["persistedResult","outputResultAssignment"]){
     const expression=source.match(new RegExp(`const ${name}=row\\.output_slot_id\\?"([^"\\n]+)"`))?.[1];assert.ok(expression);
     const db=new DatabaseSync(":memory:");
     try{

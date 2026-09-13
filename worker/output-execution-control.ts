@@ -451,18 +451,22 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
 }
 
 /** Projection only: job/receipt truth wins and never creates a new grant or job. */
-export function prepareOutputJobOutcomeStatements(env:WorkerEnv,job:Pick<DocumentJobRow,"job_id"|"stream_id"|"correlation_id">){
+export function prepareOutputJobOutcomeStatements(env:WorkerEnv,job:Pick<DocumentJobRow,"job_id"|"stream_id"|"correlation_id">,terminalWitness?:{completedAt:string;resultJson:string}){
  const now=new Date().toISOString();
+ const witnessSql=terminalWitness?" AND live.status='failed' AND live.completed_at=? AND live.result_json IS ?":"";
+ const witnessBindings=terminalWitness?[terminalWitness.completedAt,terminalWitness.resultJson]:[];
  const slotUpdate=env.DB.prepare(`UPDATE output_operation_slots SET status=CASE
   WHEN EXISTS(SELECT 1 FROM output_provider_calls calls WHERE calls.scope_key=output_operation_slots.scope_key AND calls.slot_id=output_operation_slots.slot_id AND calls.status IN('pending','uncertain')) THEN 'uncertain'
   ELSE CASE (SELECT live.status FROM document_jobs live WHERE live.job_id=output_operation_slots.job_id AND live.stream_id=? AND live.correlation_id=?)
    WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed' WHEN 'partial' THEN 'failed' WHEN 'canceled' THEN 'cancelled'
    WHEN 'running' THEN 'running' WHEN 'committing' THEN 'running' ELSE status END END,
-  outcome_event_id=COALESCE((SELECT event_id FROM events WHERE stream_id=? AND correlation_id=? AND type IN('GenerationCompleted','GenerationFailed','DocumentRenderCompleted','DocumentRenderFailed') ORDER BY sequence DESC LIMIT 1),outcome_event_id),updated_at=? WHERE job_id=?`)
- .bind(job.stream_id,job.correlation_id,job.stream_id,job.correlation_id,now,job.job_id);
+  outcome_event_id=COALESCE((SELECT event_id FROM events WHERE stream_id=? AND correlation_id=? AND type IN('GenerationCompleted','GenerationFailed','DocumentRenderCompleted','DocumentRenderFailed') ORDER BY sequence DESC LIMIT 1),outcome_event_id),updated_at=? WHERE job_id=?
+  AND EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=output_operation_slots.job_id AND live.stream_id=? AND live.correlation_id=?${witnessSql})`)
+ .bind(job.stream_id,job.correlation_id,job.stream_id,job.correlation_id,now,job.job_id,job.stream_id,job.correlation_id,...witnessBindings);
  const grantUpdate=env.DB.prepare(`UPDATE output_execution_grants SET status='completed' WHERE status IN('authorized','active')
    AND EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=output_execution_grants.scope_key AND slot.grant_id=output_execution_grants.grant_id AND slot.job_id=?)
-   AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=output_execution_grants.scope_key AND slot.grant_id=output_execution_grants.grant_id AND slot.status IN('authorized','queued','running','uncertain'))`).bind(job.job_id);
+   AND EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.stream_id=? AND live.correlation_id=?${witnessSql})
+   AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=output_execution_grants.scope_key AND slot.grant_id=output_execution_grants.grant_id AND slot.status IN('authorized','queued','running','uncertain'))`).bind(job.job_id,job.job_id,job.stream_id,job.correlation_id,...witnessBindings);
  return [slotUpdate,grantUpdate];
 }
 export async function synchronizeOutputJobOutcome(env:WorkerEnv,job:Pick<DocumentJobRow,"job_id"|"status"|"stream_id"|"correlation_id">,extraStatements:D1PreparedStatement[]=[]){

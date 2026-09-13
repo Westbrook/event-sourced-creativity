@@ -71,6 +71,7 @@ test('actual storage cleanup protects only the current recovery storage key, nev
   const start=source.indexOf("UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written')"),end=source.indexOf('`)',start);assert.ok(start>=0&&end>start);
   const sql=source.slice(start,end).replace('${retainedPersonalFalRecoverySql}',retainedPersonalFalRecoverySql);
   for(const mode of ['current','older','expired','revoked']){const {db}=fixture();try{
+    db.exec("ALTER TABLE document_jobs ADD COLUMN source_surface TEXT; ALTER TABLE document_jobs ADD COLUMN request_json TEXT");
     db.exec("CREATE TABLE output_native_storage_writes(scope_key TEXT,slot_id TEXT,storage_key TEXT,status TEXT,publication_event_id TEXT,updated_at TEXT)");
     const token='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',key=`u-6163746f72/generated/generation-recovery-${token}.png`;
     const oldKey='u-6163746f72/generated/generation-recovery-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.png';

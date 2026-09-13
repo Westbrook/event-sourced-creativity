@@ -1,3 +1,4 @@
+import { readFalRecoveryCheckpoint } from "./output-fal-recovery-policy.ts";
 import { stopOutputVideoJob } from "./output-video-stop.ts";
 import { readOutputAudioPayload } from "./output-audio-execution.ts";
 import { MODEL3D_PRIVATE_CHECKPOINT_KEYS, MODEL3D_TERMINAL_RESULT_SQL, model3dNativeCheckpoint, model3dPublicResultSql } from "./output-model3d-terminal.ts";
@@ -467,6 +468,15 @@ function unsafePaidRecovery(row:DocumentJobRow):ProviderFailureDetail|null{
   const unavailable=():ProviderFailureDetail=>({code:"provider_result_recovery_unavailable",category:"server",scope:"unknown",action:"contact_support",message:"Paid provider work was recorded, but its saved recovery data is incomplete. No replacement paid request was submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null});
   const plannerUsage=checkpoint.plannerUsage&&typeof checkpoint.plannerUsage==="object"?checkpoint.plannerUsage as Record<string,unknown>:{};
   const paidPlan=Boolean(checkpoint.plannerResponseId||Number(plannerUsage.totalTokens??0)>0||submissions.some((entry)=>entry.operation==="planning"&&entry.status==="completed"));
+  // Native Image stores its direction privately behind outputFalCheckpoint,
+  // not the document-render artifactPlan schema. Keep this a terminal refusal:
+  // the generic generate executor cannot resume that direction without buying
+  // it again. Only the separate original-result GET recovery may restore it.
+  if(paidPlan&&row.kind==="generate"&&row.output_slot_id&&readFalRecoveryCheckpoint(checkpoint.outputFalCheckpoint))return{
+    code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",
+    message:"The Image worker stopped before saving its result. Inspect the saved original request; no replacement paid request was submitted.",
+    retryable:false,retryAfterMs:null,requestId:null,httpStatus:null,
+  };
   if(paidPlan&&(!checkpoint.artifactPlan||!parseDocumentArtifactContent(JSON.stringify(checkpoint.artifactPlan))))return unavailable();
   const rendered=Array.isArray(checkpoint.renderedItems)?checkpoint.renderedItems as Record<string,unknown>[]:[];
   const frames=Object.values(checkpoint.productionFrameReceipts&&typeof checkpoint.productionFrameReceipts==="object"?checkpoint.productionFrameReceipts as Record<string,Record<string,unknown>>:{});
@@ -1862,8 +1872,12 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
   if(detail?.code==="provider_submission_uncertain"&&!isPresentationJob(row)&&!unresolvedAudioSubmission(row)&&!unresolvedModel3dSubmission(row)&&!unresolvedStoryboardSubmission(row)&&parseResult(row).providerSubmissionProtocol!==1&&!providerSubmissions(parseResult(row)).length)row.result_json=JSON.stringify({...parseResult(row),providerSubmissionLegacyUncertain:true});
   const errorDetail:ProviderFailureDetail = detail??{ code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"The server lost contact with this operation before it finished.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null };
   const parentId = parentJobIdFromRequest(parseRequest(row));
-  const result = await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('queued','running','committing') AND correlation_id=? AND result_json IS ? AND (status='queued' OR lease_expires_at<=? OR updated_at<=?) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND EXISTS(SELECT 1 FROM events terminal WHERE terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')))")
-    .bind(errorDetail.code,now,JSON.stringify({...parseResult(row),errorDetail,stage:"failed",progressMessage:failureProgressMessage(errorDetail)}),parentId,now,now,row.job_id,user.userId,row.correlation_id,observedResult,now,staleBefore).run();
+  const failedResult=JSON.stringify({...parseResult(row),errorDetail,stage:"failed",progressMessage:failureProgressMessage(errorDetail)});
+  const terminal = env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('queued','running','committing') AND correlation_id=? AND result_json IS ? AND (status='queued' OR lease_expires_at<=? OR updated_at<=?) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND EXISTS(SELECT 1 FROM events terminal WHERE terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')))")
+    .bind(errorDetail.code,now,failedResult,parentId,now,now,row.job_id,user.userId,row.correlation_id,observedResult,now,staleBefore);
+  // Project the terminal native job and its existing monetary evidence together.
+  // Pending/uncertain calls remain held; this never creates an attempt or grant.
+  const result=row.output_slot_id?(await env.DB.batch([terminal,...prepareOutputJobOutcomeStatements(env,row,{completedAt:now,resultJson:failedResult})]))[0]!:await terminal.run();
   if(Number(result.meta.changes??0)!==1){
     if(requiresForegroundDocumentExecution(row)&&operationFinished(await readCorrelatedEvents(env,user.streamId,[row.correlation_id]),row))await runDocumentJob(env,user,row.job_id);
     return;
