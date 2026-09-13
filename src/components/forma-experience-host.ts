@@ -301,6 +301,11 @@ export class FormaExperienceHost extends FormaElement {
     if (!event.isTrusted || !this.#confirmed || !state?.permitted.prepare || !this.#visible() || this.#busy) return;
     void this.#command("prepare", state);
   }
+  #renewPreparation(event: SubmitEvent) {
+    event.preventDefault(); const state = this.#state();
+    if (!event.isTrusted || !state?.permitted.renewPreparation || !state.sceneRenewal || !this.#visible() || this.#busy) return;
+    void this.#command("renewPreparation", state);
+  }
   async #load() {
     const operation = this.#beginOperation();
     let loadedBinding: Binding | undefined;
@@ -887,6 +892,12 @@ export class FormaExperienceHost extends FormaElement {
       ${unavailableProviderPreparation ? html`<section class="experience-terms" aria-label=${this.i18n.system("Cost and transfer")}>
         <dl><div><dt>${this.i18n.system("Provider")}</dt><dd>${this.i18n.system(target?.reasonCode === "output_narrative_provider_unavailable" ? "Unavailable" : "Not configured")}</dd></div><div><dt>${this.i18n.system("Source transfer")}</dt><dd>${this.i18n.system("None")}</dd></div><div><dt>${this.i18n.system("Maximum cost")}</dt><dd>$0</dd></div></dl></section>` : nothing}
       ${available && state?.preflight && binding && !result && !unavailableProviderPreparation ? this.#termsSummary(terms, state, binding) : nothing}
+      ${available && state?.permitted.renewPreparation && state.sceneRenewal ? html`<form class="experience-admission" data-experience-action="renewPreparation" @submit=${(event: SubmitEvent) => this.#renewPreparation(event)}>
+        <dl><div><dt>${this.i18n.system("Document")}</dt><dd>${this.i18n.system("Retained")}</dd></div>
+          <div><dt>${this.i18n.system("Generation calls")}</dt><dd>0</dd></div>
+          <div><dt>${this.i18n.system("Maximum cost")}</dt><dd>$0</dd></div>
+          <div><dt>${this.i18n.system("Next")}</dt><dd>${this.i18n.system("Cost and transfer")}</dd></div></dl>
+        <button type="submit" class="button primary" data-experience-control="renewPreparation" aria-disabled=${String(this.#busy)} ?disabled=${this.#buttonDisabled(this.#busy, "renewPreparation")}>${this.i18n.system("Renew preparation")}</button></form>` : nothing}
       ${available && terms?.rows.length && !terms.summary && !result && !unavailableProviderPreparation ? html`<section class="experience-terms" aria-label=${this.i18n.system("Cost and transfer")}>${this.#termsContent(terms)}</section>` : nothing}
       ${available && state?.permitted.authorize ? html`<form class="experience-admission" data-experience-action="authorize" @submit=${(event: SubmitEvent) => this.#paidSubmit(event, "authorize", authorize ? outputPaidDecisionKey(authorize) : null)}>
         ${state.output === "scene" ? html`<p>${this.i18n.system("This creates a written Scene, not images, video or audio. One OpenAI request; no automatic repair. Charges may remain if validation fails.")}</p>

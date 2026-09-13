@@ -92,3 +92,63 @@ test('expired Scene disclosure remains readable but cannot be approved; prepare 
     assert.deepEqual(transport.calls[1].body, {draftHash: next.identity.draftHash, explicitRequirementsConfirmation: true});
   } finally {transport.client.dispose();}
 });
+
+function renewableFixture() {
+  const f = fixture();
+  f.state = {...f.state, status: 'unavailable', sceneCostPreview: null,
+    sceneRenewal: {predecessorPreflightId: f.state.preflight.id, expiredAt: new Date(Date.now() - 60000).toISOString()},
+    permitted: {prepare: false, authorize: false, run: false, resumeRun: false, renewPreparation: true}};
+  return f;
+}
+test('renewal disclosure is Scene-only, exact-predecessor and never paired with financial authority', () => {
+  const f = renewableFixture(); assert.ok(decodeExperienceBinding(f.state, f.identity));
+  for (const patch of [{sceneRenewal: undefined}, {sceneRenewal: {...f.state.sceneRenewal, extra: true}},
+    {sceneRenewal: {...f.state.sceneRenewal, predecessorPreflightId: 'different'}},
+    {sceneRenewal: {...f.state.sceneRenewal, expiredAt: new Date(Date.now() + 60000).toISOString()}},
+    {permitted: {...f.state.permitted, authorize: true}}, {permitted: {...f.state.permitted, renewPreparation: false}},
+    {status: 'review'}]) assert.equal(decodeExperienceBinding({...f.state, ...patch}, f.identity), null);
+  assert.equal(decodeExperienceBinding({...f.state, output: 'image'}, {...f.identity, output: 'image'}), null);
+});
+test('GET never renews; explicit renewal sends only original predecessor and unpaid confirmation', async () => {
+  const f = renewableFixture(), {client, calls} = clientFixture(f);
+  try {
+    const shown = await client.read();
+    assert.equal(calls.length, 1); assert.equal(calls[0].method, 'GET');
+    await client.command('renewPreparation', shown, {...f.preview, confirmed: true});
+    assert.equal(calls.length, 1, 'renewal cannot transport a financial consent');
+    await client.command('authorize', shown); assert.equal(calls.length, 1);
+    await client.command('renewPreparation', shown);
+    assert.equal(calls.length, 2); assert.match(calls[1].path, /\/output\/prepare$/);
+    assert.deepEqual(calls[1].body, {draftHash: f.identity.draftHash, explicitRequirementsConfirmation: true,
+      renewal: {predecessorPreflightId: f.state.preflight.id, explicitRenewal: true}});
+    await client.command('renewPreparation', shown); assert.equal(calls.length, 2, 'stale display cannot submit again');
+  } finally {client.dispose();}
+});
+
+test('renewed preparation requires new consent and never automatically authorizes or runs', async () => {
+  const f = renewableFixture(), oldApproval = {...f.preview, confirmed: true};
+  const {client, calls} = clientFixture(f);
+  try {
+    const expired = await client.read();
+    const fresh = fixture();
+    fresh.state.plan.revisionId = 'renewed-plan';
+    fresh.state.preflight.planRevisionId = 'renewed-plan';
+    fresh.state.preflight.id = 'renewed-preflight';
+    fresh.state.preflight.termsDigest = 'renewed-terms';
+    fresh.preview.requestId = 'renewed-request';
+    fresh.preview.bindingHash = 'c'.repeat(64);
+    f.state = fresh.state;
+    const shown = await client.command('renewPreparation', expired);
+    assert.equal(calls.length, 2, 'Renewal has exactly one unpaid POST');
+    assert.equal(shown.preflight.id, 'renewed-preflight');
+    await client.command('authorize', shown, oldApproval);
+    await client.command('authorize', shown);
+    await client.command('run', shown);
+    assert.equal(calls.length, 2, 'Neither stale consent nor renewal grants execution');
+    await client.command('authorize', shown, {...fresh.preview, confirmed: true});
+    assert.equal(calls.length, 3);
+    assert.match(calls[2].path, /\/output\/authorize$/);
+    assert.equal(calls[2].body.sceneCostConsent.requestId, 'renewed-request');
+    assert.equal(calls.some(call => /\/output\/run$/.test(call.path)), false);
+  } finally {client.dispose();}
+});

@@ -1,10 +1,14 @@
 import { canonicalJson, digest } from "../src/experiences/compiler.ts";
+import { scenePreparationCommandKey, scenePreparationCycleMatches, type ScenePreparationCycle } from "./experience-scene-renewal.ts";
 
 /** Pure identity/envelope helpers. No provider, budget, job or authorization is minted here. */
 export type ExperienceOutputStage = "save" | "confirm" | "preflight" | "authorize" | "run";
 export type ExperienceOutputBinding = Readonly<{
   version: 1; draftId: string; draftHash: string; releaseHash: string; requestHash: string;
   sourceBindingHash: string; output: "image" | "slides" | "short_story" | "scene" | "audio" | "storyboard" | "model3d" | "video"; projectId: string; documentId: string; streamId: string;
+  /** Only a server-verified append-only successor may add this. Root v1 bindings
+   * and their immutable keys/envelopes retain their exact original shape. */
+  preparationCycle?: ScenePreparationCycle;
 }>;
 type PlanIdentity = { draftId: string; draftHash: string; request: unknown; events: readonly unknown[];
   release: { releaseHash: string; output: { output: string } }; projectId: string; documentId: string; streamId: string };
@@ -20,6 +24,12 @@ export async function experienceOutputBinding(plan: PlanIdentity): Promise<Exper
 }
 export async function experienceOutputCommandKey(binding: ExperienceOutputBinding, stage: ExperienceOutputStage) {
   if (!stages.includes(stage)) throw new Error("experience_output_stage_invalid");
+  if (Object.hasOwn(binding, "preparationCycle")) {
+    const { preparationCycle: cycle, ...root } = binding;
+    if (binding.output !== "scene" || stage === "save" || !cycle
+      || !await scenePreparationCycleMatches(root, cycle.predecessor, cycle)) throw new Error("experience_scene_renewal_lineage_unavailable");
+    return scenePreparationCommandKey(cycle, stage);
+  }
   // Deliberately omit mutable content, release, quote and client mutation IDs.
   // A changed envelope cannot escape this one logical-intake stage fence.
   const identity = (await digest({ namespace: "experience-output-command@1", streamId: binding.streamId, draftId: binding.draftId })).slice(7);

@@ -9,7 +9,7 @@ import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches } from ".
 
 export type ExperienceBindingIdentity = Readonly<{ draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string; output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d"; actorUserId: string }>;
 export type ExperienceBindingResponse = ExperienceNativeState | ExperienceNativeUnavailable;
-export type ExperienceBindingAction = "prepare" | "authorize" | "run" | "resumeRun" | "recoverResult";
+export type ExperienceBindingAction = "prepare" | "renewPreparation" | "authorize" | "run" | "resumeRun" | "recoverResult";
 const status = new Set(["absent", "preparing", "review", "authorized", "queued", "running", "succeeded", "failed", "cancelled", "partial", "uncertain", "unavailable"]);
 const stages = new Set([null, "save", "confirm", "preflight", "authorize", "run"]);
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 1024 && !/[\p{Cc}]/u.test(value);
@@ -56,17 +56,28 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
     // 21 through an original grant disclosure). Other limits are unchanged.
     if (!json(value, 0, {nodes: 0}, identity.output === "scene" ? 24 : 16) || !record(value) || value.version !== 1 || !record(value.permitted)) return null;
     const permitted = value.permitted;
+    if (permitted.renewPreparation !== undefined && typeof permitted.renewPreparation !== "boolean") return null;
     if (permitted.recoverResult !== undefined && typeof permitted.recoverResult !== "boolean") return null;
     if (value.recovery !== undefined && !["pending", "completed"].includes(String(value.recovery))) return null;
     if (!["prepare", "authorize", "run", "resumeRun"].every(key => typeof permitted[key] === "boolean")) return null;
     if (value.status === "unavailable" && value.originalIntent === "unknown_or_retained") {
-      return text(value.error) && !permitted.prepare && !permitted.authorize && !permitted.run && !permitted.resumeRun && !permitted.recoverResult ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
+      return text(value.error) && !permitted.prepare && !permitted.authorize && !permitted.run && !permitted.resumeRun && !permitted.recoverResult && !permitted.renewPreparation
+        && !Object.hasOwn(value, "sceneRenewal") ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
     }
     if (!["draftId", "draftHash", "releaseHash", "documentId", "projectId", "output"].every(key => value[key] === identity[key as keyof ExperienceBindingIdentity])
       || value.sourceSurface !== "outputs" || !status.has(String(value.status)) || !stages.has(value.stage as never)
       || !record(value.current) || value.current.custody !== "verified" || value.current.source !== "verified"
       || !text(value.current.sourceDigest) || !text(value.current.requirementsDigest)) return null;
     const plan = value.plan, preflight = value.preflight, original = value.original, grant = value.grant;
+    if (Object.hasOwn(value, "sceneRenewal")) {
+      const renewal = value.sceneRenewal;
+      if (value.output !== "scene" || value.status !== "unavailable" || value.disposition !== "prepared"
+        || value.stage !== "preflight" || original !== null || grant !== null || !record(preflight)
+        || permitted.renewPreparation !== true || permitted.prepare || permitted.authorize || permitted.run || permitted.resumeRun || permitted.recoverResult
+        || !record(renewal) || Object.keys(renewal).length !== 2 || !text(renewal.predecessorPreflightId)
+        || renewal.predecessorPreflightId !== preflight.id || !text(renewal.expiredAt)
+        || !Number.isFinite(Date.parse(renewal.expiredAt)) || Date.parse(renewal.expiredAt) > Date.now()) return null;
+    } else if (permitted.renewPreparation) return null;
     if (value.output === "scene") {
       if (!Object.hasOwn(value, "sceneCostPreview")) return null;
       const preview = value.sceneCostPreview === null ? null : parseSceneMiniAppCostPreview(value.sceneCostPreview);
@@ -194,6 +205,9 @@ export class ExperienceOutputBindingClient {
       if (!model3dMiniAppCostApprovalMatches(model3dApproval, shown.model3dCostPreview)) return this.#state;
     } else if (model3dApproval !== undefined) return this.#state;
     const body = action === "prepare" ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true }
+      : action === "renewPreparation" && shown.output === "scene" && shown.sceneRenewal
+        ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true,
+          renewal: { predecessorPreflightId: shown.sceneRenewal.predecessorPreflightId, explicitRenewal: true } }
       : action === "authorize" && shown.preflight ? { draftHash: this.identity.draftHash, termsDigest: shown.preflight.termsDigest, maximumMicrousd: shown.preflight.maximumMicrousd, explicitAuthorization: true,
         ...(shown.output === "scene" ? {sceneCostConsent: sceneApproval} : {}), ...(shown.output === "audio" ? {audioCostConsent: audioApproval} : {}), ...(shown.output === "model3d" ? {model3dCostConsent: model3dApproval} : {}) }
       : action === "recoverResult" && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, jobId: shown.original.jobId, explicitRecovery: true }
@@ -205,7 +219,7 @@ export class ExperienceOutputBindingClient {
     if (this.#pending || !this.#controls.current()) return this.#state;
     const epoch = ++this.#epoch, abort = new AbortController(); this.#abort = abort; this.#pending = true;
     const current = () => epoch === this.#epoch && !abort.signal.aborted && this.#controls.current();
-    const path = `/api/experiences/drafts/${encodeURIComponent(this.identity.draftId)}/output${action ? "/" + (action === "recoverResult" ? "recover-result" : action) : ""}`;
+    const path = `/api/experiences/drafts/${encodeURIComponent(this.identity.draftId)}/output${action ? "/" + (action === "recoverResult" ? "recover-result" : action === "renewPreparation" ? "prepare" : action) : ""}`;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const testTimeout = Number.isSafeInteger(this.#controls.timeoutMs) && Number(this.#controls.timeoutMs) > 0 && Number(this.#controls.timeoutMs) <= 20000 ? Number(this.#controls.timeoutMs) : undefined;
     const timeoutMs = testTimeout ?? experienceResponseTimeout(action ? { action, output: this.identity.output } : undefined);

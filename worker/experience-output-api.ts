@@ -11,6 +11,9 @@ import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-off
 import { createSceneOutputContract } from "../src/model/output-scene-contract.ts";
 import { sceneMiniAppCostApprovalMatches } from "../src/model/scene-mini-app-consent.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
+import { outputScenePreparationIdentity } from "./output-scene-source.ts";
+import { scenePreparationSuccessor } from "./experience-scene-renewal.ts";
+import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRenewalWindowAssertion, sceneRenewalPredecessorAssertion } from "./experience-scene-renewal-proof.ts";
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
@@ -30,8 +33,8 @@ import { experienceOutputAuthorization, experienceOutputBinding, experienceOutpu
   type ExperienceOutputBinding, type ExperienceOutputStage } from "./experience-output-binding.ts";
 import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget, type ExperienceOutputRecipe } from "./experience-output-recipe.ts";
 import type { WorkerEnv, WorkerExecutionContext } from "./runtime.ts";
-import { readExperienceOutputOriginals, experienceOutputPhases as phases, experienceOutputError as error,
-  type ExperienceOutputOriginal as Original } from "./experience-output-originals.ts";
+import { readExperienceOutputLineage, scenePreparationPredecessor, experienceOutputPhases as phases, experienceOutputError as error,
+  type ExperienceOutputLineage, type ExperienceOutputOriginal as Original } from "./experience-output-originals.ts";
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const diagnosticCodes = new Set(`not_found method_not_allowed same_origin_required experience_output_request_invalid experience_output_unavailable
@@ -42,6 +45,7 @@ experience_output_plan_unavailable experience_output_plan_changed experience_out
 experience_output_unbound_operation experience_output_original_authorization_unavailable experience_output_original_operation_changed experience_scene_original_consent_unavailable experience_output_original_job_unavailable experience_model3d_original_consent_unavailable experience_audio_original_consent_unavailable
 experience_output_original_run_unavailable experience_output_original_grant_unavailable experience_video_original_attempt_unavailable experience_storyboard_original_attempt_unavailable experience_audio_recovery_unavailable
 experience_audio_confirmation_required experience_model3d_confirmation_required experience_model3d_image_recovery_forbidden experience_storyboard_recovery_unavailable experience_review_stale experience_scene_confirmation_required experience_release_changed
+experience_scene_renewal_required experience_scene_renewal_unavailable experience_scene_renewal_lineage_unavailable experience_scene_renewal_scope_unavailable
 experience_output_recipe_confirmation_required experience_output_unbound_plan experience_output_unbound_preflight experience_output_preflight_required experience_output_authorization_unavailable experience_output_authorization_terms_changed
 experience_output_explicit_run_required experience_output_run_unavailable output_source_epoch_required experience_output_explicit_recovery_required experience_output_native_refused
 experience_output_original_unavailable experience_output_stage_evidence_unavailable mutation_key_reused_with_different_content output_command_scope_mismatch original_command_content_unavailable invalid_output_scope
@@ -80,6 +84,7 @@ async function refused(response: Response): Promise<Response> {
 }
 type Loaded = { trusted: OutputTrustedContext; binding: ExperienceOutputBinding; recipe: ExperienceOutputRecipe;
   retained: NonNullable<Awaited<ReturnType<typeof readExperienceDraft>>>; receipt: ExperienceIntakeReceipt;
+  rootBinding: ExperienceOutputBinding; lineage: ExperienceOutputLineage;
   originals: Partial<Record<ExperienceOutputStage, Original>> };
 
 function validateManagedRequirement(loaded: Loaded) {
@@ -148,11 +153,12 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   }
   // Schema readiness belongs to deployment. Exact reads below fail closed; this
   // creator adapter never initializes DDL or infers readiness from a warm cache.
-  const loaded: Loaded = { trusted, binding, recipe, retained, receipt, originals: {} };
-  loaded.originals = await readExperienceOutputOriginals(trusted, binding);
+  const lineage = await readExperienceOutputLineage(trusted, binding);
+  const loaded: Loaded = { trusted, binding: lineage.binding, rootBinding: binding, lineage, recipe, retained, receipt, originals: lineage.originals };
   // Earlier stages are an atomic prerequisite, not merely UI provenance. Their
   // immutable index/event associations survive through each later native batch.
-  trusted.sourceAssertions.push(...Object.values(loaded.originals).map(value => outputCommandReceiptAssertion(trusted.scope, value!.receipt)));
+  trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
+  if (binding.output === "scene") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys));
   validateManagedRequirement(loaded);
   if (!experienceSourceMatches(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
     documents: trusted.projection.documents, blocks: trusted.projection.libraryBlocks.filter(block => block.id !== recipe.spec.id),
@@ -171,6 +177,43 @@ async function confirmed(loaded: Loaded) {
     || !matchExperienceOutputRecipeTarget(loaded.recipe, plan.plan, { documentId: loaded.binding.documentId,
       sourceRevision: loaded.trusted.sourceDigest, requirementRevision: loaded.trusted.requirementsDigest })) error("experience_output_plan_changed");
   return plan;
+}
+
+/** A quote renewal is an unpaid successor of one positively never-authorized
+ * lineage. No missing/failed read is interpreted as absence. These predicates
+ * accompany the native confirmation transaction, not only this preview. */
+async function renewalOffer(loaded: Loaded) {
+  if (loaded.binding.output !== "scene" || loaded.originals.authorize || loaded.originals.run
+    || (loaded.binding.preparationCycle?.ordinal ?? 0) >= 8) return null;
+  const predecessor = scenePreparationPredecessor(loaded.binding, loaded.originals);
+  if (!predecessor) return null;
+  const plan = await confirmed(loaded), root = loaded.rootBinding;
+  const contract = createSceneOutputContract({ draftId: root.draftId, draftHash: root.draftHash,
+    releaseHash: root.releaseHash, requestHash: root.requestHash, sourceBindingHash: root.sourceBindingHash });
+  if (!plan || !contract) return null;
+  const original = await outputScenePreparationIdentity(contract, plan, loaded.recipe.targetId);
+  const now = Date.now();
+  if (!original || Date.parse(original.expiresAt) > now || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return null;
+  if ((await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== root.releaseHash) return null;
+  const latest = await outputExperienceCommands.readConfirmedPlan(loaded.trusted);
+  if (!latest || canonicalJson(latest) !== canonicalJson(plan)) return null;
+  const requestIds: string[] = [];
+  for (const witness of loaded.lineage.witnesses) {
+    if (witness.receipt.action !== "confirm") continue;
+    const saved = witness.receipt.payload.confirmed_plan;
+    if (!record(saved) || typeof saved.revisionId !== "string" || typeof saved.confirmedAt !== "string") error("experience_scene_renewal_lineage_unavailable", 410);
+    const identity = await outputScenePreparationIdentity(contract, { revisionId: saved.revisionId, confirmedAt: saved.confirmedAt }, loaded.recipe.targetId);
+    if (!identity) error("experience_scene_renewal_lineage_unavailable", 410);
+    requestIds.push(identity.requestId);
+  }
+  const guards = [sceneRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds),
+    sceneRenewalWindowAssertion(loaded.trusted.scope, root.draftId, original.expiresAt, loaded.retained.expiresAt),
+    sceneRenewalPredecessorAssertion(loaded.trusted.scope, predecessor)];
+  const clear = await loaded.trusted.env.DB.prepare(`SELECT CASE WHEN ${guards.map(guard => `(${guard.sql})`).join(" AND ")} THEN 1 ELSE 0 END AS clear`)
+    .bind(...guards.flatMap(guard => guard.bindings ?? [])).first<{ clear: number }>();
+  if (clear?.clear !== 1) return null;
+  return { predecessor, cycle: await scenePreparationSuccessor(root, predecessor), guards,
+    disclosure: { predecessorPreflightId: predecessor.preflight.preflightId, expiredAt: original.expiresAt } };
 }
 
 /** Audio preparation wire shape is server-only while the native client selector stays closed. */
@@ -229,6 +272,10 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
     if (preflight && (((binding.output === "storyboard" || binding.output === "video") ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
       || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
+    if (binding.output === "scene" && result.status === "unavailable") {
+      const renewal = await renewalOffer(loaded);
+      if (renewal) { result.sceneRenewal = renewal.disclosure; result.permitted.renewPreparation = true; }
+    }
     return result;
   }
   const authorization = originals.authorize, grantId = authorization.receipt.payload.grant_id;
@@ -354,7 +401,7 @@ async function execute(loaded: Loaded, phase: ExperienceOutputStage, fields: Rec
   // request state is always reconstructed from the original indexed command.
 }
 
-/** Existing native transaction adapter, PERSONAL Image/Slides only. No generic job POST. */
+/** Existing native transaction adapter for registered personal mini-apps. No generic job POST. */
 export async function handleExperienceOutput(request: Request, env: WorkerEnv, executionContext: WorkerExecutionContext, bridge: OutputExecutionBridge): Promise<Response> {
   let diagnosticStage: DiagnosticStage = "initial_load";
   try {
@@ -368,7 +415,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       const origin = request.headers.get("origin");
       if (origin && origin !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") return unavailable("same_origin_required", 403);
       const value = await readExperienceBody(request);
-      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation"] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "model3dCostConsent") ? ["model3dCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
+      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation", ...(record(value) && Object.hasOwn(value, "renewal") ? ["renewal"] : [])] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "model3dCostConsent") ? ["model3dCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
       if (!record(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) return unavailable("experience_output_request_invalid", 400);
       body = value;
     }
@@ -386,6 +433,28 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     if (action && (await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== loaded.binding.releaseHash) error("experience_release_changed");
     if (action === "prepare") {
       if (body.explicitRequirementsConfirmation !== true) error("experience_output_recipe_confirmation_required", 403);
+      if (Object.hasOwn(body, "renewal")) {
+        diagnosticStage = "prepare_confirm_state";
+        const input = body.renewal;
+        if (loaded.binding.output !== "scene" || !record(input) || Object.keys(input).length !== 2
+          || input.explicitRenewal !== true || typeof input.predecessorPreflightId !== "string") error("experience_scene_renewal_required", 403);
+        const existing = loaded.binding.preparationCycle;
+        if (existing?.predecessor.preflight.preflightId !== input.predecessorPreflightId) {
+          const offer = await renewalOffer(loaded);
+          if (!offer || offer.disclosure.predecessorPreflightId !== input.predecessorPreflightId) error("experience_scene_renewal_unavailable", 409);
+          loaded.trusted.sourceAssertions.push(...offer.guards);
+          // The root save is never repeated. The exact old index, all ancestor
+          // receipt/private witnesses and native source/head checks fence this
+          // first confirmation together in commitOutputCommand's atomic batch.
+          diagnosticStage = "prepare_confirm_execute";
+          await execute({ ...loaded, binding: { ...loaded.rootBinding, preparationCycle: offer.cycle },
+            originals: { save: loaded.originals.save } }, "confirm", { explicitRequirementsConfirmation: true }, bridge, executionContext);
+          diagnosticStage = "prepare_confirm_reload";
+          const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
+        }
+        // A lost-response retry can continue ONLY the same already-indexed
+        // child. It cannot renew again or repeat a financial/run stage.
+      }
       for (const phase of ["save", "confirm", "preflight"] as const) {
         if (!loaded.originals[phase]) {
           diagnosticStage = `prepare_${phase}_state`;
@@ -455,7 +524,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     diagnosticStage = "final_state";
     const value = await state(latest);
     if (recovered) value.recovery = recovered;
-    const assertions = Object.values(latest.originals).map(value => outputCommandReceiptAssertion(latest.trusted.scope, value!.receipt));
+    const assertions = latest.lineage.witnesses.map(value => outputCommandReceiptAssertion(latest.trusted.scope, value.receipt));
     diagnosticStage = "final_disclose";
     return await outputExperienceCommands.disclose(latest.trusted, value, 200, assertions);
   } catch (cause) {

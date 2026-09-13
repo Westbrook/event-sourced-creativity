@@ -19,6 +19,7 @@ export type ExperienceNativeState = {
   output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d"; sourceSurface: "outputs";
   /** Scene-only original disclosure; omission on other outputs preserves their wire shape. */
   sceneCostPreview?: SceneMiniAppCostPreview | null;
+  sceneRenewal?: { predecessorPreflightId: string; expiredAt: string };
   /** Audio-only original cost and source-transfer disclosure. */
   audioCostPreview?: AudioMiniAppCostPreview | null;
   model3dCostPreview?: Model3dMiniAppCostPreview | null;
@@ -31,11 +32,11 @@ export type ExperienceNativeState = {
   preflight: ExperienceNativePreflight | null;
   grant: OutputGrantRow | null;
   original: ExperienceNativeOriginal | null;
-  permitted: { prepare: boolean; authorize: boolean; run: boolean; resumeRun: boolean; recoverResult?: boolean };
+  permitted: { prepare: boolean; authorize: boolean; run: boolean; resumeRun: boolean; recoverResult?: boolean; renewPreparation?: boolean };
 };
 export type ExperienceNativeUnavailable = {
   version: 1; status: "unavailable"; error: string; originalIntent: "unknown_or_retained";
-  permitted: { prepare: false; authorize: false; run: false; resumeRun: false; recoverResult?: false };
+  permitted: { prepare: false; authorize: false; run: false; resumeRun: false; recoverResult?: false; renewPreparation?: false };
 };
 export type ExperienceNativePrepareRequest = { draftHash: string; explicitRequirementsConfirmation: true };
 export type ExperienceNativeAuthorizeRequest = { draftHash: string; termsDigest: string; maximumMicrousd: number; explicitAuthorization: true; sceneCostConsent?: SceneMiniAppCostApproval; audioCostConsent?: ExperienceAudioCostApproval; model3dCostConsent?: ExperienceModel3dCostApproval };

@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1tmhsof.17": "Renew preparation",
   "system.auto.156lxlv.8": "3D model",
   "system.auto.15uddgm.56": "1 static GLB · Structure checked; visual review required",
   "system.auto.1memg69.44": "1 static GLB assembly · One requested object",

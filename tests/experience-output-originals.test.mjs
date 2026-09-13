@@ -24,7 +24,9 @@ const modulePaths = [
   'src/model/output-requirement-events.ts', 'src/model/presentation-candidates.ts',
   'src/model/generation-execution-evidence.ts', 'src/model/provider-submission.ts',
   'worker/experience-output-originals.ts', 'worker/experience-output-binding.ts',
+  'worker/experience-scene-renewal.ts',
   'src/experiences/compiler.ts', 'src/experiences/image-ratio.ts',
+  'src/experiences/video-reference.ts', 'src/experiences/contracts.ts',
 ];
 assert.deepEqual(manifest.modules.map(entry => entry.path).sort(), [...modulePaths].sort(), 'Exact reviewed closure only');
 const allowed = new Set(), expectedHashes = new Map();
@@ -76,13 +78,14 @@ after(() => {
   try { assert.equal(forbiddenFetchAttempts, 0, 'A forbidden fetch was attempted, even if an original-reader catch swallowed its error'); }
   finally { cleanup(); }
 });
-let core, primitives, originals, bindingHelpers, compiler;
+let core, primitives, originals, bindingHelpers, compiler, renewal;
 try {
   core = await import(pathToFileURL(resolve(root, 'worker/output-command-core.ts')).href);
   primitives = await import(pathToFileURL(resolve(root, 'worker/event-write-primitives.ts')).href);
   originals = await import(pathToFileURL(resolve(root, 'worker/experience-output-originals.ts')).href);
   bindingHelpers = await import(pathToFileURL(resolve(root, 'worker/experience-output-binding.ts')).href);
   compiler = await import(pathToFileURL(resolve(root, 'src/experiences/compiler.ts')).href);
+  renewal = await import(pathToFileURL(resolve(root, 'worker/experience-scene-renewal.ts')).href);
 } catch (error) { cleanup(); throw error; }
 // Keep the guard through tests: an unexpected late import must also fail closed.
 
@@ -153,12 +156,12 @@ async function bindingFor(output = 'image') {
     projectId: 'project-1', documentId: 'document-1', streamId: 'creative:author-1',
   });
 }
-async function seed(h, binding, phase = 'save') {
+async function seed(h, binding, phase = 'save', phasePayload = {}) {
   const sequence = Number(h.db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS next FROM events').get().next);
   const envelope = await experienceOutputEnvelope(binding, phase, 0, { qualification: { note: privateMarker, order: ['one', 'two'] } });
   const key = await experienceOutputCommandKey(binding, phase), digest = (await compiler.digest(envelope)).slice(7);
   const payload = { project_id: h.scope.projectId, document_id: h.scope.documentId, qualification_note: privateMarker,
-    output_command_envelope: envelope };
+    output_command_envelope: envelope, ...phasePayload };
   // Ordinary witness only. A phase named run/authorize does NOT prepare a job,
   // reserve funds, record consent or dispatch anything in this read fixture.
   const event = primitives.makeEvent(binding.streamId, sequence, `user:${h.scope.actorUserId}`,
@@ -406,4 +409,64 @@ test('actual ordered reader rejects a found phase after a missing predecessor wi
     assert.deepEqual(h.snapshot(), before, 'Gap detection must not backfill or replace a missing phase');
     assert.equal(h.db.prepare('SELECT COUNT(*) AS count FROM output_commands').get().count, present.length);
   }
+});
+
+async function seedScenePreparation(h, binding, name) {
+  const plan = {revisionId: `plan-${name}`, sourceDigest: 'source-1', requirementsDigest: 'requirements-1'};
+  await seed(h, binding, 'confirm', {plan_revision_id: plan.revisionId, confirmed_plan: plan});
+  await seed(h, binding, 'preflight', {plan_revision_id: plan.revisionId, preflight_id: `preflight-${name}`,
+    preflight: {id: `preflight-${name}`, planRevisionId: plan.revisionId, sourceDigest: plan.sourceDigest, requirementsDigest: plan.requirementsDigest}});
+}
+async function lineage(h, binding) {
+  const before = h.snapshot();
+  try { return await originals.readExperienceOutputLineage(h.trusted, binding); }
+  finally { assert.deepEqual(h.snapshot(), before, 'Lineage lookup must not mutate originals'); }
+}
+async function sceneRoot(t) {
+  const h = harness(t), binding = await bindingFor('scene');
+  await seed(h, binding); await seedScenePreparation(h, binding, 'root');
+  const original = await lineage(h, binding);
+  const predecessor = originals.scenePreparationPredecessor(binding, original.originals);
+  const child = {...binding, preparationCycle: await renewal.scenePreparationSuccessor(binding, predecessor)};
+  return {h, binding, child, original};
+}
+
+test('Scene lineage retains root v1 parity and every predecessor witness when selecting a partial or complete successor', async t => {
+  const {h, binding, child, original} = await sceneRoot(t);
+  assert.deepEqual(original.binding, binding); assert.equal(original.witnesses.length, 3);
+  await seed(h, child, 'confirm', {plan_revision_id: 'plan-child', confirmed_plan: {revisionId: 'plan-child', sourceDigest: 'source-1', requirementsDigest: 'requirements-1'}});
+  const partial = await lineage(h, binding);
+  assert.equal(partial.binding.preparationCycle.id, child.preparationCycle.id);
+  assert.equal(partial.originals.save.receipt.eventId, original.originals.save.receipt.eventId);
+  assert.equal(partial.originals.preflight, undefined); assert.equal(partial.witnesses.length, 4);
+  await seed(h, child, 'preflight', {plan_revision_id: 'plan-child', preflight_id: 'preflight-child', preflight: {
+    id: 'preflight-child', planRevisionId: 'plan-child', sourceDigest: 'source-1', requirementsDigest: 'requirements-1'}});
+  const complete = await lineage(h, binding);
+  assert.equal(complete.witnesses.length, 5);
+  assert.deepEqual(complete.witnesses.slice(0, 3), original.witnesses);
+  assert.equal(complete.originals.preflight.receipt.payload.preflight.id, 'preflight-child');
+});
+
+test('Scene lineage refuses a successor phase hole and an orphan with a foreign predecessor instead of falling back', async t => {
+  for (const kind of ['hole', 'orphan']) {
+    const {h, binding, child} = await sceneRoot(t);
+    if (kind === 'hole') await seed(h, child, 'preflight');
+    else {
+      const altered = {...child.preparationCycle.predecessor, confirmation: {...child.preparationCycle.predecessor.confirmation, eventId: 'foreign'}};
+      await seed(h, {...binding, preparationCycle: await renewal.scenePreparationSuccessor(binding, altered)}, 'confirm');
+    }
+    await assert.rejects(() => lineage(h, binding), /experience_scene_renewal_lineage_unavailable/);
+  }
+});
+
+test('Scene lineage refuses an indexed successor with unavailable private body, never selecting the retained root', async t => {
+  const {h, binding, child} = await sceneRoot(t), saved = await seed(h, child, 'confirm');
+  h.db.prepare('UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?').run('2026-09-13T00:00:00.000Z', saved.event.eventId);
+  await assert.rejects(() => lineage(h, binding), /experience_output_original_unavailable/);
+});
+
+test('Scene lineage refuses a child after any predecessor authorization even when a child index exists', async t => {
+  const {h, binding, child} = await sceneRoot(t);
+  await seed(h, binding, 'authorize'); await seed(h, child, 'confirm');
+  await assert.rejects(() => lineage(h, binding), /experience_scene_renewal_lineage_unavailable/);
 });

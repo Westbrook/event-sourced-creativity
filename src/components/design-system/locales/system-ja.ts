@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1tmhsof.17": "準備を更新",
   "system.auto.156lxlv.8": "3Dモデル",
   "system.auto.15uddgm.56": "静的GLB 1点 · 構造確認済み。外観の確認が必要です",
   "system.auto.1memg69.44": "静的GLBアセンブリ1点 · リクエスト対象は1つの物体",

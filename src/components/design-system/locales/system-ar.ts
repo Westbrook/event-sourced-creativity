@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1tmhsof.17": "تجديد التحضير",
   "system.auto.156lxlv.8": "نموذج ثلاثي الأبعاد",
   "system.auto.15uddgm.56": "ملف GLB ثابت واحد · تم التحقق من البنية؛ يلزم فحص بصري",
   "system.auto.1memg69.44": "تجميع GLB ثابت واحد · عنصر واحد مطلوب",
