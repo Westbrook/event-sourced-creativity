@@ -11,6 +11,7 @@ import { outputScenePreflightConfiguration } from "./output-scene-preflight-cont
 import { resolveOutputSceneSource } from "./output-scene-source.ts";
 import type { PreparedSceneCost } from "./scene-cost-consent.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 
 type ScenePreflightProof = Readonly<{ prepared: PreparedSceneCost; sourceAssertions: readonly OutputSqlAssertion[]; requestId: string; expiresAt: string }>;
@@ -52,12 +53,6 @@ export async function createOutputSceneProviderInput(rawIntake: unknown, effecti
   });
 }
 
-function conjunction(assertions: readonly OutputSqlAssertion[]): OutputSqlAssertion {
-  if (assertions.length === 1) return assertions[0]!;
-  const middle = Math.ceil(assertions.length / 2), left = conjunction(assertions.slice(0, middle)), right = conjunction(assertions.slice(middle));
-  return { sql: `(${left.sql}) AND (${right.sql})`, bindings: [...(left.bindings ?? []), ...(right.bindings ?? [])] };
-}
-
 /** Read-only preparation through the actual retained-intake and Scene source
  * readers. No approval, provider call, slot/job, reservation or schema mutation.
  * Private assertions must be consumed again by the existing atomic admission and
@@ -96,8 +91,11 @@ export async function preflightOutputSceneTarget(input: OutputBridgeTargetInput)
   const sourceAssertions: OutputSqlAssertion[] = [...source.sourceAssertions, prepared.guard,
     { sql: "? > strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [source.expiresAt], deadlineMs: Date.parse(source.expiresAt) }]
     .map(assertion => ({ ...assertion, bindings: [...(assertion.bindings ?? [])] }));
-  const guard = conjunction(sourceAssertions);
-  if (!await env.DB.prepare(`SELECT 1 AS current WHERE ${guard.sql}`).bind(...(guard.bindings ?? [])).first()
+  // A renewed plan retains every ancestor witness. Keep each statement within
+  // D1's parameter limits, while reading all predicates in one atomic batch.
+  // Preserve the original assertions for admission and dispatch revalidation.
+  const checked = await env.DB.batch<Record<string, unknown>>(outputProofReadStatements(env, sourceAssertions));
+  if (checked.length !== sourceAssertions.length || checked.some(result => result.success === false || Number(result.results[0]?.current) !== 1)
     || sourceAssertions.some(assertion => assertion.deadlineMs !== undefined && Date.now() >= assertion.deadlineMs)) return unavailable(target.id, "output_scene_source_changed");
   proofs.set(preflight, Object.freeze({ prepared: freeze(prepared), sourceAssertions: freeze(sourceAssertions), requestId: source.requestId, expiresAt: source.expiresAt }));
   return preflight;

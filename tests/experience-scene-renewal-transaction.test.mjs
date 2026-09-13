@@ -7,9 +7,10 @@ import { resolve, relative, sep, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Actual native save/confirm/preflight/commit code, real in-memory schema and
-// real atomic batch. No bridge, HTTP fixture success, authority override, source
-// replacement, provider credentials or persisted DB/media. This qualifies native
-// confirmation guards, NOT the mini-app HTTP journey or provider execution.
+// real atomic batch. Original cases omit the bridge; capacity cases invoke only
+// actual read-only Scene preflight with a non-secret configuration sentinel.
+// No authority/source replacement, real credentials, provider call or persisted
+// DB/media. This qualifies native guards and preflight, not paid generation.
 const root = realpathSync(process.env.FORMA_SCENE_RENEWAL_CANDIDATE_ROOT);
 const manifest = JSON.parse(readFileSync(process.env.FORMA_SCENE_RENEWAL_REVIEWED_MANIFEST, 'utf8'));
 assert.equal(manifest.reviewedFor, 'experience-scene-renewal-native-transaction');
@@ -37,7 +38,8 @@ const entrypoints = new Set(['worker/runtime.ts', 'worker/output-requirements-ap
   'worker/experience-scene-renewal.ts', 'worker/experience-scene-renewal-proof.ts', 'worker/experience-output-originals.ts',
   'worker/experience-scene-recipe.ts', 'src/model/output-scene-contract.ts', 'worker/output-scene-source.ts',
   'worker/experience-intake-read.ts', 'worker/output-command-core.ts', 'tests/output-server-test-helpers.mjs',
-  'worker/experience-output-api.ts', 'worker/experience-intake-api.ts', 'src/experiences/intake.ts']);
+  'worker/experience-output-api.ts', 'worker/experience-intake-api.ts', 'src/experiences/intake.ts',
+  'worker/output-scene-preflight.ts']);
 let forbidden = 0;
 const restorers = [];
 // Before ANY production or package import. All attempted work fails, and the
@@ -106,6 +108,7 @@ const { outputTestDatabase } = await load('tests/output-server-test-helpers.mjs'
 const { handleExperienceOutput } = await load('worker/experience-output-api.ts');
 const { handleExperienceIntake } = await load('worker/experience-intake-api.ts');
 const { registeredExperience, initialValues } = await load('src/experiences/intake.ts');
+const { preflightOutputSceneTarget, outputScenePreflightProof } = await load('worker/output-scene-preflight.ts');
 const execution = { waitUntil() { forbidden++; throw Error('unexpected_background_work'); } };
 const owner = 'dev-local-creative', project = 'renewal-project', documentId = 'renewal-document';
 const stream = `creative:${owner}`, draftId = `experience-draft-${'c'.repeat(64)}`;
@@ -287,8 +290,9 @@ test('a late authorization index with no stream-head change blocks native renewa
 
 // Real mini-app intake and prepare/read handlers. No test constructs the renewal
 // sourceAssertions here: the product handler must assemble and enforce them.
-async function httpFixture(t) {
+async function httpFixture(t, { capacity = false } = {}) {
   const state = outputTestDatabase(':memory:'); t.after(() => state.sqlite.close());
+  if (capacity) state.capacity = instrumentScenePreflightCapacity(state);
   await runtime.ensureSchema(state.env);
   const now = new Date().toISOString();
   state.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,'creator','pilot-2026-08-10',?,?,?)")
@@ -307,7 +311,7 @@ async function httpFixture(t) {
   assert.equal((await committed.json()).status,'complete');
   state.path = `/api/experiences/drafts/${state.plan.draftId}/output`;
   state.send = (body) => handleExperienceOutput(body === undefined ? new Request('http://localhost'+state.path)
-    : post(state.path+'/prepare',body),state.env,execution,undefined);
+    : post(state.path+'/prepare',body),state.env,execution,state.bridge);
   const RealDate = Date, old = Date.now()-1_200_000;
   globalThis.Date = class extends RealDate { constructor(...args) {super(...(args.length?args:[old]));} static now(){return old;} };
   try {
@@ -367,4 +371,148 @@ test('actual mini-app renewal rolls back when retention changes between offer an
   assert.equal(s.count('output_plan_revisions'),plans);
   assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS count FROM output_commands WHERE command_key LIKE 'scene-cycle-v1:%'").get().count,0);
   s.assertUnpaid();
+});
+
+// Test-only SQL/response observation. Every statement still executes through
+// the reviewed in-memory SQLite adapter and its BEGIN IMMEDIATE atomic batch.
+// This records counts and SQL text, never source values or credentials.
+function instrumentScenePreflightCapacity(state) {
+  const observed = { bindingCounts: [], proofBatches: [], active: null, faults: 0 };
+  const prepare = state.DB.prepare.bind(state.DB), batch = state.DB.batch.bind(state.DB);
+  function track(statement) {
+    const bind = statement.bind.bind(statement), execute = statement.execute.bind(statement);
+    statement.bind = (...values) => {
+      observed.bindingCounts.push(values.length);
+      assert.ok(values.length <= 100, `D1 statement exceeds 100 bindings: ${values.length}`);
+      return track(bind(...values));
+    };
+    statement.execute = kind => {
+      assert.ok(statement.bindings.length <= 100, 'Every executed SQLite statement stays within D1 binding capacity');
+      return execute(kind);
+    };
+    return statement;
+  }
+  state.DB.prepare = sql => track(prepare(sql));
+  state.DB.batch = async statements => {
+    const active = observed.active, last = statements.at(-1);
+    // Select only the actual preflight's final proof batch, by its canonical
+    // terminal deadline predicate and exact selected plan's deadline. Other
+    // batches, reads, source readers, guards and result values are untouched.
+    const selected = active && statements.length > 1
+      && statements.every(statement => statement.sql.startsWith('SELECT CASE WHEN ('))
+      && last.sql === "SELECT CASE WHEN (? > strftime('%Y-%m-%dT%H:%M:%fZ','now')) THEN 1 ELSE 0 END AS current"
+      && last.bindings.length === 1 && last.bindings[0] === active.expiresAt;
+    const result = await batch(statements);
+    if (!selected) return result;
+    const record = { statements: statements.length, counts: statements.map(statement => statement.bindings.length),
+      totalBindings: statements.reduce((sum, statement) => sum + statement.bindings.length, 0),
+      successfulRows: result.length === statements.length && result.every(row => row.success !== false && Number(row.results[0]?.current) === 1) };
+    observed.proofBatches.push(record); active.batches++;
+    assert.equal(record.successfulRows, true, 'Negative cases start from real successful SQLite predicates');
+    assert.ok(record.counts.every(count => count <= 100));
+    if (!active.fault) return result;
+    observed.faults++;
+    if (active.fault === 'missing-result') return result.slice(0, -1);
+    if (active.fault === 'false-predicate') return result.map((row, index) => index === 0 ? { ...row, results: [{ current: 0 }] } : row);
+    if (active.fault === 'failed-result') return result.map((row, index) => index === 0 ? { ...row, success: false } : row);
+    if (active.fault === 'expired-after-batch') {
+      // Only the JS clock crosses expiry after the real atomic batch returned.
+      // SQLite receipts and stored deadlines are not edited. Restored before
+      // the bridge returns to the HTTP handler, even if preflight throws.
+      active.restoreNow = Date.now;
+      Date.now = () => Date.parse(active.expiresAt);
+      return result;
+    }
+    assert.fail('Unknown targeted proof fault');
+  };
+  return observed;
+}
+
+function attachRealScenePreflight(state, fault = null) {
+  assert.ok(state.capacity);
+  // Public non-secret sentinel; satisfies configuration presence only. All
+  // network and background tripwires remain installed before product imports.
+  state.env.OPENAI_API_KEY = 'fixture-not-a-provider-key';
+  const forbiddenBridge = () => { forbidden++; throw Error('unexpected_paid_scene_bridge_method'); };
+  const returned = [];
+  state.bridge = {
+    async preflight(input) {
+      assert.equal(state.capacity.active, null);
+      const active = { expiresAt: new Date(Date.parse(input.confirmedPlan.confirmedAt) + 900_000).toISOString(), fault, batches: 0, restoreNow: null };
+      state.capacity.active = active;
+      try {
+        // Unmodified actual input and production function; no provider or
+        // source-reader replacement, precomputed target or fabricated success.
+        const target = await preflightOutputSceneTarget(input);
+        returned.push({ target, proof: outputScenePreflightProof(target), batches: active.batches });
+        return target;
+      } finally {
+        if (active.restoreNow) Date.now = active.restoreNow;
+        state.capacity.active = null;
+      }
+    },
+    prepareAdmission: forbiddenBridge, dispatch: forbiddenBridge,
+    resolveResult: forbiddenBridge, cleanupExpiredOrRevoked: forbiddenBridge,
+  };
+  return returned;
+}
+
+test('real Scene successor preflight survives cumulative original and renewal proof bindings', async t => {
+  const s = await httpFixture(t, { capacity: true });
+  // The inherited fixture deliberately makes the original expired preparation
+  // with no bridge. It is not evidence of a previously available provider quote.
+  assert.equal(s.expired.preflight.targets[0].available, false);
+  const originalCommands = s.sqlite.prepare('SELECT * FROM output_commands ORDER BY command_key').all();
+  const beforePlans = s.count('output_plan_revisions'), returned = attachRealScenePreflight(s);
+  const response = await s.send(s.body);
+  assert.equal(response.status, 200, await response.clone().text());
+  const renewed = await response.json();
+  assert.equal(renewed.status, 'review');
+  assert.equal(renewed.preflight.targets[0].available, true);
+  assert.equal(renewed.preflight.targets[0].reasonCode, 'output_scene_ready');
+  assert.ok(renewed.sceneCostPreview);
+  assert.equal(renewed.sceneCostPreview.documentId, s.plan.documentId);
+  assert.ok(Date.parse(renewed.preflight.expiresAt) > Date.now());
+  assert.ok(Date.parse(renewed.sceneCostPreview.expiresAt) > Date.now());
+  assert.equal(renewed.permitted.authorize, true, 'Fresh terms may be reviewed; the test never authorizes');
+  assert.equal(renewed.permitted.run, false);
+  assert.equal(renewed.original, null); assert.equal(renewed.grant, null);
+  assert.equal(renewed.documentId, s.plan.documentId);
+  assert.notEqual(renewed.plan.revisionId, s.expired.plan.revisionId);
+  assert.notEqual(renewed.preflight.id, s.expired.preflight.id);
+  assert.equal(s.count('output_plan_revisions'), beforePlans + 1);
+  assert.equal(returned.length, 1);
+  assert.equal(returned[0].batches, 1, 'All final source assertions share one atomic batch');
+  assert.ok(returned[0].proof, 'Actual preflight retains its original admission/dispatch proof object');
+  const finalBatch = s.capacity.proofBatches.at(-1);
+  t.diagnostic(JSON.stringify({proofStatements:finalBatch.statements,totalBindings:finalBatch.totalBindings,maximumStatementBindings:Math.max(...finalBatch.counts)}));
+  assert.ok(finalBatch.totalBindings > 100, 'This must exercise the original combined-statement regression');
+  assert.equal(finalBatch.statements, returned[0].proof.sourceAssertions.length);
+  assert.equal(finalBatch.totalBindings, returned[0].proof.sourceAssertions.reduce((sum, value) => sum + (value.bindings?.length ?? 0), 0));
+  assert.ok(s.capacity.bindingCounts.length > 0);
+  assert.ok(s.capacity.bindingCounts.every(count => count <= 100));
+  for (const row of originalCommands) assert.deepEqual(s.sqlite.prepare('SELECT * FROM output_commands WHERE scope_key=? AND actor_user_id=? AND command_key=?').get(row.scope_key, row.actor_user_id, row.command_key), row);
+  const passive = await s.read();
+  assert.equal(passive.preflight.id, renewed.preflight.id);
+  assert.equal(returned.length, 1, 'GET does not run another preflight');
+  assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentCreated'").get().count, 1);
+  s.assertUnpaid(); assert.equal(forbidden, 0);
+});
+
+for (const fault of ['missing-result', 'false-predicate', 'failed-result', 'expired-after-batch'])
+test(`real Scene preflight refuses ${fault} after its actual source-proof batch`, async t => {
+  const s = await httpFixture(t, { capacity: true }), returned = attachRealScenePreflight(s, fault);
+  const response = await s.send(s.body);
+  assert.equal(response.status, 200, await response.clone().text());
+  const renewed = await response.json();
+  assert.equal(s.capacity.faults, 1, 'Exactly one selected final proof batch is faulted');
+  assert.equal(returned.length, 1); assert.equal(returned[0].batches, 1);
+  assert.equal(returned[0].target.available, false);
+  assert.equal(returned[0].target.reasonCode, 'output_scene_source_changed');
+  assert.equal(returned[0].proof, null, 'Rejected source proof cannot attach an admission/dispatch proof');
+  assert.equal(renewed.preflight.targets[0].available, false);
+  assert.equal(renewed.permitted.authorize, false); assert.equal(renewed.permitted.run, false);
+  assert.equal(renewed.original, null); assert.equal(renewed.grant, null);
+  assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentCreated'").get().count, 1);
+  s.assertUnpaid(); assert.equal(forbidden, 0);
 });
