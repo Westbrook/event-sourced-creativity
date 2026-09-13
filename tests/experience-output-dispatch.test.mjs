@@ -120,6 +120,54 @@ test("API catch maps nullish and unknown dispatch failures to a private unavaila
   for(const code of ["experience_output_original_envelope_unavailable","output_scene_source_changed","scene_cost_authority_changed"])assert.equal((await refuse({code,status:409}).json()).error,code);
 });
 
+test("unknown failures gain only fixed bounded diagnostic kinds without changing response or log keys",async()=>{
+  const source=stripTypeScriptTypes(readFileSync(new URL("../worker/experience-output-api.ts",import.meta.url),"utf8"));
+  const helpers=source.slice(source.indexOf("const record ="),source.indexOf("async function refused("));
+  const caught=source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);assert.ok(caught);
+  const logged=[];
+  const invoke=new Function("cause","console",helpers+"\nconst diagnosticStage='prepare_preflight_execute';\n"+caught[1]);
+  const readSubtype=new Function("cause",helpers+"\nreturn diagnosticSubtype(cause);");
+  const cases=[
+    [new Error("D1_ERROR: FOREIGN KEY constraint failed: private_table"),"d1_constraint"],
+    [new Error("Wrong number of parameter bindings: private_binding"),"d1_binding_count"],
+    [new Error("D1_TYPE_ERROR: private value"),"d1_binding_type"],
+    [new Error("D1_ERROR: too many SQL variables: private SQL"),"db_schema"],
+    [new Error("D1_ERROR: string or blob too big: private body"),"d1_value_limit"],
+    [new Error("SQLITE_LOCKED: private table"),"d1_busy"],
+    [new Error("no such column: private_identifier"),"db_schema"],
+    [new Error("Too many API requests by single worker invocation. private suffix"),"worker_subrequest_limit"],
+    [new Error("Too many subrequests. private suffix"),"worker_subrequest_limit"],
+    [new Error("D1_ERROR: too many queries: private details"),"d1_query_limit"],
+    [new Error("D1_ERROR",{cause:new Error("SQLITE_TOOBIG: private details")}),"d1_value_limit"],
+    [new Error("D1_ERROR: unrecognized private database detail"),"d1_error"],
+    ...["bridge_target_mismatch","bridge_preflight_incomplete","bridge_provider_call_routes_required","bridge_provider_call_routes_invalid"]
+      .map(code=>[Object.assign(new Error("private source"),{code,status:500}),code]),
+  ];
+  for(const [cause,subtype] of cases){
+    const response=invoke(cause,{warn:(...args)=>logged.push(args)}),body=await response.json();
+    assert.equal(response.status,cause.status??409);assert.equal(body.error,"experience_output_unavailable");
+    assert.equal(body.status,"unavailable");assert.equal(body.permitted.authorize,false);assert.equal(body.permitted.run,false);
+    assert.equal(Object.hasOwn(body,"subtype"),false);assert.equal(Object.hasOwn(body,"diagnostic"),false);
+    const [label,entry]=logged.at(-1);assert.equal(label,"experience_output_refused");assert.equal(entry.kind,subtype);
+    assert.deepEqual(Object.keys(entry),["code","status","stage","kind"]);
+    assert.equal(entry.stage,"prepare_preflight_execute");assert.ok(!JSON.stringify(entry).includes("private"));
+  }
+  for(const cause of [undefined,null,{},"D1_ERROR: private",{code:"private_customer_named_example"},new Error("private source"),new Error("too many ordinary creative ideas")])assert.equal(readSubtype(cause),undefined);
+  let getters=0;const accessor=new Error("private source");
+  Object.defineProperty(accessor,"cause",{get(){getters++;throw Error("private getter");}});
+  assert.equal(readSubtype(accessor),undefined);assert.equal(getters,0);
+  const cycle=new Error("private source");cycle.cause=cycle;assert.equal(readSubtype(cycle),undefined);
+  const deep=new Error("D1_ERROR",{cause:new Error("private wrapper",{cause:new Error("private wrapper",{cause:new Error("SQLITE_TOOBIG")})})});
+  assert.equal(readSubtype(deep),"d1_error","No inspection past three error nodes");
+  assert.equal(readSubtype(new Error("x".repeat(2048)+"SQLITE_TOOBIG")),undefined,"No inspection past the bounded prefix");
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const cause of [new Proxy({}, {getOwnPropertyDescriptor(){throw Error("private descriptor trap");}}),revoked.proxy]){
+    const response=invoke(new Error("opaque",{cause}),{warn:(...args)=>logged.push(args)});
+    assert.equal(response.status,409);assert.equal((await response.json()).error,"experience_output_unavailable");
+    assert.equal(logged.at(-1)[1].kind,"unknown");assert.ok(!JSON.stringify(logged.at(-1)).includes("private"));
+  }
+});
+
 test("non-Fal preflights never enter the recovery metadata query",async()=>{
   const source=readFileSync(new URL("../worker/experience-output-api.ts",import.meta.url),"utf8");
   const start=source.indexOf("result.permitted.recoverResult = Boolean("),end=source.indexOf(";",start);assert.ok(start>=0&&end>start);

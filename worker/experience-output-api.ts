@@ -65,6 +65,40 @@ function diagnosticKind(cause: unknown) {
   if (["TypeError", "SyntaxError", "RangeError", "AbortError"].includes(cause.name)) return cause.name;
   return "unknown";
 }
+// Fixed log-only labels. This is diagnosis, not permission, retryability or
+// evidence that any paid request reached a provider. Public errors stay unchanged.
+const nativeDiagnosticSubtypes = new Map([
+  ["bridge_target_mismatch", "bridge_target_mismatch"],
+  ["bridge_preflight_incomplete", "bridge_preflight_incomplete"],
+  ["bridge_provider_call_routes_required", "bridge_provider_call_routes_required"],
+  ["bridge_provider_call_routes_invalid", "bridge_provider_call_routes_invalid"],
+]);
+function diagnosticSubtype(cause: unknown): string | undefined {
+  let current: unknown = cause, fallback: string | undefined;
+  // D1 wrappers may retain the actionable error in cause. Only own data
+  // properties, three nodes and 2048 message characters per node are inspected.
+  // No stack, arbitrary object serialization, getters or recursive traversal.
+  try { for (let depth = 0; depth < 3 && record(current); depth++) {
+    const code = Object.getOwnPropertyDescriptor(current, "code")?.value;
+    const raw = Object.getOwnPropertyDescriptor(current, "message")?.value;
+    const native = nativeDiagnosticSubtypes.get(typeof code === "string" ? code : typeof raw === "string" ? raw : "");
+    if (native) return native;
+    if (!(current instanceof Error)) break;
+    const message = typeof raw === "string" ? raw.slice(0, 2048) : "";
+    if (/\b(?:CHECK|UNIQUE|FOREIGN KEY|NOT NULL) constraint failed\b|\bSQLITE_CONSTRAINT(?:_[A-Z_]+)?\b/iu.test(message)) return "d1_constraint";
+    if (/\bWrong number of parameter bindings\b|\bSQLITE_RANGE\b/iu.test(message)) return "d1_binding_count";
+    if (/\bD1_TYPE_ERROR\b/u.test(message)) return "d1_binding_type";
+    if (/\btoo many SQL variables\b/iu.test(message)) return "d1_parameter_limit";
+    if (/\bSQLITE_TOOBIG\b|\bstring or blob too big\b/iu.test(message)) return "d1_value_limit";
+    if (/\bSQLITE_BUSY\b|\bSQLITE_LOCKED\b|\bdatabase is locked\b/iu.test(message)) return "d1_busy";
+    if (/\bno such (?:table|column)\b|\bSQLITE_SCHEMA\b/iu.test(message)) return "d1_schema";
+    if (/\bToo many API requests by single worker invocation\b|\bToo many subrequests\b/iu.test(message)) return "worker_subrequest_limit";
+    if (/\bD1_ERROR:\s*too many queries\b/iu.test(message)) return "d1_query_limit";
+    if (/\bD1_ERROR\b|\bSQLITE_ERROR\b/u.test(message)) fallback = "d1_error";
+    current = Object.getOwnPropertyDescriptor(current, "cause")?.value;
+  } } catch { /* Optional diagnosis must never replace the original refusal. */ }
+  return fallback;
+}
 const unavailable = (code: string, status = 409, diagnostic?: { stage: DiagnosticStage; kind: string }) => {
   const safeCode = diagnosticCodes.has(code) ? code : "experience_output_unavailable";
   // The platform associates this bounded code with its request log. Never log
@@ -532,7 +566,8 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
   } catch (cause) {
     const item = record(cause) ? cause : {};
     const code = typeof item.code === "string" ? item.code : typeof item.message === "string" && /^[a-z][a-z0-9_]+$/u.test(item.message) ? item.message : "experience_output_unavailable";
+    const kind = code !== "experience_output_unavailable" && diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause);
     return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409,
-      { stage: diagnosticStage, kind: code !== "experience_output_unavailable" && diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause) });
+      { stage: diagnosticStage, kind: kind === "unknown" ? diagnosticSubtype(cause) ?? kind : kind });
   }
 }

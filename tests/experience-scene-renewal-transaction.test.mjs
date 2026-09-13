@@ -290,7 +290,7 @@ test('a late authorization index with no stream-head change blocks native renewa
 
 // Real mini-app intake and prepare/read handlers. No test constructs the renewal
 // sourceAssertions here: the product handler must assemble and enforce them.
-async function httpFixture(t, { capacity = false } = {}) {
+async function httpFixture(t, { capacity = false, originalAgeMs = 1_200_000 } = {}) {
   const state = outputTestDatabase(':memory:'); t.after(() => state.sqlite.close());
   if (capacity) state.capacity = instrumentScenePreflightCapacity(state);
   await runtime.ensureSchema(state.env);
@@ -312,7 +312,7 @@ async function httpFixture(t, { capacity = false } = {}) {
   state.path = `/api/experiences/drafts/${state.plan.draftId}/output`;
   state.send = (body) => handleExperienceOutput(body === undefined ? new Request('http://localhost'+state.path)
     : post(state.path+'/prepare',body),state.env,execution,state.bridge);
-  const RealDate = Date, old = Date.now()-1_200_000;
+  const RealDate = Date, old = Date.now()-originalAgeMs;
   globalThis.Date = class extends RealDate { constructor(...args) {super(...(args.length?args:[old]));} static now(){return old;} };
   try {
     const response = await state.send({draftHash:state.plan.draftHash,explicitRequirementsConfirmation:true});
@@ -497,6 +497,106 @@ test('real Scene successor preflight survives cumulative original and renewal pr
   assert.equal(returned.length, 1, 'GET does not run another preflight');
   assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentCreated'").get().count, 1);
   s.assertUnpaid(); assert.equal(forbidden, 0);
+});
+
+// Both historical cycles are made by the actual HTTP handler at historical
+// fixture times, without a provider bridge. Their unavailable preflights are
+// immutable originals, not evidence of historically available provider quotes.
+// SQLite retains its real clock; only the new second successor uses the actual
+// Scene preflight and current SQL/JS deadlines. No saved receipt is backdated.
+async function secondRenewalFixture(t) {
+  const s = await httpFixture(t, {capacity:true, originalAgeMs:2_400_000});
+  const RealDate=Date, firstTime=Date.now()-1_200_000;
+  globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:[firstTime]));} static now(){return firstTime;}};
+  let first;
+  try {
+    const response=await s.send(s.body);assert.equal(response.status,200,await response.clone().text());
+    first=await response.json();
+  } finally {globalThis.Date=RealDate;}
+  s.firstExpired=await s.read();
+  assert.equal(s.firstExpired.preflight.id,first.preflight.id);
+  assert.notEqual(first.preflight.id,s.expired.preflight.id);
+  assert.equal(s.firstExpired.permitted.renewPreparation,true);
+  assert.equal(s.firstExpired.preflight.targets[0].available,false);
+  const trusted=await native.loadOutputTrustedContext(new Request('http://localhost'),s.env,s.plan.documentId,'author');
+  assert.ok(!(trusted instanceof Response));
+  const rootBinding=await binding.experienceOutputBinding(s.plan);
+  const lineage=await originals.readExperienceOutputLineage(trusted,rootBinding);
+  assert.equal(lineage.binding.preparationCycle.ordinal,1);
+  const predecessor=originals.scenePreparationPredecessor(lineage.binding,lineage.originals);
+  assert.ok(predecessor);assert.equal(predecessor.preflight.preflightId,first.preflight.id);
+  s.expectedCycle=await renewal.scenePreparationSuccessor(rootBinding,predecessor);
+  assert.equal(s.expectedCycle.ordinal,2);
+  s.rootBinding=rootBinding;
+  s.secondBody={draftHash:s.plan.draftHash,explicitRequirementsConfirmation:true,
+    renewal:{predecessorPreflightId:first.preflight.id,explicitRenewal:true}};
+  s.ancestors={
+    commands:s.sqlite.prepare('SELECT * FROM output_commands ORDER BY command_key').all(),
+    plans:s.sqlite.prepare('SELECT * FROM output_plan_revisions ORDER BY revision').all(),
+    preflights:s.sqlite.prepare('SELECT * FROM output_preflights ORDER BY preflight_id').all(),
+    bodies:s.sqlite.prepare('SELECT * FROM event_private_payloads ORDER BY private_event_id').all(),
+  };
+  assert.equal(s.ancestors.plans.length,2);assert.equal(s.ancestors.preflights.length,2);
+  s.assertAncestors=()=>{
+    for(const row of s.ancestors.commands)assert.deepEqual(s.sqlite.prepare('SELECT * FROM output_commands WHERE scope_key=? AND actor_user_id=? AND command_key=?').get(row.scope_key,row.actor_user_id,row.command_key),row);
+    for(const row of s.ancestors.plans)assert.deepEqual(s.sqlite.prepare('SELECT * FROM output_plan_revisions WHERE scope_key=? AND plan_revision_id=?').get(row.scope_key,row.plan_revision_id),row);
+    for(const row of s.ancestors.preflights)assert.deepEqual(s.sqlite.prepare('SELECT * FROM output_preflights WHERE scope_key=? AND preflight_id=?').get(row.scope_key,row.preflight_id),row);
+    for(const row of s.ancestors.bodies)assert.deepEqual(s.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(row.private_event_id),row);
+  };
+  s.assertUnpaid();return s;
+}
+
+test('actual HTTP second Scene renewal preserves both ancestors and preflights the deterministic cycle two',async t=>{
+  const s=await secondRenewalFixture(t),returned=attachRealScenePreflight(s);
+  const response=await s.send(s.secondBody);assert.equal(response.status,200,await response.clone().text());
+  const renewed=await response.json();
+  assert.equal(renewed.status,'review');assert.equal(renewed.documentId,s.plan.documentId);
+  assert.equal(renewed.preflight.targets[0].available,true);assert.equal(renewed.preflight.targets[0].reasonCode,'output_scene_ready');
+  assert.equal(renewed.permitted.authorize,true);assert.equal(renewed.permitted.run,false);
+  assert.equal(renewed.original,null);assert.equal(renewed.grant,null);assert.ok(renewed.sceneCostPreview);
+  assert.ok(Date.parse(renewed.sceneCostPreview.expiresAt)>Date.now());
+  assert.notEqual(renewed.preflight.id,s.firstExpired.preflight.id);assert.notEqual(renewed.plan.revisionId,s.firstExpired.plan.revisionId);
+  const trusted=await native.loadOutputTrustedContext(new Request('http://localhost'),s.env,s.plan.documentId,'author');
+  assert.ok(!(trusted instanceof Response));
+  const lineage=await originals.readExperienceOutputLineage(trusted,s.rootBinding);
+  assert.deepEqual(lineage.binding.preparationCycle,s.expectedCycle);
+  assert.equal(lineage.cycleCommandKeys.length,4);
+  assert.equal(lineage.originals.preflight.receipt.payload.preflight_id,renewed.preflight.id);
+  assert.equal(s.count('output_plan_revisions'),3);assert.equal(s.count('output_preflights'),3);
+  assert.equal(returned.length,1);assert.ok(returned[0].proof);assert.equal(returned[0].batches,1);
+  assert.ok(s.capacity.bindingCounts.every(count=>count<=100));s.assertAncestors();
+  const counts={events:s.count('events'),commands:s.count('output_commands'),plans:s.count('output_plan_revisions'),preflights:s.count('output_preflights')};
+  const replay=await s.send(s.secondBody);assert.equal(replay.status,200,await replay.clone().text());
+  assert.equal((await replay.json()).preflight.id,renewed.preflight.id);
+  assert.equal((await s.read()).preflight.id,renewed.preflight.id);assert.equal(returned.length,1);
+  assert.deepEqual({events:s.count('events'),commands:s.count('output_commands'),plans:s.count('output_plan_revisions'),preflights:s.count('output_preflights')},counts);
+  assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentCreated'").get().count,1);
+  s.assertAncestors();s.assertUnpaid();assert.equal(forbidden,0);
+});
+
+test('second Scene renewal rolls back on unrelated owner-head advance at native confirmation',async t=>{
+  const s=await secondRenewalFixture(t),returned=attachRealScenePreflight(s),batch=s.DB.batch.bind(s.DB);
+  const counts={events:s.count('events'),commands:s.count('output_commands'),plans:s.count('output_plan_revisions'),preflights:s.count('output_preflights')};
+  const secondKey=await binding.experienceOutputCommandKey({...s.rootBinding,preparationCycle:s.expectedCycle},'confirm');
+  let raced=false,headBefore=-1,headAfter=-1;
+  s.DB.batch=async statements=>{
+    if(!raced&&statements.some(statement=>/^INSERT INTO output_commands\b/u.test(statement.sql.trim())&&statement.bindings[2]===secondKey)){
+      raced=true;headBefore=await runtime.streamHead(s.env,s.plan.streamId);
+      await runtime.appendEvents(s.env,[runtime.makeEvent(s.plan.streamId,0,`user:${owner}`,'test','second-renewal-owner-head-race','ProjectCreated',
+        {project_id:'unrelated-renewal-race-project',name:'Unrelated concurrent project'})]);
+      headAfter=await runtime.streamHead(s.env,s.plan.streamId);
+    }
+    return batch(statements);
+  };
+  const response=await s.send(s.secondBody);assert.equal(raced,true);assert.equal(headAfter,headBefore+1);
+  assert.equal(response.status,409,await response.clone().text());assert.equal((await response.json()).error,'output_revision_or_authority_changed');
+  assert.equal(s.count('events'),counts.events+1,'Only the independent competing event persists');
+  assert.equal(s.count('output_commands'),counts.commands);assert.equal(s.count('output_plan_revisions'),counts.plans);assert.equal(s.count('output_preflights'),counts.preflights);
+  assert.equal(s.sqlite.prepare('SELECT COUNT(*) AS count FROM output_commands WHERE command_key=?').get(secondKey).count,0);
+  assert.equal(s.sqlite.prepare('SELECT COUNT(*) AS count FROM events WHERE correlation_id=?').get(secondKey).count,0);
+  assert.equal(returned.length,0,'The rejected confirmation never reaches a preflight or paid bridge');
+  assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentCreated'").get().count,1);
+  s.assertAncestors();s.assertUnpaid();assert.equal(forbidden,0);
 });
 
 for (const fault of ['missing-result', 'false-predicate', 'failed-result', 'expired-after-batch'])
