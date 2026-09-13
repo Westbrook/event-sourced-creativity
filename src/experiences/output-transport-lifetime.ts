@@ -5,6 +5,9 @@ export const EXPERIENCE_BODY_TIMEOUT_MS = 20_000;
 /** Waiting for an already authorized job grants no extra provider time, calls,
  * source access or spend. Server execution/authority deadlines remain unchanged. */
 export function experienceResponseTimeout(operation?: ExperienceForegroundOperation) {
+  // Preparation performs save, confirm and preflight with fresh custody reads.
+  // This is one explicit intent, not automatic continuation or paid execution.
+  if (operation?.action === "prepare") return 120_000;
   if (operation?.action === "recoverResult") return 120_000 + 60_000;
   if (operation?.action !== "run" && operation?.action !== "resumeRun") return 20_000;
   const policy = operation.output === "model3d" ? OUTPUT_MODEL3D_EXECUTION_POLICY

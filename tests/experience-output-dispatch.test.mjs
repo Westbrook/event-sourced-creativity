@@ -94,7 +94,9 @@ test("API catch maps nullish and unknown dispatch failures to a private unavaila
   const helpers = source.slice(source.indexOf("const record ="), source.indexOf("async function refused("));
   const caught = source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);
   assert.ok(caught); assert.ok(helpers.startsWith("const record ="));
-  const refuse = new Function("cause", helpers + "\n" + caught[1]);
+  const logged=[];
+  const invoke = new Function("cause", "console", helpers + "\n" + caught[1]);
+  const refuse=cause=>invoke(cause,{warn:(...args)=>logged.push(args)});
   for (const cause of [undefined, null, "private provider detail", 42, Symbol("private"), {}, new Error("private provider detail")]) {
     const response = refuse(cause);
     assert.equal(response.status, 409);
@@ -104,6 +106,13 @@ test("API catch maps nullish and unknown dispatch failures to a private unavaila
   }
   const known = refuse(Object.assign(new Error("private message"), { code: "experience_output_source_changed", status: 403 }));
   assert.equal(known.status, 403); assert.equal((await known.json()).error, "experience_output_source_changed");
+  const privateCode=refuse({code:"Private provider source text",status:409});
+  assert.equal((await privateCode.json()).error,"experience_output_unavailable");
+  for (const code of ["private_customer_named_example","request_01a09b9506477779b6fa6b670ecafcc8"]) {
+    assert.equal((await refuse({code,status:409}).json()).error,"experience_output_unavailable");
+  }
+  for(const [label,entry] of logged){assert.equal(label,"experience_output_refused");assert.deepEqual(Object.keys(entry),["code","status"]);assert.match(entry.code,/^[a-z][a-z0-9_]+$/u);assert.ok(entry.code.length<=160);}
+  assert.ok(!JSON.stringify(logged).includes("private"));assert.ok(!JSON.stringify(logged).includes("Private"));
 });
 
 test("non-Fal preflights never enter the recovery metadata query",async()=>{

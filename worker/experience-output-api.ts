@@ -34,9 +34,27 @@ import { readExperienceOutputOriginals, experienceOutputPhases as phases, experi
   type ExperienceOutputOriginal as Original } from "./experience-output-originals.ts";
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
-const unavailable = (code: string, status = 409) => Response.json({ version: 1, status: "unavailable", error: code,
+const diagnosticCodes = new Set(`not_found method_not_allowed same_origin_required experience_output_request_invalid experience_output_unavailable
+experience_output_unbound_requirement experience_output_requirement_changed experience_output_requirement_evidence_unavailable experience_draft_unavailable
+experience_image_ratio_required experience_scene_contract_unavailable experience_audio_contract_unavailable experience_storyboard_contract_unavailable experience_model3d_contract_unavailable
+experience_intake_original_unavailable experience_output_scope_changed output_video_source_changed experience_model3d_original_changed experience_output_source_changed experience_output_source_unavailable
+experience_output_plan_unavailable experience_output_plan_changed experience_output_preflight_changed experience_video_preflight_unavailable experience_model3d_preflight_unavailable experience_storyboard_preflight_unavailable experience_scene_preflight_unavailable
+experience_output_unbound_operation experience_output_original_authorization_unavailable experience_output_original_operation_changed experience_scene_original_consent_unavailable experience_output_original_job_unavailable experience_model3d_original_consent_unavailable experience_audio_original_consent_unavailable
+experience_output_original_run_unavailable experience_output_original_grant_unavailable experience_video_original_attempt_unavailable experience_storyboard_original_attempt_unavailable experience_audio_recovery_unavailable
+experience_audio_confirmation_required experience_model3d_confirmation_required experience_model3d_image_recovery_forbidden experience_storyboard_recovery_unavailable experience_review_stale experience_scene_confirmation_required experience_release_changed
+experience_output_recipe_confirmation_required experience_output_unbound_plan experience_output_unbound_preflight experience_output_preflight_required experience_output_authorization_unavailable experience_output_authorization_terms_changed
+experience_output_explicit_run_required experience_output_run_unavailable output_source_epoch_required experience_output_explicit_recovery_required experience_output_native_refused
+experience_output_original_unavailable experience_output_stage_evidence_unavailable mutation_key_reused_with_different_content output_command_scope_mismatch original_command_content_unavailable invalid_output_scope
+output_revision_or_authority_changed invalid_output_requirement output_active_commitment_requires_cancellation output_requirements_need_confirmation invalid_output_plan output_scope_amendment_reason_required output_private_evidence_unavailable output_requirements_failed`.split(/\s+/u));
+const unavailable = (code: string, status = 409) => {
+  const safeCode = diagnosticCodes.has(code) ? code : "experience_output_unavailable";
+  // The platform associates this bounded code with its request log. Never log
+  // source text, request bodies, provider responses, credentials or actor data.
+  console.warn("experience_output_refused", { code: safeCode, status });
+  return Response.json({ version: 1, status: "unavailable", error: safeCode,
   originalIntent: "unknown_or_retained", permitted: { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false } } satisfies ExperienceNativeUnavailable,
 { status, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+};
 async function refused(response: Response): Promise<Response> {
   const value: unknown = await response.json().catch(() => null);
   const code = record(value) && typeof value.error === "string" && /^[a-z][a-z0-9_]+$/u.test(value.error)

@@ -434,7 +434,7 @@ test("ordinary delayed headers do not renew the twenty-second total deadline", a
 });
 
 test("foreground policy is action-specific and does not lengthen passive or admission waits", () => {
-  for (const action of ["read", "prepare", "authorize", "unknown"]) {
+  for (const action of ["read", "authorize", "unknown"]) {
     assert.equal(experienceResponseTimeout({action,output:"video"}), 20000);
     assert.equal(experienceHostTimeout({action,output:"video"}), 30000);
   }
@@ -444,6 +444,22 @@ test("foreground policy is action-specific and does not lengthen passive or admi
     assert.equal(experienceHostTimeout({action,output}), expected + 50000);
   }
   assert.equal(experienceResponseTimeout({action:"recoverResult",output:"image"}), 180000);
+  assert.equal(experienceResponseTimeout({action:"prepare",output:"scene"}), 120000);
+  assert.equal(experienceHostTimeout({action:"prepare",output:"scene"}), 170000);
+});
+
+test("one explicit preparation survives both old cutoffs without automatically continuing", async context => {
+  context.mock.timers.enable({apis:["setTimeout"]});
+  let finish!: (value:Response)=>void;
+  const fake=transport([response(state("absent")),()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+  const client=new ExperienceOutputBindingClient(identity,{origin,current:()=>true,request:fake.request});
+  await client.read();const original=shown(client);
+  const host=new ExperienceHostOperation(()=>client.dispose(),undefined,{action:"prepare",output:"image"});
+  const pending=host.wait(client.command("prepare",original));
+  context.mock.timers.tick(31000);assert.equal(host.current(),true);assert.equal(fake.calls[1].init.signal!.aborted,false);
+  await client.command("prepare",original);assert.equal(fake.calls.length,2);
+  finish(response(state("preparing"),basePath+"/prepare"));assert.equal((await pending).status,"preparing");host.finish();
+  assert.deepEqual(fake.calls.map(call=>call.init.method),["GET","POST"]);
 });
 
 test("binding lifetime: a never-finishing fetch times out and releases pending state", { timeout: 1000 }, async () => {
