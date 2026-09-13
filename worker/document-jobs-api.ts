@@ -516,6 +516,11 @@ const LOCAL_PERSISTENCE_FAILURE=/\b(?:D1_ERROR|SQLITE_(?:CONSTRAINT|ERROR|BUSY|L
 const SOURCE_FIDELITY_FAILURE=/\b(?:SOURCE_FIDELITY_VALIDATION_FAILED|source[_ -]fidelity[_ -]validation[_ -]failed|protected[_ -](?:quote|fact|claim|source)|(?:required|protected).{0,40}(?:quote|quotation|numerical fact|source attribution).{0,40}(?:missing|truncated|invalid|unresolved))/i;
 
 function classifyDocumentJobFailure(input:unknown,existing:ProviderFailureDetail|null=null,status:number|null=null):ProviderFailureDetail{
+  if(input instanceof OutputConflictError && input.code==="output_execution_authority_unverified")return{
+    code:input.code,category:"access",scope:"request",action:"none",
+    message:"The captured source or authorization could not be revalidated after a guarded write stopped. Inspect the retained receipt before authorizing another attempt.",
+    retryable:false,retryAfterMs:null,requestId:null,httpStatus:null,
+  };
   const raw=input instanceof Error?input.message:typeof input==="string"?input:"";
   const evidence=[raw,existing?.code??"",existing?.message??""].filter(Boolean).join(" ");
   if(LOCAL_PERSISTENCE_FAILURE.test(evidence))return{

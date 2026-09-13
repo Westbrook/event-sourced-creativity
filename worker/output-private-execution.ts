@@ -16,8 +16,9 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
   const statements = new WeakMap<D1PreparedStatement, { statement: D1PreparedStatement; sql: string }>();
   const guardedBatch = async (inputs: D1PreparedStatement[], force = false) => {
     const unwrapped = inputs.map(input => statements.get(input) ?? { statement: input, sql: "" });
-    const guards = force || unwrapped.some(input => privateWrite(input.sql))
-      ? (await assertions()).flatMap(assertion => outputAssertionStatements(env, assertion)) : [];
+    const capturedAssertions = force || unwrapped.some(input => privateWrite(input.sql))
+      ? (await assertions()).map(assertion => ({ ...assertion, bindings: [...(assertion.bindings ?? [])] })) : [];
+    const guards = capturedAssertions.flatMap(assertion => outputAssertionStatements(env, assertion));
     // Only the execution hook can supply this immutable, verified receipt; an
     // event's self-described settings alone cannot retain native storage.
     // Audio separately binds its original approved job/slot and settled calls.
@@ -175,8 +176,36 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
       ORDER BY completed.sequence DESC LIMIT 1),updated_at=?
       WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' AND publication_event_id IS NULL`)
       .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,videoCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,model3dCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
-    const result = await env.DB.batch([...guards, ...unwrapped.map(input => input.statement), ...publication]);
-    return result.slice(guards.length,guards.length+inputs.length);
+    try {
+      const result = await env.DB.batch([...guards, ...unwrapped.map(input => input.statement), ...publication]);
+      return result.slice(guards.length,guards.length+inputs.length);
+    } catch (error) {
+      // This shared CHECK does not identify the original failing statement.
+      // Re-read the SAME predicates only to diagnose whether the captured
+      // authority can still be verified. Never refresh it, retry the write,
+      // or infer that a guard caused the original transaction failure.
+      if (capturedAssertions.length && error instanceof Error
+        && /^(?:D1_ERROR:\s*)?CHECK constraint failed:\s*passed\s*=\s*1(?:\s*:\s*SQLITE_CONSTRAINT(?:_CHECK)?)?$/u.test(error.message)) {
+        let authorityUnverified = false;
+        try {
+          const verification = await env.DB.batch<{ output_private_authority_passed: unknown }>(capturedAssertions.map(assertion => env.DB.prepare(
+            `SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS output_private_authority_passed`,
+          ).bind(...(assertion.bindings ?? []))));
+          authorityUnverified = verification.length === capturedAssertions.length
+            && verification.every(result => result.success === true && result.results.length === 1
+              && (result.results[0]?.output_private_authority_passed === 0 || result.results[0]?.output_private_authority_passed === 1))
+            && verification.some(result => result.results[0]?.output_private_authority_passed === 0);
+        } catch {
+          // Missing/unreadable proof cannot replace the original SQL failure.
+        }
+        if (authorityUnverified) {
+          const refusal = new OutputConflictError("output_execution_authority_unverified", 409);
+          Object.defineProperty(refusal, "cause", { value: error, configurable: true });
+          throw refusal;
+        }
+      }
+      throw error;
+    }
   };
   const wrap = (statement: D1PreparedStatement, sql: string, bindings:unknown[]=[]): D1PreparedStatement => {
     const wrapped = new Proxy(statement, {
