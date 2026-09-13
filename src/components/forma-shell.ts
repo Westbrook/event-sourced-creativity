@@ -1,8 +1,12 @@
+import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
 import { html, noChange, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon, downloadJson, copyTextToClipboard } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
+import { hasExperienceHostSelector } from "../experiences/host-route";
+import { experienceShellShortcut } from "../experiences/shell-shortcut";
+import "../experiences/shell.css";
 import { artifactFocusOptionsFromRoute, artifactFocusRoute, documentContextBlockFromRoute, documentContextBlockRoute, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, withDocumentInRoute, withProjectTaskDocumentInRoute } from "../model/routes";
 import { commandDiscoveryTargetAvailable, commandMatchScore, commandReviewIdentity, commandReviewMatches, projectCommandDiscovery, type CommandDiscoveryInput, type CommandDiscoveryRow } from "../model/command-discovery";
 import { commandDiscoveryCopy } from "./design-system/locales/command-discovery-messages";
@@ -226,7 +230,9 @@ export class FormaShell extends FormaElement {
   };
   #shareScope(){const session=this.store.session.get(),context=session?.projectContext,projection=this.store.projection.get();return[session?.user.userId??"",context?.organizationId??"personal",context?.projectAccessId??"personal",projection.projectId,projection.documentId,session?.permissionEpoch??""].join("\u0000");}
   #clearShareSecret=()=>{this.#retireSourceRetirementFocus();this.#retireAccountFocus();this.#accountReturnFocus=false;this.#retireRouteFocus();this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;if(this.store.ui.shareOpen)this.store.patchUi({shareOpen:false});};
-  #openShare(closeAccount=false){if(!this.store.canManageProjectShares())return;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;void this.store.loadShares();this.store.patchUi({...closeAccount?{accountOpen:false}:{},shareOpen:true});}
+  // A malformed experience selector stays restricted; the host shows unavailable.
+  #experienceMode(){return hasExperienceHostSelector(this.store.route.get());}
+  #openShare(closeAccount=false){if(this.#experienceMode()||!this.store.canManageProjectShares())return;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;void this.store.loadShares();this.store.patchUi({...closeAccount?{accountOpen:false}:{},shareOpen:true});}
   #closeShare(){this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;this.store.patchUi({shareOpen:false});}
   // A one-shot presentation lease, separate from navigation or action authority.
   #captureShellFocus(current:()=>boolean,ownedRouteFocus?:(element:Element)=>boolean):ShellFocus{
@@ -365,11 +371,13 @@ export class FormaShell extends FormaElement {
   };
   #keydown = (event: KeyboardEvent) => {
     if (event.isComposing || event.key === "Process" || this.#commandComposing && this.store.ui.commandOpen) return;
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.#openCommands(); }
     const target = event.composedPath()[0];
     const editingField = target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+    const shortcut=experienceShellShortcut(this.#experienceMode(),event.key,event.metaKey||event.ctrlKey,editingField,event.shiftKey);
+    if(shortcut==="suppress")event.preventDefault();
+    else if(shortcut==="commands"){event.preventDefault();this.#openCommands();}
     const projectContext=this.store.session.get()?.projectContext;
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !editingField && (!projectContext||projectContext.permissions.includes("project.author")) && ["creative","canvas"].includes(applicationIdFromRoute(this.store.route.get()))) { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
+    if ((shortcut==="undo"||shortcut==="redo") && (!projectContext||projectContext.permissions.includes("project.author")) && ["creative","canvas"].includes(applicationIdFromRoute(this.store.route.get()))) { event.preventDefault(); if (shortcut==="redo") void this.store.redo(); else void this.store.undo(); }
     if (event.key === "Escape") {
       if(this.store.ui.commandOpen){event.preventDefault();void this.#closeCommands();return;}
       if(this.store.ui.impersonationConfirmOpen)this.store.resolveImpersonatedInteraction(false);
@@ -480,7 +488,7 @@ export class FormaShell extends FormaElement {
       if (dialogChanged) queueMicrotask(() => this.#raiseToast());
     });
     this.#dialogObserver.observe(this, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
-    void loadRouteComponent(location.pathname);
+    void loadRouteComponent(this.store.route.get());
     const shared=location.pathname==="/share"||location.pathname.startsWith("/share/");
     if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
     else if(!this.store.events.get().length)void this.store.load();
@@ -506,6 +514,13 @@ export class FormaShell extends FormaElement {
   }
 
   protected override updated() {
+    if(this.#experienceMode()){
+      if(this.store.ui.commandOpen)void this.#closeCommands(false);
+      if(this.store.ui.accountOpen||this.store.ui.shareOpen||this.store.ui.compareOpen){
+        this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;
+        this.store.patchUi({accountOpen:false,shareOpen:false,compareOpen:false});
+      }
+    }
     if(this.#routeFocus&&(!this.#routeFocus.scopeCurrent()||!this.#routeFocus.focus.current()))this.#retireRouteFocus();
     if(this.#accountFocus&&!this.#accountFocus.owner.scopeCurrent()){this.#retireAccountFocus();this.#accountReturnFocus=false;}
     if(this.#commandRouteFocus&&!this.#commandRouteFocus.current()){this.#commandRouteFocus.focus.dispose();this.#commandRouteFocus=null;}
@@ -610,9 +625,9 @@ export class FormaShell extends FormaElement {
       window.scrollTo({top:0});
       return true;
     };
-    if(options&&applicationIdFromRoute(this.store.route.get())!==applicationIdFromRoute(path)){
+    if(options&&(isStandaloneExperienceRoute(path)||applicationIdFromRoute(this.store.route.get())!==applicationIdFromRoute(path))){
       return this.store.transitionWorkspace(path,options).then(opened=>opened&&
-        (applicationIdFromRoute(this.store.route.get())===applicationIdFromRoute(path)?finish():true));
+        (isStandaloneExperienceRoute(path)?true:applicationIdFromRoute(this.store.route.get())===applicationIdFromRoute(path)?finish():true));
     }
     this.store.setRoute(path,options);return finish();
   }
@@ -721,7 +736,7 @@ export class FormaShell extends FormaElement {
     return this.#commandIntentCurrent(owner)&&this.store.captureAuthorizationScope()?.key===owner.authorityKey;
   }
   #commandOriginElements(){
-    return [...this.querySelectorAll<CommandDepartureOwner>("forma-library,forma-projects,forma-activity,forma-workspace,forma-workspace-settings,forma-creative-assistant,forma-sessions,forma-memory,forma-deliver,forma-chat-studio,forma-canvas-surface,forma-creative-editor,forma-context-board,forma-guided-brief,forma-reality-layers,forma-adaptive-path,forma-image-format-editor,forma-output-card")]
+    return [...this.querySelectorAll<CommandDepartureOwner>("forma-experience-host,forma-library,forma-projects,forma-activity,forma-workspace,forma-workspace-settings,forma-creative-assistant,forma-sessions,forma-memory,forma-deliver,forma-chat-studio,forma-canvas-surface,forma-creative-editor,forma-context-board,forma-guided-brief,forma-reality-layers,forma-adaptive-path,forma-image-format-editor,forma-output-card")]
       .filter(element=>element.isConnected&&FormaElement.hasStoreIdentity(element,this.store));
   }
   #commandOriginsCurrent(owner:CommandOpening,context?:NavigationPresentationContext){
@@ -755,6 +770,7 @@ export class FormaShell extends FormaElement {
       opener:active instanceof HTMLElement?active:null,origins:this.#commandOriginElements().map(element=>element.captureCommandDeparture())};
   }
   #openCommands(){
+    if(this.#experienceMode())return;
     if(this.store.ui.commandOpen){void this.#closeCommands();return;}
     if(this.ownerDocument.querySelector("dialog[open],.output-requirement-form,.output-plan-review"))return;
     this.#commandRouteFocus?.focus.dispose();this.#commandRouteFocus=null;
@@ -1162,7 +1178,7 @@ export class FormaShell extends FormaElement {
     finally{if(!image){(cancelNativeClose as (()=>void)|null)?.();nativeClosing=null;captured.dispose();}}
   }
   async #runCommand(key:string|null,owner:CommandOpening){
-    if(!key||this.#commandComposing||this.#commandOpening!==owner||!this.#commandContextCurrent(owner)||this.store.route.get()!==owner.route)return;
+    if(this.#experienceMode()||!key||this.#commandComposing||this.#commandOpening!==owner||!this.#commandContextCurrent(owner)||this.store.route.get()!==owner.route)return;
     const choice=this.#filteredCommandChoices(owner).find(value=>value.key===key);if(!choice)return;
     if(choice.row&&!commandDiscoveryTargetAvailable(choice.row,this.#commandInputFacts(owner)))return;
     const replaces=this.#commandReplacesOrigin(choice,owner);
@@ -1173,7 +1189,7 @@ export class FormaShell extends FormaElement {
     const {navigation,originScope,blocked,reportUnavailable}=captured,focus=navigation.focus;
     try{
       await closing;
-      if(!navigation.current()||!focus.current()){
+      if(this.#experienceMode()||!navigation.current()||!focus.current()){
         if(captured.refusalCurrent()&&blocked()){
           reportUnavailable();
           await this.#restoreCommandOpener(owner,focus,()=>captured.refusalCurrent()&&this.#commandOriginsCurrent(owner));
@@ -1352,13 +1368,14 @@ export class FormaShell extends FormaElement {
     }finally{if(!focusTransferred)focus.dispose();}
   }
   async #openContextComposer(callerCurrent:()=>boolean=()=>true,navigationOwner?:CommandNavigation){
+    if(this.#experienceMode())return;
     const request=++this.#contextOpening,epoch=this.#commandEpoch,projection=this.store.projection.get();
     if(!projection.documentId){this.store.toast("Open a document before adding a creative decision.");return;}
     const source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope();
     if(!source||!authorization||!this.store.sourceOwnershipActive(source))return;
     const originRoute=this.store.route.get();
     let arrivedRoute=originRoute,navigation:{current:()=>boolean}|null=null,admitted=false;
-    const scopeCurrent=()=>this.isConnected&&request===this.#contextOpening&&epoch===this.#commandEpoch&&callerCurrent()
+    const scopeCurrent=()=>!this.#experienceMode()&&this.isConnected&&request===this.#contextOpening&&epoch===this.#commandEpoch&&callerCurrent()
       &&this.store.sourceOwnershipActive(source)&&this.store.authorizationScopeActive(authorization)
       &&this.store.projection.get().projectId===projection.projectId&&this.store.projection.get().documentId===projection.documentId;
     const workspaceNow=()=>{
@@ -1409,6 +1426,7 @@ export class FormaShell extends FormaElement {
   }
 
   #commandChoices(owner:CommandOpening):CommandChoice[] {
+    if(this.#experienceMode())return [];
     const copy=commandDiscoveryCopy(this.i18n.locale),discovery=projectCommandDiscovery(this.#commandInputFacts(owner));
     const generic=discovery.find(row=>row.target.kind==="prepare"&&row.preparationChoice==="generic");
     const path=this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);
@@ -1449,7 +1467,7 @@ export class FormaShell extends FormaElement {
   }
   #commands() {
     const owner=this.#commandOpening;
-    if(!owner||!this.#commandContextCurrent(owner)||owner.route!==this.store.route.get())return nothing;
+    if(this.#experienceMode()||!owner||!this.#commandContextCurrent(owner)||owner.route!==this.store.route.get())return nothing;
     const commands=this.#filteredCommandChoices(owner),copy=commandDiscoveryCopy(this.i18n.locale);
     if(this.#commandChooseFirst){this.#commandActiveKey=commands[0]?.key??null;this.#commandChooseFirst=false;}
     else if(this.#commandActiveKey&&!commands.some(command=>command.key===this.#commandActiveKey)){this.#commandActiveKey=null;this.#commandSelectionChanged=true;}
@@ -1485,6 +1503,7 @@ export class FormaShell extends FormaElement {
   override render() {
     const path = this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);const isCreative=applicationId==="creative";const isCanvas=applicationId==="canvas";const isMaking=isCreative||isCanvas;
     const pathname=path.split(/[?#]/)[0]||"/";
+    const experienceMode=this.#experienceMode();
     if(pathname==="/share"||pathname.startsWith("/share/"))return html`<a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a><div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(pathname.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
     const session=this.store.session.get();const impersonation=session?.impersonation;const shared=Boolean(session?.projectContext);const canAuthor=!shared||Boolean(session?.projectContext?.permissions.includes("project.author"));
     const documentRouteState=this.store.documentRouteState(path);
@@ -1517,9 +1536,9 @@ export class FormaShell extends FormaElement {
     const activeTask=authorizedTasks.find((item)=>navigationItemActive(applicationId,item.id,path))?.id||"";
     const audienceNavigation=isCreative||isCanvas?html`<forma-ui-audience-navigation class=${`application-task-navigation area-navigation--${applicationId}`} data-primary-navigation=${isCreative ? "true" : "false"} .label=${this.i18n.t("shell."+applicationId,application.label)} .value=${activeTask} .destinations=${destinations} @forma-navigate=${(event:CustomEvent<{value:string;href:string}>)=>{event.preventDefault();this.#route(event.detail.href);}}></forma-ui-audience-navigation>`:nothing;
     const workspaceDestinations=availableApplications.map((candidate)=>({label:this.i18n.t("shell."+candidate.id,candidate.label),value:candidate.id,href:authorizedApplicationHome(candidate.id,access),description:this.i18n.t("shell.description."+candidate.id,candidate.description)}));
-    return html`<div class=${`app-shell application-${applicationId} ${applicationId==="operations"?"admin-shell":""}`} data-nav-posture=${this.#layoutPosture} data-short-height=${String(this.#shortHeight)} data-layout-intent=${isCreative&&(documentViewFromRoute(path)==="document"||pathname==="/creative/create"||pathname.startsWith("/creative/create/"))?"workbench":"browse"} @forma-context-create=${()=>{if(isCreative&&canAuthor)void this.#openContextComposer();}}>
+    return html`<div class=${`app-shell application-${applicationId} ${applicationId==="operations"?"admin-shell":""}`} data-experience-mode=${String(experienceMode)} data-nav-posture=${this.#layoutPosture} data-short-height=${String(this.#shortHeight)} data-layout-intent=${isCreative&&!experienceMode&&(documentViewFromRoute(path)==="document"||pathname==="/creative/create"||pathname.startsWith("/creative/create/"))?"workbench":"browse"} @forma-context-create=${()=>{if(!experienceMode&&isCreative&&canAuthor)void this.#openContextComposer();}}>
       <a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a>
-      <header class="topbar">
+      ${experienceMode?html`<header class="topbar experience-topbar"><span class="experience-brand"><span class="brand-mark" aria-hidden="true">F</span><span>Forma</span></span><div class="top-actions">${this.#localePicker()}</div></header>`:html`<header class="topbar">
         <button class="brand" @click=${() => this.#route(isCanvas?"/canvas/projects":"/projects")} aria-label=${this.i18n.t("shell.openProjects","Open all Forma projects")}><span class="brand-mark">F</span><span>Forma</span></button>
         <forma-ui-workspace-switcher .label=${this.i18n.t("navigation.availableWorkspaces","Available workspaces")} .value=${applicationId} .destinations=${workspaceDestinations} @forma-navigate=${(event:CustomEvent<{value:string;href:string}>)=>{event.preventDefault();this.#route(event.detail.href);}}></forma-ui-workspace-switcher>
         <div class="application-context"><b>${this.i18n.t("shell."+applicationId,application.label)}</b><span>${this.i18n.t("shell.description."+applicationId,application.description)}</span></div>
@@ -1539,19 +1558,19 @@ export class FormaShell extends FormaElement {
           ${isCreative&&this.store.canManageProjectShares()&&isDocumentViewRoute(path)&&projection.documentId?html`<button type="button" class="button secondary compact account-share-action" @click=${()=>this.#openShare(true)}>${icon("share")} ${this.i18n.t("shell.share","Share")}</button>`:nothing}
           <button type="button" class="button ghost" @click=${() => this.#route("/settings")}>${isCanvas?this.i18n.t("account.privacyCreatorWorkspace","Review privacy in Creator Workspace"):this.i18n.t("account.privacy","Review privacy controls")}</button>
         </div>
-      </header>
-      ${documentFocusFromRoute(path) ? html`<div class="focus-locale-switcher">${this.#localePicker()}</div>` : nothing}
+      </header>`}
+      ${!experienceMode&&documentFocusFromRoute(path) ? html`<div class="focus-locale-switcher">${this.#localePicker()}</div>` : nothing}
       ${impersonation?html`<aside class="impersonation-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("account.bannerTitle", "Fictional account · {name}", { name: "\u2068" + impersonation.fictionalUser.displayName + "\u2069" })}</b><span>${this.i18n.t("account.bannerDetail", "You are signed in as {name}. Every change to this mock account asks for confirmation.", { name: "\u2068" + impersonation.actor.displayName + "\u2069" })}</span></div><button class="button secondary compact" @click=${()=>this.store.stopImpersonating()}>${this.i18n.t("account.return", "Return to my account")}</button></aside>`:nothing}
       ${shared?html`<aside class="impersonation-banner workspace-shared-banner" role="status"><span class="impersonation-banner-mark">${icon("user")}</span><div><b>${this.i18n.t("workspace.admin.sharedProjectMode","You are working inside a shared project.")}</b>${canAuthor?nothing:html`<span>${this.i18n.t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")}</span>`}</div><button type="button" class="button secondary compact" @click=${()=>void this.#leaveProjectContext()}>${this.i18n.t("workspace.admin.leaveSharedProject","Return to my projects")}</button></aside>`:nothing}
-      ${audienceNavigation}
+      ${experienceMode?nothing:audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${errorMessage} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
       ${this.#nativeImageHost.renderStatus()}
       ${this.store.ui.toast&&this.store.ui.toastPresentation==="inline"?html`<div class="queued-notice" role="status" aria-live="polite">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>`:nothing}
       <main id="main-content" tabindex="-1" aria-busy=${sourceReady||documentRouteState==="unavailable"?"false":"true"}>${personalProjects?html`${sourceReady?nothing:sourcePlaceholder}<div class="projects-source-owner" ?hidden=${!sourceReady} ?inert=${!sourceReady} style=${sourceReady?"display:contents":nothing}>${keyed(projectsOwnerKey,this.#page())}</div>`:sourceReady?this.#page():sourcePlaceholder}</main>
-      ${session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
+      ${!experienceMode&&session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
       ${this.store.ui.toast&&this.store.ui.toastPresentation!=="inline" ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
-      ${this.store.ui.commandOpen ? this.#commands() : nothing}
-      ${this.store.ui.shareOpen&&this.store.canManageProjectShares()?this.#share():nothing}
+      ${!experienceMode&&this.store.ui.commandOpen ? this.#commands() : nothing}
+      ${!experienceMode&&this.store.ui.shareOpen&&this.store.canManageProjectShares()?this.#share():nothing}
       ${this.#planningConsent()}
       ${this.store.ui.impersonationConfirmOpen ? this.#impersonationWarning() : nothing}
       ${session&&!session.policy.accepted&&isMaking?this.#terms():nothing}

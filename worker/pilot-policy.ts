@@ -1,4 +1,7 @@
 import { assertOutputAdmissionActor, assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { intEnv, activeProjectBillingSql } from "./pilot-policy-primitives.ts";
+import { DEFAULT_EVIDENCE_RETENTION_DAYS } from "./private-content-storage.ts";
+export { DURABLE_WORK_RETENTION_END, DEFAULT_EVIDENCE_RETENTION_DAYS, privateContentRetentionClass, preparePrivateContent, storePrivateContent } from "./private-content-storage.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 import { MICRO_USD_PER_USD } from "./replay-cost.ts";
@@ -7,20 +10,24 @@ import { providerSubmissions, hasUnsettledProviderSubmission, unsettledProviderS
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACTS, audioAdapterContractForModel } from "../src/model/audio.ts";
-import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, principalHasCapability, type PrincipalAccess } from "./access-policy.ts";
+import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, type PrincipalAccess } from "./access-policy.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications.ts";
 import { ASSISTANT_MODELS, assistantModelCostMicrousd, type AssistantModel } from "../src/model/assistant-model-policy.ts";
 import { readProjectRequestContext } from "./project-access.ts";
+import { readExistingPrincipalRequest, completePrincipalRequest, identityFromRequest, decodedCookieValue, roleRank,
+  hasCapability, requireConsent } from "./principal-request-core.ts";
+export { hasCapability, requireConsent };
+import { configuredPilotAdmissionGuard } from "./intake-authority.ts";
+export { configuredPilotAdmissionGuard };
 
-export const POLICY_VERSION = "pilot-2026-08-10";
+import { POLICY_VERSION } from "./policy-version.ts";
+export { POLICY_VERSION };
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
 export type ProjectExecutionScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;actorUserId:string};
 export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; access: PrincipalAccess; fictional?: boolean; billingUserId?: string;projectExecution?:ProjectExecutionScope; authorizationSnapshot?:{updatedAt:string;rawEpoch:string;grants:string;organizations:string;projects:string;identityPolicies:string;canvasRequirements:number} };
 export type PilotImpersonation = { impersonationId:string; personaId:string; replaySessionId:string; actor:PilotUser; fictionalUser:PilotUser; startedAt:string; expiresAt:string };
 
-const roleRank: Record<PilotRole, number> = { viewer: 0, agent: 1, creator: 2, admin: 3 };
-const intEnv = (value: string | undefined, fallback: number) => { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback; };
 const moneyEnv = (value: string | undefined, fallbackUsd: number) => { const parsed = Number(value); return Math.round((Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackUsd) * MICRO_USD_PER_USD); };
 
 /** Free creative guidance is available only to a live named participant in the exact active organization. */
@@ -39,96 +46,17 @@ export async function assistantPilotEntitled(env:WorkerEnv,userId:string,organiz
   return Boolean(admitted);
 }
 
-function decodeName(request: Request) {
-  const encoded = request.headers.get("oai-authenticated-user-full-name");
-  if (!encoded || request.headers.get("oai-authenticated-user-full-name-encoding") !== "percent-encoded-utf-8") return "";
-  try { return decodeURIComponent(encoded); } catch { return ""; }
-}
 
-function identityFromRequest(request: Request) {
-  const url = new URL(request.url);
-  const oaiId = request.headers.get("oai-authenticated-user-id");
-  const oaiEmail = request.headers.get("oai-authenticated-user-email");
-  if (oaiId && oaiEmail) return { userId: oaiId, email: oaiEmail.toLowerCase(), displayName: decodeName(request) || oaiEmail.split("@")[0], source: "openai-workspace" };
-  // A bare cf-access-authenticated-user-email header is not a verified identity assertion.
-  // Hosted Sites authenticates visitors through its trusted OpenAI identity headers.
-  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return { userId: "dev-local-creative", email: "creative@local.forma", displayName: "Local creative", source: "local-development" };
-  return null;
-}
-
-const cookieValue=(request:Request,name:string)=>request.headers.get("cookie")?.split(";").map((value)=>value.trim()).find((value)=>value.startsWith(`${name}=`))?.slice(name.length+1)??"";
-const decodedCookieValue=(request:Request,name:string)=>{const value=cookieValue(request,name);try{return decodeURIComponent(value);}catch{return "";}};
 const impersonationCookie=(request:Request,value:string,maxAge:number)=>`forma_impersonation=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol==="https:"?"; Secure":""}`;
-const impersonationMutationExempt=(request:Request)=>{const url=new URL(request.url);if(["GET","HEAD","OPTIONS"].includes(request.method))return true;if(url.pathname.startsWith("/api/impersonation")||url.pathname.startsWith("/api/replay-sessions")||url.pathname.startsWith("/api/admin/")||url.pathname==="/api/session")return true;return /^\/api\/document-jobs\/[^/]+\/(?:run|ack)$/.test(url.pathname);};
 
-async function activeImpersonation(request:Request,env:WorkerEnv,actor:PilotUser):Promise<PilotImpersonation|null>{
-  const id=decodedCookieValue(request,"forma_impersonation");if(!id)return null;const row=await env.DB.prepare(`SELECT impersonation.*,persona.display_name,fictional.email,fictional.role AS fictional_role,fictional.consent_version,fictional.consented_at
-    FROM impersonation_sessions impersonation JOIN replay_personas persona ON persona.persona_id=impersonation.persona_id JOIN users fictional ON fictional.user_id=impersonation.fictional_user_id
-    WHERE impersonation.impersonation_id=? AND impersonation.actor_user_id=? AND impersonation.status='active' AND impersonation.expires_at>? AND persona.status='ready'`).bind(id,actor.userId,new Date().toISOString()).first<Record<string,unknown>>();
-  if(!row)return null;const fictionalUser:PilotUser={userId:String(row.fictional_user_id),email:String(row.email),displayName:String(row.display_name),role:String(row.fictional_role??"creator") as PilotRole,consentVersion:row.consent_version?String(row.consent_version):null,consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${String(row.fictional_user_id)}`,access:await principalAccessFromRow({updated_at:row.updated_at??""},"creator"),fictional:true,billingUserId:actor.userId};
-  return{impersonationId:String(row.impersonation_id),personaId:String(row.persona_id),replaySessionId:String(row.replay_session_id),actor,fictionalUser,startedAt:String(row.started_at),expiresAt:String(row.expires_at)};
-}
 
-/** Read-only final-boundary equivalent of requireUser's configured pilot entry.
- * Preserve successor admission, explicit breakglass and the exact owner-recovery
- * exception. No consent, authoring capability, paid quota or reservation is granted. */
-export function configuredPilotAdmissionGuard(env:WorkerEnv,principal:Pick<PilotUser,"userId"|"email">):BudgetReservationGuard{
-  const configured=env.FORMA_PILOT_COHORT_ID?.trim()??"";
-  const breakglass=new Set((env.FORMA_ADMIN_EMAILS??"").split(",").map(value=>value.trim().toLowerCase()).filter(Boolean));
-  if(!configured||breakglass.has(principal.email.toLowerCase()))return{sql:"1",bindings:[]};
-  return{sql:`(EXISTS(SELECT 1 FROM pilot_cohorts cohort
-      JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
-      JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
-      WHERE cohort.organization_id=(SELECT selected.organization_id FROM pilot_cohorts selected WHERE selected.cohort_id=?)
-        AND cohort.status IN('active','paused')
-        AND cohort.starts_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        AND participant.email_normalized=? AND participant.status='active' AND participant.revoked_at IS NULL
-        AND (participant.user_id IS NULL OR participant.user_id=?))
-    OR EXISTS(SELECT 1 FROM pilot_cohorts cohort
-      JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
-      JOIN organization_memberships member ON member.organization_id=cohort.organization_id AND member.user_id=? AND member.role='owner'
-        AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-      JOIN users owner ON owner.user_id=member.user_id AND owner.email=?
-      WHERE cohort.cohort_id=?
-        AND (cohort.status='closed' OR cohort.ends_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR cohort.starts_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-        AND NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id
-          AND successor.status IN('active','paused') AND successor.starts_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-          AND successor.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))`,
-    bindings:[configured,principal.email.toLowerCase(),principal.userId,principal.userId,principal.email.toLowerCase(),configured]};
-}
 
 export async function requireUser(request: Request, env: WorkerEnv, minimum: PilotRole = "viewer", options:{account?:"effective"|"principal"}={}) {
   await ensureSchema(env);
-  const identity = identityFromRequest(request);
-  if (!identity) return { response: Response.json({ error: "authentication_required" }, { status: 401 }), user: null };
-  const restrictedCohort=env.FORMA_PILOT_COHORT_ID?.trim()??"";
-  type AdmittedPilotParticipant={participant_id:string;user_id:string|null;cohort_id:string;participant_cap_microusd:number};
-  let admittedParticipant:AdmittedPilotParticipant|null=null;
-  if(restrictedCohort){
-    const now=new Date().toISOString();
-    admittedParticipant=await env.DB.prepare(`SELECT participant.participant_id,participant.user_id,cohort.cohort_id,cohort.participant_cap_microusd
-      FROM pilot_cohorts cohort JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
-      JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
-      WHERE cohort.organization_id=(SELECT selected.organization_id FROM pilot_cohorts selected WHERE selected.cohort_id=?)
-        AND cohort.status IN ('active','paused') AND cohort.starts_at<=? AND cohort.ends_at>?
-        AND participant.email_normalized=? AND participant.status='active' AND participant.revoked_at IS NULL
-        AND (participant.user_id IS NULL OR participant.user_id=?) ORDER BY cohort.created_at DESC LIMIT 1`)
-      .bind(restrictedCohort,now,now,identity.email,identity.userId).first<AdmittedPilotParticipant>();
-    const breakglass=new Set((env.FORMA_ADMIN_EMAILS??"").split(",").map((value)=>value.trim().toLowerCase()).filter(Boolean));
-    if(!admittedParticipant&&!breakglass.has(identity.email)){
-      const ownerRecovery=await env.DB.prepare(`SELECT 1 AS authorized FROM pilot_cohorts cohort
-        JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
-        JOIN organization_memberships member ON member.organization_id=cohort.organization_id AND member.user_id=? AND member.role='owner'
-          AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-        JOIN users principal ON principal.user_id=member.user_id AND principal.email=?
-        WHERE cohort.cohort_id=? AND (cohort.status='closed' OR cohort.ends_at<=? OR cohort.starts_at>?)
-          AND NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id
-            AND successor.status IN ('active','paused') AND successor.starts_at<=? AND successor.ends_at>?)`)
-        .bind(identity.userId,identity.email,restrictedCohort,now,now,now,now).first();
-      if(!ownerRecovery)return{response:Response.json({error:"pilot_participant_required"},{status:403}),user:null};
-    }
-  }
-  let row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
+  const current = await readExistingPrincipalRequest(request, env, minimum, options);
+  if (!("kind" in current)) return current;
+  const { identity, admittedParticipant } = current;
+  let { row } = current;
   if (!row) {
     const now = new Date().toISOString();
     const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
@@ -154,11 +82,6 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
     }
     row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
   } else {
-    const observed = { email: identity.email, source: identity.source, subject: identity.userId };
-    const access = await principalAccessFromRow(row, String(row.role), observed);
-    if (access.identityPolicyDeniedCustody || row.email !== identity.email && access.deniedOrganizationIds?.length) {
-      return { response: Response.json({ error: "organization_identity_policy_required" }, { status: 403 }), user: null, principal: null, impersonation: null };
-    }
     if (row.email !== identity.email || row.display_name !== identity.displayName) {
       await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
       row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
@@ -173,20 +96,7 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
         .bind(identity.userId,`pilot:${admittedParticipant.cohort_id}`,admittedParticipant.participant_cap_microusd,now),
     ]);
   }
-  const role=String(row?.role) as PilotRole;
-  if(!Object.hasOwn(roleRank,role)||!Object.hasOwn(roleRank,minimum))return{response:Response.json({error:"invalid_account_role"},{status:403}),user:null,principal:null,impersonation:null};
-  const access=await principalAccessFromRow(row??{},role,{email:identity.email,source:identity.source,subject:identity.userId});
-  if(access.identityPolicyDeniedCustody)return{response:Response.json({error:"organization_identity_policy_required"},{status:403}),user:null,principal:null,impersonation:null};
-  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row?.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access,
-    authorizationSnapshot:{updatedAt:String(row?.updated_at??""),rawEpoch:String(row?.permission_epoch??""),grants:String(row?.grants_json??"[]"),organizations:String(row?.organizations_json??"[]"),projects:String(row?.projects_json??"[]"),identityPolicies:String(row?.identity_policies_json??"[]"),canvasRequirements:Number(row?.approved_canvas_requirements??0)} };
-  if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
-  const principalOnly=options.account==="principal";
-  const checkPrincipalImpersonation=principalOnly&&new URL(request.url).pathname!=="/api/impersonation"&&Boolean(decodedCookieValue(request,"forma_impersonation"));
-  const impersonation=principalOnly&&!checkPrincipalImpersonation?null:await activeImpersonation(request,env,principal);
-  if(principalOnly&&impersonation)return{response:Response.json({error:"return_to_principal_before_internal_access"},{status:409}),user:null,principal,impersonation};
-  const user=impersonation?.fictionalUser??principal;
-  if(impersonation&&!impersonationMutationExempt(request)&&request.headers.get("x-forma-impersonation-confirmation")!=="I understand, continue")return{response:Response.json({error:"impersonation_confirmation_required",message:`You are acting as ${user.displayName}. Confirm this individual interaction before it changes the fictional account.`},{status:428}),user:null,principal,impersonation};
-  return { response: null, user, principal, impersonation };
+  return completePrincipalRequest(request, env, identity, row, minimum, options);
 }
 
 /** Existing-account administrative reads must not bootstrap schema, identity, or counters. */
@@ -207,9 +117,6 @@ export async function requireExistingHoldAdministrator(request: Request, env: Wo
   return {user,response:null};
 }
 
-export function hasCapability(user: PilotUser, capability: FormaCapability, scope?: { organizationId?: string | null; projectAccessId?: string | null }) {
-  return principalHasCapability(user.access, capability, scope);
-}
 
 /** Evaluate the real principal and current accepted membership before any protected response. */
 export async function requireCapability(
@@ -227,9 +134,6 @@ export async function requireCapability(
   return authorization;
 }
 
-export function requireConsent(user: PilotUser) {
-  return user.consentVersion === POLICY_VERSION ? null : Response.json({ error: "pilot_terms_required", policyVersion: POLICY_VERSION }, { status: 428 });
-}
 
 export type PlatformAssistantPrincipal = {
   userId: string;
@@ -300,15 +204,6 @@ export type ProjectBudgetScope={organizationId:string;projectAccessId:string;act
 export type BudgetReservationGuard={sql:string;bindings:Array<string|number|null>};
 async function budgetReservationAdmitted(env:WorkerEnv,guard:BudgetReservationGuard|undefined){return !guard||Boolean(await env.DB.prepare(`SELECT 1 AS admitted WHERE ${guard.sql}`).bind(...guard.bindings).first());}
 type BudgetReservationContext = { batchCounterInitialization?:boolean;outputAdmissionReads?:OutputAdmissionReads;reservationGuard?:BudgetReservationGuard; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
-
-const activeProjectBillingSql=`EXISTS(SELECT 1 FROM organization_projects project
-  JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-  JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-  JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
-    AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
-  LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id
-    AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-  WHERE project.project_access_id=? AND project.organization_id=? AND project.status='active' AND (project.owner_user_id=? OR project_member.role IN('owner','editor')))`;
 
 async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudgetScope){
   if(!scope.organizationId||!scope.projectAccessId||scope.actorUserId!==userId)return null;
@@ -1410,7 +1305,7 @@ export async function settleDocumentGenerationBudgets(env:WorkerEnv,userId:strin
   let usedTokens=0,usedMicrousd=0;
   for(const call of calls){
     const receipt=receipts.find(item=>item.clientRequestId===call.clientRequestId);
-    if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==(call.stage.startsWith("planning:")?"planning":call.stage==="model3d:initial"?"model3d":"image")
+    if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==(call.stage.startsWith("planning:")?"planning":call.stage==="audio:initial"?"audio":call.stage==="model3d:initial"?"model3d":"image")
       ||!Number.isSafeInteger(call.usedMicrousd)||Number(call.usedMicrousd)<0
       ||call.status==="rejected"&&(receipt.status!=="rejected"||call.usedMicrousd!==0)
       ||call.status==="settled"&&(receipt.status!=="completed"||receipt.costMicrousd!==call.usedMicrousd||(receipt.providerRequestId??null)!==call.providerRequestId
@@ -1460,133 +1355,6 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
   const active = await env.DB.prepare("SELECT reservation_id FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing')").bind(userId, streamId, correlationId).all<{ reservation_id: string }>();
   for (const row of active.results) await releaseCostBudget(env, userId, row.reservation_id);
   return active.results.length;
-}
-
-export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
-export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
-
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "chat-assistant-memory" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "memory-structured-ledger" | "memory-structured-origin" | "memory-document-job-origin";
-
-export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
-  return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
-}
-
-export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string) {
-  const preparationDb = env.DB;
-  const boundedMemoryAnswer = kind === "chat-assistant-memory" && expiryCeiling !== undefined;
-  const boundedJobUser = kind === "chat-user" && expiryCeiling !== undefined;
-  const documentJobManifest = kind === "memory-document-job-origin";
-  const boundedMemory = kind === "memory-structured-origin" || documentJobManifest || boundedMemoryAnswer || boundedJobUser;
-  // Memory evidence cannot refresh the original private lifetime.
-  if (documentJobManifest && (typeof content !== "string" || content.length === 0 || content.length > 65_536
-    || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_manifest_invalid");
-  if (kind === "memory-structured-origin" && (typeof content !== "string" || content.length > 65_536 || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_manifest_invalid");
-  if (boundedMemoryAnswer && (typeof content !== "string" || content.length === 0 || content.length > 65_536
-    || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_memory_answer_invalid");
-  if (boundedJobUser && (typeof content !== "string" || !content.trim() || content.length > 4_000
-    || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 16_000)) throw new Error("private_content_memory_user_invalid");
-  if ((kind === "memory-structured-ledger" || kind === "memory-structured-origin" || documentJobManifest) && expiryCeiling === undefined) throw new Error("private_content_expiry_ceiling_invalid");
-  if (expiryCeiling !== undefined && ((kind !== "memory-structured-ledger" && kind !== "memory-structured-origin" && kind !== "memory-document-job-origin" && kind !== "chat-assistant-memory" && kind !== "chat-user") || typeof expiryCeiling !== "string")) throw new Error("private_content_expiry_ceiling_invalid");
-  if (boundedMemory && (typeof expiryCeiling !== "string" || expiryCeiling.length !== 24)) throw new Error("private_content_expiry_ceiling_invalid");
-  const ceiling = expiryCeiling === undefined ? null : Date.parse(expiryCeiling);
-  if (ceiling !== null && (!Number.isSafeInteger(ceiling) || new Date(ceiling).toISOString() !== expiryCeiling || ceiling <= Date.now())) throw new Error("private_content_expiry_ceiling_invalid");
-  if(identity&&(kind!=="authoring-preview"||(!/^copy-preview-[a-f0-9]{64}$/u.test(identity.contentId)&&!/^canvas-arrangement-preview-[a-f0-9]{64}$/u.test(identity.contentId))))throw new Error("private_content_identity_invalid");
-  if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
-  assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
-  const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
-    .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>()):null;
-  if (boundedMemory && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
-  const contentId = identity?.contentId ?? uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
-  const days=category==="governed-evidence"?Number(policy?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))):Number(policy?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30));
-  const expiresAt=category==="durable-work"?new Date(DURABLE_WORK_RETENTION_END):new Date(createdAt.getTime()+days*86_400_000);
-  if (ceiling !== null) expiresAt.setTime(Math.min(expiresAt.getTime(), ceiling));
-  // Policy reads may outlive the supplied ceiling; never prepare expired bounded memory.
-  if (boundedMemory && (!Number.isSafeInteger(expiresAt.getTime()) || expiresAt.getTime() <= createdAt.getTime())) throw new Error("private_content_expiry_ceiling_invalid");
-  const now=createdAt.toISOString();
-  const statements=projectScope?[
-    env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
-      SELECT ?,?,?,?,?,?,NULL WHERE ${activeProjectBillingSql}
-        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')
-        AND ((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=?))
-          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))${guard?` AND (${guard.sql})`:""}`)
-      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0),...(guard?.bindings??[])),
-    env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
-      SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
-      .bind(projectScope.projectAccessId,contentId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,now,contentId,ownerId),
-    env.DB.prepare(`INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at)
-      SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=? AND resource.organization_id=?
-        AND resource.project_id=? AND resource.resource_kind='content' AND resource.resource_id=? AND resource.actor_user_id=?)`)
-      .bind(contentId,projectScope.organizationId,projectScope.projectAccessId,projectScope.projectId,ownerId,category,Number(policy?.version??0),expiresAt.toISOString(),now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,contentId,ownerId),
-  ]:[env.DB.prepare(`INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) ${guard?`SELECT ?,?,?,?,?,?,NULL WHERE ${guard.sql}`:"VALUES (?,?,?,?,?,?,NULL)"}`).bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),...(guard?.bindings??[]))];
-  // Identity-bound admission must insert once or abort before custody, cleanup, and publication.
-  // The existing content NOT NULL constraint rejects a denied predicate inside this batch.
-  const identityAdmission=identity?(projectScope?{sql:`${activeProjectBillingSql}
-        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')
-        AND ((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=?))
-          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))${guard?` AND (${guard.sql})`:""}`,
-    bindings:[ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0),...(guard?.bindings??[])]}:guard):undefined;
-  if(identityAdmission)statements[0]=env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
-    SELECT ?,?,?,CASE WHEN (${identityAdmission.sql}) THEN ? ELSE NULL END,?,?,NULL`)
-    .bind(contentId,ownerId,kind,...identityAdmission.bindings,content,now,expiresAt.toISOString());
-  // Optional expiry cleanup uses the same complete negative provenance boundary as
-  // ordinary hydration. Retyped registered bodies and immutable event references
-  // remain excluded; dedicated evidence retires only through its lifecycle path.
-  let cleanupGuard: { condition: string; bindings: (string | number | null)[] } | null = null;
-  if (kind !== "memory-structured-ledger" && kind !== "memory-structured-origin" && !documentJobManifest) {
-    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
-    const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
-    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
-    try {
-      const exclusion = await nativeMemoryAnswerExclusion(env, { answerAlias: "private_content" });
-      if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
-      cleanupGuard = { condition: exclusion.sql, bindings: [...exclusion.bindings] };
-    } catch (error) {
-      if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
-      // Unavailable exact schema omits optional cleanup, never widens it. Body
-      // insertion is unchanged; database changes and other failures still deny.
-      if (!(error instanceof Error) || (error.message !== "native_structured_origin_schema_unavailable"
-        && error.message !== "native_document_job_origin_schema_unavailable")) throw error;
-    }
-  }
-  // Private ledger/origin preparation owns inserts only, not retirement.
-  if(cleanupGuard)statements.push(projectScope?preparationDb.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin','memory-document-job-origin') AND expires_at<=?
-    AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=private_content.content_id AND governed.organization_id=?)
-    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_retention_policies policy ON policy.organization_id=governed.organization_id AND policy.legal_hold=1
-      WHERE governed.content_id=private_content.content_id AND governed.classification='governed-evidence')
-    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_legal_holds hold
-      ON hold.organization_id=governed.organization_id AND hold.status='active'
-      WHERE governed.content_id=private_content.content_id
-        AND(hold.scope_kind='organization'
-          OR hold.scope_kind='project' AND hold.resource_id=governed.project_access_id
-          OR hold.scope_kind='content' AND hold.resource_id=governed.content_id))
-    AND EXISTS(SELECT 1 FROM private_content inserted WHERE inserted.content_id=? AND inserted.owner_id=?)
-    AND ${cleanupGuard.condition}`)
-    .bind(now,ownerId,now,projectScope.organizationId,contentId,ownerId,...cleanupGuard.bindings):preparationDb.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin','memory-document-job-origin') AND expires_at<=?
-      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)
-      AND ${cleanupGuard.condition}`)
-    .bind(now,ownerId,now,...cleanupGuard.bindings));
-  // Optional cleanup reads may also cross the original source deadline. The
-  // publisher must still enforce these inserts in its own atomic proof batch.
-  if (boundedMemory && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
-  if (boundedMemory && expiresAt.getTime() <= Date.now()) throw new Error("private_content_expiry_ceiling_invalid");
-  return { contentId, createdAt: now, expiresAt: expiresAt.toISOString(), statements, requiredInserts:projectScope?3:1 };
-}
-
-/** Existing callers keep their original storage behavior; atomic admissions collect the same statements. */
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>,identity?:{contentId:string}) {
-  const prepared=await preparePrivateContent(env,ownerId,kind,content,projectScope,undefined,guard,identity);
-  const publicationOffset=prepared.statements.length,publications=publish?.({contentId:prepared.contentId,expiresAt:prepared.expiresAt})??[];
-  let results:Awaited<ReturnType<WorkerEnv["DB"]["batch"]>>;
-  try{results=await env.DB.batch([...prepared.statements,...publications]);}
-  catch(error){
-    const cause=error instanceof Error?error.cause:undefined;
-    if(identity&&(projectScope||guard)&&[error,cause].some(value=>value instanceof Error&&/(?:^|: )NOT NULL constraint failed: private_content\.content(?:$|:)/u.test(value.message)))
-      throw new Error("project_private_content_access_revoked",{cause:error});
-    throw error;
-  }
-  for(let index=0;index<prepared.requiredInserts;index++)if(Number(results[index]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");
-  if(publications.some((_,index)=>Number(results[publicationOffset+index]?.meta.changes??0)!==1))throw new Error("private_content_publication_unavailable");
-  return {contentId:prepared.contentId,expiresAt:prepared.expiresAt};
 }
 
 /** Ordinary hydration needs current read membership, not permission to buy new work. */

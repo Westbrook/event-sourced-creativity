@@ -3,6 +3,7 @@ import { pcmWavPeaks, trimPcmWav, type PcmWavInfo } from "../model/audio-contain
 import { audioTrimCopy } from "./design-system/locales/audio-trim-messages.ts";
 import { FormaPresentationalElement } from "./presentational-element";
 import { captureOutputNavigationFocus } from "./output-navigation-focus";
+import { revealAudioTrimFocus } from "./audio-trim-focus.ts";
 import "./audio-trim-editor.css";
 
 export type AudioTrimSelection = Readonly<{
@@ -102,16 +103,26 @@ export class AudioTrimEditor extends FormaPresentationalElement {
     const origin = event.currentTarget as HTMLButtonElement, document = this.ownerDocument;
     const url = URL.createObjectURL(new Blob([new Uint8Array(preview.bytes)], { type: "audio/wav" }));
     this.#previewUrl = url; this.#previewFailed = false; this.requestUpdate();
+    const focus = captureOutputNavigationFocus(document);
     try {
       await this.updateComplete;
       const audio = this.#audio;
       // Loading alone never starts playback, and only the still-focused exact
       // native origin may transfer focus to its new native playback control.
-      if (this.isConnected && this.selection === selection && !this.disabled && this.#previewUrl === url
+      const current = () => this.isConnected && this.selection === selection && !this.disabled && this.#previewUrl === url
+        && this.ownerDocument === document && focus.current();
+      if (current()
         && this.ownerDocument === document && origin.isConnected && this.contains(origin)
         && document.activeElement === origin && audio?.isConnected && this.contains(audio)
-        && audio.getAttribute("src") === url) audio.focus({ preventScroll: true });
+        && audio.getAttribute("src") === url) focus.run(audio, () => {
+          if (!current()) return false;
+          audio.focus({ preventScroll: true });
+          if (!current() || document.activeElement !== audio) return false;
+          revealAudioTrimFocus(this, audio, current);
+          return current() && document.activeElement === audio;
+        });
     } catch { /* A failed render never acquires another element's focus. */ }
+    finally { focus.dispose(); }
   }
 
   async #previewError(url: string, event: Event) {
@@ -126,7 +137,13 @@ export class AudioTrimEditor extends FormaPresentationalElement {
       await this.updateComplete;
       const target = this.querySelector<HTMLButtonElement>(".audio-trim-preview");
       if (current() && target?.isConnected && this.contains(target))
-        focus.run(target, () => { if (!current()) return false; target.focus({ preventScroll: true }); return true; });
+        focus.run(target, () => {
+          if (!current()) return false;
+          target.focus({ preventScroll: true });
+          if (!current() || document.activeElement !== target) return false;
+          revealAudioTrimFocus(this, target, current);
+          return current() && document.activeElement === target;
+        });
     } catch { /* A replaced source or interrupted focus cannot recover here. */ }
     finally { focus.dispose(); }
   }

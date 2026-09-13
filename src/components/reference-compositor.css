@@ -40,7 +40,7 @@ forma-reference-compositor { display: contents; }
 .reference-compositor-card > footer > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); }
 .reference-compositor-card button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 760px) {
-  .reference-compositor-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reference-compositor-settings { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
   .reference-compositor-name { grid-column: 1 / -1; }
   .reference-compositor-workarea { grid-template-columns: minmax(0, 1fr); }
   .reference-compositor-card > footer { align-items: flex-start; }

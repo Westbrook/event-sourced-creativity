@@ -1,5 +1,6 @@
-import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
-import { claimCostBudgetReservation, POLICY_VERSION, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { executionAdmissionGuard } from "./intake-authority.ts";
+export { executionAdmissionGuard };
+import { claimCostBudgetReservation, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 
 export type ExecutionStepLimit={name:string;provider:string;model:string;inputTokens:number;outputTokens:number;maximumMicrousd:number;toolCalls:number};
@@ -22,39 +23,6 @@ export async function consentHash(value:unknown){
   return Array.from(new Uint8Array(bytes),(byte)=>byte.toString(16).padStart(2,"0")).join("");
 }
 
-/** The same captured authorization must still exist at the SQL mutation boundary. */
-export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBinding,sourceHead:number|null,paid=false){
-  const snapshot=user.authorizationSnapshot;
-  if(!snapshot)return{sql:"0",bindings:[] as Array<string|number|null>};
-  const scope=binding.scope;
-  const custody=scope?`EXISTS(SELECT 1 FROM organization_projects project
-    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id
-      AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
-    WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.status='active')`
-    :`NOT EXISTS(SELECT 1 FROM organization_projects project WHERE project.owner_user_id=? AND project.project_id=?)
-      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.owner_user_id=? AND resource.resource_kind='document' AND resource.resource_id=?)`;
-  const now=new Date().toISOString();
-  const session=binding.contextSessionId?` AND EXISTS(SELECT 1 FROM project_context_sessions selected_session WHERE selected_session.context_id=?
-    AND selected_session.principal_user_id=? AND selected_session.organization_id=? AND selected_session.project_access_id=?
-    AND selected_session.revoked_at IS NULL AND selected_session.expires_at>? AND selected_session.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`:"";
-  const pilot=!paid?"":binding.pilotCohortId?` AND EXISTS(SELECT 1 FROM pilot_cohorts cohort JOIN pilot_participants participant
-    ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
-    WHERE cohort.cohort_id=? AND cohort.organization_id=? AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>? AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-      AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer')`
-    :` AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.status IN('active','paused','closed')
-      AND (cohort.organization_id=? OR EXISTS(SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id
-        AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL)))`;
-  return{sql:`EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal WHERE principal.user_id=? AND principal.role=?
-    AND principal.updated_at=? AND principal.consent_version=? AND COALESCE(principal.permission_epoch,'')=?
-    AND COALESCE(principal.grants_json,'[]')=? AND COALESCE(principal.organizations_json,'[]')=?
-    AND COALESCE(principal.projects_json,'[]')=? AND COALESCE(principal.identity_policies_json,'[]')=?
-    AND COALESCE(principal.approved_canvas_requirements,0)=?)
-    ${sourceHead===null?"":"AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?"} AND ${custody}${session}${pilot}`,
-    bindings:[user.userId,user.userId,user.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...(sourceHead===null?[]:[binding.streamId,sourceHead]),
-      ...(scope?[scope.projectAccessId,scope.organizationId,binding.projectId,scope.ownerUserId]:[user.userId,binding.projectId,user.userId,binding.documentId]),
-      ...(binding.contextSessionId?[binding.contextSessionId,user.userId,scope?.organizationId??"",scope?.projectAccessId??"",now]:[]),
-      ...(!paid?[]:binding.pilotCohortId?[binding.pilotCohortId,scope?.organizationId??"",now,now,user.userId]:[scope?.organizationId??"",user.userId])] as Array<string|number|null>};
-}
 
 export async function executionAuthorityCurrent(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,sourceHead:number|null){
   const guard=executionAdmissionGuard(user,binding,sourceHead);

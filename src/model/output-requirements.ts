@@ -1,3 +1,10 @@
+import { parseModel3dOutputContract, type Model3dOutputContract } from "./output-model3d-contract.ts";
+import { parseVideoOutputContract, type VideoOutputContract } from "./output-video-contract.ts";
+import { parseStoryboardOutputContract, type StoryboardOutputContract } from "./output-storyboard-contract.ts";
+import { parseAudioOutputContract, type AudioOutputContract } from "./output-audio-contract.ts";
+import { parseSceneOutputContract, type SceneOutputContract } from "./output-scene-contract.ts";
+import { parseShortStoryNarrativeContract, type ShortStoryNarrativeContract } from "./output-narrative-contract.ts";
+
 /** Authored output intent. These values do not grant permission, spend money, or accept results. */
 export const OUTPUT_REQUIREMENTS_SCHEMA_VERSION = 1 as const;
 /** Leave room for a finite target suffix within the server's 160-character opaque ID limit. */
@@ -46,6 +53,13 @@ export type OutputDeliverable = {
   required: boolean;
   quantity: OutputQuantity;
   content_quantity?: OutputQuantity;
+  /** Explicit versioned narrative intent; omission preserves legacy document semantics. */
+  narrative_contract?: ShortStoryNarrativeContract;
+  scene_contract?: SceneOutputContract;
+  audio_contract?: AudioOutputContract;
+  video_contract?: VideoOutputContract;
+  storyboard_contract?: StoryboardOutputContract;
+  model3d_contract?: Model3dOutputContract;
   source_scope: OutputSourceScope;
   coverage: OutputCoverage;
   format_variants?: OutputFormatVariant[];
@@ -205,13 +219,62 @@ function member(value: unknown, path: string, issues: OutputIssue[], ids: Set<st
 
 function deliverable(value: unknown, path: string, issues: OutputIssue[], ids: Set<string>) {
   if (!object(value)) { issues.push(issue("invalid_deliverable", path, "Expected a deliverable.")); return; }
-  keys(value, ["id", "label", "media_kind", "required", "quantity", "content_quantity", "source_scope", "coverage", "format_variants", "series", "original_text", "value_origins"], path, issues);
+  keys(value, ["id", "label", "media_kind", "required", "quantity", "content_quantity", "narrative_contract", "scene_contract", "audio_contract", "video_contract", "storyboard_contract", "model3d_contract", "source_scope", "coverage", "format_variants", "series", "original_text", "value_origins"], path, issues);
   identity(value.id, `${path}.id`, issues, ids);
   label(value.label, `${path}.label`, issues);
   if (!mediaKinds.has(value.media_kind as OutputMediaKind)) issues.push(issue("invalid_media_kind", `${path}.media_kind`, "This media kind is not supported."));
   if (typeof value.required !== "boolean") issues.push(issue("invalid_requiredness", `${path}.required`, "Requiredness must be explicit."));
   quantity(value.quantity, `${path}.quantity`, issues);
   if (value.content_quantity !== undefined) quantity(value.content_quantity, `${path}.content_quantity`, issues);
+  if (Object.hasOwn(value, "model3d_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "model3d_contract")!;
+    if (!("value" in descriptor) || !parseModel3dOutputContract(descriptor.value)) issues.push(issue("invalid_model3d_contract", `${path}.model3d_contract`, "3D object contract unavailable"));
+    if (value.media_kind !== "model3d" || value.required !== true || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "model" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "scene_contract", "audio_contract", "video_contract", "storyboard_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("model3d_deliverable_shape_unsupported", `${path}.model3d_contract`, "One static GLB target with full Document context required"));
+  }
+  if (Object.hasOwn(value, "narrative_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "narrative_contract")!;
+    if (!("value" in descriptor) || !parseShortStoryNarrativeContract(descriptor.value)) issues.push(issue("invalid_narrative_contract", `${path}.narrative_contract`, "Narrative contract unavailable."));
+    if (value.media_kind !== "document" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "document" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("narrative_deliverable_shape_unsupported", `${path}.narrative_contract`, "One narrative Document with full Document context required."));
+  }
+  if (Object.hasOwn(value, "video_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "video_contract")!;
+    if (!("value" in descriptor) || !parseVideoOutputContract(descriptor.value)) issues.push(issue("invalid_video_contract", `${path}.video_contract`, "Video contract unavailable"));
+    if (value.media_kind !== "video" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "video" || value.quantity.value !== 1
+      || !object(value.content_quantity) || value.content_quantity.kind !== "exact" || value.content_quantity.unit !== "second" || value.content_quantity.value !== 4
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["audio_contract", "scene_contract", "narrative_contract", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("video_deliverable_shape_unsupported", `${path}.video_contract`, "1 video · 4 seconds · 1 image"));
+  }
+  if (Object.hasOwn(value, "audio_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "audio_contract")!;
+    if (!("value" in descriptor) || !parseAudioOutputContract(descriptor.value)) issues.push(issue("invalid_audio_contract", `${path}.audio_contract`, "Audio contract unavailable"));
+    if (value.media_kind !== "audio" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "episode" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "scene_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("audio_deliverable_shape_unsupported", `${path}.audio_contract`, "One instrumental Audio track with full Document context required"));
+  }
+  if (Object.hasOwn(value, "storyboard_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "storyboard_contract")!;
+    if (!("value" in descriptor) || !parseStoryboardOutputContract(descriptor.value)) issues.push(issue("invalid_storyboard_contract", `${path}.storyboard_contract`, "Storyboard contract unavailable"));
+    if (value.media_kind !== "document" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "document" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "scene_contract", "audio_contract", "video_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("storyboard_deliverable_shape_unsupported", `${path}.storyboard_contract`, "One four-frame Storyboard with full Document context required"));
+  }
+  if (Object.hasOwn(value, "scene_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "scene_contract")!;
+    if (!("value" in descriptor) || !parseSceneOutputContract(descriptor.value)) issues.push(issue("invalid_scene_contract", `${path}.scene_contract`, "Scene contract unavailable"));
+    if (value.media_kind !== "document" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "document" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("scene_deliverable_shape_unsupported", `${path}.scene_contract`, "Scene Document required"));
+  }
   sourceScope(value.source_scope, `${path}.source_scope`, issues);
   coverage(value.coverage, `${path}.coverage`, issues);
   text(value.original_text, `${path}.original_text`, issues);

@@ -1,42 +1,32 @@
+import { preflightOutputModel3dMiniAppTarget } from "./output-model3d-preflight.ts";
+import { readOutputAudioPayload, requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
+import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
+import { preflightOutputAudioTarget, outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
+import { preflightOutputStoryboardTarget, outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
+import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
+import { preflightOutputSceneTarget, outputScenePreflightProof } from "./output-scene-preflight.ts";
+import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
+import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
+import { preflightOutputNarrativeTarget } from "./output-narrative-preflight.ts";
 import { createOutputAdmissionReads, outputAdmissionGovernanceAssertions } from "./output-admission-reads.ts";
 import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
-import { OUTPUT_MODEL3D_EXECUTION_POLICY, OUTPUT_NATIVE_EXECUTION_POLICY, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
+import { OUTPUT_MODEL3D_EXECUTION_POLICY } from "../src/model/output-execution-policy.ts";
 import { validateModel3dRequest } from "../src/model/model3d.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import { prepareModel3dRequest } from "./model3d-request.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
 import type { OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
-import type { ImageFormat } from "../src/model/image-format.ts";
-import { validateProviderImageDimensions } from "../src/model/image-format.ts";
 import { sendsReferencePixels } from "../src/model/block-types.ts";
-import { minimumPresentationSlideCount } from "../src/model/managed-production.ts";
-import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
-import { documentRenderTokenReservation } from "../src/model/generation-budget.ts";
-import { manualPresentationMaximumOutputTokens, resolvePresentationCountRequest } from "../src/model/presentation-count-policy.ts";
 import { prepareOutputDocumentJob, type PreparedOutputDocumentJob } from "./document-jobs-api.ts";
 import { prepareBudgetReservation, prepareCostBudgetReservation, type PilotUser } from "./pilot-policy.ts";
-import { selectImageAdapter } from "./image-adapter.ts";
-import { outputImageBudget } from "./output-image-budget.ts";
-import { hasKnownTextModelPricing, priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
-import { estimateOpenAITextCallMaximumMicrousd, OpenAITextAccountingError } from "./openai-text-cost.ts";
-import { resolvePresentationModelRoutes, PresentationModelConfigurationError, type PresentationModelRoute } from "./presentation-model-routing.ts";
 import { outputDigest, type OutputBridgeTargetInput, type OutputExecutionBridge, type OutputPreparedAdmission } from "./output-requirements-api.ts";
 import { OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputNativeResult } from "./output-native-result.ts";
 import { cleanupExpiredOrRevokedOutputWork } from "./output-execution-control.ts";
+import { preflightOutputImageSlidesTarget, outputNativeTargetRefusal, outputNativeRecord as record, outputNativeUnavailable as unavailable, type OutputNativeSettings } from "./output-image-slides-preflight.ts";
+export { outputExactImageRender } from "./output-image-slides-preflight.ts";
+export type { OutputNativeCallRoute, OutputNativeSettings } from "./output-image-slides-preflight.ts";
 
-const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
-const unavailable=(targetId:string,reasonCode:string,reason:string):OutputNativeTargetPreflight=>({targetId,available:false,reasonCode,transferCode:"output_transfer_none_owned_adoption",reason,provider:null,model:null,route:null,maximumMicrousd:0,maximumCalls:0,maximumTokens:0,settings:{},transferDescription:"No source or file is sent by this check. You can use an owned file after inspection and review."});
-export type OutputNativeCallRoute={
- stage:string;provider:string;model:string;maximumMicrousd:number;
- presentationRoute?:PresentationModelRoute;maximumInputTokens?:number;maximumOutputTokens?:number;
-};
-export type OutputNativeSettings={
- kind:"generate"|"render_document";payload:Record<string,unknown>;calls:OutputNativeCallRoute[];
- executionPolicy?:OutputNativeExecutionPolicy;
- imageBudget?:NonNullable<ReturnType<typeof outputImageBudget>>;
- imageRender?:{format:ImageFormat;size:`${number}x${number}`};
-};
 type Model3dReferencePreparation = Awaited<ReturnType<typeof prepareModel3dRequest>>;
 const model3dReferenceReads = new WeakMap<object, Array<{ env: OutputBridgeTargetInput["env"]; events: OutputBridgeTargetInput["sourceEvents"]; key: string; prepared: Promise<Model3dReferencePreparation> }>>();
 
@@ -52,87 +42,23 @@ function prepareOutputModel3dReferences(input: OutputBridgeTargetInput, referenc
  return prepared;
 }
 
-/** Exact geometry only. No implicit crop, approximate ratio, resize, or provider fallback. */
-export function outputExactImageRender(ratio:{width:number;height:number}):{format:ImageFormat;size:`${number}x${number}`}|null{
- if(!Number.isSafeInteger(ratio.width)||!Number.isSafeInteger(ratio.height)||ratio.width<=0||ratio.height<=0)return null;
- const gcd=(a:number,b:number):number=>b?gcd(b,a%b):a;
- const divisor=gcd(ratio.width,ratio.height),w=ratio.width/divisor,h=ratio.height/divisor;
- const alignment=(a:number,b:number)=>a*b/gcd(a,b);
- const step=alignment(16/gcd(w,16),16/gcd(h,16));
- const baseWidth=w*step,baseHeight=h*step;
- const multiplier=Math.max(1,Math.ceil(Math.max(1024/Math.min(baseWidth,baseHeight),Math.sqrt(655_360/(baseWidth*baseHeight)))));
- const width=baseWidth*multiplier,height=baseHeight*multiplier;
- if(!validateProviderImageDimensions(width,height).valid)return null;
- return {format:{schema_version:1,aspect_ratio:{width:w,height:h},dimensions:{width,height,unit:"px"}},size:`${width}x${height}`};
-}
-function providerInputInstructions(input:OutputBridgeTargetInput){
- return [input.target.instruction_text,`Only this deliverable is requested: ${input.target.label}.`,
-  `Coverage contract: ${JSON.stringify(input.target.coverage)}.`,
-  "The delivery instructions are not evidence. Ground factual claims in the authorized Document sources."].join("\n");
-}
 export function outputJobUser(principal:PilotUser,scope:OutputScope):PilotUser{
  return scope.kind==="project"?{...principal,streamId:`creative:${scope.ownerUserId}`,projectExecution:{organizationId:scope.organizationId!,projectAccessId:scope.projectAccessId!,projectId:scope.projectId,ownerUserId:scope.ownerUserId,actorUserId:scope.actorUserId}}:principal;
 }
 
 export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput):Promise<OutputNativeTargetPreflight>{
- const {target,env}=input;
- if(!target.selected||target.blocking_issues.length)return unavailable(target.id,target.blocking_issues[0]?.code??"output_native_target_not_selected",target.blocking_issues[0]?.message??"Select this resolved target before creating it.");
- if(target.source_scope.kind!=="document")return unavailable(target.id,"output_native_document_scope_required","Native creation currently requires the full authorized Document. Scoped targets can be completed with a verified owned file.");
- if(target.media_kind==="model3d")return preflightOutputModel3dTarget(input);
- if(!["image","slides"].includes(target.media_kind))return unavailable(target.id,"output_native_medium_adoption_only","This medium uses verified owned-file adoption in this release; no provider job will be substituted.");
- if(!env.OPENAI_API_KEY)return unavailable(target.id,"output_native_planner_unconfigured","The planning provider is not configured. Saving and owned-file adoption remain available.");
- const plannerModel=env.OPENAI_MODEL??"gpt-5.6-terra";
- if(target.media_kind!=="slides"&&!hasKnownTextModelPricing(plannerModel))return unavailable(target.id,"output_native_planner_price_unknown","The configured planning model has no known price contract.");
- const facts=Array.isArray(input.context.snapshot.facts)?input.context.snapshot.facts.map(record):[];
- if(!facts.some(fact=>fact.active!==false&&String(fact.type).toLowerCase()!=="output"&&fact.intent!=="prohibit"&&fact.effect!=="must_not_include"))return unavailable(target.id,"output_native_source_required","Add an active authorized source before creating this target.");
- const common={productionMode:"manual",budgetAcknowledged:true,preflightAcknowledged:true,outputTargetInstructions:providerInputInstructions(input)};
- const maximumInputTokens=new TextEncoder().encode(JSON.stringify(input.context.snapshot)).byteLength*4+25_000;
- let settings:OutputNativeSettings,provider:string,model:string,route:string,maximumTokens:number,maximumMicrousd:number;
- if(target.media_kind==="slides"){
-  if(!target.count_policy||target.count_policy.unit!=="slide")return unavailable(target.id,"output_native_slide_count_policy_required","Confirm an exact or flexible slide count policy first.");
-  let counts:ReturnType<typeof resolvePresentationCountRequest>;
-  try{counts=resolvePresentationCountRequest({slideCountPolicy:target.count_policy,...(target.count_policy.kind!=="flexible"||target.suggested_count===null?{}:{itemCount:target.suggested_count}),productionMode:"manual"},minimumPresentationSlideCount(input.context.snapshot));}
-  catch{return unavailable(target.id,"output_native_slide_count_unsupported","The accepted slide count cannot use the native presentation route.");}
-  const contract=buildPresentationSourceContract(input.context.snapshot,{itemCount:counts.itemCount,...(counts.requestedSlideCount===undefined?{}:{requestedSlideCount:counts.requestedSlideCount}),slideCountPolicy:counts.slideCountPolicy});
-  if(contract.sourceIssues?.length||!contract.sources.some(source=>source.sourceKind==="block"))return unavailable(target.id,contract.sourceIssues?.[0]?.code??"output_native_slide_source_unresolved",contract.sourceIssues?.[0]?.message??"The deck needs an authorized factual source.");
-  const maxOutput=manualPresentationMaximumOutputTokens(counts.slideCountPolicy,counts.itemCount);
-  let calls:OutputNativeCallRoute[];
-  try{
-   const routes=resolvePresentationModelRoutes(env);
-   // These exact route fields and caps are included in the persisted quote digest.
-   const quotedCall=(stage:string,presentationRoute:PresentationModelRoute):OutputNativeCallRoute=>({
-    stage,provider:"openai",model:presentationRoute.model,presentationRoute,maximumInputTokens,maximumOutputTokens:maxOutput,
-    maximumMicrousd:Math.max(500_000,estimateOpenAITextCallMaximumMicrousd(presentationRoute.model,maximumInputTokens,maxOutput)),
-   });
-   calls=[quotedCall("planning:0:initial",routes.composition),quotedCall("planning:0:repair",routes.repair)];
-  }catch(error){
-   if(error instanceof PresentationModelConfigurationError||error instanceof OpenAITextAccountingError)return unavailable(target.id,error.code,error.message);
-   throw error;
-  }
-  maximumMicrousd=calls.reduce((sum,call)=>sum+call.maximumMicrousd,0);maximumTokens=documentRenderTokenReservation("slides",counts.itemCount,2);
-  settings={kind:"render_document",payload:{...common,artifactKind:"slides",itemCount:counts.itemCount,slideCountPolicy:counts.slideCountPolicy,...(counts.requestedSlideCount===undefined?{}:{requestedSlideCount:counts.requestedSlideCount})},calls};
-  provider="openai";model=calls[0]!.model;route="document-slides-manual-v1";
- }else{
-  if(!target.aspect_ratio)return unavailable(target.id,"output_native_image_ratio_required","Confirm the image aspect ratio first.");
-  const imageRender=outputExactImageRender(target.aspect_ratio);
-  if(!imageRender)return unavailable(target.id,"output_native_image_ratio_unsupported","The provider cannot create this exact ratio within its dimension limits. Adopt a verified file or explicitly revise the requirement.");
-  const referenceCount=facts.filter(fact=>fact.type==="reference"&&fact.active!==false&&Number(record(fact.properties).weight??.5)>0&&sendsReferencePixels(record(fact.properties).pixel_reference_mode)).length;
-  if(referenceCount)return unavailable(target.id,"output_native_reference_input_unpriced","This bounded image route cannot yet price GPT Image 2 reference-pixel input. No requested reference is omitted: use an inspected owned image or explicitly change the reference requirement.");
-  const referenceStubs=Array.from({length:referenceCount},()=>({bytes:new Uint8Array(0),mimeType:"image/png",source:"uploaded-reference" as const}));
-  const selected=selectImageAdapter(env,{quality:"high",size:imageRender.size,references:referenceStubs});
-  if(selected.providerName!=="openai")return unavailable(target.id,"output_native_image_adapter_unsupported","The current bounded native image route supports the configured OpenAI adapter only. The selected provider must not silently fall back; adopt an owned image instead.");
-  if((env.FORMA_IMAGE_PROVIDER??"openai").trim().toLowerCase()!=="openai")return unavailable(target.id,"output_native_image_provider_unavailable","The requested image provider is unavailable for this bounded route; no automatic fallback is authorized.");
-  const plannerMaximum=Math.max(100_000,priceTextUsageBreakdownMicrousd(plannerModel,{inputTokens:maximumInputTokens,outputTokens:1200,totalTokens:maximumInputTokens+1200}).totalMicrousd);
-  const imageBudget=outputImageBudget(selected.model,imageRender.size);
-  if(!imageBudget)return unavailable(target.id,"output_native_image_price_unknown","The configured image model or size has no verified native image pricing contract. No fallback rate or provider will be used.");
-  const imageMaximum=Math.max(900_000,imageBudget.maximumMicrousd);
-  maximumMicrousd=plannerMaximum+imageMaximum;maximumTokens=128_000;
-  settings={kind:"generate",payload:{...common,outputImageFormat:imageRender.format},imageRender,imageBudget,calls:[{stage:"planning:initial",provider:"openai",model:plannerModel,maximumMicrousd:plannerMaximum},{stage:"image:initial",provider:selected.providerName,model:selected.model,maximumMicrousd:imageMaximum}]};
-  provider=selected.providerName;model=selected.model;route="document-image-manual-v1";
+ if(Object.hasOwn(input.target,"model3d_contract"))return preflightOutputModel3dMiniAppTarget(input);
+ if(Object.hasOwn(input.target,"video_contract"))return unavailable(input.target.id,"output_video_preparation_unavailable","Video preparation unavailable");
+ if(Object.hasOwn(input.target,"audio_contract"))return preflightOutputAudioTarget(input);
+ if(Object.hasOwn(input.target,"storyboard_contract"))return preflightOutputStoryboardTarget(input);
+ if(Object.hasOwn(input.target,"scene_contract"))return preflightOutputSceneTarget(input);
+ if(Object.hasOwn(input.target,"narrative_contract"))return preflightOutputNarrativeTarget(input);
+ if(input.target.media_kind==="model3d"){
+  const refused=outputNativeTargetRefusal(input);
+  if(refused)return refused;
+  return preflightOutputModel3dTarget(input);
  }
- settings.executionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY;
- return {targetId:target.id,available:true,reasonValues:{maximumExecutionSeconds:OUTPUT_NATIVE_EXECUTION_POLICY.maximumMilliseconds/1000},reasonCode:target.media_kind==="slides"?"output_native_slides_ready":"output_native_image_ready",transferCode:"output_transfer_document_after_authorization",reason:target.media_kind==="slides"?"One initial request and at most one repair. The accepted count policy remains unchanged. Each operation has a four-minute application execution window; a timeout does not prove provider cancellation, and unresolved allowances remain held.":"At most two generation calls: one direction call and one image call at the exact size. After authorization and Start, Forma sends the exact final image prompt as text to OpenAI (omni-moderation-latest) for at most one additional automatic safety check before image creation. This check is not counted as a generation call and is currently free under OpenAI’s pricing. Each operation has a four-minute application execution window; a timeout does not prove provider cancellation, and unresolved allowances remain held.",provider,model,route,maximumMicrousd,maximumCalls:2,maximumTokens,settings,
-  transferDescription:"After you authorize and start, the authorized Document source context and selected target instructions go to the disclosed provider. Native image attempts also send the exact final image prompt as text to OpenAI (omni-moderation-latest) for at most one additional automatic safety check before image creation. This check is not counted as a generation call and is currently free under OpenAI’s pricing. If reference pixels are required, native image generation is unavailable. This preflight sends nothing. Account and provider ceilings are separate; the displayed cap bounds application admission, not a guarantee of provider billing."};
+ return preflightOutputImageSlidesTarget(input);
 }
 
 /** The reviewed target wording is the exact provider prompt; no planning rewrite is charged. */
@@ -156,18 +82,56 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
  const readScope=createOutputAdmissionReads({request:input.request,env:input.env,documentId:input.scope.documentId,actorUserId:input.scope.actorUserId,billingUserId:input.principal.billingUserId??input.principal.userId,organizationId:input.scope.organizationId,projectAccessId:input.scope.projectAccessId},
   input.governanceWitness?{witness:input.governanceWitness,source:{ownerUserId:input.scope.ownerUserId,projectId:input.scope.projectId,contextId:input.scope.contextId??"",sourceDigest:input.sourceDigest,contextSnapshotDigest:await outputDigest(input.context.snapshot)}}:undefined);
  const governanceAssertions=outputAdmissionGovernanceAssertions(readScope);
+ const sceneAssertions:OutputSqlAssertion[]=[];
  const prepared:Array<{slot:OutputOperationSlot;job:PreparedOutputDocumentJob;statements:D1PreparedStatement[];assertions:OutputSqlAssertion[];checkpoint:Record<string,unknown>}> = [];
  for(const slot of input.slots){
   const target=input.confirmedPlan.plan.targets.find(target=>target.id===slot.targetId);
   const frozen=input.preflight.targets.find(target=>target.targetId===slot.targetId);
   if(!target||!frozen?.available)throw new OutputConflictError("output_target_not_admissible");
+  if(Object.hasOwn(target,"model3d_contract"))throw new OutputConflictError("output_model3d_execution_unavailable",409);
+  if(Object.hasOwn(target,"video_contract"))throw new OutputConflictError("output_video_execution_unavailable",409);
   const current=await preflightOutputNativeTarget({...input,target});
   if(!current.available||await outputDigest(current)!==slot.routeDigest||await outputDigest(frozen)!==slot.routeDigest)throw new OutputConflictError("output_route_changed");
   const settings=current.settings as OutputNativeSettings;
+  const nativeStoryboard=Object.hasOwn(target,"storyboard_contract")?readStoryboardExecutionOffer(current):null;
+  if(Object.hasOwn(target,"storyboard_contract")&&!nativeStoryboard)throw new OutputConflictError("output_storyboard_offer_invalid",409);
+  const refreshStoryboard=async()=>{
+   const refreshed=await preflightOutputStoryboardTarget({...input,target}),proof=outputStoryboardPreflightProof(refreshed),offer=readStoryboardExecutionOffer(refreshed);
+   if(!nativeStoryboard||!proof?.sourceAssertions.length||!offer||input.scope.kind!=="personal"||input.scope.contextId
+    ||await outputDigest(refreshed)!==slot.routeDigest||proof.requestId!==slot.jobId||offer.original.requestId!==slot.jobId
+    ||Date.parse(proof.expiresAt)<=Date.now()||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_storyboard_original_attempt_required",403);
+   sceneAssertions.push(...proof.sourceAssertions);return offer;
+  };
+  if(nativeStoryboard)await refreshStoryboard();
+  const nativeAudio=Object.hasOwn(target,"audio_contract")?readOutputAudioPayload(settings.payload):null;
+  if(Object.hasOwn(target,"audio_contract")&&!nativeAudio)throw new OutputConflictError("output_audio_contract_unsupported");
+  const refreshAudio=async()=>{
+   const refreshed=await preflightOutputAudioTarget({...input,target});const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
+   if(!nativeAudio||!proof||!preview||!refreshed.available||await outputDigest(refreshed)!==slot.routeDigest||preview.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_audio_source_changed",403);
+   requireAudioMiniAppCostApproval(input.audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);sceneAssertions.push(...proof);return nativeAudio;
+  };
+  if(nativeAudio)await refreshAudio();
+  const nativeScene=Object.hasOwn(target,"scene_contract")?await readOutputScenePayload(settings.payload):null;
+  if(Object.hasOwn(target,"scene_contract")&&!nativeScene)throw new OutputConflictError("output_scene_contract_unsupported");
+  const refreshScene=async()=>{
+   const refreshed=await preflightOutputSceneTarget({...input,target});
+   const proof=outputScenePreflightProof(refreshed);
+   const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
+   if(!proof||!payload||!nativeScene||await outputDigest(refreshed)!==slot.routeDigest||proof.requestId!==slot.jobId
+     ||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_scene_original_attempt_required");
+   requireSceneMiniAppCostApproval(input.sceneCostConsent,nativeScene.outputScene.costPreview,payload.outputScene.costPreview);
+   sceneAssertions.push(...proof.sourceAssertions);
+   return proof.prepared;
+  };
+  const scenePrepared=nativeScene?await refreshScene():null;
+  const admissionPayload=nativeAudio?{...settings.payload,audioCostConsent:input.audioCostConsent,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeScene?{...settings.payload,sceneCostConsent:input.sceneCostConsent}:settings.payload;
   const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
-  const job=await prepareOutputDocumentJob(input.request,input.env,{documentId:input.scope.documentId,kind:settings.kind,payload:settings.payload},{jobId:slot.jobId,outputExecution:reference,readScope,
+  const job=await prepareOutputDocumentJob(input.request,input.env,{documentId:input.scope.documentId,kind:settings.kind,payload:admissionPayload},{jobId:slot.jobId,outputExecution:reference,readScope,
+   ...(nativeScene&&scenePrepared?{outputScene:{payload:nativeScene,prepared:scenePrepared,refresh:refreshScene}}:{}),
+   ...(nativeAudio?{outputAudio:{payload:admissionPayload,refresh:refreshAudio}}:{}),
+   ...(nativeStoryboard?{outputStoryboard:{payload:admissionPayload,maximumMicrousd:nativeStoryboard.maximumMicrousd,refresh:refreshStoryboard}}:{}),
    maximumMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls,...(settings.imageRender?{outputImageRender:settings.imageRender}:{}),
-   compile:async trusted=>{if(trusted.documentRevision!==input.context.documentRevision||await outputDigest(trusted.snapshot)!==await outputDigest(input.context.snapshot))throw new OutputConflictError("output_source_changed");return settings.payload;}});
+   compile:async trusted=>{if(trusted.documentRevision!==input.context.documentRevision||await outputDigest(trusted.snapshot)!==await outputDigest(input.context.snapshot))throw new OutputConflictError("output_source_changed");return admissionPayload;}});
   if(job instanceof Response){const issue=record(await job.json());throw new OutputConflictError(String(issue.error??"output_job_preflight_failed"),job.status);}
   if(job.user.userId!==input.scope.actorUserId||job.user.streamId!==`creative:${input.scope.ownerUserId}`)throw new OutputConflictError("output_job_scope_mismatch",403);
   const billingOwner=job.user.billingUserId??job.user.userId;
@@ -184,7 +148,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   if(budgetScope)assertions.push({sql:"EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN events anchor ON anchor.event_id=resource.source_event_id WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.resource_kind='job' AND resource.resource_id=? AND resource.actor_user_id=? AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=?)",bindings:[budgetScope.projectAccessId,budgetScope.organizationId,slot.jobId,job.user.userId,slot.jobId]});
   prepared.push({slot,job,statements:[...token.statements,...cost.statements],assertions,checkpoint:{reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:cost.period,costReservationMicrousd:cost.reservedMicrousd,outputExecution:reference,generationReceipt:{...record(job.initialResult.generationReceipt),reservation_status:"active",reservation_microusd:cost.reservedMicrousd,output_slot_id:slot.slotId,output_grant_id:slot.grantId}}});
  }
- return {sourceAssertions:governanceAssertions,events:prepared.map(item=>item.job.queueEvent),buildStatements(events){const statements:D1PreparedStatement[]=[],assertions:OutputSqlAssertion[]=[];for(const item of prepared){const event=events.find(event=>event.type===item.job.queueEvent.type&&event.payload.job_id===item.slot.jobId);if(!event)throw new Error("output_job_anchor_missing");statements.push(...item.statements,...item.job.buildStatements(event,item.checkpoint));assertions.push(...item.assertions);}return{statements,assertions};}};
+ return {sourceAssertions:[...governanceAssertions,...sceneAssertions],events:prepared.map(item=>item.job.queueEvent),buildStatements(events){const statements:D1PreparedStatement[]=[],assertions:OutputSqlAssertion[]=[];for(const item of prepared){const event=events.find(event=>event.type===item.job.queueEvent.type&&event.payload.job_id===item.slot.jobId);if(!event)throw new Error("output_job_anchor_missing");statements.push(...item.statements,...item.job.buildStatements(event,item.checkpoint));assertions.push(...item.assertions);}return{statements,assertions};}};
 }
 
 export const outputDocumentExecutionBridge:OutputExecutionBridge={

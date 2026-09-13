@@ -595,3 +595,51 @@ test("presentation guidance: emitted native summaries share logical 44px target 
   assert.ok(f.renderer.ownNodes(f.host, "summary").every(node => Object.keys(node.handlers).length === 0), "native details keep their browser keyboard behavior");
   t.diagnostic("Full component output plus parsed production CSS contract; not a browser-computed target-size or accessibility certificate.");
 });
+
+test("Video request editor preserves original 480p through the actual review and submit handlers",async t=>{
+  const {captureDocumentRenderSettings}=await import("../src/model/document-render-request.ts");
+  const f=fixture(t,{facts:[]});f.host.launcherOnly=false;
+  const submissions=[],storePort=await videoRequestStorePort(submissions);
+  f.store.renderDocumentArtifact=async(...args)=>{f.state.requests.push(args);return storePort._renderDocumentArtifact(...args);};
+  const job={jobId:"video-original",documentId:"A",kind:"render_document",status:"failed",sourceSurface:"document",requestedAt:"2026-09-13T00:00:00Z",updatedAt:"2026-09-13T00:00:00Z",requestKey:"original-480p",members:[],attemptCount:1,dismissedAt:null,error:"Invalid input",errorDetail:null,result:{artifactKind:"video",generationReceipt:{input_ref:"video-original-input",reservation_status:"settled",settled_cost_microusd:0}}};
+  const captured=captureDocumentRenderSettings({artifactKind:"video",productionMode:"manual",videoSeconds:4,videoSize:"1280x720",videoAudioMode:"silent",videoResolution:"480p",audience:"Original audience"});
+  f.store.content.set({"video-original-input":JSON.stringify({job_id:job.jobId,document_id:"A",artifact_kind:"video",request:{editable_settings:captured}})});
+  f.store.documentJobs.set([job]);f.store.loadDocumentJobDetail=async id=>{assert.equal(id,job.jobId);return job;};
+  f.draw();await f.click("Review & change request");
+  assert.equal(f.state.requests.length,0,"review cannot submit or reuse prior paid consent");
+  assert.match(f.visible(),/Settings restored/);
+  const sessionGet=f.store.session.get;
+  let remaining=2_000_000;
+  f.store.session.get=()=>{const session=sessionGet();return{...session,provider:{...session.provider,videoModel:"bytedance/seedance-2.0/reference-to-video"},costBudgets:{period:"fixture",currency:"USD",user:{usedMicrousd:0,reservedMicrousd:0,limitMicrousd:remaining,remainingMicrousd:remaining},workspace:{usedMicrousd:0,reservedMicrousd:0,limitMicrousd:10_000_000,remainingMicrousd:10_000_000}}};};
+  f.draw();
+  assert.match(f.visible(),/Estimated provider render: \$0\.54 at 480p/);
+  assert.match(f.visible(),/Total reserved: up to \$2\.21/,"displayed maximum keeps the unchanged conservative server reservation");
+  const createButton=()=>f.renderer.ownNodes(f.host,"button").find(node=>node.attributes.class==="button primary");
+  assert.ok(createButton()&&Object.hasOwn(createButton().attributes,"disabled"),"$2 cannot fund the server's $2.2096 reservation");
+  assert.equal(f.state.requests.length,0);assert.equal(submissions.length,0);
+  // Disabled native submit control is verified here. The fixture admission port
+  // does not execute the Store/server budget gate; do not bypass it and claim one.
+  remaining=2_209_600;await f.flush();
+  assert.ok(createButton()&&!Object.hasOwn(createButton().attributes,"disabled"),"the exact existing reservation remains reachable");
+  await f.renderer.handler(f.host,"input",node=>node.attributes.name==="audience","input")({target:{value:"Edited audience"}});await f.flush();
+  await f.submit();assert.equal(f.state.requests.length,1);assert.equal(f.state.requests[0][0],"video");
+  assert.equal(f.state.requests[0][1].videoResolution,"480p");assert.equal(f.state.requests[0][1].videoSeconds,4);assert.equal(f.state.requests[0][1].videoAudioMode,"silent");
+  assert.equal(submissions.length,1);assert.equal(submissions[0].payload.videoResolution,"480p");assert.equal(submissions[0].payload.audience,"Edited audience");assert.match(submissions[0].payload.requestKey,/:resolution:480p$/);
+  assert.equal(await f.host.openRender("video","A",{current:()=>true}),true);await f.flush();await f.submit();
+  assert.equal(f.state.requests.length,2);assert.equal(f.state.requests[1][1].videoResolution,undefined,"new opening cannot inherit an older retained-only resolution");
+  assert.equal(submissions.length,2);assert.equal(submissions[1].payload.videoResolution,undefined);assert.doesNotMatch(submissions[1].payload.requestKey,/:resolution:/);
+});
+
+async function videoRequestStorePort(submissions){
+  const {documentRenderGuidance,documentRenderGuidanceProblem}=await import("../src/model/document-render-guidance.ts");
+  const {documentGenerationRevision:generationRevisionFor}=await import("../src/model/document-jobs.ts");
+  const tree=syntax("src/state/store.ts");const host=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.members.some(member=>member.name?.getText(tree)==="#renderDocumentArtifact"));
+  const method=host?.members.find(member=>member.name?.getText(tree)==="#renderDocumentArtifact");assert.ok(method);
+  // Keep the complete production Store method; expose private names only to attach
+  // the existing storage/context boundary ports. No render branch is substituted.
+  const transformed=ts.transform(method,[context=>node=>{const visit=child=>ts.isPrivateIdentifier(child)?ts.factory.createIdentifier("_"+child.text.slice(1)):ts.visitEachChild(child,visit,context);return ts.visitNode(node,visit);}]);
+  const memberCode=ts.createPrinter().printNode(ts.EmitHint.Unspecified,transformed.transformed[0],tree);transformed.dispose();
+  const code=ts.transpileModule("class VideoRequestStorePort {"+memberCode+"}",{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+  const Port=new Function("generationRevisionFor","documentRenderGuidance","documentRenderGuidanceProblem",code+";return VideoRequestStorePort;")(generationRevisionFor,documentRenderGuidance,documentRenderGuidanceProblem);
+  return Object.assign(new Port(),{projection:{get:()=>({documentId:"A"})},_generationContext:()=>({documentRevision:"original-source-revision",documentId:"A",snapshot:{facts:[]}}),_systemNotice:text=>text,toast(){},async _startDocumentJob(kind,payload,surface,documentId){submissions.push({kind,payload,surface,documentId});return{job:{jobId:"local-admission-boundary"},reused:false};}});
+}

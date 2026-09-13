@@ -32,7 +32,8 @@ const CONTEXT_MUTATION_TYPES=["ProjectCreated","ProjectRenamed","ProjectStateCha
 const CONTEXT_MUTATION_SQL=`type IN (${CONTEXT_MUTATION_TYPES.map((type)=>`'${type}'`).join(",")})`;
 
 const usesFalImages=(env:WorkerEnv)=>["fal","fal-ideogram","ideogram"].includes((env.FORMA_IMAGE_PROVIDER??"openai").trim().toLowerCase());
-const providerScopeKey = (env: WorkerEnv) => usesFalImages(env)?`fal:${env.FAL_IMAGE_MODEL??"ideogram/v4"}`:`openai:${env.OPENAI_PROJECT ?? "default"}:${env.OPENAI_IMAGE_MODEL ?? "gpt-image-2"}`;
+export const configuredImageHealthIdentity=(env:WorkerEnv):{provider:"fal"|"openai";model:string}=>usesFalImages(env)?{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4"}:{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2"};
+const providerScopeKey=(env:WorkerEnv)=>{const selected=configuredImageHealthIdentity(env);return selected.provider==="fal"?`fal:${selected.model}`:`openai:${env.OPENAI_PROJECT??"default"}:${selected.model}`;};
 const nowIso = () => new Date().toISOString();
 
 function productionPreflightSnapshot(snapshot:Record<string,unknown>,mode:ProductionMode){

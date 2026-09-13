@@ -7,7 +7,7 @@ import { documentRenderGuidance } from "./document-render-guidance.ts";
 import { MAX_MANAGED_PRESENTATION_SLIDES } from "./managed-production.ts";
 
 const record = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-const EDITABLE_KEYS = ["itemCount", "requestedSlideCount", "slideCountPolicy", "productionMode", "audience", "tone", "presentationStyle", "presentationFidelity", "sceneMedium", "videoSeconds", "videoSize", "videoAudioMode", "audioProfile", "audioImageBlockId", "audioVideoArtifactId", "soundtrackBlockIds", "sendSoundtrackToVideoProvider", "sendAudioVideoToProvider"] as const;
+const EDITABLE_KEYS = ["itemCount", "requestedSlideCount", "slideCountPolicy", "productionMode", "audience", "tone", "presentationStyle", "presentationFidelity", "sceneMedium", "videoSeconds", "videoSize", "videoResolution", "videoAudioMode", "audioProfile", "audioImageBlockId", "audioVideoArtifactId", "soundtrackBlockIds", "sendSoundtrackToVideoProvider", "sendAudioVideoToProvider"] as const;
 /** Actor-private request controls only: no source, provider IDs, grant, reservation, or retry state. */
 export function captureDocumentRenderSettings(payload: Record<string, unknown>) {
   return { schema_version: 1, artifact_kind: payload.artifactKind, settings: Object.fromEntries(EDITABLE_KEYS.filter(key => payload[key] !== undefined).map(key => [key, payload[key]])) };
@@ -15,7 +15,7 @@ export function captureDocumentRenderSettings(payload: Record<string, unknown>) 
 export type RestoredDocumentRenderSettings = {
   kind: DocumentArtifactKind; audience: string; tone: string; productionMode: "manual" | "managed";
   itemCount: number | null; presentationStyle: SlideStylePresetId | "document"; presentationFidelity: "faithful" | "creative";
-  sceneMedium?: SceneMedium; videoSeconds?: VideoDurationSeconds; videoSize?: "1280x720" | "720x1280"; videoAudioMode?: VideoAudioMode;
+  sceneMedium?: SceneMedium; videoSeconds?: VideoDurationSeconds; videoSize?: "1280x720" | "720x1280"; videoResolution?: "480p" | "720p"; videoAudioMode?: VideoAudioMode;
   audioProfile?: AudioRequestProfile; audioImageBlockId: string; audioVideoArtifactId: string; soundtrackBlockIds: string[];
   needsTransferConfirmation: boolean;
 };
@@ -56,6 +56,7 @@ export function restoreDocumentRenderSettings(job: DocumentJob, content: Record<
   if (settings.sceneMedium !== undefined && !isSceneMedium(settings.sceneMedium)) return null;
   if (settings.videoSeconds !== undefined && !isVideoDurationSeconds(settings.videoSeconds)) return null;
   if (settings.videoSize !== undefined && !VIDEO_ADAPTER_CONTRACT.supportedFrameSizes.includes(settings.videoSize as "1280x720" | "720x1280")) return null;
+  if (settings.videoResolution !== undefined && settings.videoResolution !== "480p" && settings.videoResolution !== "720p") return null;
   if (settings.videoAudioMode !== undefined && !isVideoAudioMode(settings.videoAudioMode)) return null;
   const profile = record(settings.audioProfile);
   if (kind === "audio" && (!profile || !AUDIO_GENERATION_GOALS.includes(profile.goal as AudioRequestProfile["goal"]) || !AUDIO_DESTINATIONS.includes(profile.destination as AudioRequestProfile["destination"]) || profile.durationSeconds !== undefined && (!Number.isFinite(profile.durationSeconds) || Number(profile.durationSeconds) <= 0) || profile.speakerCount !== undefined && (!Number.isSafeInteger(profile.speakerCount) || Number(profile.speakerCount) < 1))) return null;
@@ -66,6 +67,7 @@ export function restoreDocumentRenderSettings(job: DocumentJob, content: Record<
     ...(isSceneMedium(settings.sceneMedium) ? { sceneMedium: settings.sceneMedium } : {}),
     ...(isVideoDurationSeconds(settings.videoSeconds) ? { videoSeconds: settings.videoSeconds } : {}),
     ...(settings.videoSize ? { videoSize: settings.videoSize as "1280x720" | "720x1280" } : {}),
+    ...(settings.videoResolution ? { videoResolution: settings.videoResolution as "480p" | "720p" } : {}),
     ...(isVideoAudioMode(settings.videoAudioMode) ? { videoAudioMode: settings.videoAudioMode } : {}),
     ...(profile ? { audioProfile: profile as AudioRequestProfile } : {}),
     audioImageBlockId: String(settings.audioImageBlockId ?? ""), audioVideoArtifactId: String(settings.audioVideoArtifactId ?? ""),

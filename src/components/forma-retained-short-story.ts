@@ -5,6 +5,7 @@ import { documentArtifactRevision } from "../model/document-artifacts";
 import { parseRetainedStoryRoute, type RetainedStoryDto, type RetainedStorySelection } from "../model/retained-short-story.ts";
 import { parseNativeRetainedOutputRoute, type NativeRetainedOutputDto } from "../model/native-retained-output.ts";
 import { readRetainedShortStory, readNativeRetainedOutput } from "../model/retained-short-story-client.ts";
+import { renderNativeRetainedStory } from "./native-retained-story.ts";
 import "./forma-retained-short-story.css";
 
 type RetainedOutputKind = "short_story" | "scene" | "slides" | "storyboard" | "model3d" | "audio" | "video";
@@ -272,10 +273,7 @@ export class FormaRetainedShortStory extends FormaElement {
       return;
     }
     const content = result.kind === "native-retained-short-story" ? result.contentMarkdown : result.content.content_markdown;
-    render(html`<article class="retained-story-reader" aria-label=${this.#label()}>
-      ${result.title.trim() ? html`<h2 class="retained-story-title" dir="auto" translate="no">${result.title}</h2>` : nothing}
-      <pre class="retained-story-content" dir="auto" translate="no">${content}</pre>
-    </article>`, this.#mount);
+    render(renderNativeRetainedStory({ title: result.title, contentMarkdown: content }, this.#label()), this.#mount);
   }
   override render() {
     const ready = this.#ready(), pending = this.#phase === "waiting" || this.#phase === "loading";

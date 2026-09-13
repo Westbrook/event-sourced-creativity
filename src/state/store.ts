@@ -1,3 +1,6 @@
+import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
+import { AUDIO_LOCAL_CONVERSION_MEDIA_TYPE, parseAudioTrimOperationRequest, audioTrimOperationFingerprintInput, encodeAudioConversionSource } from "../model/audio-local-conversion.ts";
+import { inspectPcmWav, PCM_WAV_EDIT_MAX_BYTES } from "../model/audio-container.ts";
 import { captureCurrentGeneratedImageEdit, matchGeneratedImageEditSnapshot, type CurrentGeneratedImageEdit } from "../model/generated-image-edit-current.ts";
 import { GENERATED_IMAGE_EDIT_LIMITS } from "../model/generated-image-edit.ts";
 import { parseGeneratedImageEditRequest, parseGeneratedImageRevision, generatedImageEditOperationSha256, projectGeneratedImageEdit, type GeneratedImageEditRequest, type GeneratedImageEditSnapshot, type GeneratedImageEditAcknowledgment } from "../model/generated-image-revision.ts";
@@ -77,7 +80,7 @@ import type { PresentationCandidateRevisionRequest, PresentationCandidateRevisio
 type WorkspaceNavigationOptions = { replace?:boolean; preserveFocus?:boolean; documentFocus?:boolean; current?:()=>boolean; focus?:OutputNavigationFocusLease; documentId?:string; onOriginHandoff?:()=>boolean; onDestinationSource?:(source:CapturedSourceOwnership)=>boolean; nativeImageStartup?:NativeImageWorkspaceStartup };
 type WorkspaceNavigationOwner = {options:WorkspaceNavigationOptions;handedOff:boolean;revision:number;route:string;browserRoute:string;session:PilotSession|null;sessionRevision:number;sourceGeneration:number;sourceRetired:boolean;authorization:string;shared:boolean;cookieGeneration:number;cookieSessionGeneration:number;startup:NativeImageWorkspaceStartupDispatcher|null};
 const workspaceNavigationCurrent=(options:WorkspaceNavigationOptions)=>(!options.current||options.current())&&(!options.focus||options.focus.current());
-type DocumentArtifactRenderOptions = {model3dPrompt?:string;model3dPromptSource?:"document";model3dAdaptation?:ReturnType<typeof model3dAdaptationReceipt>;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void};
+type DocumentArtifactRenderOptions = {model3dPrompt?:string;model3dPromptSource?:"document";model3dAdaptation?:ReturnType<typeof model3dAdaptationReceipt>;model3dSettings?:Model3dSettings;model3dReferenceBlockIds?:string[];documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoResolution?:"480p"|"720p";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;slideCountPolicy?:SlideCountPolicy;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];sceneRequestId?:string;sceneCostConsent?:SceneCostApproval;current?:()=>boolean;onDispatch?:()=>void;onResult?:(result:SceneSubmissionResult)=>void};
 // Internal classification only; legacy callers still receive the same localized Error.message.
 class GenerationBudgetAdmissionError extends Error {
   constructor(readonly reason:"budget-blocked"|"user-canceled",message:string){super(message);}
@@ -592,6 +595,17 @@ export class FormaStore {
     return {...context,documentRevision:generationRevisionFor(context)};
   }
   documentJob(kind:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&(job.status==="queued"||job.status==="running"||job.status==="committing"));}
+  /** Local Source stability only. Native Output admission revalidates server source and custody. */
+  experienceDocumentSourceCurrent(documentId:string,expectedRevision:string):boolean{
+    const session=this.session.get(),projection=this.projection.get(),source=this.captureSourceOwnership();
+    if(!session||session.impersonation||session.projectContext||!session.policy.accepted||!["creator","admin"].includes(session.user.role)
+      ||!this.sourceOwnershipActive(source)||this.#projectContextCookieGeneration!==this.#projectContextSessionGeneration
+      ||this.#cachedHistoryRevalidation||this.documentRouteState()!=="ready"||!this.routeDataReady()
+      ||this.asOf.get()!==Number.POSITIVE_INFINITY||projection.documentId!==documentId)return false;
+    const confirmed=foldEvents(this.events.get(),Number.POSITIVE_INFINITY,documentId);
+    return this.#generationContext(documentId,"","headshot",confirmed).documentRevision===expectedRevision
+      &&this.#generationContext(documentId).documentRevision===expectedRevision&&this.sourceOwnershipActive(source);
+  }
   documentGenerationRevision(){return this.#generationContext().documentRevision;}
   documentModel3dAdaptation(documentId=this.projection.get().documentId,referenceCount=0):Model3dDocumentAdaptation{
     return adaptDocumentToModel3d(this.#generationContext(documentId).snapshot,{referenceCount});
@@ -2467,10 +2481,10 @@ export class FormaStore {
       if(claim.legacyFailure!==null)throw claim.legacyFailure.reason;
     });
   }
-  #claimInitialListRead(owner=this.#captureInitialListReadOwner()):NativeImageListReadClaim{
+  #claimInitialListRead(owner=this.#captureInitialListReadOwner(),freshAfterActive=false):NativeImageListReadClaim{
     const active=this.#initialListReadActive,pending=this.#initialListReadPending;
     if(this.#initialListReadOwnerCurrent(owner)){
-      if(active&&this.#sameInitialListReadOwner(active.owner,owner)&&this.#initialListReadOwnerCurrent(active.owner))return active;
+      if(!freshAfterActive&&active&&this.#sameInitialListReadOwner(active.owner,owner)&&this.#initialListReadOwnerCurrent(active.owner))return active;
       if(pending&&this.#sameInitialListReadOwner(pending.owner,owner)&&this.#initialListReadOwnerCurrent(pending.owner))return pending;
     }
     const claim=this.#newInitialListReadClaim(owner);
@@ -2526,9 +2540,11 @@ export class FormaStore {
   /** Explicitly requests one eligible read. The later startup bridge marks a
    * passive/deferred slot unnecessary before calling; this is not a scheduler. */
   beginNativeImageInitialListRead():NativeImageInitialListReadOperation{return this.#claimInitialListRead().operation;}
-  async syncDocumentJobs():Promise<void>{
+  async syncDocumentJobs(options:{freshAfterActive?:boolean}={}):Promise<void>{
     const busy=Boolean(this.#initialListReadActive||this.#initialListReadPump||this.#initialListReadPending);
-    const claim=this.#claimInitialListRead();
+    // A verified explicit native run needs a page begun after its admission;
+    // keep existing pending-owner coalescing and the original read/driver pump.
+    const claim=this.#claimInitialListRead(this.#captureInitialListReadOwner(),options.freshAfterActive===true);
     // Admission cleanup preceded the legacy busy check. Its caller-local
     // failure still rejects immediately; this never waits on the active pass.
     if(busy&&!claim.admissionFailed){this.#observeInitialListRead(claim);return;}
@@ -3163,6 +3179,7 @@ export class FormaStore {
     if(!this.#workspaceNavigationCurrent(owner))return false;
     path=this.#projectTaskRoute(path,owner.options);
     if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(isStandaloneExperienceRoute(path))return this.#assignWorkspaceNavigation(path,owner);
     const source=applicationIdFromRoute(owner.route),destination=applicationIdFromRoute(path);
     if(source!==destination)return !["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)
       ?this.#assignWorkspaceNavigation(path,owner):this.transitionWorkspace(path,this.#workspaceNavigationOptions(owner));
@@ -3174,6 +3191,7 @@ export class FormaStore {
     if(!this.#workspaceNavigationCurrent(owner))return false;
     path=this.#projectTaskRoute(path,options);
     if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(isStandaloneExperienceRoute(path))return this.#assignWorkspaceNavigation(path,owner);
     const source=applicationIdFromRoute(owner.route),destination=applicationIdFromRoute(path);
     if(source===destination)return this.#commitRoute(path,owner);
     if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination))return this.#assignWorkspaceNavigation(path,owner);
@@ -4185,15 +4203,20 @@ export class FormaStore {
   async append(event:EventInput,options:AppendOptions={}):Promise<CreativeEvent[]>{return this.appendBatch([event],options);}
 
   /** Correct the durable deliverable itself without invoking a generation provider. */
-  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest):Promise<AudioTrimEditResult>;
+  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest,convertedSource?:Uint8Array):Promise<AudioTrimEditResult>;
   async reviseDocumentArtifact(artifactId:string,input:VideoTrimEditRequest):Promise<VideoTrimEditResult>;
   async reviseDocumentArtifact(artifactId:string,input:Model3dScaleEditRequest):Promise<Model3dScaleEditResult>;
   async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<boolean>;
-  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|VideoTrimEditRequest|Model3dScaleEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<AudioTrimEditResult|VideoTrimEditResult|Model3dScaleEditResult|boolean>{
+  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|VideoTrimEditRequest|Model3dScaleEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number},convertedSource?:Uint8Array):Promise<AudioTrimEditResult|VideoTrimEditResult|Model3dScaleEditResult|boolean>{
     if ("model3dScale" in input) return this.#reviseModel3dDocumentArtifact(artifactId,input);
     if ("videoTrim" in input) return this.#reviseVideoDocumentArtifact(artifactId,input);
+    if (convertedSource !== undefined && (Object.getPrototypeOf(convertedSource) !== Uint8Array.prototype || convertedSource.byteLength > PCM_WAV_EDIT_MAX_BYTES)) return {status:"refused",code:"invalid_range"};
+    const convertedBytes = convertedSource ? new Uint8Array(convertedSource) : null;
+    try {
     const requestInput=JSON.parse(JSON.stringify(input)) as typeof input;
-    const trimInput = "audioTrim" in requestInput ? requestInput : null;
+    const trimRequested = "audioTrim" in requestInput;
+    const trimInput = trimRequested ? parseAudioTrimOperationRequest(requestInput) : null;
+    if (trimRequested && !trimInput || Boolean(trimInput?.audioTrim.conversion) !== Boolean(convertedBytes)) return {status:"refused",code:"invalid_range"};
     const textInput = "markdown" in requestInput ? requestInput : null;
     const trimFailure = (status: "conflict" | "refused" | "unconfirmed" | "retired", code: "source_changed" | "invalid_range" | "unsupported" | "unavailable" | "access_denied" | "unconfirmed" | "retired") =>
       ({status,code} as AudioTrimEditResult);
@@ -4205,7 +4228,7 @@ export class FormaStore {
     const projectId=this.projection.get().projectId,revisionBefore=documentArtifactRevision(this.events.get(),artifactId);
     const retainedDraft = parseDocumentArtifactContent(retainedBefore);
     const unchangedContent=(()=>{
-      if (trimInput) return trimInput.audioTrim.startFrame === 0 && trimInput.audioTrim.endFrame === trimInput.audioTrim.sourceFrameCount
+      if (trimInput) return !trimInput.audioTrim.conversion && trimInput.audioTrim.startFrame === 0 && trimInput.audioTrim.endFrame === trimInput.audioTrim.sourceFrameCount
         && trimInput.audioTrim.resultMediaSha256 === trimInput.audioTrim.sourceMediaSha256 && typeof retainedBefore === "string" ? retainedBefore : null;
       if(!artifact||!contentRef||!Number.isSafeInteger(requestInput.expectedRevision)||requestInput.expectedRevision!==revisionBefore
         ||!textInput||typeof textInput.markdown!=="string"||!textInput.markdown.trim())return null;
@@ -4247,6 +4270,14 @@ export class FormaStore {
       if (revisionBefore !== trimInput.expectedRevision || artifact.settings.source_media_sha256 !== trim.sourceMediaSha256
         || await digestText(retainedBefore) !== trimInput.expectedContentSha256) return trimFailure("conflict","source_changed");
       if (!trimSourceCurrent()) return trimFailure("retired","retired");
+      if (trim.conversion) {
+        const info = convertedBytes && inspectPcmWav(convertedBytes);
+        if (artifact.mediaType !== "audio/mpeg" || !convertedBytes || !info || convertedBytes.length !== trim.conversion.decodedByteLength
+          || info.sampleRate !== trim.conversion.sampleRate || info.channels !== trim.conversion.channels || info.frameCount !== trim.conversion.frameCount) return trimFailure("refused","invalid_range");
+        const decodedHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(convertedBytes))),byte=>byte.toString(16).padStart(2,"0")).join("");
+        if (!trimSourceCurrent()) return trimFailure("retired","retired");
+        if (decodedHash !== trim.conversion.decodedMediaSha256) return trimFailure("refused","invalid_range");
+      }
     }
     const admission=await this.#admitEventWrite([{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],"append"),observation=admission.observation;
     if(!admission.admitted){if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!this.sourceOwnershipActive(sourceOwner)},[],this.sourceOwnershipActive(sourceOwner)?"none":"withheld",{silent:true});return trimInput ? trimFailure(this.sourceOwnershipActive(sourceOwner)?"unconfirmed":"retired",this.sourceOwnershipActive(sourceOwner)?"unconfirmed":"retired") : false;}
@@ -4256,7 +4287,8 @@ export class FormaStore {
       if(!this.sourceOwnershipActive(sourceOwner)||trimInput&&!trimSourceCurrent()){this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");return trimInput?trimFailure("retired","retired"):false;}
       this.busy.set("DocumentArtifactEdited");this.notify();let dispatched=false;observation.attempted=true;
       try{
-        const response=await this.guardedFetch("/api/artifacts/"+encodeURIComponent(artifactId),{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(requestInput)},"save a correction to this finished output",
+        const wire = convertedBytes ? {operation:trimInput,convertedAudioSource:encodeAudioConversionSource(convertedBytes)} : requestInput;
+        const response=await this.guardedFetch("/api/artifacts/"+encodeURIComponent(artifactId),{method:"PATCH",headers:{"content-type":convertedBytes?AUDIO_LOCAL_CONVERSION_MEDIA_TYPE:"application/json"},body:JSON.stringify(wire)},"save a correction to this finished output",
           {current:()=>dispatched||(trimInput?trimSourceCurrent():this.sourceOwnershipActive(sourceOwner)),onDispatch:()=>{dispatched=true;}});
         this.#assertAuthorizationScope(authorization);
         const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;revision?:number;error?:string;message?:string};
@@ -4321,7 +4353,8 @@ export class FormaStore {
         if(current)this.toast(error instanceof Error?error.message:"The finished output could not be saved.");return false;
       }finally{if(this.sourceOwnershipScopeActive(sourceOwner)){this.busy.set("");this.notify();}}
     };
-    const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+    const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return await pending;
+    } finally { convertedBytes?.fill(0); }
   }
 
   #generatedImageOwner(outputId:string,current:()=>boolean=()=>true){
@@ -4525,6 +4558,7 @@ export class FormaStore {
       ||audio.source.url!==snapshot.sourceMediaUrl||audio.source.sha256!==input.audioTrim.sourceMediaSha256||audio.source.revision!==snapshot.sourceRevision
       ||audio.source.contentSha256!==input.expectedContentSha256||audio.source.frameCount!==input.audioTrim.sourceFrameCount
       ||audio.startFrame!==input.audioTrim.startFrame||audio.endFrame!==input.audioTrim.endFrame||audio.media.sha256!==input.audioTrim.resultMediaSha256
+      ||audio.operation!==(input.audioTrim.conversion?"client-converted-trim":"trim")||JSON.stringify(audio.conversion)!==JSON.stringify(input.audioTrim.conversion)
       ||JSON.stringify(parseAudioMediaRevision(event.payload.audio_revision))!==JSON.stringify(audio))return null;
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw))),byte=>byte.toString(16).padStart(2,"0")).join("");
     if(event.payload.content_sha256!==digest)return null;
@@ -4536,8 +4570,7 @@ export class FormaStore {
     const unconfirmed:AudioTrimEditResult={status:"unconfirmed",code:"unconfirmed"},retired:AudioTrimEditResult={status:"retired",code:"retired"};
     let request:AudioTrimEditRequest;
     try{request=JSON.parse(JSON.stringify(input)) as AudioTrimEditRequest;}catch{return unconfirmed;}
-    const canonical=(value:AudioTrimEditRequest)=>JSON.stringify({expectedRevision:value.expectedRevision,expectedContentSha256:value.expectedContentSha256,
-      audioTrim:{sourceMediaSha256:value.audioTrim.sourceMediaSha256,sourceFrameCount:value.audioTrim.sourceFrameCount,startFrame:value.audioTrim.startFrame,endFrame:value.audioTrim.endFrame,resultMediaSha256:value.audioTrim.resultMediaSha256}});
+    const canonical=(value:AudioTrimEditRequest)=>{const result=audioTrimOperationFingerprintInput(value);if(!result)throw new TypeError("audio_trim_invalid_range");return result;};
     let fingerprintInput:string;
     try{fingerprintInput=canonical(request);}catch{return unconfirmed;}
     const observation=[...this.#eventWriteObservations.values()].find(value=>value.audioTrim?.artifactId===artifactId&&canonical(value.audioTrim.request)===fingerprintInput);
@@ -6551,8 +6584,8 @@ export class FormaStore {
     const productionMode=options.productionMode??"manual";let requestedSlideCount=kind==="slides"?options.requestedSlideCount??options.itemCount:undefined;let itemCount=kind==="slides"?requestedSlideCount:options.itemCount;
     if(kind==="slides"&&options.slideCountPolicy!==undefined){try{const count=resolvePresentationCountRequest({...options,productionMode});requestedSlideCount=count.requestedSlideCount;itemCount=count.itemCount;}catch(error){this.toast(error instanceof Error?error.message:"Invalid presentation count policy");return false;}}
     if(kind==="slides"){if(options.itemCount!==undefined&&options.requestedSlideCount!==undefined&&options.itemCount!==options.requestedSlideCount){this.toast("The selected slide count does not match the requested presentation size.");return false;}const maximumSlideCount=productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:15;if(requestedSlideCount!==undefined&&(!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1||requestedSlideCount>maximumSlideCount)){this.toast(this.#systemNotice("{mode} presentations support between 1 and {maximum} slides. The request was not started.",{mode:this.#systemNotice(productionMode==="managed"?"Managed":"Manual"),maximum:maximumSlideCount}));return false;}}
-    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,...(options.slideCountPolicy?{slideCountPolicy:options.slideCountPolicy}:{}),authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}${options.slideCountPolicy?`:policy:${generationRevisionFor(options.slideCountPolicy)}`:""}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}${audioIdentity}${workflowIdentity}`;
-    try{const {job,reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId,nativeStory?{current:nativeStory.current,onDispatch:nativeStory.onDispatch,nativeShortStory:true}:undefined);
+    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const soundtrackBlockIds=[...new Set((options.soundtrackBlockIds??[]).map(String).filter(Boolean))];const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,...(options.slideCountPolicy?{slideCountPolicy:options.slideCountPolicy}:{}),authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}${options.slideCountPolicy?`:policy:${generationRevisionFor(options.slideCountPolicy)}`:""}`:"";const audioIdentity=soundtrackBlockIds.length||options.sendSoundtrackToVideoProvider===true||options.audioImageBlockId||options.audioProfile||options.audioProviderModel||options.audioVideoArtifactId||options.sendAudioVideoToProvider===true?`:audio:${generationRevisionFor({soundtrackBlockIds,sendSoundtrackToVideoProvider:options.sendSoundtrackToVideoProvider===true,audioImageBlockId:options.audioImageBlockId??null,...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{})})}`:"";const workflow=options.workflowId&&options.workflowStageId?{workflowId:options.workflowId,workflowStageId:options.workflowStageId,workflowSources:options.workflowSources??[]}:null;const workflowIdentity=workflow?`:workflow:${generationRevisionFor({workflowId:workflow.workflowId,workflowStageId:workflow.workflowStageId,sources:productionWorkflowSourceIdentity(workflow.workflowSources)})}`:"";const videoIdentity=kind==="video"&&options.videoResolution!==undefined?`:resolution:${options.videoResolution}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}${audioIdentity}${workflowIdentity}${videoIdentity}`;
+    try{const {job,reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,...(options.videoResolution!==undefined?{videoResolution:options.videoResolution}:{}),videoAudioMode:options.videoAudioMode,...(soundtrackBlockIds.length?{soundtrackBlockIds}:{}),...(options.sendSoundtrackToVideoProvider===true?{sendSoundtrackToVideoProvider:true}:{}),...(options.audioImageBlockId?{audioImageBlockId:options.audioImageBlockId}:{}),...(options.audioProfile?{audioProfile:options.audioProfile}:{}),...(options.audioProviderModel?{audioProviderModel:options.audioProviderModel}:{}),...(options.audioVideoArtifactId?{audioVideoArtifactId:options.audioVideoArtifactId}:{}),...(options.sendAudioVideoToProvider===true?{sendAudioVideoToProvider:true}:{}),...(workflow??{}),productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId,nativeStory?{current:nativeStory.current,onDispatch:nativeStory.onDispatch,nativeShortStory:true}:undefined);
       if(nativeStory){
         const handle=acknowledgedNativeStoryHandle(job,{documentId,documentRevision:context.documentRevision,requestKey});
         if(!handle)throw new Error("native_story_job_identity_mismatch");

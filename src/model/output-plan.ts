@@ -1,3 +1,9 @@
+import type { Model3dOutputContract } from "./output-model3d-contract.ts";
+import type { VideoOutputContract } from "./output-video-contract.ts";
+import type { StoryboardOutputContract } from "./output-storyboard-contract.ts";
+import type { AudioOutputContract } from "./output-audio-contract.ts";
+import type { SceneOutputContract } from "./output-scene-contract.ts";
+import type { ShortStoryNarrativeContract } from "./output-narrative-contract.ts";
 import { deriveOutputRequirementId, inspectOutputRequirement, isOutputRequirementId, outputRequirementInterpretationBasis, outputRequirementInterpretationNeedsReview, validateOutputCountPolicy, OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT, type OutputAspectRatio, type OutputCountPolicy, type OutputCoverage, type OutputDeliverable, type OutputIssue, type OutputMediaKind, type OutputQuantity, type OutputRequirementSpec, type OutputSourceScope } from "./output-requirements.ts";
 
 export type OutputPlanOptions = {
@@ -28,6 +34,12 @@ export type OutputPlanTarget = {
   aspect_ratio: OutputAspectRatio | null;
   source_scope: OutputSourceScope; coverage: OutputCoverage;
   content_quantity: OutputQuantity | null;
+  narrative_contract?: ShortStoryNarrativeContract;
+  scene_contract?: SceneOutputContract;
+  audio_contract?: AudioOutputContract;
+  video_contract?: VideoOutputContract;
+  storyboard_contract?: StoryboardOutputContract;
+  model3d_contract?: Model3dOutputContract;
   count_policy: OutputCountPolicy | null;
   suggested_count: number | null;
   instruction_text: string;
@@ -178,6 +190,13 @@ export function compileOutputPlan(specs: readonly OutputRequirementSpec[], optio
         const targetSelected = selectedTargets === null ? selected : chosenByTarget;
         if (!required && chosenByTarget) obligation.selected = true;
         const target: OutputPlanTarget = { id: targetId, requirement_id: spec.id, deliverable_id: entry.id, obligation_id: row.id, variant_id: row.variant_id ?? null, member_id: row.member_id ?? null, label: count === 1 ? row.label : `${row.label} ${ordinal}`, media_kind: entry.media_kind, required, selected: targetSelected, ordinal, quantity: { kind: "exact", unit: row.quantity.unit, value: 1 }, aspect_ratio: copy(row.aspect_ratio ?? null), source_scope: copy(source), coverage: copy(coverage), content_quantity: copy(contentQuantity), count_policy: copy(contentPolicy), suggested_count: validSuggestion ? suggestion : null, instruction_text: row.instruction_text, source_revision: options.source_revision, requirement_revision: options.requirement_revision, blocking_issues: copy(blocking) };
+        // Never synthesize a null/default field on legacy targets; their digest stays unchanged.
+        if (Object.hasOwn(entry, "narrative_contract")) target.narrative_contract = copy(entry.narrative_contract!);
+        if (Object.hasOwn(entry, "scene_contract")) target.scene_contract = copy(entry.scene_contract!);
+        if (Object.hasOwn(entry, "audio_contract")) target.audio_contract = copy(entry.audio_contract!);
+        if (Object.hasOwn(entry, "video_contract")) target.video_contract = copy(entry.video_contract!);
+        if (Object.hasOwn(entry, "storyboard_contract")) target.storyboard_contract = copy(entry.storyboard_contract!);
+        if (Object.hasOwn(entry, "model3d_contract")) target.model3d_contract = copy(entry.model3d_contract!);
         plan.targets.push(target);
         obligation.target_ids.push(targetId);
       }

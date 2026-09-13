@@ -6,6 +6,8 @@ export type AudioTrimCopy = Readonly<{
   waveform: string; preview: string; previewLabel: string; previewUnavailable: string;
   save: string; saving: string; check: string; checking: string; cancel: string; done: string; finish: string;
   personalOnly: string; nativeHint: string;
+  conversionHelp: string; conversionAction: string; conversionReady: string; conversionSave: string;
+  conversionDetailsLabel: string; conversionDetails: string; conversionFailure: string;
   status: Readonly<Record<AudioTrimEditCode, string>>;
 }>;
 
@@ -19,8 +21,13 @@ const en: AudioTrimCopy = {
   previewUnavailable: "The preview could not be loaded. Your selection is preserved.",
   save: "Save trim", saving: "Saving trim…", check: "Check this Save", checking: "Checking this Save…", cancel: "Cancel", done: "Done",
   finish: "Save or cancel the trim before closing this output.",
-  personalOnly: "Trimming is available for supported personal PCM WAV outputs up to 25 MiB.",
-  nativeHint: "This view is for playback. In Library, you can trim and save supported PCM WAV outputs in personal documents you own.",
+  personalOnly: "Trim owned PCM WAV audio, or explicitly prepare a local WAV copy of supported MP3 audio. Files are limited to 25 MiB.",
+  nativeHint: "Edit in Forma opens audio trimming. MP3 requires explicit local WAV preparation.",
+  conversionHelp: "Prepare a local WAV copy, adjust the trim, then save a new revision. The original MP3 is kept.",
+  conversionAction: "Prepare WAV trim", conversionReady: "WAV ready", conversionSave: "Save WAV trim",
+  conversionDetailsLabel: "Local conversion details",
+  conversionDetails: "Your browser performs the conversion. Forma verifies the submitted PCM and trim, but does not certify that this browser’s decode is identical to the original.",
+  conversionFailure: "This browser could not prepare the audio. The original has not changed.",
   status: {
     saved: "Trim saved as a new revision. Request a fresh review before approval.",
     unchanged: "The whole audio is selected. No new revision was created.",
@@ -44,8 +51,13 @@ const fr: AudioTrimCopy = {
   previewUnavailable: "L’aperçu n’a pas pu être chargé. Votre sélection est conservée.",
   save: "Enregistrer le rognage", saving: "Enregistrement du rognage…", check: "Vérifier cet enregistrement", checking: "Vérification de cet enregistrement…", cancel: "Annuler", done: "Terminé",
   finish: "Enregistrez ou annulez le rognage avant de fermer ce résultat.",
-  personalOnly: "Le rognage est disponible pour les résultats personnels au format WAV PCM pris en charge, jusqu’à 25 Mio.",
-  nativeHint: "Cette vue sert à la lecture. Dans la Bibliothèque, vous pouvez rogner et enregistrer les résultats WAV PCM pris en charge dans les documents personnels dont vous êtes propriétaire.",
+  personalOnly: "Rognez vos fichiers WAV PCM, ou préparez explicitement une copie WAV locale d’un fichier MP3 pris en charge. Taille maximale : 25 Mio.",
+  nativeHint: "Modifier dans Forma ouvre le rognage audio. Un MP3 nécessite une préparation WAV locale explicite.",
+  conversionHelp: "Préparez une copie WAV locale, ajustez le rognage, puis enregistrez une nouvelle révision. Le MP3 original est conservé.",
+  conversionAction: "Préparer le rognage WAV", conversionReady: "WAV prêt", conversionSave: "Enregistrer le rognage WAV",
+  conversionDetailsLabel: "Détails de la conversion locale",
+  conversionDetails: "Votre navigateur effectue la conversion. Forma vérifie le PCM envoyé et le rognage, mais ne certifie pas que le décodage de ce navigateur est identique à l’original.",
+  conversionFailure: "Ce navigateur n’a pas pu préparer l’audio. L’original n’a pas été modifié.",
   status: {
     saved: "Le rognage est enregistré dans une nouvelle révision. Demandez une nouvelle revue avant l’approbation.",
     unchanged: "L’audio entier est sélectionné. Aucune nouvelle révision n’a été créée.",
@@ -69,8 +81,13 @@ const ar: AudioTrimCopy = {
   previewUnavailable: "تعذّر تحميل المعاينة. تم الاحتفاظ بتحديدك.",
   save: "حفظ الاقتطاع", saving: "جارٍ حفظ الاقتطاع…", check: "التحقق من عملية الحفظ هذه", checking: "جارٍ التحقق من عملية الحفظ هذه…", cancel: "إلغاء", done: "تم",
   finish: "احفظ الاقتطاع أو ألغِه قبل إغلاق هذا الناتج.",
-  personalOnly: "يتوفر الاقتطاع للنواتج الشخصية المدعومة بصيغة WAV PCM حتى 25 ميبيبايت.",
-  nativeHint: "هذا العرض مخصص للتشغيل. في المكتبة، يمكنك اقتطاع نواتج WAV PCM المدعومة وحفظها في المستندات الشخصية التي تملكها.",
+  personalOnly: "اقتطع صوت WAV PCM الذي تملكه، أو جهّز صراحةً نسخة WAV محلية من صوت MP3 مدعوم. الحد الأقصى للملفات 25 ميبيبايت.",
+  nativeHint: "يفتح «تعديل في Forma» اقتطاع الصوت. يتطلب MP3 تجهيز WAV محليًا بشكل صريح.",
+  conversionHelp: "جهّز نسخة WAV محلية، واضبط الاقتطاع، ثم احفظ مراجعة جديدة. يبقى MP3 الأصلي محفوظًا.",
+  conversionAction: "تجهيز اقتطاع WAV", conversionReady: "WAV جاهز", conversionSave: "حفظ اقتطاع WAV",
+  conversionDetailsLabel: "تفاصيل التحويل المحلي",
+  conversionDetails: "ينفّذ متصفحك التحويل. يتحقق Forma من بيانات PCM المرسلة والاقتطاع، لكنه لا يشهد بأن فك الترميز في هذا المتصفح مطابق للأصل.",
+  conversionFailure: "تعذّر على هذا المتصفح تجهيز الصوت. لم يتغير الأصل.",
   status: {
     saved: "حُفظ الاقتطاع كمراجعة جديدة. اطلب مراجعة أخرى قبل الموافقة.",
     unchanged: "تم تحديد الصوت بالكامل. لم تُنشأ مراجعة جديدة.",
@@ -94,8 +111,13 @@ const ja: AudioTrimCopy = {
   previewUnavailable: "プレビューを読み込めませんでした。選択範囲は保持されています。",
   save: "トリミングを保存", saving: "トリミングを保存中…", check: "この保存結果を確認", checking: "この保存結果を確認中…", cancel: "キャンセル", done: "完了",
   finish: "この出力を閉じる前に、トリミングを保存するかキャンセルしてください。",
-  personalOnly: "トリミングは、25 MiB以下の対応する個人用PCM WAV出力で利用できます。",
-  nativeHint: "この画面は再生用です。ライブラリでは、自分が所有する個人用ドキュメントの対応するPCM WAV出力をトリミングして保存できます。",
+  personalOnly: "所有するPCM WAV音声をトリミングするか、対応するMP3音声からローカルWAVコピーを明示的に準備できます。ファイルは25 MiB以下に限ります。",
+  nativeHint: "「Formaで編集」で音声トリミングを開きます。MP3はローカルWAVの明示的な準備が必要です。",
+  conversionHelp: "ローカルWAVコピーを準備し、範囲を調整して新しいリビジョンを保存します。元のMP3は保持されます。",
+  conversionAction: "WAVトリミングを準備", conversionReady: "WAV準備完了", conversionSave: "WAVトリミングを保存",
+  conversionDetailsLabel: "ローカル変換の詳細",
+  conversionDetails: "変換はブラウザが行います。Formaは送信されたPCMとトリミングを検証しますが、このブラウザによるデコードが元の音声と同一であるとは保証しません。",
+  conversionFailure: "このブラウザでは音声を準備できませんでした。元の音声は変更されていません。",
   status: {
     saved: "トリミングを新しいリビジョンとして保存しました。承認の前に再レビューを依頼してください。",
     unchanged: "音声全体が選択されています。新しいリビジョンは作成されませんでした。",

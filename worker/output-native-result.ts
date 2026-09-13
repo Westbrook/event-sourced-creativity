@@ -15,6 +15,10 @@ import { OutputConflictError, type OutputSqlAssertion } from "./output-requireme
  * selection, pin, or whole-Document review becomes a new target approval. */
 export async function resolveOutputNativeResult(input:OutputBridgeTargetInput&{nativeJobId:string}):Promise<{bytes:Uint8Array;name:string;origin:Record<string,unknown>;assertions:OutputSqlAssertion[]}>{
  const {env,scope,target}=input;
+ if(Object.hasOwn(target,"video_contract"))throw new OutputConflictError("native_video_contract_result_unavailable",422);
+ if(Object.hasOwn(target,"audio_contract"))throw new OutputConflictError("native_audio_contract_result_unavailable",422);
+ if(Object.hasOwn(target,"scene_contract"))throw new OutputConflictError("native_scene_result_unavailable",422);
+ if(Object.hasOwn(target,"narrative_contract"))throw new OutputConflictError("native_narrative_result_unavailable",422);
  const job=await env.DB.prepare(`SELECT job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.correlation_id,slot.slot_id,slot.target_id,slot.target_contract_digest,slot.source_digest
    FROM document_jobs job JOIN output_operation_slots slot ON slot.job_id=job.job_id
    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id

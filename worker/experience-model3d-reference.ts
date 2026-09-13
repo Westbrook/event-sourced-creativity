@@ -1,0 +1,39 @@
+import { readModel3dReferenceIntent } from "../src/experiences/model3d-reference.ts";
+import { authorizeExperienceIntake, readExperienceBody } from "./experience-intake-api.ts";
+import { loadOutputTrustedContext } from "./output-requirements-api.ts";
+import { inspectModel3dReferenceCustody } from "./model3d-reference-custody.ts";
+import type { WorkerEnv } from "./runtime.ts";
+
+const reply = (body: unknown, status = 200) => Response.json(body, { status, headers: {
+  "cache-control": "private, no-store", "x-content-type-options": "nosniff",
+} });
+const refused = (error: string, status: number) => reply({ version: 1, status: "unavailable", error, generation: "unavailable" }, status);
+
+/** Inspection only: no provider request, asset copy, grant, draft or rights event. */
+export async function handleExperienceModel3dReference(request: Request, env: WorkerEnv): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname !== "/api/experiences/model3d/reference/inspect" || url.search || url.hash) return refused("not_found", 404);
+  if (request.method !== "POST") return refused("method_not_allowed", 405);
+  if (request.headers.get("origin") && request.headers.get("origin") !== url.origin
+    || request.headers.get("sec-fetch-site") === "cross-site") return refused("same_origin_required", 403);
+  const auth = await authorizeExperienceIntake(request, env);
+  if (auth instanceof Response) return auth;
+  let selection;
+  try { selection = readModel3dReferenceIntent(await readExperienceBody(request)); }
+  catch { return refused("request_invalid", 400); }
+  if (!selection) return refused("model3d_reference_selection_invalid", 400);
+  const trusted = await loadOutputTrustedContext(request, env, selection.sourceDocumentId, "read");
+  if (trusted instanceof Response) return trusted;
+  try {
+    const inspection = await inspectModel3dReferenceCustody(trusted, auth, selection);
+    return reply({ version: 1, status: "inspected", inspection, generation: "unavailable",
+      notice: "Permission is your statement. The current source and private-file custody were checked; this is not a saved reference, transfer, approval, or generation authorization." });
+  } catch (error) {
+    const candidate = error as { code?: unknown; status?: unknown };
+    if (typeof candidate?.code === "string" && /^model3d_reference_[a-z_]+$/u.test(candidate.code)
+      && typeof candidate.status === "number" && [400, 403, 409].includes(candidate.status)) return refused(candidate.code, candidate.status);
+    if (request.signal.aborted) return refused("model3d_reference_read_cancelled", 409);
+    // Existing private/provider-style errors are not serialized into this new response.
+    return refused("model3d_reference_unavailable", 409);
+  }
+}

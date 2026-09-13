@@ -2,7 +2,10 @@ import { parseModel3dMediaRevision, parseModel3dCurrentProjection, type Model3dC
 import { validWorkspaceQuickEditEvents } from "../src/model/workspace-local-proposal.ts";
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
-import { FORMA_CAPABILITIES, type FormaCapability } from "../src/platform/capabilities.ts";
+import type { FormaCapability } from "../src/platform/capabilities.ts";
+import type { ProjectRequestContext } from "./project-request-context.ts";
+export type { ProjectRequestContext };
+export { hasProjectContextCookie, projectContextCookie, rejectProjectContext, readProjectRequestContext } from "./project-request-context.ts";
 import { DURABLE_WORK_RETENTION_END, POLICY_VERSION, hasCapability, type BudgetReservationGuard, type PilotUser } from "./pilot-policy.ts";
 import { appendEvents, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readEvents, readEventsByClientEventIds, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { validateCanvasEvent } from "./realtime/canvas-admission.ts";
@@ -21,9 +24,11 @@ import { combineAuthoringGuards, prepareAuthoringEventBatch, prepareAuthoringMed
 import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
 import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
 import { validateModel3dAssetEvents } from "./model3d-event-guards.ts";
-import { assistantOwnSendGuard, assistantOwnSendProjectIndexGuard, assistantStructuredOwnSendGuard, assistantStructuredOwnSendProjectIndexGuard, type AssistantContextReadObserver, type AssistantContextReadDescriptor, type AssistantOwnSendFootprint, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
+import { assistantStructuredOwnSendGuard, assistantStructuredOwnSendProjectIndexGuard, type AssistantContextReadObserver, type AssistantContextReadDescriptor, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
+import { projectSourceProjectionAssertion, projectSourceProjectionCurrentAssertion, prepareProjectSourceEventsStatement, type ProjectSourceScope } from "./project-source-read.ts";
+export { projectSourceProjectionCurrentAssertion, prepareProjectSourceEventsStatement };
+export type { ProjectSourceScope };
 
-const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
   ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","EmptyCanvasChosen",
@@ -60,10 +65,6 @@ const artifactContentHoldSql=(content:string,artifact:string)=>`EXISTS(SELECT 1 
         AND retention.project_access_id=${artifact}.project_access_id AND retention.classification='governed-evidence'
     WHERE policy.organization_id=${artifact}.organization_id AND policy.legal_hold=1)`;
 
-export type ProjectRequestContext={
-  contextId:string;organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;
-  principalUserId:string;role:string;permissions:FormaCapability[];expiresAt:string;
-};
 
 /** Resolve billing only from an exact, active owner/document/tenant relationship. */
 export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,documentId:string,verifiedProjectId=""){
@@ -109,50 +110,6 @@ export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,do
   return{scope:{...active[0],projectId,ownerUserId:user.userId},denied:false as const};
 }
 
-const readCookie=(request:Request,name:string)=>{
-  const value=request.headers.get("cookie")?.split(";").map((part)=>part.trim()).find((part)=>part.startsWith(`${name}=`))?.slice(name.length+1)??"";
-  try{return decodeURIComponent(value);}catch{return"";}
-};
-
-/** Presence only, using the resolver's exact first-cookie/decode semantics; not authority. */
-export const hasProjectContextCookie=(request:Request)=>Boolean(readCookie(request,CONTEXT_COOKIE));
-
-export const projectContextCookie=(request:Request,value:string,maxAge:number)=>`${CONTEXT_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol==="https:"?"; Secure":""}`;
-
-export function rejectProjectContext(request:Request,error="project_access_revoked"){
-  return Response.json({error},{status:403,headers:{"set-cookie":projectContextCookie(request,"",0),"cache-control":"private, no-store"}});
-}
-
-/** Resolve the opaque selection against live membership and migration state on every request. */
-export async function readProjectRequestContext(request:Request,env:WorkerEnv,principal:PilotUser):Promise<{context:ProjectRequestContext|null;response:Response|null}>{
-  const contextId=readCookie(request,CONTEXT_COOKIE);
-  if(!contextId)return{context:null,response:null};
-  if(principal.fictional||readCookie(request,"forma_impersonation"))return{context:null,response:Response.json({error:"project_context_impersonation_unavailable"},{status:409,headers:{"set-cookie":projectContextCookie(request,"",0)}})};
-  const now=new Date().toISOString();
-  const row=await env.DB.prepare(`SELECT context.context_id,context.organization_id,context.project_access_id,context.expires_at,
-      project.project_id,project.owner_user_id,CASE WHEN project.owner_user_id=? THEN 'owner' ELSE project_member.role END AS role
-    FROM project_context_sessions context
-    JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
-    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.status='active'
-    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-    JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
-      AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
-    LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-    WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>?
-      AND (project.owner_user_id=? OR project_member.membership_id IS NOT NULL)
-      AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.organization_id=project.organization_id AND cohort.status IN ('active','paused','closed')
-        AND (cohort.status!='closed' OR NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id AND successor.status IN ('active','paused')))
-        AND NOT EXISTS(SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id AND participant.organization_id=project.organization_id
-          AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL))`)
-    .bind(principal.userId,principal.userId,principal.userId,contextId,principal.userId,now,principal.userId,principal.userId).first<Record<string,unknown>>();
-  if(!row)return{context:null,response:rejectProjectContext(request)};
-  const scope={organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id)};
-  if(!hasCapability(principal,"project.read",scope))return{context:null,response:rejectProjectContext(request)};
-  const permissions=FORMA_CAPABILITIES.filter((capability)=>capability.startsWith("project.")&&hasCapability(principal,capability,scope));
-  const effectiveRole=principal.access.projects.find((project)=>project.organizationId===scope.organizationId&&project.projectAccessId===scope.projectAccessId)?.role??String(row.role);
-  return{response:null,context:{contextId,organizationId:scope.organizationId,projectAccessId:scope.projectAccessId,projectId:String(row.project_id),ownerUserId:String(row.owner_user_id),principalUserId:principal.userId,role:effectiveRole,permissions,expiresAt:String(row.expires_at)}};
-}
 
 type ProjectIndex={
   projectId:string;documentIds:Set<string>;blockIds:Set<string>;relationIds:Set<string>;collectionIds:Set<string>;
@@ -915,31 +872,6 @@ export async function readProjectAssistantEventView(env:WorkerEnv,context:Projec
     .filter((event)=>event.type!=="ProjectResourceRestricted");
 }
 
-export type ProjectSourceScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string};
-
-function projectSourceProjectionAssertion(scope:ProjectSourceScope,head:{sql:string;bindings:Readonly<BudgetReservationGuard["bindings"]>}|null){
-  return {sql:`EXISTS(SELECT 1 FROM project_migration_states migration
-    JOIN organization_projects project ON project.project_access_id=migration.project_access_id AND project.organization_id=migration.organization_id
-      AND project.owner_user_id=migration.owner_user_id AND project.status='active'
-    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-    WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND project.project_id=?
-      AND migration.status='active'${head?` AND ${head.sql}`:""}
-      AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=migration.project_access_id
-        AND resource.organization_id=migration.organization_id AND resource.project_id=project.project_id AND resource.owner_user_id=migration.owner_user_id
-        AND resource.resource_kind='manifest_version' AND resource.resource_id='canvas-v1'))`,
-    bindings:[scope.projectAccessId,scope.organizationId,scope.ownerUserId,scope.projectId,...(head?.bindings??[])]};
-}
-
-/** A read may require a current projection, but cannot reactivate or repair one. */
-export function projectSourceProjectionCurrentAssertion(scope:ProjectSourceScope,own?:AssistantOwnSendFootprint){
-  if(own&&(!own.scope||own.streamId!=="creative:"+scope.ownerUserId||own.scope.organizationId!==scope.organizationId
-    ||own.scope.projectAccessId!==scope.projectAccessId||own.scope.projectId!==scope.projectId||own.scope.ownerUserId!==scope.ownerUserId))throw new Error("context_own_send_scope");
-  const suffix=own?assistantOwnSendGuard(own):null;
-  const index=own?assistantOwnSendProjectIndexGuard(own,true):null,partialIndex=own?assistantOwnSendProjectIndexGuard(own):null;
-  const head=own?`(migration.last_owner_sequence=? OR migration.last_owner_sequence=? AND (${index!.sql}))`:"migration.last_owner_sequence=(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)";
-  const current=projectSourceProjectionAssertion(scope,{sql:head,bindings:own?[own.sourceHead,own.sourceHead+own.eventWrites.length,...index!.bindings]:[`creative:${scope.ownerUserId}`]});
-  return suffix?{sql:`(${current.sql}) AND ((${suffix.sql}) AND (${partialIndex!.sql}))`,bindings:[...current.bindings,...suffix.bindings,...partialIndex!.bindings]}:current;
-}
 
 /** Final-only structured publication proof: never substitutes for the original prewrite source guard. */
 export function projectStructuredSourceProjectionCurrentAssertion(scope:ProjectSourceScope,own:AssistantStructuredOwnSendFootprint){
@@ -956,13 +888,6 @@ export function projectSourceProjectionPublicationAssertion(scope:ProjectSourceS
   return projectSourceProjectionAssertion(scope,null);
 }
 
-/** Shared source SELECT for ordinary refresh and guarded read-only Output execution. */
-export function prepareProjectSourceEventsStatement(env:WorkerEnv,scope:ProjectSourceScope){
-  return env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
-    LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-    WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.project_id=? AND scope.owner_user_id=?
-    ORDER BY scope.project_sequence`).bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId);
-}
 
 /** Internal generation receives exact project history, never an owner's account-wide stream. */
 export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceScope,options:{synchronize?:boolean}={}){

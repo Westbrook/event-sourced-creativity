@@ -1,3 +1,4 @@
+import { captureOutputFalImageRequest, restoreOutputFalImageRequest, submitOutputFalImageRequest, outputFalImageCost, type OutputFalCapturedRequest } from "./output-fal-image-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { buildCreativeImagePrompt, validateImageReferences, type CreativeImageOptions, type ImageReference, type ImageOutputFormat } from "./openai-adapter.ts";
 import { moderateExactImagePrompt } from "./openai-moderation.ts";
@@ -6,6 +7,8 @@ import { normalizePromptTechnique } from "../src/model/prompt-structures.ts";
 import { priceFalIdeogramImageBreakdownMicrousd, type FalIdeogramRenderingSpeed } from "./replay-cost.ts";
 import { buildIdeogramPrompt, classifyIdeogramPromptFocus, IDEOGRAM_PROMPT_ADAPTER_VERSION } from "./ideogram-prompt-adapter.ts";
 import { buildIdeogramCaption, IDEOGRAM_CAPTION_ADAPTER_VERSION } from "./ideogram-caption-adapter.ts";
+import { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION } from "./fal-image-identity.ts";
+export { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION };
 
 type FalQueueState = {
   status?: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -34,8 +37,6 @@ type FalCreativeImageOptions = CreativeImageOptions & {
   onProviderReceipt?: (receipt: FalImageProviderReceipt) => void | Promise<void>;
 };
 
-export const FAL_IDEOGRAM_ADAPTER_ID="fal-ideogram-v4";
-export const FAL_IDEOGRAM_ADAPTER_VERSION="v52";
 export const FAL_IDEOGRAM_CAPTION_STRATEGY="production_director" as const;
 export const FAL_IDEOGRAM_REFERENCE_STRENGTHS={inspiration:.99,preserve_composition:.88,preserve_subject:.3,preserve_style:.72,default:.9} as const;
 const FAL_IMAGE_TIMEOUT_MS=10*60*1000;
@@ -108,9 +109,11 @@ const falError=(response:Response,body:unknown,fallback:string,prompt:string,req
   return new ProviderRequestError({...error.detail,code:error.detail.code.startsWith("fal_")?error.detail.code:`fal_${error.detail.code}`,requestId:error.detail.requestId??requestId},prompt);
 };
 
-async function falJson(env:WorkerEnv,url:string,init:RequestInit,prompt:string,requestId:string|null=null){
+async function falJson(env:WorkerEnv,url:string,init:RequestInit,prompt:string,requestId:string|null=null,assertCurrent?:()=>Promise<void>){
+  if(assertCurrent)await assertCurrent();
   let response:Response;try{response=await fetch(url,init);}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),...(requestId?{requestId}:{})},prompt);}
   let body:unknown={};try{body=await response.clone().json();}catch{/* Keep status-level failure evidence. */}
+  if(assertCurrent)await assertCurrent();
   if(!response.ok)throw falError(response,body,`fal_image_${response.status}`,prompt,requestId);
   return body;
 }
@@ -157,14 +160,17 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
   if(options.outputFormat==="webp")throw new ProviderRequestError({code:"fal_webp_output_unsupported",category:"provider",scope:"request",action:"edit_request",message:"The Ideogram V4 adapter returns JPEG or PNG. Choose one of those formats or use the OpenAI image adapter.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const promptTechnique=normalizePromptTechnique(options.promptTechnique);const canonicalPrompt=options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:0});const promptMode=options.ideogramPromptMode??"expanded_plain";const ideogramCaptionStrategy=options.ideogramCaptionStrategy??FAL_IDEOGRAM_CAPTION_STRATEGY;const adaptation=promptMode==="expanded_plain"?buildIdeogramPrompt(snapshot,direction,canonicalPrompt,references,{size,quality,promptTechnique,ideogramCaptionStrategy}):buildIdeogramCaption(snapshot,direction,canonicalPrompt,references,{size,quality,promptTechnique,ideogramCaptionStrategy});const prompt=adaptation.prompt;const promptAdapterVersion=promptMode==="expanded_plain"?IDEOGRAM_PROMPT_ADAPTER_VERSION:IDEOGRAM_CAPTION_ADAPTER_VERSION;const started=Date.now();
   if(!adaptation.valid)throw new ProviderRequestError({code:promptMode==="expanded_plain"?"ideogram_prompt_invalid":"ideogram_caption_invalid",category:"provider",scope:"request",action:"edit_request",message:`The Ideogram ${promptMode==="expanded_plain"?"prompt":"caption"} compiler produced an invalid provider prompt: ${adaptation.issues.join("; ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400},prompt);
-  await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
-  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
-  if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation"},prompt);
-
   const model=falImageModelForRequest(env,quality,references,direction);
   const speed=falRenderingSpeed(quality);const expansionModel=falExpansionModelForRequest(env,quality,model,promptMode,options.ideogramExpansionModel);const format=outputFormat(options.outputFormat);const input:Record<string,unknown>={prompt,expansion_model:expansionModel,image_size:{width:sizeResult.width,height:sizeResult.height},rendering_speed:speed,acceleration:"none",num_images:1,sync_mode:false,enable_safety_checker:true,output_format:format};
   if(Number.isFinite(options.ideogramSeed))input.seed=Math.max(0,Math.min(2_147_483_647,Math.floor(Number(options.ideogramSeed))));
   if(references[0]){input.image_url=dataUri(references[0]);input.strength=falReferenceStrength(references[0],options.ideogramReferenceStrength);}
+  const nativeRequest=options.outputFalImage===undefined?null:await captureOutputFalImageRequest(options.outputFalImage,model,input,
+    {promptMode,promptAdapterVersion,captionStrategy:ideogramCaptionStrategy,adapterVersion:options.ideogramAdapterVersion??FAL_IDEOGRAM_ADAPTER_VERSION},options.providerClientRequestId??"");
+  if(nativeRequest&&(!options.onBeforeProviderAttempt||!options.onProviderSubmission||!options.onBeforeProviderDispatch||!options.onOutputFalRequest||!options.onBeforeSourceTransmission||options.providerReceipt))throw new Error("output_fal_dispatch_hooks_required");
+  await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
+  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+  if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation"},prompt);
+
   let state:FalQueueState;let receipt:FalImageProviderReceipt;
   if(options.providerReceipt){
     const retained=options.providerReceipt;
@@ -175,7 +181,9 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
     state=await falJson(env,`${receipt.providerStatusUrl}${receipt.providerStatusUrl.includes("?")?"&":"?"}logs=1`,{headers:falHeaders(env),signal:options.signal},prompt,receipt.providerRequestId) as FalQueueState;
   }else{
     await options.onStage?.("provider-submit",`Submitting to ${model}.`);
-    const submitted=await falJson(env,falEndpoint(model),{method:"POST",headers:falHeaders(env),body:JSON.stringify(input),signal:options.signal},prompt) as FalQueueState;
+    const post=(body:string)=>falJson(env,falEndpoint(model),{method:"POST",headers:falHeaders(env),body,signal:options.signal},prompt);
+    const submitted=(nativeRequest?await submitOutputFalImageRequest(nativeRequest,{beforeAttempt:options.onBeforeProviderAttempt!,checkpoint:request=>options.onOutputFalRequest!(request,{canonicalPrompt,promptTechnique,promptMode,promptAdapterVersion,promptAdaptation:adaptation,safety:moderation}),pending:options.onProviderSubmission!,beforeDispatch:options.onBeforeProviderDispatch!},post)
+      :await post(JSON.stringify(input))) as FalQueueState;
     const acceptedRequestId=String(submitted.request_id??"");if(!acceptedRequestId)throw new ProviderRequestError({code:"fal_provider_returned_no_request_id",category:"provider",scope:"request",action:"contact_support",message:"Fal accepted no durable request identifier, so the image cannot be tracked or resubmitted safely.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:502},prompt);
     receipt=falImageProviderReceipt(model,acceptedRequestId,prompt);
     await options.onProviderReceipt?.(receipt);
@@ -197,11 +205,57 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
   }
   await options.onStage?.("provider-download","Ideogram finished rendering. Securing the private result.");
   const result=await falJson(env,responseUrl,{headers:falHeaders(env),signal:options.signal},prompt,requestId) as FalImageResult;
+  const {image,bytes,width,height,mimeType}=await readFalImageFile(result,requestId,prompt,sizeResult,format,options.signal,nativeRequest,nativeRequest?async()=>{await options.onBeforeSourceTransmission?.();}:undefined);
+  return{provider:"fal" as const,adapterId:FAL_IDEOGRAM_ADAPTER_ID,adapterVersion:options.ideogramAdapterVersion??FAL_IDEOGRAM_ADAPTER_VERSION,providerRequestId:requestId,providerMediaUrl:image.url,model,prompt,canonicalPrompt,promptTechnique,promptMode,promptAdapterVersion,promptAdaptation:adaptation,bytes,revisedPrompt:result.prompt&&result.prompt!==prompt?result.prompt:null,createdAt:null,latencyMs:Date.now()-started,usage:{inputTokens:0,outputTokens:0,totalTokens:0,textInputTokens:0,imageInputTokens:0},width,height,mimeType,quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null,strength:falReferenceStrength(reference,options.ideogramReferenceStrength)})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount:0,outputFormat:format,outputCompression:null,seed:Number.isFinite(result.seed)?Number(result.seed):null,nsfwDetected:Boolean(result.has_nsfw_concepts?.some(Boolean)),renderingSpeed:speed,expansionModel,costBreakdown:nativeRequest?outputFalImageCost(nativeRequest.contract):priceFalIdeogramImageBreakdownMicrousd(model,width,height,speed,expansionModel),...(nativeRequest?{pricingVersion:nativeRequest.contract.pricingVersion}:{}),costPrecision:"provider-pixel-rate-estimate" as const};
+}
+
+// Share the existing media/PNG validator between first run and GET-only recovery.
+async function boundedFalImageBytes(response:Response){
+  const {MAX_OUTPUT_ASSET_BYTES}=await import("../src/model/output-asset-inspection.ts");
+  const length=response.headers.get("content-length");
+  if(length!==null&&(!/^\d+$/u.test(length)||Number(length)>MAX_OUTPUT_ASSET_BYTES)){await response.body?.cancel();throw new Error("output_fal_result_too_large");}
+  if(!response.body)throw new Error("output_fal_result_empty");
+  const reader=response.body.getReader(),chunks:Uint8Array[]=[];let total=0;
+  try{
+    for(;;){const chunk=await reader.read();if(chunk.done)break;
+      total+=chunk.value.byteLength;if(total>MAX_OUTPUT_ASSET_BYTES)throw new Error("output_fal_result_too_large");chunks.push(chunk.value);}
+  }catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+  const bytes=new Uint8Array(total);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return bytes;
+}
+async function readFalImageFile(result:FalImageResult,requestId:string,prompt:string,size:{width:number;height:number},format:"png"|"jpeg",signal?:AbortSignal,nativeRequest?:OutputFalCapturedRequest|null,assertCurrent?:()=>Promise<void>){
+  if(nativeRequest&&result.images?.length!==1)throw new Error("output_fal_result_outside_contract");
   const image=result.images?.[0];if(!image?.url)throw new ProviderRequestError({code:"fal_provider_returned_no_image",category:"provider",scope:"request",action:"retry",message:"Fal completed the request without an image URL.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
-  let imageUrl:URL;try{imageUrl=new URL(image.url);}catch{throw new ProviderRequestError({code:"fal_provider_returned_invalid_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an invalid image location.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);}if(imageUrl.protocol!=="https:"||!(imageUrl.hostname==="fal.media"||imageUrl.hostname.endsWith(".fal.media")))throw new ProviderRequestError({code:"fal_provider_returned_untrusted_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an image location outside its trusted media domain.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
-  let imageResponse:Response;try{imageResponse=await fetch(image.url,{signal:options.signal});}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),requestId},prompt);}
+  let imageUrl:URL;try{imageUrl=new URL(image.url);}catch{throw new ProviderRequestError({code:"fal_provider_returned_invalid_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an invalid image location.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);}if(imageUrl.protocol!=="https:"||imageUrl.username||imageUrl.password||imageUrl.port||!(imageUrl.hostname==="fal.media"||imageUrl.hostname.endsWith(".fal.media")))throw new ProviderRequestError({code:"fal_provider_returned_untrusted_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an image location outside its trusted media domain.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
+  await assertCurrent?.();
+  let imageResponse:Response;try{imageResponse=await fetch(image.url,{method:"GET",...(nativeRequest?{redirect:"error" as const}:{}),signal});}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),requestId},prompt);}
   if(!imageResponse.ok)throw falError(imageResponse,{},`fal_image_download_${imageResponse.status}`,prompt,requestId);
-  const bytes=new Uint8Array(await imageResponse.arrayBuffer());if(!bytes.byteLength)throw new ProviderRequestError({code:"fal_provider_returned_empty_image",category:"provider",scope:"request",action:"retry",message:"Fal returned an empty image file.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
-  const width=Number(image.width??sizeResult.width),height=Number(image.height??sizeResult.height);const mimeType=image.content_type??imageResponse.headers.get("content-type")??(format==="png"?"image/png":"image/jpeg");if(!mimeType.startsWith("image/"))throw new ProviderRequestError({code:"fal_provider_returned_non_image",category:"provider",scope:"request",action:"retry",message:"Fal returned a non-image media type for an image request.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
-  return{provider:"fal" as const,adapterId:FAL_IDEOGRAM_ADAPTER_ID,adapterVersion:options.ideogramAdapterVersion??FAL_IDEOGRAM_ADAPTER_VERSION,providerRequestId:requestId,providerMediaUrl:image.url,model,prompt,canonicalPrompt,promptTechnique,promptMode,promptAdapterVersion,promptAdaptation:adaptation,bytes,revisedPrompt:result.prompt&&result.prompt!==prompt?result.prompt:null,createdAt:null,latencyMs:Date.now()-started,usage:{inputTokens:0,outputTokens:0,totalTokens:0,textInputTokens:0,imageInputTokens:0},width,height,mimeType,quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null,strength:falReferenceStrength(reference,options.ideogramReferenceStrength)})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount:0,outputFormat:format,outputCompression:null,seed:Number.isFinite(result.seed)?Number(result.seed):null,nsfwDetected:Boolean(result.has_nsfw_concepts?.some(Boolean)),renderingSpeed:speed,expansionModel,costBreakdown:priceFalIdeogramImageBreakdownMicrousd(model,width,height,speed,expansionModel),costPrecision:"provider-pixel-rate-estimate" as const};
+  const bytes=nativeRequest?await boundedFalImageBytes(imageResponse):new Uint8Array(await imageResponse.arrayBuffer());
+  await assertCurrent?.();if(!bytes.byteLength)throw new ProviderRequestError({code:"fal_provider_returned_empty_image",category:"provider",scope:"request",action:"retry",message:"Fal returned an empty image file.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
+  const width=Number(image.width??size.width),height=Number(image.height??size.height);const mimeType=image.content_type??imageResponse.headers.get("content-type")??(format==="png"?"image/png":"image/jpeg");if(!mimeType.startsWith("image/"))throw new ProviderRequestError({code:"fal_provider_returned_non_image",category:"provider",scope:"request",action:"retry",message:"Fal returned a non-image media type for an image request.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
+  if(nativeRequest){
+    const { inspectOutputAsset }=await import("../src/model/output-asset-inspection.ts");
+    const inspected=await inspectOutputAsset(bytes,"image.png",{snapshot:false});
+    if(width!==nativeRequest.contract.width||height!==nativeRequest.contract.height||mimeType!=="image/png"
+      ||inspected.status!=="inspected"||inspected.kind!=="image"||inspected.mimeType!=="image/png"
+      ||inspected.facts.width!==nativeRequest.contract.width||inspected.facts.height!==nativeRequest.contract.height)throw new Error("output_fal_result_outside_contract");
+  }
+  return{result,image,bytes,width,height,mimeType};
+}
+
+/** One read of an already accepted request. Never plans, moderates, submits, cancels or claims. */
+export async function readOutputFalImageResult(env:WorkerEnv,retained:OutputFalCapturedRequest,receipt:FalImageProviderReceipt,options:{assertCurrent:()=>Promise<void>;signal?:AbortSignal}){
+  if(typeof options?.assertCurrent!=="function"||!env.FAL_KEY?.trim())throw new Error("output_fal_recovery_unavailable");
+  const captured=await restoreOutputFalImageRequest(retained.contract,retained.body,retained.attempt.clientRequestId,retained.attempt.requestDigest);
+  const canonical=falImageProviderReceipt(captured.contract.model,receipt.providerRequestId);
+  if(Object.keys(receipt).length!==Object.keys(canonical).length||Object.entries(canonical).some(([key,value])=>receipt[key as keyof FalImageProviderReceipt]!==value))throw new Error("output_fal_recovery_receipt_mismatch");
+  const read=(url:string)=>falJson(env,url,{method:"GET",redirect:"error",headers:falHeaders(env),signal:options.signal},"",canonical.providerRequestId,options.assertCurrent);
+  const state=await read(canonical.providerStatusUrl) as FalQueueState;
+  if(!state||typeof state!=="object"||state.request_id!==undefined&&state.request_id!==canonical.providerRequestId)throw new Error("output_fal_recovery_receipt_mismatch");
+  if(state.status==="IN_QUEUE"||state.status==="IN_PROGRESS")return{status:"pending" as const,providerRequestId:canonical.providerRequestId};
+  if(state.status!=="COMPLETED"||state.error!==undefined||state.error_type)throw new Error("output_fal_recovery_result_unavailable");
+  const result=await read(canonical.providerResponseUrl) as FalImageResult;
+  if(!result||typeof result!=="object"||result.error!==undefined)throw new Error("output_fal_recovery_result_unavailable");
+  const image=await readFalImageFile(result,canonical.providerRequestId,"",captured.contract,"png",options.signal,captured,options.assertCurrent);
+  await options.assertCurrent();
+  return{status:"completed" as const,providerRequestId:canonical.providerRequestId,...image,costBreakdown:outputFalImageCost(captured.contract),pricingVersion:captured.contract.pricingVersion};
 }

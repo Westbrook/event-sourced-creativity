@@ -1,3 +1,4 @@
+import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
 import { inheritRuntimeSchemaReadiness, type WorkerEnv } from "./runtime.ts";
 import { outputAssertionStatements, OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
@@ -6,7 +7,7 @@ const privateWrite = (sql: string) => /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE
   || /\bUPDATE\s+document_jobs\s+SET\b[\s\S]*(?:result_json|request_json|lease_expires_at)/iu.test(sql);
 
 /** Existing writers run unchanged, with the same transaction guarding their private writes. */
-export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null}={}): WorkerEnv {
+export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined}={}): WorkerEnv {
   const nativeKeys = new Map<string, string>();
   // The private-content INSERT also checks this exact policy version in its
   // transaction. Reusing one request-local read never bypasses a policy change.
@@ -17,14 +18,106 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
     const unwrapped = inputs.map(input => statements.get(input) ?? { statement: input, sql: "" });
     const guards = force || unwrapped.some(input => privateWrite(input.sql))
       ? (await assertions()).flatMap(assertion => outputAssertionStatements(env, assertion)) : [];
+    // Only the execution hook can supply this immutable, verified receipt; an
+    // event's self-described settings alone cannot retain native storage.
+    // Audio separately binds its original approved job/slot and settled calls.
+    const storyboardCompletion=options.storyboardCompletionJson?.()??null;
     const publication = guards.length ? [...nativeKeys].map(([storageKey, hash]) => env.DB.prepare(`UPDATE output_native_storage_writes SET publication_event_id=(
       SELECT completed.event_id FROM events completed JOIN event_private_payloads body ON body.private_event_id=completed.event_id
       JOIN output_operation_slots slot ON slot.scope_key=? AND slot.slot_id=? JOIN document_jobs job ON job.job_id=slot.job_id
-      WHERE completed.type='GenerationCompleted' AND completed.stream_id=job.stream_id AND completed.correlation_id=job.correlation_id
-       AND json_extract(body.private_json,'$.document_id')=? AND json_extract(body.private_json,'$.media_url')=? AND body.redacted_at IS NULL
+      WHERE completed.stream_id=job.stream_id AND completed.correlation_id=job.correlation_id
+       AND json_extract(body.private_json,'$.document_id')=? AND body.redacted_at IS NULL
+       AND (completed.type='GenerationCompleted' AND json_extract(body.private_json,'$.media_url')=?
+        OR completed.type='DocumentRenderCompleted' AND completed.actor='worker:renderer' AND body.owner_id=job.owner_id AND body.document_id=job.document_id
+        AND json_extract(body.private_json,'$.artifact_kind')='storyboard' AND json_extract(body.private_json,'$.source_surface')='outputs'
+        AND json_extract(body.private_json,'$.requested_by_user_id')=job.owner_id
+        AND json_extract(body.private_json,'$.artifact_id')=json_extract(job.result_json,'$.artifactId')
+        AND json_extract(body.private_json,'$.settings.output_storyboard')=json(?)
+        AND json_extract(body.private_json,'$.settings.output_storyboard.jobId')=job.job_id
+        AND json_extract(body.private_json,'$.settings.output_storyboard.slotId')=slot.slot_id
+        AND json_extract(body.private_json,'$.settings.output_storyboard.actorUserId')=job.owner_id
+        AND json_extract(body.private_json,'$.settings.output_storyboard.documentId')=job.document_id
+        AND json_extract(body.private_json,'$.settings.output_storyboard.streamId')=job.stream_id
+        AND json_extract(body.private_json,'$.settings.output_storyboard.correlationId')=job.correlation_id
+        AND json_extract(body.private_json,'$.settings.output_storyboard.version')='output-storyboard-completion-v1'
+        AND json_extract(body.private_json,'$.item_count')=4 AND json_type(body.private_json,'$.items')='array'
+        AND json_array_length(body.private_json,'$.items')=4
+        AND NOT EXISTS(SELECT 1 FROM json_each(body.private_json,'$.items') item
+          LEFT JOIN json_each(body.private_json,'$.settings.output_storyboard.frames') frame ON frame.key=item.key
+          WHERE frame.type IS NOT 'object' OR item.type IS NOT 'object'
+           OR json_extract(frame.value,'$.frameIndex') IS NOT item.key
+           OR json_extract(item.value,'$.id') IS NOT json_extract(frame.value,'$.id')
+           OR json_extract(item.value,'$.media_url') IS NOT json_extract(frame.value,'$.mediaUrl')
+           OR json_extract(item.value,'$.media_type') IS NOT json_extract(frame.value,'$.mimeType')
+           OR json_extract(item.value,'$.width') IS NOT json_extract(frame.value,'$.width')
+           OR json_extract(item.value,'$.height') IS NOT json_extract(frame.value,'$.height'))
+        AND EXISTS(SELECT 1 FROM json_each(body.private_json,'$.settings.output_storyboard.frames') frame
+          WHERE json_extract(frame.value,'$.mediaUrl')=? AND json_extract(frame.value,'$.sha256')=?)
+        OR completed.type='DocumentRenderCompleted' AND completed.actor='worker:renderer'
+        AND ?='personal' AND job.owner_id=? AND job.kind='render_document'
+        AND output_native_storage_writes.write_acknowledged=1
+        AND body.owner_id=job.owner_id AND body.document_id=job.document_id
+        AND json_extract(body.private_json,'$.artifact_kind')='audio'
+        AND json_extract(body.private_json,'$.source_surface')='outputs'
+        AND json_extract(body.private_json,'$.requested_by_user_id')=job.owner_id
+        AND json_extract(body.private_json,'$.artifact_id')=json_extract(job.result_json,'$.artifactId')
+        AND json_extract(body.private_json,'$.media_type')='audio/mpeg'
+        AND json_extract(body.private_json,'$.media_url')=?
+        AND json_extract(body.private_json,'$.settings.source_media_sha256')=?
+        AND json_extract(body.private_json,'$.item_count')=1
+        AND json_type(body.private_json,'$.items')='array' AND json_array_length(body.private_json,'$.items')=1
+        AND json_extract(job.request_json,'$.outputAudio.schemaVersion')=1
+        AND json_extract(job.request_json,'$.outputAudio.id')='forma.audio.instrumental-20@1'
+        AND json_extract(job.request_json,'$.outputAudio.artifactKind')='audio'
+        AND json_extract(job.request_json,'$.outputAudio.productionMode')='manual'
+        AND json_extract(job.request_json,'$.outputAudio.trackCount')=1
+        AND json_extract(job.request_json,'$.outputAudio.role')='score'
+        AND json_extract(job.request_json,'$.outputAudio.goal')='timed_music'
+        AND json_extract(job.request_json,'$.outputAudio.destination')='standalone'
+        AND json_extract(job.request_json,'$.outputAudio.durationSeconds')=20
+        AND json_type(job.request_json,'$.outputAudio.requireInstrumental')='true'
+        AND json_extract(job.request_json,'$.audioCostConsent.requestId')=job.job_id
+        AND json_type(job.request_json,'$.audioCostConsent.confirmed')='true'
+        AND json_type(job.request_json,'$.audioCostConsent.providerTransferConfirmed')='true'
+        AND json_extract(job.request_json,'$.audioCostConsent.actorUserId')=job.owner_id
+        AND json_extract(job.request_json,'$.audioCostConsent.documentId')=job.document_id
+        AND json_extract(job.request_json,'$.audioCostConsent.sourceDigest')=slot.source_digest
+        AND json_extract(job.request_json,'$.audioCostConsent.draftId')=json_extract(job.request_json,'$.outputAudio.source.draftId')
+        AND json_extract(body.private_json,'$.project_id')=json_extract(job.request_json,'$.audioCostConsent.projectId')
+        AND json_extract(body.private_json,'$.settings.output_audio')=json_extract(job.request_json,'$.outputAudio')
+        AND json_extract(body.private_json,'$.settings.output_audio_execution')=json_extract(job.request_json,'$.outputExecution')
+        AND json_extract(job.request_json,'$.outputExecution.scopeKey')=slot.scope_key
+        AND json_extract(job.request_json,'$.outputExecution.slotId')=slot.slot_id
+        AND json_extract(job.request_json,'$.outputExecution.grantId')=slot.grant_id
+        AND json_extract(job.request_json,'$.outputExecution.planRevisionId')=slot.plan_revision_id
+        AND json_extract(job.request_json,'$.outputExecution.targetId')=slot.target_id
+        AND json_extract(job.request_json,'$.outputExecution.targetContractDigest')=slot.target_contract_digest
+        AND json_extract(job.request_json,'$.outputExecution.sourceDigest')=slot.source_digest
+        AND json_extract(body.private_json,'$.settings.output_audio_receipt.schemaVersion')=1
+        AND json_extract(body.private_json,'$.settings.output_audio_receipt.contract')=json_extract(job.request_json,'$.outputAudio')
+        AND json_extract(body.private_json,'$.settings.output_audio_receipt.requestedSeconds')=20
+        AND json_type(body.private_json,'$.settings.output_audio_receipt.measuredSeconds')='null'
+        AND json_type(body.private_json,'$.settings.output_audio_receipt.requirementFulfilled')='false'
+        AND json_type(body.private_json,'$.settings.output_audio_receipt.plannerCallIds')='array'
+        AND json_array_length(body.private_json,'$.settings.output_audio_receipt.plannerCallIds') BETWEEN 1 AND 2
+        AND (SELECT COUNT(DISTINCT value) FROM json_each(body.private_json,'$.settings.output_audio_receipt.plannerCallIds'))=json_array_length(body.private_json,'$.settings.output_audio_receipt.plannerCallIds')
+        AND (SELECT COUNT(*) FROM output_provider_calls call WHERE call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id)=json_array_length(body.private_json,'$.settings.output_audio_receipt.plannerCallIds')+1
+        AND NOT EXISTS(SELECT 1 FROM json_each(body.private_json,'$.settings.output_audio_receipt.plannerCallIds') original
+          LEFT JOIN output_provider_calls call ON call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id AND call.client_request_id=original.value
+          WHERE original.type IS NOT 'text' OR call.status IS NOT 'settled' OR call.provider IS NOT 'openai'
+            OR call.model IS NOT 'gpt-5.6-terra' OR call.stage_key NOT IN('planning:0:initial','planning:0:repair'))
+        AND EXISTS(SELECT 1 FROM output_provider_calls call WHERE call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id
+          AND call.stage_key='planning:0:initial' AND call.status='settled')
+        AND EXISTS(SELECT 1 FROM output_provider_calls call WHERE call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id
+          AND call.stage_key='audio:initial' AND call.provider='fal' AND call.model='fal-ai/stable-audio-3/medium/text-to-audio'
+          AND call.status='settled' AND call.used_microusd>0
+          AND call.client_request_id=json_extract(body.private_json,'$.settings.output_audio_receipt.mediaCallId')
+          AND call.provider_response_id=json_extract(body.private_json,'$.settings.output_audio_receipt.providerRequestId')
+          AND call.provider_response_id=json_extract(body.private_json,'$.provider_job_id')
+          AND call.request_digest=json_extract(body.private_json,'$.settings.output_audio_receipt.requestDigest')))
       ORDER BY completed.sequence DESC LIMIT 1),updated_at=?
       WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' AND publication_event_id IS NULL`)
-      .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
+      .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
     const result = await env.DB.batch([...guards, ...unwrapped.map(input => input.statement), ...publication]);
     return result.slice(guards.length,guards.length+inputs.length);
   };
@@ -133,7 +226,15 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
     AND EXISTS(SELECT 1 FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
       JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
       WHERE slot.scope_key=output_native_storage_writes.scope_key AND slot.slot_id=output_native_storage_writes.slot_id
-      AND (grant_row.status='revoked' OR grant_row.expires_at<=?)
+      AND (grant_row.status='revoked' OR (grant_row.expires_at<=? AND NOT EXISTS(
+        SELECT 1 FROM document_jobs recovery WHERE recovery.job_id=slot.job_id AND recovery.owner_id=grant_row.actor_user_id
+          AND recovery.status='failed' AND json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
+          AND json_extract(recovery.result_json,'$.outputFalRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputFalCheckpoint.clientRequestId')
+          AND length(json_extract(recovery.result_json,'$.outputFalRecovery.token'))=36
+          AND output_native_storage_writes.storage_key=json_extract(recovery.result_json,'$.outputFalRecovery.storageKey')
+          AND output_native_storage_writes.storage_key LIKE '%-recovery-'||json_extract(recovery.result_json,'$.outputFalRecovery.token')||'.png'
+          AND EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=grant_row.scope_key AND grant_id=grant_row.grant_id AND ${retainedPersonalFalRecoverySql})
+          AND json_extract(recovery.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))
       AND (? IS NULL OR plan.owner_user_id=?) AND (? IS NULL OR plan.organization_id=?)
       AND (?=0 OR (plan.scope_kind='personal' AND plan.organization_id IS NULL AND plan.project_access_id IS NULL)))`)
     .bind(now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();

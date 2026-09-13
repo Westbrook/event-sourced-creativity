@@ -1,5 +1,5 @@
 import { mediaKeyMatchesOwnerNamespace } from "../src/model/media-ownership.ts";
-import { verifySourceDocumentEvidence } from "./media-api.ts";
+import { verifySourceDocumentEvidence } from "./source-reference-evidence.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 type SourceBlock = { type: string; properties: Record<string, unknown> };

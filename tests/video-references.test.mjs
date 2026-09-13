@@ -115,3 +115,45 @@ test("video creation exposes durable batch and per-frame reference controls",asy
   assert.match(styles,/\.video-reference-preflight/);
   assert.match(styles,/\.video-reference-mode-controls/);
 });
+
+// Executes the existing events call expression against the actual adapter, stopping
+// at the pre-submit progress boundary. This is a connected seam check, not a full
+// authenticated handler, owned-reference, generated-result or provider test.
+test("manual video call site forwards explicit resolution into the existing adapter without provider traffic", async () => {
+  const ts = await import("typescript");
+  const { generateCreativeVideo } = await import("../worker/openai-adapter.ts");
+  const text = await readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8");
+  const source = ts.createSourceFile("events-api.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const calls = []; const visit = node => { if (ts.isCallExpression(node) && node.expression.getText(source) === "generateCreativeVideo") calls.push(node); ts.forEachChild(node, visit); }; visit(source);
+  assert.equal(calls.length, 1);
+  const expression = calls[0].getText(source);
+  const run = new Function("scope", `return (async () => { const {generateCreativeVideo,env,plan,requestedVideoSeconds,requestedVideoResolution,size,requestedVideoAudioMode,compiledSnapshot,ownerId,body,preparedVideoReferences,preparedAudioReferences,retainedReceipt,execution,progressCheckpoint}=scope; let videoInputReceipt=null,activeProviderModel='',activeProviderJobId='',activeProviderStatusUrl='',activeProviderResponseUrl='',activeProviderCancelUrl='',videoSubmissionAttempted=false; return ${expression}; })();`);
+  const previous = globalThis.fetch; let fetches = 0;
+  globalThis.fetch = () => { fetches++; throw new Error("network_forbidden"); };
+  try {
+    for (const selected of [{resolution:"480p"},{},{resolution:"720p"},{resolution:"1080p",error:"video_resolution_unsupported"},{resolution:"480p",model:"unconfigured-other-model",error:"video_resolution_provider_unsupported"},{resolution:"720p",retained:true}]) {
+      const {resolution}=selected;
+      const stop = new Error("stop_before_provider_submission"); let prepared;
+      const scope = { generateCreativeVideo: (env,prompt,options) => generateCreativeVideo(env,prompt,{...options,onPrepared: receipt => { prepared=receipt; if(selected.retained)throw stop; return options.onPrepared?.(receipt); }}),
+        env:{FAL_KEY:"inert-not-a-credential",...(selected.model?{FAL_VIDEO_MODEL:selected.model}:{})},plan:{content_markdown:"A copper lamp turns slowly."},requestedVideoSeconds:4,requestedVideoResolution:resolution,size:"1280x720",requestedVideoAudioMode:"silent",compiledSnapshot:{facts:[]},ownerId:"local-resolution-fixture",body:{videoResolution:resolution,...(selected.retained?{providerJobId:"original-owned-job"}:{})},preparedVideoReferences:[],preparedAudioReferences:[],retainedReceipt:selected.retained?{provider:"fal",model:"bytedance/seedance-2.0/reference-to-video",submittedPrompt:"Original retained motion prompt.",parameters:{resolution:"480p",duration:4,generate_audio:false},referenceInputs:[],usedReferencePixels:false}:undefined,progressCheckpoint:()=>({}),execution:{progress(stage){if(stage==="submitting")throw stop;}} };
+      const failure = await run(scope).then(()=>null,error=>error);
+      if (selected.error) { assert.equal(failure?.detail?.code, selected.error); assert.equal(prepared, undefined); }
+      else { assert.equal(failure,stop); assert.equal(prepared.parameters.resolution,selected.retained?"480p":resolution??"720p"); assert.equal(prepared.parameters.duration,4); assert.equal(prepared.parameters.generate_audio,false); }
+    }
+  } finally { globalThis.fetch = previous; }
+  assert.equal(fetches,0);
+});
+
+test("video resolution admission refuses unsupported and unmanaged promises before spending", async () => {
+  const ts=await import("typescript");
+  const {VIDEO_ADAPTER_CONTRACT}=await import("../src/model/video-adapter.ts");
+  for(const [filename,variable] of [["events-api.ts","body"],["document-jobs-api.ts","payload"]]){
+    const text=await readFile(new URL("../worker/"+filename,import.meta.url),"utf8"),source=ts.createSourceFile(filename,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    const nodes=[];const visit=node=>{if(ts.isIfStatement(node)&&node.expression.getText(source).includes(variable+".videoResolution!==undefined"))nodes.push(node);ts.forEachChild(node,visit);};visit(source);assert.equal(nodes.length,1);
+    const validate=new Function(variable,"VIDEO_ADAPTER_CONTRACT",`const kind="render_document";${nodes[0].getText(source)} return null;`);
+    for(const resolution of ["480p","720p",undefined])assert.equal(validate({action:"render_document",artifactKind:"video",...(resolution===undefined?{}:{videoResolution:resolution})},VIDEO_ADAPTER_CONTRACT),null);
+    for(const value of ["1080p","480P",480,null,{}]){const response=validate({action:"render_document",artifactKind:"video",videoResolution:value},VIDEO_ADAPTER_CONTRACT);assert.equal(response.status,400);assert.equal((await response.json()).error,"video_resolution_unsupported");}
+    const managed=validate({action:"render_document",artifactKind:"video",productionMode:"managed",videoResolution:"480p"},VIDEO_ADAPTER_CONTRACT);assert.equal((await managed.json()).error,"managed_video_resolution_unsupported");
+    const other=validate({action:"render_document",artifactKind:"audio",videoResolution:"480p"},VIDEO_ADAPTER_CONTRACT);assert.equal((await other.json()).error,"video_resolution_unsupported");
+  }
+});

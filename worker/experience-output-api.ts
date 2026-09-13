@@ -1,0 +1,365 @@
+import { experienceModel3dOutputContract } from "./experience-model3d-recipe.ts";
+import { prepareExperienceModel3dReference } from "./experience-model3d-reference-source.ts";
+import { prepareExperienceVideoOutputSource } from "./experience-video-output-source.ts";
+import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches, type AudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
+import { createAudioOutputContract } from "../src/model/output-audio-contract.ts";
+import { createStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
+import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
+import { createSceneOutputContract } from "../src/model/output-scene-contract.ts";
+import { sceneMiniAppCostApprovalMatches } from "../src/model/scene-mini-app-consent.ts";
+import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
+import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
+import { recoverOutputFalImage } from "./output-fal-recovery.ts";
+import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
+import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
+import type { DocumentJobRow } from "./document-jobs-api.ts";
+import { canonicalJson } from "../src/experiences/compiler.ts";
+import { experienceResourceId, receiptPrefix, registeredExperience } from "../src/experiences/intake.ts";
+import { experienceSourceMatches } from "../src/experiences/host-source.ts";
+import type { ExperienceIntakeReceipt } from "../src/experiences/native-host.ts";
+import type { ExperienceNativeState, ExperienceNativeUnavailable } from "../src/experiences/output-binding-contract.ts";
+import { authorizeExperienceIntake, readExperienceDraft, experienceDraftGuard, readExperienceBody } from "./experience-intake-api.ts";
+import { commitAtomicIntake } from "./project-intake.ts";
+import { loadOutputTrustedContext, outputExperienceCommands, type OutputExecutionBridge, type OutputTrustedContext } from "./output-requirements-api.ts";
+import { outputCommandReceiptAssertion } from "./output-command-core.ts";
+import { experienceOutputAuthorization, experienceOutputBinding, experienceOutputEnvelope,
+  type ExperienceOutputBinding, type ExperienceOutputStage } from "./experience-output-binding.ts";
+import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget, type ExperienceOutputRecipe } from "./experience-output-recipe.ts";
+import type { WorkerEnv, WorkerExecutionContext } from "./runtime.ts";
+import { readExperienceOutputOriginals, experienceOutputPhases as phases, experienceOutputError as error,
+  type ExperienceOutputOriginal as Original } from "./experience-output-originals.ts";
+
+const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+const unavailable = (code: string, status = 409) => Response.json({ version: 1, status: "unavailable", error: code,
+  originalIntent: "unknown_or_retained", permitted: { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false } } satisfies ExperienceNativeUnavailable,
+{ status, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+async function refused(response: Response): Promise<Response> {
+  const value: unknown = await response.json().catch(() => null);
+  const code = record(value) && typeof value.error === "string" && /^[a-z][a-z0-9_]+$/u.test(value.error)
+    ? value.error : "experience_output_unavailable";
+  const result = unavailable(code, response.status >= 400 && response.status < 600 ? response.status : 409);
+  // Preserve authentication/consent response headers without retaining stale body
+  // encoding, length or cache metadata from the replaced refusal representation.
+  for (const [name, value] of response.headers) if (!["content-type", "content-length", "content-encoding", "cache-control", "x-content-type-options"].includes(name)) result.headers.set(name, value);
+  return result;
+}
+type Loaded = { trusted: OutputTrustedContext; binding: ExperienceOutputBinding; recipe: ExperienceOutputRecipe;
+  retained: NonNullable<Awaited<ReturnType<typeof readExperienceDraft>>>; receipt: ExperienceIntakeReceipt;
+  originals: Partial<Record<ExperienceOutputStage, Original>> };
+
+function validateManagedRequirement(loaded: Loaded) {
+  const { trusted, recipe } = loaded, saved = loaded.originals.save;
+  const matches = trusted.projection.libraryBlocks.filter(block => block.id === recipe.spec.id);
+  if (!saved) { if (matches.length) error("experience_output_unbound_requirement", 410); return; }
+  const payload = saved.receipt.payload, block = matches[0];
+  if (matches.length !== 1 || !block || payload.block_id !== recipe.spec.id || payload.type !== "output"
+    || payload.scope !== "document" || payload.project_id !== trusted.scope.projectId || payload.document_id !== trusted.scope.documentId
+    || !record(payload.properties) || canonicalJson(payload.properties.output_spec) !== canonicalJson(recipe.spec)
+    || block.type !== "output" || block.scope !== "document" || block.removed || block.locked || block.canvasId !== ""
+    || block.projectId !== trusted.scope.projectId || block.documentId !== trusted.scope.documentId
+    || block.handle !== payload.handle || block.position !== payload.position
+    || canonicalJson(block.properties) !== canonicalJson(payload.properties)
+    || canonicalJson(block.sourceEvents) !== canonicalJson([saved.receipt.eventId])) error("experience_output_requirement_changed");
+  const events = trusted.events.filter(event => event.eventId === saved.receipt.eventId);
+  if (events.length !== 1 || events[0]!.type !== "BlockCreated" || events[0]!.actor !== `user:${trusted.scope.actorUserId}`
+    || events[0]!.streamId !== `creative:${trusted.scope.ownerUserId}` || events[0]!.sequence !== saved.sequence
+    || canonicalJson(events[0]!.payload) !== canonicalJson(payload)) error("experience_output_requirement_evidence_unavailable", 410);
+}
+
+async function load(request: Request, env: WorkerEnv, draftId: string, permission: "read" | "author" | "request"): Promise<Loaded | Response> {
+  const auth = await authorizeExperienceIntake(request, env); if (auth instanceof Response) return refused(auth);
+  const retained = await readExperienceDraft(env, auth, draftId); if (!retained) error("experience_draft_unavailable", 410);
+  const plan = retained.plan, binding = await experienceOutputBinding(plan);
+  const ratio = plan.request.values.ratio;
+  if (binding.output === "image" && (!ratio || ratio.provenance !== "authored" || !record(ratio.value))) error("experience_image_ratio_required");
+  const identities = { requirementId: await experienceResourceId(draftId, "native-output-requirement"), deliverableId: await experienceResourceId(draftId, "native-output-deliverable") };
+  const sceneContract = binding.output === "scene" ? createSceneOutputContract({ draftId: binding.draftId, draftHash: binding.draftHash,
+    releaseHash: binding.releaseHash, requestHash: binding.requestHash, sourceBindingHash: binding.sourceBindingHash }) : null;
+  if (binding.output === "scene" && !sceneContract) error("experience_scene_contract_unavailable");
+  const audioContract = binding.output === "audio" ? createAudioOutputContract({ draftId: binding.draftId, draftHash: binding.draftHash,
+    releaseHash: binding.releaseHash, requestHash: binding.requestHash, sourceBindingHash: binding.sourceBindingHash }) : null;
+  if (binding.output === "audio" && !audioContract) error("experience_audio_contract_unavailable");
+  const storyboardContract = binding.output === "storyboard" ? createStoryboardOutputContract({ draftId: binding.draftId, draftHash: binding.draftHash,
+    releaseHash: binding.releaseHash, requestHash: binding.requestHash, sourceBindingHash: binding.sourceBindingHash }) : null;
+  if (binding.output === "storyboard" && !storyboardContract) error("experience_storyboard_contract_unavailable");
+  const model3dContract = binding.output === "model3d" ? experienceModel3dOutputContract(plan, binding) : null;
+  if (binding.output === "model3d" && !model3dContract) error("experience_model3d_contract_unavailable");
+  const videoSource = binding.output === "video" ? await prepareExperienceVideoOutputSource(request, env, auth, retained) : null;
+  const recipe = createExperienceOutputRecipe(binding.output === "video" ? { output: "video", ...identities, contract: videoSource!.contract } : binding.output === "model3d" ? { output: "model3d", ...identities, contract: model3dContract! } : binding.output === "storyboard" ? { output: "storyboard", ...identities, contract: storyboardContract! } : binding.output === "audio" ? { output: "audio", ...identities, contract: audioContract! } : binding.output === "scene" ? { output: "scene", ...identities, contract: sceneContract! } : binding.output === "short_story" ? { output: "short_story", ...identities, contract: SHORT_STORY_NARRATIVE_CONTRACT } : binding.output === "slides" ? { output: "slides", ...identities }
+    : { output: "image", ...identities, variantId: await experienceResourceId(draftId, "native-output-variant"), aspectRatio: ratio!.value as { width: number; height: number } });
+  const intakeResponse = await commitAtomicIntake(env, auth, { projectId: plan.projectId, documentId: plan.documentId, events: structuredClone(plan.events) as typeof plan.events[number][] }, "check", {
+    receiptPrefix: receiptPrefix(draftId), clientId: "web:experience-intake", correlationPrefix: "experience-intake:", guard: experienceDraftGuard(auth, plan, retained.content) });
+  const receipt = { ...await intakeResponse.json() as Record<string, unknown>, draftId, draftHash: plan.draftHash } as unknown as ExperienceIntakeReceipt;
+  if (!intakeResponse.ok || receipt.status !== "complete") error("experience_intake_original_unavailable", 410);
+  const trusted = await loadOutputTrustedContext(request, env, plan.documentId, permission); if (trusted instanceof Response) return refused(trusted);
+  if (trusted.scope.kind !== "personal" || trusted.scope.actorUserId !== auth.user.userId || trusted.scope.ownerUserId !== auth.user.userId
+    || trusted.scope.documentId !== plan.documentId || trusted.scope.projectId !== plan.projectId) error("experience_output_scope_changed", 403);
+  // The same retained draft/custody assertion participates in every native write
+  // and final private disclosure, not only this earlier in-memory source check.
+  trusted.sourceAssertions.push(experienceDraftGuard(auth, plan, retained.content));
+  if (videoSource) {
+    if (videoSource.head !== trusted.ownerHead) error("output_video_source_changed", 409);
+    trusted.sourceAssertions.push(videoSource.guard, { sql: "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?",
+      bindings: [binding.streamId, videoSource.head] });
+  }
+  if (model3dContract?.reference) {
+    // Passive state and prepare both reread the original source. A once-saved
+    // preparation may not present a later changed image as current custody.
+    const original = await prepareExperienceModel3dReference(request, env, auth, model3dContract.reference.selection);
+    if (canonicalJson(original.reference) !== canonicalJson(plan.reference) || original.head !== trusted.ownerHead)
+      error("experience_model3d_original_changed", 409);
+    trusted.sourceAssertions.push(original.guard, { sql: "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?",
+      bindings: [binding.streamId, original.head] });
+  }
+  // Schema readiness belongs to deployment. Exact reads below fail closed; this
+  // creator adapter never initializes DDL or infers readiness from a warm cache.
+  const loaded: Loaded = { trusted, binding, recipe, retained, receipt, originals: {} };
+  loaded.originals = await readExperienceOutputOriginals(trusted, binding);
+  // Earlier stages are an atomic prerequisite, not merely UI provenance. Their
+  // immutable index/event associations survive through each later native batch.
+  trusted.sourceAssertions.push(...Object.values(loaded.originals).map(value => outputCommandReceiptAssertion(trusted.scope, value!.receipt)));
+  validateManagedRequirement(loaded);
+  if (!experienceSourceMatches(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
+    documents: trusted.projection.documents, blocks: trusted.projection.libraryBlocks.filter(block => block.id !== recipe.spec.id),
+    relations: trusted.projection.libraryBlockRelations, events: trusted.events })) error("experience_output_source_changed");
+  if (trusted.sourceProblems.length) error("experience_output_source_unavailable", 410);
+  return loaded;
+}
+
+async function confirmed(loaded: Loaded) {
+  const saved = loaded.originals.confirm;
+  if (!saved) return null;
+  const id = saved.receipt.payload.plan_revision_id;
+  if (typeof id !== "string") error("experience_output_plan_unavailable", 410);
+  const plan = await outputExperienceCommands.readConfirmedPlan(loaded.trusted, id);
+  if (!plan || canonicalJson(plan) !== canonicalJson(saved.receipt.payload.confirmed_plan)
+    || !matchExperienceOutputRecipeTarget(loaded.recipe, plan.plan, { documentId: loaded.binding.documentId,
+      sourceRevision: loaded.trusted.sourceDigest, requirementRevision: loaded.trusted.requirementsDigest })) error("experience_output_plan_changed");
+  return plan;
+}
+
+/** Audio preparation wire shape is server-only while the native client selector stays closed. */
+type ExperiencePreparedState = (ExperienceNativeState | (Omit<ExperienceNativeState, "output"> & { output: "audio" | "storyboard" | "model3d" | "video" })) & { audioCostPreview?: AudioMiniAppCostPreview | null };
+async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
+  const { trusted, binding, originals } = loaded, plan = await confirmed(loaded);
+  const preflightValue = originals.preflight?.receipt.payload.preflight;
+  const preflight = preflightValue as ExperienceNativeState["preflight"];
+  if (originals.preflight && (!record(preflightValue) || !plan || preflight?.planRevisionId !== plan.revisionId
+    || preflight.sourceDigest !== trusted.sourceDigest || preflight.requirementsDigest !== trusted.requirementsDigest
+    || !Array.isArray(preflight.targets) || preflight.targets.length !== 1 || !record(preflight.targets[0]) || preflight.targets[0].targetId !== loaded.recipe.targetId
+    || originals.preflight!.envelope.planRevisionId !== plan.revisionId)) error("experience_output_preflight_changed");
+  const result: ExperiencePreparedState = { version: 1, draftId: binding.draftId, draftHash: binding.draftHash, releaseHash: binding.releaseHash,
+    documentId: binding.documentId, projectId: binding.projectId, output: binding.output, sourceSurface: "outputs",
+    status: preflight ? "review" : originals.save ? "preparing" : "absent", disposition: preflight ? "prepared" : "never_admitted",
+    current: { custody: "verified", source: "verified", sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest },
+    stage: [...phases].reverse().find(phase => originals[phase]) ?? null,
+    plan: plan ? { revisionId: plan.revisionId, targetId: loaded.recipe.targetId, targetContractDigest: plan.targetContractDigests[loaded.recipe.targetId]!, sourceDigest: plan.sourceDigest, requirementsDigest: plan.requirementsDigest } : null,
+    preflight: preflight ?? null, grant: null, original: null,
+    permitted: { prepare: !preflight && !originals.authorize, authorize: Boolean(preflight?.targets.every(target => target.available) && Date.parse(preflight.expiresAt) > Date.now() && !originals.authorize), run: false, resumeRun: false } };
+  if (binding.output === "video") {
+    result.permitted.authorize = false;
+    if (originals.authorize || originals.run) error("experience_video_execution_unavailable", 409);
+  }
+  if (binding.output === "audio") {
+    result.audioCostPreview=parseAudioMiniAppCostPreview(record(preflight?.targets[0]?.settings)?preflight!.targets[0]!.settings.costPreview:null);
+    if(!result.audioCostPreview||Date.parse(result.audioCostPreview.expiresAt)<=Date.now())result.permitted.authorize=false;
+  }
+  if (binding.output === "model3d") result.permitted.authorize = false;
+  if (binding.output === "storyboard") {
+    const offered=preflight?.targets[0],storyboard=readStoryboardExecutionOffer(offered);
+    if(offered?.available&&(!storyboard||canonicalJson(storyboard.contract)!==canonicalJson(loaded.recipe.spec.deliverables[0]?.storyboard_contract)
+      ||storyboard.original.actorUserId!==trusted.scope.actorUserId||storyboard.original.documentId!==binding.documentId||storyboard.original.projectId!==binding.projectId
+      ||storyboard.original.sourceDigest!==trusted.sourceDigest||storyboard.original.requirementsDigest!==trusted.requirementsDigest))error("experience_storyboard_preflight_unavailable",410);
+    if(!storyboard||Date.parse(String(storyboard.original.expiresAt))<=Date.now())result.permitted.authorize=false;
+  }
+  if (binding.output === "scene") {
+    const settings = preflight?.targets[0]?.settings;
+    const scenePayload = record(settings) ? await readOutputScenePayload(settings.payload) : null;
+    if (preflight?.targets[0]?.available && (!scenePayload
+      || canonicalJson(scenePayload.outputScene.sceneContract) !== canonicalJson(loaded.recipe.spec.deliverables[0]?.scene_contract))) error("experience_scene_preflight_unavailable");
+    result.sceneCostPreview = scenePayload?.outputScene.costPreview ?? null;
+    if (!result.sceneCostPreview || Date.parse(result.sceneCostPreview.expiresAt) <= Date.now()) result.permitted.authorize = false;
+  }
+  if (!originals.authorize) {
+    if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
+    if (preflight && ((binding.output === "storyboard" ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
+      || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
+    return result;
+  }
+  const authorization = originals.authorize, grantId = authorization.receipt.payload.grant_id;
+  if (typeof grantId !== "string" || !plan || !preflight || authorization.envelope.preflightId !== preflight.id
+    || authorization.envelope.termsDigest !== preflight.termsDigest || authorization.envelope.explicitAuthorization !== true
+    || authorization.envelope.maximumMicrousd !== preflight.maximumMicrousd) error("experience_output_original_authorization_unavailable", 410);
+  const evidence = await outputExperienceCommands.readGrantEvidence(trusted.env, trusted.scope, grantId, true);
+  if (evidence.slots.length !== 1 || canonicalJson(evidence.confirmedPlan) !== canonicalJson(plan) || canonicalJson(evidence.preflight) !== canonicalJson(preflight)) error("experience_output_original_operation_changed");
+  const slot = evidence.slots[0]!, authorizedTargets = authorization.receipt.payload.authorized_targets;
+  if (binding.output === "scene" && (!result.sceneCostPreview || slot.jobId !== result.sceneCostPreview.requestId
+    // Equality of an already indexed original action, not synthesized approval.
+    || canonicalJson(authorization.envelope.sceneCostConsent ?? null) !== canonicalJson({ ...result.sceneCostPreview, confirmed: true }))) error("experience_scene_original_consent_unavailable", 410);
+  if (slot.grantId !== grantId || slot.targetId !== loaded.recipe.targetId || slot.planRevisionId !== plan.revisionId
+    || slot.targetContractDigest !== plan.targetContractDigests[loaded.recipe.targetId] || slot.sourceDigest !== plan.sourceDigest
+    || slot.attemptOrdinal !== 0 || slot.previousSlotId !== null || !Array.isArray(authorizedTargets) || authorizedTargets.length !== 1
+    || canonicalJson(authorizedTargets[0]) !== canonicalJson({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })) error("experience_output_original_operation_changed");
+  const job = await trusted.env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
+    .bind(slot.jobId, trusted.scope.actorUserId, binding.streamId, binding.documentId).first<DocumentJobRow>();
+  if (!job || !job.correlation_id || !Number.isFinite(Date.parse(job.expires_at)) || Date.parse(job.expires_at) <= Date.now()) error("experience_output_original_job_unavailable", 410);
+  trusted.sourceAssertions.push({ sql: "EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND status=? AND expires_at=? AND correlation_id=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+    bindings: [slot.jobId, trusted.scope.actorUserId, binding.streamId, binding.documentId, job.status, job.expires_at, job.correlation_id], deadlineMs: Date.parse(job.expires_at) });
+  if(binding.output==="audio"&&(!result.audioCostPreview||slot.jobId!==result.audioCostPreview.requestId||slot.attemptOrdinal!==0||slot.previousSlotId||canonicalJson(authorization.envelope.audioCostConsent)!==canonicalJson({...result.audioCostPreview,confirmed:true,providerTransferConfirmed:true})))error("experience_audio_original_consent_unavailable",410);
+  const run = originals.run;
+  if (run && (run.envelope.grantId !== grantId || run.envelope.explicitRun !== true || run.receipt.payload.grant_id !== grantId
+    || canonicalJson(run.receipt.payload.job_ids) !== canonicalJson([slot.jobId]) || run.receipt.payload.existing_jobs_only !== true)) error("experience_output_original_run_unavailable", 410);
+  const snapshot = await outputExperienceCommands.snapshot(trusted);
+  const grant = snapshot.grants.find(value => value.id === grantId);
+  if (!grant || grant.status !== evidence.row.status || grant.expiresAt !== String(evidence.row.expires_at) || grant.planRevisionId !== plan.revisionId
+    || grant.actorUserId !== trusted.scope.actorUserId || grant.payerUserId !== trusted.scope.actorUserId
+    || grant.maximumMicrousd !== preflight.maximumMicrousd || grant.maximumCalls !== preflight.maximumCalls
+    || canonicalJson(grant.disclosure) !== canonicalJson(preflight) || grant.operations.length !== 1
+    || grant.operations[0]!.id !== slot.slotId || grant.operations[0]!.jobId !== slot.jobId || grant.operations[0]!.targetId !== slot.targetId
+    || grant.operations[0]!.status !== slot.status)
+    error("experience_output_original_grant_unavailable", 410);
+  result.grant = grant;
+  result.original = { authorization: { key: authorization.receipt.key, eventId: authorization.receipt.eventId },
+    run: run ? { key: run.receipt.key, eventId: run.receipt.eventId } : null,
+    grantId, grantStatus: String(evidence.row.status), slotId: slot.slotId, slotStatus: slot.status, jobId: slot.jobId, jobStatus: job.status,
+    targetId: slot.targetId, targetContractDigest: slot.targetContractDigest, routeDigest: slot.routeDigest, planRevisionId: plan.revisionId,
+    sourceDigest: plan.sourceDigest, requirementsDigest: plan.requirementsDigest, expiresAt: String(evidence.row.expires_at), correlationId: job.correlation_id, jobExpiresAt: job.expires_at };
+  result.disposition = run ? "original_run_recorded" : "original_authorized";
+  result.status = ["authorized", "queued", "running", "succeeded", "failed", "cancelled", "unavailable", "uncertain"].includes(slot.status) ? slot.status as ExperienceNativeState["status"] : "unavailable";
+  if (job.status === "partial") result.status = "partial";
+  else if (job.status === "failed") result.status = "failed";
+  else if (job.status === "canceled") result.status = "cancelled";
+  else if (job.status === "completed" && slot.status !== "succeeded") result.status = "unavailable";
+  else if (!["queued", "running", "committing", "completed"].includes(job.status)) result.status = "unavailable";
+  result.permitted = { prepare: false, authorize: false,
+    run: !run && job.status === "queued" && slot.status === "authorized" && Number(evidence.row.deadline_current) === 1 && evidence.row.status === "authorized",
+    // Resume is an explicit wake-up of the exact recorded run, not a fresh
+    // command or provider attempt. Native receipts/leases still decide work.
+    resumeRun: Boolean(run && snapshot.permissions?.canRequest === true && ["queued", "running"].includes(job.status) && ["queued", "running"].includes(slot.status)
+      && Number(evidence.row.deadline_current) === 1 && ["authorized", "active"].includes(grant.status)
+      && grant.pendingCalls === 0 && grant.operations[0]!.pendingCalls === 0) };
+  if (Number(evidence.row.deadline_current) !== 1) { if (job.status !== "completed") result.status = "unavailable"; result.permitted.run = false; result.permitted.resumeRun = false; }
+  if (binding.output === "scene" && (!result.sceneCostPreview || Date.parse(result.sceneCostPreview.expiresAt) <= Date.now())) {
+    result.permitted.run = false; result.permitted.resumeRun = false;
+  }
+  if(binding.output==="storyboard"){
+    const storyboard=readStoryboardExecutionOffer(preflight.targets[0]);
+    if(!storyboard||storyboard.original.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)error("experience_storyboard_original_attempt_unavailable",410);
+    if(Date.parse(String(storyboard.original.expiresAt))<=Date.now()){result.permitted.run=false;result.permitted.resumeRun=false;}
+  }
+  result.permitted.recoverResult = Boolean(run && binding.output === "image" && preflight.targets[0]?.provider === "fal" && preflight.targets[0]?.model === "ideogram/v4"
+    && preflight.targets[0]?.route === "document-image-fal-manual-v1" && job.status === "failed" && snapshot.permissions?.canRequest
+    && ["authorized", "active", "completed"].includes(String(evidence.row.status)) && await trusted.env.DB.prepare(`SELECT 1 AS available FROM output_execution_grants
+      WHERE scope_key=? AND grant_id=? AND ${retainedPersonalFalRecoverySql}
+      AND NOT EXISTS(SELECT 1 FROM document_jobs current WHERE current.job_id=? AND (
+        current.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR json_extract(current.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`)
+      .bind(trusted.scope.key,grantId,job.job_id).first());
+  const jobMetadata: unknown = JSON.parse(job.result_json ?? "{}");
+  const recovery = record(jobMetadata) ? jobMetadata.outputFalRecovery : null;
+  if (binding.output === "image" && preflight.targets[0]?.provider === "fal" && result.status === "succeeded" && job.status === "completed" && grant.status === "completed" && record(recovery)
+    && recovery.version === "output-fal-recovery-v1" && recovery.status === "completed" && typeof recovery.completionEventId === "string") result.recovery = "completed";
+  return result;
+}
+
+async function execute(loaded: Loaded, phase: ExperienceOutputStage, fields: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+  const prior = loaded.originals[phase];
+  const envelope = prior?.envelope ?? await experienceOutputEnvelope(loaded.binding, phase, loaded.trusted.ownerHead, fields);
+  const result = await outputExperienceCommands.execute(loaded.trusted, envelope, bridge, executionContext);
+  if (result instanceof Response) {
+    const issue = await result.json() as Record<string, unknown>;
+    error(typeof issue.error === "string" ? issue.error : "experience_output_native_refused", result.status);
+  }
+  // Commit acknowledgement is not admission replacement authority. The following
+  // request state is always reconstructed from the original indexed command.
+}
+
+/** Existing native transaction adapter, PERSONAL Image/Slides only. No generic job POST. */
+export async function handleExperienceOutput(request: Request, env: WorkerEnv, executionContext: WorkerExecutionContext, bridge: OutputExecutionBridge): Promise<Response> {
+  try {
+    const url = new URL(request.url), match = /^\/api\/experiences\/drafts\/(experience-draft-[a-f0-9]{64})\/output(?:\/(prepare|authorize|run|recover-result))?$/u.exec(url.pathname);
+    if (!match) return unavailable("not_found", 404);
+    const draftId = match[1]!, action = match[2];
+    if (url.searchParams.size || (action ? request.method !== "POST" : request.method !== "GET")) return unavailable("method_not_allowed", 405);
+    let body: Record<string, unknown> = {};
+    let recovered: "pending" | "completed" | undefined;
+    if (action) {
+      const origin = request.headers.get("origin");
+      if (origin && origin !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") return unavailable("same_origin_required", 403);
+      const value = await readExperienceBody(request);
+      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation"] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
+      if (!record(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) return unavailable("experience_output_request_invalid", 400);
+      body = value;
+    }
+    let loaded = await load(request, env, draftId, action === "prepare" ? "author" : action ? "request" : "read");
+    if (loaded instanceof Response) return loaded;
+    if (loaded.binding.output === "video" && ["authorize", "run", "recover-result"].includes(action ?? "")) error("experience_video_execution_unavailable", 409);
+    if (loaded.binding.output === "audio" && action === "recover-result") error("experience_audio_recovery_unavailable", 409);
+    if(action==="authorize"&&(loaded.binding.output==="audio")!==Object.hasOwn(body,"audioCostConsent"))error("experience_audio_confirmation_required",403);
+    if (loaded.binding.output === "model3d" && action && action !== "prepare") error("experience_model3d_execution_unavailable", 409);
+    if (loaded.binding.output === "storyboard" && action === "recover-result") error("experience_storyboard_recovery_unavailable", 409);
+    if (action && body.draftHash !== loaded.binding.draftHash) error("experience_review_stale");
+    if (action === "authorize" && (loaded.binding.output === "scene") !== Object.hasOwn(body, "sceneCostConsent")) error("experience_scene_confirmation_required", 403);
+    if (action && (await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== loaded.binding.releaseHash) error("experience_release_changed");
+    if (action === "prepare") {
+      if (body.explicitRequirementsConfirmation !== true) error("experience_output_recipe_confirmation_required", 403);
+      for (const phase of ["save", "confirm", "preflight"] as const) {
+        if (!loaded.originals[phase]) {
+          const current = await state(loaded);
+          if (!current.permitted.prepare) break;
+          if (phase === "confirm" && await outputExperienceCommands.readConfirmedPlan(loaded.trusted)) error("experience_output_unbound_plan", 410);
+          const plan = phase === "preflight" ? await confirmed(loaded) : null;
+          if (phase === "preflight" && (!plan || await env.DB.prepare("SELECT 1 AS present FROM output_preflights WHERE scope_key=? AND plan_revision_id=? AND actor_user_id=? LIMIT 1").bind(loaded.trusted.scope.key, plan.revisionId, loaded.trusted.scope.actorUserId).first())) error("experience_output_unbound_preflight", 410);
+          await execute(loaded, phase, phase === "save" ? { blockId: loaded.recipe.spec.id, spec: loaded.recipe.spec, explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
+            : phase === "confirm" ? { explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
+            : { planRevisionId: plan!.revisionId, targetIds: [loaded.recipe.targetId] }, bridge, executionContext);
+          const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
+        }
+      }
+    } else if (action === "authorize") {
+      const current = await state(loaded);
+      if (!current.preflight) error("experience_output_preflight_required");
+      const confirmation = experienceOutputAuthorization(body, current.preflight);
+      if (!loaded.originals.authorize && !current.permitted.authorize) error("experience_output_authorization_unavailable");
+      if (loaded.originals.authorize && (loaded.originals.authorize.envelope.termsDigest !== body.termsDigest || loaded.originals.authorize.envelope.maximumMicrousd !== body.maximumMicrousd)) error("experience_output_authorization_terms_changed");
+      if (loaded.binding.output === "scene") {
+        if (!current.sceneCostPreview || (!loaded.originals.authorize
+          ? !sceneMiniAppCostApprovalMatches(body.sceneCostConsent, current.sceneCostPreview)
+          : canonicalJson(body.sceneCostConsent) !== canonicalJson(loaded.originals.authorize.envelope.sceneCostConsent))) error("experience_scene_confirmation_required", 403);
+      }
+      if(loaded.binding.output==="audio"&&(!current.audioCostPreview||(!loaded.originals.authorize?!audioMiniAppCostApprovalMatches(body.audioCostConsent,current.audioCostPreview):canonicalJson(body.audioCostConsent)!==canonicalJson(loaded.originals.authorize.envelope.audioCostConsent))))error("experience_audio_confirmation_required",403);
+      await execute(loaded, "authorize", { ...confirmation, preflightId: current.preflight.id,
+        ...(loaded.binding.output==="audio"?{audioCostConsent:body.audioCostConsent}:{}),
+        ...(loaded.binding.output === "scene" ? { sceneCostConsent: body.sceneCostConsent } : {}) }, bridge, executionContext);
+    } else if (action === "run") {
+      const current = await state(loaded);
+      if (body.explicitRun !== true || !current.original || body.grantId !== current.original.grantId) error("experience_output_explicit_run_required", 403);
+      if (!loaded.originals.run && !current.permitted.run) error("experience_output_run_unavailable");
+      if (!loaded.originals.run || current.permitted.resumeRun)
+        await execute(loaded, "run", { grantId: current.original.grantId, explicitRun: body.explicitRun }, bridge, executionContext);
+    } else if (action === "recover-result") {
+      // Preserve intake/command custody without capturing state()'s old job status.
+      // Source epochs allow only the same nonsemantic native events during recovery.
+      const recoveryLoaded = loaded;
+      const assertions = recoveryLoaded.trusted.sourceAssertions.map(assertion => assertion.sql === "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?"
+        && assertion.bindings?.[0] === recoveryLoaded.binding.streamId && Number.isSafeInteger(assertion.bindings?.[1])
+        ? outputSourceEpochAssertion(recoveryLoaded.trusted.scope,{head:Number(assertion.bindings?.[1]),sourceDigest:recoveryLoaded.trusted.sourceDigest}) : assertion);
+      const current = await state(loaded);
+      if (body.explicitRecovery !== true || !current.original?.run || body.grantId !== current.original.grantId || body.jobId !== current.original.jobId
+        || !current.permitted.recoverResult && current.original.jobStatus !== "completed") error("experience_output_explicit_recovery_required",403);
+      const job = await env.DB.prepare("SELECT document_jobs.*,(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
+        .bind(current.original.jobId,loaded.trusted.scope.actorUserId,loaded.binding.streamId,loaded.binding.documentId).first<DocumentJobRow>();
+      if (!job) error("experience_output_original_job_unavailable",410);
+      const outcome = await recoverOutputFalImage(env,loaded.trusted.principal,job,{assertions,signal:request.signal});
+      recovered = outcome.status;
+    }
+    const latest = action ? await load(request, env, draftId, "read") : loaded; if (latest instanceof Response) return latest;
+    const value = await state(latest);
+    if (recovered) value.recovery = recovered;
+    const assertions = Object.values(latest.originals).map(value => outputCommandReceiptAssertion(latest.trusted.scope, value!.receipt));
+    return await outputExperienceCommands.disclose(latest.trusted, value, 200, assertions);
+  } catch (cause) {
+    const item = record(cause) ? cause : {};
+    const code = typeof item.code === "string" ? item.code : typeof item.message === "string" && /^[a-z][a-z0-9_]+$/u.test(item.message) ? item.message : "experience_output_unavailable";
+    return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409);
+  }
+}

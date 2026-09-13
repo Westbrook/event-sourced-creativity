@@ -1,5 +1,5 @@
 import type { WorkerEnv } from "./runtime.ts";
-import { OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
+import { OutputConflictError, type OutputSqlAssertion } from "./output-command-core.ts";
 
 declare const outputGovernanceWitness: unique symbol;
 /** In-memory evidence of a completed server read; it has no wire representation. */

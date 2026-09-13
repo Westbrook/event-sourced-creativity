@@ -7,9 +7,12 @@ import { stripTypeScriptTypes } from "node:module";
 
 const source = await readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8");
 const start = source.indexOf("  #nativeAudioJob(job:DocumentJob){");
-const end = source.indexOf("  #nativeStoryboardJob(job:DocumentJob){", start);
+const end = source.indexOf("  #nativeVideoJob(job:DocumentJob){", start);
 assert.ok(start > 0 && end > start, "exact new-method boundaries exist");
 const methods = source.slice(start, end);
+assert.deepEqual([...methods.matchAll(/^ {2}(?:async )?#(\w+)\(/gm)].map(match => match[1]),
+  ["nativeAudioJob", "nativeAudioJobIdentity", "openOriginalAudio", "nativeAudioCompletions"],
+  "extract only the four actual Audio methods, without neighboring format methods");
 assert.equal((methods.match(/async #openOriginalAudio\(/g) ?? []).length, 1);
 const minimalClass = stripTypeScriptTypes(`class Subject {
   #audioResultRead=null; #audioResultError=null; #activeId=""; #convertingId="";

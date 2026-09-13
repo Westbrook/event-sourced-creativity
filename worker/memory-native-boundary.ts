@@ -1,6 +1,6 @@
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
-import { nativeStructuredOriginSchema } from "./memory-native-origin.ts";
+import { nativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 
 type AnswerAlias = "answer" | "authored" | "private_content" | "content";

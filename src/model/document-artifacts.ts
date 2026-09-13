@@ -1,4 +1,5 @@
 import { slideCountAccepted, type SlideCountPolicy } from "./presentation-count-policy.ts";
+import { parseAudioLocalConversion, type AudioLocalConversion, type AudioTrimOperationRequest } from "./audio-local-conversion.ts";
 import type { ImageFocalPoint } from "./focal-point.ts";
 import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
@@ -163,16 +164,14 @@ export function model3dArtifactMediaFile(artifact: Pick<DocumentArtifact, "kind"
 
 /** Immutable authored clip provenance; the enclosing edit event identifies its current revision. */
 export type AudioMediaRevision = {
-  schemaVersion: 1; operation: "trim";
+  schemaVersion: 1; operation: "trim" | "client-converted-trim";
+  conversion?: AudioLocalConversion;
   media: { url: string; mediaType: "audio/wav"; sha256: string; byteLength: number };
   source: { url: string; sha256: string; revision: number; contentSha256: string; frameCount: number };
   startFrame: number; endFrame: number; sampleRate: number; channels: 1 | 2; bitsPerSample: 16;
   frameCount: number; durationSeconds: number;
 };
-export type AudioTrimEditRequest = {
-  expectedRevision: number; expectedContentSha256: string;
-  audioTrim: { sourceMediaSha256: string; sourceFrameCount: number; startFrame: number; endFrame: number; resultMediaSha256: string };
-};
+export type AudioTrimEditRequest = AudioTrimOperationRequest;
 export type AudioTrimEditCode = "saved" | "unchanged" | "source_changed" | "invalid_range" | "unsupported" | "unavailable" | "access_denied" | "unconfirmed" | "retired";
 export type AudioTrimEditResult =
   | { status: "saved"; code: "saved"; revision: number; contentSha256: string; audioRevision: AudioMediaRevision }
@@ -291,8 +290,10 @@ export function parseAudioMediaRevision(value: unknown): AudioMediaRevision | nu
   const integer = (candidate: unknown, minimum: number): candidate is number => typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= minimum;
   const digest = (candidate: unknown): candidate is string => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);
   try {
-    const row = closed(value, ["schemaVersion", "operation", "media", "source", "startFrame", "endFrame", "sampleRate", "channels", "bitsPerSample", "frameCount", "durationSeconds"]);
-    if (!row || row.schemaVersion !== 1 || row.operation !== "trim") return null;
+    const converted = Boolean(value && typeof value === "object" && Object.hasOwn(value, "conversion"));
+    const row = closed(value, ["schemaVersion", "operation", "media", "source", "startFrame", "endFrame", "sampleRate", "channels", "bitsPerSample", "frameCount", "durationSeconds", ...(converted ? ["conversion"] : [])]);
+    const conversion = converted && row ? parseAudioLocalConversion(row.conversion) : null;
+    if (!row || row.schemaVersion !== 1 || row.operation !== (converted ? "client-converted-trim" : "trim") || converted && !conversion) return null;
     const media = closed(row.media, ["url", "mediaType", "sha256", "byteLength"]), source = closed(row.source, ["url", "sha256", "revision", "contentSha256", "frameCount"]);
     if (!media || !source || !mediaUrl(media.url) || !mediaUrl(source.url) || media.mediaType !== "audio/wav"
       || !digest(media.sha256) || !digest(source.sha256) || !digest(source.contentSha256)
@@ -300,11 +301,12 @@ export function parseAudioMediaRevision(value: unknown): AudioMediaRevision | nu
       || !integer(source.frameCount, 1) || !integer(row.startFrame, 0) || !integer(row.endFrame, 1)
       || !integer(row.sampleRate, 1) || !integer(row.frameCount, 1) || row.channels !== 1 && row.channels !== 2
       || row.bitsPerSample !== 16 || row.endFrame > source.frameCount || row.startFrame >= row.endFrame
-      || row.frameCount !== row.endFrame - row.startFrame || row.frameCount >= source.frameCount
+      || row.frameCount !== row.endFrame - row.startFrame || (converted ? row.frameCount > source.frameCount : row.frameCount >= source.frameCount)
+      || conversion && (conversion.frameCount !== source.frameCount || conversion.sampleRate !== row.sampleRate || conversion.channels !== row.channels)
       || row.sampleRate * row.channels * 2 > 0xffffffff || 44 + source.frameCount * row.channels * 2 > 25 * 1024 * 1024
       || media.byteLength !== 44 + row.frameCount * row.channels * 2
       || row.durationSeconds !== row.frameCount / row.sampleRate || media.url === source.url) return null;
-    return { schemaVersion: 1, operation: "trim", media: { url: media.url, mediaType: "audio/wav", sha256: media.sha256, byteLength: media.byteLength },
+    return { schemaVersion: 1, operation: converted ? "client-converted-trim" : "trim", ...(conversion ? { conversion } : {}), media: { url: media.url, mediaType: "audio/wav", sha256: media.sha256, byteLength: media.byteLength },
       source: { url: source.url, sha256: source.sha256, revision: source.revision, contentSha256: source.contentSha256, frameCount: source.frameCount },
       startFrame: row.startFrame, endFrame: row.endFrame, sampleRate: row.sampleRate, channels: row.channels, bitsPerSample: 16,
       frameCount: row.frameCount, durationSeconds: row.durationSeconds as number };
@@ -342,6 +344,13 @@ const leadingCopySentence = (value: unknown) => {
 const repeatedCopyLeadIn = (left: unknown, right: unknown) => {
   const first=leadingCopySentence(left),second=leadingCopySentence(right);
   return Boolean(first&&second&&first.sentence===second.sentence||first&&first.sentence===contentKey(right)||second&&second.sentence===contentKey(left));
+};
+// A body may use its heading as the subject of a longer claim. Strict
+// word-prefix overlap is not evidence that the additional claim is redundant.
+// A repeated complete opening sentence still uses the existing lead-in repair.
+const extendsSlideHeading = (heading: unknown, body: unknown) => {
+  const headingKey=contentKey(heading),bodyKey=contentKey(body);
+  return Boolean(headingKey&&bodyKey.startsWith(headingKey+" ")&&!repeatedCopyLeadIn(heading,body));
 };
 export const slideCopyIsNearDuplicate = (left: unknown, right: unknown) => {
   const leftKey=contentKey(left),rightKey=contentKey(right);if(!leftKey||!rightKey||!isProseCopy(left)||!isProseCopy(right))return false;if(leftKey===rightKey)return true;
@@ -481,12 +490,14 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
 }
 
 export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraftItem {
-  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=distinctText(requestedBody,title?[title]:[]);
+  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=distinctText(requestedBody,title&&!extendsSlideHeading(title,requestedBody)?[title]:[]);
   const contextGroupIds=Array.isArray(input.context_group_ids)?[...new Set(input.context_group_ids.map(text).filter(Boolean))]:[];
   let slide=input.slide?normalizeSlideVisual(input.slide,{title,body},index):null;
   if(slide&&body&&body.length<=160&&slide.visual.kind==="hero-type"&&!slide.visual.value&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
-    slide=normalizeSlideVisual({...slide,visual:{...slide.visual,value:body}},{title,body:""},index);
-    body="";
+    const promoted=normalizeSlideVisual({...slide,visual:{...slide.visual,value:body}},{title,body:""},index);
+    // A visual normalization may reject this distinct body as title overlap.
+    // Commit the transfer only if the complete claim survives verbatim.
+    if(promoted.visual.value===body){slide=promoted;body="";}
   }
   if(slide&&body&&["architecture","diagram"].includes(slide.visual.kind)&&slide.visual.data.length>=2&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
     const titleKey=contentKey(title),bodyKey=contentKey(body),narrativeKeys=new Set([titleKey,bodyKey].filter(Boolean));
@@ -494,8 +505,8 @@ export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraft
     const narrativeOnly=rows.every((datum)=>narrativeKeys.has(contentKey(datum.label))&&(!datum.value||narrativeKeys.has(contentKey(datum.value)))&&!datum.exactValue&&!datum.displayValue&&preciseNumber(datum.label)===null&&preciseNumber(datum.value)===null);
     if(narrativeOnly&&rows.some((datum)=>contentKey(datum.label)===titleKey)&&rows.some((datum)=>contentKey(datum.label)===bodyKey)){
       const sourceIds=[...new Set([...(slide.sourceIds??[]),...rows.flatMap((datum)=>datum.sourceIds??[])])];
-      slide=normalizeSlideVisual({...slide,layout:index===0?"cover":"statement",...(sourceIds.length?{sourceIds}:{}),visual:{kind:"hero-type",label:slide.visual.label,value:body,data:[]}},{title,body:""},index);
-      body="";
+      const promoted=normalizeSlideVisual({...slide,layout:index===0?"cover":"statement",...(sourceIds.length?{sourceIds}:{}),visual:{kind:"hero-type",label:slide.visual.label,value:body,data:[]}},{title,body:""},index);
+      if(promoted.visual.value===body){slide=promoted;body="";}
     }
   }
   return{title,body,notes:text(input.notes),image_prompt:text(input.image_prompt),context_group_ids:contextGroupIds,slide};
@@ -509,6 +520,7 @@ export function slideCopyIssues(value:unknown):SlideCopyIssue[]{
   for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){
     const first=fields[left],second=fields[right];
     if(!first||!second||!slideCopyIsNearDuplicate(first.value,second.value))continue;
+    if(first.path==="title"&&second.path==="body"&&extendsSlideHeading(first.value,second.value))continue;
     const categoryLabel=first.path==="body"||first.path==="title"?/^slide\.visual\.data\.(\d+)\.label$/u.exec(second.path):null;
     if(categoryLabel&&Array.isArray(visualData)&&visualData.length>=2){
       const label=contentKey(second.value),narrative=contentKey(first.value),labelTokens=copyTokens(second.value);

@@ -373,6 +373,11 @@ const directoryEntry = (path: string) => path === "/" ? "/" : `${path.replace(/\
  */
 export function resolveServerRoute(routeValue: string): ServerRouteResolution | null {
   const path = new URL(routeValue, "https://forma.local").pathname.replace(/\/+$/, "") || "/";
+  // The public typed-input entry is separate from the retained /make/* readers.
+  // Use the extensionless HTML asset path to avoid an asset-binding redirect.
+  if (["/experiences", "/experiences/image", "/experiences/slides", "/experiences/short-story", "/experiences/scene", "/experiences/model3d", "/experiences/storyboard", "/experiences/audio", "/experiences/video"].includes(path)) {
+    return { application: "creative", entryPath: "/experiences", canonicalFamily: path };
+  }
   const named = SITE_ROUTE_ENTRIES.find((entry) => entry.path === path);
   if (named) return { application: named.application, entryPath: directoryEntry(named.path), canonicalFamily: named.path };
 

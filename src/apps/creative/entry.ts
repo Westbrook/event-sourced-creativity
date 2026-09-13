@@ -1,8 +1,10 @@
 import { html } from "lit";
+import { hasExperienceHostSelector } from "../../experiences/host-route.ts";
 import { FormaElement } from "../../components/forma-element";
 import { documentViewFromRoute, routePathname } from "../../model/routes";
 
 export function loadCreativeRoute(path: string): Promise<unknown> {
+  if (hasExperienceHostSelector(path)) return import("../../components/forma-experience-host");
   const pathname=routePathname(path);
   const documentView = documentViewFromRoute(path);
   if (["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname)) return import("../../components/forma-retained-short-story");
@@ -27,6 +29,7 @@ export function loadCreativeRoute(path: string): Promise<unknown> {
 export class FormaCreativeApplication extends FormaElement {
   override render() {
     const path = this.store.route.get();const pathname=routePathname(path);const documentView=documentViewFromRoute(path);
+    if (hasExperienceHostSelector(path)) return html`<forma-experience-host></forma-experience-host>`;
     if(["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname)) return html`<forma-retained-short-story></forma-retained-short-story>`;
     if(pathname.startsWith("/projects")||pathname==="/creative")return html`<forma-projects></forma-projects>`;
     if(pathname.startsWith("/studio/project"))return html`<forma-project-contents></forma-project-contents>`;

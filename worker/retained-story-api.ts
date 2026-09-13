@@ -24,6 +24,7 @@ import {
 import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy.ts";
 import { configuredPilotAdmissionGuard, POLICY_VERSION } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { readRetainedOutputStoryboard } from "./output-storyboard-retained.ts";
 
 const AUTH_BYTES = 128 * 1024;
 // Audio, Video and Model3D additionally witness complete bounded original request bytes.
@@ -253,7 +254,7 @@ async function storyboardReceipt(env: WorkerEnv, native: ReturnType<typeof selec
     try { key = decodeURIComponent(item.media_url.slice("/api/media/".length)); } catch { throw unavailable(); }
     if (!key.startsWith(prefix)) throw unavailable();
   }
-  return { bindings, raw: row.private_json, items: payload.items };
+  return { bindings, raw: row.private_json, items: payload.items, payload };
 }
 
 const videoReceiptGuard = () => `private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
@@ -969,7 +970,9 @@ async function model3dCompletionInput(env: WorkerEnv, job: Awaited<ReturnType<ty
 /**
  * Authenticated CURRENT personal native revision only. This is neither an
  * Experience result nor generation/custody authority. All database operations
- * here are fixed SELECTs; no provider, MEDIA, budget, repair or writer entry.
+ * here are fixed SELECTs; no provider, budget, repair or writer entry.
+ * Native mini-app Storyboard additionally re-reads its four original private
+ * MEDIA objects with request-abort and retained-content deadline bounds.
  * Runtime/import/SQL qualification is separate from this detached source.
  */
 async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativeOutput: NativeRetainedOutputTarget | null, nativeCompletion: NativeOutputCompletion | null = null): Promise<Response> {
@@ -1024,11 +1027,19 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const body = record(JSON.parse(source.content));
     if (!body || typeof body.title !== "string" || typeof body.content_markdown !== "string"
       || !Array.isArray(body.items)) throw unavailable();
+    let storyboardRead:Awaited<ReturnType<typeof readRetainedOutputStoryboard>>|null=null;
+    if(storyboard&&(storyboard.payload.source_surface==="outputs"||Object.hasOwn(record(storyboard.payload.settings)??{},"output_storyboard"))){
+      if(selection.revision!==0||native.latestEditId||typeof native.completionInputRef!=="string"||!opaque.test(native.completionInputRef))throw unavailable();
+      try{storyboardRead=await readRetainedOutputStoryboard(env,{ownerId:identity.userId,completionId:native.completionId,
+        documentId:selection.documentId,projectId:native.projectId,artifactId:selection.artifactId,contentId:native.contentId,
+        inputId:native.completionInputRef,rawContent:source.content,contentExpiresAt:source.expires_at,completionRaw:storyboard.raw,signal:request.signal});}
+      catch{throw unavailable();}
+    }
     const audioEdit = audio ? await audioEditReceipt(env, native, identity.userId, selection, body, audio) : null;
     const videoEdit = video ? await videoEditReceipt(env, native, identity.userId, selection, body, video) : null;
     const model3dEdit = model3d ? await model3dEditReceipt(env, native, identity.userId, selection, body, model3d) : null;
-    const retainedExpiresAt = model3dEdit?.source && Date.parse(model3dEdit.source.expiresAt) < Date.parse(source.expires_at)
-      ? model3dEdit.source.expiresAt : source.expires_at;
+    const retainedExpiresAt = storyboardRead?.expiresAt ?? (model3dEdit?.source && Date.parse(model3dEdit.source.expiresAt) < Date.parse(source.expires_at)
+      ? model3dEdit.source.expiresAt : source.expires_at);
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
       ? projectNativeRetainedOutput(outputTarget, body, retainedExpiresAt, native.sceneMedium, {
@@ -1080,7 +1091,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     // The witness is a closed array generated above, never caller-supplied SQL.
     const comparisons = eventColumns.map((name, index) => `actual.${name} IS NOT json_extract(expected.value,'$[${index}]')`).join(" OR ");
     const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${nativeCompletion ? nativeCompletionJobCte(nativeCompletion.output) : jobCte}`:""},
-      expected_events AS (SELECT value FROM json_each(?))
+      ${storyboardRead?"storyboard_witness AS (SELECT ? AS bindings),":""}expected_events AS (SELECT value FROM json_each(?))
       SELECT 1 AS admitted FROM private_content WHERE ${personalContentGuard()}
         AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?
         AND EXISTS(SELECT 1 FROM authorized WHERE CAST(auth_json AS BLOB)=CAST(? AS BLOB))
@@ -1089,6 +1100,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
           ON actual.event_id=json_extract(expected.value,'$[0]') WHERE actual.event_id IS NULL OR ${comparisons})
         ${job?"AND EXISTS(SELECT 1 FROM bounded_story_job WHERE CAST(job_json AS BLOB)=CAST(? AS BLOB))":""}
         ${storyboard?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${storyboardReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${storyboardRead?`AND (${storyboardRead.witness.sql})`:""}
         ${model3d?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${video?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${audio?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${audioReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
@@ -1101,9 +1113,10 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         ${model3dEdit?.source?.edit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${model3dEdit?.originalReset?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${completionInput?`AND EXISTS(SELECT 1 FROM private_content WHERE ${audioInputGuard()} AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}`)
-      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(videoEdit?[...videoEdit.bindings,videoEdit.raw]:[]), ...(videoEdit?.source?[...videoEdit.source.bindings,videoEdit.source.raw,videoEdit.source.expiresAt]:[]), ...(videoEdit?.source?.edit?[...videoEdit.source.edit.bindings,videoEdit.source.edit.raw]:[]), ...(model3dEdit?[...model3dEdit.bindings,model3dEdit.raw]:[]), ...(model3dEdit?.source?[...model3dEdit.source.bindings,model3dEdit.source.raw,model3dEdit.source.expiresAt]:[]), ...(model3dEdit?.source?.edit?[...model3dEdit.source.edit.bindings,model3dEdit.source.edit.raw]:[]), ...(model3dEdit?.originalReset?[...model3dEdit.originalReset.bindings,model3dEdit.originalReset.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
+      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), ...(storyboardRead?[storyboardRead.witness.json]:[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(videoEdit?[...videoEdit.bindings,videoEdit.raw]:[]), ...(videoEdit?.source?[...videoEdit.source.bindings,videoEdit.source.raw,videoEdit.source.expiresAt]:[]), ...(videoEdit?.source?.edit?[...videoEdit.source.edit.bindings,videoEdit.source.edit.raw]:[]), ...(model3dEdit?[...model3dEdit.bindings,model3dEdit.raw]:[]), ...(model3dEdit?.source?[...model3dEdit.source.bindings,model3dEdit.source.raw,model3dEdit.source.expiresAt]:[]), ...(model3dEdit?.source?.edit?[...model3dEdit.source.edit.bindings,model3dEdit.source.edit.raw]:[]), ...(model3dEdit?.originalReset?[...model3dEdit.originalReset.bindings,model3dEdit.originalReset.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
       .first<{ admitted: number }>();
     if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()
+      || storyboardRead && (Date.parse(storyboardRead.expiresAt)<=Date.now()||request.signal.aborted)
       || videoEdit?.source && Date.parse(videoEdit.source.expiresAt) <= Date.now()
       || model3dEdit?.source && Date.parse(model3dEdit.source.expiresAt) <= Date.now()
       || completionInput && Date.parse(completionInput.expiresAt) <= Date.now()) throw unavailable();

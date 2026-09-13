@@ -1,5 +1,5 @@
 import type { WorkerEnv } from "./runtime.ts";
-import { nativeMemoryFingerprint } from "./memory-native-origin.ts";
+import { nativeMemoryFingerprint } from "./memory-native-origin-schema.ts";
 
 const schemaNames = "'memory_document_job_answer_origins','memory_document_job_origin_dependencies'";
 const schemaExpression = `(SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql))

@@ -2,7 +2,7 @@ import type { CreativeEvent } from "../src/model/events.ts";
 import type { OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
 import type { OutputAssetRow, OutputConfirmedPlan, OutputGrantRow, OutputPreflight, OutputResultRow } from "../src/model/output-delivery-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
-import { OutputConflictError, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
+import { OutputConflictError, type OutputScope, type OutputSqlAssertion } from "./output-command-core.ts";
 import { outputAssetDocumentPrefix } from "./output-asset-storage-identity.ts";
 
 /** A limit makes the read unavailable; it never changes the authored assignment. */

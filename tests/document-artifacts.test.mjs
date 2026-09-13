@@ -684,7 +684,7 @@ test("keeps text, structured slides, storyboard, and video rendering behind dura
   const canvasKinds=["short_story","scene","slides","storyboard","video","audio"];
   assert.deepEqual(DOCUMENT_ARTIFACT_KINDS,[...canvasKinds,"model3d"],"audit both surfaces when another format is added");
   for(const kind of canvasKinds)assert.match(canvas,new RegExp(kind));
-  assert.match(component,/if\(this\.#kind==="model3d"\)\{await this\.#createModel3d\(\);return;\}/);
+  assert.match(component,/if\(this\.#kind==="model3d"\)\{if\(model3dAdaptation\)await this\.#createModel3d\(model3dAdaptation,model3dDocumentRevision\);return;\}/);
   assert.match(component,/forma-model3d-viewer/);assert.match(component,/model3d-output-files/);
   const deliveryStart=canvas.indexOf("async #openArtifactDelivery("),deliveryEnd=canvas.indexOf("\n  #closeCanvasArtifact()",deliveryStart);
   assert.ok(deliveryStart>=0&&deliveryEnd>deliveryStart,"Canvas retains its kind-independent exact-output handoff");
@@ -816,4 +816,46 @@ test("replay laboratory semantically covers every document artifact",()=>{
   assert.equal(repetitiveCoverage.checks.find((item)=>item.key==="document-artifact-rendering")?.passed,false);
   const repeatedAcrossSlides=events.map((entry)=>entry.type!=="DocumentRenderCompleted"||entry.payload.artifact_kind!=="slides"?entry:{...entry,payload:{...entry.payload,items:entry.payload.items.map((item,index,items)=>index===1?{...item,body:items[0].body}:item)}});const repeatedDeckCoverage=evaluateReplayCoverage(repeatedAcrossSlides,SCENARIO_EVENT_TYPES);
   assert.equal(repeatedDeckCoverage.checks.find((item)=>item.key==="document-artifact-rendering")?.passed,false);
+});
+
+
+test("heading extensions preserve a distinct slide claim instead of deleting it as title duplication",()=>{
+  const title="Repair-first purchasing",body="Repair-first purchasing reduces avoidable replacements.";
+  const item={title,body,notes:"",image_prompt:"",slide:{layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"",value:"Keep useful equipment in service.",data:[]}}};
+  const normalized=normalizeSlideItem(item);
+  assert.equal(normalized.body,body);
+  assert.deepEqual(slideCopyIssues(item),[]);
+  assert.deepEqual(slideCopyIssues(normalized),[]);
+  const retained=parseDocumentArtifactContent(JSON.stringify({title,summary:"",content_markdown:body,presentation,items:[item]}));
+  assert.equal(retained.items[0].body,body);
+  assert.equal(normalizeSlideItem({...item,body:title}).body,"");
+  assert.ok(slideCopyIssues({...item,body:title}).some(issue=>issue.firstPath==="title"&&issue.secondPath==="body"));
+  const lead="Build the story once";
+  assert.equal(normalizeSlideItem({...item,title:lead,body:lead+". Preserve each independent decision."}).body,"Preserve each independent decision.");
+  assert.equal(slideDeckCopyIsDistinct([item,{...item,title:"Another decision"}]),false);
+  for(const [heading,claim] of [
+    ["Repair-first purchasing","Repair-first purchasing does not eliminate replacement costs."],
+    ["Maintenance costs fell by 20%","Maintenance costs fell by 20% before rising by 10%."],
+  ]){
+    const counterexample={...item,title:heading,body:claim};
+    assert.equal(normalizeSlideItem(counterexample).body,claim);
+    assert.deepEqual(slideCopyIssues(counterexample),[]);
+  }
+});
+
+
+for(const kind of ["hero-type","architecture","diagram"])test(`${kind} promotion preserves heading-extension content when the visual rejects it`,()=>{
+  const title="Repair-first purchasing",body="Repair-first purchasing reduces avoidable replacements.";
+  const data=kind==="hero-type"?[]:[{label:title,value:"",source_ids:["blk_002"]},{label:body,value:"",source_ids:["blk_003"]}];
+  const item={title,body,notes:"Original notes",image_prompt:"",slide:{layout:"statement",kicker:"",source_ids:["blk_001"],bullets:[],visual:{kind,label:"",value:"",data}}};
+  const normalized=normalizeSlideItem(item);
+  assert.equal(normalized.body,body,"an unsuccessful promotion must leave the complete claim in body");
+  assert.equal(normalized.slide.visual.kind,kind,"do not replace the original visual with a lossy promotion");
+  assert.deepEqual(new Set(normalized.slide.sourceIds),new Set(kind==="hero-type"?["blk_001"]:["blk_001","blk_002","blk_003"]));
+  assert.equal(normalized.notes,item.notes);
+  const parsed=parseDocumentArtifactContent(JSON.stringify({title,summary:"",content_markdown:body,presentation,items:[normalized]}));
+  assert.equal(parsed.items[0].body,body,"retained parsing cannot erase the claim on another normalization pass");
+  const issues=documentArtifactValidationIssues("slides",parsed,{itemCount:1});
+  assert.equal(issues.some(issue=>issue.code==="missing_visible_claim"),false);
+  assert.ok(issues.some(issue=>issue.code===(kind==="hero-type"?"incomplete_visual":"duplicate_slide_copy")),"keep the unresolved visual explicit rather than claiming a lossy repair succeeded");
 });

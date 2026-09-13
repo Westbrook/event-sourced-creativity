@@ -13,7 +13,8 @@ const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
   const local=typeof context.parentURL==="string"&&context.parentURL.startsWith(workspaceRoot)&&!context.parentURL.includes("/node_modules/");
   return nextResolve(local&&specifier.startsWith(".")&&!/\.[a-z0-9]+$/iu.test(specifier)?`${specifier}.ts`:specifier,context);
 }});
-const {handleArtifactEdit}=await import("../worker/artifact-api.ts").finally(()=>sourceResolution.deregister());
+test.after(()=>sourceResolution.deregister());
+const {handleArtifactEdit}=await import("../worker/artifact-api.ts");
 
 const PROMISE="Your content. One context. Infinite paths to your target.";
 const OWNER="dev-local-creative";

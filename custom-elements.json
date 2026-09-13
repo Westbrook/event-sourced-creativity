@@ -11798,6 +11798,58 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-experience-host.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaExperienceHost",
+          "tagName": "forma-experience-host",
+          "customElement": true,
+          "summary": "Experience host application interface.",
+          "description": "Same-Document native admission view. All original command/grant identities are\nretained by the server; mounting and recovery read them without admitting work.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-experience-host",
+          "declaration": {
+            "name": "FormaExperienceHost",
+            "module": "src/components/forma-experience-host.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaExperienceHost",
+          "declaration": {
+            "name": "FormaExperienceHost",
+            "module": "src/components/forma-experience-host.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-focal-point-lab.ts",
       "declarations": [
         {

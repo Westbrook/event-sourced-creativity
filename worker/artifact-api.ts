@@ -1,5 +1,6 @@
 import { documentArtifactValidationIssues, model3dArtifactMediaFile, parseAudioMediaRevision, parseDocumentArtifactContent, parseVideoMediaRevision, parseVideoTrimEditRequest, videoArtifactMediaItem, type AudioTrimEditRequest, type VideoMediaRevision } from "../src/model/document-artifacts.ts";
 import { PCM_WAV_EDIT_MAX_BYTES, inspectPcmWav, trimPcmWav } from "../src/model/audio-container.ts";
+import { AUDIO_LOCAL_CONVERSION_MEDIA_TYPE, parseAudioTrimOperationRequest, readAudioConversionWire } from "../src/model/audio-local-conversion.ts";
 import { VIDEO_PREFIX_TRIM_MAX_BYTES, inspectVideoPrefix, trimVideoPrefix } from "../src/model/video-container.ts";
 import { MAX_MODEL3D_UPLOAD_BYTES } from "../src/model/model3d-assets.ts";
 import { GeometryScaleError, scaleModel3dGeometry } from "../src/model/model3d-geometry-edit.ts";
@@ -27,20 +28,7 @@ type RevisionRow={revision:number;content_json:string;content_sha256:string;crea
 const sha256=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),(byte)=>byte.toString(16).padStart(2,"0")).join("");
 const audioBytesSha256=async(value:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",value as Uint8Array<ArrayBuffer>)),byte=>byte.toString(16).padStart(2,"0")).join("");
 function audioTrimRequest(value: unknown): AudioTrimEditRequest | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>, trim = row.audioTrim as Record<string, unknown>;
-  const hash = (item: unknown) => typeof item === "string" && /^[a-f0-9]{64}$/u.test(item);
-  if (Object.keys(row).sort().join(",") !== "audioTrim,expectedContentSha256,expectedRevision"
-    || !Number.isSafeInteger(row.expectedRevision) || Number(row.expectedRevision) < 0 || !hash(row.expectedContentSha256)
-    || !trim || typeof trim !== "object" || Array.isArray(trim)
-    || Object.keys(trim).sort().join(",") !== "endFrame,resultMediaSha256,sourceFrameCount,sourceMediaSha256,startFrame"
-    || !hash(trim.sourceMediaSha256) || !hash(trim.resultMediaSha256)
-    || !Number.isSafeInteger(trim.sourceFrameCount) || Number(trim.sourceFrameCount) < 1
-    || !Number.isSafeInteger(trim.startFrame) || !Number.isSafeInteger(trim.endFrame)
-    || Number(trim.startFrame) < 0 || Number(trim.startFrame) >= Number(trim.endFrame) || Number(trim.endFrame) > Number(trim.sourceFrameCount)) return null;
-  return { expectedRevision: Number(row.expectedRevision), expectedContentSha256: row.expectedContentSha256 as string,
-    audioTrim: { sourceMediaSha256: trim.sourceMediaSha256 as string, sourceFrameCount: Number(trim.sourceFrameCount),
-      startFrame: Number(trim.startFrame), endFrame: Number(trim.endFrame), resultMediaSha256: trim.resultMediaSha256 as string } };
+  return parseAudioTrimOperationRequest(value);
 }
 function audioTrimAdmission(env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string, artifactId: string, contentId: string) {
   const snapshot = actor.authorizationSnapshot, pilot = configuredPilotAdmissionGuard(env, actor);
@@ -57,16 +45,16 @@ function audioTrimAdmission(env: WorkerEnv, actor: PilotUser, projectId: string,
       snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...pilot.bindings,projectId,documentId,artifactId,contentId,contentId] };
 }
 /** The cap applies to observed stream bytes as well as the object's declared size. */
-async function audioTrimSource(env: WorkerEnv, ownerId: string, url: string, expectedHash: string) {
+async function audioTrimSource(env: WorkerEnv, ownerId: string, url: string, expectedHash: string, expectedMime: "audio/wav" | "audio/mpeg" = "audio/wav") {
   const metadata = await readOwnedAudioReference(env, ownerId, url, { metadataOnly: true });
   if (!metadata || url !== `/api/media/${encodeURIComponent(metadata.key)}` || !metadata.key.startsWith(`${ownerMediaNamespace(ownerId)}/generated/`)
-    || metadata.mimeType !== "audio/wav" || metadata.metadata.sha256 !== expectedHash
+    || metadata.mimeType !== expectedMime || metadata.metadata.sha256 !== expectedHash
     || !Number.isSafeInteger(metadata.size) || metadata.size < 45 || metadata.size > PCM_WAV_EDIT_MAX_BYTES) return null;
   const object = await env.MEDIA.get(metadata.key);
   if (!object || object.customMetadata?.ownerId !== ownerId || object.customMetadata.sha256 !== expectedHash
     || object.size !== metadata.size) return null;
   const headers = new Headers(); object.writeHttpMetadata(headers);
-  if (headers.get("content-type") !== "audio/wav") return null;
+  if (headers.get("content-type") !== expectedMime) return null;
   const bytes = new Uint8Array(object.size), reader = object.body.getReader();
   let offset = 0, chunks = 0, complete = false;
   const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 30_000);
@@ -594,10 +582,20 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
   }
 
   let input:{markdown?:unknown;items?:unknown;expectedRevision?:unknown;expectedContentSha256?:unknown;audioTrim?:unknown;videoTrim?:unknown;model3dScale?:unknown};
-  try{input=await request.json() as typeof input;}catch{return Response.json({error:"invalid_artifact_edit"},{status:400});}
+  let convertedAudioBytes: Uint8Array | null = null;
+  if (request.headers.get("content-type") === AUDIO_LOCAL_CONVERSION_MEDIA_TYPE) {
+    if (!editRequest || project || artifact.kind !== "audio") return Response.json({error:"audio_trim_unsupported"},{status:400});
+    const wire = await readAudioConversionWire(request);
+    if (!wire) return Response.json({error:"audio_trim_invalid_range"},{status:400});
+    input = wire.request; convertedAudioBytes = wire.bytes;
+  } else {
+    try{input=await request.json() as typeof input;}catch{return Response.json({error:"invalid_artifact_edit"},{status:400});}
+  }
+  try {
   if(!input||typeof input!=="object"||Array.isArray(input))return Response.json({error:"invalid_artifact_edit"},{status:400});
   const trimRequested = editRequest && Object.hasOwn(input, "audioTrim");
   const trimInput = trimRequested ? audioTrimRequest(input) : null;
+  if (Boolean(trimInput?.audioTrim.conversion) !== Boolean(convertedAudioBytes)) return Response.json({error:"audio_trim_invalid_range"},{status:400});
   const videoRequested = editRequest && Object.hasOwn(input,"videoTrim");
   const videoInput = videoRequested ? parseVideoTrimEditRequest(input) : null;
   const model3dRequested = editRequest && Object.hasOwn(input,"model3dScale");
@@ -653,6 +651,7 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
       && saved.source.revision === trimInput.expectedRevision && saved.source.contentSha256 === trimInput.expectedContentSha256
       && saved.source.sha256 === trimInput.audioTrim.sourceMediaSha256 && saved.source.frameCount === trimInput.audioTrim.sourceFrameCount
       && saved.startFrame === trimInput.audioTrim.startFrame && saved.endFrame === trimInput.audioTrim.endFrame
+      && JSON.stringify(saved.conversion) === JSON.stringify(trimInput.audioTrim.conversion)
       && saved.media.sha256 === trimInput.audioTrim.resultMediaSha256 && latestEdit.payload.content_sha256 === await sha256(source.content)
       && await trimStillCurrent()) {
       return Response.json({appended:[latestEdit],head:initialPersonalHead,content:{[contentId]:source.content},revision});
@@ -801,9 +800,20 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     if (!mediaUrl || typeof mediaHash !== "string" || mediaHash !== trimInput.audioTrim.sourceMediaSha256
       || artifact.mediaUrl !== mediaUrl || artifact.settings.source_media_sha256 !== mediaHash)
       return Response.json({error:"audio_trim_source_changed"},{status:409});
-    if (artifact.mediaType !== "audio/wav") return Response.json({error:"audio_trim_unsupported"},{status:400});
+    const conversion = trimInput.audioTrim.conversion;
+    if (artifact.mediaType !== (conversion ? "audio/mpeg" : "audio/wav")) return Response.json({error:"audio_trim_unsupported"},{status:400});
     let sourceBytes: Uint8Array | null;
-    try { sourceBytes = await audioTrimSource(env, ownerId, mediaUrl, mediaHash); }
+    try {
+      if (conversion) {
+        const originalBytes = await audioTrimSource(env, ownerId, mediaUrl, mediaHash, "audio/mpeg");
+        if (!originalBytes) return Response.json({error:"audio_trim_unavailable"},{status:404});
+        try { if (originalBytes.length !== conversion.sourceByteLength) return Response.json({error:"audio_trim_source_changed"},{status:409}); }
+        finally { originalBytes.fill(0); }
+        if (!convertedAudioBytes || convertedAudioBytes.length !== conversion.decodedByteLength
+          || await audioBytesSha256(convertedAudioBytes) !== conversion.decodedMediaSha256) return Response.json({error:"audio_trim_invalid_range"},{status:400});
+        sourceBytes = convertedAudioBytes;
+      } else sourceBytes = await audioTrimSource(env, ownerId, mediaUrl, mediaHash);
+    }
     catch { return Response.json({error:"audio_trim_unavailable"},{status:404}); }
     if (!sourceBytes) return Response.json({error:"audio_trim_unavailable"},{status:404});
     const info = inspectPcmWav(sourceBytes);
@@ -814,10 +824,10 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     if (!trimmed || resultHash !== trimInput.audioTrim.resultMediaSha256)
       return Response.json({error:"audio_trim_invalid_range"},{status:400});
     if (!await trimStillCurrent()) return Response.json({error:"audio_trim_source_changed"},{status:409});
-    if (!trimmed.changed) return Response.json({appended:[],content:{[contentId]:source.content},revision});
+    if (!trimmed.changed && !conversion) return Response.json({appended:[],content:{[contentId]:source.content},revision});
     // Allocate the immutable identity now, but validate the full revision before any R2 put.
     const operationId = `audio-trim-${uuidV7()}`, key = `${ownerMediaNamespace(ownerId)}/generated/${operationId}.wav`;
-    const audioRevision = parseAudioMediaRevision({schemaVersion:1,operation:"trim",media:{url:`/api/media/${encodeURIComponent(key)}`,mediaType:"audio/wav",sha256:resultHash,byteLength:trimmed.bytes.length},
+    const audioRevision = parseAudioMediaRevision({schemaVersion:1,operation:conversion?"client-converted-trim":"trim",...(conversion?{conversion}:{}),media:{url:`/api/media/${encodeURIComponent(key)}`,mediaType:"audio/wav",sha256:resultHash,byteLength:trimmed.bytes.length},
       source:{url:mediaUrl,sha256:mediaHash,revision,contentSha256:sourceHash,frameCount:info.frameCount},startFrame:trimmed.startFrame,endFrame:trimmed.endFrame,
       sampleRate:info.sampleRate,channels:info.channels,bitsPerSample:16,frameCount:trimmed.frameCount,durationSeconds:trimmed.durationSeconds});
     if (!audioRevision) return Response.json({error:"audio_trim_invalid_range"},{status:400});
@@ -917,8 +927,9 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     if (!await trimStillCurrent()) return Response.json({error:"audio_trim_source_changed"},{status:409});
     try {
       // R2 staging remains separate from the atomic DB reference commit.
-      const retained = await storeGeneratedMedia(env,ownerId,pendingAudio.operationId,pendingAudio.bytes,"local-pcm-trim","audio/wav",
-        {source:"authored-audio-edit",artifactId,sourceMediaSha256:pendingAudio.sourceMediaSha256,sourceRevision:String(revision),requestSha256:trimFingerprint!});
+      const retained = await storeGeneratedMedia(env,ownerId,pendingAudio.operationId,pendingAudio.bytes,trimInput?.audioTrim.conversion?"client-local-pcm-conversion-trim":"local-pcm-trim","audio/wav",
+        {source:"authored-audio-edit",artifactId,sourceMediaSha256:pendingAudio.sourceMediaSha256,sourceRevision:String(revision),requestSha256:trimFingerprint!,...(trimInput?.audioTrim.conversion?{conversionProvenance:"client-local",decodedMediaSha256:trimInput.audioTrim.conversion.decodedMediaSha256}:{})});
+      if (retained.contentHash !== edited.audio_revision?.media.sha256 || retained.url !== edited.audio_revision.media.url) return Response.json({error:"audio_trim_unconfirmed"},{status:503});
       stagedAudio = {key:retained.key};
     } catch { return Response.json({error:"audio_trim_unconfirmed"},{status:503}); }
   }
@@ -992,4 +1003,5 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
     return Response.json({ error: "artifact_revision_conflict", revision }, { status: 409 });
   }
   return Response.json({ appended: [event], head: event.sequence, content: { [contentId]: serialized }, revision: revision + 1 });
+  } finally { convertedAudioBytes?.fill(0); }
 }

@@ -1,4 +1,26 @@
-import { prepareProviderSuccess } from "./generation-readiness.ts";
+import { readOutputAudioPayload, assertOutputAudioAttempt, requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
+import { outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
+import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
+import { recordOutputSceneLocalStop, readOutputSceneLocalStop } from "./output-scene-local-stop.ts";
+import { verifyOutputStoryboardCompletion } from "./output-storyboard-completion.ts";
+import { outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
+import { readStoryboardFrameAttempt, storyboardFrameRequest } from "./output-storyboard-fal.ts";
+import { readStoryboardPlannerAttempt } from "./output-storyboard-request.ts";
+import { retainStoryboardPlannerRequestCheckpoint, retainStoryboardRawEnvelopeCheckpoint } from "./output-storyboard-planner-checkpoint.ts";
+import type { StoryboardRawEnvelope } from "./output-storyboard-envelope.ts";
+import { retainStoryboardFrameCheckpoint, storyboardFrameSequenceAssertion } from "./output-storyboard-checkpoint.ts";
+import type { CapturedStoryboardPlan } from "./output-storyboard-plan.ts";
+import { assertOutputSceneAttempt } from "./output-scene-execution.ts";
+import { outputScenePreflightProof } from "./output-scene-preflight.ts";
+import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
+import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
+import type { PreparedSceneCost } from "./scene-cost-consent.ts";
+import { assertOutputNarrativeAttempt } from "./output-narrative-execution.ts";
+import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
+import { retainOutputFalImageCheckpoint } from "./output-fal-image-checkpoint.ts";
+import type { OutputFalCapturedRequest } from "./output-fal-image-contract.ts";
+import { readOutputFalImageContract } from "./output-fal-image-contract.ts";
+import { prepareOutputImageProviderHealth } from "./output-image-provider-health.ts";
 import { prepareOutputNativeProjectPublicationStatements } from "./output-native-project-publication.ts";
 import { guardOutputPrivateWrites, reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import type { ProviderFailureDetail } from "./provider-errors.ts";
@@ -30,12 +52,22 @@ export type OutputEventExecution={
  publicationScopesComplete?:()=>boolean;
  reference:{scopeKey:string;grantId:string;slotId:string;planRevisionId:string;targetId:string;targetContractDigest:string;sourceDigest:string};
  settings:Record<string,unknown>;
+ refreshAudio?:()=>Promise<void>;
+ readAudioEnvelope?:(responseRef:string)=>Promise<string>;
+ refreshScene?:()=>Promise<PreparedSceneCost>;
+ readSceneEnvelope?:(responseRef:string)=>Promise<string>;
  imageRender?:{format:ImageFormat;size:`${number}x${number}`};
  reservations:{reservationId:string;costReservationId:string;costReservationPeriod:string;costReservationMicrousd:number;maximumTokens:number};
  assertContext:(context:ReturnType<typeof authoritativeCreativeContext>)=>Promise<void>;
+ retainFalImageRequest:(request:OutputFalCapturedRequest,planning:Record<string,unknown>)=>Promise<void>;
+ retainStoryboardFrameRequest?:(request:OutputFalCapturedRequest,plan:CapturedStoryboardPlan,frameIndex:number)=>Promise<void>;
+ retainStoryboardEnvelope?:(envelope:StoryboardRawEnvelope)=>Promise<void>;
+ verifyStoryboardCompletion?:(artifactId:string,artifact:unknown,frames:unknown,lifetime?:{signal?:AbortSignal;deadlineMs?:number})=>Promise<Record<string,unknown>>;
+ storyboardMediaDeadlineMs?:()=>number;
  beforeSourceTransmission:()=>Promise<void>;
  beforeProviderAttempt:(attempt:ProviderAttemptPreflight)=>Promise<void>;
  beforeProviderDispatch:(clientRequestId:string)=>void;
+ providerNotDispatched?:(attempt:ProviderAttemptPreflight)=>Promise<void>;
  dispatchStop:(error:unknown)=>ProviderFailureDetail|null;
  observeProvider:(receipt:PaidProviderSubmission)=>Promise<void>;
 };
@@ -59,12 +91,47 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const {scope,slot}=binding;
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
- const current=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+ const current=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
  if(!current.available||await outputDigest(current)!==slot.routeDigest)throw new OutputConflictError("output_native_route_changed",409);
+ const audioProof=Object.hasOwn(authority.target,"audio_contract")?outputAudioPreflightAssertions(current):null;
+ if(Object.hasOwn(authority.target,"audio_contract")&&!audioProof)throw new OutputConflictError("output_audio_source_unavailable",403);
+ const audioAssertions:OutputSqlAssertion[]=[...(audioProof??[])];
+ const sceneProof=Object.hasOwn(authority.target,"scene_contract")?outputScenePreflightProof(current):null;
+ if(Object.hasOwn(authority.target,"scene_contract")&&!sceneProof)throw new OutputConflictError("output_scene_source_unavailable",403);
+ const sceneAssertions:OutputSqlAssertion[]=[...(sceneProof?.sourceAssertions??[])];
+ const storyboardProof=Object.hasOwn(authority.target,"storyboard_contract")?outputStoryboardPreflightProof(current):null;
+ if(Object.hasOwn(authority.target,"storyboard_contract")&&!storyboardProof)throw new OutputConflictError("output_storyboard_source_unavailable",403);
+ if(storyboardProof&&(storyboardProof.requestId!==job.job_id||storyboardProof.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId
+  ||Date.parse(storyboardProof.expiresAt)<=Date.now()))throw new OutputConflictError("output_storyboard_original_attempt_required",403);
+ const storyboardSourceAssertions:OutputSqlAssertion[]=[...(storyboardProof?.sourceAssertions??[])];
+ const sceneEnvelopeAssertions:OutputSqlAssertion[]=[];
+ const storyboardCompletionAssertions:OutputSqlAssertion[]=[];
+ let storyboardCompletionJson:string|undefined;
  const projectJobAuthority=documentJobProjectAuthority(user,job.document_id,job.job_id);
- const liveAssertions=()=>[...authority.assertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
+ const liveAssertions=()=>[...authority.assertions,...sceneAssertions,...audioAssertions,...storyboardSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
  const settings=authority.targetPreflight.settings as OutputNativeSettings;
  if(settings.kind!==job.kind)throw new OutputConflictError("output_job_route_mismatch",403);
+ const audioPayload=audioProof?readOutputAudioPayload(settings.payload):null;
+ const refreshAudio=audioProof?async()=>{
+  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+  const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
+  if(!audioPayload||!proof||!preview||preview.requestId!==job.job_id||slot.jobId!==job.job_id||slot.attemptOrdinal!==0||slot.previousSlotId||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_audio_source_changed",403);
+  requireAudioMiniAppCostApproval(parsed(job.request_json).audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);
+  audioAssertions.splice(0,audioAssertions.length,...proof);
+ }:undefined;
+ if(refreshAudio)await refreshAudio();
+ const scenePayload=sceneProof?await readOutputScenePayload(settings.payload):null;
+ const refreshScene=sceneProof?async()=>{
+  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+  const proof=outputScenePreflightProof(refreshed);
+  const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
+  if(!proof||!payload||!scenePayload||proof.requestId!==job.job_id||proof.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId
+    ||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_scene_source_changed",403);
+  requireSceneMiniAppCostApproval(parsed(job.request_json).sceneCostConsent,scenePayload.outputScene.costPreview,payload.outputScene.costPreview);
+  sceneAssertions.splice(0,sceneAssertions.length,...proof.sourceAssertions);
+  return proof.prepared;
+ }:undefined;
+ if(refreshScene)await refreshScene();
  const billingOwner=user.billingUserId??user.userId;
  const checkpoint=parsed(job.result_json);
  const period=checkpoint.costReservationPeriod;
@@ -74,22 +141,46 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const periodDeadline=Date.parse(`${period}-01T00:00:00.000Z`);
  const nextPeriod=Number.isFinite(periodDeadline)?new Date(periodDeadline):null;
  nextPeriod?.setUTCMonth(nextPeriod.getUTCMonth()+1);
- const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...authority.assertions.flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
+ const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...[...authority.assertions,...sceneAssertions,...audioAssertions,...storyboardSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
  let dispatchStopError:OutputConflictError|null=null;
  const assertDispatchDeadline=()=>{if(dispatchStopError)throw dispatchStopError;const leaseDeadline=Date.parse(String(job.lease_expires_at));if(!Number.isFinite(dispatchDeadline)||!Number.isFinite(leaseDeadline)||Date.now()>=Math.min(dispatchDeadline,leaseDeadline)){
   dispatchStopError=new OutputConflictError("output_execution_deadline_expired",403);throw dispatchStopError;
  }};
- const claimedCalls=new Map<string,{callKey:string;provider:string;model:string;operation:string;pending:boolean;dispatched:boolean}>();
+ const localStops=new Set<string>();
+ const claimedCalls=new Map<string,{callKey:string;provider:string;model:string;operation:string;pending:boolean;dispatched:boolean;settled?:boolean;requestDigest:string;storyboardBinding?:string;checkpointed:boolean}>();
  const observedReceipts=new Map(providerSubmissions(checkpoint).map(receipt=>[receipt.clientRequestId,receipt]));
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
- const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy});
+ const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson});
  let publicationScopesComplete=scope.kind==="personal";
- return {guardedEnvironment,
+ return {guardedEnvironment,...(refreshAudio?{refreshAudio,
+  async readAudioEnvelope(responseRef:string){
+   if(scope.kind!=="personal"||!responseRef)throw new OutputConflictError("output_audio_envelope_unavailable",403);
+   const row=await env.DB.prepare("SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-response' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id)").bind(responseRef,scope.actorUserId).first<{content:string;expires_at:string}>();
+   if(!row)throw new OutputConflictError("output_audio_envelope_unavailable",403);
+   sceneEnvelopeAssertions.push({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-response' AND content=? AND expires_at=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[responseRef,scope.actorUserId,row.content,row.expires_at],deadlineMs:Date.parse(row.expires_at)});
+   await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));return row.content;
+  }
+ }:{}),...(refreshScene?{refreshScene,
+  async providerNotDispatched(attempt:ProviderAttemptPreflight){
+   if(!scenePayload||claimedCalls.get(attempt.clientRequestId)?.dispatched||localStops.has(attempt.clientRequestId))return;
+   await assertOutputSceneAttempt(settings,attempt);
+   localStops.add(attempt.clientRequestId);
+   await recordOutputSceneLocalStop(env,{job,scope,slot,billingOwner,bindingHash:scenePayload.outputScene.costPreview.bindingHash,attempt});
+  },
+  async readSceneEnvelope(responseRef:string){
+   if(scope.kind!=="personal"||!responseRef)throw new OutputConflictError("output_scene_envelope_unavailable",403);
+   const row=await env.DB.prepare("SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-response' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id)").bind(responseRef,scope.actorUserId).first<{content:string;expires_at:string}>();
+   if(!row)throw new OutputConflictError("output_scene_envelope_unavailable",403);
+   sceneEnvelopeAssertions.push({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-response' AND content=? AND expires_at=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[responseRef,scope.actorUserId,row.content,row.expires_at],deadlineMs:Date.parse(row.expires_at)});
+   await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));
+   return row.content;
+  }}:{}),
   dispatchStop:error=>dispatchStopError!==null&&error===dispatchStopError?{code:"output_execution_deadline_expired",category:"access",scope:"project",action:"check_project",
    message:"The current source or execution authorization expired before this provider call could be sent. Earlier usage and unresolved allowances are retained; check current access before starting other work.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:403}:null,
   sourceEvents:authority.events,sourceHead:authority.head,
   async eventAppendCommitted(events){
    if(!events.length||events.length>8||events.some(event=>event.streamId!==job.stream_id||event.correlationId!==job.correlation_id))return false;
+   if(refreshScene)await refreshScene();if(refreshAudio)await refreshAudio();
    const checks=events.map(event=>{const values=eventWriteBindings(event);
     return env.DB.prepare(`SELECT 1 AS present FROM events stored LEFT JOIN event_private_payloads body ON body.private_event_id=stored.event_id
       WHERE stored.event_id=? AND stored.stream_id=? AND stored.sequence=? AND stored.occurred_at=? AND stored.recorded_at=?
@@ -107,13 +198,47 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    ...(scope.kind==="personal"&&events.length?outputAssertionStatements(env,{sql:`(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?
      OR (NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(SELECT value FROM json_each(?))) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)<>?)`,
     bindings:[JSON.stringify(events.map(event=>event.eventId)),events.length,JSON.stringify(events.map(event=>event.eventId)),job.stream_id,events[0]!.sequence-1]}):[]),
-   ...(events.some(event=>event.type==="GenerationCompleted"||event.type==="DocumentRenderCompleted")?[prepareProviderSuccess(env).statement]:[]),...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events)],
+   ...prepareOutputImageProviderHealth(env,{job,slot,events,routes:settings.calls,claimedCalls,observedReceipts}),...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events)],
   eventWriteCommitted:results=>{if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;},
   publicationScopesComplete:()=>publicationScopesComplete,reference,settings:settings.payload,...(settings.imageRender?{imageRender:settings.imageRender}:{}),reservations:{reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens},
   async assertContext(context){if(context.documentRevision!==authority.context.documentRevision||await outputDigest(context.snapshot)!==await outputDigest(authority.context.snapshot))throw new OutputConflictError("output_source_changed",409);},
-  async beforeSourceTransmission(){await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));},
+  async retainFalImageRequest(request,planning){
+   const call=claimedCalls.get(request.attempt.clientRequestId);
+   if(!call||call.callKey!=="image:initial"||call.provider!=="fal"||call.model!==request.contract.model||call.pending||call.dispatched)throw new OutputConflictError("output_fal_checkpoint_call_mismatch",403);
+   await retainOutputFalImageCheckpoint(guardedEnvironment,user,job,scope,slot,request,planning);
+  },
+  async retainStoryboardFrameRequest(request,plan,frameIndex){
+   const mapped=await storyboardFrameRequest(plan,frameIndex,request),call=claimedCalls.get(request.attempt.clientRequestId);
+   if(!call||artifactKind!=="storyboard"||call.callKey!==mapped.attempt.logicalCallKey||call.requestDigest!==mapped.attempt.requestDigest
+     ||call.storyboardBinding!==plan.bindingSha256||call.provider!=="fal"||call.model!==request.contract.model||call.pending||call.dispatched||call.checkpointed)throw new OutputConflictError("output_storyboard_checkpoint_call_mismatch",403);
+   await retainStoryboardFrameCheckpoint(guardedEnvironment,user,job,scope,slot,request,plan,frameIndex);
+   call.checkpointed=true;
+  },
+  async retainStoryboardEnvelope(envelope){
+   const call=claimedCalls.get(envelope.clientRequestId);
+   if(artifactKind!=="storyboard"||!call||call.callKey!=="planning:0:initial"||!call.pending||!call.dispatched||!call.checkpointed
+    ||call.requestDigest!==envelope.requestDigest||call.provider!==envelope.provider||call.model!==envelope.model)throw new OutputConflictError("output_storyboard_envelope_call_mismatch",403);
+   await retainStoryboardRawEnvelopeCheckpoint(guardedEnvironment,scope,slot,job,envelope);
+  },
+  async verifyStoryboardCompletion(artifactId,artifact,frames,lifetime){
+   storyboardCompletionJson=undefined;
+   if(artifactKind!=="storyboard")throw new OutputConflictError("output_storyboard_completion_invalid",403);
+   const deadlineMs=Math.min(lifetime?.deadlineMs??Infinity,dispatchDeadline,Date.parse(String(job.lease_expires_at)),Date.parse(job.expires_at));
+   const verified=await verifyOutputStoryboardCompletion(env,scope,slot,job,settings.payload,artifactId,artifact,frames,{signal:lifetime?.signal,deadlineMs});
+   storyboardCompletionAssertions.splice(0,storyboardCompletionAssertions.length,...verified.assertions);
+   await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));
+   storyboardCompletionJson=JSON.stringify(verified.receipt);
+   return verified.receipt;
+  },
+  storyboardMediaDeadlineMs(){
+   // Capture this value once per read. Heartbeats may update the existing lease,
+   // but a running read never renews its captured deadline or original source TTL.
+   const deadline=Math.min(dispatchDeadline,Date.parse(String(job.lease_expires_at)),Date.parse(job.expires_at));
+   return artifactKind==="storyboard"&&Number.isFinite(deadline)?deadline:0;
+  },
+  async beforeSourceTransmission(){if(refreshAudio)await refreshAudio();await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));},
   async beforeProviderAttempt(attempt){
-   assertDispatchDeadline();
+   if(refreshAudio)await refreshAudio();assertDispatchDeadline();
    const callKey=attempt.logicalCallKey;
    const route=settings.calls.find(route=>route.stage===callKey);
    if(!callKey||!route||route.model!==attempt.model||!attempt.requestDigest||!Number.isSafeInteger(attempt.maximumInputTokens)||!Number.isSafeInteger(attempt.maximumOutputTokens)||attempt.maximumInputTokens<0||attempt.maximumOutputTokens<0)throw new OutputConflictError("output_provider_stage_not_authorized",403);
@@ -121,14 +246,24 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
     ||!Number.isSafeInteger(route.maximumInputTokens)||attempt.maximumInputTokens>Number(route.maximumInputTokens)
     ||attempt.maximumOutputTokens!==route.maximumOutputTokens
     ||await outputDigest(attempt.presentationRoute)!==await outputDigest(route.presentationRoute)))throw new OutputConflictError("output_provider_route_changed",403);
+   if(artifactKind==="short_story"||attempt.narrative!==undefined){try{await assertOutputNarrativeAttempt(settings,attempt);}catch{throw new OutputConflictError("output_narrative_request_not_authorized",403);}}
+   if(scenePayload||attempt.scene!==undefined){try{await assertOutputSceneAttempt(settings,attempt);}catch{throw new OutputConflictError("output_scene_request_not_authorized",403);}}
+   const storyboardPlanning=artifactKind==="storyboard"&&callKey.startsWith("planning:")||attempt.storyboardPlanning!==undefined?await readStoryboardPlannerAttempt(attempt,settings.payload.outputStoryboardPlanner):null;
+   if(storyboardPlanning&&(artifactKind!=="storyboard"||route.provider!=="openai"||scope.kind!=="personal"))throw new OutputConflictError("output_storyboard_planner_not_authorized",403);
+   const storyboard=callKey.startsWith("image:frame:")||attempt.storyboard!==undefined?await readStoryboardFrameAttempt(attempt,settings.payload.outputStoryboard):null;
+   if(storyboard&&(artifactKind!=="storyboard"||route.provider!=="fal"||scope.kind!=="personal"))throw new OutputConflictError("output_storyboard_request_not_authorized",403);
+   if(audioPayload||attempt.audio!==undefined){try{await assertOutputAudioAttempt(settings,attempt);}catch{throw new OutputConflictError("output_audio_request_not_authorized",403);}}
+   const fal=route.provider==="fal"&&(callKey==="image:initial"||storyboard)?readOutputFalImageContract(settings.payload.outputFalImage):null;
+   if((route.provider==="fal"&&(callKey==="image:initial"||storyboard)||attempt.falImage!==undefined)&&(!fal
+     ||await outputDigest(attempt.falImage)!==await outputDigest(fal)||attempt.maximumInputTokens!==0||attempt.maximumOutputTokens!==0))throw new OutputConflictError("output_fal_request_outside_contract",403);
    const priorTokens=[...observedReceipts.values()].filter(receipt=>receipt.status==="completed").reduce((sum,receipt)=>sum+Number(receipt.totalTokens??0),0);
    if(priorTokens+attempt.maximumInputTokens+attempt.maximumOutputTokens>slot.maximumTokens)throw new OutputConflictError("output_token_allowance_exceeded",429);
    const maximumUsage={inputTokens:attempt.maximumInputTokens,outputTokens:attempt.maximumOutputTokens,totalTokens:attempt.maximumInputTokens+attempt.maximumOutputTokens};
-   const pricedMaximum=callKey==="model3d:initial"?estimateModel3dCostMicrousd(settings.payload.model3dSettings)
-     :route.presentationRoute?estimateOpenAITextCallMaximumMicrousd(attempt.model,attempt.maximumInputTokens,attempt.maximumOutputTokens)
+   const pricedMaximum=audioPayload&&callKey==="audio:initial"?Number(settings.payload.audioEstimatedCostMicrousd):fal?fal.estimatedMicrousd:callKey==="model3d:initial"?estimateModel3dCostMicrousd(settings.payload.model3dSettings)
+     :route.presentationRoute||artifactKind==="short_story"||scenePayload||audioPayload||storyboardPlanning?estimateOpenAITextCallMaximumMicrousd(attempt.model,attempt.maximumInputTokens,attempt.maximumOutputTokens)
     :callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd:priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
    if(pricedMaximum>route.maximumMicrousd)throw new OutputConflictError("output_call_cost_allowance_exceeded",429);
-   const assertions:OutputSqlAssertion[]=[...liveAssertions(),{sql:`EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.owner_id=? AND live.stream_id=? AND live.correlation_id=? AND live.attempt_count=? AND live.status='running'
+   const assertions:OutputSqlAssertion[]=[...liveAssertions(),...(storyboard?[storyboardFrameSequenceAssertion(scope,slot,job,storyboard.frameIndex,storyboard.plan.bindingSha256)]:[]),{sql:`EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.owner_id=? AND live.stream_id=? AND live.correlation_id=? AND live.attempt_count=? AND live.status='running'
       AND live.lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND NOT EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(live.result_json,'$.providerSubmissions'),'{}')) receipt
         WHERE json_extract(receipt.value,'$.status')='completed' AND (COALESCE(json_type(receipt.value,'$.totalTokens'),'')<>'integer' OR json_extract(receipt.value,'$.totalTokens')<0))
@@ -140,11 +275,13 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
        AND cost.reserved_microusd=? AND token.reserved_tokens=? AND cost.status='executing' AND token.status='active')`,bindings:[slot.costReservationId,slot.tokenReservationId,billingOwner,job.stream_id,job.correlation_id,operation,period,slot.maximumMicrousd,slot.maximumTokens]}];
    const claim=await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
    if(!claim.claimed)throw new OutputConflictError("output_provider_call_already_consumed",409);
-   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="model3d:initial"?"model3d":"image",pending:false,dispatched:false});
+   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="audio:initial"?"audio":callKey==="model3d:initial"?"model3d":"image",pending:false,dispatched:false,requestDigest:attempt.requestDigest,checkpointed:false,...(storyboard?{storyboardBinding:storyboard.plan.bindingSha256}:{})});
+   if(storyboardPlanning){const claimed=claimedCalls.get(attempt.clientRequestId)!;claimed.storyboardBinding=storyboardPlanning.requestDigest;
+    await retainStoryboardPlannerRequestCheckpoint(guardedEnvironment,scope,slot,job,storyboardPlanning);claimed.checkpointed=true;}
   },
   beforeProviderDispatch(clientRequestId){
    const call=claimedCalls.get(clientRequestId);
-   if(!call||!call.pending||call.dispatched)throw new OutputConflictError("output_provider_call_missing",403);
+   if(!call||!call.pending||call.dispatched||localStops.has(clientRequestId)||call.storyboardBinding&&!call.checkpointed)throw new OutputConflictError("output_provider_call_missing",403);
    // No await may separate this check from the actual adapter fetch. A denial
    // leaves the existing pending call/holds unresolved; it is not a provider rejection.
    assertDispatchDeadline();call.dispatched=true;
@@ -170,6 +307,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
     .bind(JSON.stringify(financial),new Date().toISOString(),job.job_id,user.userId,job.stream_id,job.correlation_id).run();
    const known=Number.isSafeInteger(receipt.costMicrousd)&&Number(receipt.costMicrousd)>=0;
    await settleOutputProviderCall(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+   call.settled=receipt.status==="completed"&&known;
    // Subsequent private progress/candidate writes carry the same live SQL proof;
    // retaining this monetary witness does not itself authorize any private write.
   },
@@ -224,7 +362,8 @@ export async function cleanupExpiredOrRevokedOutputWork(env:WorkerEnv,scope:Outp
  const statements:D1PreparedStatement[]=[];
  for(const slot of owned){
   statements.push(env.DB.prepare(`UPDATE output_execution_grants SET status='revoked'
-   WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND status IN('authorized','active') AND expires_at<=?`)
+   WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND status IN('authorized','active') AND expires_at<=?
+     AND NOT (${retainedPersonalFalRecoverySql})`)
    .bind(scope.key,slot.grantId,scope.actorUserId,now));
   statements.push(env.DB.prepare(`UPDATE document_jobs SET status='canceled',error_message='output_authorization_expired_or_revoked',completed_at=?,lease_expires_at=NULL,updated_at=?
    WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND status='queued' AND attempt_count=0
@@ -327,13 +466,16 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
  if(settlement.status==='uncertain')return {reconciled:0,status:'uncertain' as const};
  // Refresh only operational fields. This remains safe after source erasure and
  // never reconstructs private requests, candidates, outputs, or event bodies.
+ const originalJob=await env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?").bind(job.job_id,actor.userId).first<DocumentJobRow>();
+ const localStop=originalJob?await readOutputSceneLocalStop(env,originalJob,actor.userId,actor.billingUserId??actor.userId):null;
+ const actualCalls=localStop?0:calls.results.length;
  const financial=env.DB.prepare(`UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),json_object('generationReceipt',json_object(
     'reservation_status',(SELECT status FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?),
     'settled_cost_microusd',(SELECT used_microusd FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?),
     'actual_provider_call_count',?, 'provider_request_status',CASE WHEN ?=0 THEN 'not_submitted' WHEN status='completed' THEN 'completed' ELSE 'submitted' END,
     'source_transmission_status',CASE WHEN ?=0 THEN 'not_transmitted' ELSE 'transmitted' END))),updated_at=?
    WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('completed','partial','failed','canceled')`)
-   .bind(String(candidate.cost_reservation_id),actor.billingUserId??actor.userId,String(candidate.cost_reservation_id),actor.billingUserId??actor.userId,calls.results.length,calls.results.length,calls.results.length,new Date().toISOString(),job.job_id,actor.userId,job.stream_id,job.correlation_id);
- await synchronizeOutputJobOutcome(env,job,[...authority,financial]);
+   .bind(String(candidate.cost_reservation_id),actor.billingUserId??actor.userId,String(candidate.cost_reservation_id),actor.billingUserId??actor.userId,actualCalls,actualCalls,actualCalls,new Date().toISOString(),job.job_id,actor.userId,job.stream_id,job.correlation_id);
+ await synchronizeOutputJobOutcome(env,job,[...authority,...(localStop?outputAssertionStatements(env,localStop.guard):[]),financial]);
  return {reconciled:Number(settlement.settled),status:'known' as const};
 }

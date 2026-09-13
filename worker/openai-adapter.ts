@@ -1,3 +1,12 @@
+import { generateOutputVideo, type OutputVideoAttempt, type OutputVideoExecutionOptions } from "./output-video-execution.ts";
+import { captureOutputAudioAttempt, readOutputAudioEnvelope, type OutputAudioAttempt } from "./output-audio-execution.ts";
+import { parseAudioOutputContract } from "../src/model/output-audio-contract.ts";
+import { prepareOutputSceneAdapter, generateOutputSceneArtifact, type OutputSceneAdapterSelection, type OutputSceneAttempt } from "./output-scene-adapter.ts";
+import { parseStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
+import { captureStoryboardPlannerRequest, captureStoryboardPlannerResponse, readStoryboardPlannerExecution, type StoryboardPlannerExecution } from "./output-storyboard-request.ts";
+import { captureStoryboardRawEnvelope, storyboardEnvelopeText, type StoryboardRawEnvelope } from "./output-storyboard-envelope.ts";
+import { captureOutputNarrativeRequest, OUTPUT_NARRATIVE_INSTRUCTIONS, outputNarrativeBodyReceipt, outputNarrativeArtifactProblem, outputNarrativeResponseProblem, readOutputNarrativeExecution, type OutputNarrativeExecution } from "./output-narrative-request.ts";
+import { assessShortStoryBody } from "../src/model/output-narrative-contract.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES, manualPresentationMaximumOutputTokens, presentationCountInstruction, resolvePresentationCountRequest, slideCountBounds, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { ApiError, createFalClient } from "@fal-ai/client";
@@ -50,6 +59,9 @@ export type CreativeImageOptions = {
   onBeforeProviderDispatch?:(clientRequestId:string)=>void;
   outputImageFormat?:import("../src/model/image-format").ImageFormat;
   outputTargetInstructions?:string;
+  /** Internal native quote only, validated before any bounded Fal request. */
+  outputFalImage?:unknown;
+  onOutputFalRequest?:(request:import("./output-fal-image-contract.ts").OutputFalCapturedRequest,details:Record<string,unknown>)=>Promise<void>;
   onProviderSubmission?: PaidProviderSubmissionObserver;
   providerClientRequestId?: string;
   quality?: "low" | "medium" | "high";
@@ -94,9 +106,9 @@ export type ProductionPageContext = {
 export type ProviderAttemptReceipt = { model:string; responseId:string; responseIds:string[]; usage:{inputTokens:number;outputTokens:number;totalTokens:number}; latencyMs:number };
 export const PRESENTATION_ADAPTER_VERSION="2026-09-02-durable-calls-source-bookends-v7";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
-export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string;call?:PaidProviderSubmission};
-export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string;logicalCallKey?:string;requestDigest?:string;reasoningEffort?:string;pricingVersion?:string;cachePolicy?:string;presentationRoute?:PresentationModelRoute};
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; slideCountPolicy?:SlideCountPolicy; outputTargetInstructions?:string; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; presentationModelRoutes?:PresentationModelRoutes; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|{responseRef:string}|Promise<void|{responseRef:string}>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void };
+export type ProviderResponseReceipt=ProviderAttemptReceipt&{rawEnvelope?:string;candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string;call?:PaidProviderSubmission;storyboardEnvelope?:string};
+export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string;logicalCallKey?:string;requestDigest?:string;reasoningEffort?:string;pricingVersion?:string;cachePolicy?:string;presentationRoute?:PresentationModelRoute;falImage?:unknown;storyboard?:unknown;storyboardPlanning?:unknown;scene?:OutputSceneAttempt;audio?:OutputAudioAttempt;video?:OutputVideoAttempt;narrative?:{execution:OutputNarrativeExecution;requestBody:string}};
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; slideCountPolicy?:SlideCountPolicy; outputTargetInstructions?:string; outputScene?:OutputSceneAdapterSelection;outputAudio?:unknown;outputStoryboard?:StoryboardPlannerExecution;onStoryboardEnvelope?:(envelope:StoryboardRawEnvelope)=>Promise<void>;outputNarrative?:OutputNarrativeExecution; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; presentationModelRoutes?:PresentationModelRoutes; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|{responseRef:string}|Promise<void|{responseRef:string}>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void;onProviderNotDispatched?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
 export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; contextGroups?:Array<{id:string;name:string;target:string;role:string;application:string;relativity:number}>; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type VideoAudioReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; durationSeconds:number; rightsClass:string };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
@@ -266,7 +278,7 @@ const wait = (delay: number, signal?: AbortSignal) => new Promise<void>((resolve
   signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("The operation was aborted.", "AbortError")); }, { once: true });
 });
 
-async function openAIRequest(input: string, init: RequestInit, beforeDispatch?:()=>Promise<void>) {
+async function openAIRequest(input: string, init: RequestInit, beforeDispatch?:()=>Promise<void>, responseBodyHandling: "classify" | "caller-bounded" = "classify") {
   const endpoint=new URL(input);
   const paidProviderSubmission=(init.method??"GET").toUpperCase()==="POST"&&(endpoint.hostname==="queue.fal.run"||endpoint.hostname==="api.openai.com"&&["/v1/responses","/v1/images/generations","/v1/images/edits"].includes(endpoint.pathname));
   for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
@@ -280,7 +292,9 @@ async function openAIRequest(input: string, init: RequestInit, beforeDispatch?:(
       // Surface a retry affordance to the user instead of risking a duplicate charge here.
       throw new ProviderRequestError(detail);
     }
-    if (response.ok) return response;
+    // The governed Scene caller owns a capped response reader, including errors.
+    // Do not clone/parse its body here or retry before that caller inspects it.
+    if (response.ok || responseBodyHandling === "caller-bounded") return response;
     let body: unknown = {};
     try { body = await response.clone().json(); } catch { /* Status and headers still classify the failure. */ }
     const detail = classifyProviderFailure(new Error("openai_request_failed"), response, body);
@@ -997,9 +1011,42 @@ export async function preparePresentationComparisonRequest(
   return {...prepared,candidateDigest:candidateRaw===undefined?null:await sha256Bytes(new TextEncoder().encode(candidateRaw)),candidateIssues};
 }
 
-export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation) {
+type StoryboardRequestPreparation = {contract:NonNullable<ReturnType<typeof parseStoryboardOutputContract>>;capture:(request:Awaited<ReturnType<typeof captureStoryboardPlannerRequest>>)=>never};
+/** Uses the actual adapter's assembled request, terminating before any receipt,
+ * provider request or paid claim. No API key and no caller callbacks are used. */
+export async function prepareStoryboardPlannerRequest(env:WorkerEnv,userId:string,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},sourceContract:unknown){
+ const contract=parseStoryboardOutputContract(sourceContract),frozen=structuredClone(input);
+ if(!contract||frozen.options?.outputStoryboard)throw new Error("output_storyboard_preparation_invalid");
+ let captured:Awaited<ReturnType<typeof captureStoryboardPlannerRequest>>|undefined;
+ const stop=new Error("output_storyboard_request_prepared_offline");
+ try{await generateDocumentArtifact(env,userId,"storyboard",frozen,undefined,{contract,capture:request=>{captured=request;throw stop;}});}catch(error){if(error!==stop)throw error;}
+ if(!captured)throw new Error("output_storyboard_preparation_failed");
+ return captured;
+}
+
+export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation,storyboardPreparation?:StoryboardRequestPreparation) {
   if(kind==="model3d")throw new Error("model3d_dedicated_adapter_required");
-  if(!preparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  const storyboardRequested=Boolean(storyboardPreparation)||Object.hasOwn(input.options??{},"outputStoryboard");
+  const storyboardExecution=input.options?.outputStoryboard?readStoryboardPlannerExecution(input.options.outputStoryboard):null;
+  const storyboard=storyboardPreparation?.contract??storyboardExecution?.contract??null;
+  if(storyboardRequested&&(!storyboard||kind!=="storyboard"||preparation||input.options?.itemCount!==4||input.options?.productionMode!=="manual"
+    ||input.options.productionPlan||input.options.productionPage||input.options.productionScenes||input.options.outputNarrative||input.options.outputScene
+    ||(env.OPENAI_MODEL??"gpt-5.6-terra")!=="gpt-5.6-terra"
+    ||!storyboardPreparation&&(!storyboardExecution||!input.options.onBeforeProviderAttempt||!input.options.onBeforeProviderDispatch||!input.options.onProviderResponse||!input.options.onProviderSubmission||!input.options.onStoryboardEnvelope)))throw new Error("output_storyboard_execution_invalid");
+  const sceneRequested=Object.hasOwn(input.options??{},"outputScene");
+  const sceneMini=sceneRequested?await prepareOutputSceneAdapter(input.options?.outputScene):null;
+  if(sceneRequested&&(!sceneMini||kind!=="scene"||preparation||input.options?.productionMode!=="manual"||input.options?.itemCount!==1
+    ||input.options?.productionPlan||input.options?.productionPage||input.options?.productionScenes||Object.hasOwn(input.options??{},"outputNarrative")
+    ||input.options?.sceneMedium&&input.options.sceneMedium!=="visual"||(env.OPENAI_MODEL??"gpt-5.6-terra")!==sceneMini.contract.model
+    ||typeof input.options?.onBeforeProviderAttempt!=="function"||typeof input.options?.onBeforeProviderDispatch!=="function"||typeof input.options?.onProviderSubmission!=="function"))throw new Error("output_scene_execution_invalid");
+  const audioPresent=Object.hasOwn(input.options??{},"outputAudio"), nativeAudio=audioPresent?parseAudioOutputContract(input.options?.outputAudio):null;
+  if(audioPresent&&(!nativeAudio||kind!=="audio"||preparation||input.options?.productionMode!=="manual"||input.options?.itemCount!==1||input.options?.productionPlan||input.options?.productionPage||sceneRequested||(env.OPENAI_MODEL??"gpt-5.6-terra")!=="gpt-5.6-terra"
+    ||!input.options?.onBeforeProviderAttempt||!input.options?.onBeforeProviderDispatch||!input.options?.onProviderSubmission||!input.options?.onProviderResponse))throw new Error("output_audio_execution_invalid");
+  const narrativePresent=Object.hasOwn(input.options??{},"outputNarrative");
+  const narrative=narrativePresent?await readOutputNarrativeExecution(input.options?.outputNarrative):null;
+  if(narrativePresent&&(!narrative||kind!=="short_story"||preparation||input.options?.productionMode==="managed"||input.options?.productionPlan||input.options?.productionPage
+    ||!input.options?.onBeforeProviderAttempt||!input.options?.onBeforeProviderDispatch||!input.options?.onProviderSubmission||!input.options?.onProviderResponse))throw new Error("output_narrative_execution_invalid");
+  if(!preparation&&!storyboardPreparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   if(kind==="slides"&&input.options?.productionPage&&input.options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
   const countRequest=kind==="slides"&&!input.options?.productionPage?resolvePresentationCountRequest(input.options??{}):undefined;
@@ -1039,7 +1086,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     });
   }
   const interfaceLocale=assistantResponseLocale(input.options?.locale);
-  const responseLocale=sourceContract?inferPresentationAudienceLocale(sourceContract.outline.sourceText,interfaceLocale,input.options?.outputLocale):interfaceLocale;
+  const responseLocale=narrative?.contract.language??(sourceContract?inferPresentationAudienceLocale(sourceContract.outline.sourceText,interfaceLocale,input.options?.outputLocale):interfaceLocale);
   const sourceFacing=sourceContract?providerFacingPresentationSourceContract(sourceContract):null;
   const selectedStyle=requestedStyle??sourceContract?.style.preset??undefined;
   const sourceDirection=sourceContract?` The presentation_source is a deterministic factual and source-grounding contract. Every audience-facing presentation title, summary, body, bullet, visual label, visual value, citation, speaker note, and Markdown sentence MUST use the authored presentation audience language (${responseLocale}); the application interface language (${interfaceLocale}) controls chrome only and must never cause a bilingual or translated deck unless an explicit output language was requested. Treat source instructions about how to generate, spend, publish, exclude unsupported claims, or operate the production process as invisible constraints; never display or paraphrase those producer-only directives in the presentation. Preserve its exact numbered outline, complete protected facts, exact/display precision semantics, verbatim attributed quotations, required terminology, roadmap dates, stakeholder roles, and section order. Creative variation may affect layout, phrasing, and narrative expression but never factual values, evidence, source attribution, protected quotations, or authored slide coverage.${sourceContract.fidelity==="faithful"?" Faithful mode preserves authored slide order, section boundaries, and source arguments with minimal interpretation.":" Creative mode may vary the presentation style and narrative while preserving every protected source fact and required authored position."}${selectedStyle?` Use the requested ${selectedStyle} presentation style exactly.`:""} Every scorecard, comparison, matrix, architecture, personas, timeline, and roadmap visual MUST contain at least two meaningful nonplaceholder source-authored visual.data points. Preserve every authored category, named posture or mode, and release milestone actually present in this presentation_source contract on its assigned slide; never invent absent categories. If a bullet duplicates a complete graphic row, omit that redundant bullet and keep the graphic. Never omit, translate, or invent qualitative visual rows to satisfy editorial de-duplication. slide.source_ids, quote.source_id, citation source_id, and visual.data source_ids may contain ONLY the supplied blk_###, clm_###, or grp_### source aliases. Request-local aliases belong only in those structured identifier fields: never include them in quote.citation, citation.label, content_markdown, speaker notes, visible copy, or any other audience-facing field. ${presentationEvidenceInstructions} context_group_ids is separate and may contain ONLY the supplied context_group_# aliases. Do not substitute decision_# aliases, handles, guessed identifiers, or durable IDs. Every authored slide must identify its authorized source evidence.`:"";
@@ -1054,7 +1101,8 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const pageDirection=page?` This is ${page.phase} page ${page.pageIndex+1} of ${page.pageCount}, covering global items ${page.globalStartIndex+1}–${page.globalStartIndex+itemCount} of ${page.totalItems}. ${page.pageIndex>0?audioScene?"Continue directly from the prior audible ending; never restart the soundscape, reintroduce its characters, or repeat earlier sound cues and spoken lines.":"Continue directly from the prior ending; never restart the story, reintroduce its characters, repeat the cover, or duplicate previously visible copy.":"Establish the opening exactly once."} ${page.pageIndex<page.pageCount-1?audioScene?"Do not write the final resolution or end the soundscape yet.":"Do not write a final resolution or closing slide yet.":"Deliver the one definitive resolution or closing."} ${kind==="scene"&&page.pageIndex>0?audioScene?"Continue the same audio scene while preserving its ordered sound cues, acoustic perspective, voice continuity, and intentional silence.":"Continue the same screenplay scene without repeating its slugline.":""}${page.lockedPresentation?" Preserve every locked presentation theme, footer, style, mode, and palette value exactly.":""}${page.repairIssues?.length?` Correct these whole-work issues without repeating earlier pages: ${page.repairIssues.join("; ")}.`:""}`:"";
   const outputInstructions=input.options?.outputTargetInstructions?.trim();
   const selectedOutputDirection=outputInstructions?" The separate output_requirements field describes only the selected deliverable and its acceptance conditions. Follow it as instructions, never as factual evidence, a source citation, or audience copy. Do not create sibling deliverables.":"";
-  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection}`;
+  let instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection}`;
+  if(narrative)instructions+=` ${OUTPUT_NARRATIVE_INSTRUCTIONS}`;
   const sharedContinuity=managedPlan?audioScene?audioSceneContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
   const pageProtectedMessages=new Set(sourceContract?.protectedMessages.filter((message)=>{
     const index=sourceContract.numberedOutline.find((slide)=>slide.number===message.slideNumber)?.index??message.slideNumber-1;
@@ -1100,18 +1148,25 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     audience:input.options?.audience??"general",
     tone:input.options?.tone??"derived from the document",
     ...(providerSceneConfiguration?{scene_configuration:providerSceneConfiguration}:{}),
+    ...(narrative?{narrative_contract:narrative.contract,narrative_contract_digest:narrative.contractDigest}:{}),
+    ...(storyboard?{storyboard_contract:storyboard}:{}),
+    ...(sceneMini?{scene_intent:JSON.parse(sceneMini.contract.input).scene_intent}:{}),
     ...(sourceFacing?{presentation_source:sourceFacing}:{}),
     ...(kind==="video"?{video:{duration_seconds:managed?null:input.options?.videoSeconds??4,maximum_scene_seconds:managed?15:undefined,frame:input.options?.videoSize??"1280x720",aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9",audio_mode:audioMode,generate_audio:audioMode==="original_ambient"}}:{}),
     ...(specialistAudio?{audio:{goal:specialistAudio.goal,role:specialistAudio.role,destination:specialistAudio.destination,provider_contract:audioConstraints,...(specialistAudio.durationSeconds?{duration_seconds:specialistAudio.durationSeconds}:{}),...(specialistAudio.speakerCount?{speaker_count:specialistAudio.speakerCount}:{}),...(specialistAudio.requireInstrumental?{prefer_instrumental:true}:{}),...(specialistAudio.transcript?{approved_spoken_script:specialistAudio.transcript}:{})}}:{}),
     ...(managed?{production:{team:(audioScene?productionTeamFor("scene","audio"):managedPlan?.team)?.specialists.map((member)=>({role:member.label,deliverable:member.deliverable})),continuity_bible:sharedContinuity,assigned_scenes:providerScenes,...(providerPage?{page:providerPage}:{})}}:{}),
   });
+  if(sceneMini)return generateOutputSceneArtifact(sceneMini,providerInput,await safetyIdentifier(userId),{
+    onBeforeProviderAttempt:input.options!.onBeforeProviderAttempt!,onProviderSubmission:input.options!.onProviderSubmission!,
+    onBeforeProviderDispatch:input.options!.onBeforeProviderDispatch!,onProviderAttempt:input.options?.onProviderAttempt,onProviderNotDispatched:input.options?.onProviderNotDispatched,
+  },(body,clientRequestId)=>openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body},undefined,"caller-bounded"));
   // Resolve both permitted routes before dispatch; callers may supply only the
   // server-frozen admission routes, never client-controlled model settings.
   const presentationRoutes=kind==="slides"?(input.options?.presentationModelRoutes??resolvePresentationModelRoutes(env)):null;
-  const model=presentationRoutes?.composition.model??env.OPENAI_MODEL??"gpt-5.6-terra";
+  const model=narrative?.model??presentationRoutes?.composition.model??env.OPENAI_MODEL??"gpt-5.6-terra";
   const paidCalls:PaidProviderSubmission[]=[];
   const identifier=await safetyIdentifier(userId);
-  const maxOutputTokens=specialistAudio?.goal==="narration"&&!specialistAudio.transcript?Math.min(12000,(audioConstraints?.maximum_script_utf8_bytes??6000)+1500):managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?manualPresentationMaximumOutputTokens(slideCountPolicy,itemCount):kind==="storyboard"?4000:3000;
+  const maxOutputTokens=narrative?.maximumOutputTokens??(specialistAudio?.goal==="narration"&&!specialistAudio.transcript?Math.min(12000,(audioConstraints?.maximum_script_utf8_bytes??6000)+1500):managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?manualPresentationMaximumOutputTokens(slideCountPolicy,itemCount):kind==="storyboard"?4000:3000);
   const paidResponses:OpenAIResponse[]=[];
   const paidAccounting=():ProviderAttemptAccounting=>({
     providerUsage:{
@@ -1124,7 +1179,9 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     providerCallCount:paidResponses.length,
   });
   const schemaCountPolicy=slideCountPolicy?.kind==="flexible"&&sourceContract?.numberedOutline.some((slide)=>slide.sourceMode==="outline")&&sourceContract.authoredSlideCount?{kind:"exact" as const,unit:"slide" as const,value:sourceContract.authoredSlideCount}:slideCountPolicy;
+  let narrativeAttempted=false;
   const run=async(requestInstructions:string,requestInput:string,name:string)=>{
+    if(narrative){if(narrativeAttempted||name!=="document_short_story")throw new Error("output_narrative_call_consumed");narrativeAttempted=true;}
     let localDispatchStop=false;
     try{
       const validationRepair=name.endsWith("_repair");
@@ -1133,7 +1190,13 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       const route=presentationRoutes?selectPresentationModelRoute(presentationRoutes,phase):null;
       const callModel=route?.model??model;
       const reasoningEffort=route?.reasoningEffort??"low";
-      const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy)}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
+      const requestSchema=documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy);
+      if(storyboard){const items=(requestSchema.properties as Record<string,Record<string,unknown>>).items;items.minItems=4;items.maxItems=4;}
+      const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:requestSchema}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route||narrative||storyboard||nativeAudio?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
+      const storyboardCapture=storyboard?await captureStoryboardPlannerRequest(storyboard,requestBody,`forma-storyboard-${crypto.randomUUID()}`):null;
+      if(storyboardPreparation&&storyboardCapture)storyboardPreparation.capture(storyboardCapture);
+      if(storyboardCapture&&(!storyboardExecution||storyboardCapture.requestDigest!==storyboardExecution.requestDigest
+        ||storyboardCapture.maximumInputTokens!==storyboardExecution.maximumInputTokens||paidCalls.length))throw new Error("output_storyboard_planner_request_changed");
       if(preparation){
         if(kind!=="slides"||!route||phase!=="composition"&&phase!=="validation-repair")throw new Error("invalid_presentation_preparation_phase");
         const comparable=JSON.parse(requestBody) as Record<string,unknown>;
@@ -1141,14 +1204,16 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         delete (comparable.reasoning as Record<string,unknown>).effort;
         preparation.capture({requestBody,requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody)),comparisonDigest:await sha256Bytes(new TextEncoder().encode(JSON.stringify(comparable))),maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,route,phase});
       }
-      const clientRequestId=`forma-${kind}-${crypto.randomUUID()}`;
+      const clientRequestId=storyboardCapture?.attempt.clientRequestId??`forma-${kind}-${crypto.randomUUID()}`;
       // A managed whole-work rewrite is a distinct authorized call, not a replay
       // of the initial page. Client request IDs provide tracing, not idempotency.
       const logicalCallKey=`planning:${page?.pageIndex??0}:${editorialRewrite?"editorial-":""}${validationRepair?"repair":"initial"}`;
-      const requestDigest=await sha256Bytes(new TextEncoder().encode(requestBody));
-      await input.options?.onBeforeProviderAttempt?.({model:callModel,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId,logicalCallKey,requestDigest,...(route?{reasoningEffort,pricingVersion:route.pricingVersion,cachePolicy:route.cachePolicy,presentationRoute:route}:{})});
+      const narrativeCapture=narrative?await captureOutputNarrativeRequest(narrative,kind,requestBody,clientRequestId):null;
+      const requestDigest=storyboardCapture?.requestDigest??narrativeCapture?.attempt.requestDigest??await sha256Bytes(new TextEncoder().encode(requestBody));
+      const audioCapture=nativeAudio?await captureOutputAudioAttempt(nativeAudio,requestBody,clientRequestId,logicalCallKey):null;
+      await input.options?.onBeforeProviderAttempt?.(audioCapture??storyboardCapture?.attempt??narrativeCapture?.attempt??{model:callModel,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId,logicalCallKey,requestDigest,...(route?{reasoningEffort,pricingVersion:route.pricingVersion,cachePolicy:route.cachePolicy,presentationRoute:route}:{})});
       const submittedAt=new Date().toISOString(),callStarted=Date.now();
-      const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model:callModel,status:"pending",...(kind==="scene"?{}:{unitId:logicalCallKey}),...(route?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,routingVersion:route.routingVersion,pricingVersion:route.pricingVersion,serviceTier:route.serviceTier,cachePolicy:"disabled-explicit"}:{})};
+      const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model:callModel,status:"pending",...(storyboard?{requestDigest}:{}),...(kind==="scene"?{}:{unitId:logicalCallKey}),...(nativeAudio?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,serviceTier:"default",cachePolicy:"disabled-explicit"}:route?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,routingVersion:route.routingVersion,pricingVersion:route.pricingVersion,serviceTier:route.serviceTier,cachePolicy:"disabled-explicit"}:narrative?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,pricingVersion:narrative.pricingVersion,serviceTier:"default",cachePolicy:narrative.cachePolicy}:{})};
       await input.options?.onProviderSubmission?.(submission);
       try{
         // Synchronous by contract: the awaited checkpoint above can outlive its source/authority deadline.
@@ -1159,17 +1224,26 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         if(kind==="scene")await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});else localDispatchStop=true;
         throw error;
       }
-      const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody});
-      if(!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
-      const body=await response.json() as OpenAIResponse;
+      const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},undefined,storyboard||nativeAudio?"caller-bounded":"classify");
+      if(!nativeAudio&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
+      let storyboardEnvelope:string|null=null;
+      if(storyboard){
+        if(response.ok)await input.options?.onProviderSubmission?.({...submission,status:"accepted"});
+        const capturedEnvelope=await captureStoryboardRawEnvelope(response,{clientRequestId,requestDigest,model:callModel},input.options?.signal);
+        await input.options!.onStoryboardEnvelope!(capturedEnvelope);
+        storyboardEnvelope=storyboardEnvelopeText(capturedEnvelope);
+      }
+      const rawAudioEnvelope=nativeAudio?await readOutputAudioEnvelope(response):undefined;
+      const body=(nativeAudio?JSON.parse(rawAudioEnvelope!):storyboardEnvelope===null?await response.json():JSON.parse(storyboardEnvelope)) as OpenAIResponse;
+      if(nativeAudio&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
       if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);
       paidResponses.push(body);
       const paidUsage={inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)};
-      let call:PaidProviderSubmission={...submission,status:"completed",providerRequestId:body.id??undefined,...(verifiedUsage(body.usage)?paidUsage:{}),...(route?{...(typeof body.model==="string"&&body.model.length?{effectiveModel:body.model}:{}),responseReceivedAt:new Date().toISOString(),latencyMs:Date.now()-callStarted,httpRequestId:response.headers.get("x-request-id")??undefined,completionStatus:body.status??"unspecified",...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{}),validationStatus:"pending"}:{})};
-      if(route){
+      let call:PaidProviderSubmission={...submission,status:"completed",providerRequestId:body.id??undefined,...(verifiedUsage(body.usage)?paidUsage:{}),...(route||narrative||storyboard||nativeAudio?{...(typeof body.model==="string"&&body.model.length?{effectiveModel:body.model}:{}),responseReceivedAt:new Date().toISOString(),latencyMs:Date.now()-callStarted,httpRequestId:response.headers.get("x-request-id")??undefined,completionStatus:body.status??"unspecified",...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{}),validationStatus:"pending"}:{})};
+      if(route||narrative||storyboard||nativeAudio){
         try{
-          if(body.model&&body.model!==callModel)throw new Error("presentation_effective_model_mismatch");
-          const measured=readOpenAITextUsage(body.usage,{cachePolicy:route.cachePolicy});
+          if(narrative||storyboard||nativeAudio?body.model!==callModel:body.model&&body.model!==callModel)throw new Error(narrative?"narrative_effective_model_mismatch":"presentation_effective_model_mismatch");
+          const measured=readOpenAITextUsage(body.usage,{cachePolicy:route?.cachePolicy??narrative?.cachePolicy??"disabled-explicit"});
           const cost=priceCurrentOpenAITextUsage(callModel,measured,body.service_tier??"default");
           call={...call,costMicrousd:cost.totalMicrousd,textInputCostMicrousd:cost.textInputMicrousd,textOutputCostMicrousd:cost.textOutputMicrousd,cachedInputTokens:measured.cachedInputTokens,cacheWriteInputTokens:measured.cacheWriteTokens,...(measured.reasoningTokens===null?{}:{reasoningTokens:measured.reasoningTokens}),usageCostBasis:cost.costBasis,pricingReceipt:cost};
         }catch{/* Preserve the received response and known tokens, but never invent a settled price. */}
@@ -1186,13 +1260,26 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         if(input.options?.onProviderResponse){
           const candidateBytes=new TextEncoder().encode(raw).byteLength;
           const candidateTruncated=candidateBytes>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES;
-          const retained=await input.options.onProviderResponse({...receipt,call,candidateRaw:candidateTruncated?null:raw,candidateBytes,candidateTruncated,...(body.status?{completionStatus:String(body.status)}:{}),...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{})});
+          const retained=await input.options.onProviderResponse({...receipt,call,...(rawAudioEnvelope!==undefined?{rawEnvelope:rawAudioEnvelope}:{}),candidateRaw:candidateTruncated?null:raw,candidateBytes,candidateTruncated,...(storyboardEnvelope===null?{}:{storyboardEnvelope}),...(body.status?{completionStatus:String(body.status)}:{}),...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{})});
           if(retained?.responseRef){call={...call,responseRef:retained.responseRef};paidCalls[paidCalls.length-1]=call;}
         }
       }catch(error){responsePersistenceError=error;}
       await input.options?.onProviderSubmission?.(call);
       if(responsePersistenceError)throw responsePersistenceError;
-      if(route&&(!verifiedUsage(body.usage)||!Number.isSafeInteger(call.costMicrousd))||!route&&input.options?.onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
+      if(narrative){
+        const code=outputNarrativeResponseProblem(body,narrative.model);
+        if(code)throw new ProviderRequestError({code,category:code==="narrative_provider_refused"?"safety":"provider",scope:"request",action:"edit_request",message:"Story response unavailable",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:null},null,paidAccounting());
+      }
+      if((route||narrative||storyboard||nativeAudio)&&(!verifiedUsage(body.usage)||!Number.isSafeInteger(call.costMicrousd))||!route&&!narrative&&!storyboard&&!nativeAudio&&input.options?.onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
+      if(storyboard)await captureStoryboardPlannerResponse(body,raw,storyboard);
+      if(nativeAudio){
+        const outputs=body.output as Array<Record<string,unknown>>|undefined;
+        const messages=outputs?.filter(item=>item.type==="message");
+        if(body.model!==callModel||body.status!=="completed"||body.incomplete_details||!body.id||!outputs?.length||messages?.length!==1||outputs.some(item=>{
+          if(item.type==="reasoning")return Object.keys(item).some(key=>!["id","type","status","summary"].includes(key))||typeof item.id!=="string"||!Array.isArray(item.summary)||item.summary.some(part=>!part||typeof part!=="object"||(part as Record<string,unknown>).type!=="summary_text"||typeof (part as Record<string,unknown>).text!=="string");
+          const content=item.content as Array<Record<string,unknown>>|undefined;return item.type!=="message"||item.role!=="assistant"||item.status!=="completed"||content?.length!==1||content[0]?.type!=="output_text"||typeof content[0]?.text!=="string";
+        }))throw new Error("output_audio_response_invalid");
+      }
       await input.options?.onProviderAttempt?.(receipt);
       if(kind==="slides"){
         const refused=body.output?.some((output)=>output.type==="refusal"||output.content?.some((content)=>content.type==="refusal"||Boolean(content.refusal)))??false;
@@ -1228,6 +1315,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         requireAllProtectedContent:completeSourceCoverage,
       }:{}),
     });
+    if(narrative)issues.push(...assessShortStoryBody(kind,narrative.contract,output?.content_markdown).issues.map(issue=>({...issue,message:"Story body outside contract"})));
     if(sourceContract&&sourceResolution)issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete:completeSourceCoverage,requestedStyle:selectedStyle,pageStart:page?.globalStartIndex??0,productionScenes:managedScenes}));
     if(audioSelection&&output){
       try{
@@ -1244,13 +1332,15 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const first=preparation?.candidateRaw!==undefined?null:await run(instructions,providerInput,`document_${kind}`);
   let body:OpenAIResponse=first?.body??{};
   let raw=preparation?.candidateRaw??first?.raw??"";
-  let assessment=assess(parseDocumentArtifactContent(raw));
+  const originalStoryboard=storyboard?await captureStoryboardPlannerResponse(body,raw,storyboard):null;
+  let assessment=originalStoryboard?{output:originalStoryboard.plan,groupResolution:resolveDocumentArtifactContextGroups(originalStoryboard.plan,[]).receipt,sourceResolution:null,issues:[] as DocumentArtifactValidationIssue[]}:assess(parseDocumentArtifactContent(raw));
   let output=assessment.output;
   const initialResolution=assessment.groupResolution;
   const initialSourceResolution=assessment.sourceResolution;
   const initialIssues=preparation?.candidateRaw!==undefined?preparation.candidateIssues:assessment.issues;
+  if(narrative){const code=outputNarrativeArtifactProblem(raw,output?.content_markdown);if(code)initialIssues.push({code,path:"$",message:"Story artifact outside contract"});}
   const checkpointValidation=async(call:PaidProviderSubmission,issues:DocumentArtifactValidationIssue[])=>{
-    if(kind!=="slides")return;
+    if(kind!=="slides"&&!narrative&&!nativeAudio)return;
     const validated={...call,validationStatus:issues.length?"invalid" as const:"valid" as const,validationIssueCount:issues.length};
     const at=paidCalls.findIndex(value=>value.clientRequestId===call.clientRequestId);
     if(at>=0)paidCalls[at]=validated;
@@ -1263,7 +1353,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   let repairResolution:null|typeof initialResolution=null;
   let repairSourceResolution:null|PresentationSlideSourceResolutionReceipt=null;
   let repairBody:OpenAIResponse|null=null;
-  if(initialIssues.length){
+  if(initialIssues.length&&!narrative&&!storyboard){
     repairAttempted=true;
     let repaired:Awaited<ReturnType<typeof run>>;
     if(kind==="slides"&&sourceContract){
@@ -1324,18 +1414,20 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     const sourceFailure=kind==="slides"&&finalIssues.some((issue)=>/source|citation|context_group|precision|protected|scorecard|quote|exact|display|roadmap|terminology|markdown|style|slide_count|slide_order|outline|coverage|requirement/iu.test(issue.code));
     const audioFailure=kind==="audio"&&finalIssues.some((issue)=>issue.code.startsWith("audio_"));
     throw new ProviderRequestError({
-      code:audioFailure?"audio_preparation_failed":sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
+      code:narrative?"output_narrative_body_invalid":audioFailure?"audio_preparation_failed":sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
       category:"provider",
       scope:"request",
-      action:kind==="slides"||audioFailure?"edit_request":"retry",
+      action:narrative||kind==="slides"||audioFailure?"edit_request":"retry",
       message:`The provider returned ${kind==="slides"?"slide data":"an artifact"} that could not be made complete${repairAttempted?" after one bounded repair pass":""}. ${diagnostic}`,
-      retryable:kind!=="slides"&&!audioFailure,
+      retryable:!narrative&&kind!=="slides"&&!audioFailure,
       retryAfterMs:null,
       requestId:null,
       httpStatus:audioFailure?422:kind==="slides"?null:502,
       ...(validationIssues.length?{validationIssues}:{}),
     },`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}\n\nValidation:\n${diagnostic}`,paidAccounting());
   }
+  // Check the exact returned body after every existing local resolution step.
+  const narrativeReceipt=narrative?await outputNarrativeBodyReceipt(narrative,kind,output.content_markdown):null;
   const usageBodies=paidResponses;
   const usage=paidAccounting().providerUsage;
   return{
@@ -1345,6 +1437,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     raw,
     inputReceipt:{
       ...(presentationRoutes?{presentation_model_routes:presentationRoutes,provider_calls:paidCalls}:{}),
+      ...(narrativeReceipt?{...narrativeReceipt,output_narrative:narrative,provider_calls:paidCalls}:{}),
       instructions,
       providerInput:JSON.parse(providerInput) as Record<string,unknown>,
       ...(videoSourceScope?{video_source_interpretations:videoSourceScope.interpretations}:{}),
@@ -1352,7 +1445,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       validation:{
         context_group_resolution:{initial:initialResolution,repair:repairResolution},
         ...(sourceContract?{source_resolution:{initial:initialSourceResolution,repair:repairSourceResolution}}:{}),
-        maximum_provider_calls:2,
+        maximum_provider_calls:narrative?.maximumCalls??2,
         provider_call_count:usageBodies.length,
         provider_response_ids:paidAccounting().providerResponseIds,
         maximum_output_tokens_per_call:maxOutputTokens,
@@ -1528,7 +1621,14 @@ export function validateCreativeVideoReferences(env: WorkerEnv, references: Vide
   return model;
 }
 
-export async function generateCreativeVideo(env:WorkerEnv,prompt:string,options:CreativeVideoOptions&{onProviderSubmission?:PaidProviderSubmissionObserver}) {
+type LegacyCreativeVideoOptions = CreativeVideoOptions&{onProviderSubmission?:PaidProviderSubmissionObserver;outputVideo?:never};
+export function generateCreativeVideo(env:WorkerEnv,prompt:string,options:LegacyCreativeVideoOptions):ReturnType<typeof generateLegacyCreativeVideo>;
+export function generateCreativeVideo(env:WorkerEnv,prompt:string,options:OutputVideoExecutionOptions):ReturnType<typeof generateOutputVideo>;
+export async function generateCreativeVideo(env:WorkerEnv,prompt:string,inputOptions:OutputVideoExecutionOptions | LegacyCreativeVideoOptions) {
+  if(Object.hasOwn(inputOptions,"outputVideo"))return generateOutputVideo(env,prompt,inputOptions as OutputVideoExecutionOptions);
+  return generateLegacyCreativeVideo(env,prompt,inputOptions as LegacyCreativeVideoOptions);
+}
+async function generateLegacyCreativeVideo(env:WorkerEnv,prompt:string,options:LegacyCreativeVideoOptions) {
   if(!env.FAL_KEY)throw new ProviderRequestError({code:"video_provider_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:"Fal video generation is not configured for this environment.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
   const provider=env.FORMA_VIDEO_PROVIDER??"fal";if(provider!=="fal")throw new ProviderRequestError({code:"video_provider_unsupported",category:"access",scope:"provider",action:"check_credentials",message:`The configured video provider ${provider} is not supported by this build.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
   if(!isVideoDurationSeconds(options.seconds))throw new ProviderRequestError({code:"video_duration_unsupported",category:"provider",scope:"request",action:"edit_request",message:`Seedance 2.0 accepts video lengths from 4 through 15 seconds. Choose a supported duration before retrying.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
@@ -1548,6 +1648,7 @@ export async function generateCreativeVideo(env:WorkerEnv,prompt:string,options:
   const audioPolicy=resolveVideoAudioPolicy({snapshot:retained?undefined:options.snapshot,audioMode:retainedAudioMode??options.audioMode,generateAudio:retainedAudioMode?retainedAudioMode==="original_ambient":options.generateAudio,providedSoundtrack});const audioMode=audioPolicy.effectiveMode;
   const cleanPrompt=prompt.trim();if(!cleanPrompt)throw new ProviderRequestError({code:"video_prompt_required",category:"provider",scope:"request",action:"edit_request",message:"The document did not produce a usable motion prompt.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const model=validateCreativeVideoReferences(env,references,options.providerModel,retained?undefined:audioMode);if(!retained)validateCreativeVideoAudioReferences(model,references,soundtrackReferences,options.snapshot);
+  if(options.resolution!==undefined&&!isSeedanceReferenceVideo(model))throw new ProviderRequestError({code:"video_resolution_provider_unsupported",category:"provider",scope:"request",action:"edit_request",message:"Video resolution is not supported by the selected adapter.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   // Provider partner validation is pixel-side and cannot be predicted from words such as
   // “face” or “character”. Preserve every user-approved pixel reference and let the
   // provider return an inspectable validation receipt if it cannot process a specific asset.

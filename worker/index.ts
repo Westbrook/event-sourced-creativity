@@ -7,7 +7,11 @@ import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, re
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
 import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
-import { handleDocumentJobs } from "./document-jobs-api";
+import { handleDocumentJobs, runDocumentJob } from "./document-jobs-api";
+import { withExperienceOutputDispatch } from "./experience-output-dispatch.ts";
+import { handleExperienceVideoReference } from "./experience-video-reference.ts";
+import { handleExperienceIntake } from "./experience-intake-api";
+import { handleExperienceOutput } from "./experience-output-api";
 import { handleDocumentDuplication } from "./document-duplication-api";
 import { handleCanvasArrangements } from "./canvas-arrangements";
 import { handleAdaptiveProposalApplication } from "./adaptive-proposal-application-api";
@@ -92,6 +96,9 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     }
     if(url.pathname==="/api/retained-story"||url.pathname.startsWith("/api/retained-story/"))return handleRetainedStoryRead(request,env);
     if(url.pathname==="/api/retained-output"||url.pathname.startsWith("/api/retained-output/"))return handleNativeRetainedOutputRead(request,env);
+    if(/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output(?:\/(?:prepare|authorize|run|recover-result))?$/u.test(url.pathname))return handleExperienceOutput(request,env,context,withExperienceOutputDispatch(outputDocumentExecutionBridge,runDocumentJob));
+    if(url.pathname==="/api/experiences/video/reference/inspect")return handleExperienceVideoReference(request,env);
+    if(url.pathname==="/api/experiences"||url.pathname.startsWith("/api/experiences/"))return handleExperienceIntake(request,env);
     const marketingRoute=parseMarketingRoute(url.pathname);
     if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
