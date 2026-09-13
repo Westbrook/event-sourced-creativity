@@ -8,7 +8,9 @@ const start=focusSource.indexOf("export function captureOutputNavigationFocus(")
 const capture=new Function(stripTypeScriptTypes(focusSource.slice(start,end).replace("export function ","function "))+";return captureOutputNavigationFocus;")();
 const helpers=source.slice(source.indexOf("  #focusOut ="),source.indexOf("  protected override willUpdate()"));
 const render=source.slice(source.indexOf("  override render()"),source.lastIndexOf("\n}\nif ("));
-const compiled=stripTypeScriptTypes("class Host {\n"+(helpers+render).replace("override render()", "render()").replaceAll(/#([A-Za-z]\w*)/g,"$1")+"\n}")+";return Host;";
+const stop=source.slice(source.indexOf("  async #stopVideo("),source.indexOf("  async #command("));
+const reveal=source.slice(source.indexOf("  #captureCommandFocusVisibility("),source.indexOf("  #snapshotMatches("));
+const compiled=stripTypeScriptTypes("class Host {\n"+(helpers+render+stop+reveal).replace("override render()", "render()").replaceAll(/#([A-Za-z]\w*)/g,"$1")+"\n}")+";return Host;";
 const html=(strings,...values)=>({strings,values}), nothing=Symbol("nothing");
 function text(value){
  if(value===nothing||value===null||value===undefined)return "";
@@ -39,7 +41,7 @@ function harness(action="run"){
  Object.assign(host,{ownerDocument:document,binding,busy:false,loading:false,confirmed:true,approval:true,sceneApproval:false,
   state:()=>state,readable:()=>readable,visible:()=>visible,
   paidDecision:key=>host.busy||!state?.permitted[key]?null:{action:key},
-  i18n:{system:value=>value},imageFormat:()=>null,terms:()=>null,imageReady:()=>true,
+  model3dText:value=>value,i18n:{system:value=>value},imageFormat:()=>null,terms:()=>null,imageReady:()=>true,
   status:"Authorized",requestUpdate(){host.updates=(host.updates??0)+1;},
   navigate(){assert.fail("no navigation from disabled control");},edit(){assert.fail("no Edit from disabled control");},exit(){assert.fail("no exit from disabled control");},
  });
@@ -114,10 +116,33 @@ test("passive busy exit click cannot start navigation",()=>{
  rendered.values.at(-2)();assert.equal(h.document.activeElement,h.button);
 });
 test("stable status stays outside conditional result/forms and uses global focus-visible styles",()=>{
- const h=harness();assert.match(h.markup(),/<p data-experience-status tabindex="-1" role="status" aria-live="polite">/);
- assert.match(source,/this\.#preserveFocus\(\);\n {2}}\n {2}#rows/);
+ const h=harness();assert.match(h.markup(),/<p data-experience-status(?: class=[^ >]*)? tabindex="-1" role="status" aria-live="polite">/);
+ assert(source.slice(source.indexOf("  protected override willUpdate()"),source.indexOf("  #model3dText(")).includes("this.#preserveFocus();"));
  assert.match(source,/addEventListener\("focusout", this\.#focusOut\)/);
  assert.match(source,/removeEventListener\("focusout", this\.#focusOut\)/);
  // Actual authority guards are unchanged; aria-disabled never becomes permission.
  for(const guard of ["|| this.#busy || shown !== this.#state()", "|| !this.#visible() || this.#busy", "|| this.#busy || !state.permitted[action]", "if (this.#loading || this.#busy) return;"])assert.ok(source.includes(guard),guard);
+});
+
+test('held Video Stop stays focusable, blocks duplicate activation, and transfers/reveals only command-owned focus',async()=>{
+ for(const moveAway of [false,true]){
+  const h=harness('stop');h.button.form=undefined;h.host.binding.selection.output='video';
+  h.setState({output:'video',status:'running',original:{jobId:'original',jobStatus:'running'},permitted:{}});
+  let resolveStop,calls=0,reveals=0,active=true;
+  const held=new Promise(resolve=>{resolveStop=resolve;}),operation={wait:p=>p};
+  Object.assign(h.host,{navigationEpoch:1,updateComplete:Promise.resolve(),baseCurrent:()=>true,beginOperation:()=>operation,operationCurrent:()=>active,
+   finishOperation:()=>{active=false;return true;},resetDecision(){},store:{stopDocumentJob(id){assert.equal(id,'original');calls++;return held;}},
+   async refreshAndRead(){h.setState({output:'video',status:'cancelled',original:{jobId:'original',jobStatus:'canceled'},permitted:{}});h.host.preserveFocus();},
+  });
+  h.document.defaultView={innerHeight:400,innerWidth:400,getComputedStyle:()=>({outlineWidth:'2',outlineOffset:'2'})};h.document.elementFromPoint=()=>null;
+  h.status.getBoundingClientRect=()=>({width:200,height:30,left:0,right:200,top:500,bottom:530});h.status.contains=e=>e===h.status;h.status.scrollIntoView=()=>{reveals++;};
+  const pending=h.host.stopVideo({isTrusted:true});await Promise.resolve();
+  assert.equal(h.host.busy,true);assert.equal(h.host.buttonDisabled(true,'stop'),false);assert.match(buttonMarkup(h,'stop'),/aria-disabled=true/);assert.match(buttonMarkup(h,'stop'),/\?disabled=false/);
+  await h.host.stopVideo({isTrusted:true});assert.equal(calls,1);
+  if(moveAway){h.document.activeElement=h.outside;h.document.emit('focusin',h.outside);}
+  resolveStop(true);await pending;
+  assert.equal(h.host.busy,false);assert.equal(h.host.status,'Stopped · Charges retained');
+  assert.equal(h.document.activeElement,moveAway?h.outside:h.status);assert.equal(reveals,moveAway?0:1);assert.equal(h.listeners(),0);
+  assert(!h.markup().includes('data-experience-control="stop"'));
+ }
 });

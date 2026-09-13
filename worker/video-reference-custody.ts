@@ -14,7 +14,7 @@ function fail(code: string, status = 409): never { throw Object.assign(new Error
 
 /** Read-only first step for one ordinary still. Not a persisted intake, quote,
  * media transfer, source adoption or permission to generate. Save must reread. */
-export async function inspectVideoReferenceCustody(trusted: OutputTrustedContext, auth: ProjectIntakeAuthorization, value: unknown) {
+export async function readVideoReferenceCustody(trusted: OutputTrustedContext, auth: ProjectIntakeAuthorization, value: unknown) {
   const selection = readVideoReferenceIntent(value);
   if (!selection) fail("video_reference_selection_invalid", 400);
   const { scope, env } = trusted;
@@ -66,7 +66,13 @@ export async function inspectVideoReferenceCustody(trusted: OutputTrustedContext
   await verifyOutputSourceRead(env, scope, ownerHead, assertions);
   if (captured() !== before) fail("video_reference_source_changed");
   rightsCurrent(); trusted.request.signal.throwIfAborted();
-  return Object.freeze({ version: 1, qualification: "read-only-reference-inspection", selection, sourceDigest,
+  const inspection = Object.freeze({ version: 1, qualification: "read-only-reference-inspection", selection, sourceDigest,
     intent: EXPERIENCE_VIDEO_INTENT,
     content: Object.freeze({ sha256: image.sha256, byteLength: image.bytes.byteLength, mimeType: image.mimeType }) });
+  return { inspection, image };
+}
+
+/** The HTTP inspector never returns the privately retained source bytes. */
+export async function inspectVideoReferenceCustody(trusted: OutputTrustedContext, auth: ProjectIntakeAuthorization, value: unknown) {
+  return (await readVideoReferenceCustody(trusted, auth, value)).inspection;
 }

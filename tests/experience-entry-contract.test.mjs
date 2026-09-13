@@ -124,3 +124,17 @@ test('Continue carries only closed host selectors and existing report return fla
   const route = parseExperienceHostRoute(elements[0].href); assert.equal(route.output, 'slides'); assert.equal(route.documentId, plan.documentId); assert.equal(route.draftId, plan.draftId); assert.ok(route.documentRoute.includes('progress-report='));
   abort.abort(); assert.equal(elements.length, 0); session.dispose();
 });
+
+test('actual Video navigation adapter supplies Continue without a provider call or implicit approval', async () => {
+  const {experienceNavigationAdapter}=await import('../src/experiences/navigation-adapter.ts');
+  const {experienceOutputSettings}=await import('../src/experiences/native-host.ts');
+  const {parseExperienceHostRoute}=await import('../src/experiences/host-route.ts');
+  const plan={draftId:'experience-draft-'+'a'.repeat(64),release:{output:{output:'video'}}};
+  const children=[],target={ownerDocument:{createElement:()=>({})},replaceChildren(...nodes){children.splice(0,children.length,...nodes);}};
+  const controller=new AbortController(),old=globalThis.fetch;globalThis.fetch=()=>{throw Error('navigation must not dispatch');};
+  try{
+    const session=await experienceNavigationAdapter('/experiences/video?progress-report').mount(target,{plan,settings:experienceOutputSettings(plan),receipt:{documentRoute:'/document/video-doc'}},controller.signal);
+    assert.equal(children.length,1);assert.equal(children[0].textContent,'Continue');assert.equal(parseExperienceHostRoute(children[0].href).output,'video');assert(children[0].href.includes('progress-report'));
+    assert.equal(experienceOutputSettings(plan).videoResolution,'480p');controller.abort();assert.equal(children.length,0);session.dispose();
+  }finally{globalThis.fetch=old;}
+});

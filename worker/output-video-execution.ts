@@ -31,7 +31,7 @@ export type OutputVideoRawEnvelope = Readonly<{
   providerRequestId: string | null; requestUrl: string; httpStatus: number;
   headers: ReadonlyArray<readonly [string, string]>; decodedByteLength: number; decodedBodySha256: string; decodedBodyBase64: string;
 }>;
-export type OutputVideoHookLease = Readonly<{ signal: AbortSignal; assertCurrent: () => void }>;
+export type OutputVideoHookLease = Readonly<{ signal: AbortSignal; deadlineMs: number; assertCurrent: () => void }>;
 export type OutputVideoExecutionOptions = Omit<CreativeVideoOptions, "onPrepared" | "onReceipt"> & {
   onPrepared?: (receipt: Parameters<NonNullable<CreativeVideoOptions["onPrepared"]>>[0], lease: OutputVideoHookLease) => void | Promise<void>;
   onReceipt?: (receipt: Parameters<NonNullable<CreativeVideoOptions["onReceipt"]>>[0], lease: OutputVideoHookLease) => void | Promise<void>;
@@ -112,8 +112,9 @@ function hookLease(parent: AbortSignal) {
   const controller = new AbortController(); let active = true, observed = false;
   const abort = () => controller.abort(parent.reason);
   if (parent.aborted) abort(); else parent.addEventListener("abort", abort, { once: true });
-  const lease: OutputVideoHookLease = Object.freeze({ signal: controller.signal, assertCurrent() {
-    requireValue(active, "output_video_hook_retired"); controller.signal.throwIfAborted(); observed = true;
+  const deadlineMs = Date.now() + OUTPUT_VIDEO_TRANSPORT.requestTimeoutMs;
+  const lease: OutputVideoHookLease = Object.freeze({ signal: controller.signal, deadlineMs, assertCurrent() {
+    requireValue(active, "output_video_hook_retired"); requireValue(Date.now() < deadlineMs, "output_video_hook_timeout"); controller.signal.throwIfAborted(); observed = true;
   } });
   return { lease, check() { requireValue(observed, "output_video_hook_lease_unobserved"); lease.assertCurrent(); }, retire() {
     active = false; controller.abort(new Error("output_video_hook_retired")); parent.removeEventListener("abort", abort);
@@ -126,6 +127,14 @@ async function runHook<T>(controller: AbortController, hook: (lease: OutputVideo
   const timer = setTimeout(() => controller.abort(new Error("output_video_hook_timeout")), OUTPUT_VIDEO_TRANSPORT.requestTimeoutMs);
   try { const value = await Promise.race([Promise.resolve().then(() => hook(current.lease)), stop]); current.check(); return value; }
   finally { current.retire(); clearTimeout(timer); if (rejectStop) signal.removeEventListener("abort", rejectStop); }
+}
+/** A native callback keeps the same observable, nonrenewable30-second lease. */
+export async function withOutputVideoHook<T>(signal: AbortSignal | undefined, hook: (lease: OutputVideoHookLease) => T | Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
+  try { return await runHook(controller, hook); }
+  finally { controller.abort(new Error("output_video_hook_retired")); signal?.removeEventListener("abort", abort); }
 }
 function mediaUrl(value: unknown) {
   requireValue(typeof value === "string" && value.length <= 4096, "output_video_media_url_invalid");
@@ -294,9 +303,59 @@ export async function generateOutputVideo(env: WorkerEnv, prompt: string, option
     const bytes = new Uint8Array(await media.arrayBuffer()); requireValue(bytes.length > 0, "output_video_result_invalid");
     requireValue(video.file_size === undefined || Number.isSafeInteger(video.file_size) && video.file_size === bytes.length, "output_video_result_length_mismatch");
     const costMicrousd = attempt.video.mediaMaximumMicrousd;
-    await runHook(controller, lease => options.onProviderSubmission!({ ...submission!, status: "completed", costMicrousd, totalTokens: 0 }, lease));
+    await runHook(controller, lease => options.onProviderSubmission!({ ...submission!, status: "completed", costMicrousd, inputTokens: 0, outputTokens: 0, totalTokens: 0 }, lease));
     // Requested seconds/frame, not measured facts or requirement fulfillment.
     return { ...receipt, bytes, mimeType: "video/mp4", seconds: 4 as const, size: contract.frameSize, latencyMs: Date.now() - start, costMicrousd,
       submittedPrompt, providerParameters, referenceInputs, usedReferencePixels: true, adaptation };
   } finally { controller.abort(new Error("output_video_execution_retired")); clearTimeout(timer); options.signal?.removeEventListener("abort", abort); }
+}
+
+/** Read one original accepted request. This function has no upload, submission,
+ * planner, retry or cancellation path. The required callbacks establish live
+ * server custody; the supplied identities are only data. */
+export async function readOriginalOutputVideo(env:WorkerEnv,original:{contract:unknown;requestBody:string;clientRequestId:string;requestDigest:string;providerRequestId:string},options:{signal?:AbortSignal;
+ onBeforeRead:(lease:OutputVideoHookLease)=>Promise<void>;
+ onEnvelope:(envelope:OutputVideoRawEnvelope,lease:OutputVideoHookLease)=>Promise<void>}){
+ requireValue(typeof options.onBeforeRead==="function"&&typeof options.onEnvelope==="function","output_video_recovery_hooks_required");
+ const attempt=await captureOutputVideoAttempt(original.contract,original.requestBody,original.clientRequestId);
+ requireValue(attempt.requestDigest===original.requestDigest&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/u.test(original.providerRequestId)
+  &&!["pending","submitted","unknown"].includes(original.providerRequestId.toLowerCase()),"output_video_recovery_identity_invalid");
+ requireValue(typeof env.FAL_KEY==="string"&&env.FAL_KEY.length>0&&(env.FORMA_VIDEO_PROVIDER??"fal")==="fal","output_video_provider_unavailable");
+ const providerRequestId=original.providerRequestId,base=`https://queue.fal.run/bytedance/seedance-2.0/requests/${providerRequestId}`;
+ const controller=new AbortController(),abort=()=>controller.abort(options.signal?.reason??Error("output_video_recovery_interrupted"));
+ if(options.signal?.aborted)abort();else options.signal?.addEventListener("abort",abort,{once:true});
+ const timer=setTimeout(()=>controller.abort(Error("output_video_recovery_timeout")),120000),signal=controller.signal;
+ const before=()=>runHook(controller,lease=>options.onBeforeRead(lease)),headers={Authorization:`Key ${env.FAL_KEY}`,Accept:"application/json"};
+ const retained=async(response:Response,phase:"status"|"result",requestUrl:string)=>{
+  const raw=responseEnvelopes.get(response);requireValue(raw,"output_video_response_custody_unavailable");let binary="";
+  for(let offset=0;offset<raw.bytes.length;offset+=32768)binary+=String.fromCharCode(...raw.bytes.subarray(offset,offset+32768));
+  const saved=freeze({schemaVersion:1 as const,phase,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,providerRequestId,requestUrl,httpStatus:raw.status,headers:raw.headers,
+   decodedByteLength:raw.bytes.length,decodedBodySha256:await hash(raw.bytes),decodedBodyBase64:btoa(binary)});
+  await runHook(controller,lease=>options.onEnvelope(saved,lease));responseEnvelopes.delete(response);
+ };
+ try{
+  const statusResponse=await requestOutputVideoResponse(base+"/status",{method:"GET",headers,signal},before);
+  await retained(statusResponse,"status",base+"/status");
+  requireValue(statusResponse.headers.get("x-fal-request-id")===null||statusResponse.headers.get("x-fal-request-id")===providerRequestId,"output_video_provider_receipt_mismatch");
+  requireValue(statusResponse.ok,"output_video_status_unavailable");const status=await envelope(statusResponse);
+  requireValue(status.request_id===undefined||status.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
+  if(status.status==="IN_QUEUE"||status.status==="IN_PROGRESS")return{status:"pending" as const,providerRequestId};
+  requireValue(status.status==="COMPLETED","output_video_status_unavailable");
+  const response=await requestOutputVideoResponse(base,{method:"GET",headers,signal},before);await retained(response,"result",base);
+  requireValue(response.headers.get("x-fal-request-id")===null||response.headers.get("x-fal-request-id")===providerRequestId,"output_video_provider_receipt_mismatch");
+  requireValue(response.ok,"output_video_result_unavailable");const result=await envelope(response);
+  requireValue(result.request_id===undefined||result.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
+  requireValue(result.data===undefined||result.data&&typeof result.data==="object"&&!Array.isArray(result.data),"output_video_result_invalid");
+  const data=result.data as Record<string,unknown>|undefined;
+  requireValue(data?.request_id===undefined||data.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
+  requireValue(!(result.video!==undefined&&data?.video!==undefined),"output_video_result_ambiguous");
+  const video=(result.video??data?.video) as Record<string,unknown>|undefined;
+  requireValue(video&&typeof video==="object"&&!Array.isArray(video),"output_video_result_invalid");
+  requireValue(video.request_id===undefined||video.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
+  const responseMedia=await requestOutputVideoResponse(mediaUrl(video.url),{method:"GET",signal},before,OUTPUT_VIDEO_TRANSPORT.maximumResultBytes);
+  requireValue(responseMedia.ok&&responseMedia.headers.get("content-type")?.split(";",1)[0]?.trim().toLowerCase()==="video/mp4"
+   &&(video.content_type===undefined||video.content_type==="video/mp4"),"output_video_result_invalid");
+  const bytes=new Uint8Array(await responseMedia.arrayBuffer());requireValue(bytes.length>0&&(video.file_size===undefined||Number.isSafeInteger(video.file_size)&&video.file_size===bytes.length),"output_video_result_length_mismatch");
+  await before();return{status:"completed" as const,providerRequestId,bytes,mimeType:"video/mp4" as const,costMicrousd:attempt.video.mediaMaximumMicrousd,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,model:attempt.model};
+ }finally{controller.abort(Error("output_video_recovery_retired"));clearTimeout(timer);options.signal?.removeEventListener("abort",abort);}
 }

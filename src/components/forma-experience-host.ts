@@ -1,3 +1,8 @@
+import { ref } from "lit/directives/ref.js";
+import { createVideoOutputContract, type VideoOutputContract } from "../model/output-video-contract.ts";
+import { readVideoReferencePlan } from "../experiences/video-reference-plan.ts";
+import { captureExperienceVideoTarget, verifyExperienceVideoRead } from "../experiences/video-native-result.ts";
+import type { mountNativeRetainedVideo, NativeVideoPresentation } from "./native-retained-video.ts";
 import { captureExperienceModel3dTarget, experienceModel3dContract, verifyExperienceModel3dRead } from "../experiences/model3d-native-result.ts";
 import { model3dTermIsInterfaceCopy } from "../experiences/model3d-native-copy.ts";
 import type { Model3dOutputContract } from "../model/output-model3d-contract.ts";
@@ -24,7 +29,7 @@ import type { RetainedStoryDto } from "../model/retained-short-story.ts";
 import type { renderNativeRetainedStory } from "./native-retained-story.ts";
 import { isExperienceStoryTarget, verifyExperienceStoryRead } from "../experiences/story-result.ts";
 import "./forma-retained-short-story.css";
-import { html, nothing } from "lit";
+import { html, nothing, type PropertyValues } from "lit";
 import { FormaElement } from "./forma-element";
 import { navigateInApp, type CommandDeparture } from "./command-departure";
 import { OutputDirectActivationLatch, outputPaidDecisionKey, type OutputPaidDecision } from "./output-direct-activation";
@@ -51,15 +56,17 @@ type Binding = {
   sceneSource: SceneOutputSource | null; sceneContractDigest: string | null;
   storyboardSource: StoryboardOutputSource | null;
   audioSource: AudioOutputSource | null;
+  videoContract: VideoOutputContract | null;
   model3dContract: Model3dOutputContract | null;
 };
+type Video = Extract<NativeRetainedOutputDto, { output: "video" }>;
 type Model3d = Extract<NativeRetainedOutputDto, { output: "model3d" }>;
 type Audio = Extract<NativeRetainedOutputDto, { output: "audio" }>;
 type Slides = Extract<NativeRetainedOutputDto, { output: "slides" }>;
 type Storyboard = Extract<NativeRetainedOutputDto, { output: "storyboard" }>;
 type Image = NonNullable<Awaited<ReturnType<FormaStore["loadGeneratedImageEdit"]>>>;
 type Scene = NonNullable<Awaited<ReturnType<typeof readExperienceNativeScene>>>;
-type Result = { lease: object; candidate: ExperienceResultCandidate; current(): boolean } & ({ output: "model3d"; model3d: Model3d; render: typeof renderNativeRetainedModel3d } | { output: "audio"; audio: Audio; render: typeof renderNativeRetainedAudio } | { output: "storyboard"; storyboard: Storyboard; render: typeof renderNativeRetainedStoryboard } | { output: "image"; image: Image } | { output: "slides"; slides: Slides; render: typeof renderNativeRetainedSlides } | { output: "short_story"; story: RetainedStoryDto; render: typeof renderNativeRetainedStory } | { output: "scene"; scene: Scene; measurement: unknown; render: typeof renderNativeRetainedScene });
+type Result = { lease: object; candidate: ExperienceResultCandidate; current(): boolean } & ({ output: "model3d"; model3d: Model3d; render: typeof renderNativeRetainedModel3d } | { output: "video"; video: Video; mount: typeof mountNativeRetainedVideo } | { output: "audio"; audio: Audio; render: typeof renderNativeRetainedAudio } | { output: "storyboard"; storyboard: Storyboard; render: typeof renderNativeRetainedStoryboard } | { output: "image"; image: Image } | { output: "slides"; slides: Slides; render: typeof renderNativeRetainedSlides } | { output: "short_story"; story: RetainedStoryDto; render: typeof renderNativeRetainedStory } | { output: "scene"; scene: Scene; measurement: unknown; render: typeof renderNativeRetainedScene });
 
 /** Same-Document native admission view. All original command/grant identities are
  * retained by the server; mounting and recovery read them without admitting work. */
@@ -83,6 +90,31 @@ export class FormaExperienceHost extends FormaElement {
   #operation?: ExperienceHostOperation;
   #status = "Checking Document";
   #result?: Result;
+  #videoPresentation?: NativeVideoPresentation;
+  #videoResult?: Result;
+  #videoNode?: HTMLElement;
+  #mountVideo = (node?: Element) => {
+    const next = node instanceof HTMLElement ? node : undefined;
+    if (next !== this.#videoNode) {
+      this.#videoPresentation?.dispose(); this.#videoPresentation = undefined; this.#videoResult = undefined;
+    }
+    this.#videoNode = next;
+  };
+  protected override updated(changed: PropertyValues) {
+    super.updated(changed);
+    // Lit ref runs before its new fragment is connected. The leaf deliberately
+    // refuses detached roots, so mount only after the host's DOM commit.
+    const node = this.#videoNode, result = this.#result;
+    if (node?.isConnected && this.contains(node) && result?.output === "video" && this.#visible() && result.current()) {
+      if (this.#videoResult === result && this.#videoPresentation) { this.#videoPresentation.refresh(); return; }
+      this.#videoPresentation?.dispose(); this.#videoResult = result;
+      this.#videoPresentation = result.mount(node, result.video, {
+        locale: this.i18n, isCurrent: () => this.#videoNode === node && this.#result === result && this.#visible() && result.current(),
+      });
+    } else {
+      this.#videoPresentation?.dispose(); this.#videoPresentation = undefined; this.#videoResult = undefined;
+    }
+  }
   #imageLoaded = false;
   #imageNode?: HTMLImageElement;
   #deadline?: ReturnType<typeof setTimeout>;
@@ -128,6 +160,8 @@ export class FormaExperienceHost extends FormaElement {
   }
   #resetDecision() { this.#confirmed = false; this.#approval = false; this.#sceneApproval = false; this.#audioApproval = false; this.#model3dApproval = false; this.#latch.clear(); }
   #clearResult() {
+    this.#videoNode = undefined;
+    this.#videoPresentation?.dispose();this.#videoPresentation=undefined;this.#videoResult=undefined;
     this.#reader?.abort(); this.#reader = undefined; this.#result = undefined; this.#imageLoaded = false;
     this.#imageNode?.removeAttribute("src"); this.#imageNode = undefined;
     for (const node of this.querySelectorAll<HTMLImageElement>("img[data-experience-image], img.native-retained-storyboard-image")) node.removeAttribute("src");
@@ -138,11 +172,11 @@ export class FormaExperienceHost extends FormaElement {
     for (const node of this.querySelectorAll(".retained-story-reader, .native-retained-scene-reader, .native-retained-storyboard-reader, .native-retained-model3d-reader")) { node.replaceChildren(); node.remove(); }
   }
   #storySync = () => {
-    if (["short_story", "scene", "storyboard", "audio", "model3d"].includes(this.#binding?.selection.output ?? "") && this.#binding && (!this.#current(this.#binding) || this.#result && !this.#result.current())) this.#clearResult();
+    if (["short_story", "scene", "storyboard", "audio", "video", "model3d"].includes(this.#binding?.selection.output ?? "") && this.#binding && (!this.#current(this.#binding) || this.#result && !this.#result.current())) this.#clearResult();
   };
   #storyWithdraw = () => {
     // These events precede session/source publication; do not wait for Lit.
-    if (["short_story", "scene", "storyboard", "audio", "model3d"].includes(this.#binding?.selection.output ?? "")) { this.#status = "Document unavailable"; this.#retire(); this.requestUpdate(); }
+    if (["short_story", "scene", "storyboard", "audio", "video", "model3d"].includes(this.#binding?.selection.output ?? "")) { this.#status = "Document unavailable"; this.#retire(); this.requestUpdate(); }
   };
   #visibility = () => { if (this.ownerDocument.visibilityState === "hidden") {
     this.#stopResultRead();
@@ -185,6 +219,8 @@ export class FormaExperienceHost extends FormaElement {
     if (state.output === "image" && !format) return null;
     return outputTerms(state.preflight, { now: Date.now(), output: state.output, targetId: state.plan.targetId, grant: state.grant, allowRecordedResume: state.permitted.resumeRun === true,
       ...(format ? { expectedImageSize: `${format.dimensions.width}x${format.dimensions.height}` } : {}),
+      ...(state.output === "video" && this.#binding?.videoContract ? { expectedVideo: { contract:this.#binding.videoContract,
+        actorUserId:this.#binding.ownerId,projectId:this.#binding.plan.projectId,documentId:this.#binding.plan.documentId } } : {}),
       ...(state.output === "storyboard" && this.#binding?.storyboardSource ? { expectedStoryboard: { source:this.#binding.storyboardSource,
         actorUserId:this.#binding.ownerId,projectId:this.#binding.plan.projectId,documentId:this.#binding.plan.documentId } } : {}),
       ...(state.output === "scene" ? { expectedSceneContract: createSceneOutputContract(this.#binding?.sceneSource) ?? undefined,
@@ -292,7 +328,12 @@ export class FormaExperienceHost extends FormaElement {
       if (!active()) throw new Error("unavailable");
       const model3dContract = selection.output === "model3d" ? await operation.wait(experienceModel3dContract(plan)) : null;
       if (selection.output === "model3d" && !model3dContract || !active()) throw new Error("unavailable");
-      const binding = { selection, plan, store, route, source, authorization, ownerId: session.user.userId, revision: store.documentGenerationRevision(), sceneSource, sceneContractDigest, storyboardSource, audioSource, model3dContract } as Binding;
+      const videoReference=selection.output==="video"?readVideoReferencePlan(plan.reference,plan.request.reference):null;
+      const videoContract=selection.output==="video"?createVideoOutputContract({source:{draftId:plan.draftId,draftHash:plan.draftHash,releaseHash:plan.release.releaseHash,
+        requestHash:await operation.wait(digest(plan.request)),sourceBindingHash:await operation.wait(digest({projectId:plan.projectId,documentId:plan.documentId,events:plan.events}))},
+        reference:videoReference?.selection,frameSize:plan.request.values.frame?.value==="landscape"?"1280x720":plan.request.values.frame?.value==="portrait"?"720x1280":null}):null;
+      if(selection.output==="video"&&!videoContract||!active())throw new Error("unavailable");
+      const binding = { selection, plan, store, route, source, authorization, ownerId: session.user.userId, revision: store.documentGenerationRevision(), sceneSource, sceneContractDigest, storyboardSource, audioSource, videoContract, model3dContract } as Binding;
       binding.client = new ExperienceOutputBindingClient({ draftId: plan.draftId, draftHash: plan.draftHash, releaseHash: plan.release.releaseHash,
         documentId: plan.documentId, projectId: plan.projectId, output: selection.output, actorUserId: session.user.userId },
         { origin: this.ownerDocument.location.origin, current: () => this.#binding === binding && this.#readable(binding) && this.store.experienceDocumentSourceCurrent(binding.plan.documentId, binding.revision) });
@@ -334,6 +375,21 @@ export class FormaExperienceHost extends FormaElement {
     if (state.status === "unavailable" && state.disposition === "prepared") return this.i18n.system("Generation unavailable");
     return ({ absent: "Confirm output", preparing: "Preparation recorded", review: "Cost and transfer", authorized: "Authorized", queued: "Queued", running: "Creating",
       succeeded: "Completed operation", failed: "Failed", cancelled: "Cancelled", partial: "Partial", uncertain: "Unconfirmed", unavailable: "Original unavailable" } as const)[state.status];
+  }
+  async #stopVideo(event:MouseEvent) {
+    const binding=this.#binding,state=this.#state();
+    if(!event.isTrusted||!binding||!this.#visible(binding)||this.#busy||this.#loading||state?.output!=="video"||!state.original||!["queued","running"].includes(state.original.jobStatus))return;
+    const jobId=state.original.jobId,operation=this.#beginOperation(),revealFocus=this.#captureCommandFocusVisibility(binding);this.#commandFocusReveal=revealFocus;this.#busy=true;this.#resetDecision();this.requestUpdate();
+    try{
+      const stopped=await operation.wait(this.store.stopDocumentJob(jobId));
+      if(!this.#operationCurrent(operation)||this.#binding!==binding||!this.#baseCurrent(binding))return;
+      await this.#refreshAndRead(binding,operation);
+      if(this.#operationCurrent(operation))this.#status=stopped?"Stopped · Charges retained":"Stop unconfirmed";
+    }catch{if(this.#operationCurrent(operation))this.#status="Stop unconfirmed";}
+    finally{if(this.#commandFocusReveal===revealFocus)this.#commandFocusReveal=null;
+      if(this.#finishOperation(operation)){this.#busy=false;this.requestUpdate();}
+      await revealFocus?.().catch(()=>{ /* The original command owns any status reveal. */ });
+    }
   }
   async #command(action: ExperienceBindingAction, shown: ExperienceNativeState, sceneConsent?: SceneMiniAppCostApproval, audioConsent?: ExperienceAudioCostApproval, model3dConsent?: ExperienceModel3dCostApproval) {
     const binding = this.#binding; if (!binding || !this.#visible(binding) || this.#busy || shown !== this.#state()) return;
@@ -411,6 +467,7 @@ export class FormaExperienceHost extends FormaElement {
       || plan.revisionId !== state.plan.revisionId || plan.sourceDigest !== state.plan.sourceDigest || plan.requirementsDigest !== state.plan.requirementsDigest
       || plan.targetContractDigests[state.plan.targetId] !== state.plan.targetContractDigest || plan.plan.targets.length !== 1
       || plan.plan.targets[0]?.id !== state.plan.targetId || (state.output === "scene" ? !captureExperienceSceneTarget(plan.plan.targets[0], this.#binding?.sceneSource)
+        : state.output === "video" ? !captureExperienceVideoTarget(plan.plan.targets[0], this.#binding?.videoContract??null)
         : state.output === "storyboard" ? !captureExperienceStoryboardTarget(plan.plan.targets[0], this.#binding?.storyboardSource)
         : state.output === "model3d" ? !captureExperienceModel3dTarget(plan.plan.targets[0], this.#binding?.model3dContract)
         : state.output === "audio" ? !captureExperienceAudioTarget(plan.plan.targets[0], this.#binding?.audioSource)
@@ -543,6 +600,23 @@ export class FormaExperienceHost extends FormaElement {
           if (!visible()) throw new Error("unavailable");
           this.#result = { lease, output: "scene", candidate, scene, measurement, render: renderer.renderNativeRetainedScene, current: visible };
           this.#status = this.i18n.system("Scene");
+        } else if(candidate.output==="video"){
+          if(!binding.videoContract||!state.plan||!state.original||hash!==candidate.video.contentSha256)throw new Error("unavailable");
+          const input=await operation.wait(this.store.ensurePrivateContent(candidate.inputRef,{force:true}));
+          if(!selected())throw new Error("unavailable");
+          const [client,renderer]=await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"),import("./native-retained-video.ts")]));
+          if(!selected())throw new Error("unavailable");
+          const abort=new AbortController();this.#reader=abort;
+          const visible=()=>this.#reader===abort&&!abort.signal.aborted&&selected();
+          const video=await operation.wait(client.readNativeRetainedOutput({output:"video",selection:{documentId:state.documentId,artifactId:candidate.artifactId,revision:0,contentSha256:hash}},
+            {origin:this.ownerDocument.location.origin,signal:abort.signal,current:visible,request:(path,init)=>fetch(path,init)}));
+          if(!visible()||video.output!=="video"||!await operation.wait(verifyExperienceVideoRead(candidate.video,raw,input,video,{
+            contract:binding.videoContract,documentId:state.documentId,projectId:state.projectId,artifactId:candidate.artifactId,ownerId:binding.ownerId,
+            jobId:state.original.jobId,slotId:state.original.slotId,grantId:state.original.grantId,targetId:state.plan.targetId,
+            planRevisionId:state.plan.revisionId,targetContractDigest:state.plan.targetContractDigest,sourceDigest:state.plan.sourceDigest,correlationId:state.original.correlationId,
+          }))||!visible()||Date.parse(video.expiresAt)<=Date.now())throw new Error("unavailable");
+          this.#result={lease,output:"video",candidate,video,mount:renderer.mountNativeRetainedVideo,current:()=>visible()&&Date.parse(video.expiresAt)>Date.now()};
+          this.#status="1 video · 4 s · 480p · Silent";
         } else if(candidate.output==="storyboard"){
           if(!binding.storyboardSource||!state.plan||!state.original||hash!==candidate.storyboard.contentSha256)throw new Error("unavailable");
           const input=await operation.wait(this.store.ensurePrivateContent(candidate.inputRef,{force:true}));
@@ -611,7 +685,7 @@ export class FormaExperienceHost extends FormaElement {
   #scheduleDeadline() {
     if (this.#deadline) clearTimeout(this.#deadline);
     const state = this.#state(), result = this.#result;
-    const dates = [state?.grant?.expiresAt ?? state?.preflight?.expiresAt, state?.sceneCostPreview?.expiresAt, state?.audioCostPreview?.expiresAt, state?.model3dCostPreview?.expiresAt, result?.candidate.expiresAt, result?.output === "model3d" ? result.model3d.expiresAt : result?.output === "storyboard" ? result.storyboard.expiresAt : result?.output === "audio" ? result.audio.expiresAt : result?.output === "slides" ? result.slides.expiresAt : result?.output === "short_story" ? result.story.expiresAt : undefined]
+    const dates = [state?.grant?.expiresAt ?? state?.preflight?.expiresAt, state?.sceneCostPreview?.expiresAt, state?.audioCostPreview?.expiresAt, state?.model3dCostPreview?.expiresAt, result?.candidate.expiresAt, result?.output === "video" ? result.video.expiresAt : result?.output === "model3d" ? result.model3d.expiresAt : result?.output === "storyboard" ? result.storyboard.expiresAt : result?.output === "audio" ? result.audio.expiresAt : result?.output === "slides" ? result.slides.expiresAt : result?.output === "short_story" ? result.story.expiresAt : undefined]
       .flatMap(value => value && Number.isFinite(Date.parse(value)) ? [Date.parse(value)] : []).filter(value => value > Date.now());
     if (!dates.length) return;
     this.#deadline = setTimeout(() => {
@@ -656,7 +730,7 @@ export class FormaExperienceHost extends FormaElement {
     const result = this.#result, binding = this.#binding;
     if (!result || !binding || this.#busy || !this.#visible(binding) || !result.current() || result.output === "image" && !this.#imageReady(result)) return;
     const base = `/library?document=${encodeURIComponent(binding.plan.documentId)}`;
-    const selection = result.output === "model3d" ? result.model3d.selection : result.output === "storyboard" ? result.storyboard.selection : result.output === "audio" ? result.audio.selection : result.output === "slides" ? result.slides.selection : result.output === "short_story" ? result.story.selection : result.output === "scene" ? result.scene.content.selection : null;
+    const selection = result.output === "video" ? result.video.selection : result.output === "model3d" ? result.model3d.selection : result.output === "storyboard" ? result.storyboard.selection : result.output === "audio" ? result.audio.selection : result.output === "slides" ? result.slides.selection : result.output === "short_story" ? result.story.selection : result.output === "scene" ? result.scene.content.selection : null;
     const path = result.output === "image" ? libraryFocusRoute("output", result.image.outputId, "", base)
       : artifactFocusRoute(selection!.artifactId, "", { expectedRevision: 0, expectedContentSha256: selection!.contentSha256, intent: "inspect" }, base);
     await navigateInApp(this, navigation => this.#result === result && this.#visible(binding) && result.current() && navigation.current()
@@ -695,6 +769,7 @@ export class FormaExperienceHost extends FormaElement {
       if (action === "prepare" && !this.#confirmed) withdrawn = true;
       if ((action === "authorize" || action === "run" || action === "resumeRun") && !this.#paidDecision(action)) withdrawn = true;
     }
+    if (control === "stop" && (!this.#visible(binding) || state?.output !== "video" || !state.original || !["queued", "running"].includes(state.original.jobStatus))) withdrawn = true;
     if (control === "edit" && (!this.#visible(binding) || !this.#result
       || this.#result.output === "image" && !this.#imageReady(this.#result))) withdrawn = true;
     if (!withdrawn) return;
@@ -791,16 +866,17 @@ export class FormaExperienceHost extends FormaElement {
     const duplicateReviewStatus = Boolean(available && state?.status === "review" && state.preflight && terms?.summary && terms.available
       && !result && !unavailableProviderPreparation && !this.#loading && !this.#busy && !this.#refreshing && this.#status === "Cost and transfer");
     return html`<section class="experience-host" aria-busy=${String(this.#loading || this.#busy)}>
-      <header class="experience-heading"><h1>${binding?.selection.output === "image" ? "Image" : binding?.selection.output === "slides" ? "Slides" : binding?.selection.output === "short_story" ? "Short story" : binding?.selection.output === "scene" ? "Scene" : binding?.selection.output === "model3d" ? this.i18n.system("3D model") : binding?.selection.output === "audio" ? this.i18n.system("Audio") : binding?.selection.output === "storyboard" ? "Storyboard" : "Output"}</h1></header>
+      <header class="experience-heading"><h1>${binding?.selection.output === "video" ? "Video" : binding?.selection.output === "image" ? "Image" : binding?.selection.output === "slides" ? "Slides" : binding?.selection.output === "short_story" ? "Short story" : binding?.selection.output === "scene" ? "Scene" : binding?.selection.output === "model3d" ? this.i18n.system("3D model") : binding?.selection.output === "audio" ? this.i18n.system("Audio") : binding?.selection.output === "storyboard" ? "Storyboard" : "Output"}</h1></header>
       <p data-experience-status class=${duplicateReviewStatus ? "experience-status-duplicate" : nothing} tabindex="-1" role="status" aria-live="polite">${this.#model3dText(this.#status)}</p>
       ${available && result ? result.output === "image" ? html`<figure class="experience-native-image"><img data-experience-image src=${result.image.media.url} alt="Image" width=${result.image.media.width} height=${result.image.media.height}
         @load=${(event: Event) => this.#imageLoad(event, result)} @error=${() => { if (this.#result === result) { this.#clearResult(); this.#status = "Result unavailable"; this.requestUpdate(); } }}></figure>`
         : result.output === "model3d" ? keyed(result.lease, result.render(result.model3d, this.i18n))
+        : result.output === "video" ? keyed(result.lease,html`<div class="experience-native-video" ${ref(this.#mountVideo)}></div>`)
         : result.output === "audio" ? keyed(result.lease, result.render(result.audio, this.i18n))
         : result.output === "scene" ? keyed(result.lease, result.render(result.scene.content, this.i18n.system("Scene"), result.measurement, this.#sceneLabels()))
         : result.output === "short_story" ? keyed(result.lease, result.render(result.story, "Short story")) : result.output === "storyboard" ? keyed(result.lease,result.render(result.storyboard,this.i18n)) : result.render(result.slides, this.i18n) : nothing}
       ${available && state?.permitted.prepare ? html`<form class="experience-admission" data-experience-action="prepare" @submit=${(event: SubmitEvent) => this.#prepare(event)}>
-        <dl><div><dt>${this.#model3dText("Output")}</dt><dd>${state.output === "model3d" ? this.i18n.system("1 static GLB assembly · One requested object") : state.output === "audio" ? this.i18n.system("1 instrumental track · about 20 seconds") : state.output === "image" ? "1 image" : state.output === "short_story" ? "1 story · 600–800 words" : state.output === "scene" ? this.i18n.system("1 written scene · 2 characters · 1 location · 1–2 pages") : state.output === "storyboard" ? "4 frames" : "5 slides"}</dd></div>${format ? html`<div><dt>${this.i18n.system("Ratio")}</dt><dd>${format.aspect_ratio.width}:${format.aspect_ratio.height}</dd></div><div><dt>${this.i18n.system("Dimensions")}</dt><dd>${format.dimensions.width} × ${format.dimensions.height}</dd></div>` : nothing}</dl>
+        <dl><div><dt>${this.#model3dText("Output")}</dt><dd>${state.output === "video" ? "1 video · 4 s · 480p · Silent" : state.output === "model3d" ? this.i18n.system("1 static GLB assembly · One requested object") : state.output === "audio" ? this.i18n.system("1 instrumental track · about 20 seconds") : state.output === "image" ? "1 image" : state.output === "short_story" ? "1 story · 600–800 words" : state.output === "scene" ? this.i18n.system("1 written scene · 2 characters · 1 location · 1–2 pages") : state.output === "storyboard" ? "4 frames" : "5 slides"}</dd></div>${format ? html`<div><dt>${this.i18n.system("Ratio")}</dt><dd>${format.aspect_ratio.width}:${format.aspect_ratio.height}</dd></div><div><dt>${this.i18n.system("Dimensions")}</dt><dd>${format.dimensions.width} × ${format.dimensions.height}</dd></div>` : nothing}</dl>
         <label><input type="checkbox" .checked=${this.#confirmed} ?disabled=${this.#busy} @change=${(event: Event) => { this.#confirmed = (event.currentTarget as HTMLInputElement).checked; this.#latch.clear(); this.requestUpdate(); }}>${this.i18n.system("Confirm output")}</label>
         <button type="submit" class="button primary" data-experience-control="prepare" aria-disabled=${String(this.#busy || !this.#confirmed)} ?disabled=${this.#buttonDisabled(this.#busy || !this.#confirmed, "prepare")}>${this.i18n.system("Check cost")}</button></form>` : nothing}
       ${unavailableProviderPreparation ? html`<section class="experience-terms" aria-label=${this.i18n.system("Cost and transfer")}>
@@ -817,12 +893,13 @@ export class FormaExperienceHost extends FormaElement {
         ${state.output === "audio" ? html`<p>${this.i18n.system("Create one instrumental track: one OpenAI planning call, at most one repair, then one fal.ai audio request. The 20-second target is not a measured result. Charges may remain if validation fails.")}</p>
           <label><input type="checkbox" .checked=${this.#audioApproval} ?disabled=${this.#busy || !terms?.available || !state.audioCostPreview}
             @change=${(event: Event) => { this.#audioApproval = event.isTrusted && (event.currentTarget as HTMLInputElement).checked; this.#latch.clear(); this.requestUpdate(); }}>${this.i18n.system("Approve this exact Audio request and its displayed maximum cost")}</label>` : nothing}
-        <label><input type="checkbox" .checked=${this.#approval} ?disabled=${this.#busy || !terms?.available} @change=${(event: Event) => { this.#approval = (!["audio", "model3d"].includes(state.output) || event.isTrusted) && (event.currentTarget as HTMLInputElement).checked; this.#latch.clear(); this.requestUpdate(); }}>${this.i18n.system("Approve source transfer and maximum spend")}</label>
+        <label><input type="checkbox" .checked=${this.#approval} ?disabled=${this.#busy || !terms?.available} @change=${(event: Event) => { this.#approval = (!["audio", "model3d", "video"].includes(state.output) || event.isTrusted) && (event.currentTarget as HTMLInputElement).checked; this.#latch.clear(); this.requestUpdate(); }}>${this.i18n.system("Approve source transfer and maximum spend")}</label>
         <button type="submit" class="button primary" data-experience-control="authorize" aria-disabled=${String(!authorize)} ?disabled=${this.#buttonDisabled(!authorize, "authorize")} @click=${(event: MouseEvent) => this.#arm(event, "authorize")}>${this.i18n.system("Authorize")}</button></form>` : nothing}
       ${available && state?.permitted.run ? html`<form class="experience-admission" data-experience-action="run" @submit=${(event: SubmitEvent) => this.#paidSubmit(event, "run", run ? outputPaidDecisionKey(run) : null)}>
-        <button type="submit" class="button primary" data-experience-control="run" aria-disabled=${String(!run)} ?disabled=${this.#buttonDisabled(!run, "run")} @click=${(event: MouseEvent) => this.#arm(event, "run")}>${state.output === "image" ? "Create image" : state.output === "short_story" ? "Create story" : state.output === "scene" ? this.i18n.system("Create scene") : state.output === "model3d" ? this.i18n.system("Create 3D model") : state.output === "audio" ? this.i18n.system("Create audio") : state.output === "storyboard" ? "Create storyboard" : "Create slides"}</button></form>` : nothing}
+        <button type="submit" class="button primary" data-experience-control="run" aria-disabled=${String(!run)} ?disabled=${this.#buttonDisabled(!run, "run")} @click=${(event: MouseEvent) => this.#arm(event, "run")}>${state.output === "video" ? "Create video" : state.output === "image" ? "Create image" : state.output === "short_story" ? "Create story" : state.output === "scene" ? this.i18n.system("Create scene") : state.output === "model3d" ? this.i18n.system("Create 3D model") : state.output === "audio" ? this.i18n.system("Create audio") : state.output === "storyboard" ? "Create storyboard" : "Create slides"}</button></form>` : nothing}
       ${available && state?.permitted.resumeRun ? html`<form class="experience-admission" data-experience-action="resumeRun" @submit=${(event: SubmitEvent) => this.#paidSubmit(event, "resumeRun", resume ? outputPaidDecisionKey(resume) : null)}>
         <button type="submit" class="button primary" data-experience-control="resumeRun" aria-disabled=${String(!resume)} ?disabled=${this.#buttonDisabled(!resume, "resumeRun")} @click=${(event: MouseEvent) => this.#arm(event, "resumeRun")}>${this.#model3dText("Resume")}</button></form>` : nothing}
+      ${available&&state?.output==="video"&&state.original&&["queued","running"].includes(state.original.jobStatus)?html`<button type="button" class="button secondary" data-experience-control="stop" aria-disabled=${String(this.#busy||this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy||this.#loading,"stop")} @click=${this.#stopVideo}>Stop</button>`:nothing}
       <div class="experience-result-actions">${available && state?.permitted.recoverResult ? html`<button type="button" class="button primary" data-experience-action="recoverResult" data-experience-control="recoverResult" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "recoverResult")}
         @click=${(event: MouseEvent) => { if (event.isTrusted) void this.#command("recoverResult", state); }}>${this.i18n.system("Recover result")}</button>` : nothing}${this.#readable(binding) ? html`<button type="button" class="button secondary" data-experience-control="check" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "check")} @click=${() => void this.#check()}>${this.#model3dText("Check status")}</button>` : nothing}
         ${available && result ? html`<button type="button" class="button primary" data-experience-control="edit" aria-disabled=${String(this.#busy || result.output === "image" && !this.#imageReady(result))} ?disabled=${this.#buttonDisabled(this.#busy || result.output === "image" && !this.#imageReady(result), "edit")} @click=${() => { if (!this.#busy) void this.#navigate(() => this.#edit()); }}>${this.#model3dText("Edit in Forma")}</button>` : nothing}</div>

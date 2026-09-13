@@ -3,6 +3,7 @@ import { preflightOutputModel3dMiniAppTarget, outputModel3dPreflightAssertions }
 import { readOutputAudioPayload, requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
 import { preflightOutputAudioTarget, outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
+import { preflightOutputVideoTarget, requireOutputVideoOriginal } from "./output-video-preflight.ts";
 import { preflightOutputStoryboardTarget, outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
 import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
 import { preflightOutputSceneTarget, outputScenePreflightProof } from "./output-scene-preflight.ts";
@@ -49,7 +50,7 @@ export function outputJobUser(principal:PilotUser,scope:OutputScope):PilotUser{
 
 export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput):Promise<OutputNativeTargetPreflight>{
  if(Object.hasOwn(input.target,"model3d_contract"))return preflightOutputModel3dMiniAppTarget(input);
- if(Object.hasOwn(input.target,"video_contract"))return unavailable(input.target.id,"output_video_preparation_unavailable","Video preparation unavailable");
+ if(Object.hasOwn(input.target,"video_contract"))return preflightOutputVideoTarget(input);
  if(Object.hasOwn(input.target,"audio_contract"))return preflightOutputAudioTarget(input);
  if(Object.hasOwn(input.target,"storyboard_contract"))return preflightOutputStoryboardTarget(input);
  if(Object.hasOwn(input.target,"scene_contract"))return preflightOutputSceneTarget(input);
@@ -89,10 +90,17 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const target=input.confirmedPlan.plan.targets.find(target=>target.id===slot.targetId);
   const frozen=input.preflight.targets.find(target=>target.targetId===slot.targetId);
   if(!target||!frozen?.available)throw new OutputConflictError("output_target_not_admissible");
-  if(Object.hasOwn(target,"video_contract"))throw new OutputConflictError("output_video_execution_unavailable",409);
   const current=await preflightOutputNativeTarget({...input,target});
   if(!current.available||await outputDigest(current)!==slot.routeDigest||await outputDigest(frozen)!==slot.routeDigest)throw new OutputConflictError("output_route_changed");
   const settings=current.settings as OutputNativeSettings;
+  const nativeVideo=Object.hasOwn(target,"video_contract")?requireOutputVideoOriginal({...input,target},current,slot).offer:null;
+  const refreshVideo=async()=>{
+   const refreshed=await preflightOutputVideoTarget({...input,target});
+   if(!nativeVideo||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_video_route_changed",409);
+   const {offer,proof}=requireOutputVideoOriginal({...input,target},refreshed,slot);
+   sceneAssertions.push(...proof.sourceAssertions);return offer;
+  };
+  if(nativeVideo)await refreshVideo();
   const nativeModel3d=Object.hasOwn(target,"model3d_contract")?await readOutputModel3dPayload(settings.payload):null;
   if(Object.hasOwn(target,"model3d_contract")&&!nativeModel3d)throw new OutputConflictError("output_model3d_contract_unsupported",403);
   const refreshModel3d=async()=>{
@@ -139,6 +147,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const job=await prepareOutputDocumentJob(input.request,input.env,{documentId:input.scope.documentId,kind:settings.kind,payload:admissionPayload},{jobId:slot.jobId,outputExecution:reference,readScope,
    ...(nativeScene&&scenePrepared?{outputScene:{payload:nativeScene,prepared:scenePrepared,refresh:refreshScene}}:{}),
    ...(nativeAudio?{outputAudio:{payload:admissionPayload,refresh:refreshAudio}}:{}),
+   ...(nativeVideo?{outputVideo:{payload:admissionPayload,maximumMicrousd:nativeVideo.maximumMicrousd,refresh:refreshVideo}}:{}),
    ...(nativeModel3d?{outputModel3d:{payload:admissionPayload,refresh:refreshModel3d}}:{}),
    ...(nativeStoryboard?{outputStoryboard:{payload:admissionPayload,maximumMicrousd:nativeStoryboard.maximumMicrousd,refresh:refreshStoryboard}}:{}),
    maximumMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls,...(settings.imageRender?{outputImageRender:settings.imageRender}:{}),

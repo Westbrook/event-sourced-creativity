@@ -1305,7 +1305,7 @@ export async function settleDocumentGenerationBudgets(env:WorkerEnv,userId:strin
   let usedTokens=0,usedMicrousd=0;
   for(const call of calls){
     const receipt=receipts.find(item=>item.clientRequestId===call.clientRequestId);
-    if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==(call.stage.startsWith("planning:")?"planning":call.stage==="audio:initial"?"audio":call.stage==="model3d:initial"?"model3d":"image")
+    if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==(call.stage.startsWith("planning:")?"planning":call.stage==="audio:initial"?"audio":call.stage==="model3d:initial"?"model3d":call.stage==="video:initial"?"video":"image")
       ||!Number.isSafeInteger(call.usedMicrousd)||Number(call.usedMicrousd)<0
       ||call.status==="rejected"&&(receipt.status!=="rejected"||call.usedMicrousd!==0)
       ||call.status==="settled"&&(receipt.status!=="completed"||receipt.costMicrousd!==call.usedMicrousd||(receipt.providerRequestId??null)!==call.providerRequestId

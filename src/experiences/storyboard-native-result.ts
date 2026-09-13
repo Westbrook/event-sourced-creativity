@@ -1,3 +1,4 @@
+import { snapshotExperienceEvidence as snapshot } from "./evidence-snapshot.ts";
 import { canonicalJson, freeze } from "./compiler.ts";
 import { createStoryboardOutputContract, parseStoryboardOutputContract, type StoryboardOutputContract } from "../model/output-storyboard-contract.ts";
 import { ownerMediaNamespace } from "../model/media-ownership.ts";
@@ -8,28 +9,6 @@ const id=(v:unknown):v is string=>typeof v==="string"&&/^[A-Za-z0-9][A-Za-z0-9._
 const hash=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{64}$/u.test(v);
 const same=(a:unknown,b:unknown)=>canonicalJson(a)===canonicalJson(b);
 const sha=async(text:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text))),n=>n.toString(16).padStart(2,"0")).join("");
-function snapshot(value:unknown):unknown{
- let nodes=0,characters=0;const seen=new Set<object>();
- const visit=(v:unknown,depth:number):unknown=>{
-  if(++nodes>8192||depth>16)throw Error("storyboard_metadata_limit");
-  if(v===null||typeof v==="boolean"||typeof v==="number"&&Number.isFinite(v))return v;
-  if(typeof v==="string"){characters+=v.length;if(characters<=1_048_576)return v;}
-  if(!v||typeof v!=="object"||seen.has(v))throw Error("storyboard_metadata_invalid");
-  const array=Array.isArray(v),prototype=Object.getPrototypeOf(v);
-  if(array?prototype!==Array.prototype:prototype!==Object.prototype&&prototype!==null)throw Error("storyboard_metadata_invalid");
-  seen.add(v);const descriptors=Object.getOwnPropertyDescriptors(v),out:Record<string,unknown>=Object.create(null);
-  if(Reflect.ownKeys(descriptors).some(k=>typeof k!=="string")||array&&Object.keys(descriptors).length!==v.length+1)throw Error("storyboard_metadata_invalid");
-  if(array){
-   for(let index=0;index<v.length;index++)if(!Object.hasOwn(descriptors,String(index)))throw Error("storyboard_metadata_invalid");
-  }
-  for(const [key,d] of Object.entries(descriptors)){
-   if(array&&key==="length")continue;
-   if(!d.enumerable||!Object.hasOwn(d,"value")||["__proto__","constructor","prototype"].includes(key)||array&&!/^(0|[1-9]\d*)$/u.test(key))throw Error("storyboard_metadata_invalid");
-   out[key]=visit(d.value,depth+1);
-  }
-  seen.delete(v);return Object.freeze(array?Object.values(out):out);
- };return visit(value,0);
-}
 const own=(value:unknown,key:string)=>{if(!row(value))return undefined;const d=Object.getOwnPropertyDescriptor(value,key);return d?.enumerable&&Object.hasOwn(d,"value")?d.value:undefined;};
 const exact=(v:Record<string,unknown>,keys:readonly string[])=>Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
 type Frame=Readonly<{frameIndex:number;id:string;mediaUrl:string;sha256:string;byteLength:number;width:1536;height:1024;mimeType:"image/png";provider:"fal";model:"ideogram/v4";clientRequestId:string;providerRequestId:string;storyboardBindingSha256:string}>;

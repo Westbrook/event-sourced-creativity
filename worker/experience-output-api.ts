@@ -1,3 +1,4 @@
+import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
 import { model3dMiniAppCostApprovalMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
 import { readOutputModel3dPayload } from "./output-model3d-execution.ts";
 import { experienceModel3dOutputContract } from "./experience-model3d-recipe.ts";
@@ -12,6 +13,7 @@ import { sceneMiniAppCostApprovalMatches } from "../src/model/scene-mini-app-con
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
+import { recoverOutputVideo } from "./output-video-recovery.ts";
 import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
 import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
@@ -159,8 +161,11 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     preflight: preflight ?? null, grant: null, original: null,
     permitted: { prepare: !preflight && !originals.authorize, authorize: Boolean(preflight?.targets.every(target => target.available) && Date.parse(preflight.expiresAt) > Date.now() && !originals.authorize), run: false, resumeRun: false } };
   if (binding.output === "video") {
-    result.permitted.authorize = false;
-    if (originals.authorize || originals.run) error("experience_video_execution_unavailable", 409);
+    const offered=preflight?.targets[0],video=readVideoExecutionOffer(offered);
+    if(offered?.available&&(!video||canonicalJson(video.contract)!==canonicalJson(loaded.recipe.spec.deliverables[0]?.video_contract)
+      ||video.original.actorUserId!==trusted.scope.actorUserId||video.original.documentId!==binding.documentId||video.original.projectId!==binding.projectId
+      ||video.original.sourceDigest!==trusted.sourceDigest||video.original.requirementsDigest!==trusted.requirementsDigest))error("experience_video_preflight_unavailable",410);
+    if(!video||Date.parse(String(video.original.expiresAt))<=Date.now())result.permitted.authorize=false;
   }
   if (binding.output === "audio") {
     result.audioCostPreview=parseAudioMiniAppCostPreview(record(preflight?.targets[0]?.settings)?preflight!.targets[0]!.settings.costPreview:null);
@@ -191,7 +196,7 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   }
   if (!originals.authorize) {
     if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
-    if (preflight && ((binding.output === "storyboard" ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
+    if (preflight && (((binding.output === "storyboard" || binding.output === "video") ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
       || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
     return result;
   }
@@ -254,6 +259,13 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   if (binding.output === "scene" && (!result.sceneCostPreview || Date.parse(result.sceneCostPreview.expiresAt) <= Date.now())) {
     result.permitted.run = false; result.permitted.resumeRun = false;
   }
+  if(binding.output==="video"){
+    const video=readVideoExecutionOffer(preflight.targets[0]);
+    if(!video||video.original.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)error("experience_video_original_attempt_unavailable",410);
+    // A wake-up is never permission to redo planning, upload or submit media.
+    result.permitted.resumeRun=false;
+    if(Date.parse(String(video.original.expiresAt))<=Date.now())result.permitted.run=false;
+  }
   if(binding.output==="storyboard"){
     const storyboard=readStoryboardExecutionOffer(preflight.targets[0]);
     if(!storyboard||storyboard.original.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)error("experience_storyboard_original_attempt_unavailable",410);
@@ -267,6 +279,32 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
         current.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR json_extract(current.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`)
       .bind(trusted.scope.key,grantId,job.job_id).first());
   const jobMetadata: unknown = JSON.parse(job.result_json ?? "{}");
+  if(binding.output==="video"){
+    // Availability is advisory. The recovery entry revalidates current rights,
+    // source, private originals, both paid calls and a token-fenced read lease.
+    result.permitted.recoverResult=Boolean(run&&job.status==="failed"&&snapshot.permissions?.canRequest
+      && preflight.targets[0]?.provider==="fal"&&preflight.targets[0]?.route==="document-video-owned-still-four-seconds-manual-v1"
+      && ["authorized","active","completed"].includes(grant.status)&&["failed","uncertain"].includes(slot.status)
+      &&await trusted.env.DB.prepare(`SELECT 1 AS available FROM document_jobs job
+        JOIN output_operation_slots original ON original.job_id=job.job_id AND original.scope_key=? AND original.slot_id=?
+        JOIN output_provider_calls media ON media.scope_key=original.scope_key AND media.slot_id=original.slot_id
+        JOIN private_content request ON request.content_id=json_extract(job.result_json,'$.outputVideoMediaCheckpoint.requestRef')
+        WHERE job.job_id=? AND job.owner_id=? AND job.status='failed' AND job.kind='render_document' AND job.source_surface='outputs'
+          AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_type(job.result_json,'$.outputVideoStop') IS NULL
+          AND (job.lease_expires_at IS NULL OR job.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+          AND (json_type(job.result_json,'$.outputVideoRecovery') IS NULL OR json_extract(job.result_json,'$.outputVideoRecovery.status')='completed'
+            OR json_extract(job.result_json,'$.outputVideoRecovery.expiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+          AND media.call_key='video:initial' AND media.stage_key='video:initial' AND media.provider='fal' AND media.status IN('uncertain','settled')
+          AND media.client_request_id=json_extract(job.result_json,'$.outputVideoMediaCheckpoint.clientRequestId')
+          AND media.request_digest=json_extract(job.result_json,'$.outputVideoMediaCheckpoint.requestDigest')
+          AND length(media.provider_response_id) BETWEEN 1 AND 200 AND lower(media.provider_response_id) NOT IN('pending','unknown','submitted')
+          AND request.owner_id=job.owner_id AND request.kind='prompt' AND request.redacted_at IS NULL AND request.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=request.content_id)`)
+        .bind(trusted.scope.key,slot.slotId,job.job_id,trusted.scope.actorUserId).first());
+    const videoRecovery=record(jobMetadata)?jobMetadata.outputVideoRecovery:null;
+    if(job.status==="completed"&&slot.status==="succeeded"&&grant.status==="completed"&&record(videoRecovery)
+      &&videoRecovery.version==="output-video-recovery-v1"&&videoRecovery.status==="completed")result.recovery="completed";
+  }
   const recovery = record(jobMetadata) ? jobMetadata.outputFalRecovery : null;
   if (binding.output === "image" && preflight.targets[0]?.provider === "fal" && result.status === "succeeded" && job.status === "completed" && grant.status === "completed" && record(recovery)
     && recovery.version === "output-fal-recovery-v1" && recovery.status === "completed" && typeof recovery.completionEventId === "string") result.recovery = "completed";
@@ -304,7 +342,6 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     }
     let loaded = await load(request, env, draftId, action === "prepare" ? "author" : action ? "request" : "read");
     if (loaded instanceof Response) return loaded;
-    if (loaded.binding.output === "video" && ["authorize", "run", "recover-result"].includes(action ?? "")) error("experience_video_execution_unavailable", 409);
     if (loaded.binding.output === "audio" && action === "recover-result") error("experience_audio_recovery_unavailable", 409);
     if(action==="authorize"&&(loaded.binding.output==="audio")!==Object.hasOwn(body,"audioCostConsent"))error("experience_audio_confirmation_required",403);
     if(action==="authorize"&&(loaded.binding.output==="model3d")!==Object.hasOwn(body,"model3dCostConsent"))error("experience_model3d_confirmation_required",403);
@@ -357,16 +394,22 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       // Preserve intake/command custody without capturing state()'s old job status.
       // Source epochs allow only the same nonsemantic native events during recovery.
       const recoveryLoaded = loaded;
-      const assertions = recoveryLoaded.trusted.sourceAssertions.map(assertion => assertion.sql === "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?"
-        && assertion.bindings?.[0] === recoveryLoaded.binding.streamId && Number.isSafeInteger(assertion.bindings?.[1])
-        ? outputSourceEpochAssertion(recoveryLoaded.trusted.scope,{head:Number(assertion.bindings?.[1]),sourceDigest:recoveryLoaded.trusted.sourceDigest}) : assertion);
+      const assertions = recoveryLoaded.trusted.sourceAssertions.map(assertion => {
+        const capturedHead=assertion.sql === "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?"
+          || recoveryLoaded.binding.output==="video"&&assertion.sql === "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?";
+        if(!capturedHead)return assertion;
+        if(assertion.bindings?.length!==2||assertion.bindings[0]!==recoveryLoaded.binding.streamId
+          ||!Number.isSafeInteger(assertion.bindings[1])||assertion.bindings[1]!==recoveryLoaded.trusted.ownerHead)error("output_source_epoch_required",403);
+        return outputSourceEpochAssertion(recoveryLoaded.trusted.scope,{head:Number(assertion.bindings[1]),sourceDigest:recoveryLoaded.trusted.sourceDigest});
+      });
       const current = await state(loaded);
       if (body.explicitRecovery !== true || !current.original?.run || body.grantId !== current.original.grantId || body.jobId !== current.original.jobId
         || !current.permitted.recoverResult && current.original.jobStatus !== "completed") error("experience_output_explicit_recovery_required",403);
       const job = await env.DB.prepare("SELECT document_jobs.*,(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
         .bind(current.original.jobId,loaded.trusted.scope.actorUserId,loaded.binding.streamId,loaded.binding.documentId).first<DocumentJobRow>();
       if (!job) error("experience_output_original_job_unavailable",410);
-      const outcome = await recoverOutputFalImage(env,loaded.trusted.principal,job,{assertions,signal:request.signal});
+      const recover=loaded.binding.output==="video"?recoverOutputVideo:recoverOutputFalImage;
+      const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal});
       recovered = outcome.status;
     }
     const latest = action ? await load(request, env, draftId, "read") : loaded; if (latest instanceof Response) return latest;

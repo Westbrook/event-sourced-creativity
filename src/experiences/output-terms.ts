@@ -1,3 +1,5 @@
+import { readVideoExecutionOffer } from "../model/output-video-offer.ts";
+import type { VideoOutputContract } from "../model/output-video-contract.ts";
 import { readModel3dExecutionOffer } from "../model/output-model3d-offer.ts";
 import type { Model3dOutputContract } from "../model/output-model3d-contract.ts";
 import type { Model3dMiniAppCostPreview } from "../model/model3d-mini-app-consent.ts";
@@ -51,7 +53,7 @@ export type OutputTerms = Readonly<{
 }>;
 export type OutputTermsOptions = Readonly<{
   now: number;
-  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d";
+  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d";
   targetId: string;
   grant?: OutputGrantRow | null;
   /** Display eligibility only. Host separately proves server permission and the exact original recorded run. */
@@ -67,6 +69,7 @@ export type OutputTermsOptions = Readonly<{
   model3dCostPreview?: Model3dMiniAppCostPreview | null;
   expectedAudioContract?: AudioOutputContract;
   audioCostPreview?: AudioMiniAppCostPreview | null;
+  expectedVideo?: Readonly<{ contract: VideoOutputContract; actorUserId: string; projectId: string; documentId: string }>;
   expectedStoryboard?: Readonly<{ source: StoryboardOutputSource; actorUserId: string; projectId: string; documentId: string }>;
 }>;
 
@@ -281,6 +284,17 @@ function audioSettings(settings: Data, payload: Data, target: Data, options: Out
 }
 
 function targetProjection(target: Data, options: OutputTermsOptions): OutputTermsTarget | null {
+  if(options.output==="video"){
+    const parsed=readVideoExecutionOffer(target),expected=options.expectedVideo;
+    if(!parsed||!expected||target.targetId!==options.targetId||canonicalJson(parsed.contract)!==canonicalJson(expected.contract)
+      ||parsed.original.actorUserId!==expected.actorUserId||parsed.original.projectId!==expected.projectId||parsed.original.documentId!==expected.documentId
+      ||Date.parse(String(parsed.original.expiresAt))<=options.now)return null;
+    const calls=parsed.calls.map(call=>{const v=call as Record<string,unknown>;return Object.freeze({stage:String(v.stage),rows:rows(row("Provider",String(v.provider)),row("Model",String(v.model)),moneyRow("Maximum spend",Number(v.maximumMicrousd)),row("Maximum input tokens",Number(v.maximumInputTokens)),row("Maximum output tokens",Number(v.maximumOutputTokens)))});});
+    return Object.freeze({targetId:options.targetId,calls:Object.freeze(calls),settings:JSON.stringify(parsed.settings,null,2),rows:rows(
+      row("Output","1 video · 4 s · 480p · Silent"),row("Generation calls","1 planner · 1 video"),moneyRow("Maximum spend",parsed.maximumMicrousd),
+      row("Original job",String(parsed.original.requestId)),row("Deadline",String(parsed.original.expiresAt)),row("Planning provider","OpenAI · gpt-5.6-terra"),
+      row("Video provider","fal.ai · Seedance 2.0"),row("Source transfer","Document text → OpenAI · Selected image and direction → fal.ai"),row("Automatic retry","None"),row("Result review","Required"))});
+  }
   if (options.output === "model3d") {
     const checked = readModel3dExecutionOffer(target);
     if (!checked || target.targetId !== options.targetId || !options.expectedModel3dContract || !options.model3dCostPreview
@@ -503,7 +517,7 @@ export function outputTermsNotice(terms: OutputTerms | null, state: {
 
 export function outputTerms(preflight: OutputPreflight, options: OutputTermsOptions): OutputTerms {
   try {
-    if (!options || !Number.isFinite(options.now) || options.now < 0 || !["image", "slides", "short_story", "scene", "storyboard", "audio", "model3d"].includes(options.output)
+    if (!options || !Number.isFinite(options.now) || options.now < 0 || !["image", "slides", "short_story", "scene", "storyboard", "audio", "video", "model3d"].includes(options.output)
       || typeof options.targetId !== "string" || !options.targetId.trim()) return unknownTerms;
     // The closed Scene response schema reaches depth 19 in the quoted offer.
     // Keep the same node/string bounds and preserve other output limits.
@@ -521,8 +535,8 @@ export function outputTerms(preflight: OutputPreflight, options: OutputTermsOpti
     if (!attempt || !ceiling(attempt.ordinal) || attempt.previousSlotId !== null
       || Object.keys(record(offer.operationAttempts)!).length !== 1) return unknownTerms;
     if (target.provider === "fal" && (offer.maximumMicrousd !== target.maximumMicrousd || offer.maximumCalls !== (options.output==="storyboard"?5:options.output==="audio"?3:options.output==="model3d"?1:2) || attempt.ordinal !== 0)) return unknownTerms;
-    if(options.output==="storyboard"){
-      const checked=readStoryboardExecutionOffer(target);
+    if(options.output==="storyboard"||options.output==="video"){
+      const checked=options.output==="video"?readVideoExecutionOffer(target):readStoryboardExecutionOffer(target);
       if(!checked||checked.original.sourceDigest!==offer.sourceDigest||checked.original.requirementsDigest!==offer.requirementsDigest
         ||expiry>Date.parse(String(checked.original.expiresAt)))return unknownTerms;
     }
@@ -535,8 +549,8 @@ export function outputTerms(preflight: OutputPreflight, options: OutputTermsOpti
     const projected = targetProjection(target, options);
     if (!projected) return unknownTerms;
     const grantData=options.grant==null?null:snapshot(options.grant,options.output==="scene"?24:14);
-    if(options.output==="storyboard"&&grantData){
-      const checked=readStoryboardExecutionOffer(target),g=record(grantData),operation=Array.isArray(g?.operations)?record(g.operations[0]):null;
+    if((options.output==="storyboard"||options.output==="video")&&grantData){
+      const checked=options.output==="video"?readVideoExecutionOffer(target):readStoryboardExecutionOffer(target),g=record(grantData),operation=Array.isArray(g?.operations)?record(g.operations[0]):null;
       if(!checked||!g||operation?.jobId!==checked.original.requestId||stamp(g.expiresAt)===null||(stamp(g.expiresAt)??Infinity)>Date.parse(String(checked.original.expiresAt)))return unknownTerms;
     }
     if (options.output === "model3d" && grantData) {

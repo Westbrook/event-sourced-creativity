@@ -30,7 +30,7 @@ function extracted(path, names, deps) {
   const js = stripTypeScriptTypes(body);
   return new Function(...Object.keys(deps), js + "\nreturn {" + names.join(",") + "};")(...Object.values(deps));
 }
-class OutputConflictError extends Error { constructor(code, status = 409) { super(code); this.code = code; this.status = status; } }
+const {OutputConflictError}=await import('../worker/output-command-core.ts');
 const creator = "video-owned-test";
 const release = await registeredExperience("video");
 const referenceSelection = { version: 1, sourceProjectId: "original-project", sourceDocumentId: "original-document",
@@ -71,10 +71,11 @@ function fixture() {
   const reads = [], selects = [], principal = { userId: creator, streamId: plan.streamId, access: { capabilities: ["project.author"] }, consent: true };
   const input = { request: new Request("https://forma.test"), principal,
     env: { FORMA_IMAGE_PROVIDER: "fal", OPENAI_API_KEY: "synthetic-configured-no-network", FAL_KEY: "synthetic-configured-no-network", DB: {
-      prepare(sql) { assert.match(sql, /^SELECT 1 AS current WHERE /u); selects.push(sql);
-        return { bind(...values) { selects.push(values); return { async first() { return input.current ? { current: 1 } : null; } }; } }; },
+      prepare(sql) { assert.match(sql, /^SELECT (?:1 AS current WHERE |CASE WHEN )/u); selects.push(sql);
+        return { bind(...values) { selects.push(values); return { async first() { return input.current ? { current: 1 } : null; },async all(){return {success:true,results:[{current:input.current?1:0}]};} }; } }; },
+      async batch(statements){return Promise.all(statements.map(s=>s.all()));},
     } }, current: true,
-    scope: { kind: "personal", actorUserId: creator, ownerUserId: creator, projectId: plan.projectId, documentId: plan.documentId,
+    scope: { kind: "personal", key: `personal:${creator}:${plan.projectId}`, actorUserId: creator, ownerUserId: creator, projectId: plan.projectId, documentId: plan.documentId,
       organizationId: null, projectAccessId: null, contextId: null },
     sourceDigest, requirementsDigest, ownerHead: 42, sourceAssertions: [{ sql: "source_head_current = ?", bindings: [42] }],
     sourceEvents: structuredClone([...originalEvents, outputEvent]),
@@ -90,7 +91,7 @@ function fixture() {
   const ports = {
     readExperienceDraft: async (_env, auth, draftId) => { reads.push("draft"); assert.equal(auth.principal, principal); assert.equal(draftId, plan.draftId);
       return input.missing ? null : { plan: input.retainedPlan ?? plan, content: { exact: "retained-source" }, expiresAt: new Date(Date.now() + 86400000).toISOString() }; },
-    experienceDraftGuard: (_auth, actual) => { assert.equal(actual.draftId, plan.draftId); return { sql: "private_draft_current = ?", bindings: [plan.draftHash] }; },
+    experienceDraftGuard: (_auth, actual) => { assert.equal(actual.draftId, plan.draftId); return input.draftGuard ?? { sql: "private_draft_current = ?", bindings: [plan.draftHash] }; },
     projectIntakeAuthority: (_env, auth) => { assert.equal(auth.principal, principal); return { sql: "actor_current = ?", bindings: [creator] }; },
     join: (...guards) => ({ sql: guards.map(g => "(" + g.sql + ")").join(" AND "), bindings: guards.flatMap(g => g.bindings) }),
     requireConsent: actor => { assert.equal(actor, principal); return actor.consent ? null : new Response(null, { status: 403 }); },
@@ -105,7 +106,7 @@ function fixture() {
     prepareExperienceVideoReference: async (request, env, auth, selection) => {
       reads.push("original-image"); assert.equal(request, input.request); assert.equal(env,input.env); assert.equal(auth.principal,principal); assert.deepEqual(selection, referenceSelection);
       if(input.imageUnavailable)throw new OutputConflictError("video_reference_source_unavailable");
-      return { reference: input.freshReference ?? referencePlan, head:input.originalHead ?? 42, guard:{sql:"original_image_current = ?",bindings:[referenceSelection.sha256]} };
+      return { reference: input.freshReference ?? referencePlan, head:input.originalHead ?? 42, guard:input.originalGuard??{sql:"original_image_current = ?",bindings:[referenceSelection.sha256]} };
     },
   });
   const resolver = extracted("worker/output-video-source.ts", ["resolveOutputVideoSource", "outputVideoPreparationIdentity"], {
@@ -180,11 +181,13 @@ test('Video source preparation cannot offer authorization or accept a forged ret
   originals:{preflight:{receipt:{payload:{preflight}},envelope:{planRevisionId:preflight.planRevisionId}}}};
  const state=oneFunction('worker/experience-output-api.ts','async function state','\nasync function execute',{
   confirmed:async()=>({...f.input.confirmedPlan,targetContractDigests:{[recipe.targetId]:'synthetic-target'}}),
-  record:v=>Boolean(v&&typeof v==='object'&&!Array.isArray(v)),canonicalJson,phases:['save','confirm','preflight','authorize','run'],
+  readVideoExecutionOffer,record:v=>Boolean(v&&typeof v==='object'&&!Array.isArray(v)),canonicalJson,phases:['save','confirm','preflight','authorize','run'],
   error:code=>{throw new Error(code);},
  });
+ await assert.rejects(state(loaded),/experience_video_preflight_unavailable/);
+ preflight.targets[0].available=false;
  const value=await state(loaded);assert.equal(value.status,'unavailable');assert.equal(value.permitted.authorize,false);assert.equal(value.permitted.run,false);
- loaded.originals.authorize={};await assert.rejects(state(loaded),/experience_video_execution_unavailable/);
+ loaded.originals.authorize={receipt:{payload:{}},envelope:{}};await assert.rejects(state(loaded),/experience_output_original_authorization_unavailable/);
 });
 
 test('original receipt SQL rejects missing, redirected, redacted and altered private evidence',async()=>{
@@ -229,4 +232,121 @@ test('native bridge forwards captured owner head without manufacturing an epoch 
  const bridge=oneFunction('worker/output-requirements-api.ts','function bridgeTarget','\nasync function preflightPlan',{requireCurrentSource:trusted=>trusted.context});
  const f=fixture(),trusted={...f.input,events:f.input.sourceEvents,ownerHead:77};const value=bridge(trusted,f.input.confirmedPlan,f.input.target);
  assert.equal(value.ownerHead,77);assert.equal(value.sourceEvents,trusted.events);
+});
+
+const {outputSourceEpochAssertion}=await import('../worker/output-requirements-ledger.ts');
+const {outputProofReadStatements,assertOutputProofRead}=await import('../worker/output-disclosure-proof.ts');
+const {DatabaseSync}=await import('node:sqlite');
+const {standingConstraints}=await import('../src/model/taste.ts');
+const {documentRenderTokenReservation}=await import('../src/model/generation-budget.ts');
+const {OUTPUT_VIDEO_EXECUTION_POLICY}=await import('../src/model/output-execution-policy.ts');
+const {prepareVideoPlannerRequest}=await import('../worker/openai-adapter.ts');
+const {outputVideoMediaPrice}=await import('../worker/output-video-execution.ts');
+const {VIDEO_PLANNER_MODEL}=await import('../worker/output-video-planner.ts');
+const {estimateOpenAITextCallMaximumMicrousd}=await import('../worker/openai-text-cost.ts');
+const {readVideoExecutionOffer,VIDEO_READY_REASON,VIDEO_TRANSFER}=await import('../src/model/output-video-offer.ts');
+function quoteFixture(){
+ const f=fixture();return {...f,...extracted('worker/output-video-preflight.ts',['preflightOutputVideoTarget','outputVideoPreflightProof','requireOutputVideoOriginal','outputVideoExecutionSourceAssertions'],{
+  canonicalJson,freeze,parseVideoOutputContract,standingConstraints,documentRenderTokenReservation,OUTPUT_VIDEO_EXECUTION_POLICY,
+  prepareVideoPlannerRequest,outputVideoMediaPrice,VIDEO_PLANNER_MODEL,estimateOpenAITextCallMaximumMicrousd,resolveOutputVideoSource:f.resolveOutputVideoSource,
+  readVideoExecutionOffer,VIDEO_READY_REASON,VIDEO_TRANSFER,OutputConflictError,outputSourceEpochAssertion,outputProofReadStatements,assertOutputProofRead,
+ })};
+}
+test('exact read-only Video quote combines original custody, real compiler bytes and480p media price without private writes',async()=>{
+ const f=quoteFixture(),quote=await f.preflightOutputVideoTarget(f.input),offer=readVideoExecutionOffer(quote);
+ assert.ok(quote.available);assert.ok(offer);assert.deepEqual(quote.settings.executionPolicy,{maximumMilliseconds:900000,heartbeatMilliseconds:60000,maximumRenewals:14});assert.equal(quote.maximumCalls,2);assert.equal(quote.maximumTokens,documentRenderTokenReservation('video',1,1));
+ assert.deepEqual(offer.calls.map(c=>c.stage),['planning:0:initial','video:initial']);assert.equal(offer.calls[1].maximumMicrousd,outputVideoMediaPrice().maximumMicrousd);assert.equal(quote.maximumMicrousd,offer.calls.reduce((sum,c)=>sum+c.maximumMicrousd,0));
+ assert.equal(offer.payload.videoResolution,'480p');assert.equal(offer.payload.videoSeconds,4);assert.equal(offer.payload.videoAudioMode,'silent');assert.equal(offer.original.draftId,plan.draftId);
+ assert.ok(f.selects.length);const proof=f.outputVideoPreflightProof(quote);assert.ok(proof.sourceAssertions.length);assert.equal(proof.requestId,offer.original.requestId);assert.equal(f.outputVideoPreflightProof(structuredClone(quote)),null);
+ const repeated=await f.preflightOutputVideoTarget(f.input);assert.deepEqual(repeated,quote);assert.equal(f.outputVideoPreflightProof(repeated).expiresAt,proof.expiresAt);
+});
+test('Video quote rechecks source and expiry, and unconfigured or malformed routes authorize zero calls',async()=>{
+ const absent=quoteFixture();absent.input.env.OPENAI_API_KEY='';const refused=await absent.preflightOutputVideoTarget(absent.input);assert.equal(refused.maximumCalls,0);assert.deepEqual(absent.reads,[]);
+ for(const modify of [f=>{f.input.target.quantity.value=2;},f=>{delete f.input.target.content_quantity;},f=>{f.input.target.audio_contract=undefined;}]){const f=quoteFixture();modify(f);const result=await f.preflightOutputVideoTarget(f.input);assert.equal(result.available,false);assert.equal(result.maximumMicrousd,0);assert.equal(f.outputVideoPreflightProof(result),null);}
+ const stale=quoteFixture();stale.input.current=false;const result=await stale.preflightOutputVideoTarget(stale.input);assert.equal(result.available,false);assert.equal(result.reasonCode,'output_video_source_changed');
+ const head=quoteFixture();head.input.originalHead=43;await assert.rejects(head.preflightOutputVideoTarget(head.input),/source_changed/);
+});
+test('Video offer parsing rejects drift rather than turning a changed quote into authority',async()=>{
+ const f=quoteFixture(),quote=await f.preflightOutputVideoTarget(f.input);
+ for(const change of [q=>{q.settings.executionPolicy={maximumMilliseconds:240000,heartbeatMilliseconds:60000,maximumRenewals:3};},q=>{q.maximumCalls=3;},q=>{q.maximumMicrousd++;},q=>{q.settings.payload.videoResolution='720p';},q=>{q.settings.payload.videoSeconds=5;},q=>{q.settings.calls[1].maximumMicrousd++;},q=>{q.settings.original.requestId='other';},q=>{q.settings.videoPricingVersion='future';},q=>{q.settings.approved=true;}]){const changed=structuredClone(quote);change(changed);assert.equal(readVideoExecutionOffer(changed),null);}
+ let reads=0;const getter={...quote};Object.defineProperty(getter,'settings',{enumerable:true,get(){reads++;throw Error('getter');}});assert.equal(readVideoExecutionOffer(getter),null);assert.equal(reads,0);
+});
+
+
+test('Video original admission binds the actual quote proof to the first job, scope, source and immutable expiry',async()=>{
+ const f=quoteFixture(),quote=await f.preflightOutputVideoTarget(f.input),proof=f.outputVideoPreflightProof(quote);
+ const attempt={attemptOrdinal:0,previousSlotId:null,jobId:proof.requestId};
+ const admitted=f.requireOutputVideoOriginal(f.input,quote,attempt);assert.equal(admitted.proof,proof);assert.equal(admitted.offer.original.requestId,attempt.jobId);
+ assert.throws(()=>f.requireOutputVideoOriginal(f.input,structuredClone(quote),attempt),/original_attempt_required/);
+ for(const delta of [{attemptOrdinal:1},{attemptOrdinal:-1},{previousSlotId:'old-slot'},{previousSlotId:undefined},{jobId:'different-job'}]){
+  assert.throws(()=>f.requireOutputVideoOriginal(f.input,quote,{...attempt,...delta}),/original_attempt_required/);
+ }
+ for(const delta of [{kind:'project'},{contextId:'other-context'},{actorUserId:'other'},{ownerUserId:'other'},{projectId:'other'},{documentId:'other'}]){
+  assert.throws(()=>f.requireOutputVideoOriginal({...f.input,scope:{...f.input.scope,...delta}},quote,attempt),/original_attempt_required/);
+ }
+ for(const key of ['sourceDigest','requirementsDigest'])assert.throws(()=>f.requireOutputVideoOriginal({...f.input,[key]:'0'.repeat(64)},quote,attempt),/original_attempt_required/);
+ assert.throws(()=>f.requireOutputVideoOriginal({...f.input,target:{...f.input.target,id:'other'}},quote,attempt),/original_attempt_required/);
+ const clock=Date.now;try{Date.now=()=>Date.parse(proof.expiresAt);assert.throws(()=>f.requireOutputVideoOriginal(f.input,quote,attempt),/original_attempt_required/);}finally{Date.now=clock;}
+});
+
+test('Video execution keeps original still guards while only same-source job events may advance the owner head',async()=>{
+ const f=quoteFixture(),quote=await f.preflightOutputVideoTarget(f.input),proof=f.outputVideoPreflightProof(quote),attempt={attemptOrdinal:0,previousSlotId:null,jobId:proof.requestId};
+ const assertions=f.outputVideoExecutionSourceAssertions(f.input,quote,attempt),original=proof.sourceAssertions;
+ const retained=original.filter(a=>a.sql!=="COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?");
+ for(const guard of retained)assert.ok(assertions.includes(guard),'Original private, source, rights and expiry guard retained by identity');
+ const epoch=assertions.find(a=>!original.includes(a));assert.ok(epoch);assert.equal(assertions.length,original.length);
+ const db=new DatabaseSync(':memory:');try{
+  db.exec('CREATE TABLE events(stream_id TEXT,sequence INTEGER,type TEXT,actor TEXT,correlation_id TEXT);CREATE TABLE output_operation_slots(scope_key TEXT,source_digest TEXT,job_id TEXT);CREATE TABLE document_jobs(job_id TEXT,correlation_id TEXT);');
+  db.prepare('INSERT INTO output_operation_slots VALUES(?,?,?)').run(f.input.scope.key,f.input.sourceDigest,attempt.jobId);db.prepare('INSERT INTO document_jobs VALUES(?,?)').run(attempt.jobId,'original-correlation');
+  const inspect=()=>Boolean(db.prepare('SELECT 1 AS current WHERE '+epoch.sql).get(...epoch.bindings));assert.equal(inspect(),true);
+  const append=(type,correlation='original-correlation',actor='worker:renderer')=>db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('creative:'+f.input.scope.ownerUserId,f.input.ownerHead+1,type,actor,correlation);
+  for(const type of ['DocumentOpened','DocumentRenderRequested','DocumentRenderCompleted','BudgetReserved']){append(type);assert.equal(inspect(),true);db.exec('DELETE FROM events');}
+  for(const args of [['BlockUpdated'],['ReferencePermissionsUpdated'],['DocumentRenderRequested','foreign-correlation'],['ModelRegistered','original-correlation','worker:other']]){append(...args);assert.equal(inspect(),false);db.exec('DELETE FROM events');}
+  append('DocumentRenderRequested');db.prepare('UPDATE output_operation_slots SET source_digest=?').run('changed-source');assert.equal(inspect(),false);
+ }finally{db.close();}
+ for(const head of [undefined,-1,f.input.ownerHead+1])assert.throws(()=>f.outputVideoExecutionSourceAssertions({...f.input,ownerHead:head},quote,attempt),/source_epoch_required/);
+});
+
+test('native Video receipt records the exact two-call cap without paid repair or changing legacy Video accounting',async()=>{
+ const {VIDEO_ADAPTER_CONTRACT}=await import('../src/model/video-adapter.ts');let privateReceipt;
+ const receipt=oneFunction('worker/document-jobs-api.ts','async function acceptedGenerationReceipt','\nfunction parentJobIdFromRequest',{
+  VIDEO_ADAPTER_CONTRACT,sceneConfigurationFromRequest:()=>null,readOutputAudioPayload:()=>null,sourceSnapshotSha256:digest,
+  captureDocumentRenderSettings:payload=>({artifact_kind:payload.artifactKind,videoResolution:payload.videoResolution}),
+  storePrivateContent:async(_env,owner,kind,raw)=>{privateReceipt=JSON.parse(raw);assert.equal(owner,'owner');assert.equal(kind,'document-artifact-input');return{contentId:'private-input',expiresAt:new Date(Date.now()+86400000).toISOString()};},
+ });
+ const f=quoteFixture(),offer=readVideoExecutionOffer(await f.preflightOutputVideoTarget(f.input));
+ const make=(native,extra={})=>receipt({OPENAI_MODEL:'gpt-5.6-terra'},{userId:'owner'}, {...offer.payload,...extra,snapshot:{facts:[]}},'same-document','original-video',offer.maximumMicrousd,null,undefined,undefined,undefined,undefined,undefined,false,native);
+ const result=await make(true);
+ for(const view of [result,result.settings,privateReceipt.request]){assert.equal(view.planned_provider_call_count,2);assert.equal(view.maximum_provider_call_count,2);assert.equal(view.max_repair_call_count,0);assert.equal(view.reservation_microusd,offer.maximumMicrousd);}
+ assert.equal(result.provider,'fal');assert.equal(result.model,VIDEO_ADAPTER_CONTRACT.model);assert.equal(privateReceipt.planner.model,'gpt-5.6-terra');
+ assert.equal(result.settings.video_resolution,'480p');assert.equal(result.reservation_is_application_hard_cap,true);assert.equal(result.reservation_is_provider_hard_cap,false);
+ assert.equal(result.settled_cost_microusd,0);assert.equal(result.actual_provider_call_count,null);assert.equal(result.source_transmission_status,'not_transmitted');assert.equal(result.provider_request_status,'not_submitted');
+ const legacy=await make(false,{nativeVideoReceipt:true});assert.equal(legacy.planned_provider_call_count,1);assert.equal(legacy.max_repair_call_count,1);assert.equal(legacy.reservation_is_application_hard_cap,false);assert.equal(legacy.provider,'openai');
+});
+
+test('actual authorization handoff carries the captured owner head into fresh Video admission',async()=>{
+ const f=quoteFixture(),preflight=await f.preflightOutputVideoTarget(f.input),proof=f.outputVideoPreflightProof(preflight);
+ const statement=source('worker/output-requirements-api.ts').match(/const prepared = (await bridge\.prepareAdmission\([^\n]+\));/u);assert(statement,'actual native admission handoff');
+ const trusted={...f.input,events:f.input.sourceEvents,ownerHead:f.input.ownerHead},slots=[{targetId:f.input.target.id,jobId:proof.requestId,attemptOrdinal:0,previousSlotId:null}];
+ const ports={trusted,body:{},plan:f.input.confirmedPlan,context:f.input.context,grantId:'grant',preflight:{targets:[preflight]},slots,sceneTargets:[],audioTargets:[],model3dTargets:[],bridge:{prepareAdmission:async input=>input}};
+ const forward=new Function(...Object.keys(ports),stripTypeScriptTypes('async function handoff(){return '+statement[1]+';}')+';return handoff();');
+ const admitted=await forward(...Object.values(ports));assert.equal(admitted.ownerHead,trusted.ownerHead);assert.equal(admitted.sourceEvents,trusted.events);
+ const current=await f.preflightOutputVideoTarget({...f.input,...admitted,target:f.input.target});assert.equal(current.available,true);
+ assert.equal(f.requireOutputVideoOriginal({...f.input,...admitted,target:f.input.target},current,slots[0]).proof.requestId,proof.requestId);
+});
+
+test('actual Video preflight batches the102-binding source shape and checks every result plus expiry',async()=>{
+ for(const failure of ['none','middle','truncated','expiry']){
+  const f=quoteFixture(),guard=count=>({sql:Array.from({length:count},()=>'?').join(' AND '),bindings:Array(count).fill(1)});
+  // Match the real caller51 + joined draft23 + original17 + receipt8 + head2
+  // + expiry1 shape. Source/auth and DB rows remain explicit fixture ports;
+  // the actual preflight, proof builder, size limit and result checker execute.
+  f.input.sourceAssertions=[guard(51)];f.input.draftGuard=guard(22);f.input.originalGuard=guard(17);
+  const bindings=[];f.input.env.DB.prepare=sql=>({bind(...values){assert(values.length<=100,'D1 per-statement binding maximum');bindings.push(values.length);return{sql,values};}});
+  let batchCount=0;const now=Date.now;
+  f.input.env.DB.batch=async statements=>{batchCount++;assert.equal(statements.length,6);const results=statements.map(()=>({success:true,results:[{current:1}]}));
+   if(failure==='middle')results[2].results[0].current=0;if(failure==='truncated')results.pop();if(failure==='expiry')Date.now=()=>now()+900001;return results;};
+  try{const value=await f.preflightOutputVideoTarget(f.input);assert.equal(value.available,failure==='none');assert.equal(batchCount,1);assert.equal(bindings.reduce((a,b)=>a+b,0),102);assert.equal(Math.max(...bindings),51);}
+  finally{Date.now=now;}
+ }
 });

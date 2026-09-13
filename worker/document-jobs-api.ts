@@ -1,3 +1,4 @@
+import { stopOutputVideoJob } from "./output-video-stop.ts";
 import { readOutputAudioPayload } from "./output-audio-execution.ts";
 import { MODEL3D_PRIVATE_CHECKPOINT_KEYS, MODEL3D_TERMINAL_RESULT_SQL, model3dNativeCheckpoint, model3dPublicResultSql } from "./output-model3d-terminal.ts";
 import { readOutputSceneLocalStop } from "./output-scene-local-stop.ts";
@@ -1392,7 +1393,7 @@ type GenerationReceipt=Record<string,unknown>&{
   reservation_status:string;source_transmission_status:string;provider_request_status:string;
 };
 
-async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Record<string,unknown>,documentId:string,jobId:string,estimatedCostMicrousd:number,production:ManagedProductionPlan|null,contentScope:ProjectExecutionScope|undefined,effectiveSnapshot?:Record<string,unknown>,deferredPrivate?:D1PreparedStatement[],admissionReads?:OutputAdmissionReads,scenePayload?:NonNullable<Awaited<ReturnType<typeof readOutputScenePayload>>>,nativeStoryboardReceipt=false):Promise<GenerationReceipt>{
+async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Record<string,unknown>,documentId:string,jobId:string,estimatedCostMicrousd:number,production:ManagedProductionPlan|null,contentScope:ProjectExecutionScope|undefined,effectiveSnapshot?:Record<string,unknown>,deferredPrivate?:D1PreparedStatement[],admissionReads?:OutputAdmissionReads,scenePayload?:NonNullable<Awaited<ReturnType<typeof readOutputScenePayload>>>,nativeStoryboardReceipt=false,nativeVideoReceipt=false):Promise<GenerationReceipt>{
   const snapshot=payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:{};
   const artifactKind=String(payload.artifactKind??"");
   const sceneConfiguration=sceneConfigurationFromRequest(payload);
@@ -1402,7 +1403,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   // Scene has no downstream media render: the existing planning guard bounds its full cost.
   // Only the server-owned native preparation selects this receipt policy;
   // a client payload flag or legacy manual storyboard is not that authority.
-  const applicationSpendingCap=nativeStoryboardReceipt||isSlides||artifactKind==="scene";
+  const applicationSpendingCap=nativeStoryboardReceipt||nativeVideoReceipt||isSlides||artifactKind==="scene";
   const sourceOutline=isSlides?inferPresentationSourceOutline(snapshot):null;
   const slideCountPolicy=isSlides&&payload.slideCountPolicy!==undefined?readSlideCountPolicy(payload.slideCountPolicy):undefined;
   const rawRequestedCount=payload.requestedSlideCount??payload.itemCount;
@@ -1410,15 +1411,15 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   const authoredSlideCount=isSlides?production?.authoredSlideCount??sourceOutline?.authoredSlideCount??null:null;
   const predictedSlideCount=isSlides?production?.predictedSlideCount??(slideCountPolicy?resolvePresentationCountRequest(payload).itemCount:requestedSlideCount??7):null;
   const batchCount=production?.providerBatchCount??1;
-  const plannedProviderCallCount=nativeStoryboardReceipt?5:readOutputAudioPayload(payload)?2:production?.providerCallCount??1;
-  const maxRepairCallCount=nativeStoryboardReceipt||isModel3d||scenePayload?0:production?.maxRepairCallCount??1;
-  const maximumProviderCallCount=nativeStoryboardReceipt?5:readOutputAudioPayload(payload)?3:isModel3d||scenePayload?1:production?.maximumProviderCallCount??2;
+  const plannedProviderCallCount=nativeVideoReceipt?2:nativeStoryboardReceipt?5:readOutputAudioPayload(payload)?2:production?.providerCallCount??1;
+  const maxRepairCallCount=nativeVideoReceipt||nativeStoryboardReceipt||isModel3d||scenePayload?0:production?.maxRepairCallCount??1;
+  const maximumProviderCallCount=nativeVideoReceipt?2:nativeStoryboardReceipt?5:readOutputAudioPayload(payload)?3:isModel3d||scenePayload?1:production?.maximumProviderCallCount??2;
   const capturedAt=new Date().toISOString();
   const plannerProvider="openai";
   const modelRoutes=isSlides?resolvePresentationModelRoutes(env):null;
   const plannerModel=modelRoutes?.composition.model??String(env.OPENAI_MODEL??"gpt-5.6-terra");
-  const provider=artifactKind==="audio"||isModel3d?"fal":"openai";
-  const model=model3d?.model??(artifactKind==="audio"?String(payload.audioProviderModel??env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro"):plannerModel);
+  const provider=nativeVideoReceipt||artifactKind==="audio"||isModel3d?"fal":"openai";
+  const model=nativeVideoReceipt?VIDEO_ADAPTER_CONTRACT.model:model3d?.model??(artifactKind==="audio"?String(payload.audioProviderModel??env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro"):plannerModel);
   const audioProfile=artifactKind==="audio"?normalizeAudioRequestProfile(payload.audioProfile,snapshot):null;
   const sourceHash=await sourceSnapshotSha256(snapshot);
   const sceneContext=sceneConfiguration?{
@@ -1524,6 +1525,7 @@ function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError
 }
 
 const OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS = ["outputExecution","providerSubmissionProtocol","providerSubmissionLegacyUncertain","artifactPlan","renderedItems","outputStoryboardPlannerCheckpoint","outputStoryboardRawEnvelope","outputStoryboardCheckpoints"] as const;
+const OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS = ["outputExecution","providerSubmissionProtocol","providerSubmissionLegacyUncertain","artifactPlan","outputVideoPlannerCheckpoint","outputVideoPlannerEnvelope","outputVideoMediaCheckpoint","outputVideoMediaEnvelopes","outputVideoMediaResult","outputVideoRecovery","outputVideoRecoveryEnvelopes"] as const;
 
 async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "completed" | "failed", result: Record<string, unknown>, errorMessage: string | null, completedAt = new Date().toISOString(), guardActive = true) {
   const parentId = parentJobIdFromRequest(parseRequest(row));
@@ -1536,7 +1538,11 @@ async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "c
   // The terminal result is an object: $[0] is a no-op removal for existing keys.
   // Preserve missing, null, boolean, string, numeric and container values for every key.
   const missingStoryboardCheckpointKeys=OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS.map(key=>"CASE WHEN json_type(result_json,'$."+key+"') IS NULL THEN '$."+key+"' ELSE '$[0]' END").join(",");
-  const resultAssignment=row.output_slot_id&&model3dNativeCheckpoint(parseRequest(row))?MODEL3D_TERMINAL_RESULT_SQL:storyboardCheckpointSql?`json_remove(json_set(${outputResultAssignment},${storyboardCheckpointSql}),${missingStoryboardCheckpointKeys})`:outputResultAssignment;
+  const storyboardResultAssignment=storyboardCheckpointSql?`json_remove(json_set(${outputResultAssignment},${storyboardCheckpointSql}),${missingStoryboardCheckpointKeys})`:outputResultAssignment;
+  const videoCheckpointSql=row.output_slot_id&&row.kind==="render_document"&&parseRequest(row).artifactKind==="video"
+    ? OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS.map(key=>"'$."+key+"',CASE json_type(result_json,'$."+key+"') WHEN 'true' THEN json('true') WHEN 'false' THEN json('false') ELSE json_extract(result_json,'$."+key+"') END").join(",") : null;
+  const missingVideoCheckpointKeys=OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS.map(key=>"CASE WHEN json_type(result_json,'$."+key+"') IS NULL THEN '$."+key+"' ELSE '$[0]' END").join(",");
+  const resultAssignment=row.output_slot_id&&model3dNativeCheckpoint(parseRequest(row))?MODEL3D_TERMINAL_RESULT_SQL:videoCheckpointSql?`json_remove(json_set(${storyboardResultAssignment},${videoCheckpointSql}),${missingVideoCheckpointKeys})`:storyboardResultAssignment;
   const statement = guardActive
     ? `UPDATE document_jobs SET status=?,result_json=${resultAssignment},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('running','committing')`
     : `UPDATE document_jobs SET status=?,result_json=${resultAssignment},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?`;
@@ -1565,8 +1571,9 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const errorDetail=errorDetailFromResult(parsed);
   const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote"]);
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="storyboard")for(const key of OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
+  if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
-  const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
+  const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&!key.startsWith("outputVideo")&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
   if(sanitizedResult&&request.artifactKind==="model3d"&&!model3dNativeCheckpoint(request))Object.assign(sanitizedResult,model3dRecoveryProviderReceipt(parsed)??{});
   if(sanitizedResult&&consentedAdaptiveJob(row)&&!certifiedAdaptiveRows.has(row)){delete sanitizedResult.structure;delete sanitizedResult.intent;}
   // Present current evidence without changing the stored receipt, checkpoint, or cost hold.
@@ -2259,7 +2266,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const livePlannerValidation=livePlannerInput.validation&&typeof livePlannerInput.validation==="object"?livePlannerInput.validation as Record<string,unknown>:{};
     const observedPlannerCalls=Math.max(Array.isArray(liveCheckpoint.plannerResponseIds)?new Set(liveCheckpoint.plannerResponseIds.map(String).filter(Boolean)).size:0,Math.max(0,Number(livePlannerInput.provider_request_count??livePlannerValidation.provider_call_count??0)));
     const acceptedReceipt=rawReceipt&&typeof rawReceipt==="object"?{...rawReceipt as Record<string,unknown>,...(observedPlannerCalls?{actual_provider_call_count:observedPlannerCalls}:{})}:null;
-    let terminalResult = { ...durableCheckpoint, ...(outputBinding&&(readOutputAudioPayload(parseRequest(row))||row.kind==="render_document"&&parseRequest(row).artifactKind==="storyboard"||model3dNativeCheckpoint(parseRequest(row)))?{providerSubmissions:liveCheckpoint.providerSubmissions}:{}), ...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}), ...safeResult({...body,followupJobId:followup?.job_id}), ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
+    let terminalResult = { ...durableCheckpoint, ...(outputBinding&&(readOutputAudioPayload(parseRequest(row))||row.kind==="render_document"&&["storyboard","video"].includes(String(parseRequest(row).artifactKind))||model3dNativeCheckpoint(parseRequest(row)))?{providerSubmissions:liveCheckpoint.providerSubmissions}:{}), ...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}), ...safeResult({...body,followupJobId:followup?.job_id}), ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
     const recordedNativeFailure=outputBinding&&Array.isArray(body.appended)&&body.appended.some(event=>event&&typeof event==="object"&&["GenerationFailed","DocumentRenderFailed"].includes(String((event as Record<string,unknown>).type)));
     if(outputBinding&&!response.ok&&!recordedNativeFailure)await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_rejected_before_generation"});
     // Build the final receipt while the lease and source-retention proof are still
@@ -2433,6 +2440,7 @@ async function stopAdaptivePlanningJob(env:WorkerEnv,user:PilotUser,target:Docum
 async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: DocumentJobRow, force: boolean) {
   if(consentedAdaptiveJob(target))return stopAdaptivePlanningJob(env,user,target,force);
   await ensureOutputRequirementsSchema(env);
+  if(!force){const nativeVideoStop=await stopOutputVideoJob(env,user.userId,target);if(nativeVideoStop){if("job" in nativeVideoStop&&nativeVideoStop.job)await reconcileKnownOutputProviderReceipts(env,user,{jobId:target.job_id});return nativeVideoStop;}}
   if(await env.DB.prepare("SELECT 1 FROM output_operation_slots slot JOIN output_provider_calls calls ON calls.scope_key=slot.scope_key AND calls.slot_id=slot.slot_id WHERE slot.job_id=? AND calls.status IN('pending','uncertain') LIMIT 1").bind(target.job_id).first())return{error:"provider_submission_in_flight",status:409} as const;
   if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan" && target.kind !== "render_document") return { error: "generation_job_required", status: 409 } as const;
   if (target.status === "committing") return { error: "job_finalizing", status: 409 } as const;
@@ -2557,6 +2565,7 @@ type OutputDocumentJobPreparation = {
   jobId: string; outputExecution: Record<string, string>;
   maximumMicrousd: number; maximumTokens: number; maximumCalls: number;
   outputAudio?: { payload: Record<string,unknown>; refresh: () => Promise<unknown> };
+  outputVideo?: { payload: Record<string,unknown>; maximumMicrousd: number; refresh: () => Promise<unknown> };
   outputModel3d?: { payload: Record<string,unknown>; refresh: () => Promise<NonNullable<Awaited<ReturnType<typeof readOutputModel3dPayload>>>> };
   outputStoryboard?: { payload: Record<string,unknown>; maximumMicrousd: number; refresh: () => Promise<unknown> };
   outputScene?: { payload: NonNullable<Awaited<ReturnType<typeof readOutputScenePayload>>>; prepared: PreparedSceneCost; refresh: () => Promise<PreparedSceneCost> };
@@ -3398,7 +3407,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(payload.audience!==undefined)payload.audience=guidance.audience;
     if(payload.tone!==undefined)payload.tone=guidance.tone;
   }
-  if(!outputPreparation && ["outputModel3d","model3dPreparation","model3dCostPreview","model3dCostConsent","outputExecution","outputTargetInstructions","outputImageFormat","outputFalImage","outputNarrative","outputScene","outputStoryboard","outputStoryboardPlanner","outputAudio","audioCostConsent","narrativeContractDigest","contractDigest"].some((key)=>Object.hasOwn(payload,key)))
+  if(!outputPreparation && ["outputModel3d","model3dPreparation","model3dCostPreview","model3dCostConsent","outputExecution","outputTargetInstructions","outputImageFormat","outputFalImage","outputNarrative","outputScene","outputStoryboard","outputStoryboardPlanner","outputVideo","outputVideoPlanner","outputAudio","audioCostConsent","narrativeContractDigest","contractDigest"].some((key)=>Object.hasOwn(payload,key)))
     return Response.json({error:"output_execution_server_owned"},{status:400});
   const nativeModel3d=outputPreparation?.outputModel3d??null;
   if(Object.hasOwn(payload,"outputModel3d")&&(!nativeModel3d||!await readOutputModel3dPayload(payload)||JSON.stringify(payload)!==JSON.stringify(nativeModel3d.payload)))
@@ -3410,6 +3419,11 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   const nativeAudio=outputPreparation?.outputAudio??null;
   const nativeStoryboard=outputPreparation?.outputStoryboard??null;
+  const nativeVideo=outputPreparation?.outputVideo??null;
+  if((Object.hasOwn(payload,"outputVideo")||Object.hasOwn(payload,"outputVideoPlanner"))&&(!nativeVideo||kind!=="render_document"||payload.artifactKind!=="video"
+    ||payload.productionMode!=="manual"||payload.itemCount!==1||payload.videoSeconds!==4||payload.videoResolution!=="480p"||payload.videoAudioMode!=="silent"
+    ||JSON.stringify(payload)!==JSON.stringify(nativeVideo.payload)))return Response.json({error:"output_video_contract_unsupported"},{status:422});
+  if(nativeVideo)await nativeVideo.refresh();
   if(Object.hasOwn(payload,"outputStoryboard")&&(!nativeStoryboard||kind!=="render_document"||payload.artifactKind!=="storyboard"||payload.productionMode!=="manual"||payload.itemCount!==4
     ||JSON.stringify(payload)!==JSON.stringify(nativeStoryboard.payload)))return Response.json({error:"output_storyboard_contract_unsupported"},{status:422});
   if(nativeStoryboard)await nativeStoryboard.refresh();
@@ -3427,7 +3441,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   const nativeNarrative=outputPreparation?await readOutputNarrativePayload(payload):null;
   if(outputPreparation&&Object.hasOwn(payload,"outputNarrative")&&!nativeNarrative)return Response.json({error:"output_narrative_contract_unsupported"},{status:422});
-  if(outputPreparation && (kind!=="generate"&&kind!=="render_document" || kind==="render_document"&&payload.artifactKind!=="slides"&&payload.artifactKind!=="model3d"&&!nativeNarrative&&!nativeScene&&!nativeAudio&&!nativeStoryboard || payload.productionMode==="managed"))
+  if(outputPreparation && (kind!=="generate"&&kind!=="render_document" || kind==="render_document"&&payload.artifactKind!=="slides"&&payload.artifactKind!=="model3d"&&!nativeNarrative&&!nativeScene&&!nativeAudio&&!nativeStoryboard&&!nativeVideo || payload.productionMode==="managed"))
     return Response.json({error:"output_native_route_unsupported"},{status:422});
   let scenePrepared:PreparedSceneCost|null=null;
   const retainedSceneResponse=(existing:NonNullable<Awaited<ReturnType<typeof readExistingSceneRequest>>>)=>{
@@ -3670,7 +3684,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }
     }
     const audioProviderCost=selectedAudio?.estimatedCostMicrousd??AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd;
-    const estimatedCostMicrousd=nativeStoryboard?nativeStoryboard.maximumMicrousd:selectedModel3d?selectedModel3d.estimatedCostMicrousd:scenePrepared?scenePrepared.preview.maximumMicrousd:production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioProviderCost:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?audioProviderCost+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
+    const estimatedCostMicrousd=nativeVideo?nativeVideo.maximumMicrousd:nativeStoryboard?nativeStoryboard.maximumMicrousd:selectedModel3d?selectedModel3d.estimatedCostMicrousd:scenePrepared?scenePrepared.preview.maximumMicrousd:production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioProviderCost:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?audioProviderCost+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
     productionPlan=production;estimatedGenerationCostMicrousd=estimatedCostMicrousd;
     if(pilotAllowance.pilot){
       const fixed=await readOutputAdmissionValue(outputPreparation?.readScope,"pilot-budget-counters",()=>env.DB.prepare(`SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters
@@ -3794,9 +3808,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // Cookie-free tenant owners retain the same resolved custody as the exact Scene approval.
   const admissionUser=scenePrepared?.scope?{...user,projectExecution:scenePrepared.scope}:user;
   const deferredPrivate=outputPreparation?[] as D1PreparedStatement[]:undefined;
-  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,admissionUser,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,scenePrepared?.scope??projectContentScope,scenePrepared?.effectiveSnapshot??workflowPlanningSnapshot,deferredPrivate,outputPreparation?.readScope,nativeScene?.payload,Boolean(nativeStoryboard)):kind==="preview"||kind==="generate"?{artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedGenerationCostMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"}:null;
+  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,admissionUser,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,scenePrepared?.scope??projectContentScope,scenePrepared?.effectiveSnapshot??workflowPlanningSnapshot,deferredPrivate,outputPreparation?.readScope,nativeScene?.payload,Boolean(nativeStoryboard),Boolean(nativeVideo)):kind==="preview"||kind==="generate"?{artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedGenerationCostMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"}:null;
   const sceneConfiguration=kind==="render_document"?sceneConfigurationFromRequest(payload):null;
-  const initialResult=receipt?{...(scenePrepared||payload.artifactKind==="model3d"?{providerSubmissionProtocol:1,providerSubmissions:{}}:{}),artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
+  const initialResult=receipt?{...(scenePrepared||nativeVideo||payload.artifactKind==="model3d"?{providerSubmissionProtocol:1,providerSubmissions:{}}:{}),artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
   if(outputPreparation){
     if(kind!=="generate"&&kind!=="render_document")return Response.json({error:"output_native_route_unsupported"},{status:422});
     const requiredTokens=kind==="generate"?32_000:documentRenderTokenReservation(String(payload.artifactKind),Math.max(1,Math.floor(Number(payload.itemCount??6))),2);

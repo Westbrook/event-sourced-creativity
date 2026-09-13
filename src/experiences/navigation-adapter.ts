@@ -7,7 +7,7 @@ export function experienceNavigationAdapter(currentRoute: string): ExperienceNat
   return Object.freeze({
     async mount(target, context, signal) {
       const output = context.plan.release.output.output;
-      if (output !== "image" && output !== "slides" && output !== "short_story" && output !== "scene" && output !== "storyboard" && output !== "audio" && output !== "model3d") throw new Error("experience_output_unsupported");
+      if (output !== "image" && output !== "slides" && output !== "short_story" && output !== "scene" && output !== "storyboard" && output !== "audio" && output !== "model3d" && output !== "video") throw new Error("experience_output_unsupported");
       const current = new URL(currentRoute, "https://forma.local"), document = new URL(context.receipt.documentRoute, "https://forma.local");
       const returns = current.searchParams.getAll("progress-report");
       if (returns.length > 1) throw new TypeError("experience_route_invalid");

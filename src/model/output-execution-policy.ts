@@ -10,6 +10,9 @@ export const OUTPUT_MODEL3D_EXECUTION_POLICY = Object.freeze({
   heartbeatMilliseconds: 60_000,
   maximumRenewals: 14,
 });
+/** Video shares the bounded queued-media window. Original grant/source expiry
+ * remains the upper bound; this policy does not renew either authority. */
+export const OUTPUT_VIDEO_EXECUTION_POLICY = OUTPUT_MODEL3D_EXECUTION_POLICY;
 export type OutputNativeExecutionPolicy = typeof OUTPUT_NATIVE_EXECUTION_POLICY | typeof OUTPUT_MODEL3D_EXECUTION_POLICY;
 
 /** An offered contract must match the bounded native transport policy exactly. */

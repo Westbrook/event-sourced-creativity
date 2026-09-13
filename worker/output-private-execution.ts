@@ -7,7 +7,7 @@ const privateWrite = (sql: string) => /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE
   || /\bUPDATE\s+document_jobs\s+SET\b[\s\S]*(?:result_json|request_json|lease_expires_at)/iu.test(sql);
 
 /** Existing writers run unchanged, with the same transaction guarding their private writes. */
-export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined}={}): WorkerEnv {
+export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined}={}): WorkerEnv {
   const nativeKeys = new Map<string, string>();
   // The private-content INSERT also checks this exact policy version in its
   // transaction. Reusing one request-local read never bypasses a policy change.
@@ -22,6 +22,7 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
     // event's self-described settings alone cannot retain native storage.
     // Audio separately binds its original approved job/slot and settled calls.
     const storyboardCompletion=options.storyboardCompletionJson?.()??null;
+    const videoCompletion=options.videoCompletionJson?.()??null;
     const model3dCompletion=options.model3dCompletionJson?.()??null;
     const publication = guards.length ? [...nativeKeys].map(([storageKey, hash]) => env.DB.prepare(`UPDATE output_native_storage_writes SET publication_event_id=(
       SELECT completed.event_id FROM events completed JOIN event_private_payloads body ON body.private_event_id=completed.event_id
@@ -54,6 +55,30 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
            OR json_extract(item.value,'$.height') IS NOT json_extract(frame.value,'$.height'))
         AND EXISTS(SELECT 1 FROM json_each(body.private_json,'$.settings.output_storyboard.frames') frame
           WHERE json_extract(frame.value,'$.mediaUrl')=? AND json_extract(frame.value,'$.sha256')=?)
+        OR completed.type='DocumentRenderCompleted' AND completed.actor='worker:renderer' AND body.owner_id=job.owner_id AND body.document_id=job.document_id
+        AND output_native_storage_writes.write_acknowledged=1
+        AND json_extract(body.private_json,'$.artifact_kind')='video' AND json_extract(body.private_json,'$.source_surface')='outputs'
+        AND json_extract(body.private_json,'$.requested_by_user_id')=job.owner_id
+        AND json_extract(body.private_json,'$.settings.output_video')=json(?)
+        AND json_extract(body.private_json,'$.settings.output_video.version')='output-video-completion-v1'
+        AND json_extract(body.private_json,'$.settings.output_video.jobId')=job.job_id
+        AND json_extract(body.private_json,'$.settings.output_video.slotId')=slot.slot_id
+        AND json_extract(body.private_json,'$.settings.output_video.sourceDigest')=slot.source_digest
+        AND json_extract(body.private_json,'$.settings.output_video.actorUserId')=job.owner_id
+        AND json_extract(body.private_json,'$.settings.output_video.documentId')=job.document_id
+        AND json_extract(body.private_json,'$.settings.output_video.correlationId')=job.correlation_id
+        AND json_extract(body.private_json,'$.settings.output_video.contract')=json_extract(job.request_json,'$.outputVideo')
+        AND json_extract(body.private_json,'$.artifact_id')=json_extract(body.private_json,'$.settings.output_video.artifactId')
+        AND json_extract(body.private_json,'$.media_url')=? AND json_extract(body.private_json,'$.media_type')='video/mp4'
+        AND json_extract(body.private_json,'$.settings.output_video.media.mediaUrl')=json_extract(body.private_json,'$.media_url')
+        AND json_extract(body.private_json,'$.settings.output_video.media.sha256')=?
+        AND json_extract(body.private_json,'$.settings.output_video.media.providerRequestId')=json_extract(body.private_json,'$.provider_job_id')
+        AND json_extract(body.private_json,'$.item_count')=1 AND json_extract(body.private_json,'$.settings.output_video.providerCallCount')=2
+        AND json_extract(body.private_json,'$.settings.source_media_sha256')=json_extract(body.private_json,'$.settings.output_video.media.sha256')
+        AND json_type(body.private_json,'$.items')='array' AND json_array_length(body.private_json,'$.items')=1
+        AND json_extract(body.private_json,'$.items[0].id')=json_extract(body.private_json,'$.artifact_id')||'-item-1'
+        AND json_extract(body.private_json,'$.items[0].media_url')=json_extract(body.private_json,'$.media_url')
+        AND json_extract(body.private_json,'$.items[0].media_type')='video/mp4'
         OR completed.type='DocumentRenderCompleted' AND completed.actor='worker:renderer'
         AND ?='personal' AND job.owner_id=? AND job.kind='render_document'
         AND output_native_storage_writes.write_acknowledged=1 AND body.owner_id=job.owner_id AND body.document_id=job.document_id
@@ -149,7 +174,7 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
           AND call.request_digest=json_extract(body.private_json,'$.settings.output_audio_receipt.requestDigest')))
       ORDER BY completed.sequence DESC LIMIT 1),updated_at=?
       WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' AND publication_event_id IS NULL`)
-      .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,model3dCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
+      .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,videoCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,model3dCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
     const result = await env.DB.batch([...guards, ...unwrapped.map(input => input.statement), ...publication]);
     return result.slice(guards.length,guards.length+inputs.length);
   };
@@ -260,13 +285,24 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
       WHERE slot.scope_key=output_native_storage_writes.scope_key AND slot.slot_id=output_native_storage_writes.slot_id
       AND (grant_row.status='revoked' OR (grant_row.expires_at<=? AND NOT EXISTS(
         SELECT 1 FROM document_jobs recovery WHERE recovery.job_id=slot.job_id AND recovery.owner_id=grant_row.actor_user_id
-          AND recovery.status='failed' AND json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
+          AND recovery.status='failed' AND (json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
           AND json_extract(recovery.result_json,'$.outputFalRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputFalCheckpoint.clientRequestId')
           AND length(json_extract(recovery.result_json,'$.outputFalRecovery.token'))=36
           AND output_native_storage_writes.storage_key=json_extract(recovery.result_json,'$.outputFalRecovery.storageKey')
           AND output_native_storage_writes.storage_key LIKE '%-recovery-'||json_extract(recovery.result_json,'$.outputFalRecovery.token')||'.png'
           AND EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=grant_row.scope_key AND grant_id=grant_row.grant_id AND ${retainedPersonalFalRecoverySql})
-          AND json_extract(recovery.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))
+          AND json_extract(recovery.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          OR recovery.kind='render_document' AND recovery.source_surface='outputs' AND recovery.document_id=plan.document_id AND plan.scope_kind='personal'
+          AND plan.organization_id IS NULL AND plan.project_access_id IS NULL AND grant_row.context_id IS NULL
+          AND recovery.owner_id=plan.owner_user_id AND recovery.stream_id='creative:'||plan.owner_user_id
+          AND recovery.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND json_extract(recovery.request_json,'$.artifactKind')='video' AND json_type(recovery.result_json,'$.outputVideoStop') IS NULL
+          AND json_extract(recovery.result_json,'$.outputVideoRecovery.version')='output-video-recovery-v1'
+          AND length(json_extract(recovery.result_json,'$.outputVideoRecovery.token'))=36
+          AND json_extract(recovery.result_json,'$.outputVideoRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputVideoMediaCheckpoint.clientRequestId')
+          AND json_extract(recovery.result_json,'$.outputVideoRecovery.requestDigest')=json_extract(recovery.result_json,'$.outputVideoMediaCheckpoint.requestDigest')
+          AND output_native_storage_writes.storage_key=json_extract(recovery.result_json,'$.outputVideoRecovery.storageKey')
+          AND json_extract(recovery.result_json,'$.outputVideoRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))))
       AND (? IS NULL OR plan.owner_user_id=?) AND (? IS NULL OR plan.organization_id=?)
       AND (?=0 OR (plan.scope_kind='personal' AND plan.organization_id IS NULL AND plan.project_access_id IS NULL)))`)
     .bind(now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();

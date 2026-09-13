@@ -4,6 +4,7 @@ import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consen
 import { requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
+import { outputVideoPreflightProof, requireOutputVideoOriginal } from "./output-video-preflight.ts";
 import { outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
 import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
@@ -274,6 +275,19 @@ export async function resolveOutputFalRecoveryAuthority(env:WorkerEnv,scope:Outp
   return proof;
 }
 
+/** Original Video read/publication authority, never paid dispatch. */
+export async function resolveOutputVideoRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot){
+  if(scope.kind!=="personal"||scope.contextId!==null||scope.organizationId!==null||scope.projectAccessId!==null||scope.key!==slot.scopeKey
+    ||scope.actorUserId!==scope.ownerUserId||slot.attemptOrdinal!==0||slot.previousSlotId!==null)fail("output_video_recovery_scope_unsupported",403);
+  const current=await loadOutputCurrentContext(env,scope),evidence=await readOutputGrantEvidence(env,scope,slot.grantId);
+  if(!["authorized","active","completed"].includes(String(evidence.row.status)))fail("output_execution_grant_inactive",403);
+  const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
+  if(target.media_kind!=="video"||targetPreflight.provider!=="fal"||targetPreflight.route!=="document-video-owned-still-four-seconds-manual-v1")fail("output_video_recovery_route_unsupported",403);
+  const proof=prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
+    assertions:[...current.assertions,...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
+  return proof;
+}
+
 /** Reuse retained evidence only while every later event is proven nonsemantic.
  * Scope/grant/slot/deadline checks remain live SQL at each write and provider call.
  */
@@ -428,6 +442,7 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
   let model3dOriginalDeadline: number | null = null;
   let audioOriginalDeadline: number | null = null;
   let storyboardOriginalDeadline: number | null = null;
+  let videoOriginalDeadline: number | null = null;
   const operationAttempts: OutputPreflight["operationAttempts"] = {};
   if (body.alternativeOfSlotId && selected.length !== 1) fail("choose_one_target_for_explicit_alternative");
   const identities = (selected as OutputPlanTarget[]).map((target) => ({ targetId: target.id, contract: plan.targetContractDigests[target.id] }));
@@ -469,6 +484,12 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
       audioOriginalDeadline = Math.min(audioOriginalDeadline ?? Infinity, ...deadlines);
       trusted.sourceAssertions.push(...audioSource);
     }
+    if (Object.hasOwn(target, "video_contract") && result.available) {
+      const proof = outputVideoPreflightProof(result);
+      if (!proof?.sourceAssertions.length || !Number.isFinite(Date.parse(proof.expiresAt))) fail("output_video_original_unavailable", 409);
+      videoOriginalDeadline = Math.min(videoOriginalDeadline ?? Infinity, Date.parse(proof.expiresAt));
+      trusted.sourceAssertions.push(...proof.sourceAssertions);
+    }
     if (Object.hasOwn(target, "storyboard_contract") && result.available) {
       const proof = outputStoryboardPreflightProof(result);
       if (!proof?.sourceAssertions.length || !Number.isFinite(Date.parse(proof.expiresAt))) fail("output_storyboard_original_unavailable", 409);
@@ -480,9 +501,10 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
     targets.push(result);
   }
   const createdAt = nowIso(), preflightId = uuidV7();
+  if (videoOriginalDeadline !== null && videoOriginalDeadline <= Date.now()) fail("output_video_original_expired", 409);
   if (storyboardOriginalDeadline !== null && storyboardOriginalDeadline <= Date.now()) fail("output_storyboard_original_expired", 409);
   if (model3dOriginalDeadline !== null && model3dOriginalDeadline <= Date.now()) fail("output_model3d_original_expired", 409);
-  const expiresAtMs = Math.min(Date.now() + 15 * 60_000, audioOriginalDeadline ?? Infinity, storyboardOriginalDeadline ?? Infinity, model3dOriginalDeadline ?? Infinity);
+  const expiresAtMs = Math.min(Date.now() + 15 * 60_000, audioOriginalDeadline ?? Infinity, storyboardOriginalDeadline ?? Infinity, model3dOriginalDeadline ?? Infinity, videoOriginalDeadline ?? Infinity);
   if (expiresAtMs <= Date.now()) fail("output_audio_original_expired", 409);
   const withoutDigest = { id: preflightId, planRevisionId: plan.revisionId, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, targets, operationAttempts,
     maximumMicrousd: targets.filter((target) => target.available).reduce((sum, target) => sum + target.maximumMicrousd, 0), maximumCalls: targets.filter((target) => target.available).reduce((sum, target) => sum + target.maximumCalls, 0), expiresAt: new Date(expiresAtMs).toISOString(), createdAt };
@@ -520,6 +542,9 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
   const storyboardTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"storyboard_contract"));
   if(storyboardTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
     ||storyboardTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("storyboard_mini_app_route_required",403);
+  const videoTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"video_contract"));
+  if(videoTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
+    ||videoTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("video_mini_app_route_required",403);
   const context = requireCurrentSource(trusted), grantId = uuidV7(), createdAt = nowIso();
   const slots: OutputOperationSlot[] = [];
   const sceneTargets = plan.plan.targets.filter(target => target.selected && Object.hasOwn(target, "scene_contract"));
@@ -534,6 +559,10 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     const attempt = preflight.operationAttempts[target.id];
     if (!attempt || !Number.isSafeInteger(attempt.ordinal) || attempt.ordinal < 0) fail("output_attempt_identity_missing", 409);
     let jobId = uuidV7();
+    if(Object.hasOwn(target,"video_contract")){
+      const {proof}=requireOutputVideoOriginal(bridgeTarget(trusted,plan,target),current,{attemptOrdinal:attempt.ordinal,previousSlotId:attempt.previousSlotId});
+      jobId=proof.requestId;sceneExpiresAt=proof.expiresAt;trusted.sourceAssertions.push(...proof.sourceAssertions);
+    }
     if(Object.hasOwn(target,"model3d_contract")){
       const original=await readOutputModel3dPayload(record(offered.settings).payload),fresh=await readOutputModel3dPayload(record(current.settings).payload),proof=outputModel3dPreflightAssertions(current);
       if(!original||!fresh||!proof?.length||attempt.ordinal!==0||attempt.previousSlotId||fresh.preview.actorUserId!==trusted.scope.actorUserId
@@ -571,7 +600,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId, costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
-  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
+  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
   // Preserve the original Scene quote deadline through final atomic admission.
   if (sceneExpiresAt && Date.parse(sceneExpiresAt) <= Date.now()) fail("scene_mini_app_confirmation_required", 403);

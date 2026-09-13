@@ -262,13 +262,15 @@ export class ExperienceView {
   async #native() {
     const plan = this.runtime.committedPlan, receipt = this.runtime.receipt;
     if (!plan || !receipt) return;
-    const link = el("a", this.runtime.release.output.output === "video" ? "Edit in Forma" : "Open in Forma", "experience-button primary"); link.href = receipt.documentRoute;
+    const video = this.runtime.release.output.output === "video";
+    const link = el("a", video ? "Edit in Forma" : "Open in Forma", video && this.#adapter ? "experience-button" : "experience-button primary"); link.href = receipt.documentRoute;
     if (this.runtime.release.output.output === "video") {
       const heading = this.#controls.querySelector("h2")!, details = el("details", undefined, "experience-saved-details");
       details.append(el("summary", "Saved settings"), this.#summary());
       this.#controls.replaceChildren(heading, ...(this.#retainedPreview ? [this.#retainedPreview.element] : []), details, el("p", "No video generated"));
       this.#stage.replaceChildren(); this.#stage.hidden = true; this.#stage.parentElement?.classList.add("experience-video-retained");
-      this.#status.textContent = ""; this.#actions.append(link); return;
+      this.#status.textContent = ""; this.#actions.append(link);
+      if (!this.#adapter) return;
     }
     if (this.runtime.release.output.output === "scene" && !this.#adapter) {
       const heading = this.#controls.querySelector("h2")!, choices = this.#controls.querySelector(".experience-summary")!;
@@ -278,9 +280,12 @@ export class ExperienceView {
       this.#stage.hidden = true; this.#stage.parentElement!.classList.add("experience-scene-saved");
       return;
     }
-    this.#stage.replaceChildren(el("h2", "Document saved")); this.#actions.append(link);
-    if (!this.#adapter || !["image", "slides", "short_story", "scene", "storyboard", "audio", "model3d"].includes(this.runtime.release.output.output)) { this.#stage.append(el("p", "Generation unavailable")); return; }
-    const target = el("div", undefined, "experience-native-host"); this.#stage.append(target);
+    if (this.runtime.release.output.output !== "video") { this.#stage.replaceChildren(el("h2", "Document saved")); this.#actions.append(link); }
+    if (!this.#adapter || !["image", "slides", "short_story", "scene", "storyboard", "audio", "video", "model3d"].includes(this.runtime.release.output.output)) { this.#stage.append(el("p", "Generation unavailable")); return; }
+    // Video retains its saved reference panel and hidden direction stage. Mount
+    // navigation in the visible action area, without starting generation.
+    const target = el("div", undefined, "experience-native-host");
+    (this.runtime.release.output.output === "video" ? this.#actions : this.#stage).append(target);
     try {
       const session = await this.#adapter.mount(target, Object.freeze({ plan, receipt, settings: experienceOutputSettings(plan) }), this.#abort.signal);
       if (this.#disposed) session.dispose(); else this.#session = session;

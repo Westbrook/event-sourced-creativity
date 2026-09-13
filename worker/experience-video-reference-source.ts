@@ -3,7 +3,7 @@ import { readVideoReferenceIntent } from "../src/experiences/video-reference.ts"
 import { readVideoReferencePlan, type VideoReferencePlan } from "../src/experiences/video-reference-plan.ts";
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import { inspectVideoReferenceCustody } from "./video-reference-custody.ts";
-import { loadOutputTrustedContext } from "./output-requirements-api.ts";
+import { continueOutputTrustedContext } from "./output-trusted-context.ts";
 import { projectIntakeAuthority, type ProjectIntakeAuthorization } from "./intake-authority.ts";
 import { outputActiveSourceDeadlineAssertions } from "./output-disclosure-proof.ts";
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
@@ -18,7 +18,11 @@ export async function prepareExperienceVideoReference(request: Request, env: Wor
   auth: ProjectIntakeAuthorization, value: unknown): Promise<PreparedVideoReferenceSource> {
   const selection = readVideoReferenceIntent(value);
   if (!selection) fail("video_reference_selection_invalid", 400);
-  const trusted = await loadOutputTrustedContext(request, env, selection.sourceDocumentId, "read");
+  // Reuse the already authenticated principal. Background native jobs carry
+  // this principal, not a fabricated HTTP credential. The continuation still
+  // checks current consent, scope/capabilities and complete disclosure custody.
+  if (auth.user !== auth.principal || auth.impersonation) fail("video_reference_scope_unavailable", 403);
+  const trusted = await continueOutputTrustedContext(request, env, selection.sourceDocumentId, "read", auth);
   if (trusted instanceof Response) fail("video_reference_source_unavailable", trusted.status);
   const inspection = await inspectVideoReferenceCustody(trusted, auth, selection);
   const block = trusted.projection.libraryBlocks.find(candidate => candidate.id === selection.sourceBlockId);

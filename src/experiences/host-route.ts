@@ -1,5 +1,5 @@
 /** A view selector only. Retained intake and current canonical source establish authority. */
-export type ExperienceHostSelection = Readonly<{ output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d"; draftId: string; documentId: string; documentRoute: string }>;
+export type ExperienceHostSelection = Readonly<{ output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d"; draftId: string; documentId: string; documentRoute: string }>;
 const keys = new Set(["experience", "experience-draft", "progress-report"]);
 const draft = /^experience-draft-[a-f0-9]{64}$/u;
 const documentPath = /^\/document\/([a-zA-Z0-9][a-zA-Z0-9._:-]{0,159})(?:\/[^/]+)?$/u;
@@ -29,11 +29,11 @@ export function parseExperienceHostRoute(value: string): ExperienceHostSelection
   if (!url || !match || url.hash || [...url.searchParams.keys()].some(key => !keys.has(key))
     || [...keys].some(key => url.searchParams.getAll(key).length > 1)) return null;
   const output = url.searchParams.get("experience"), draftId = url.searchParams.get("experience-draft");
-  if ((output !== "image" && output !== "slides" && output !== "short_story" && output !== "scene" && output !== "storyboard" && output !== "audio" && output !== "model3d") || !draftId || !draft.test(draftId)) return null;
+  if ((output !== "image" && output !== "slides" && output !== "short_story" && output !== "scene" && output !== "storyboard" && output !== "audio" && output !== "video" && output !== "model3d") || !draftId || !draft.test(draftId)) return null;
   url.searchParams.delete("experience"); url.searchParams.delete("experience-draft");
   return Object.freeze({ output, draftId, documentId: match[1]!, documentRoute: url.pathname + url.search });
 }
-export function experienceHostRoute(documentRoute: string, output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d", draftId: string): string {
+export function experienceHostRoute(documentRoute: string, output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d", draftId: string): string {
   const url = local(documentRoute);
   if (!url || hasExperienceHostSelector(documentRoute)) throw new TypeError("experience_route_invalid");
   url.searchParams.set("experience", output); url.searchParams.set("experience-draft", draftId);

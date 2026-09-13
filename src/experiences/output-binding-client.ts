@@ -6,7 +6,7 @@ import { parseSceneMiniAppCostPreview, sceneMiniAppCostApprovalMatches, type Sce
 
 import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches } from "../model/audio-mini-app-consent.ts";
 
-export type ExperienceBindingIdentity = Readonly<{ draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string; output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d"; actorUserId: string }>;
+export type ExperienceBindingIdentity = Readonly<{ draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string; output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d"; actorUserId: string }>;
 export type ExperienceBindingResponse = ExperienceNativeState | ExperienceNativeUnavailable;
 export type ExperienceBindingAction = "prepare" | "authorize" | "run" | "resumeRun" | "recoverResult";
 const status = new Set(["absent", "preparing", "review", "authorized", "queued", "running", "succeeded", "failed", "cancelled", "partial", "uncertain", "unavailable"]);
@@ -249,7 +249,7 @@ export function experienceResultGrantCurrent(state:ExperienceNativeState,now:num
   const spendingDeadline=Date.parse(state.original.expiresAt);
   if(!Number.isFinite(spendingDeadline))return false;
   if(spendingDeadline>now)return true;
-  return ["image","slides","short_story","scene","storyboard","audio","model3d"].includes(state.output)&&state.status==="succeeded"
+  return ["image","slides","short_story","scene","storyboard","audio","video","model3d"].includes(state.output)&&state.status==="succeeded"
     &&state.disposition==="original_run_recorded"&&commandIdentity(state.original.run)&&state.original.jobStatus==="completed"
     &&state.original.slotStatus==="succeeded"&&state.original.grantStatus==="completed"&&state.grant.status==="completed"
     &&!state.permitted.prepare&&!state.permitted.authorize&&!state.permitted.run&&!state.permitted.resumeRun&&!state.permitted.recoverResult

@@ -177,9 +177,9 @@ test("actual writer captures before guarded append and live assertions retain ev
   }
   visit(ast); assert(selected.live && selected.sidecars);
   const x = publication(), model3dPublication = x.continuation;
-  const other = Array.from({ length: 7 }, (_, index) => ({ sql: "?", bindings: [index] }));
+  const other = Array.from({ length: 10 }, (_, index) => ({ sql: "?", bindings: [index] }));
   const ports = { model3dPublication, model3dCompletionJson: x.completionJson, model3dAssertions: [x.fence],
-    authority: { assertions: [other[0]] }, sceneAssertions: [other[1]], audioAssertions: [other[2]], storyboardSourceAssertions: [other[3]], sceneEnvelopeAssertions: [other[4]], storyboardCompletionAssertions: [other[5]], projectJobAuthority: other[6],
+    authority: { assertions: [other[0]] }, sceneAssertions: [other[1]], audioAssertions: [other[2]], storyboardSourceAssertions: [other[3]], sceneEnvelopeAssertions: [other[4]], storyboardCompletionAssertions: [other[5]], projectJobAuthority: other[6], videoLifetimeAssertions: () => [other[7]], videoSourceAssertions: [other[8]], videoCompletionAssertions: [other[9]],
     outputScopeAuthority: () => ({ sql: "scope" }), scope: { kind: "personal" }, job: { job_id: x.original.jobId, owner_id: "owner", stream_id: x.original.streamId, correlation_id: x.original.correlationId, lease_expires_at: "2099-01-01" }, user: { userId: "owner" }, slot: {},
     env: {}, outputAssertionStatements: () => [], settings: { calls: [] }, claimedCalls: new Map(), observedReceipts: new Map(), prepareOutputImageProviderHealth: () => [], prepareOutputNativeProjectPublicationStatements: () => [] };
   const live = compile("const live=" + selected.live + ";", ports, "live");

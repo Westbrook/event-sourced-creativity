@@ -20,7 +20,7 @@ function declarations(source, names) {
   return [...found.values()].join("\n");
 }
 export function terminalSource({ withoutModel3dPreservation = false } = {}) {
-  let source = declarations(jobSource, ["parseRequest", "parentJobIdFromRequest", "finishDocumentJob", "PRESERVE_ADAPTIVE_RECEIPT_SQL", "OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS"])
+  let source = declarations(jobSource, ["parseRequest", "parentJobIdFromRequest", "finishDocumentJob", "PRESERVE_ADAPTIVE_RECEIPT_SQL", "OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS", "OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS"])
     + "\n" + declarations(controlSource, ["prepareOutputJobOutcomeStatements"]);
   if (withoutModel3dPreservation) {
     const branch = "row.output_slot_id&&model3dNativeCheckpoint(parseRequest(row))?MODEL3D_TERMINAL_RESULT_SQL:";
@@ -34,7 +34,7 @@ export function terminalSource({ withoutModel3dPreservation = false } = {}) {
 export function serializeTerminalSource(row) {
   const source = declarations(jobSource, ["parseRequest", "parseResult", "parentJobIdFromRequest", "serializeJob"]);
   const ports = { MODEL3D_PRIVATE_CHECKPOINT_KEYS, model3dNativeCheckpoint,
-    OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS: [], generationRequestIdentity: () => ({}), sceneConfigurationFromRequest: () => null,
+    OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS: [], OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS: [], generationRequestIdentity: () => ({}), sceneConfigurationFromRequest: () => null,
     queueRecoveryPresentation: () => null, errorDetailFromResult: () => null, model3dRecoveryProviderReceipt: () => { throw Error("Private original must not be reintroduced"); },
     consentedAdaptiveJob: () => false, certifiedAdaptiveRows: new WeakSet(), fanKindFromRequest: () => null };
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;

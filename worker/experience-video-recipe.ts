@@ -26,5 +26,5 @@ export function createExperienceVideoRecipe(input: {
     value_origins: { label: origin("Video"), deliverables: origin(wording), interpretation_basis: origin(wording) },
   };
   if (inspectOutputRequirement(spec).status !== "valid") throw new Error("experience_output_recipe_invalid");
-  return freeze({ output: "video" as const, spec, targetId: `${input.deliverableId}:target:1`, nativeReadiness: "unavailable" as const });
+  return freeze({ output: "video" as const, spec, targetId: `${input.deliverableId}:target:1`, nativeReadiness: "eligible_for_existing_preflight" as const });
 }

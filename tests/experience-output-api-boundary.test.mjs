@@ -30,6 +30,7 @@ const seamExports = {
   "./output-requirements-ledger.ts": ["readOutputCommand", "outputCommandReceiptAssertion", "outputSourceEpochAssertion"],
   "./output-command-core.ts": ["outputCommandReceiptAssertion", "readOutputCommand"],
   "./output-fal-recovery.ts": ["recoverOutputFalImage"],
+  "./output-video-recovery.ts": ["recoverOutputVideo"],
   "./experience-model3d-reference-source.ts": ["prepareExperienceModel3dReference"],
   "./experience-video-output-source.ts": ["prepareExperienceVideoOutputSource"],
 };
@@ -39,7 +40,8 @@ const actualAPIImports = new Set(["../src/experiences/compiler.ts", "../src/expe
   "../src/model/output-storyboard-contract.ts", "../src/model/output-storyboard-offer.ts",
   "../src/model/output-scene-contract.ts", "../src/model/scene-mini-app-consent.ts",
   "./output-scene-preflight-contract.ts", "../src/model/output-narrative-contract.ts",
-  "./experience-model3d-recipe.ts", "../src/model/model3d-mini-app-consent.ts", "./output-model3d-execution.ts"]);
+  "./experience-model3d-recipe.ts", "../src/model/output-video-offer.ts",
+  "../src/model/model3d-mini-app-consent.ts", "./output-model3d-execution.ts"]);
 const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   const parent = context.parentURL && new URL(context.parentURL);
   const apiBoundary = parent?.pathname === apiURL.pathname && parent.searchParams.has("boundary");
@@ -236,6 +238,7 @@ async function harness(output = "slides") {
     // Video custody is likewise outside these Image/Slides boundary controls.
     prepareExperienceVideoOutputSource: async () => { throw new Error("boundary_video_source_forbidden"); },
     recoverOutputFalImage: async () => { throw new Error("boundary_recovery_forbidden"); },
+    recoverOutputVideo: async () => { throw new Error("boundary_video_recovery_forbidden"); },
     outputSourceEpochAssertion: () => { throw new Error("boundary_recovery_forbidden"); },
     authorizeExperienceIntake: async () => { h.authCalls++; return h.authStatus ? Response.json({ error: "synthetic_auth_denied" },
       { status: h.authStatus, headers: { "www-authenticate": 'Bearer realm="boundary"' } }) : { user: { userId: owner } }; },

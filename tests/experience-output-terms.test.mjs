@@ -95,6 +95,11 @@ test("Fal shared client contract imports no Worker execution or provider graph",
 test("helper imports only canonical types and closed pure output contracts", () => {
   const source = readFileSync(new URL("../src/experiences/output-terms.ts", import.meta.url), "utf8");
   assert.deepEqual(source.match(/^import[^\n]+/gm), [
+    'import { readVideoExecutionOffer } from "../model/output-video-offer.ts";',
+    'import type { VideoOutputContract } from "../model/output-video-contract.ts";',
+    'import { readModel3dExecutionOffer } from "../model/output-model3d-offer.ts";',
+    'import type { Model3dOutputContract } from "../model/output-model3d-contract.ts";',
+    'import type { Model3dMiniAppCostPreview } from "../model/model3d-mini-app-consent.ts";',
     'import { EXPERIENCE_AUDIO_INTENT } from "./contracts.ts";',
     'import { parseAudioOutputContract, type AudioOutputContract } from "../model/output-audio-contract.ts";',
     'import { parseAudioMiniAppCostPreview, type AudioMiniAppCostPreview } from "../model/audio-mini-app-consent.ts";',

@@ -16,7 +16,7 @@ export type ExperienceNativeOriginal = {
 };
 export type ExperienceNativeState = {
   version: 1; draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string;
-  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "model3d"; sourceSurface: "outputs";
+  output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d"; sourceSurface: "outputs";
   /** Scene-only original disclosure; omission on other outputs preserves their wire shape. */
   sceneCostPreview?: SceneMiniAppCostPreview | null;
   /** Audio-only original cost and source-transfer disclosure. */

@@ -199,7 +199,7 @@ test('actual host read awaits original input and verified DTO; withdrawal at eac
 test('actual host deadline survives spend expiry, then removes all private Storyboard nodes at retained expiry without input',()=>{
  let now=1000,next=0;const timers=new Map(),trace={aborts:0,removedSrc:0,removed:0,emptied:0,decisions:0};
  const clear=hostMethod('#clearResult()','#storySync =');
- const context={reader:{abort(){trace.aborts++;}},querySelectorAll:selector=>selector==='forma-native-retained-audio'?[]:selector.startsWith('img')?Array.from({length:4},()=>({removeAttribute:name=>{assert.equal(name,'src');trace.removedSrc++;}})):[{replaceChildren(){trace.emptied++;},remove(){trace.removed++;}}],
+ const context={reader:{abort(){trace.aborts++;}},querySelectorAll:selector=>['forma-native-retained-audio','forma-model3d-viewer'].includes(selector)?[]:selector.startsWith('img')?Array.from({length:4},()=>({removeAttribute:name=>{assert.equal(name,'src');trace.removedSrc++;}})):[{replaceChildren(){trace.emptied++;},remove(){trace.removed++;}}],
  resetDecision(){trace.decisions++;},requestUpdate(){},clearResult(){clear.call(this);},state:()=>({grant:{expiresAt:new Date(1100).toISOString()}})};
  context.result={output:'storyboard',candidate:{expiresAt:new Date(1400).toISOString()},storyboard:{expiresAt:new Date(1250).toISOString()},current:()=>now<1250};
  const deadline=hostMethod('#scheduleDeadline()','#imageReady(',{Date:{now:()=>now,parse:Date.parse},setTimeout:(callback,delay)=>{const id=++next;timers.set(id,{callback,at:now+delay});return id;},clearTimeout:id=>timers.delete(id)});

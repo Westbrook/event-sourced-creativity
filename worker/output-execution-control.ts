@@ -1,3 +1,10 @@
+import { verifyOutputVideoCompletion } from "./output-video-completion.ts";
+import { retainOutputVideoRequestCheckpoint, retainOutputVideoMediaEnvelope, retainOutputVideoPlannerEnvelope } from "./output-video-checkpoint.ts";
+import { captureOutputVideoAttempt, outputVideoMediaPrice, type OutputVideoHookLease, type OutputVideoRawEnvelope } from "./output-video-execution.ts";
+import { assertVideoPlannerAttempt } from "./output-video-planner.ts";
+import type { VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
+import { readOutputVideoReference } from "./output-video-reference.ts";
+import { outputVideoExecutionSourceAssertions } from "./output-video-preflight.ts";
 import { model3dPublicationHead } from "./output-model3d-publication-head.ts";
 import { readOutputAudioPayload, assertOutputAudioAttempt, requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { projectNativeRetainedModel3d } from "../src/model/native-retained-model3d.ts";
@@ -75,8 +82,14 @@ export type OutputEventExecution={
  retainStoryboardEnvelope?:(envelope:StoryboardRawEnvelope)=>Promise<void>;
  verifyStoryboardCompletion?:(artifactId:string,artifact:unknown,frames:unknown,lifetime?:{signal?:AbortSignal;deadlineMs?:number})=>Promise<Record<string,unknown>>;
  storyboardMediaDeadlineMs?:()=>number;
+ verifyVideoCompletion:(artifactId:string,artifact:unknown,lifetime:{signal?:AbortSignal;deadlineMs:number})=>Promise<Record<string,unknown>>;
+ videoMediaDeadlineMs:()=>number;
  beforeSourceTransmission:()=>Promise<void>;
- beforeProviderAttempt:(attempt:ProviderAttemptPreflight)=>Promise<void>;
+ beforeProviderAttempt:(attempt:ProviderAttemptPreflight,lease?:OutputVideoHookLease)=>Promise<void>;
+ withVideoLease:<T>(lease:OutputVideoHookLease,work:()=>T|Promise<T>)=>Promise<T>;
+ readVideoReference:(lease:OutputVideoHookLease)=>Promise<import("./openai-adapter.ts").VideoReference>;
+ retainVideoPlannerEnvelope:(envelope:VideoPlannerRawEnvelope,lease:OutputVideoHookLease)=>Promise<void>;
+ retainVideoMediaEnvelope:(envelope:OutputVideoRawEnvelope,lease:OutputVideoHookLease)=>Promise<void>;
  beforeProviderDispatch:(clientRequestId:string)=>void;
  providerNotDispatched?:(attempt:ProviderAttemptPreflight)=>Promise<void>;
  dispatchStop:(error:unknown)=>ProviderFailureDetail|null;
@@ -102,8 +115,10 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const {scope,slot}=binding;
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
- const current=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+ const currentInput={env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,ownerHead:authority.sourceEpoch.head};
+ const current=await preflightOutputNativeTarget(currentInput);
  if(!current.available||await outputDigest(current)!==slot.routeDigest)throw new OutputConflictError("output_native_route_changed",409);
+ const videoSourceAssertions=Object.hasOwn(authority.target,"video_contract")?outputVideoExecutionSourceAssertions(currentInput,current,slot):[];
  const audioProof=Object.hasOwn(authority.target,"audio_contract")?outputAudioPreflightAssertions(current):null;
  if(Object.hasOwn(authority.target,"audio_contract")&&!audioProof)throw new OutputConflictError("output_audio_source_unavailable",403);
  const audioAssertions:OutputSqlAssertion[]=[...(audioProof??[])];
@@ -124,9 +139,12 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  let model3dCompletionJson:string|undefined;
  let model3dPrepared:Model3dPreparedReceipt|null=null;
  let model3dQualified:Awaited<ReturnType<typeof qualifyOutputModel3dCompletion>>|null=null;
+ let videoCompletionJson:string|undefined;const videoCompletionAssertions:OutputSqlAssertion[]=[];
  const projectJobAuthority=documentJobProjectAuthority(user,job.document_id,job.job_id);
  const model3dPublication=model3dProof?model3dPublicationHead({jobId:job.job_id,ownerId:job.owner_id,streamId:job.stream_id,correlationId:job.correlation_id}):null;
- const liveAssertions=()=>[...authority.assertions,...sceneAssertions,...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
+ let videoHook:OutputVideoHookLease|null=null;
+ const videoLifetimeAssertions=():OutputSqlAssertion[]=>{if(!videoHook)return[];videoHook.assertCurrent();return[{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(videoHook.deadlineMs).toISOString()],deadlineMs:videoHook.deadlineMs}];};
+ const liveAssertions=()=>[...videoLifetimeAssertions(),...authority.assertions,...sceneAssertions,...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
  const settings=authority.targetPreflight.settings as OutputNativeSettings;
  if(settings.kind!==job.kind)throw new OutputConflictError("output_job_route_mismatch",403);
  const model3dPayload=model3dProof?await readOutputModel3dPayload(settings.payload):null;
@@ -170,7 +188,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const periodDeadline=Date.parse(`${period}-01T00:00:00.000Z`);
  const nextPeriod=Number.isFinite(periodDeadline)?new Date(periodDeadline):null;
  nextPeriod?.setUTCMonth(nextPeriod.getUTCMonth()+1);
- const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...[...authority.assertions,...sceneAssertions,...audioAssertions,...model3dAssertions,...storyboardSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
+ const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...[...authority.assertions,...sceneAssertions,...audioAssertions,...model3dAssertions,...storyboardSourceAssertions,...videoSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
  let dispatchStopError:OutputConflictError|null=null;
  const assertDispatchDeadline=()=>{if(dispatchStopError)throw dispatchStopError;const leaseDeadline=Date.parse(String(job.lease_expires_at));if(!Number.isFinite(dispatchDeadline)||!Number.isFinite(leaseDeadline)||Date.now()>=Math.min(dispatchDeadline,leaseDeadline)){
   dispatchStopError=new OutputConflictError("output_execution_deadline_expired",403);throw dispatchStopError;
@@ -179,7 +197,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const claimedCalls=new Map<string,{callKey:string;provider:string;model:string;operation:string;pending:boolean;dispatched:boolean;settled?:boolean;requestDigest:string;storyboardBinding?:string;checkpointed:boolean}>();
  const observedReceipts=new Map(providerSubmissions(checkpoint).map(receipt=>[receipt.clientRequestId,receipt]));
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
- const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,model3dCompletionJson:()=>model3dCompletionJson});
+ const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,videoCompletionJson:()=>videoCompletionJson,model3dCompletionJson:()=>model3dCompletionJson});
  let publicationScopesComplete=scope.kind==="personal";
  return {guardedEnvironment,...(model3dPayload&&refreshModel3d?{model3d:{
   async prepare(receipt:Model3dPreparedReceipt){
@@ -312,8 +330,38 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const deadline=Math.min(dispatchDeadline,Date.parse(String(job.lease_expires_at)),Date.parse(job.expires_at));
    return artifactKind==="storyboard"&&Number.isFinite(deadline)?deadline:0;
   },
+  videoMediaDeadlineMs(){return artifactKind==="video"?Math.min(dispatchDeadline,Date.parse(String(job.lease_expires_at)),Date.parse(job.expires_at)):0;},
+  async verifyVideoCompletion(artifactId,artifact,lifetime){
+   videoCompletionJson=undefined;
+   if(artifactKind!=="video")throw new OutputConflictError("output_video_completion_invalid",403);
+   const deadlineMs=Math.min(lifetime.deadlineMs,dispatchDeadline,Date.parse(String(job.lease_expires_at)),Date.parse(job.expires_at));
+   const verified=await verifyOutputVideoCompletion(env,scope,slot,job,settings.payload,artifactId,artifact,{...lifetime,deadlineMs});
+   videoCompletionAssertions.splice(0,videoCompletionAssertions.length,...verified.assertions);
+   await env.DB.batch(liveAssertions().flatMap(a=>outputAssertionStatements(env,a)));videoCompletionJson=JSON.stringify(verified.receipt);return verified.receipt;
+  },
+  async withVideoLease(lease,work){
+   if(artifactKind!=="video"||videoHook)throw new OutputConflictError("output_video_hook_invalid",403);
+   lease.assertCurrent();videoHook=lease;
+   try{const value=await work();lease.assertCurrent();return value;}finally{videoHook=null;}
+  },
+  async readVideoReference(lease){
+   if(artifactKind!=="video"||videoHook!==lease)throw new OutputConflictError("output_video_hook_invalid",403);
+   return readOutputVideoReference(currentInput,lease,async()=>{await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));});
+  },
+  async retainVideoPlannerEnvelope(envelope,lease){
+   const call=claimedCalls.get(envelope.clientRequestId);
+   if(artifactKind!=="video"||videoHook!==lease||!call||call.callKey!=="planning:0:initial"||!call.pending||!call.dispatched||!call.checkpointed||call.requestDigest!==envelope.requestDigest)throw new OutputConflictError("output_video_envelope_call_mismatch",403);
+   await retainOutputVideoPlannerEnvelope(guardedEnvironment,scope,slot,job,envelope,lease);
+  },
+  async retainVideoMediaEnvelope(envelope,lease){
+   const call=claimedCalls.get(envelope.clientRequestId);
+   if(artifactKind!=="video"||videoHook!==lease||!call||call.callKey!=="video:initial"||!call.pending||!call.dispatched||!call.checkpointed||call.requestDigest!==envelope.requestDigest)throw new OutputConflictError("output_video_envelope_call_mismatch",403);
+   await retainOutputVideoMediaEnvelope(guardedEnvironment,scope,slot,job,envelope,lease);
+  },
   async beforeSourceTransmission(){if(refreshAudio)await refreshAudio();if(refreshModel3d){await refreshModel3d();assertDispatchDeadline();}await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));},
-  async beforeProviderAttempt(attempt){
+  async beforeProviderAttempt(attempt,lease){
+   if(artifactKind==="video"&&(!lease||videoHook!==lease))throw new OutputConflictError("output_video_hook_invalid",403);
+   lease?.assertCurrent();
    if(refreshAudio)await refreshAudio();if(refreshModel3d)await refreshModel3d();assertDispatchDeadline();
    if(model3dPayload)assertModel3dPreparedAttempt(model3dPayload,model3dPrepared,attempt);
    const callKey=attempt.logicalCallKey;
@@ -325,6 +373,14 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
     ||await outputDigest(attempt.presentationRoute)!==await outputDigest(route.presentationRoute)))throw new OutputConflictError("output_provider_route_changed",403);
    if(artifactKind==="short_story"||attempt.narrative!==undefined){try{await assertOutputNarrativeAttempt(settings,attempt);}catch{throw new OutputConflictError("output_narrative_request_not_authorized",403);}}
    if(scenePayload||attempt.scene!==undefined){try{await assertOutputSceneAttempt(settings,attempt);}catch{throw new OutputConflictError("output_scene_request_not_authorized",403);}}
+   if(artifactKind==="video"){
+    if(callKey==="planning:0:initial")await assertVideoPlannerAttempt(settings.payload.outputVideoPlanner,attempt);
+    else if(callKey==="video:initial"&&attempt.video){
+     const captured=await captureOutputVideoAttempt(settings.payload.outputVideo,attempt.video.requestBody,attempt.clientRequestId);
+     if(await outputDigest(captured)!==await outputDigest(attempt))throw new OutputConflictError("output_video_request_not_authorized",403);
+    }else throw new OutputConflictError("output_video_request_not_authorized",403);
+    lease!.assertCurrent();
+   }else if(attempt.video||attempt.videoPlanning)throw new OutputConflictError("output_video_request_not_authorized",403);
    const storyboardPlanning=artifactKind==="storyboard"&&callKey.startsWith("planning:")||attempt.storyboardPlanning!==undefined?await readStoryboardPlannerAttempt(attempt,settings.payload.outputStoryboardPlanner):null;
    if(storyboardPlanning&&(artifactKind!=="storyboard"||route.provider!=="openai"||scope.kind!=="personal"))throw new OutputConflictError("output_storyboard_planner_not_authorized",403);
    const storyboard=callKey.startsWith("image:frame:")||attempt.storyboard!==undefined?await readStoryboardFrameAttempt(attempt,settings.payload.outputStoryboard):null;
@@ -336,8 +392,8 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const priorTokens=[...observedReceipts.values()].filter(receipt=>receipt.status==="completed").reduce((sum,receipt)=>sum+Number(receipt.totalTokens??0),0);
    if(priorTokens+attempt.maximumInputTokens+attempt.maximumOutputTokens>slot.maximumTokens)throw new OutputConflictError("output_token_allowance_exceeded",429);
    const maximumUsage={inputTokens:attempt.maximumInputTokens,outputTokens:attempt.maximumOutputTokens,totalTokens:attempt.maximumInputTokens+attempt.maximumOutputTokens};
-   const pricedMaximum=audioPayload&&callKey==="audio:initial"?Number(settings.payload.audioEstimatedCostMicrousd):fal?fal.estimatedMicrousd:callKey==="model3d:initial"?estimateModel3dCostMicrousd(settings.payload.model3dSettings)
-     :route.presentationRoute||artifactKind==="short_story"||scenePayload||audioPayload||storyboardPlanning?estimateOpenAITextCallMaximumMicrousd(attempt.model,attempt.maximumInputTokens,attempt.maximumOutputTokens)
+   const pricedMaximum=artifactKind==="video"&&callKey==="video:initial"?outputVideoMediaPrice().maximumMicrousd:audioPayload&&callKey==="audio:initial"?Number(settings.payload.audioEstimatedCostMicrousd):fal?fal.estimatedMicrousd:callKey==="model3d:initial"?estimateModel3dCostMicrousd(settings.payload.model3dSettings)
+     :route.presentationRoute||artifactKind==="short_story"||scenePayload||audioPayload||storyboardPlanning||artifactKind==="video"?estimateOpenAITextCallMaximumMicrousd(attempt.model,attempt.maximumInputTokens,attempt.maximumOutputTokens)
     :callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd:priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
    if(pricedMaximum>route.maximumMicrousd)throw new OutputConflictError("output_call_cost_allowance_exceeded",429);
    const assertions:OutputSqlAssertion[]=[...liveAssertions(),...(storyboard?[storyboardFrameSequenceAssertion(scope,slot,job,storyboard.frameIndex,storyboard.plan.bindingSha256)]:[]),{sql:`EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.owner_id=? AND live.stream_id=? AND live.correlation_id=? AND live.attempt_count=? AND live.status='running'
@@ -352,13 +408,14 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
        AND cost.reserved_microusd=? AND token.reserved_tokens=? AND cost.status='executing' AND token.status='active')`,bindings:[slot.costReservationId,slot.tokenReservationId,billingOwner,job.stream_id,job.correlation_id,operation,period,slot.maximumMicrousd,slot.maximumTokens]}];
    const claim=await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
    if(!claim.claimed)throw new OutputConflictError("output_provider_call_already_consumed",409);
-   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="audio:initial"?"audio":callKey==="model3d:initial"?"model3d":"image",pending:false,dispatched:false,requestDigest:attempt.requestDigest,checkpointed:false,...(storyboard?{storyboardBinding:storyboard.plan.bindingSha256}:{})});
+   claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="audio:initial"?"audio":callKey==="model3d:initial"?"model3d":callKey==="video:initial"?"video":"image",pending:false,dispatched:false,requestDigest:attempt.requestDigest,checkpointed:false,...(storyboard?{storyboardBinding:storyboard.plan.bindingSha256}:{})});
+   if(artifactKind==="video"){lease!.assertCurrent();await retainOutputVideoRequestCheckpoint(guardedEnvironment,scope,slot,job,attempt,lease!);claimedCalls.get(attempt.clientRequestId)!.checkpointed=true;}
    if(storyboardPlanning){const claimed=claimedCalls.get(attempt.clientRequestId)!;claimed.storyboardBinding=storyboardPlanning.requestDigest;
     await retainStoryboardPlannerRequestCheckpoint(guardedEnvironment,scope,slot,job,storyboardPlanning);claimed.checkpointed=true;}
   },
   beforeProviderDispatch(clientRequestId){
    const call=claimedCalls.get(clientRequestId);
-   if(!call||!call.pending||call.dispatched||localStops.has(clientRequestId)||call.storyboardBinding&&!call.checkpointed)throw new OutputConflictError("output_provider_call_missing",403);
+   if(!call||!call.pending||call.dispatched||localStops.has(clientRequestId)||(call.storyboardBinding||artifactKind==="video")&&!call.checkpointed)throw new OutputConflictError("output_provider_call_missing",403);
    // No await may separate this check from the actual adapter fetch. A denial
    // leaves the existing pending call/holds unresolved; it is not a provider rejection.
    assertDispatchDeadline();call.dispatched=true;
@@ -380,10 +437,12 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const financial={...plannerFields,providerSubmissionProtocol:1,providerSubmissions:{[receipt.clientRequestId]:safe},reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,
     ...(artifactKind==="slides"?{presentationProviderSubmission:"confirmed"}:{}),
     generationReceipt:{provider:receipt.provider,model:receipt.model,artifact_kind:artifactKind,provider_request_status:"submitted",source_transmission_status:"transmitted",reservation_status:"executing"}};
-   await env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?),updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?")
-    .bind(JSON.stringify(financial),new Date().toISOString(),job.job_id,user.userId,job.stream_id,job.correlation_id).run();
+   const financialWrite=env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?),updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?")
+    .bind(JSON.stringify(financial),new Date().toISOString(),job.job_id,user.userId,job.stream_id,job.correlation_id);
+   if(artifactKind==="video"){if(!videoHook)throw new OutputConflictError("output_video_hook_invalid",403);await env.DB.batch([...videoLifetimeAssertions().flatMap(a=>outputAssertionStatements(env,a)),financialWrite,...videoLifetimeAssertions().flatMap(a=>outputAssertionStatements(env,a))]);}
+   else await financialWrite.run();
    const known=Number.isSafeInteger(receipt.costMicrousd)&&Number(receipt.costMicrousd)>=0;
-   await settleOutputProviderCall(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+   await settleOutputProviderCall(env,{...(artifactKind==="video"?{assertions:videoLifetimeAssertions()}:{}),scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
    call.settled=receipt.status==="completed"&&known;
    // Subsequent private progress/candidate writes carry the same live SQL proof;
    // retaining this monetary witness does not itself authorize any private write.
@@ -522,7 +581,7 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
  const safe:Record<string,PaidProviderSubmission>={};
  for(const call of calls.results){
   const receipt=receipts.find(value=>value.clientRequestId===call.client_request_id);
-  const expectedOperation=String(call.stage_key).startsWith('planning:')?'planning':call.stage_key==='model3d:initial'?'model3d':'image';
+  const expectedOperation=String(call.stage_key).startsWith('planning:')?'planning':call.stage_key==='model3d:initial'?'model3d':call.stage_key==='video:initial'?'video':'image';
   if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==expectedOperation
     ||!['completed','rejected'].includes(receipt.status))continue;
   const knownCost=receipt.status==='rejected'?0:receipt.costMicrousd;

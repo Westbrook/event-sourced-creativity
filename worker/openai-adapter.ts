@@ -1,3 +1,7 @@
+import { captureVideoPlannerEnvelope, videoPlannerEnvelopeText, type VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
+import { requestOutputVideoResponse } from "./output-video-execution.ts";
+import { captureVideoPlannerRequest, readVideoPlannerExecution, type VideoPlannerExecution, type VideoPlannerAttempt } from "./output-video-planner.ts";
+import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
 import { generateOutputVideo, type OutputVideoAttempt, type OutputVideoExecutionOptions } from "./output-video-execution.ts";
 import { captureOutputAudioAttempt, readOutputAudioEnvelope, type OutputAudioAttempt } from "./output-audio-execution.ts";
 import { parseAudioOutputContract } from "../src/model/output-audio-contract.ts";
@@ -107,8 +111,8 @@ export type ProviderAttemptReceipt = { model:string; responseId:string; response
 export const PRESENTATION_ADAPTER_VERSION="2026-09-02-durable-calls-source-bookends-v7";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
 export type ProviderResponseReceipt=ProviderAttemptReceipt&{rawEnvelope?:string;candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string;call?:PaidProviderSubmission;storyboardEnvelope?:string};
-export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string;logicalCallKey?:string;requestDigest?:string;reasoningEffort?:string;pricingVersion?:string;cachePolicy?:string;presentationRoute?:PresentationModelRoute;falImage?:unknown;storyboard?:unknown;storyboardPlanning?:unknown;scene?:OutputSceneAttempt;audio?:OutputAudioAttempt;video?:OutputVideoAttempt;narrative?:{execution:OutputNarrativeExecution;requestBody:string}};
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; slideCountPolicy?:SlideCountPolicy; outputTargetInstructions?:string; outputScene?:OutputSceneAdapterSelection;outputAudio?:unknown;outputStoryboard?:StoryboardPlannerExecution;onStoryboardEnvelope?:(envelope:StoryboardRawEnvelope)=>Promise<void>;outputNarrative?:OutputNarrativeExecution; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; presentationModelRoutes?:PresentationModelRoutes; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|{responseRef:string}|Promise<void|{responseRef:string}>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void;onProviderNotDispatched?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
+export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string;logicalCallKey?:string;requestDigest?:string;reasoningEffort?:string;pricingVersion?:string;cachePolicy?:string;presentationRoute?:PresentationModelRoute;falImage?:unknown;storyboard?:unknown;storyboardPlanning?:unknown;scene?:OutputSceneAttempt;audio?:OutputAudioAttempt;video?:OutputVideoAttempt;videoPlanning?:VideoPlannerAttempt;narrative?:{execution:OutputNarrativeExecution;requestBody:string}};
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; slideCountPolicy?:SlideCountPolicy; outputTargetInstructions?:string; outputScene?:OutputSceneAdapterSelection;outputAudio?:unknown;outputVideoPlanner?:VideoPlannerExecution;onVideoPlannerEnvelope?:(envelope:VideoPlannerRawEnvelope)=>Promise<void>;outputStoryboard?:StoryboardPlannerExecution;onStoryboardEnvelope?:(envelope:StoryboardRawEnvelope)=>Promise<void>;outputNarrative?:OutputNarrativeExecution; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; presentationModelRoutes?:PresentationModelRoutes; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|{responseRef:string}|Promise<void|{responseRef:string}>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void;onProviderNotDispatched?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
 export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; contextGroups?:Array<{id:string;name:string;target:string;role:string;application:string;relativity:number}>; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type VideoAudioReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; durationSeconds:number; rightsClass:string };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
@@ -1024,8 +1028,28 @@ export async function prepareStoryboardPlannerRequest(env:WorkerEnv,userId:strin
  return captured;
 }
 
-export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation,storyboardPreparation?:StoryboardRequestPreparation) {
+type VideoRequestPreparation = { contract: NonNullable<ReturnType<typeof parseVideoOutputContract>>; capture: (request: Awaited<ReturnType<typeof captureVideoPlannerRequest>>) => never };
+/** Build the exact native planner wire without credentials, persistence or dispatch. */
+export async function prepareVideoPlannerRequest(env: WorkerEnv, userId: string, input: { documentTitle: string; snapshot: Record<string, unknown>; options?: DocumentArtifactOptions }, value: unknown) {
+  const contract = parseVideoOutputContract(value), frozen = structuredClone(input);
+  if (!contract || Object.hasOwn(frozen.options ?? {}, "outputVideoPlanner")) throw new Error("output_video_planner_preparation_invalid");
+  let captured: Awaited<ReturnType<typeof captureVideoPlannerRequest>> | undefined;
+  const stop = new Error("output_video_planner_prepared_offline");
+  try { await generateDocumentArtifact(env, userId, "video", frozen, undefined, undefined, { contract, capture: request => { captured = request; throw stop; } }); }
+  catch (error) { if (error !== stop) throw error; }
+  if (!captured) throw new Error("output_video_planner_preparation_failed");
+  return captured;
+}
+export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation,storyboardPreparation?:StoryboardRequestPreparation,videoPreparation?:VideoRequestPreparation) {
   if(kind==="model3d")throw new Error("model3d_dedicated_adapter_required");
+  const videoRequested = Boolean(videoPreparation) || Object.hasOwn(input.options ?? {}, "outputVideoPlanner");
+  const videoExecution = readVideoPlannerExecution(input.options?.outputVideoPlanner);
+  const nativeVideo = videoPreparation?.contract ?? videoExecution?.contract ?? null;
+  if (videoRequested && (!nativeVideo || kind !== "video" || preparation || storyboardPreparation || input.options?.productionMode !== "manual" || input.options.itemCount !== 1
+    || input.options.videoSeconds !== 4 || input.options.videoSize !== nativeVideo.frameSize || input.options.videoAudioMode !== "silent"
+    || ["productionPlan", "productionPage", "productionScenes", "outputNarrative", "outputScene", "outputAudio", "outputStoryboard"].some(key => Object.hasOwn(input.options ?? {}, key))
+    || (env.OPENAI_MODEL ?? "gpt-5.6-terra") !== "gpt-5.6-terra"
+    || !videoPreparation && (!videoExecution || !input.options.onBeforeProviderAttempt || !input.options.onBeforeProviderDispatch || !input.options.onProviderSubmission || !input.options.onProviderResponse || !input.options.onVideoPlannerEnvelope))) throw new Error("output_video_planner_execution_invalid");
   const storyboardRequested=Boolean(storyboardPreparation)||Object.hasOwn(input.options??{},"outputStoryboard");
   const storyboardExecution=input.options?.outputStoryboard?readStoryboardPlannerExecution(input.options.outputStoryboard):null;
   const storyboard=storyboardPreparation?.contract??storyboardExecution?.contract??null;
@@ -1046,7 +1070,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const narrative=narrativePresent?await readOutputNarrativeExecution(input.options?.outputNarrative):null;
   if(narrativePresent&&(!narrative||kind!=="short_story"||preparation||input.options?.productionMode==="managed"||input.options?.productionPlan||input.options?.productionPage
     ||!input.options?.onBeforeProviderAttempt||!input.options?.onBeforeProviderDispatch||!input.options?.onProviderSubmission||!input.options?.onProviderResponse))throw new Error("output_narrative_execution_invalid");
-  if(!preparation&&!storyboardPreparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  if(!preparation&&!storyboardPreparation&&!videoPreparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   if(kind==="slides"&&input.options?.productionPage&&input.options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
   const countRequest=kind==="slides"&&!input.options?.productionPage?resolvePresentationCountRequest(input.options??{}):undefined;
@@ -1102,6 +1126,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const outputInstructions=input.options?.outputTargetInstructions?.trim();
   const selectedOutputDirection=outputInstructions?" The separate output_requirements field describes only the selected deliverable and its acceptance conditions. Follow it as instructions, never as factual evidence, a source citation, or audience copy. Do not create sibling deliverables.":"";
   let instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection}`;
+  if(nativeVideo)instructions+=" The only downstream render is one four-second 480p silent clip from the single selected owned still. Return exactly one item. Frame values identify orientation, not a 720p output promise.";
   if(narrative)instructions+=` ${OUTPUT_NARRATIVE_INSTRUCTIONS}`;
   const sharedContinuity=managedPlan?audioScene?audioSceneContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
   const pageProtectedMessages=new Set(sourceContract?.protectedMessages.filter((message)=>{
@@ -1152,7 +1177,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ...(storyboard?{storyboard_contract:storyboard}:{}),
     ...(sceneMini?{scene_intent:JSON.parse(sceneMini.contract.input).scene_intent}:{}),
     ...(sourceFacing?{presentation_source:sourceFacing}:{}),
-    ...(kind==="video"?{video:{duration_seconds:managed?null:input.options?.videoSeconds??4,maximum_scene_seconds:managed?15:undefined,frame:input.options?.videoSize??"1280x720",aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9",audio_mode:audioMode,generate_audio:audioMode==="original_ambient"}}:{}),
+    ...(kind==="video"?{video:{duration_seconds:managed?null:input.options?.videoSeconds??4,maximum_scene_seconds:managed?15:undefined,frame:nativeVideo?(nativeVideo.frameSize==="1280x720"?"landscape":"portrait"):input.options?.videoSize??"1280x720",...(nativeVideo?{resolution:"480p",reference_count:1}:{}),aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9",audio_mode:audioMode,generate_audio:audioMode==="original_ambient"}}:{}),
     ...(specialistAudio?{audio:{goal:specialistAudio.goal,role:specialistAudio.role,destination:specialistAudio.destination,provider_contract:audioConstraints,...(specialistAudio.durationSeconds?{duration_seconds:specialistAudio.durationSeconds}:{}),...(specialistAudio.speakerCount?{speaker_count:specialistAudio.speakerCount}:{}),...(specialistAudio.requireInstrumental?{prefer_instrumental:true}:{}),...(specialistAudio.transcript?{approved_spoken_script:specialistAudio.transcript}:{})}}:{}),
     ...(managed?{production:{team:(audioScene?productionTeamFor("scene","audio"):managedPlan?.team)?.specialists.map((member)=>({role:member.label,deliverable:member.deliverable})),continuity_bible:sharedContinuity,assigned_scenes:providerScenes,...(providerPage?{page:providerPage}:{})}}:{}),
   });
@@ -1185,14 +1210,19 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     let localDispatchStop=false;
     try{
       const validationRepair=name.endsWith("_repair");
+      if(nativeVideo&&(validationRepair||paidCalls.length||name!=="document_video"))throw new Error("output_video_planner_call_consumed");
       const editorialRewrite=Boolean(page?.repairIssues?.length);
       const phase:PresentationPlanningPhase=editorialRewrite?(validationRepair?"editorial-validation-repair":"editorial-rewrite"):(validationRepair?"validation-repair":"composition");
       const route=presentationRoutes?selectPresentationModelRoute(presentationRoutes,phase):null;
       const callModel=route?.model??model;
       const reasoningEffort=route?.reasoningEffort??"low";
       const requestSchema=documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy);
+      if(nativeVideo){const items=(requestSchema.properties as Record<string,Record<string,unknown>>).items;items.minItems=1;items.maxItems=1;}
       if(storyboard){const items=(requestSchema.properties as Record<string,Record<string,unknown>>).items;items.minItems=4;items.maxItems=4;}
-      const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:requestSchema}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route||narrative||storyboard||nativeAudio?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
+      const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:requestSchema}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route||narrative||storyboard||nativeAudio||nativeVideo?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
+      const videoCapture=nativeVideo?await captureVideoPlannerRequest(nativeVideo,requestBody,`forma-video-${crypto.randomUUID()}`):null;
+      if(videoPreparation&&videoCapture)videoPreparation.capture(videoCapture);
+      if(videoCapture&&(!videoExecution||videoCapture.requestDigest!==videoExecution.requestDigest||videoCapture.maximumInputTokens!==videoExecution.maximumInputTokens))throw new Error("output_video_planner_request_changed");
       const storyboardCapture=storyboard?await captureStoryboardPlannerRequest(storyboard,requestBody,`forma-storyboard-${crypto.randomUUID()}`):null;
       if(storyboardPreparation&&storyboardCapture)storyboardPreparation.capture(storyboardCapture);
       if(storyboardCapture&&(!storyboardExecution||storyboardCapture.requestDigest!==storyboardExecution.requestDigest
@@ -1204,28 +1234,29 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         delete (comparable.reasoning as Record<string,unknown>).effort;
         preparation.capture({requestBody,requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody)),comparisonDigest:await sha256Bytes(new TextEncoder().encode(JSON.stringify(comparable))),maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,route,phase});
       }
-      const clientRequestId=storyboardCapture?.attempt.clientRequestId??`forma-${kind}-${crypto.randomUUID()}`;
+      const clientRequestId=videoCapture?.attempt.clientRequestId??storyboardCapture?.attempt.clientRequestId??`forma-${kind}-${crypto.randomUUID()}`;
       // A managed whole-work rewrite is a distinct authorized call, not a replay
       // of the initial page. Client request IDs provide tracing, not idempotency.
       const logicalCallKey=`planning:${page?.pageIndex??0}:${editorialRewrite?"editorial-":""}${validationRepair?"repair":"initial"}`;
       const narrativeCapture=narrative?await captureOutputNarrativeRequest(narrative,kind,requestBody,clientRequestId):null;
-      const requestDigest=storyboardCapture?.requestDigest??narrativeCapture?.attempt.requestDigest??await sha256Bytes(new TextEncoder().encode(requestBody));
+      const requestDigest=videoCapture?.requestDigest??storyboardCapture?.requestDigest??narrativeCapture?.attempt.requestDigest??await sha256Bytes(new TextEncoder().encode(requestBody));
       const audioCapture=nativeAudio?await captureOutputAudioAttempt(nativeAudio,requestBody,clientRequestId,logicalCallKey):null;
-      await input.options?.onBeforeProviderAttempt?.(audioCapture??storyboardCapture?.attempt??narrativeCapture?.attempt??{model:callModel,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId,logicalCallKey,requestDigest,...(route?{reasoningEffort,pricingVersion:route.pricingVersion,cachePolicy:route.cachePolicy,presentationRoute:route}:{})});
+      await input.options?.onBeforeProviderAttempt?.(videoCapture?.attempt??audioCapture??storyboardCapture?.attempt??narrativeCapture?.attempt??{model:callModel,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId,logicalCallKey,requestDigest,...(route?{reasoningEffort,pricingVersion:route.pricingVersion,cachePolicy:route.cachePolicy,presentationRoute:route}:{})});
       const submittedAt=new Date().toISOString(),callStarted=Date.now();
-      const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model:callModel,status:"pending",...(storyboard?{requestDigest}:{}),...(kind==="scene"?{}:{unitId:logicalCallKey}),...(nativeAudio?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,serviceTier:"default",cachePolicy:"disabled-explicit"}:route?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,routingVersion:route.routingVersion,pricingVersion:route.pricingVersion,serviceTier:route.serviceTier,cachePolicy:"disabled-explicit"}:narrative?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,pricingVersion:narrative.pricingVersion,serviceTier:"default",cachePolicy:narrative.cachePolicy}:{})};
+      const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model:callModel,status:"pending",...(storyboard?{requestDigest}:{}),...(kind==="scene"?{}:{unitId:logicalCallKey}),...(nativeAudio||nativeVideo?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,serviceTier:"default",cachePolicy:"disabled-explicit"}:route?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,routingPhase:phase,routingVersion:route.routingVersion,pricingVersion:route.pricingVersion,serviceTier:route.serviceTier,cachePolicy:"disabled-explicit"}:narrative?{requestDigest,reasoningEffort,maximumOutputTokens:maxOutputTokens,submittedAt,pricingVersion:narrative.pricingVersion,serviceTier:"default",cachePolicy:narrative.cachePolicy}:{})};
       await input.options?.onProviderSubmission?.(submission);
       try{
         // Synchronous by contract: the awaited checkpoint above can outlive its source/authority deadline.
-        input.options?.onBeforeProviderDispatch?.(clientRequestId);
+        if(!nativeVideo)input.options?.onBeforeProviderDispatch?.(clientRequestId);
       }catch(error){
         // Preserve the existing Scene-only certified stop path. Output retains its
         // unresolved ledger hold; a local deadline is not a provider rejection.
         if(kind==="scene")await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});else localDispatchStop=true;
         throw error;
       }
-      const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},undefined,storyboard||nativeAudio?"caller-bounded":"classify");
-      if(!nativeAudio&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
+      const response=nativeVideo?await requestOutputVideoResponse("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},()=>{},524288,()=>input.options!.onBeforeProviderDispatch!(clientRequestId))
+        :await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},undefined,storyboard||nativeAudio?"caller-bounded":"classify");
+      if(!nativeAudio&&!nativeVideo&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
       let storyboardEnvelope:string|null=null;
       if(storyboard){
         if(response.ok)await input.options?.onProviderSubmission?.({...submission,status:"accepted"});
@@ -1233,16 +1264,19 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         await input.options!.onStoryboardEnvelope!(capturedEnvelope);
         storyboardEnvelope=storyboardEnvelopeText(capturedEnvelope);
       }
-      const rawAudioEnvelope=nativeAudio?await readOutputAudioEnvelope(response):undefined;
-      const body=(nativeAudio?JSON.parse(rawAudioEnvelope!):storyboardEnvelope===null?await response.json():JSON.parse(storyboardEnvelope)) as OpenAIResponse;
-      if(nativeAudio&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
+      let rawVideoEnvelope:string|undefined;
+      if(nativeVideo){const captured=await captureVideoPlannerEnvelope(response,{clientRequestId,requestDigest,model:callModel},input.options?.signal);
+        await input.options!.onVideoPlannerEnvelope!(captured);rawVideoEnvelope=videoPlannerEnvelopeText(captured);}
+      const rawAudioEnvelope=nativeVideo?rawVideoEnvelope:nativeAudio?await readOutputAudioEnvelope(response):undefined;
+      const body=(nativeAudio||nativeVideo?JSON.parse(rawAudioEnvelope!):storyboardEnvelope===null?await response.json():JSON.parse(storyboardEnvelope)) as OpenAIResponse;
+      if((nativeAudio||nativeVideo)&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
       if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);
       paidResponses.push(body);
       const paidUsage={inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)};
-      let call:PaidProviderSubmission={...submission,status:"completed",providerRequestId:body.id??undefined,...(verifiedUsage(body.usage)?paidUsage:{}),...(route||narrative||storyboard||nativeAudio?{...(typeof body.model==="string"&&body.model.length?{effectiveModel:body.model}:{}),responseReceivedAt:new Date().toISOString(),latencyMs:Date.now()-callStarted,httpRequestId:response.headers.get("x-request-id")??undefined,completionStatus:body.status??"unspecified",...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{}),validationStatus:"pending"}:{})};
-      if(route||narrative||storyboard||nativeAudio){
+      let call:PaidProviderSubmission={...submission,status:"completed",providerRequestId:body.id??undefined,...(verifiedUsage(body.usage)?paidUsage:{}),...(route||narrative||storyboard||nativeAudio||nativeVideo?{...(typeof body.model==="string"&&body.model.length?{effectiveModel:body.model}:{}),responseReceivedAt:new Date().toISOString(),latencyMs:Date.now()-callStarted,httpRequestId:response.headers.get("x-request-id")??undefined,completionStatus:body.status??"unspecified",...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{}),validationStatus:"pending"}:{})};
+      if(route||narrative||storyboard||nativeAudio||nativeVideo){
         try{
-          if(narrative||storyboard||nativeAudio?body.model!==callModel:body.model&&body.model!==callModel)throw new Error(narrative?"narrative_effective_model_mismatch":"presentation_effective_model_mismatch");
+          if(narrative||storyboard||nativeAudio||nativeVideo?body.model!==callModel:body.model&&body.model!==callModel)throw new Error(narrative?"narrative_effective_model_mismatch":"presentation_effective_model_mismatch");
           const measured=readOpenAITextUsage(body.usage,{cachePolicy:route?.cachePolicy??narrative?.cachePolicy??"disabled-explicit"});
           const cost=priceCurrentOpenAITextUsage(callModel,measured,body.service_tier??"default");
           call={...call,costMicrousd:cost.totalMicrousd,textInputCostMicrousd:cost.textInputMicrousd,textOutputCostMicrousd:cost.textOutputMicrousd,cachedInputTokens:measured.cachedInputTokens,cacheWriteInputTokens:measured.cacheWriteTokens,...(measured.reasoningTokens===null?{}:{reasoningTokens:measured.reasoningTokens}),usageCostBasis:cost.costBasis,pricingReceipt:cost};
@@ -1270,15 +1304,15 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         const code=outputNarrativeResponseProblem(body,narrative.model);
         if(code)throw new ProviderRequestError({code,category:code==="narrative_provider_refused"?"safety":"provider",scope:"request",action:"edit_request",message:"Story response unavailable",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:null},null,paidAccounting());
       }
-      if((route||narrative||storyboard||nativeAudio)&&(!verifiedUsage(body.usage)||!Number.isSafeInteger(call.costMicrousd))||!route&&!narrative&&!storyboard&&!nativeAudio&&input.options?.onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
+      if((route||narrative||storyboard||nativeAudio||nativeVideo)&&(!verifiedUsage(body.usage)||!Number.isSafeInteger(call.costMicrousd))||!route&&!narrative&&!storyboard&&!nativeAudio&&!nativeVideo&&input.options?.onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
       if(storyboard)await captureStoryboardPlannerResponse(body,raw,storyboard);
-      if(nativeAudio){
+      if(nativeAudio||nativeVideo){
         const outputs=body.output as Array<Record<string,unknown>>|undefined;
         const messages=outputs?.filter(item=>item.type==="message");
         if(body.model!==callModel||body.status!=="completed"||body.incomplete_details||!body.id||!outputs?.length||messages?.length!==1||outputs.some(item=>{
           if(item.type==="reasoning")return Object.keys(item).some(key=>!["id","type","status","summary"].includes(key))||typeof item.id!=="string"||!Array.isArray(item.summary)||item.summary.some(part=>!part||typeof part!=="object"||(part as Record<string,unknown>).type!=="summary_text"||typeof (part as Record<string,unknown>).text!=="string");
           const content=item.content as Array<Record<string,unknown>>|undefined;return item.type!=="message"||item.role!=="assistant"||item.status!=="completed"||content?.length!==1||content[0]?.type!=="output_text"||typeof content[0]?.text!=="string";
-        }))throw new Error("output_audio_response_invalid");
+        }))throw new Error(nativeVideo?"output_video_planner_response_invalid":"output_audio_response_invalid");
       }
       await input.options?.onProviderAttempt?.(receipt);
       if(kind==="slides"){
@@ -1340,13 +1374,14 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const initialIssues=preparation?.candidateRaw!==undefined?preparation.candidateIssues:assessment.issues;
   if(narrative){const code=outputNarrativeArtifactProblem(raw,output?.content_markdown);if(code)initialIssues.push({code,path:"$",message:"Story artifact outside contract"});}
   const checkpointValidation=async(call:PaidProviderSubmission,issues:DocumentArtifactValidationIssue[])=>{
-    if(kind!=="slides"&&!narrative&&!nativeAudio)return;
+    if(kind!=="slides"&&!narrative&&!nativeAudio&&!nativeVideo)return;
     const validated={...call,validationStatus:issues.length?"invalid" as const:"valid" as const,validationIssueCount:issues.length};
     const at=paidCalls.findIndex(value=>value.clientRequestId===call.clientRequestId);
     if(at>=0)paidCalls[at]=validated;
     await input.options?.onProviderSubmission?.(validated);
   };
   if(first)await checkpointValidation(first.call,initialIssues);
+  if(nativeVideo&&(initialIssues.length||!output||output.items.length!==1))throw new Error("output_video_planner_candidate_invalid");
   const locallyRepairedIssues=kind==="slides"?locallyRepairedSlideIssues(raw,output):[];
   let repairIssues:DocumentArtifactValidationIssue[]=[];
   let repairAttempted=false;

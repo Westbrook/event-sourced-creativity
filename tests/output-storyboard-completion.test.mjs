@@ -117,7 +117,7 @@ test('actual trusted execution deadline bounds stalled media by source, cost per
   const f=await fixture();try{
    const now=Date.now(),deadline=now+25,abort=new AbortController();let cancelled=0;
    f.job.lease_expires_at=new Date(mode==='lease'?deadline:now+60000).toISOString();
-   const deps={nextPeriod:new Date(mode==='cost-period'?deadline:now+60000),authority:{assertions:[]},sceneAssertions:[],audioAssertions:[],storyboardSourceAssertions:[{deadlineMs:mode==='source'?deadline:now+60000}],job:f.job,artifactKind:'storyboard'};
+   const deps={nextPeriod:new Date(mode==='cost-period'?deadline:now+60000),authority:{assertions:[]},sceneAssertions:[],audioAssertions:[],model3dAssertions:[],videoSourceAssertions:[],storyboardSourceAssertions:[{deadlineMs:mode==='source'?deadline:now+60000}],job:f.job,artifactKind:'storyboard'};
    const getDeadline=new Function(...Object.keys(deps),stripTypeScriptTypes(declaration+'\nconst value={'+source.slice(start,end)+'};')+'return value.storyboardMediaDeadlineMs;')(...Object.values(deps));
    assert.equal(getDeadline(),deadline);
    const frame=f.cp.renderedItems[0],base=await f.env.MEDIA.get(decodeURIComponent(frame.media_url.slice('/api/media/'.length)));
