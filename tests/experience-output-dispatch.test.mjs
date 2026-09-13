@@ -95,7 +95,7 @@ test("API catch maps nullish and unknown dispatch failures to a private unavaila
   const caught = source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);
   assert.ok(caught); assert.ok(helpers.startsWith("const record ="));
   const logged=[];
-  const invoke = new Function("cause", "console", helpers + "\n" + caught[1]);
+  const invoke = new Function("cause", "console", helpers + "\nconst diagnosticStage='prepare_preflight_execute';\n" + caught[1]);
   const refuse=cause=>invoke(cause,{warn:(...args)=>logged.push(args)});
   for (const cause of [undefined, null, "private provider detail", 42, Symbol("private"), {}, new Error("private provider detail")]) {
     const response = refuse(cause);
@@ -111,8 +111,13 @@ test("API catch maps nullish and unknown dispatch failures to a private unavaila
   for (const code of ["private_customer_named_example","request_01a09b9506477779b6fa6b670ecafcc8"]) {
     assert.equal((await refuse({code,status:409}).json()).error,"experience_output_unavailable");
   }
-  for(const [label,entry] of logged){assert.equal(label,"experience_output_refused");assert.deepEqual(Object.keys(entry),["code","status"]);assert.match(entry.code,/^[a-z][a-z0-9_]+$/u);assert.ok(entry.code.length<=160);}
+  for(const [label,entry] of logged){assert.equal(label,"experience_output_refused");assert.deepEqual(Object.keys(entry),["code","status","stage","kind"]);assert.equal(entry.stage,"prepare_preflight_execute");assert.match(entry.code,/^[a-z][a-z0-9_]+$/u);assert.ok(entry.code.length<=160);}
   assert.ok(!JSON.stringify(logged).includes("private"));assert.ok(!JSON.stringify(logged).includes("Private"));
+  for (const [cause,kind] of [[new TypeError("private body"),"TypeError"],[new Error("D1_ERROR: no such column: private_identifier"),"db_schema"],[new Error("UNIQUE constraint failed: secret_table"),"db_constraint"],[new Error("SQLITE_BUSY private values"),"db_busy"]]) {
+    await refuse(cause);const entry=logged.at(-1)[1];assert.equal(entry.kind,kind);assert.equal(entry.code,"experience_output_unavailable");
+    assert.ok(!JSON.stringify(entry).includes("private"));assert.ok(!JSON.stringify(entry).includes("secret"));
+  }
+  for(const code of ["experience_output_original_envelope_unavailable","output_scene_source_changed","scene_cost_authority_changed"])assert.equal((await refuse({code,status:409}).json()).error,code);
 });
 
 test("non-Fal preflights never enter the recovery metadata query",async()=>{

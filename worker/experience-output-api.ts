@@ -45,12 +45,25 @@ experience_audio_confirmation_required experience_model3d_confirmation_required 
 experience_output_recipe_confirmation_required experience_output_unbound_plan experience_output_unbound_preflight experience_output_preflight_required experience_output_authorization_unavailable experience_output_authorization_terms_changed
 experience_output_explicit_run_required experience_output_run_unavailable output_source_epoch_required experience_output_explicit_recovery_required experience_output_native_refused
 experience_output_original_unavailable experience_output_stage_evidence_unavailable mutation_key_reused_with_different_content output_command_scope_mismatch original_command_content_unavailable invalid_output_scope
-output_revision_or_authority_changed invalid_output_requirement output_active_commitment_requires_cancellation output_requirements_need_confirmation invalid_output_plan output_scope_amendment_reason_required output_private_evidence_unavailable output_requirements_failed`.split(/\s+/u));
-const unavailable = (code: string, status = 409) => {
+output_revision_or_authority_changed invalid_output_requirement output_active_commitment_requires_cancellation output_requirements_need_confirmation invalid_output_plan output_scope_amendment_reason_required output_private_evidence_unavailable output_requirements_failed
+experience_output_original_envelope_unavailable experience_output_binding_invalid experience_output_revision_invalid experience_output_envelope_invalid experience_scene_recipe_invalid output_revision_conflict confirmed_output_plan_required output_plan_needs_reconfirmation output_plan_evidence_mismatch output_read_model_unavailable output_source_private_evidence_unavailable output_block_identity_unavailable requirement_block_identity_mismatch output_requirements_required output_interpretation_review_required finite_target_selection_required target_not_selected_in_confirmed_plan
+output_scene_original_unavailable output_scene_personal_source_required output_scene_target_changed output_scene_source_changed output_scene_requirement_changed output_scene_original_expired
+scene_cost_changed scene_cost_authority_changed scene_cost_request_required scene_cost_request_invalid document_not_found context_source_rights_expired scene_cost_confirmation_required`.split(/\s+/u));
+type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
+function diagnosticKind(cause: unknown) {
+  if (!(cause instanceof Error)) return "unknown";
+  const message = cause.message.slice(0, 2048);
+  if (/CHECK constraint failed|UNIQUE constraint failed/iu.test(message)) return "db_constraint";
+  if (/no such (?:table|column)|too many SQL variables|SQLITE_SCHEMA/iu.test(message)) return "db_schema";
+  if (/SQLITE_BUSY|database is locked/iu.test(message)) return "db_busy";
+  if (["TypeError", "SyntaxError", "RangeError", "AbortError"].includes(cause.name)) return cause.name;
+  return "unknown";
+}
+const unavailable = (code: string, status = 409, diagnostic?: { stage: DiagnosticStage; kind: string }) => {
   const safeCode = diagnosticCodes.has(code) ? code : "experience_output_unavailable";
   // The platform associates this bounded code with its request log. Never log
   // source text, request bodies, provider responses, credentials or actor data.
-  console.warn("experience_output_refused", { code: safeCode, status });
+  console.warn("experience_output_refused", { code: safeCode, status, ...(diagnostic ?? {}) });
   return Response.json({ version: 1, status: "unavailable", error: safeCode,
   originalIntent: "unknown_or_retained", permitted: { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false } } satisfies ExperienceNativeUnavailable,
 { status, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
@@ -343,6 +356,7 @@ async function execute(loaded: Loaded, phase: ExperienceOutputStage, fields: Rec
 
 /** Existing native transaction adapter, PERSONAL Image/Slides only. No generic job POST. */
 export async function handleExperienceOutput(request: Request, env: WorkerEnv, executionContext: WorkerExecutionContext, bridge: OutputExecutionBridge): Promise<Response> {
+  let diagnosticStage: DiagnosticStage = "initial_load";
   try {
     const url = new URL(request.url), match = /^\/api\/experiences\/drafts\/(experience-draft-[a-f0-9]{64})\/output(?:\/(prepare|authorize|run|recover-result))?$/u.exec(url.pathname);
     if (!match) return unavailable("not_found", 404);
@@ -374,18 +388,22 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       if (body.explicitRequirementsConfirmation !== true) error("experience_output_recipe_confirmation_required", 403);
       for (const phase of ["save", "confirm", "preflight"] as const) {
         if (!loaded.originals[phase]) {
+          diagnosticStage = `prepare_${phase}_state`;
           const current = await state(loaded);
           if (!current.permitted.prepare) break;
           if (phase === "confirm" && await outputExperienceCommands.readConfirmedPlan(loaded.trusted)) error("experience_output_unbound_plan", 410);
           const plan = phase === "preflight" ? await confirmed(loaded) : null;
           if (phase === "preflight" && (!plan || await env.DB.prepare("SELECT 1 AS present FROM output_preflights WHERE scope_key=? AND plan_revision_id=? AND actor_user_id=? LIMIT 1").bind(loaded.trusted.scope.key, plan.revisionId, loaded.trusted.scope.actorUserId).first())) error("experience_output_unbound_preflight", 410);
+          diagnosticStage = `prepare_${phase}_execute`;
           await execute(loaded, phase, phase === "save" ? { blockId: loaded.recipe.spec.id, spec: loaded.recipe.spec, explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
             : phase === "confirm" ? { explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
             : { planRevisionId: plan!.revisionId, targetIds: [loaded.recipe.targetId] }, bridge, executionContext);
+          diagnosticStage = `prepare_${phase}_reload`;
           const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
         }
       }
     } else if (action === "authorize") {
+      diagnosticStage = "authorize";
       const current = await state(loaded);
       if (!current.preflight) error("experience_output_preflight_required");
       const confirmation = experienceOutputAuthorization(body, current.preflight);
@@ -403,12 +421,14 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
         ...(loaded.binding.output==="audio"?{audioCostConsent:body.audioCostConsent}:{}),
         ...(loaded.binding.output === "scene" ? { sceneCostConsent: body.sceneCostConsent } : {}) }, bridge, executionContext);
     } else if (action === "run") {
+      diagnosticStage = "run";
       const current = await state(loaded);
       if (body.explicitRun !== true || !current.original || body.grantId !== current.original.grantId) error("experience_output_explicit_run_required", 403);
       if (!loaded.originals.run && !current.permitted.run) error("experience_output_run_unavailable");
       if (!loaded.originals.run || current.permitted.resumeRun)
         await execute(loaded, "run", { grantId: current.original.grantId, explicitRun: body.explicitRun }, bridge, executionContext);
     } else if (action === "recover-result") {
+      diagnosticStage = "recover_result";
       // Preserve intake/command custody without capturing state()'s old job status.
       // Source epochs allow only the same nonsemantic native events during recovery.
       const recoveryLoaded = loaded;
@@ -430,14 +450,18 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal});
       recovered = outcome.status;
     }
+    diagnosticStage = "final_load";
     const latest = action ? await load(request, env, draftId, "read") : loaded; if (latest instanceof Response) return latest;
+    diagnosticStage = "final_state";
     const value = await state(latest);
     if (recovered) value.recovery = recovered;
     const assertions = Object.values(latest.originals).map(value => outputCommandReceiptAssertion(latest.trusted.scope, value!.receipt));
+    diagnosticStage = "final_disclose";
     return await outputExperienceCommands.disclose(latest.trusted, value, 200, assertions);
   } catch (cause) {
     const item = record(cause) ? cause : {};
     const code = typeof item.code === "string" ? item.code : typeof item.message === "string" && /^[a-z][a-z0-9_]+$/u.test(item.message) ? item.message : "experience_output_unavailable";
-    return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409);
+    return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409,
+      { stage: diagnosticStage, kind: code !== "experience_output_unavailable" && diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause) });
   }
 }
