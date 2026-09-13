@@ -1,6 +1,48 @@
 /** Stable, server-owned messages only. Authored content is never passed through this registry. */
 type Translation = readonly [string, string, string, string];
 const groups = {
+  sceneContract: { codes: "output_scene_contract_unsupported", text: [
+    "These output requirements are not supported for Scene. Review the saved delivery plan in Forma.",
+    "Ces exigences de sortie ne sont pas prises en charge pour Scène. Consultez le plan de livraison enregistré dans Forma.",
+    "متطلبات المخرجات هذه غير مدعومة للمشهد. راجع خطة التسليم المحفوظة في Forma.",
+    "この納品要件はシーンでサポートされていません。Formaで保存済みの納品計画を確認してください。",
+  ] },
+  sceneProvider: { codes: "output_scene_provider_unavailable", text: [
+    "Scene generation is not configured for this workspace. Contact a workspace administrator.",
+    "La génération de scènes n’est pas configurée pour cet espace de travail. Contactez un administrateur.",
+    "توليد المشاهد غير مهيأ لمساحة العمل هذه. تواصل مع مسؤول مساحة العمل.",
+    "このワークスペースではシーン生成が設定されていません。ワークスペース管理者に連絡してください。",
+  ] },
+  sceneExpired: { codes: "output_scene_original_expired", text: [
+    "The saved Scene preparation window has expired. Your Document is retained; this request cannot start generation.",
+    "Le délai de préparation de la scène enregistrée a expiré. Votre document est conservé ; cette demande ne peut pas lancer la génération.",
+    "انتهت مهلة إعداد المشهد المحفوظ. مستندك محفوظ؛ لا يمكن لهذا الطلب بدء التوليد.",
+    "保存済みシーンの準備期限が切れました。ドキュメントは保持されていますが、このリクエストでは生成を開始できません。",
+  ] },
+  sceneChanged: { codes: "output_scene_source_changed", text: [
+    "The saved Scene preparation no longer matches the current Document. Review the Document and delivery plan in Forma.",
+    "La préparation de la scène enregistrée ne correspond plus au document actuel. Consultez le document et le plan de livraison dans Forma.",
+    "لم يعد إعداد المشهد المحفوظ مطابقًا للمستند الحالي. راجع المستند وخطة التسليم في Forma.",
+    "保存済みシーンの準備内容が現在のドキュメントと一致しません。Formaでドキュメントと納品計画を確認してください。",
+  ] },
+  sceneRequest: { codes: "output_scene_request_unavailable", text: [
+    "The saved Scene request could not be verified. Review the Document and delivery plan in Forma; generation has not started.",
+    "La demande de scène enregistrée n’a pas pu être vérifiée. Consultez le document et le plan de livraison dans Forma ; la génération n’a pas commencé.",
+    "تعذر التحقق من طلب المشهد المحفوظ. راجع المستند وخطة التسليم في Forma؛ لم يبدأ التوليد.",
+    "保存済みシーンのリクエストを検証できませんでした。Formaでドキュメントと納品計画を確認してください。生成は開始されていません。",
+  ] },
+  sceneContext: { codes: "output_scene_context_limit", text: [
+    "This Scene exceeds the supported context limit. Review the selected source material in Forma; nothing was silently omitted.",
+    "Cette scène dépasse la limite de contexte prise en charge. Consultez les sources sélectionnées dans Forma ; rien n’a été omis sans vous en informer.",
+    "يتجاوز هذا المشهد حد السياق المدعوم. راجع المواد المصدرية المحددة في Forma؛ لم يُحذف أي شيء دون إبلاغك.",
+    "このシーンは対応するコンテキスト上限を超えています。Formaで選択済みの資料を確認してください。内容を黙って省略していません。",
+  ] },
+  sceneCost: { codes: "output_scene_cost_unavailable", text: [
+    "The cost terms for this saved Scene request could not be verified. No spending approval or generation is available.",
+    "Les conditions tarifaires de cette demande de scène enregistrée n’ont pas pu être vérifiées. Aucune autorisation de dépense ni génération n’est disponible.",
+    "تعذر التحقق من شروط تكلفة طلب المشهد المحفوظ. لا تتوفر الموافقة على الإنفاق أو عملية التوليد.",
+    "保存済みシーンのリクエストの費用条件を検証できませんでした。支出の承認も生成も利用できません。",
+  ] },
   model3dReady: { codes: "output_native_model3d_ready", text: [
     "One Rodin request creates a GLB using the exact reviewed prompt, ordered reference images, and disclosed settings. Provider content checks apply; acceptance is not guaranteed. Review the mesh and materials before accepting delivery.",
     "Une requête Rodin crée un GLB avec l’instruction exacte relue, les images de référence ordonnées et les paramètres affichés. Les contrôles de contenu du fournisseur s’appliquent ; l’acceptation n’est pas garantie. Vérifiez le maillage et les matériaux avant d’accepter la livraison.",

@@ -47,6 +47,8 @@ import { experienceImageFormat } from "../experiences/image-ratio.ts";
 import { bindingJson, experienceResultGrantCurrent, ExperienceOutputBindingClient, type ExperienceBindingAction } from "../experiences/output-binding-client.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState } from "../experiences/output-binding-contract.ts";
 import { outputTerms, outputTermsNotice, type OutputTerms, type OutputTermsRow, type OutputTermsNotice } from "../experiences/output-terms.ts";
+import { outputAvailabilityMessage } from "../experiences/output-availability-message.ts";
+import { FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES } from "./design-system/locales/output-delivery-runtime-messages.ts";
 import { captureExperienceNativeResult, type ExperienceResultCandidate } from "../experiences/native-result-association.ts";
 import "../experiences/host.css";
 
@@ -825,6 +827,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #termsSummary(terms: OutputTerms | null, state: ExperienceNativeState, binding: Binding) {
     const summary = terms?.summary;
+    const availability = outputAvailabilityMessage(state);
     const notice = outputTermsNotice(terms, { status: state.status, originalRunRecorded: state.disposition === "original_run_recorded",
       authorize: state.permitted.authorize, run: state.permitted.run, resumeRun: state.permitted.resumeRun });
     const notices: Record<OutputTermsNotice, string> = {
@@ -842,6 +845,7 @@ export class FormaExperienceHost extends FormaElement {
     return html`<section class="experience-consent-summary" aria-label=${this.i18n.system("Cost and transfer")}>
       <h2>${this.i18n.system("Cost and transfer")}</h2>
       <p class="experience-consent-notice" data-experience-terms-notice=${notice} role="status" aria-live="polite" aria-atomic="true" dir="auto">${this.i18n.system(notices[notice])}</p>
+      ${availability ? html`<p data-experience-availability-reason dir="auto">${this.i18n.t(availability.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[availability.id], availability.values)}</p>` : nothing}
       ${summary ? html`<dl class="experience-consent-facts">
         <div><dt>${this.i18n.system("Maximum cost")}</dt><dd><strong><bdi>${summary.maximumSpend}</bdi></strong></dd></div>
         <div><dt>${this.i18n.system("Output")}</dt><dd><strong dir="auto">${this.i18n.system(summary.output)}</strong>${summary.constraints.length ? html`<span class="experience-consent-constraints">${summary.constraints.map(item => html`<span dir="auto">${this.i18n.system(item.label)}: <bdi>${this.i18n.system(item.value)}</bdi></span>`)}</span>` : nothing}</dd></div>
