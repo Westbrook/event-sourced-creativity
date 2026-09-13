@@ -25,6 +25,28 @@ test("explicit operation cancellation rejects immediately without a timeout call
   assert.equal(callbacks, 0);
 });
 
+test("foreground host covers execution/body/refresh then expires once without extending authority", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const [action, output, deadline] of [["run","short_story",350000],["resumeRun","model3d",1010000],["recoverResult","image",230000]] as const) {
+    let callbacks = 0;
+    const operation = new ExperienceHostOperation(() => { callbacks++; }, undefined, {action,output});
+    const rejected = assert.rejects(operation.wait(new Promise<never>(() => {})), /operation_unconfirmed/u);
+    context.mock.timers.tick(30001); assert.equal(operation.current(), true);
+    context.mock.timers.tick(deadline - 30002); assert.equal(operation.current(), true);
+    context.mock.timers.tick(1); await rejected;
+    assert.equal(operation.current(), false); assert.equal(callbacks, 1);
+  }
+});
+
+test("foreground host withdrawal stays immediate regardless of its longer deadline", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let callbacks = 0;
+  const operation = new ExperienceHostOperation(() => { callbacks++; }, undefined, {action:"run",output:"video"});
+  const pending = assert.rejects(operation.wait(new Promise<never>(() => {})), /operation_withdrawn/u);
+  operation.cancel(); await pending; context.mock.timers.tick(1010000);
+  assert.equal(callbacks, 0); assert.equal(operation.current(), false);
+});
+
 test("finishing after a settled read suppresses timeout and rejects future waits", async context => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   let callbacks = 0;

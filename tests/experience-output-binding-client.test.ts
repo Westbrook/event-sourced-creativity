@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ExperienceHostOperation } from "../src/experiences/host-operation.ts";
+import { experienceHostTimeout, experienceResponseTimeout } from "../src/experiences/output-transport-lifetime.ts";
 import {
   decodeExperienceBinding,
   experienceResultGrantCurrent,
@@ -364,6 +366,84 @@ test("dispose aborts inflight work and a late response cannot resurrect original
   assert.equal(fake.calls[0].init.signal!.aborted, true); assert.equal(client.pending, false);
   finish(response(state("authorized"))); await operation;
   assert.deepEqual(client.state, unavailableBinding("withdrawn"));
+});
+
+test("foreground run survives both old cutoffs with one POST and accepts its late original response", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let finish!: (value: Response) => void;
+  const fake = transport([response(state("authorized")), () => new Promise<Response>(resolve => { finish = resolve; })]);
+  const client = new ExperienceOutputBindingClient(identity, { origin, current: () => true, request: fake.request });
+  await client.read(); const authorized = shown(client);
+  const host = new ExperienceHostOperation(() => client.dispose(), undefined, { action: "run", output: "image" });
+  const pending = host.wait(client.command("run", authorized));
+  context.mock.timers.tick(31000);
+  assert.equal(host.current(), true); assert.equal(client.pending, true); assert.equal(fake.calls[1].init.signal!.aborted, false);
+  await client.command("run", authorized); assert.equal(fake.calls.length, 2);
+  finish(response(state("succeeded"), basePath + "/run"));
+  assert.equal((await pending).status, "succeeded"); host.finish();
+  assert.deepEqual(fake.calls.map(call => call.init.method), ["GET", "POST"]);
+});
+
+test("foreground hard deadline retains uncertainty and suppresses late response without redispatch", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let finish!: (value: Response) => void;
+  const fake = transport([response(state("authorized")), () => new Promise<Response>(resolve => { finish = resolve; }), response(state("queued"))]);
+  const client = new ExperienceOutputBindingClient(identity, { origin, current: () => true, request: fake.request });
+  await client.read(); const authorized = shown(client), pending = client.command("run", authorized);
+  context.mock.timers.tick(299999); assert.equal(fake.calls[1].init.signal!.aborted, false);
+  context.mock.timers.tick(1); await pending;
+  assert.equal(fake.calls[1].init.signal!.aborted, true); assert.deepEqual(client.state, unavailableBinding("submission_unconfirmed"));
+  await client.command("run", authorized); assert.equal(fake.calls.length, 2);
+  await client.read(); const recovered = client.state;
+  finish(response(state("succeeded"), basePath + "/run")); await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(client.state, recovered); assert.equal(client.state.status, "queued");
+  assert.deepEqual(fake.calls.map(call => call.init.method), ["GET", "POST", "GET"]);
+});
+
+test("long foreground headers still permit only one nonrenewing twenty-second body window", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let finish!: (value: Response) => void, next!: (value: ReadableStreamReadResult<Uint8Array>) => void;
+  const fake = transport([response(state("authorized")), () => new Promise<Response>(resolve => { finish = resolve; })]);
+  const client = new ExperienceOutputBindingClient(identity, { origin, current: () => true, request: fake.request });
+  await client.read(); const pending = client.command("run", shown(client));
+  context.mock.timers.tick(45000);
+  const reply = response(state("succeeded"), basePath + "/run");
+  Object.defineProperty(reply.body, "getReader", { value: () => ({
+    read: () => new Promise<ReadableStreamReadResult<Uint8Array>>(resolve => { next = resolve; }), cancel: async () => {},
+  }) });
+  finish(reply); await new Promise<void>(resolve => setImmediate(resolve));
+  context.mock.timers.tick(19000); next({ done: false, value: new Uint8Array([32]) });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  context.mock.timers.tick(1000); await pending;
+  assert.equal(fake.calls[1].init.signal!.aborted, true); assert.deepEqual(client.state, unavailableBinding("submission_unconfirmed"));
+  assert.equal(fake.calls.length, 2);
+});
+
+test("ordinary delayed headers do not renew the twenty-second total deadline", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let finish!: (value: Response) => void;
+  const fake = transport([() => new Promise<Response>(resolve => { finish = resolve; })]);
+  const client = new ExperienceOutputBindingClient(identity, { origin, current: () => true, request: fake.request });
+  const pending = client.read(); context.mock.timers.tick(19000);
+  const reply = response(state("authorized"));
+  Object.defineProperty(reply.body, "getReader", { value: () => ({read: () => new Promise<never>(() => {}), cancel: async () => {}}) });
+  finish(reply); await new Promise<void>(resolve => setImmediate(resolve));
+  context.mock.timers.tick(999); assert.equal(client.pending, true); assert.equal(fake.calls[0].init.signal!.aborted, false);
+  context.mock.timers.tick(1); await pending;
+  assert.deepEqual(client.state, unavailableBinding("original_unavailable")); assert.equal(fake.calls[0].init.signal!.aborted, true);
+});
+
+test("foreground policy is action-specific and does not lengthen passive or admission waits", () => {
+  for (const action of ["read", "prepare", "authorize", "unknown"]) {
+    assert.equal(experienceResponseTimeout({action,output:"video"}), 20000);
+    assert.equal(experienceHostTimeout({action,output:"video"}), 30000);
+  }
+  for (const action of ["run", "resumeRun"]) for (const output of ["image","slides","short_story","scene","storyboard","audio","video","model3d"]) {
+    const expected = ["video","model3d"].includes(output) ? 960000 : 300000;
+    assert.equal(experienceResponseTimeout({action,output}), expected);
+    assert.equal(experienceHostTimeout({action,output}), expected + 50000);
+  }
+  assert.equal(experienceResponseTimeout({action:"recoverResult",output:"image"}), 180000);
 });
 
 test("binding lifetime: a never-finishing fetch times out and releases pending state", { timeout: 1000 }, async () => {

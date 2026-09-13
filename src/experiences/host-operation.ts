@@ -1,14 +1,17 @@
-/** Bounded presentation lifetime for existing passive native readers. A timeout
+import { experienceHostTimeout, type ExperienceForegroundOperation } from "./output-transport-lifetime.ts";
+
+/** Bounded presentation lifetime for native readers and explicit foreground jobs. A timeout
  * withdraws this host only; it never cancels billing or allocates another job. */
 export class ExperienceHostOperation {
   #active = true;
   #timer: ReturnType<typeof setTimeout>;
   #reject: (reason: Error) => void = () => {};
   #stopped: Promise<never>;
-  constructor(onTimeout: () => void, timeoutMs = 30000) {
+  constructor(onTimeout: () => void, timeoutMs?: number, foreground?: ExperienceForegroundOperation) {
     this.#stopped = new Promise<never>((_, reject) => { this.#reject = reject; });
     void this.#stopped.catch(() => {});
-    const bounded = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30000 ? timeoutMs : 30000;
+    const maximum = experienceHostTimeout(foreground);
+    const bounded = Number.isSafeInteger(timeoutMs) && Number(timeoutMs) > 0 && Number(timeoutMs) <= 30000 ? Number(timeoutMs) : maximum;
     this.#timer = setTimeout(() => {
       if (!this.#active) return;
       this.#active = false; this.#reject(new Error("operation_unconfirmed")); onTimeout();

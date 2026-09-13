@@ -41,6 +41,7 @@ import { registeredExperience, type ExperiencePlan } from "../experiences/intake
 import { ExperienceIntakeRuntime } from "../experiences/intake-runtime.ts";
 import { parseExperienceHostRoute, withExperienceReportFlag, type ExperienceHostSelection } from "../experiences/host-route.ts";
 import { ExperienceHostOperation } from "../experiences/host-operation.ts";
+import type { ExperienceForegroundOperation } from "../experiences/output-transport-lifetime.ts";
 import { ExperienceHostSourceLifetime } from "../experiences/host-source-lifetime.ts";
 import { experienceImageFormat } from "../experiences/image-ratio.ts";
 import { bindingJson, experienceResultGrantCurrent, ExperienceOutputBindingClient, type ExperienceBindingAction } from "../experiences/output-binding-client.ts";
@@ -142,7 +143,7 @@ export class FormaExperienceHost extends FormaElement {
     this.ownerDocument.defaultView?.removeEventListener("pagehide", this.#pagehide);
     super.disconnectedCallback();
   }
-  #beginOperation() {
+  #beginOperation(foreground?: ExperienceForegroundOperation) {
     this.#stopResultRead();
     this.#navigationEpoch++;
     this.#operation?.cancel();
@@ -150,7 +151,7 @@ export class FormaExperienceHost extends FormaElement {
       if (this.#operation !== operation) return;
       this.#operation = undefined; this.#binding?.client.dispose(); this.#clearResult(); this.#resetDecision();
       this.#busy = false; this.#loading = false; this.#refreshing = false; this.#status = "Operation unconfirmed"; this.requestUpdate();
-    });
+    }, undefined, foreground);
     this.#operation = operation; return operation;
   }
   #operationCurrent(operation: ExperienceHostOperation) { return this.#operation === operation && operation.current(); }
@@ -393,7 +394,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   async #command(action: ExperienceBindingAction, shown: ExperienceNativeState, sceneConsent?: SceneMiniAppCostApproval, audioConsent?: ExperienceAudioCostApproval, model3dConsent?: ExperienceModel3dCostApproval) {
     const binding = this.#binding; if (!binding || !this.#visible(binding) || this.#busy || shown !== this.#state()) return;
-    const operation = this.#beginOperation(), revealFocus = this.#captureCommandFocusVisibility(binding);
+    const operation = this.#beginOperation({ action, output: binding.client.identity.output }), revealFocus = this.#captureCommandFocusVisibility(binding);
     this.#commandFocusReveal = revealFocus;
     this.#busy = true; this.#resetDecision(); this.#clearResult(); this.#status = action === "recoverResult" ? this.i18n.system("Recovering") : "Recording"; this.requestUpdate();
     let followResult = false;

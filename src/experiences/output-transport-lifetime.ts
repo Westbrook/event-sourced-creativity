@@ -1,0 +1,18 @@
+import { OUTPUT_NATIVE_EXECUTION_POLICY, OUTPUT_MODEL3D_EXECUTION_POLICY, OUTPUT_VIDEO_EXECUTION_POLICY } from "../model/output-execution-policy.ts";
+
+export type ExperienceForegroundOperation = Readonly<{ action: string; output: string }>;
+export const EXPERIENCE_BODY_TIMEOUT_MS = 20_000;
+/** Waiting for an already authorized job grants no extra provider time, calls,
+ * source access or spend. Server execution/authority deadlines remain unchanged. */
+export function experienceResponseTimeout(operation?: ExperienceForegroundOperation) {
+  if (operation?.action === "recoverResult") return 120_000 + 60_000;
+  if (operation?.action !== "run" && operation?.action !== "resumeRun") return 20_000;
+  const policy = operation.output === "model3d" ? OUTPUT_MODEL3D_EXECUTION_POLICY
+    : operation.output === "video" ? OUTPUT_VIDEO_EXECUTION_POLICY : OUTPUT_NATIVE_EXECUTION_POLICY;
+  return policy.maximumMilliseconds + 60_000;
+}
+export function experienceHostTimeout(operation?: ExperienceForegroundOperation) {
+  const response = experienceResponseTimeout(operation);
+  // Include one bounded body read and the existing post-command refresh window.
+  return response === 20_000 ? 30_000 : response + EXPERIENCE_BODY_TIMEOUT_MS + 30_000;
+}

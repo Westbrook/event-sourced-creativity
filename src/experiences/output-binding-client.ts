@@ -1,4 +1,5 @@
 import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } from "../model/model3d-mini-app-consent.ts";
+import { EXPERIENCE_BODY_TIMEOUT_MS, experienceResponseTimeout } from "./output-transport-lifetime.ts";
 import { readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
 import type { ExperienceModel3dCostApproval } from "./output-binding-contract.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState, ExperienceNativeUnavailable } from "./output-binding-contract.ts";
@@ -165,7 +166,7 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
   } catch { return null; }
 }
 
-type Controls = { origin: string; current(): boolean; request?: typeof fetch; /** Bounded test seam; production defaults to 20 seconds. */ timeoutMs?: number };
+type Controls = { origin: string; current(): boolean; request?: typeof fetch; /** Short bounded test seam; production waits follow the original action. */ timeoutMs?: number };
 /** Original-intent transport. No browser UUID, automatic POST, rebase or replacement. */
 export class ExperienceOutputBindingClient {
   readonly identity: ExperienceBindingIdentity;
@@ -206,13 +207,14 @@ export class ExperienceOutputBindingClient {
     const current = () => epoch === this.#epoch && !abort.signal.aborted && this.#controls.current();
     const path = `/api/experiences/drafts/${encodeURIComponent(this.identity.draftId)}/output${action ? "/" + (action === "recoverResult" ? "recover-result" : action) : ""}`;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const timeoutMs = Number.isSafeInteger(this.#controls.timeoutMs) && Number(this.#controls.timeoutMs) > 0 && Number(this.#controls.timeoutMs) <= 20000 ? Number(this.#controls.timeoutMs) : 20000;
+    const testTimeout = Number.isSafeInteger(this.#controls.timeoutMs) && Number(this.#controls.timeoutMs) > 0 && Number(this.#controls.timeoutMs) <= 20000 ? Number(this.#controls.timeoutMs) : undefined;
+    const timeoutMs = testTimeout ?? experienceResponseTimeout(action ? { action, output: this.identity.output } : undefined);
     let rejectStopped: (reason: Error) => void = () => {};
     const stopped = new Promise<never>((_, reject) => { rejectStopped = reject; });
     void stopped.catch(() => {});
     const withdrawn = () => rejectStopped(new Error("withdrawn"));
     abort.signal.addEventListener("abort", withdrawn, { once: true });
-    const timer = setTimeout(() => abort.abort(), timeoutMs);
+    let timer = setTimeout(() => abort.abort(), timeoutMs);
     const limited = <T>(promise: Promise<T>) => Promise.race([promise, stopped]);
     try {
       const url = new URL(path, this.#controls.origin);
@@ -220,6 +222,11 @@ export class ExperienceOutputBindingClient {
       const response = await limited((this.#controls.request ?? fetch)(path, { method, credentials: "same-origin", cache: "no-store", redirect: "error", signal: abort.signal,
         headers: { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }));
       if (!current() || response.redirected || response.url !== url.href || !/^application\/json(?:\s*;|$)/iu.test(response.headers.get("content-type") ?? "") || !response.body) throw new Error("unavailable");
+      // A long foreground execution must not grant a long or renewable body read.
+      if (timeoutMs > EXPERIENCE_BODY_TIMEOUT_MS) {
+        clearTimeout(timer);
+        timer = setTimeout(() => abort.abort(), EXPERIENCE_BODY_TIMEOUT_MS);
+      }
       const declared = response.headers.get("content-length");
       if (declared !== null && (!/^(0|[1-9]\d*)$/u.test(declared) || !Number.isSafeInteger(Number(declared)) || Number(declared) > 262144)) throw new Error("unavailable");
       reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
