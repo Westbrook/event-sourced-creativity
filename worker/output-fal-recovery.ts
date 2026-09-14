@@ -1,5 +1,5 @@
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
-import { readFalRecoveryCheckpoint, falRecoveryEventProvenance, falRecoveryJobStateAllowed } from "./output-fal-recovery-policy.ts";
+import { readFalRecoveryCheckpoint, falRecoveryEventProvenance, falRecoveryJobStateAllowed, type FalRecoveryStage } from "./output-fal-recovery-policy.ts";
 import { loadOutputJobBinding, reconcileKnownOutputProviderReceipts, prepareOutputJobOutcomeStatements } from "./output-execution-control.ts";
 import { resolveOutputFalRecoveryAuthority } from "./output-requirements-api.ts";
 import { guardOutputPrivateWrites } from "./output-private-execution.ts";
@@ -40,11 +40,14 @@ async function acknowledgedRecoveryBatch<T extends Record<string,unknown>>(db:D1
 /** Explicit recovery of one original personal Fal Image. No paid dispatcher is
  * reachable here. The failed job is not requeued; only an exact GET/publication
  * lease is claimed. Immutable failure events and the prior failure fields remain. */
-export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,options:{assertions:OutputSqlAssertion[];signal?:AbortSignal}){
+export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,options:{assertions:OutputSqlAssertion[];signal?:AbortSignal;onStage?:(stage:FalRecoveryStage)=>void}){
+  options.onStage?.("binding");
   const binding=await loadOutputJobBinding(env,user,job);if(!binding)reject("output_native_operation_required");
   const {scope,slot}=binding;
   if(job.output_slot_id!==slot.slotId||job.kind!=="generate"||!falRecoveryJobStateAllowed(job.status,slot.status))reject("output_fal_recovery_job_unavailable");
+  options.onStage?.("authority");
   const proof=await resolveOutputFalRecoveryAuthority(env,scope,slot);
+  options.onStage?.("checkpoint");
   const settings=object(proof.targetPreflight.settings),payload=object(settings.payload),contract=readOutputFalImageContract(payload.outputFalImage);
   if(!contract)reject("output_fal_recovery_contract_unavailable");
   const metadata=parse(job.result_json),checkpoint=readFalRecoveryCheckpoint(metadata.outputFalCheckpoint);
@@ -62,6 +65,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     const results=await acknowledgedRecoveryBatch<T>(env.DB,[...[...assertions,...extra].flatMap(a=>outputAssertionStatements(env,a)),statement]);return results.at(-1)!.results;
   };
   const completedRead=async()=>{
+    options.onStage?.("completion_read");
     const rows=await guardedRead(env.DB.prepare(`SELECT job.result_json FROM document_jobs job JOIN events done ON done.event_id=json_extract(job.result_json,'$.outputFalRecovery.completionEventId')
       JOIN event_private_payloads body ON body.private_event_id=done.event_id AND body.redacted_at IS NULL
       WHERE job.job_id=? AND job.owner_id=? AND job.status='completed' AND done.stream_id=job.stream_id AND done.correlation_id=job.correlation_id AND done.type='GenerationCompleted'
@@ -71,17 +75,21 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     return rows.length===1?{status:"completed" as const,jobId:job.job_id,slotId:slot.slotId,replayed:true}:null;
   };
   if(job.status==="completed")return await completedRead()??reject("output_fal_recovery_completion_unavailable");
+  options.onStage?.("private_read");
   const contents=await guardedRead<{content_id:string;kind:string;content:string;expires_at:string}>(env.DB.prepare(`SELECT content_id,kind,content,expires_at FROM private_content
     WHERE content_id IN(?,?) AND owner_id=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes scope WHERE scope.resource_kind='content' AND scope.resource_id=private_content.content_id)`)
     .bind(checkpoint.requestRef,checkpoint.planningRef,user.userId));
   const request=contents.find(x=>x.content_id===checkpoint.requestRef&&x.kind==='prompt'),planning=contents.find(x=>x.content_id===checkpoint.planningRef&&x.kind==='provider-output');
   if(!request||!planning||await hash(request.content)!==checkpoint.requestSha256||await hash(planning.content)!==checkpoint.planningSha256)reject("output_fal_recovery_content_unavailable");
+  options.onStage?.("request_restore");
   const captured=await restoreOutputFalImageRequest(contract,request.content,checkpoint.clientRequestId,checkpoint.requestDigest);
+  options.onStage?.("planning");
   const plan=parse(planning.content),planned=object(plan.planned),usage=object(planned.usage),direction=object(planned.output),generationId=plan.generationId;
   if(typeof generationId!=="string"||!/^[a-zA-Z0-9-]{1,80}$/u.test(generationId)||typeof planned.raw!=="string"||JSON.stringify(JSON.parse(planned.raw))!==JSON.stringify(direction)
     ||planned.model!==contract.plannerModel||typeof planned.responseId!=="string"||!planned.responseId||!['inputTokens','outputTokens','totalTokens'].every(k=>tokenCount(usage[k]))
     ||Number(usage.totalTokens)!==Number(usage.inputTokens)+Number(usage.outputTokens))reject("output_fal_recovery_plan_unavailable");
+  options.onStage?.("calls_read");
   const calls=await guardedRead(env.DB.prepare("SELECT * FROM output_provider_calls WHERE scope_key=? AND slot_id=? ORDER BY call_key").bind(scope.key,slot.slotId));
   const call=calls.find(c=>c.call_key==='image:initial'),planner=calls.find(c=>c.call_key==='planning:initial');
   if(calls.length!==2||!call||!planner||call.client_request_id!==checkpoint.clientRequestId||call.request_digest!==checkpoint.requestDigest||call.stage_key!=='image:initial'||call.provider!=='fal'||call.model!==contract.model
@@ -89,6 +97,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     ||planner.provider!=='openai'||planner.model!==contract.plannerModel||planner.stage_key!=='planning:initial'||planner.status!=='settled'||planner.provider_response_id!==planned.responseId
     ||!tokenCount(planner.used_microusd))reject("output_fal_recovery_call_unavailable");
   const receipt=falImageProviderReceipt(contract.model,call.provider_response_id);
+  options.onStage?.("origin");
   const compiled=proof.events.filter(e=>e.type==='ContextCompiled'&&e.correlationId===job.correlation_id&&e.payload.generation_id===generationId&&e.payload.document_id===scope.documentId);
   if(compiled.length!==1)reject("output_fal_recovery_origin_unavailable");
   const provenance=falRecoveryEventProvenance(contract,settings.imageRender,compiled[0]!.payload,plan.planningSource);
@@ -102,6 +111,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     AND (lease_expires_at IS NULL OR lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     AND json_extract(result_json,'$.outputFalRecovery.token')=? AND json_extract(result_json,'$.outputFalRecovery.expiresAt')=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     AND NOT EXISTS(SELECT 1 FROM document_jobs competitor WHERE competitor.stream_id=document_jobs.stream_id AND competitor.document_id=document_jobs.document_id AND competitor.job_id<>document_jobs.job_id AND competitor.status IN('running','committing') AND competitor.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,bindings:[job.job_id,user.userId,token,expiresAt,expiresAt]};
+  options.onStage?.("lease");
   await acknowledgedRecoveryBatch(env.DB,[...assertions.flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare(`UPDATE document_jobs SET result_json=json_set(COALESCE(result_json,'{}'),'$.outputFalRecovery',json(?)) WHERE job_id=? AND owner_id=? AND status='failed' AND result_json IS ?
     AND (lease_expires_at IS NULL OR lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     AND (json_type(result_json,'$.outputFalRecovery') IS NULL OR json_extract(result_json,'$.outputFalRecovery.expiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -112,16 +122,22 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
   const assertCurrent=async()=>{if(signal.aborted)throw new Error("output_fal_recovery_canceled");await acknowledgedRecoveryBatch(env.DB,live().flatMap(a=>outputAssertionStatements(env,a)));};
   const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy});
   try{
+    options.onStage?.("provider_read");
     const result=await readOutputFalImageResult(env,captured,receipt,{assertCurrent,signal});
     if(result.status==='pending')return{status:"pending" as const,jobId:job.job_id,slotId:slot.slotId,replayed:false};
+    options.onStage?.("call_settle");
     await settleOutputProviderCall(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:'image:initial',clientRequestId:checkpoint.clientRequestId,status:'settled',usedMicrousd:result.costBreakdown.totalMicrousd,providerResponseId:receipt.providerRequestId,assertions:live()});
     const paid={clientRequestId:checkpoint.clientRequestId,provider:'fal',operation:'image',model:contract.model,status:'completed',providerRequestId:receipt.providerRequestId,costMicrousd:result.costBreakdown.totalMicrousd,inputTokens:0,outputTokens:0,totalTokens:0};
+    options.onStage?.("receipt_write");
     await acknowledgedRecoveryBatch(env.DB,[...live().flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?) WHERE job_id=? AND owner_id=?")
       .bind(JSON.stringify({providerSubmissions:{[checkpoint.clientRequestId]:paid}}),job.job_id,user.userId)]);
+    options.onStage?.("account_settle");
     const settlement=await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});
     if(settlement.status==='uncertain')reject("output_fal_recovery_settlement_unavailable");
     await assertCurrent();
+    options.onStage?.("storage_write");
     const media=await storeGeneratedImage(privateEnv,scope.ownerUserId,storageArtifactId,result.bytes,contract.model,'image/png',{generationId,provider:'fal',providerRequestId:receipt.providerRequestId,adapter:`${contract.adapterId}-${contract.adapterVersion}`});
+    options.onStage?.("private_write");
     const output=await storePrivateContent(privateEnv,user.userId,'provider-output',planned.raw),prompt=await storePrivateContent(privateEnv,user.userId,'prompt',String(JSON.parse(captured.body).prompt));
     const objectId=`object-${generationId.slice(-8)}`,complete=makeEvent(job.stream_id,1,'worker:generator','output-fal-recovery',job.correlation_id,'GenerationCompleted',{
       ...provenance,
@@ -136,6 +152,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
       cost_microusd:Number(planner.used_microusd)+result.costBreakdown.totalMicrousd,image_cost_precision:'provider-pixel-rate-estimate',image_pricing_version:contract.pricingVersion,recovered:true,
     },{causationId:complete.eventId});
     const ids=JSON.stringify([complete.eventId,usageEvent.eventId]);
+    options.onStage?.("publish");
     try{
       await appendEvents(privateEnv,[complete,usageEvent],{retries:1,prepareSidecars:()=>[
         ...outputAssertionStatements(env,{sql:"(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=2",bindings:[ids]}),
@@ -143,7 +160,11 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
           .bind(new Date().toISOString(),JSON.stringify({stage:'completed',errorDetail:null,outputFalRecovery:{...lease,status:'completed',completionEventId:complete.eventId},generationReceipt:{provider_request_status:'completed'}}),new Date().toISOString(),job.job_id,user.userId),
         ...prepareOutputJobOutcomeStatements(env,job),
       ]});
-    }catch(error){if(await completedRead())return{status:'completed' as const,jobId:job.job_id,slotId:slot.slotId,replayed:true};throw error;}
+    }catch(error){
+      if(await completedRead())return{status:'completed' as const,jobId:job.job_id,slotId:slot.slotId,replayed:true};
+      options.onStage?.("publish");
+      throw error;
+    }
     return{status:'completed' as const,jobId:job.job_id,slotId:slot.slotId,replayed:false};
   }finally{
     // Token-fenced release never clears a newer lease or a completed receipt.

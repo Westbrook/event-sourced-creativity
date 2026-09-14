@@ -17,7 +17,7 @@ import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRene
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
-import { retainedPersonalFalRecoverySql, falRecoveryJobStateAllowed } from "./output-fal-recovery-policy.ts";
+import { retainedPersonalFalRecoverySql, falRecoveryJobStateAllowed, type FalRecoveryStage } from "./output-fal-recovery-policy.ts";
 import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import { canonicalJson } from "../src/experiences/compiler.ts";
@@ -56,7 +56,7 @@ output_scene_original_unavailable output_scene_personal_source_required output_s
 scene_cost_changed scene_cost_authority_changed scene_cost_request_required scene_cost_request_invalid document_not_found context_source_rights_expired scene_cost_confirmation_required
 context_block_not_authorized context_source_not_authorized context_source_version_mismatch context_source_evidence_unavailable context_source_rights_required context_decisions_contradict
 output_source_proof_too_large output_source_changed_during_read`.split(/\s+/u));
-type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
+type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `recover_result_${FalRecoveryStage}` | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
 function diagnosticKind(cause: unknown) {
   if (!(cause instanceof Error)) return "unknown";
   const message = cause.message.slice(0, 2048);
@@ -84,6 +84,8 @@ const nativeDiagnosticSubtypes = new Map([
     "output_fal_recovery_settlement_unavailable", "output_fal_recovery_unavailable", "output_fal_recovery_receipt_mismatch",
     "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty",
     "output_fal_recovery_ack_unavailable",
+    "output_fal_checkpoint_invalid", "output_job_binding_missing", "output_job_scope_mismatch", "output_execution_authority_revoked", "output_execution_scope_mismatch",
+    "output_execution_grant_not_found", "output_execution_context_changed",
   ].map(code => [code, code] as const),
 ]);
 function diagnosticSubtype(cause: unknown): string | undefined {
@@ -565,7 +567,8 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
         .bind(current.original.jobId,loaded.trusted.scope.actorUserId,loaded.binding.streamId,loaded.binding.documentId).first<DocumentJobRow>();
       if (!job) error("experience_output_original_job_unavailable",410);
       const recover=loaded.binding.output==="video"?recoverOutputVideo:recoverOutputFalImage;
-      const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal});
+      const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal,
+        ...(loaded.binding.output==="image"?{onStage:(stage:FalRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
       recovered = outcome.status;
     }
     diagnosticStage = "final_load";

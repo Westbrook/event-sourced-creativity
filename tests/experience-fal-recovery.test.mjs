@@ -129,3 +129,34 @@ test("actual recovery currentness gate stops the original GET after malformed ba
     }
   }finally{globalThis.fetch=before;}
 });
+test("recovery reports only fixed stages and preserves original early failures without provider work",async()=>{
+  const {source,stripTypeScriptTypes}=await recoveryBatchSeam();
+  const {falRecoveryJobStateAllowed}=await import('../worker/output-fal-recovery-policy.ts');
+  const stageNames=[...source.matchAll(/options\.onStage\?\.\("([a-z_]+)"\)/gu)].map(match=>match[1]);
+  assert.deepEqual(stageNames,['binding','authority','checkpoint','completion_read','private_read','request_restore','planning','calls_read','origin','lease','provider_read','call_settle','receipt_write','account_settle','storage_write','private_write','publish','publish']);
+  assert.equal((source.match(/options\.onStage\?\./gu)||[]).length,stageNames.length,'No dynamic or private stage payload');
+  const body=stripTypeScriptTypes(source.slice(source.indexOf('const object='))).replace('export async function recoverOutputFalImage','async function recoverOutputFalImage');
+  for(const stop of ['binding','authority','checkpoint']){
+    const sentinel=new Error('private retained source detail'),stages=[];let provider=0;
+    const recover=new Function('loadOutputJobBinding','resolveOutputFalRecoveryAuthority','readOutputFalImageContract','falRecoveryJobStateAllowed','readOutputFalImageResult',body+';return recoverOutputFalImage;')(
+      async()=>{if(stop==='binding')throw sentinel;return{scope:{},slot:{slotId:'slot',status:'running'}};},
+      async()=>{if(stop==='authority')throw sentinel;return{targetPreflight:{settings:{payload:{}}}};},
+      ()=>{throw sentinel;},falRecoveryJobStateAllowed,()=>{provider++;throw Error('forbidden');});
+    await assert.rejects(recover({}, {}, {output_slot_id:'slot',kind:'generate',status:'failed'}, {assertions:[],onStage:stage=>stages.push(stage)}),error=>error===sentinel);
+    assert.deepEqual(stages,['binding','authority','checkpoint'].slice(0,['binding','authority','checkpoint'].indexOf(stop)+1));
+    assert.equal(provider,0);assert.ok(!JSON.stringify(stages).includes('private'));
+  }
+});
+test("publication replay preserves the original error and its stage unless replay itself fails",async()=>{
+  const {source,stripTypeScriptTypes}=await recoveryBatchSeam();
+  const start=source.indexOf('}catch(error){',source.indexOf('await appendEvents'));
+  const end=source.indexOf("\n    return{status:'completed'",start);
+  const body=stripTypeScriptTypes('async function probe(){try{throw original;'+source.slice(start,end)+'}');
+  for(const outcome of ['missing','read_failure','completed']){
+    const original=new Error('publication failure'),readFailure=new Error('replay failure'),stages=['publish'];
+    const probe=new Function('original','completedRead','options','job','slot',body+';return probe;')(original,async()=>{stages.push('completion_read');if(outcome==='read_failure')throw readFailure;return outcome==='completed'?{}:null;},{onStage:stage=>stages.push(stage)},{job_id:'job'},{slotId:'slot'});
+    if(outcome==='completed')assert.deepEqual(await probe(),{status:'completed',jobId:'job',slotId:'slot',replayed:true});
+    else await assert.rejects(probe(),error=>error===(outcome==='missing'?original:readFailure));
+    assert.equal(stages.at(-1),outcome==='missing'?'publish':'completion_read');
+  }
+});

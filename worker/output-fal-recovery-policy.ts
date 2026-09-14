@@ -1,5 +1,7 @@
 import { imageFormatEventFields } from "../src/model/image-format.ts";
 import { readOutputFalImageContract, type OutputFalImageContract } from "../src/model/output-fal-image-contract.ts";
+export type FalRecoveryStage = "binding" | "authority" | "checkpoint" | "completion_read" | "private_read" | "request_restore" | "planning"
+  | "calls_read" | "origin" | "lease" | "provider_read" | "call_settle" | "receipt_write" | "account_settle" | "storage_write" | "private_write" | "publish";
 
 /** A failed worker may retain its original running operation while the accepted
  * provider call is uncertain. Recovery is still fenced by the original receipt
