@@ -48,3 +48,11 @@ test('request SQL budget counts statements and reserves readback before upload',
   assert.ok(source.indexOf('life.capacity(current.witnessQueries')<source.indexOf('const upload = input.bytes.slice()'));
   assert.ok(source.includes('life.sql(prefix.length+statements.length)'));
 });
+test('interruption diagnostics are once-only fixed categories with no private fields',()=>{
+  const start=source.indexOf('stop = () => {'),end=source.indexOf('timer = setTimeout(stop',start);
+  const body=source.slice(start,end);assert.ok(body.includes('if(!life.active)return;'));
+  assert.ok(body.includes('if(request.method==="GET")console.warn("generated_image_read_interrupted",{stage:life.readStage,kind:request.signal.aborted?"request_aborted":"deadline",queries:life.queryCount})'));
+  assert.ok(body.indexOf('if(!life.active)return;')<body.indexOf('console.warn'));
+  assert.ok(body.indexOf('life.stop()')<body.indexOf('resolve(reply'));
+  assert.ok(source.includes('const DEADLINE_MS = 30_000;'));
+});

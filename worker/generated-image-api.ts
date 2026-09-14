@@ -82,6 +82,7 @@ class Lifetime {
   active = true;
   writing = false;
   private sqlCount=0;
+  get queryCount(){return this.sqlCount;}
   capacity(count:number){this.check();requireFact(integer(count)&&this.sqlCount+count<=900);}
   sql(count:number){this.capacity(count);this.sqlCount+=count;}
   readStage: "admission" | "witness_read" | "event_witness_capacity" | "revision_witness_capacity" | "witness_bounds" | "event_decode" | "event_order" | "origin_alias" | "origin_fields" | "origin_path" | "projection" | "origin_envelope" | "private_content" | "revision" | "sources" | "current_guard" | "media_read" | "media_hash" | "png_facts" = "admission";
@@ -535,7 +536,11 @@ export async function handleGeneratedImageEdit(request: Request, env: WorkerEnv,
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stop: (() => void) | undefined;
   const interrupted = new Promise<Response>(resolve => {
-    stop = () => { life.stop(); resolve(reply(life.writing ? { status: "unconfirmed", code: "unconfirmed" } : { status: "refused", code: "unavailable" }, life.writing ? 200 : 408)); };
+    stop = () => {
+      if(!life.active)return;
+      if(request.method==="GET")console.warn("generated_image_read_interrupted",{stage:life.readStage,kind:request.signal.aborted?"request_aborted":"deadline",queries:life.queryCount});
+      life.stop(); resolve(reply(life.writing ? { status: "unconfirmed", code: "unconfirmed" } : { status: "refused", code: "unavailable" }, life.writing ? 200 : 408));
+    };
     timer = setTimeout(stop, DEADLINE_MS);
     request.signal.addEventListener("abort", stop, { once: true });
     if (request.signal.aborted) stop();

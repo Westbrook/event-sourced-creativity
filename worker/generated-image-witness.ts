@@ -96,12 +96,23 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
   const guards:ImageWitnessGuard[]=sceneSourceVersionAssertions(version).map(value=>({sql:value.sql,bindings:[...value.bindings??[]] as ImageWitnessGuard['bindings']}));
   const pageGuards=compact(guards);
   let reads=0;
-  const read=async(sql:string,bindings:ImageWitnessGuard['bindings'])=>{
-    life.check();if(++reads>IMAGE_WITNESS_LIMITS.reads)fail('capacity_reads');
-    const results=await batch([env.DB.prepare(sql).bind(...bindings),...pageGuards.map(guard=>imageWitnessStatement(env,guard))]);
-    if(!dense(results)||results.length!==1+pageGuards.length||!checked(results[0])||!imageWitnessAcknowledged(results.slice(1),pageGuards.length))fail('changed');
-    return results[0].results;
+  const readMany=async(queries:{sql:string;bindings:ImageWitnessGuard['bindings']}[])=>{
+    life.check();if(!queries.length||queries.length>4||reads+queries.length>IMAGE_WITNESS_LIMITS.reads)fail('capacity_reads');
+    reads+=queries.length;
+    const width=1+pageGuards.length;
+    const results=await batch(queries.flatMap(({sql,bindings})=>[env.DB.prepare(sql).bind(...bindings),...pageGuards.map(guard=>imageWitnessStatement(env,guard))]));
+    // Validate the complete original batch before consuming any page. Every
+    // prefetched page keeps its own unchanged original-version predicates.
+    if(!dense(results)||results.length!==queries.length*width)fail('changed');
+    const pages:Row[][]=[];
+    for(let i=0;i<queries.length;i++){
+      const index=i*width,result=results[index];
+      if(!checked(result)||!imageWitnessAcknowledged(results.slice(index+1,index+width),pageGuards.length))fail('changed');
+      pages.push(result.results);
+    }
+    return pages;
   };
+  const read=async(sql:string,bindings:ImageWitnessGuard['bindings'])=>(await readMany([{sql,bindings}]))[0]!;
   const totals=await read(`WITH source AS (${relation}) SELECT COUNT(*) AS count,COALESCE(MAX(sequence),0) AS head,
     COALESCE(SUM(length(CAST(payload AS BLOB))+COALESCE(length(CAST(private_json AS BLOB)),0)),0) AS raw_bytes FROM source`,[streamId]);
   const total=totals[0];
@@ -109,17 +120,30 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
   if(total.count===0||total.count>IMAGE_WITNESS_LIMITS.events)fail('capacity_event_count');
   const scan=consumer?IMAGE_STREAM_SCAN_LIMITS:IMAGE_WITNESS_LIMITS;
   if(total.raw_bytes>scan.eventBytes)fail('capacity_event_bytes');
-  const eventRows:Row[]=[];let cursor=0,jsonBytes=2,eventCount=0;
+  const eventRows:Row[]=[];let cursor=0,jsonBytes=2,eventCount=0,prefetch=consumer?4:1;
   while(eventCount<total.count){
-    const page=await read(`WITH source AS (${relation}), page AS MATERIALIZED
-      (SELECT sequence,${eventCell} AS witness FROM source WHERE sequence>? ORDER BY sequence LIMIT ${IMAGE_WITNESS_LIMITS.pageRows}),
+    const size=Math.min(prefetch,Math.ceil((total.count-eventCount)/IMAGE_WITNESS_LIMITS.pageRows),IMAGE_WITNESS_LIMITS.reads-reads);
+    const pages=await readMany(Array.from({length:size},(_,index)=>({sql:`WITH source AS (${relation}), page AS MATERIALIZED
+      (SELECT sequence,${eventCell} AS witness FROM source WHERE sequence>? ORDER BY sequence LIMIT ${IMAGE_WITNESS_LIMITS.pageRows} OFFSET ${index*IMAGE_WITNESS_LIMITS.pageRows}),
       budgeted AS (SELECT *,SUM(COALESCE(length(CAST(witness AS BLOB)),1)+1) OVER (ORDER BY sequence) AS used FROM page)
-      SELECT sequence,witness FROM budgeted WHERE used<=${IMAGE_WITNESS_LIMITS.pageBytes} ORDER BY sequence`,[streamId,cursor]);
+      SELECT sequence,witness FROM budgeted WHERE used<=${IMAGE_WITNESS_LIMITS.pageBytes} ORDER BY sequence`,bindings:[streamId,cursor]})));
+    // Bound every staged response, even a later page we may have to discard.
+    // Four unchanged 512KB page budgets bound this temporary group to 2,048KB.
+    const sizes=pages.map(page=>{
+      if(page.length>IMAGE_WITNESS_LIMITS.pageRows)fail('capacity_event_page');
+      let totalBytes=0;
+      const values=page.map(item=>{if(typeof item.witness!=='string')fail('capacity_event_row');const n=bytes(item.witness)+1;totalBytes+=n;return n;});
+      if(totalBytes>IMAGE_WITNESS_LIMITS.pageBytes)fail('capacity_event_page');
+      return values;
+    });
+    for(let pageIndex=0;pageIndex<pages.length;pageIndex++){
+    const page=pages[pageIndex]!;
     if(!page.length)fail('capacity_event_page');
     let pageBytes=0;
-    for(const item of page){
+    for(let itemIndex=0;itemIndex<page.length;itemIndex++){
+      const item=page[itemIndex]!;
       if(!integer(item.sequence)||item.sequence<=cursor||typeof item.witness!=='string')fail('capacity_event_row');
-      const size=bytes(item.witness)+1;pageBytes+=size;jsonBytes+=size;
+      const size=sizes[pageIndex]![itemIndex]!;pageBytes+=size;jsonBytes+=size;
       if(pageBytes>IMAGE_WITNESS_LIMITS.pageBytes)fail('capacity_event_page');
       if(jsonBytes>scan.eventJsonBytes)fail('capacity_event_json');
       const row:Row=JSON.parse(item.witness);if(row.sequence!==item.sequence||row.stream_id!==streamId)fail('changed');
@@ -127,6 +151,13 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
     }
     if(eventCount>total.count)fail('changed');
     consumer?.checkpoint();
+    if(page.length<IMAGE_WITNESS_LIMITS.pageRows){
+      // A byte-limited page may end before the next prefetched offset. Never
+      // skip that gap: discard later pages and continue at the consumed cursor.
+      // Stay sequential thereafter, avoiding repeated wasted reads on dense data.
+      prefetch=1;break;
+    }
+    }
   }
   if(cursor!==total.head)fail('changed');
   // Source counters do not cover revisions. Preserve complete membership plus

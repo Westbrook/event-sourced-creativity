@@ -105,3 +105,35 @@ test('incremental consumers exceed array capacity without retaining raw rows and
     if(!changed){changed=true;f.event(171);}
   }}),/image_witness_changed/);
 });
+
+test('prefetch reduces round trips but keeps per-page proofs and exact complete order',async t=>{
+  const f=fixture(t);for(let n=1;n<=2048;n++)f.event(n);await f.capture();
+  const original=f.env.DB.batch;let batches=0,statements=0;
+  f.env.DB.batch=async values=>{batches++;statements+=values.length;return original(values);};
+  const sequential=await f.read();const baseline=batches;batches=0;statements=0;const seen=[];
+  const result=await readImageWitness(f.env,'creative:a','a','generated-image/key','output',life,{accept(row){seen.push(row.sequence);},checkpoint(){}});
+  assert.deepEqual(seen,Array.from({length:2048},(_,i)=>i+1));
+  assert.ok(batches<baseline);assert.equal(result.queryCount,statements);assert.equal(result.queryCount,sequential.queryCount);
+  assert.equal(result.reads,sequential.reads);assert.equal(result.head,2048);assert.equal(await f.verify(result.guards),true);
+});
+for(const start of [1,257])test('byte-limited prefetched page at '+start+' never skips its unfinished range',async t=>{
+  const f=fixture(t);for(let n=1;n<=1200;n++)f.event(n,JSON.stringify({text:'x'.repeat(n>=start&&n<start+256?6000:10)}));await f.capture();
+  const sequential=await f.read();const seen=[];let statements=0;
+  const result=await readImageWitness(f.env,'creative:a','a','generated-image/key','output',{...life,sql(n){statements+=n;}},{accept(row){seen.push(row.sequence);},checkpoint(){}});
+  assert.deepEqual(seen,Array.from({length:1200},(_,i)=>i+1));assert.equal(result.queryCount,statements);
+  assert.equal(result.reads,sequential.reads+(start===1?3:2));assert.equal(result.head,1200);
+});
+test('bad later prefetched acknowledgment prevents consuming even the first page',async t=>{
+  const f=fixture(t);for(let n=1;n<=1024;n++)f.event(n);await f.capture();
+  const original=f.env.DB.batch;let consumed=0;
+  f.env.DB.batch=async values=>{const rows=await original(values);if(values.length===8)rows[7]={success:true,results:[{current:0}]};return rows;};
+  await assert.rejects(readImageWitness(f.env,'creative:a','a','generated-image/key','output',life,{accept(){consumed++;},checkpoint(){}}),/image_witness_changed/);
+  assert.equal(consumed,0);
+});
+test('prefetch charges SQL before dispatch and still rejects mutation between groups',async t=>{
+  const f=fixture(t);for(let n=1;n<=2048;n++)f.event(n);await f.capture();let queries=0,consumed=0;
+  await assert.rejects(readImageWitness(f.env,'creative:a','a','generated-image/key','output',{...life,sql(n){if(queries+n>5)throw Error('SQL budget');queries+=n;}},{accept(){consumed++;},checkpoint(){}}),/SQL budget/);
+  assert.equal(queries,4);assert.equal(consumed,0);
+  let changed=false;
+  await assert.rejects(readImageWitness(f.env,'creative:a','a','generated-image/key','output',life,{accept(){},checkpoint(){if(!changed){changed=true;f.event(2049);}}}),/image_witness_changed/);
+});
