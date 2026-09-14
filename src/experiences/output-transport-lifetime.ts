@@ -8,6 +8,11 @@ export function experienceResponseTimeout(operation?: ExperienceForegroundOperat
   // Preparation performs save, confirm and preflight with fresh custody reads.
   // This is one explicit intent, not automatic continuation or paid execution.
   if (operation?.action === "prepare" || operation?.action === "renewPreparation") return 120_000;
+  // Video admission rereads the retained image, rights and quote before its
+  // atomic grant. Account-sized custody reads can exceed the old 20s client
+  // cutoff. This only waits for that explicit request; server expiry, source
+  // proofs, consent and budgets remain unchanged, with no automatic retry/run.
+  if (operation?.action === "authorize" && operation.output === "video") return 120_000;
   if (operation?.action === "recoverResult") return 120_000 + 60_000;
   if (operation?.action !== "run" && operation?.action !== "resumeRun") return 20_000;
   const policy = operation.output === "model3d" ? OUTPUT_MODEL3D_EXECUTION_POLICY

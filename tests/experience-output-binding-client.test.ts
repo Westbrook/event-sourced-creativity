@@ -480,11 +480,15 @@ test("ordinary delayed headers do not renew the twenty-second total deadline", a
   assert.deepEqual(client.state, unavailableBinding("original_unavailable")); assert.equal(fake.calls[0].init.signal!.aborted, true);
 });
 
-test("foreground policy is action-specific and does not lengthen passive or admission waits", () => {
-  for (const action of ["read", "authorize", "unknown"]) {
+test("foreground policy only extends explicit Video admission, never passive or other admission waits", () => {
+  for (const action of ["read", "unknown"]) {
     assert.equal(experienceResponseTimeout({action,output:"video"}), 20000);
     assert.equal(experienceHostTimeout({action,output:"video"}), 30000);
   }
+  for (const output of ["image","slides","short_story","scene","storyboard","audio","model3d","unknown"])
+    assert.equal(experienceResponseTimeout({action:"authorize",output}),20000);
+  assert.equal(experienceResponseTimeout({action:"authorize",output:"video"}),120000);
+  assert.equal(experienceHostTimeout({action:"authorize",output:"video"}),170000);
   for (const action of ["run", "resumeRun"]) for (const output of ["image","slides","short_story","scene","storyboard","audio","video","model3d"]) {
     const expected = ["video","model3d"].includes(output) ? 960000 : 300000;
     assert.equal(experienceResponseTimeout({action,output}), expected);
@@ -493,6 +497,54 @@ test("foreground policy is action-specific and does not lengthen passive or admi
   assert.equal(experienceResponseTimeout({action:"recoverResult",output:"image"}), 180000);
   assert.equal(experienceResponseTimeout({action:"prepare",output:"scene"}), 120000);
   assert.equal(experienceHostTimeout({action:"prepare",output:"scene"}), 170000);
+});
+
+test("one explicit Video authorization survives old cutoffs without repeat or automatic Run",async context=>{
+  context.mock.timers.enable({apis:["setTimeout"]});
+  const videoIdentity={...identity,output:"video" as const},review={...state("review"),output:"video" as const};
+  let finish!:(value:Response)=>void;
+  const fake=transport([response(review),()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+  const client=new ExperienceOutputBindingClient(videoIdentity,{origin,current:()=>true,request:fake.request});
+  await client.read();const original=shown(client),host=new ExperienceHostOperation(()=>client.dispose(),undefined,{action:"authorize",output:"video"});
+  const pending=host.wait(client.command("authorize",original));
+  context.mock.timers.tick(45000);assert.equal(host.current(),true);assert.equal(client.pending,true);assert.equal(fake.calls[1].init.signal!.aborted,false);
+  await client.command("authorize",original);assert.equal(fake.calls.length,2);
+  assert.deepEqual(JSON.parse(String(fake.calls[1].init.body)),{draftHash:identity.draftHash,termsDigest:review.preflight!.termsDigest,maximumMicrousd:review.preflight!.maximumMicrousd,explicitAuthorization:true});
+  finish(response({...state("authorized"),output:"video"},basePath+"/authorize"));
+  assert.equal((await pending).status,"authorized");host.finish();assert.equal(fake.calls.length,2);
+});
+
+test("Video admission remains finite and its timeout recovers by GET only",async context=>{
+  context.mock.timers.enable({apis:["setTimeout"]});
+  const videoIdentity={...identity,output:"video" as const},review={...state("review"),output:"video" as const};
+  const fake=transport([response(review),()=>new Promise<Response>(()=>{}),response(review)]);
+  const client=new ExperienceOutputBindingClient(videoIdentity,{origin,current:()=>true,request:fake.request});
+  await client.read();const original=shown(client),pending=client.command("authorize",original);
+  context.mock.timers.tick(119999);assert.equal(client.pending,true);context.mock.timers.tick(1);await pending;
+  assert.equal(fake.calls[1].init.signal!.aborted,true);assert.deepEqual(client.state,unavailableBinding("submission_unconfirmed"));
+  await client.command("authorize",original);assert.equal(fake.calls.length,2);
+  await client.read();assert.deepEqual(fake.calls.map(call=>call.init.method),["GET","POST","GET"]);
+});
+
+test("Video authorization keeps a20s body bound and discards a retired owner's late response",async context=>{
+  context.mock.timers.enable({apis:["setTimeout"]});
+  for(const stop of ["body-timeout","retire"]){
+    const videoIdentity={...identity,output:"video" as const},review={...state("review"),output:"video" as const};
+    let finish!:(value:Response)=>void;
+    const fake=transport([response(review),()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+    const client=new ExperienceOutputBindingClient(videoIdentity,{origin,current:()=>true,request:fake.request});
+    await client.read();const pending=client.command("authorize",shown(client));context.mock.timers.tick(45000);
+    if(stop==="body-timeout"){
+      const reply=response({...state("authorized"),output:"video"},basePath+"/authorize");
+      Object.defineProperty(reply.body,"getReader",{value:()=>({read:()=>new Promise(()=>{}),cancel:async()=>{}})});
+      finish(reply);await new Promise<void>(resolve=>setImmediate(resolve));context.mock.timers.tick(19999);assert.equal(client.pending,true);
+      context.mock.timers.tick(1);await pending;assert.deepEqual(client.state,unavailableBinding("submission_unconfirmed"));
+    }else{
+      client.dispose();await pending;finish(response({...state("authorized"),output:"video"},basePath+"/authorize"));
+      await new Promise<void>(resolve=>setImmediate(resolve));assert.deepEqual(client.state,unavailableBinding("withdrawn"));
+    }
+    assert.equal(fake.calls.length,2);assert.equal(fake.calls[1].init.signal!.aborted,true);
+  }
 });
 
 test("one explicit preparation survives both old cutoffs without automatically continuing", async context => {

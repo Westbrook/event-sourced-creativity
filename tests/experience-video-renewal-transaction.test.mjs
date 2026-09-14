@@ -107,6 +107,17 @@ test('concurrent Video renewal attempts converge on one confirmation and preflig
   assert.equal(s.sqlite.prepare("SELECT COUNT(*) AS n FROM output_commands WHERE command_key LIKE 'video-cycle-v1:%' AND action='preflight'").get().n,1);s.unpaid();
 });
 
+test('longer browser wait cannot authorize an expired fresh Video quote',async t=>{
+  const s=await fixture(t),prepared=await s.send(s.body);assert.equal(prepared.status,200,await prepared.clone().text());
+  const fresh=await prepared.json(),RealDate=Date,future=Date.parse(fresh.preflight.expiresAt)+1;
+  globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[future]));}static now(){return future;}};
+  try {
+    const response=await handleExperienceOutput(new Request('http://localhost'+s.path+'/authorize',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({draftHash:s.plan.draftHash,termsDigest:fresh.preflight.termsDigest,maximumMicrousd:fresh.preflight.maximumMicrousd,explicitAuthorization:true})}),s.env,execution,s.bridge);
+    assert.notEqual(response.status,200);s.unpaid();
+  } finally {globalThis.Date=RealDate;}
+});
+
 for(const mutation of ['retention','source-private-body','rights-private-body','ingestion-private-body'])test(`late ${mutation} change fences Video renewal atomically`,async t=>{
   const s=await fixture(t),batch=s.DB.batch.bind(s.DB);let raced=false;
   const before=s.sqlite.prepare('SELECT COUNT(*) AS n FROM output_plan_revisions').get().n;
