@@ -21,10 +21,16 @@ test('read-only diagnostics expose only fixed stage, refusal code and status wit
 test('database-kind diagnosis never returns private messages or traverses getters',()=>{
   const start=source.indexOf('function imageReadFailureKind('),end=source.indexOf('\nclass Lifetime',start);assert.ok(start>=0&&end>start);
   class Refusal extends Error{}
-  const classify=new Function('Refusal',stripTypeScriptTypes(source.slice(start,end))+';return imageReadFailureKind;')(Refusal);
+  const classify=new Function('Refusal','object',stripTypeScriptTypes(source.slice(start,end))+';return imageReadFailureKind;')(Refusal,value=>value!==null&&typeof value==='object'&&!Array.isArray(value));
   for(const [message,kind] of [['D1_ERROR: string or blob too big: SQLITE_TOOBIG','d1_value_limit'],['no such table: private','d1_schema'],['Expression tree is too large','d1_expression_depth'],['Wrong number of parameter bindings','d1_binding_count'],['private raw error','unknown']]){
     assert.equal(classify(new Error(message)),kind);assert.equal(classify(new Error('wrapper',{cause:new Error(message)})),kind);
   }
   let touched=0;const hostile=new Error();Object.defineProperty(hostile,'message',{get(){touched++;return 'private';}});Object.defineProperty(hostile,'cause',{get(){touched++;return new Error('private');}});
   assert.equal(classify(hostile),'unknown');assert.equal(touched,0);assert.equal(classify(new Refusal('private')),'refusal');
+  for(const [message,kind] of [['D1_ERROR: ambiguous column name: private','d1_ambiguous_column'],['D1_ERROR: not authorized','d1_sql_authorization'],['D1_ERROR: malformed JSON','d1_malformed_json'],['D1_ERROR: JSON cannot hold BLOB values','d1_json_blob'],['D1_ERROR: Exceeded maximum response size','d1_response_limit'],['D1_ERROR: private unrecognized detail','d1_error']]){
+    assert.equal(classify(new Error(message)),kind);
+    assert.equal(classify({message}),kind);
+    assert.equal(classify({message:'transport',cause:{message}}),kind);
+  }
+  assert.equal(classify({message:'private unrecognized detail'}),'unknown');
 });

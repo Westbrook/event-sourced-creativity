@@ -45,17 +45,33 @@ function requireFact(value: unknown, code: Refusal["code"] = "unavailable", stat
   if (!value) throw new Refusal(code, status);
 }
 function imageReadFailureKind(error: unknown): string {
-  let current=error;
-  try { for(let depth=0;depth<3&&current instanceof Error;depth++){
+  let current=error, fallback="unknown";
+  // A database adapter may transport plain error records across a realm. Only
+  // own data properties are inspected, and only fixed categories leave here.
+  try { for(let depth=0;depth<3&&object(current);depth++){
     const raw=Object.getOwnPropertyDescriptor(current,"message")?.value;
     const message=typeof raw==="string"?raw.slice(0,2048):"";
     if(/\bSQLITE_TOOBIG\b|\bstring or blob too big\b/iu.test(message))return "d1_value_limit";
     if(/\bno such (?:table|column)\b|\bSQLITE_SCHEMA\b/iu.test(message))return "d1_schema";
     if(/\bExpression tree is too large\b/iu.test(message))return "d1_expression_depth";
     if(/\bWrong number of parameter bindings\b|\bSQLITE_RANGE\b/iu.test(message))return "d1_binding_count";
+    // Reuse the fixed D1 categories already used by experience-output-api.
+    if(/\bD1_TYPE_ERROR\b/u.test(message))return "d1_binding_type";
+    if(/\bparser stack overflow\b/iu.test(message))return "d1_parser_depth";
+    if(/\bmalformed JSON\b/iu.test(message))return "d1_malformed_json";
+    if(/\bJSON cannot hold BLOB values\b/iu.test(message))return "d1_json_blob";
+    if(/\bambiguous column name\b/iu.test(message))return "d1_ambiguous_column";
+    if(/\bSQLITE_AUTH\b|\bnot authorized\b/iu.test(message)&&/\bD1_ERROR\b|\bSQLITE_AUTH\b/u.test(message))return "d1_sql_authorization";
+    if(/\bSQL statement too long\b|\bstatement is too long\b/iu.test(message))return "d1_statement_length";
+    if(/\btoo many SQL variables\b/iu.test(message))return "d1_parameter_limit";
+    if(/\b(?:exceeded|exceeds|exceeding) (?:the )?maximum (?:response|result) size\b/iu.test(message))return "d1_response_limit";
+    if(/\bSQLITE_BUSY\b|\bSQLITE_LOCKED\b|\bdatabase is locked\b/iu.test(message))return "d1_busy";
+    if(/\bToo many API requests by single worker invocation\b|\bToo many subrequests\b/iu.test(message))return "worker_subrequest_limit";
+    if(/\bD1_ERROR:\s*too many queries\b/iu.test(message))return "d1_query_limit";
+    if(/\bD1_ERROR\b|\bSQLITE_ERROR\b/u.test(message))fallback="d1_error";
     current=Object.getOwnPropertyDescriptor(current,"cause")?.value;
   } } catch { /* Diagnostics never replace the original refusal. */ }
-  return error instanceof Refusal?"refusal":"unknown";
+  return error instanceof Refusal?"refusal":fallback;
 }
 
 class Lifetime {
