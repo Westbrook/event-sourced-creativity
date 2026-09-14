@@ -44,6 +44,19 @@ class Refusal extends Error {
 function requireFact(value: unknown, code: Refusal["code"] = "unavailable", status = 409): asserts value {
   if (!value) throw new Refusal(code, status);
 }
+function imageReadFailureKind(error: unknown): string {
+  let current=error;
+  try { for(let depth=0;depth<3&&current instanceof Error;depth++){
+    const raw=Object.getOwnPropertyDescriptor(current,"message")?.value;
+    const message=typeof raw==="string"?raw.slice(0,2048):"";
+    if(/\bSQLITE_TOOBIG\b|\bstring or blob too big\b/iu.test(message))return "d1_value_limit";
+    if(/\bno such (?:table|column)\b|\bSQLITE_SCHEMA\b/iu.test(message))return "d1_schema";
+    if(/\bExpression tree is too large\b/iu.test(message))return "d1_expression_depth";
+    if(/\bWrong number of parameter bindings\b|\bSQLITE_RANGE\b/iu.test(message))return "d1_binding_count";
+    current=Object.getOwnPropertyDescriptor(current,"cause")?.value;
+  } } catch { /* Diagnostics never replace the original refusal. */ }
+  return error instanceof Refusal?"refusal":"unknown";
+}
 
 class Lifetime {
   active = true;
@@ -511,7 +524,7 @@ export async function handleGeneratedImageEdit(request: Request, env: WorkerEnv,
   const work = execute(request, env, outputId, life).catch((error: unknown) => {
     if (life.writing) return reply({ status: "unconfirmed", code: "unconfirmed" });
     const failure = error instanceof Refusal ? error : new Refusal("unavailable");
-    if(request.method==="GET")console.warn("generated_image_read_refused",{stage:life.readStage,code:failure.code,status:failure.status});
+    if(request.method==="GET")console.warn("generated_image_read_refused",{stage:life.readStage,code:failure.code,status:failure.status,kind:imageReadFailureKind(error)});
     return reply({ status: "refused", code: failure.code }, failure.status);
   });
   try { return await Promise.race([work, interrupted]); }
