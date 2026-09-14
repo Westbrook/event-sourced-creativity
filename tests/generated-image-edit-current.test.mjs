@@ -94,6 +94,19 @@ test("a bare generated output does not synthesize a compositor reference or righ
   await unavailable(f); assert.deepEqual(f.data, before);
 });
 
+test("recovered original path joins the existing private-image snapshot without inventing references", async () => {
+  const f=fixture({references:false});
+  const recoveredUrl='/api/media/'+encodeURIComponent(ownerMediaNamespace(f.data.ownerId)+'/generated/'+f.producer.payload.generation_id+'-recovery-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.png');
+  f.producer.clientId='output-fal-recovery';
+  Object.assign(f.producer.payload,{recovered:true,provider:'fal',model_id:'ideogram/v4',source_surface:'outputs',media_url:recoveredUrl});
+  const before=structuredClone(f.data),read=()=>({...f.data,head:f.data.events.at(-1).sequence});
+  const inspected=await inspectCurrentGeneratedImageEdit(read,f.now);
+  assert.equal(inspected.status,'current');assert.equal(inspected.media.url,recoveredUrl);assert.equal(inspected.revision,0);
+  assert.deepEqual(inspected.sourceIds,[]);assert.deepEqual(f.data,before);
+  f.producer.clientId='other';
+  assert.deepEqual(await inspectCurrentGeneratedImageEdit(read,f.now),{status:'unavailable'});
+});
+
 for (const missing of ["ReferenceIngested", "BlockCreated"]) test("requires the actual " + missing + " source receipt", async () => {
   const f = fixture(); f.data.events = f.data.events.filter(event => event.type !== missing); await unavailable(f);
 });

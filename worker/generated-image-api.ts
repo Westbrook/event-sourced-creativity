@@ -1,4 +1,5 @@
 import { foldEvents, type CreativeEvent } from "../src/model/events.ts";
+import { originalGeneratedImageUrl } from "../src/model/generated-image-original-url.ts";
 import { GENERATED_IMAGE_EDIT_LIMITS } from "../src/model/generated-image-edit.ts";
 import { generatedImageEditOperationSha256, parseGeneratedImageEditRequest, parseGeneratedImageRevision,
   type GeneratedImageEditRequest, type GeneratedImageEditSnapshot, type GeneratedImageRevision } from "../src/model/generated-image-revision.ts";
@@ -146,8 +147,8 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
     && integer(p.image_height, 1) && p.image_height <= 16_384 && p.quality === "high" && p.purpose === "final" && p.simulation === false
     && (p.content_expires_at == null || future(p.content_expires_at)));
   requireFact(!events.some(event => event !== completed && ["GenerationCompleted", "IdeationPreviewCompleted"].includes(event.type) && event.payload.generation_id === p.generation_id));
-  const originalUrl = "/api/media/" + encodeURIComponent(ownerMediaNamespace(actor.userId) + "/generated/" + p.generation_id + ".png");
-  requireFact(p.media_url === originalUrl);
+  const originalUrl = originalGeneratedImageUrl(actor.userId,completed);
+  requireFact(originalUrl);
   // The initial projection proves generated-output identity. Current projection
   // supplies removal and current Document/reference state, including later edits.
   const initial = foldEvents(events.filter(event => event.sequence <= completed.sequence), Infinity, p.document_id);

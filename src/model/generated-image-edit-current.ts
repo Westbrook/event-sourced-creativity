@@ -1,7 +1,8 @@
 import { projectGeneratedImageEdit, type EditableGeneratedImageOutput, type GeneratedImageEditSnapshot } from "./generated-image-revision.ts";
+import { originalGeneratedImageUrl } from "./generated-image-original-url.ts";
 import { foldEvents, type CreativeEvent } from "./events.ts";
 import { referenceCompositionMediaUrl, referenceCompositionSources, referenceCompositionSourcesFingerprint, type ReferenceCompositionSource } from "./reference-composition.ts";
-import { mediaKeyMatchesOwnerNamespace, ownerMediaNamespace } from "./media-ownership.ts";
+import { mediaKeyMatchesOwnerNamespace } from "./media-ownership.ts";
 import { outputAssetSha256 } from "./output-asset-inspection.ts";
 import { GENERATED_IMAGE_EDIT_LIMITS, type GeneratedImageEditBasis, type GeneratedImageEditCurrent } from "./generated-image-edit.ts";
 
@@ -47,8 +48,8 @@ function select(input: GeneratedImageEditRead | null, sourceId: string | null, n
     || p.image_width > 16_384 || p.image_height > 16_384 || p.quality !== "high" || p.purpose !== "final" || p.simulation !== false
     || events.some(other => other !== event && ["GenerationCompleted", "IdeationPreviewCompleted"].includes(other.type)
       && other.payload.generation_id === p.generation_id)) return null;
-  const originalMediaUrl = "/api/media/" + encodeURIComponent(ownerMediaNamespace(input.ownerId) + "/generated/" + p.generation_id + ".png");
-  if (p.media_url !== originalMediaUrl) return null;
+  const originalMediaUrl = originalGeneratedImageUrl(input.ownerId,event);
+  if (!originalMediaUrl) return null;
   if (p.content_expires_at != null) {
     if (typeof p.content_expires_at !== "string" || !(Date.parse(p.content_expires_at) > now)
       || new Date(p.content_expires_at).toISOString() !== p.content_expires_at) return null;
