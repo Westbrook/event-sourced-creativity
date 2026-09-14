@@ -194,7 +194,11 @@ export class GeneratedImageEditor extends FormaElement {
     try {
       const read = await lease.ports.read(); if (!this.#current(lease)) return;
       const snapshot = read ? structuredClone(read) : null;
-      if (!snapshot || snapshot.status !== "current" || snapshot.ownerId !== lease.opening.ownerId || snapshot.projectId !== lease.opening.projectId
+      // A failed transport/current-read is not a user dismissal. Keep only the
+      // existing unavailable notice while this opening still owns its scope.
+      // A mismatched identity below, or withdrawn opening, still retires it.
+      if (!snapshot) { this.#failure = "unavailable"; this.#phase = "error"; this.requestUpdate(); return; }
+      if (snapshot.status !== "current" || snapshot.ownerId !== lease.opening.ownerId || snapshot.projectId !== lease.opening.projectId
         || snapshot.documentId !== lease.opening.documentId || snapshot.outputId !== lease.opening.outputId) { this.#retire(); return; }
       this.#snapshot = snapshot;
       const sourceId = snapshot.sourceIds.find(id => snapshot.sources.some(source => source.id === id && source.kind === "image" && !source.requiresUnlock

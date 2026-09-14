@@ -194,6 +194,24 @@ test("late opening reads cannot replace or retire a newer opening", async t => {
   assert.equal(f.closeEvents.some(value => value.opening === f.opening), false);
 });
 
+test("an unavailable current read explains recovery instead of silently dismissing the owned editor", async t => {
+  const f = fixture(t); f.read = async () => null; const tree = await f.open();
+  assert.equal(f.state().phase, "error"); assert.equal(f.closeEvents.length, 0);
+  assert.ok(tree.root.text.includes(generatedImageEditCopy("en").unavailable));
+  assert.equal(f.captureCalls.length, 0); assert.equal(f.saveCalls.length, 0); assert.equal(f.adoptCalls, 0);
+  f.host.closeForTest(); assert.equal(f.closeEvents[0].reason, "cancel");
+});
+
+test("failed read after explicit adoption preserves its receipt and explains how to reopen without adopting twice", async t => {
+  const f = fixture(t, { adopted: false }), tree = await f.open(), copy = generatedImageEditCopy("en");
+  f.read = async () => null;
+  f.click(tree.visible("button").find(node => node.text === copy.adopt).port);
+  await until(() => f.state().phase === "error", "post-adoption unavailable notice");
+  assert.ok(f.draw().root.text.includes(copy.unavailable)); assert.equal(f.closeEvents.length, 0);
+  assert.equal(f.adoptCalls, 1); assert.equal(f.adopted, true); assert.equal(f.saveCalls.length, 0);
+  f.host.closeForTest(); assert.equal(f.adopted, true);
+});
+
 test("GET snapshot and captured edit identity must agree before the compositor opens", async t => {
   const f = fixture(t), original = f.snapshot;
   f.snapshot = () => ({ ...original(), editEventId: "unrelated-current-edit" }); await f.open();
