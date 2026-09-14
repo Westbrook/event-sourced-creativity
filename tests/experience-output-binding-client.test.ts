@@ -112,6 +112,18 @@ function shown(client: ExperienceOutputBindingClient): ExperienceNativeState {
   assert.ok("draftId" in client.state, "Expected a decoded native state");
   return client.state;
 }
+
+test("known413 source capacity after prepare remains a decoded refusal rather than transport uncertainty", async () => {
+  const refusal = unavailableBinding("output_source_proof_too_large");
+  const fake = transport([response(state()), response(refusal, basePath + "/prepare", { status: 413 })]);
+  const client = new ExperienceOutputBindingClient(identity, { origin, current: () => true, request: fake.request });
+  await client.read();
+  const result = await client.command("prepare", shown(client));
+  assert.deepEqual(result, refusal); assert.deepEqual(client.state, refusal);
+  assert.equal(client.pending, false); assert.equal(fake.calls.length, 2);
+  assert.equal(fake.calls[1]!.init.method, "POST");
+  assert.ok(Object.values(client.state.permitted).every(v => v === false));
+});
 function setPath(value: MutableRecord, path: string[], next: unknown) {
   let parent: Record<PropertyKey, unknown> = value;
   for (const key of path.slice(0, -1)) parent = parent[key] as Record<PropertyKey, unknown>;

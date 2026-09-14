@@ -47,7 +47,7 @@ import { experienceImageFormat } from "../experiences/image-ratio.ts";
 import { bindingJson, experienceResultGrantCurrent, ExperienceOutputBindingClient, type ExperienceBindingAction } from "../experiences/output-binding-client.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState } from "../experiences/output-binding-contract.ts";
 import { outputTerms, outputTermsNotice, type OutputTerms, type OutputTermsRow, type OutputTermsNotice } from "../experiences/output-terms.ts";
-import { outputAvailabilityMessage } from "../experiences/output-availability-message.ts";
+import { outputAvailabilityMessage, outputSourceCapacityMessage } from "../experiences/output-availability-message.ts";
 import { FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES } from "./design-system/locales/output-delivery-runtime-messages.ts";
 import { captureExperienceNativeResult, type ExperienceResultCandidate } from "../experiences/native-result-association.ts";
 import "../experiences/host.css";
@@ -408,7 +408,8 @@ export class FormaExperienceHost extends FormaElement {
     try {
       const response = await operation.wait(binding.client.command(action, shown, sceneConsent, audioConsent, model3dConsent));
       // Unknown admission remains unknown. Only explicit Check status recovers it.
-      if (!("draftId" in response)) this.#status = action === "recoverResult" ? this.i18n.system("Recovery unconfirmed") : "Submission unconfirmed";
+      if (!("draftId" in response)) this.#status = outputSourceCapacityMessage(response) ? this.i18n.system("Original unavailable")
+        : action === "recoverResult" ? this.i18n.system("Recovery unconfirmed") : "Submission unconfirmed";
       else if (this.#visible(binding)) {
         await this.#refreshAndRead(binding, operation);
         if (action === "recoverResult" && response.recovery === "pending" && this.#state()?.permitted.recoverResult) this.#status = this.i18n.system("Result pending");
@@ -866,6 +867,7 @@ export class FormaExperienceHost extends FormaElement {
   override render() {
     const state = this.#state(), terms = this.#terms(state), binding = this.#binding, result = this.#result;
     const available = this.#visible(binding), format = this.#imageFormat(), authorize = this.#paidDecision("authorize"), run = this.#paidDecision("run"), resume = this.#paidDecision("resumeRun");
+    const sourceCapacity = available && binding ? outputSourceCapacityMessage(binding.client.state) : null;
     const target = state?.preflight?.targets[0];
     const unavailableProviderPreparation = available && state?.status === "unavailable" && state.disposition === "prepared"
       && !state.original && !state.grant && !Object.values(state.permitted).some(Boolean)
@@ -878,6 +880,7 @@ export class FormaExperienceHost extends FormaElement {
     return html`<section class="experience-host" aria-busy=${String(this.#loading || this.#busy)}>
       <header class="experience-heading"><h1>${binding?.selection.output === "video" ? "Video" : binding?.selection.output === "image" ? "Image" : binding?.selection.output === "slides" ? "Slides" : binding?.selection.output === "short_story" ? "Short story" : binding?.selection.output === "scene" ? "Scene" : binding?.selection.output === "model3d" ? this.i18n.system("3D model") : binding?.selection.output === "audio" ? this.i18n.system("Audio") : binding?.selection.output === "storyboard" ? "Storyboard" : "Output"}</h1></header>
       <p data-experience-status class=${duplicateReviewStatus ? "experience-status-duplicate" : nothing} tabindex="-1" role="status" aria-live="polite">${this.#model3dText(this.#status)}</p>
+      ${sourceCapacity ? html`<p data-experience-source-capacity dir="auto">${this.i18n.t(sourceCapacity.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[sourceCapacity.id], sourceCapacity.values)}</p>` : nothing}
       ${available && result ? result.output === "image" ? html`<figure class="experience-native-image"><img data-experience-image src=${result.image.media.url} alt="Image" width=${result.image.media.width} height=${result.image.media.height}
         @load=${(event: Event) => this.#imageLoad(event, result)} @error=${() => { if (this.#result === result) { this.#clearResult(); this.#status = "Result unavailable"; this.requestUpdate(); } }}></figure>`
         : result.output === "model3d" ? keyed(result.lease, result.render(result.model3d, this.i18n))

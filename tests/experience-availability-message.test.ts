@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { outputAvailabilityMessage } from "../src/experiences/output-availability-message.ts";
+import { outputAvailabilityMessage, outputSourceCapacityMessage } from "../src/experiences/output-availability-message.ts";
+import { unavailableBinding } from "../src/experiences/output-binding-client.ts";
 import type { ExperienceNativeState } from "../src/experiences/output-binding-contract.ts";
 import { FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES as messages } from "../src/components/design-system/locales/output-delivery-runtime-messages.ts";
 
@@ -55,4 +56,23 @@ test("host renders registered localized text inline without raw reason or new ac
   assert.match(summary, /<p data-experience-availability-reason dir="auto">/u);
   assert.match(summary, /this.i18n.t\(availability.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en\[availability.id\], availability.values\)/u);
   assert.doesNotMatch(summary, /reasonValues|\.reason\b|unsafeHTML|<button|\.request\(/u);
+});
+
+test("known complete-source capacity refusal is explained without admitting work or claiming original outcomes", () => {
+  for (const code of ["output_source_proof_too_large", "output_source_governance_proof_too_large"]) {
+    const value = unavailableBinding(code), before = JSON.stringify(value), result = outputSourceCapacityMessage(value)!;
+    assert.equal(result.known, true); assert.deepEqual(result.values, {});
+    for (const catalog of Object.values(messages)) assert.ok(catalog[result.id].length > 30);
+    assert.equal(JSON.stringify(value), before); assert.ok(Object.values(value.permitted).every(v => v === false));
+  }
+  for (const code of ["submission_unconfirmed", "original_unavailable", "PRIVATE BODY", "output_scene_original_expired"])
+    assert.equal(outputSourceCapacityMessage(unavailableBinding(code)), null);
+  assert.equal(outputSourceCapacityMessage(state()), null);
+  const malformed = {...unavailableBinding("output_source_proof_too_large"), permitted:{prepare:true}};
+  assert.equal(outputSourceCapacityMessage(malformed as never), null);
+  const source = readFileSync(new URL("../src/components/forma-experience-host.ts", import.meta.url), "utf8");
+  assert.match(source, /outputSourceCapacityMessage\(response\) \? this.i18n.system\("Original unavailable"\)/u);
+  assert.match(source, /available && binding \? outputSourceCapacityMessage\(binding.client.state\) : null/u);
+  assert.match(source, /data-experience-source-capacity dir="auto"/u);
+  assert.match(source, /this.i18n.t\(sourceCapacity.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en\[sourceCapacity.id\], sourceCapacity.values\)/u);
 });
