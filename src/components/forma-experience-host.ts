@@ -304,7 +304,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #renewPreparation(event: SubmitEvent) {
     event.preventDefault(); const state = this.#state();
-    if (!event.isTrusted || !state?.permitted.renewPreparation || !state.sceneRenewal || !this.#visible() || this.#busy) return;
+    if (!event.isTrusted || !state?.permitted.renewPreparation || !(state.sceneRenewal || state.videoRenewal) || !this.#visible() || this.#busy) return;
     void this.#command("renewPreparation", state);
   }
   async #load() {
@@ -901,7 +901,7 @@ export class FormaExperienceHost extends FormaElement {
       ${unavailableProviderPreparation ? html`<section class="experience-terms" aria-label=${this.i18n.system("Cost and transfer")}>
         <dl><div><dt>${this.i18n.system("Provider")}</dt><dd>${this.i18n.system(target?.reasonCode === "output_narrative_provider_unavailable" ? "Unavailable" : "Not configured")}</dd></div><div><dt>${this.i18n.system("Source transfer")}</dt><dd>${this.i18n.system("None")}</dd></div><div><dt>${this.i18n.system("Maximum cost")}</dt><dd>$0</dd></div></dl></section>` : nothing}
       ${available && state?.preflight && binding && !result && !unavailableProviderPreparation ? this.#termsSummary(terms, state, binding) : nothing}
-      ${available && state?.permitted.renewPreparation && state.sceneRenewal ? html`<form class="experience-admission" data-experience-action="renewPreparation" @submit=${(event: SubmitEvent) => this.#renewPreparation(event)}>
+      ${available && state?.permitted.renewPreparation && (state.sceneRenewal || state.videoRenewal) ? html`<form class="experience-admission" data-experience-action="renewPreparation" @submit=${(event: SubmitEvent) => this.#renewPreparation(event)}>
         <dl><div><dt>${this.i18n.system("Document")}</dt><dd>${this.i18n.system("Retained")}</dd></div>
           <div><dt>${this.i18n.system("Generation calls")}</dt><dd>0</dd></div>
           <div><dt>${this.i18n.system("Maximum cost")}</dt><dd>$0</dd></div>

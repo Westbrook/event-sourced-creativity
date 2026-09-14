@@ -125,6 +125,30 @@ test('GET never renews; explicit renewal sends only original predecessor and unp
   } finally {client.dispose();}
 });
 
+test('Video renewal is exact-output and unpaid; Scene metadata cannot be relabeled', async () => {
+  const f = renewableFixture();
+  f.identity.output = 'video'; f.state.output = 'video';
+  delete f.state.sceneCostPreview;
+  assert.equal(decodeExperienceBinding(f.state, f.identity), null);
+  f.state.videoRenewal = f.state.sceneRenewal; delete f.state.sceneRenewal;
+  assert.ok(decodeExperienceBinding(f.state, f.identity));
+  for (const patch of [{sceneRenewal:f.state.videoRenewal}, {videoRenewal:undefined},
+    {videoRenewal:{...f.state.videoRenewal,predecessorPreflightId:'other'}},
+    {permitted:{...f.state.permitted,authorize:true}}, {original:{jobId:'old'}}])
+    assert.equal(decodeExperienceBinding({...f.state,...patch},f.identity),null);
+  const {client,calls}=clientFixture(f);
+  try {
+    const shown=await client.read();
+    await client.command('authorize',shown); await client.command('run',shown);
+    assert.equal(calls.length,1);
+    await client.command('renewPreparation',shown);
+    assert.equal(calls.length,2);
+    assert.deepEqual(calls[1].body,{draftHash:f.identity.draftHash,explicitRequirementsConfirmation:true,
+      renewal:{predecessorPreflightId:f.state.preflight.id,explicitRenewal:true}});
+    await client.command('renewPreparation',shown); assert.equal(calls.length,2);
+  } finally {client.dispose();}
+});
+
 test('renewed preparation requires new consent and never automatically authorizes or runs', async () => {
   const f = renewableFixture(), oldApproval = {...f.preview, confirmed: true};
   const {client, calls} = clientFixture(f);

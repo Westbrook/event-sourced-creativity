@@ -62,7 +62,7 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
     if (!["prepare", "authorize", "run", "resumeRun"].every(key => typeof permitted[key] === "boolean")) return null;
     if (value.status === "unavailable" && value.originalIntent === "unknown_or_retained") {
       return text(value.error) && !permitted.prepare && !permitted.authorize && !permitted.run && !permitted.resumeRun && !permitted.recoverResult && !permitted.renewPreparation
-        && !Object.hasOwn(value, "sceneRenewal") ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
+        && !Object.hasOwn(value, "sceneRenewal") && !Object.hasOwn(value, "videoRenewal") ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
     }
     if (!["draftId", "draftHash", "releaseHash", "documentId", "projectId", "output"].every(key => value[key] === identity[key as keyof ExperienceBindingIdentity])
       || value.sourceSurface !== "outputs" || !status.has(String(value.status)) || !stages.has(value.stage as never)
@@ -76,9 +76,12 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
       || original.slotStatus !== "succeeded" || original.grantStatus !== "completed" || !record(grant)
       || grant.status !== "completed" || grant.pendingCalls !== 0 || !Array.isArray(grant.operations)
       || grant.operations.length !== 1 || !record(grant.operations[0]) || grant.operations[0].pendingCalls !== 0)) return null;
-    if (Object.hasOwn(value, "sceneRenewal")) {
-      const renewal = value.sceneRenewal;
-      if (value.output !== "scene" || value.status !== "unavailable" || value.disposition !== "prepared"
+    if (Object.hasOwn(value, "sceneRenewal") || Object.hasOwn(value, "videoRenewal")) {
+      const field = value.output === "video" ? "videoRenewal" : "sceneRenewal";
+      const renewal = value[field];
+      if (!["scene", "video"].includes(String(value.output)) || !Object.hasOwn(value, field)
+        || Object.hasOwn(value, field === "videoRenewal" ? "sceneRenewal" : "videoRenewal")
+        || value.status !== "unavailable" || value.disposition !== "prepared"
         || value.stage !== "preflight" || original !== null || grant !== null || !record(preflight)
         || permitted.renewPreparation !== true || permitted.prepare || permitted.authorize || permitted.run || permitted.resumeRun || permitted.recoverResult
         || !record(renewal) || Object.keys(renewal).length !== 2 || !text(renewal.predecessorPreflightId)
@@ -212,9 +215,9 @@ export class ExperienceOutputBindingClient {
       if (!model3dMiniAppCostApprovalMatches(model3dApproval, shown.model3dCostPreview)) return this.#state;
     } else if (model3dApproval !== undefined) return this.#state;
     const body = action === "prepare" ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true }
-      : action === "renewPreparation" && shown.output === "scene" && shown.sceneRenewal
+      : action === "renewPreparation" && (shown.output === "scene" && shown.sceneRenewal || shown.output === "video" && shown.videoRenewal)
         ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true,
-          renewal: { predecessorPreflightId: shown.sceneRenewal.predecessorPreflightId, explicitRenewal: true } }
+          renewal: { predecessorPreflightId: (shown.output === "video" ? shown.videoRenewal! : shown.sceneRenewal!).predecessorPreflightId, explicitRenewal: true } }
       : action === "authorize" && shown.preflight ? { draftHash: this.identity.draftHash, termsDigest: shown.preflight.termsDigest, maximumMicrousd: shown.preflight.maximumMicrousd, explicitAuthorization: true,
         ...(shown.output === "scene" ? {sceneCostConsent: sceneApproval} : {}), ...(shown.output === "audio" ? {audioCostConsent: audioApproval} : {}), ...(shown.output === "model3d" ? {model3dCostConsent: model3dApproval} : {}) }
       : action === "recoverResult" && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, jobId: shown.original.jobId, explicitRecovery: true }

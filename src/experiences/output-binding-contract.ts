@@ -20,6 +20,7 @@ export type ExperienceNativeState = {
   /** Scene-only original disclosure; omission on other outputs preserves their wire shape. */
   sceneCostPreview?: SceneMiniAppCostPreview | null;
   sceneRenewal?: { predecessorPreflightId: string; expiredAt: string };
+  videoRenewal?: { predecessorPreflightId: string; expiredAt: string };
   /** Audio-only original cost and source-transfer disclosure. */
   audioCostPreview?: AudioMiniAppCostPreview | null;
   model3dCostPreview?: Model3dMiniAppCostPreview | null;

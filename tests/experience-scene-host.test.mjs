@@ -35,7 +35,7 @@ test('actual Scene host target join requires exact original plan/source and neve
 });
 
 test('actual Scene host approval requires a separate checked action and exact original Scene contract', () => {
-  const begin = src.indexOf('  #sceneConsent('), end = src.indexOf('  #prepare(', begin);
+  const begin = src.indexOf('  #sceneConsent('), end = src.indexOf('  #audioConsent(', begin);
   const method = stripTypeScriptTypes(src.slice(begin, end).replace('#sceneConsent', 'function consent').replaceAll('this.#', 'this.'));
   const consent = new Function('sceneMiniAppCostApprovalMatches', method + ';return consent;')(sceneMiniAppCostApprovalMatches);
   const preview = {version: 'scene-mini-app-cost-v1', requestId: 'job', actorUserId: 'owner', projectId: 'project', documentId: 'doc',

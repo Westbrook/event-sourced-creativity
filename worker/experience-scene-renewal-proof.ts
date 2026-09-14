@@ -38,9 +38,9 @@ export function sceneRenewalPredecessorAssertion(scope: OutputScope, predecessor
 /** Exact index fence for selection and for the first successor append. Receipt
  * and private-body assertions must ALSO accompany it. A count alone is not
  * sufficient: replacing a key while retaining the count must fail. */
-export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[]): OutputSqlAssertion {
+export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" = "scene"): OutputSqlAssertion {
   personal(scope);
-  const prefix = scenePreparationCyclePrefix(draftId);
+  const prefix = scenePreparationCyclePrefix(draftId, output);
   if (expectedKeys.length > 32 || new Set(expectedKeys).size !== expectedKeys.length
     || expectedKeys.some(key => !id(key) || !key.startsWith(prefix))) throw new Error("experience_scene_renewal_lineage_unavailable");
   return { sql: `(SELECT COUNT(*) FROM output_commands WHERE scope_key=? AND actor_user_id=? AND substr(command_key,1,?)=?)=?
@@ -59,10 +59,11 @@ export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, 
  * native Scene reservation correlation is exactly that plan's request/job ID.
  * The same predicate is intended for read qualification AND final atomic write,
  * never solely as an earlier in-memory Boolean. */
-export function sceneRenewalNoExecutionAssertion(scope: OutputScope, originalRequestIds: readonly string[]): OutputSqlAssertion {
+export function sceneRenewalNoExecutionAssertion(scope: OutputScope, originalRequestIds: readonly string[], output: "scene" | "video" = "scene"): OutputSqlAssertion {
   personal(scope);
   if (originalRequestIds.length < 1 || originalRequestIds.length > 9 || new Set(originalRequestIds).size !== originalRequestIds.length
-    || originalRequestIds.some(value => !/^scene-[a-f0-9]{64}$/u.test(value))) throw new Error("experience_scene_renewal_lineage_unavailable");
+    || !["scene", "video"].includes(output)
+    || originalRequestIds.some(value => !new RegExp(`^${output}-[a-f0-9]{64}$`, "u").test(value))) throw new Error("experience_scene_renewal_lineage_unavailable");
   const requests = JSON.stringify([...originalRequestIds].sort());
   return { sql: `NOT EXISTS(SELECT 1 FROM output_commands command LEFT JOIN events event ON event.event_id=command.event_id
       WHERE command.scope_key=? AND command.action IN('authorize','run')

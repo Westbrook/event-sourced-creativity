@@ -84,7 +84,13 @@ function fixture() {
   const env = { MEDIA: {
     async head(requested) { assert.equal(requested, key); calls.push("head"); await state.afterHead?.(); return object(); },
     async get(requested) { assert.equal(requested, key); calls.push("get"); await state.afterGet?.(); return { ...object(), body: new Blob([state.bytes]).stream() }; },
-  }, DB: { prepare() { assert.fail("No direct write/read SQL outside final proof port"); } } };
+  }, DB: { prepare(sql) {
+    assert.match(sql,/^SELECT private_json,project_id,document_id FROM event_private_payloads\s+WHERE owner_id=\? AND private_event_id=\? AND redacted_at IS NULL$/u);
+    return {bind(owner,eventId){assert.equal(owner,'owner');return {async first(){
+      const event=events.find(value=>value.eventId===eventId);assert.ok(event);
+      return {private_json:JSON.stringify(event.payload),project_id:event.payload.project_id??null,document_id:event.payload.document_id??null};
+    }}}};
+  } } };
   trusted.env = env;
   state = { bytes: new Uint8Array(bytes), size: bytes.length, mime: "image/png", metadata: { ownerId: "owner", sha256: selection.sha256 },
     authority() { calls.push("authority"); return { sql: "current_principal=?", bindings: [1] }; },

@@ -40,7 +40,7 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 /** Only exact retained confirmed/preflight receipt identities may name a child.
  * No read of the arbitrary latest native plan participates in this join. */
 export function scenePreparationPredecessor(binding: ExperienceOutputBinding, saved: Partial<Record<ExperienceOutputStage, Original>>): ScenePreparationPredecessor | null {
-  if (binding.output !== "scene" || !saved.confirm || !saved.preflight) return null;
+  if (!["scene", "video"].includes(binding.output) || !saved.confirm || !saved.preflight) return null;
   const confirmation = saved.confirm.receipt.payload, plan = confirmation.confirmed_plan;
   const preparation = saved.preflight.receipt.payload, preflight = preparation.preflight;
   if (!record(plan) || !record(preflight) || typeof plan.revisionId !== "string"
@@ -70,8 +70,8 @@ export async function readExperienceOutputLineage(trusted: OutputTrustedContext,
   if (Object.hasOwn(root, "preparationCycle")) error("experience_scene_renewal_lineage_unavailable", 410);
   const initial = await originals(trusted, root);
   const result: ExperienceOutputLineage = { binding: root, originals: initial, witnesses: Object.values(initial), cycleCommandKeys: [] };
-  if (root.output !== "scene") return result;
-  const prefix = scenePreparationCyclePrefix(root.draftId);
+  if (root.output !== "scene" && root.output !== "video") return result;
+  const prefix = scenePreparationCyclePrefix(root.draftId, root.output);
   const index = await trusted.env.DB.prepare(`SELECT command_key FROM output_commands
     WHERE scope_key=? AND actor_user_id=? AND substr(command_key,1,?)=? ORDER BY command_key LIMIT ?`)
     .bind(trusted.scope.key, trusted.scope.actorUserId, prefix.length, prefix, MAX_SCENE_PREPARATION_RENEWALS * 4 + 1)

@@ -162,13 +162,14 @@ test('native load maps the retained Video plan and carries original-image guard 
   authorizeExperienceIntake:async()=>auth,readExperienceDraft:f.ports.readExperienceDraft,experienceOutputBinding,experienceResourceId,
   prepareExperienceVideoOutputSource:f.prepareExperienceVideoOutputSource,createExperienceOutputRecipe,commitAtomicIntake:f.ports.commitAtomicIntake,
   receiptPrefix,experienceDraftGuard:f.ports.experienceDraftGuard,loadOutputTrustedContext:async()=>{ if(f.input.mutateAtDestinationRead)trusted.ownerHead++; return trusted; },
-  readExperienceOutputOriginals:async()=>({save:saved}),outputCommandReceiptAssertion:()=>({sql:'managed_current = ?',bindings:[1]}),
+  readExperienceOutputLineage:async(_trusted,root)=>({binding:root,originals:{save:saved},witnesses:[saved],cycleCommandKeys:[]}),
+  sceneRenewalIndexAssertion:()=>({sql:'cycle_index_current = ?',bindings:[1]}),outputCommandReceiptAssertion:()=>({sql:'managed_current = ?',bindings:[1]}),
   validateManagedRequirement,experienceSourceMatches,canonicalJson,record,error,
  });
  const loaded=await load(f.input.request,f.input.env,plan.draftId,'read');
  assert.equal(loaded.binding.output,'video');assert.deepEqual(loaded.recipe.spec,recipe.spec);assert.deepEqual(f.reads,['draft','original-image','check']);
  assert(trusted.sourceAssertions.some(g=>g.sql==='original_image_current = ?'));
- assert.equal(loaded.recipe.nativeReadiness,'unavailable');
+ assert.equal(loaded.recipe.nativeReadiness,'eligible_for_existing_preflight');
  f.input.originalHead=41;await assert.rejects(load(f.input.request,f.input.env,plan.draftId,'read'),/output_video_source_changed/);f.input.originalHead=42;
  f.input.mutateAtDestinationRead=true;await assert.rejects(load(f.input.request,f.input.env,plan.draftId,'read'),/output_video_source_changed/);f.input.mutateAtDestinationRead=false;trusted.ownerHead=42;
  f.input.imageUnavailable=true;await assert.rejects(load(f.input.request,f.input.env,plan.draftId,'read'),/video_reference_source_unavailable/);
@@ -181,6 +182,7 @@ test('Video source preparation cannot offer authorization or accept a forged ret
   originals:{preflight:{receipt:{payload:{preflight}},envelope:{planRevisionId:preflight.planRevisionId}}}};
  const state=oneFunction('worker/experience-output-api.ts','async function state','\nasync function execute',{
   confirmed:async()=>({...f.input.confirmedPlan,targetContractDigests:{[recipe.targetId]:'synthetic-target'}}),
+  renewalOffer:async()=>null,
   readVideoExecutionOffer,record:v=>Boolean(v&&typeof v==='object'&&!Array.isArray(v)),canonicalJson,phases:['save','confirm','preflight','authorize','run'],
   error:code=>{throw new Error(code);},
  });

@@ -24,6 +24,15 @@ function eligible(): SceneRenewalEligibility {
     authorizationReceipts: 0, runReceipts: 0, grants: 0, slots: 0, jobs: 0, tokenReservations: 0, costReservations: 0, providerCalls: 0 };
 }
 
+test("legacy Scene cycle and envelope remain byte-identical to published 306", async () => {
+  // Fixed vector generated with the HEAD implementation before Video support.
+  const root = await binding(), cycle = await scenePreparationSuccessor(root, predecessor());
+  assert.equal(Object.hasOwn(cycle, "output"), false);
+  assert.equal(cycle.id, "f0dcbaf52d55d5f04327b09186893478bda1eb4c0c169aa1cecf6dade020d038");
+  assert.equal(await digest(await experienceOutputEnvelope({ ...root, preparationCycle: cycle }, "confirm", 42,
+    { explicitRequirementsConfirmation: true })), "sha256:59f43ebbd0fa7748b9ca0526d965be1797219afa7175690313917f051353dd5d");
+});
+
 test("concurrent successor identity is deterministic and leaves original v1 keys and receipts unchanged", async () => {
   const b = await binding(), p = predecessor(), before = structuredClone(p), originalKey = await experienceOutputCommandKey(b, "confirm");
   const cycles = await Promise.all(Array.from({ length: 12 }, () => scenePreparationSuccessor(b, p)));
@@ -32,6 +41,23 @@ test("concurrent successor identity is deterministic and leaves original v1 keys
   assert.deepEqual(p, before);
   assert.notEqual(scenePreparationCommandKey(cycles[0]!, "confirm"), originalKey);
   assert.equal(Object.isFrozen(cycles[0]!.predecessor.confirmation), true);
+});
+
+test("Video reuses lineage while separating cycle identities and retaining original draft/save", async () => {
+  const scene = await binding(), video = { ...scene, output: "video" as const }, p = predecessor();
+  const original = await experienceOutputCommandKey(video, "save");
+  const cycle = await scenePreparationSuccessor(video, p), second = await scenePreparationSuccessor(video, p);
+  assert.deepEqual(cycle, second); assert.equal(cycle.output, "video");
+  assert.equal(cycle.draftId, video.draftId);
+  assert.match(scenePreparationCommandKey(cycle, "confirm"), /^video-cycle-v1:/);
+  assert.notEqual(cycle.id, (await scenePreparationSuccessor(scene, p)).id);
+  assert.equal(await scenePreparationCycleMatches(scene, p, cycle), false);
+  assert.equal(await scenePreparationCycleMatches(video, p, { ...cycle, output: undefined }), false);
+  assert.equal(await experienceOutputCommandKey(video, "save"), original);
+  await assert.rejects(experienceOutputCommandKey({ ...video, preparationCycle: cycle }, "save"));
+  const body = await experienceOutputEnvelope({ ...video, preparationCycle: cycle }, "confirm", 7);
+  assert.equal(body.documentId, video.documentId);
+  assert.equal(body.clientMutationId, scenePreparationCommandKey(cycle, "confirm"));
 });
 
 test("lineage validation refuses changed predecessor, source, release, Document and arbitrary candidate data", async () => {
