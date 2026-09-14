@@ -14,7 +14,7 @@ export type SceneHistoryScope = Readonly<{
   deadlineMs?: number;
 }>;
 export const SCENE_HISTORY_PROOF_LIMITS = Object.freeze({
-  rows: 10_000, rawBytes: 16 * 1024 * 1024, proofBytes: 36 * 1024 * 1024,
+  rows: 40_000, rawBytes: 16 * 1024 * 1024, proofBytes: 36 * 1024 * 1024,
   assertions: 384, reads: 512, bindingBytes: 128 * 1024,
 });
 type Limits = { -readonly [Key in keyof typeof SCENE_HISTORY_PROOF_LIMITS]: number };
@@ -22,7 +22,10 @@ type CapacityReason = "limit_config" | "reads" | "sql_bytes" | "bindings" | "bin
 type Cell = string | number | null;
 type Row = Record<string, Cell>;
 type Piece = { event_id: string; order_sequence: number; field: "public_body" | "private_body"; offset: number; bytes: number; total: number; storage: string };
-const encoder = new TextEncoder(), PAGE_ROWS = 64, CHUNK_BYTES = 8192, READ_PIECES = 12;
+// Capture processes one bounded page/batch at a time, never all row objects or
+// all hex pieces together. Larger histories retain the same byte/proof limits.
+const encoder = new TextEncoder(), PAGE_ROWS = 256, CHUNK_BYTES = 8192, READ_PIECES = 512;
+const PIECE_RESPONSE_BYTES = 208896;
 const rowFields = ["event_id", "event_present", "event_stream", "sequence", "order_sequence", "event_type", "occurred_at", "recorded_at", "actor", "client_id", "correlation_id", "causation_id", "compensates_event_id", "schema_version", "private_event_id", "private_owner", "private_project", "private_document", "redacted_at",
   "public_type", "public_bytes", "private_type", "private_bytes", "member_source_stream", "member_source_sequence", "member_actor", "member_created"] as const;
 const textFields = ["event_id", "event_stream", "event_type", "occurred_at", "recorded_at", "actor", "client_id", "correlation_id", "causation_id", "compensates_event_id", "private_event_id", "private_owner", "private_project", "private_document", "redacted_at", "member_source_stream", "member_actor", "member_created"] as const;
@@ -129,12 +132,71 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
     AND COUNT(*)=? AND COALESCE(MAX(order_sequence),0)=? FROM source`,
   [...relation.bindings, scope.streamId, scope.expectedOwnerHead, initial.source_count, initial.source_head]);
 
-  const rows: Row[] = []; let afterSequence = 0, afterId = "", rawBytes = 0;
-  while (rows.length < initial.source_count) {
+  const packer = (commit: (json: string) => void) => {
+    let items: string[] = [], used = 2;
+    const flush = () => { if (items.length) commit("[" + items.join(",") + "]"); items = []; used = 2; };
+    return {
+      append(value: unknown) {
+        const encoded = JSON.stringify(value), size = bytes(encoded) + 1;
+        if (size + 2 > limits.bindingBytes) capacity("binding_bytes");
+        if (items.length && used + size > limits.bindingBytes) flush();
+        items.push(encoded); used += size;
+      },
+      flush,
+    };
+  };
+  // Four individually bounded JSON bindings share one predicate, without
+  // recombining them into an oversized value. This bounds later hydration and
+  // atomic-verification query counts as well as capture's own reads.
+  const proofPacker = (sql: (expected: string) => string) => {
+    let packed: string[] = [];
+    const commit = () => {
+      if (packed.length) add(sql(packed.map(() => "SELECT value FROM json_each(?)").join(" UNION ALL ")), [...relation.bindings, ...packed]);
+      packed = [];
+    };
+    const values = packer(json => { packed.push(json); if (packed.length === 4) commit(); });
+    return { append: values.append, flush() { values.flush(); commit(); } };
+  };
+  // Fixed-position tuples avoid repeating every metadata key for every row;
+  // each original field, including storage/custody/membership, remains pinned.
+  const fieldPath = (field: typeof rowFields[number]) => `$[${rowFields.indexOf(field)}]`;
+  const metadata = proofPacker(expected => `${cte}, metadata AS NOT MATERIALIZED (${metadataSelect}), expected AS (${expected}) SELECT NOT EXISTS(
+    SELECT 1 FROM expected WHERE NOT EXISTS(SELECT 1 FROM metadata actual
+      WHERE actual.event_id=json_extract(expected.value,'${fieldPath("event_id")}') AND actual.order_sequence=json_extract(expected.value,'${fieldPath("order_sequence")}')
+      AND actual.metadata_valid=1 AND ${rowFields.map(field => `actual.${field} IS json_extract(expected.value,'${fieldPath(field)}')`).join(" AND ")}))`);
+  const exact = proofPacker(expected => `${cte}, expected AS (${expected}) SELECT NOT EXISTS(SELECT 1 FROM expected WHERE NOT EXISTS(SELECT 1 FROM source actual
+    WHERE actual.event_id=json_extract(expected.value,'$[0]') AND actual.order_sequence=json_extract(expected.value,'$[1]')
+      AND typeof(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END) IS json_extract(expected.value,'$[6]')
+      AND COALESCE(length(CAST(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB)),0)=json_extract(expected.value,'$[5]')
+      AND hex(substr(CAST(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB),
+        json_extract(expected.value,'$[3]'),json_extract(expected.value,'$[4]')))=json_extract(expected.value,'$[7]')))`);
+  const capturePieces = async (batch: Piece[]) => {
+    // CROSS JOIN fixes the small expected list as the outer loop. Without it,
+    // SQLite may scan the whole owner stream for every piece batch.
+    const actual = await read(`${cte} SELECT expected.key AS ordinal,source.event_id,source.order_sequence,
+      typeof(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN source.public_body ELSE source.private_body END) AS storage,
+      COALESCE(length(CAST(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN source.public_body ELSE source.private_body END AS BLOB)),0) AS total,
+      hex(substr(CAST(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN source.public_body ELSE source.private_body END AS BLOB),
+        json_extract(expected.value,'$.offset'),json_extract(expected.value,'$.bytes'))) AS part
+      FROM json_each(?) expected CROSS JOIN source WHERE source.event_id=json_extract(expected.value,'$.event_id')
+        AND source.order_sequence=json_extract(expected.value,'$.order_sequence') ORDER BY CAST(expected.key AS INTEGER)`, [...relation.bindings, JSON.stringify(batch)]);
+    if (actual.length !== batch.length) changed();
+    for (const [index, value] of actual.entries()) {
+      const piece = batch[index]!;
+      if (value.ordinal !== index || value.event_id !== piece.event_id || value.order_sequence !== piece.order_sequence
+        || value.storage !== piece.storage || value.total !== piece.total || typeof value.part !== "string"
+        || value.part.length !== piece.bytes * 2 || !/^[0-9A-F]+$/u.test(value.part)) changed();
+      // Fixed tuple: identity, order, field, byte offset/count, total, type, hex.
+      exact.append([piece.event_id, piece.order_sequence, piece.field, piece.offset, piece.bytes, piece.total, piece.storage, value.part]);
+    }
+  };
+  let rowCount = 0, afterSequence = 0, afterId = "", rawBytes = 0;
+  while (rowCount < initial.source_count) {
     const page = await read(`${cte}, metadata AS NOT MATERIALIZED (${metadataSelect}) SELECT * FROM metadata
       WHERE order_sequence>? OR (order_sequence=? AND event_id>?) ORDER BY order_sequence,event_id LIMIT ${PAGE_ROWS}`,
     [...relation.bindings, afterSequence, afterSequence, afterId]);
     if (!page.length || page.length > PAGE_ROWS) changed();
+    const rows: Row[] = [];
     for (const candidate of page) {
       if (candidate.metadata_valid !== 1 || candidate.event_present !== 1 || candidate.event_stream !== scope.streamId
         || !identifier(candidate.event_id) || !integer(candidate.sequence) || candidate.sequence < 1
@@ -150,66 +212,38 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
         if (value !== null && typeof value !== "string" && typeof value !== "number") unavailable();
         return [field, value];
       })) as Row;
-      rows.push(row); afterSequence = candidate.order_sequence; afterId = candidate.event_id;
+      rows.push(row); rowCount++; afterSequence = candidate.order_sequence; afterId = candidate.event_id;
       rawBytes += candidate.public_bytes + candidate.private_bytes;
-      if (rows.length > limits.rows) capacity("rows");
+      if (rowCount > limits.rows) capacity("rows");
       if (rawBytes > limits.rawBytes) capacity("raw_bytes");
-      if (rows.length > initial.source_count) changed();
+      if (rowCount > initial.source_count) changed();
+      metadata.append(rowFields.map(field => row[field]));
     }
-  }
-
-  const pack = (values: readonly Record<string, unknown>[], commit: (json: string) => void) => {
-    let items: string[] = [], used = 2;
-    for (const value of values) {
-      const encoded = JSON.stringify(value), size = bytes(encoded) + 1;
-      if (size + 2 > limits.bindingBytes) capacity("binding_bytes");
-      if (items.length && used + size > limits.bindingBytes) { commit("[" + items.join(",") + "]"); items = []; used = 2; }
-      items.push(encoded); used += size;
+    let batch: Piece[] = [], requestBytes = 2, responseBytes = 2;
+    for (const row of rows) for (const field of ["public_body", "private_body"] as const) {
+      const prefix = field === "public_body" ? "public" : "private", total = Number(row[`${prefix}_bytes`]);
+      // Empty and NULL fields are pinned by metadata. Generate only the next
+      // piece, keeping request bytes, exact JSON response bytes and rows bounded.
+      for (let offset = 1; offset <= total; offset += CHUNK_BYTES) {
+        const piece: Piece = { event_id: String(row.event_id), order_sequence: Number(row.order_sequence),
+          field, offset, bytes: Math.min(CHUNK_BYTES, total - offset + 1), total, storage: String(row[`${prefix}_type`]) };
+        const inputBytes = bytes(JSON.stringify(piece)) + 1;
+        const outputBytes = bytes(JSON.stringify({ ordinal: READ_PIECES, event_id: piece.event_id, order_sequence: piece.order_sequence,
+          storage: piece.storage, total: piece.total, part: "" })) + piece.bytes * 2 + 1;
+        if (inputBytes + 2 > limits.bindingBytes) capacity("binding_bytes");
+        if (batch.length && (batch.length >= READ_PIECES || requestBytes + inputBytes > limits.bindingBytes || responseBytes + outputBytes > PIECE_RESPONSE_BYTES)) {
+          await capturePieces(batch); batch = []; requestBytes = 2; responseBytes = 2;
+        }
+        batch.push(piece); requestBytes += inputBytes; responseBytes += outputBytes;
+      }
     }
-    if (items.length) commit("[" + items.join(",") + "]");
-  };
-  pack(rows, json => add(`${cte}, metadata AS NOT MATERIALIZED (${metadataSelect}) SELECT NOT EXISTS(
-    SELECT 1 FROM json_each(?) expected LEFT JOIN metadata actual
-      ON actual.event_id=json_extract(expected.value,'$.event_id') AND actual.order_sequence=json_extract(expected.value,'$.order_sequence')
-    WHERE actual.event_id IS NULL OR actual.metadata_valid<>1 OR ${rowFields.map(field => `actual.${field} IS NOT json_extract(expected.value,'$.${field}')`).join(" OR ")})`, [...relation.bindings, json]));
-
-  const pieces: Piece[] = [];
-  for (const row of rows) for (const field of ["public_body", "private_body"] as const) {
-    const prefix = field === "public_body" ? "public" : "private", total = Number(row[`${prefix}_bytes`]);
-    // Empty and NULL fields are already pinned by the complete metadata proof.
-    for (let offset = 1; offset <= total; offset += CHUNK_BYTES) pieces.push({ event_id: String(row.event_id), order_sequence: Number(row.order_sequence),
-      field, offset, bytes: Math.min(CHUNK_BYTES, total - offset + 1), total, storage: String(row[`${prefix}_type`]) });
+    if (batch.length) await capturePieces(batch);
   }
-  const exactPieces: Array<Piece & { hex: string }> = [];
-  for (let offset = 0; offset < pieces.length; offset += READ_PIECES) {
-    const batch = pieces.slice(offset, offset + READ_PIECES), expected = JSON.stringify(batch);
-    const actual = await read(`${cte} SELECT expected.key AS ordinal,source.event_id,source.order_sequence,
-      typeof(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN source.public_body ELSE source.private_body END) AS storage,
-      COALESCE(length(CAST(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN source.public_body ELSE source.private_body END AS BLOB)),0) AS total,
-      hex(substr(CAST(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN source.public_body ELSE source.private_body END AS BLOB),
-        json_extract(expected.value,'$.offset'),json_extract(expected.value,'$.bytes'))) AS part
-      FROM json_each(?) expected JOIN source ON source.event_id=json_extract(expected.value,'$.event_id')
-        AND source.order_sequence=json_extract(expected.value,'$.order_sequence') ORDER BY CAST(expected.key AS INTEGER)`, [...relation.bindings, expected]);
-    if (actual.length !== batch.length) changed();
-    for (const [index, value] of actual.entries()) {
-      const piece = batch[index]!;
-      if (Number(value.ordinal) !== index || value.event_id !== piece.event_id || value.order_sequence !== piece.order_sequence
-        || value.storage !== piece.storage || value.total !== piece.total || typeof value.part !== "string"
-        || value.part.length !== piece.bytes * 2 || !/^[0-9A-F]+$/u.test(value.part)) changed();
-      exactPieces.push({ ...piece, hex: value.part });
-    }
-  }
-  pack(exactPieces, json => add(`${cte} SELECT NOT EXISTS(SELECT 1 FROM json_each(?) expected LEFT JOIN source actual
-    ON actual.event_id=json_extract(expected.value,'$.event_id') AND actual.order_sequence=json_extract(expected.value,'$.order_sequence')
-    WHERE actual.event_id IS NULL
-      OR typeof(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END) IS NOT json_extract(expected.value,'$.storage')
-      OR COALESCE(length(CAST(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB)),0)<>json_extract(expected.value,'$.total')
-      OR hex(substr(CAST(CASE json_extract(expected.value,'$.field') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB),
-        json_extract(expected.value,'$.offset'),json_extract(expected.value,'$.bytes')))<>json_extract(expected.value,'$.hex'))`, [...relation.bindings, json]));
+  metadata.flush(); exact.flush();
   const retained = Object.freeze(assertions.map(assertion => Object.freeze({ ...assertion, bindings: Object.freeze([...(assertion.bindings ?? [])]) }) as unknown as OutputSqlAssertion));
   deadline(); await port.verify(retained); deadline();
   // proofBytes counts UTF-8 string binding payloads, not SQL text. SQL has its
   // own per-statement cap and the assertion count supplies the aggregate bound.
-  return Object.freeze({ version: "scene-history-proof-v1" as const, scope, rows: rows.length, rawBytes, proofBytes,
+  return Object.freeze({ version: "scene-history-proof-v1" as const, scope, rows: rowCount, rawBytes, proofBytes,
     captureReads: reads, assertions: retained });
 }

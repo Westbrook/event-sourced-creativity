@@ -290,7 +290,7 @@ test('a late authorization index with no stream-head change blocks native renewa
 
 // Real mini-app intake and prepare/read handlers. No test constructs the renewal
 // sourceAssertions here: the product handler must assemble and enforce them.
-async function httpFixture(t, { capacity = false, originalAgeMs = 1_200_000, largeHistory = false } = {}) {
+async function httpFixture(t, { capacity = false, originalAgeMs = 1_200_000, largeHistory = false, manyRows = false } = {}) {
   const state = outputTestDatabase(':memory:'); t.after(() => state.sqlite.close());
   if (capacity) state.capacity = instrumentScenePreflightCapacity(state);
   await runtime.ensureSchema(state.env);
@@ -306,6 +306,12 @@ async function httpFixture(t, { capacity = false, originalAgeMs = 1_200_000, lar
     state.historyEventId = state.sqlite.prepare("SELECT event_id FROM events WHERE correlation_id='earlier-projects' ORDER BY sequence LIMIT 1").get().event_id;
     const historical = state.sqlite.prepare("SELECT SUM(length(CAST(private_json AS BLOB))) AS bytes FROM event_private_payloads WHERE owner_id=?").get(owner);
     assert.ok(historical.bytes > 2_000_000, 'The native fixture must exceed the former single-value proof limit');
+  }
+  if (manyRows) {
+    await runtime.appendEvents(state.env, Array.from({length:10001}, (_, index) =>
+      runtime.makeEvent(stream, 0, `user:${owner}`, 'test', 'earlier-project-rows', 'ProjectCreated',
+        {project_id:`earlier-row-${index}`,name:'Earlier work'})));
+    assert.ok(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events WHERE stream_id=?').get(stream).n > 10000);
   }
   const release = await registeredExperience('scene');
   const intent = { intentId: '00000000-0000-4000-8000-000000000091', experienceId: 'scene', releaseHash: release.releaseHash,
@@ -387,7 +393,7 @@ test('actual mini-app renewal rolls back when retention changes between offer an
 // the reviewed in-memory SQLite adapter and its BEGIN IMMEDIATE atomic batch.
 // This records counts and SQL text, never source values or credentials.
 function instrumentScenePreflightCapacity(state) {
-  const observed = { bindingCounts: [], proofBatches: [], active: null, faults: 0 };
+  const observed = { bindingCounts: [], proofBatches: [], active: null, faults: 0, executions: 0 };
   const prepare = state.DB.prepare.bind(state.DB), batch = state.DB.batch.bind(state.DB);
   function track(statement) {
     const bind = statement.bind.bind(statement), execute = statement.execute.bind(statement);
@@ -397,6 +403,7 @@ function instrumentScenePreflightCapacity(state) {
       return track(bind(...values));
     };
     statement.execute = kind => {
+      observed.executions++;
       assert.ok(statement.bindings.length <= 100, 'Every executed SQLite statement stays within D1 binding capacity');
       return execute(kind);
     };
@@ -471,6 +478,25 @@ function attachRealScenePreflight(state, fault = null) {
   };
   return returned;
 }
+
+test('actual HTTP Scene renewal and preparation accept more than ten thousand historical rows without paid action', async t => {
+  const started=performance.now();
+  const s=await httpFixture(t,{capacity:true,manyRows:true}),returned=attachRealScenePreflight(s);
+  const before=s.capacity.executions;
+  const response=await s.send(s.body);
+  assert.equal(response.status,200,await response.clone().text());
+  const result=await response.json();
+  assert.equal(result.documentId,s.plan.documentId);
+  assert.equal(result.preflight.targets[0].available,true);
+  assert.equal(result.preflight.targets[0].reasonCode,'output_scene_ready');
+  assert.ok(result.sceneCostPreview);assert.equal(result.permitted.authorize,true);assert.equal(result.permitted.run,false);
+  assert.equal(returned.length,1);assert.ok(returned[0].proof.sourceAssertions.some(a=>a.sql.includes('hex(substr')));
+  assert.ok(JSON.stringify(returned[0].proof.prepared.effectiveSnapshot).length<100000);
+  s.assertUnpaid();assert.equal(forbidden,0);
+  const executedStatements=s.capacity.executions-before;
+  assert.ok(executedStatements<=1000, `Actual native preparation executed ${executedStatements} statements`);
+  t.diagnostic(JSON.stringify({nativeFixtureRows:10001,executedStatements,elapsedMs:Math.round(performance.now()-started),nodeHeapUsed:process.memoryUsage().heapUsed,notWorkerMemoryEvidence:true}));
+});
 
 test('actual HTTP Scene preflight preserves complete history above two megabytes without enlarging the requested Scene', async t => {
   const s = await httpFixture(t, {capacity:true,largeHistory:true}), returned = attachRealScenePreflight(s);

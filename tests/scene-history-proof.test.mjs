@@ -70,6 +70,62 @@ test("small Scene with more than 2 MB complete historical bodies uses bounded ex
   } finally { f.db.close(); }
 });
 
+test("forty thousand small rows retain complete exact proofs within unchanged read and byte budgets", async () => {
+  const f = fixture();
+  try {
+    f.db.exec("CREATE INDEX fixture_stream_sequence ON events(stream_id,sequence,event_id); BEGIN");
+    for (let index = 0; index < 40000; index++) f.add(`row-${String(index).padStart(5, "0")}`, index + 1, "{}");
+    f.db.exec("COMMIT");
+    let peakResponseBytes = 0, peakPieces = 0;
+    const originalRead = f.port.read;
+    f.port.read = async (sql, bindings) => {
+      const result = await originalRead(sql, bindings);
+      if (sql.includes(" AS part")) {
+        peakResponseBytes = Math.max(peakResponseBytes, Buffer.byteLength(JSON.stringify(result)));
+        peakPieces = Math.max(peakPieces, result.length);
+        assert.ok(result.length <= 512); assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 208896);
+      }
+      return result;
+    };
+    const proof = await f.capture();
+    assert.equal(proof.rows, 40000); assert.ok(proof.captureReads <= 512);
+    assert.ok(proof.proofBytes <= 36 * 1024 * 1024); assert.ok(proof.assertions.length <= 384);
+    const repeatedProofQueries = proof.captureReads + proof.assertions.length + Math.ceil(proof.rows / 6500) * (proof.assertions.length + 2) + proof.assertions.length;
+    assert.ok(repeatedProofQueries < 700, `Capture, verification, joined hydration and preflight require ${repeatedProofQueries} statements before other route work`);
+    assert.ok(proof.assertions.some(a => a.bindings.length > 2 && a.sql.includes('UNION ALL')));
+    for (const a of proof.assertions) for (const value of a.bindings ?? [])
+      if (typeof value === 'string') assert.ok(Buffer.byteLength(value) <= 128 * 1024);
+    assert.ok(peakPieces > 12); assert.ok(peakResponseBytes > 0);
+    // Neither the first nor final historical body may escape verification.
+    for (const id of ["row-00000", "row-39999"]) {
+      f.db.prepare("UPDATE event_private_payloads SET private_json='[]' WHERE private_event_id=?").run(id);
+      assert.throws(() => f.verify(proof.assertions));
+      f.db.prepare("UPDATE event_private_payloads SET private_json='{}' WHERE private_event_id=?").run(id);
+    }
+    f.verify(proof.assertions);
+    f.add("over-limit", 40001);
+    await assert.rejects(f.capture(), error => error.capacityReason === "rows");
+  } finally { f.db.close(); }
+});
+
+test("adaptive body reads cap response bytes even with maximum-size pieces and escaped identifiers", async () => {
+  const f = fixture();
+  try {
+    f.add("\u0001".repeat(100), 1, "x".repeat(600000));
+    const originalRead = f.port.read; let batches = 0;
+    f.port.read = async (sql, bindings) => {
+      const result = await originalRead(sql, bindings);
+      if (sql.includes(" AS part")) {
+        batches++; assert.ok(result.length <= 512);
+        assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 208896);
+        assert.ok(Buffer.byteLength(bindings.at(-1)) <= 128 * 1024);
+      }
+      return result;
+    };
+    const proof = await f.capture(); assert.ok(batches > 1); f.verify(proof.assertions);
+  } finally { f.db.close(); }
+});
+
 test("NUL, Unicode byte-boundary splits, missing/NULL/redacted and empty TEXT/BLOB remain distinct", async () => {
   const f = fixture();
   try {
@@ -176,9 +232,9 @@ test("empty history is positively certified and later additions invalidate it", 
 test("keyset tie-breaking uses SQLite UTF-8 binary order rather than JavaScript UTF-16 order", async () => {
   const f = fixture();
   try {
-    for (let index = 0; index < 64; index++) f.add(`ascii-${String(index).padStart(3, "0")}`, 1);
+    for (let index = 0; index < 256; index++) f.add(`ascii-${String(index).padStart(3, "0")}`, 1);
     f.add("\uE000", 1); f.add("\u{10000}", 1);
-    const proof = await f.capture(); assert.equal(proof.rows, 66); f.verify(proof.assertions);
+    const proof = await f.capture(); assert.equal(proof.rows, 258); f.verify(proof.assertions);
   } finally { f.db.close(); }
 });
 

@@ -23,6 +23,7 @@ const statements = new Function("OutputConflictError", "recordOutputProofCapacit
   section(disclosure, "function outputProofReadStatements(", "function assertOutputProofRead(") + "return outputProofReadStatements;"
 )(OutputConflictError, recordOutputProofCapacity);
 const historyUrl = moduleUrl(await read("scene-history-proof.ts"));
+const { SCENE_HISTORY_PROOF_LIMITS } = await import(historyUrl);
 const errorUrl = moduleUrl(core.slice(core.indexOf("export class OutputConflictError"), core.indexOf("/** This table")));
 const adapterSource = (await read("scene-history-proof-read.ts"))
   .replace('from "./output-command-core.ts"', `from "${errorUrl}"`)
@@ -67,7 +68,7 @@ test("retained body aggregate capacity keeps the original bound and413 identity"
 test("Scene adapter maps genuine capacity but preserves unknown database failures by identity", async () => {
   let calls = 0;
   const env = { DB: { prepare() { return { bind() { return { async all() {
-    calls++; return { success: true, results: [{ owner_head: 1, source_count: 10_001, source_head: 1 }] };
+    calls++; return { success: true, results: [{ owner_head: 1, source_count: SCENE_HISTORY_PROOF_LIMITS.rows + 1, source_head: 1 }] };
   } }; } }; } } };
   await assert.rejects(readSceneHistoryProof(env, { streamId: "creative:owner", expectedOwnerHead: 1 }), error =>
     error.code === "output_source_proof_too_large" && error.status === 413 && outputProofCapacityDiagnostic(error) === "scene_history_rows");

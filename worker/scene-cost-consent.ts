@@ -85,11 +85,16 @@ export async function prepareSceneCostConsent(
   const guidanceProblem = documentRenderGuidanceProblem(payload);
   if (guidanceProblem) fail(guidanceProblem.error, 400);
   const guidance = documentRenderGuidance(payload);
-  const initial = user.projectExecution
-    ? await readProjectSourceEvents(env, user.projectExecution, { synchronize: options.synchronize === true })
-    : await readWorkspaceEvents(env, user.streamId);
-  const initialProjection = foldEvents(initial, Infinity, documentId, user.projectExecution?.projectId ?? "");
-  const initialDocument = initialProjection.documents.find(document => document.id === documentId && !document.removed);
+  // Only the initial custody locator survives this scope. Do not retain a first
+  // full history/projection alongside the certified history and exact proofs.
+  const initialDocument = await (async () => {
+    const initial = user.projectExecution
+      ? await readProjectSourceEvents(env, user.projectExecution, { synchronize: options.synchronize === true })
+      : await readWorkspaceEvents(env, user.streamId);
+    const projection = foldEvents(initial, Infinity, documentId, user.projectExecution?.projectId ?? "");
+    const document = projection.documents.find(document => document.id === documentId && !document.removed);
+    return document ? { projectId: document.projectId } : null;
+  })();
   if (!initialDocument) fail("document_not_found", 404);
   let scope = user.projectExecution;
   if (!scope) {
