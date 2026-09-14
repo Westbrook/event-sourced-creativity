@@ -1,4 +1,4 @@
-import { readFalRecoveryCheckpoint } from "./output-fal-recovery-policy.ts";
+import { readFalRecoveryCheckpoint, recoveredFalImageEventIds } from "./output-fal-recovery-policy.ts";
 import { stopOutputVideoJob } from "./output-video-stop.ts";
 import { readOutputAudioPayload } from "./output-audio-execution.ts";
 import { MODEL3D_PRIVATE_CHECKPOINT_KEYS, MODEL3D_TERMINAL_RESULT_SQL, model3dNativeCheckpoint, model3dPublicResultSql } from "./output-model3d-terminal.ts";
@@ -1612,6 +1612,8 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&!key.startsWith("outputVideo")&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
+  const recoveredEventIds=recoveredFalImageEventIds(row,parsed);
+  if(sanitizedResult&&recoveredEventIds)sanitizedResult.appendedEventIds=recoveredEventIds;
   if(sanitizedResult&&request.artifactKind==="model3d"&&!model3dNativeCheckpoint(request))Object.assign(sanitizedResult,model3dRecoveryProviderReceipt(parsed)??{});
   if(sanitizedResult&&consentedAdaptiveJob(row)&&!certifiedAdaptiveRows.has(row)){delete sanitizedResult.structure;delete sanitizedResult.intent;}
   // Present current evidence without changing the stored receipt, checkpoint, or cost hold.

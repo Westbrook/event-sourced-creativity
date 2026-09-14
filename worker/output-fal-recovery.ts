@@ -156,8 +156,11 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     try{
       await appendEvents(privateEnv,[complete,usageEvent],{retries:1,prepareSidecars:()=>[
         ...outputAssertionStatements(env,{sql:"(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=2",bindings:[ids]}),
-        env.DB.prepare(`UPDATE document_jobs SET status='completed',error_message=NULL,completed_at=?,lease_expires_at=NULL,result_json=json_patch(result_json,?),updated_at=? WHERE job_id=? AND owner_id=?`)
-          .bind(new Date().toISOString(),JSON.stringify({stage:'completed',errorDetail:null,outputFalRecovery:{...lease,status:'completed',completionEventId:complete.eventId},generationReceipt:{provider_request_status:'completed'}}),new Date().toISOString(),job.job_id,user.userId),
+        env.DB.prepare(`UPDATE document_jobs SET status='completed',error_message=NULL,completed_at=?,lease_expires_at=NULL,
+          result_json=json_set(json_patch(result_json,?),'$.appendedEventIds',json_insert(
+            CASE WHEN json_type(result_json,'$.appendedEventIds')='array' THEN json_extract(result_json,'$.appendedEventIds') ELSE json('[]') END,
+            '$[#]',?,'$[#]',?)),updated_at=? WHERE job_id=? AND owner_id=?`)
+          .bind(new Date().toISOString(),JSON.stringify({stage:'completed',errorDetail:null,outputFalRecovery:{...lease,status:'completed',completionEventId:complete.eventId},generationReceipt:{provider_request_status:'completed'}}),complete.eventId,usageEvent.eventId,new Date().toISOString(),job.job_id,user.userId),
         ...prepareOutputJobOutcomeStatements(env,job),
       ]});
     }catch(error){

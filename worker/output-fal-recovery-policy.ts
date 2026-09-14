@@ -41,6 +41,20 @@ export const retainedPersonalFalRecoverySql=`EXISTS(
     AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id IN(request.content_id,planning.content_id)))`;
 
 const object=(v:unknown):Record<string,unknown>=>v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:{};
+/** Read-only compatibility for completed v1 recoveries written before their
+ * completion ID was also listed in appendedEventIds. The server-written marker
+ * is only an association: consumers still verify the exact event and custody.
+ * Never mutate stored history or convert malformed event lists into evidence. */
+export function recoveredFalImageEventIds(row:{kind:string;status:string;source_surface:string|null;output_slot_id?:string|null},result:Record<string,unknown>):string[]|null {
+  const recovery=object(result.outputFalRecovery),checkpoint=readFalRecoveryCheckpoint(result.outputFalCheckpoint),receipt=object(result.generationReceipt);
+  const ids=result.appendedEventIds;
+  const validId=(v:unknown):v is string=>typeof v==="string"&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(v);
+  if(row.kind!=="generate"||row.status!=="completed"||row.source_surface!=="outputs"||!validId(row.output_slot_id)
+    ||recovery.version!=="output-fal-recovery-v1"||recovery.status!=="completed"||!validId(recovery.completionEventId)
+    ||!checkpoint||recovery.clientRequestId!==checkpoint.clientRequestId||receipt.provider_request_status!=="completed"
+    ||ids!==undefined&&(!Array.isArray(ids)||!ids.every(validId)))return null;
+  return [...new Set([...(ids as string[]|undefined)??[],recovery.completionEventId])];
+}
 export function readFalRecoveryCheckpoint(value:unknown){
   const v=object(value),keys=["version","clientRequestId","requestDigest","stage","provider","model","requestRef","requestSha256","planningRef","planningSha256","expiresAt"];
   if(Object.keys(v).length!==keys.length||keys.some(k=>typeof v[k]!=="string")||v.version!=="output-fal-checkpoint-v1"||v.stage!=="image:initial"||v.provider!=="fal"||v.model!=="ideogram/v4"
