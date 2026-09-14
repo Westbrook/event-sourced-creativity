@@ -48,6 +48,7 @@ function requireFact(value: unknown, code: Refusal["code"] = "unavailable", stat
 class Lifetime {
   active = true;
   writing = false;
+  readStage: "admission" | "witness_read" | "event_witness_capacity" | "revision_witness_capacity" | "witness_bounds" | "event_decode" | "event_order" | "origin_alias" | "origin_fields" | "origin_path" | "projection" | "origin_envelope" | "private_content" | "revision" | "sources" | "current_guard" | "media_read" | "media_hash" | "png_facts" = "admission";
   readonly cancellations = new Set<() => void>();
   check() { requireFact(this.active, "unavailable", 408); }
   stop() { this.active = false; for (const cancel of this.cancellations) { try { cancel(); } catch { /* Cancellation is best effort and never awaited. */ } } this.cancellations.clear(); }
@@ -120,12 +121,18 @@ function matchesRequest(request: GeneratedImageEditRequest, snapshot: GeneratedI
 async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string, life: Lifetime): Promise<Current> {
   life.check();
   const key = internalKey(outputId);
+  life.readStage="witness_read";
   const witnesses = await life.wait(env.DB.prepare(`SELECT ${EVENT_SNAPSHOT_SQL} eventWitness,${REVISION_SNAPSHOT_SQL} revisionWitness`).bind(actor.streamId, actor.userId, key, outputId).first<Row>());
-  requireFact(witnesses && typeof witnesses.eventWitness === "string" && typeof witnesses.revisionWitness === "string");
+  life.readStage="event_witness_capacity";
+  requireFact(witnesses && typeof witnesses.eventWitness === "string");
+  life.readStage="revision_witness_capacity";
+  requireFact(typeof witnesses.revisionWitness === "string");
+  life.readStage="witness_bounds";
   const eventWitness = witnesses.eventWitness, revisionWitness = witnesses.revisionWitness;
   requireFact(encoder.encode(eventWitness).length <= MAX_EVENT_BYTES + 8_000_000 && encoder.encode(revisionWitness).length <= MAX_REVISION_BYTES + 131_072);
   const eventRows: unknown = JSON.parse(eventWitness), revisionRows: unknown = JSON.parse(revisionWitness);
   requireFact(Array.isArray(eventRows) && eventRows.length > 0 && eventRows.length <= MAX_EVENTS && Array.isArray(revisionRows) && revisionRows.length <= MAX_REVISIONS);
+  life.readStage="event_decode";
   const events: CreativeEvent[] = eventRows.map((value: unknown) => {
     requireFact(object(value) && token(value.event_id) && value.stream_id === actor.streamId && integer(value.sequence, 1));
     if (value.private_json !== null) requireFact(value.private_owner === actor.userId && typeof value.private_json === "string");
@@ -135,11 +142,14 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   });
   const eventBytes = eventRows.reduce((total: number, value: Row) => total + encoder.encode(String(value.payload)).length
     + (typeof value.private_json === "string" ? encoder.encode(value.private_json).length : 0), 0);
+  life.readStage="event_order";
   requireFact(new Set(events.map(event => event.eventId)).size === events.length && events.every((event, index) => index === 0 || events[index - 1]!.sequence < event.sequence));
+  life.readStage="origin_alias";
   const aliases = events.filter(event => (event.type === "GenerationCompleted" || event.type === "IdeationPreviewCompleted")
     && (event.payload.object_id === outputId || Array.isArray(event.payload.object_ids) && event.payload.object_ids.includes(outputId)));
   requireFact(aliases.length === 1);
   const completed = aliases[0]!, p = completed.payload;
+  life.readStage="origin_fields";
   requireFact(completed.type === "GenerationCompleted" && completed.actor === "worker:generator" && p.report_space !== "scout"
     && p.object_id === outputId && Array.isArray(p.object_ids) && p.object_ids.length === 1 && p.object_ids[0] === outputId
     && token(p.document_id) && token(p.generation_id) && /^[A-Za-z0-9._-]+$/u.test(p.generation_id) && token(p.output_ref)
@@ -147,10 +157,12 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
     && integer(p.image_height, 1) && p.image_height <= 16_384 && p.quality === "high" && p.purpose === "final" && p.simulation === false
     && (p.content_expires_at == null || future(p.content_expires_at)));
   requireFact(!events.some(event => event !== completed && ["GenerationCompleted", "IdeationPreviewCompleted"].includes(event.type) && event.payload.generation_id === p.generation_id));
+  life.readStage="origin_path";
   const originalUrl = originalGeneratedImageUrl(actor.userId,completed);
   requireFact(originalUrl);
   // The initial projection proves generated-output identity. Current projection
   // supplies removal and current Document/reference state, including later edits.
+  life.readStage="projection";
   const initial = foldEvents(events.filter(event => event.sequence <= completed.sequence), Infinity, p.document_id);
   const initialOutput = initial.libraryOutputs.filter(output => output.id === outputId);
   requireFact(initialOutput.length === 1 && initialOutput[0]!.sourceEventId === completed.eventId && initialOutput[0]!.generationId === p.generation_id
@@ -160,11 +172,13 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   requireFact(document && !document.removed && token(document.projectId) && projection.documentId === document.id && projection.projectId === document.projectId
     && outputs.length === 1 && !outputs[0]!.discarded && outputs[0]!.documentId === document.id && outputs[0]!.generationId === p.generation_id
     && outputs[0]!.sourceEventId === completed.eventId && outputs[0]!.contentRef === p.output_ref);
+  life.readStage="origin_envelope";
   const originEnvelope: unknown = eventRows.find((value: unknown) => object(value) && value.event_id === completed.eventId);
   requireFact(object(originEnvelope) && originEnvelope.private_owner === actor.userId && originEnvelope.private_redacted === null
     && originEnvelope.private_document === document.id && (originEnvelope.private_project === null || originEnvelope.private_project === document.projectId));
   requireFact(!events.some(event => ["DocumentRenderCompleted", "DocumentArtifactEdited"].includes(event.type)
     && [outputId, key].includes(String(event.payload.artifact_id ?? ""))));
+  life.readStage="private_content";
   const source = await life.wait(env.DB.prepare("SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>?")
     .bind(p.output_ref, actor.userId, new Date().toISOString()).first<Row>());
   requireFact(source && typeof source.content === "string" && source.content.length > 0 && encoder.encode(source.content).length <= GENERATED_IMAGE_EDIT_LIMITS.rawBytes && future(source.expires_at));
@@ -175,6 +189,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   // first Save; a retained revision-zero row must thereafter preserve it exactly.
   let initialMedia: Media = { url: originalUrl, mediaType: "image/png", sha256: p.source_content_hash, byteLength: 0, width: p.image_width, height: p.image_height };
   let media = initialMedia, editEventId: string | null = null;
+  life.readStage="revision";
   const edits = events.filter(event => event.type === "GeneratedImageEdited" && (event.payload.output_id === outputId || event.payload.object_id === outputId));
   requireFact(revisionRows.length === (edits.length === 0 ? 0 : edits.length + 1));
   const retained: Retained[] = [];
@@ -224,6 +239,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
     retained.push({ row: value, envelope: { ...envelope, request, imageRevision: record } as Envelope, event });
   }
   requireFact(new Set(retained.flatMap(item => item.envelope.imageRevision ? [item.envelope.imageRevision.operationSha256] : [])).size === edits.length);
+  life.readStage="sources";
   const sources = referenceCompositionSources(projection.libraryBlocks.filter(block => block.documentId === document.id && block.projectId === document.projectId), events)
     .filter(item => mediaKey(item.mediaUrl, actor.userId) !== null);
   requireFact(sources.length <= 128 && new Set(sources.map(item => item.id)).size === sources.length);
@@ -258,6 +274,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
 }
 
 async function assertCurrent(env: WorkerEnv, current: Current, life: Lifetime) {
+  life.readStage="current_guard";
   life.check();
   requireFact(future(current.rawExpires) && (current.originExpires === null || future(current.originExpires)) && current.retained.every(item => future(item.row.expires_at)), "source_changed");
   const row = await life.wait(env.DB.prepare(`SELECT 1 ok WHERE ${current.guard.sql}`).bind(...current.guard.bindings).first<Row>());
@@ -295,6 +312,7 @@ async function boundedStream(body: ReadableStream<Uint8Array>, limit: number, de
 }
 
 async function ownedMedia(env: WorkerEnv, owner: string, url: string, expectedHash: string, life: Lifetime, expectedMime?: string): Promise<Uint8Array> {
+  life.readStage="media_read";
   const key = mediaKey(url, owner); requireFact(key && hash(expectedHash)); life.check();
   const pending = env.MEDIA.get(key);
   void pending.then(value => { if (!life.active && value) void value.body.cancel().catch(() => {}); }).catch(() => {});
@@ -306,11 +324,13 @@ async function ownedMedia(env: WorkerEnv, owner: string, url: string, expectedHa
       && integer(value.size, 1) && value.size <= GENERATED_IMAGE_EDIT_LIMITS.pngBytes);
     if (expectedMime) { const headers = new Headers(); value.writeHttpMetadata(headers); requireFact(headers.get("content-type") === expectedMime); }
     const bytes = await boundedStream(value.body, GENERATED_IMAGE_EDIT_LIMITS.pngBytes, value.size, life);
+    life.readStage="media_hash";
     try { requireFact(await life.wait(outputAssetSha256(bytes)) === expectedHash); return bytes; }
     catch (error) { bytes.fill(0); throw error; }
   } catch (error) { cancel(); throw error; }
 }
 async function pngFacts(bytes: Uint8Array, expected: { sha256: string; width: number; height: number; byteLength?: number }, life: Lifetime) {
+  life.readStage="png_facts";
   const facts = await life.wait(inspectOutputAsset(bytes, "image.png", { snapshot: false }));
   requireFact(facts.status === "inspected" && facts.kind === "image" && facts.extension === "png" && facts.mimeType === "image/png"
     && facts.sha256 === expected.sha256 && facts.facts.width === expected.width && facts.facts.height === expected.height
@@ -491,6 +511,7 @@ export async function handleGeneratedImageEdit(request: Request, env: WorkerEnv,
   const work = execute(request, env, outputId, life).catch((error: unknown) => {
     if (life.writing) return reply({ status: "unconfirmed", code: "unconfirmed" });
     const failure = error instanceof Refusal ? error : new Refusal("unavailable");
+    if(request.method==="GET")console.warn("generated_image_read_refused",{stage:life.readStage,code:failure.code,status:failure.status});
     return reply({ status: "refused", code: failure.code }, failure.status);
   });
   try { return await Promise.race([work, interrupted]); }
