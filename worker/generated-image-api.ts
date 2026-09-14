@@ -53,7 +53,7 @@ function imageReadFailureKind(error: unknown): string {
   try { for(let depth=0;depth<3&&object(current);depth++){
     const raw=Object.getOwnPropertyDescriptor(current,"message")?.value;
     const message=typeof raw==="string"?raw.slice(0,2048):"";
-    if(/^image_witness_(?:capacity|changed|version|schema|epoch_absent|unavailable)$/u.test(message))return message;
+    if(/^image_witness_(?:capacity(?:_(?:reads|event_count|event_bytes|event_page|event_row|event_json|revision_count|revision_row|revision_bytes))?|changed|version|schema|epoch_absent|unavailable)$/u.test(message))return message;
     if(/\bSQLITE_TOOBIG\b|\bstring or blob too big\b/iu.test(message))return "d1_value_limit";
     if(/\bno such (?:table|column)\b|\bSQLITE_SCHEMA\b/iu.test(message))return "d1_schema";
     if(/\bExpression tree is too large\b/iu.test(message))return "d1_expression_depth";

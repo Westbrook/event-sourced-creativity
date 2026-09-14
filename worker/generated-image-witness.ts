@@ -23,7 +23,7 @@ const eventCell=`CASE WHEN ${validText(eventText)} AND typeof(payload)='text' AN
 const revisionCell=`CASE WHEN ${validText(revisionText)} AND typeof(content_json)='text' AND length(CAST(content_json AS BLOB))<=${IMAGE_WITNESS_LIMITS.revisionBodyBytes}
   THEN ${json(revisionFields)} ELSE NULL END`;
 const integer=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
-function fail(kind:'capacity'|'changed'|'version'|'schema'|'epoch_absent'|'unavailable'):never {throw new Error('image_witness_'+kind);}
+function fail(kind:'capacity'|`capacity_${'reads'|'event_count'|'event_bytes'|'event_page'|'event_row'|'event_json'|'revision_count'|'revision_row'|'revision_bytes'}`|'changed'|'version'|'schema'|'epoch_absent'|'unavailable'):never {throw new Error('image_witness_'+kind);}
 const own=(value:object,key:PropertyKey)=>Object.getOwnPropertyDescriptor(value,key)?.value;
 const dense=(value:unknown):value is unknown[]=>Array.isArray(value)&&Array.from({length:value.length},(_,i)=>i).every(i=>{
   const descriptor=Object.getOwnPropertyDescriptor(value,i);return !!descriptor&&Object.hasOwn(descriptor,'value');
@@ -92,7 +92,7 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
   const pageGuards=compact(guards);
   let reads=0;
   const read=async(sql:string,bindings:ImageWitnessGuard['bindings'])=>{
-    life.check();if(++reads>IMAGE_WITNESS_LIMITS.reads)fail('capacity');
+    life.check();if(++reads>IMAGE_WITNESS_LIMITS.reads)fail('capacity_reads');
     const results=await batch([env.DB.prepare(sql).bind(...bindings),...pageGuards.map(guard=>imageWitnessStatement(env,guard))]);
     if(!dense(results)||results.length!==1+pageGuards.length||!checked(results[0])||!imageWitnessAcknowledged(results.slice(1),pageGuards.length))fail('changed');
     return results[0].results;
@@ -101,19 +101,21 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
     COALESCE(SUM(length(CAST(payload AS BLOB))+COALESCE(length(CAST(private_json AS BLOB)),0)),0) AS raw_bytes FROM source`,[streamId]);
   const total=totals[0];
   if(totals.length!==1||!total||!integer(total.count)||!integer(total.head)||!integer(total.raw_bytes))fail('unavailable');
-  if(total.count===0||total.count>IMAGE_WITNESS_LIMITS.events||total.raw_bytes>IMAGE_WITNESS_LIMITS.eventBytes)fail('capacity');
+  if(total.count===0||total.count>IMAGE_WITNESS_LIMITS.events)fail('capacity_event_count');
+  if(total.raw_bytes>IMAGE_WITNESS_LIMITS.eventBytes)fail('capacity_event_bytes');
   const eventRows:Row[]=[];let cursor=0,jsonBytes=2;
   while(eventRows.length<total.count){
     const page=await read(`WITH source AS (${relation}), page AS MATERIALIZED
       (SELECT sequence,${eventCell} AS witness FROM source WHERE sequence>? ORDER BY sequence LIMIT ${IMAGE_WITNESS_LIMITS.pageRows}),
       budgeted AS (SELECT *,SUM(COALESCE(length(CAST(witness AS BLOB)),1)+1) OVER (ORDER BY sequence) AS used FROM page)
       SELECT sequence,witness FROM budgeted WHERE used<=${IMAGE_WITNESS_LIMITS.pageBytes} ORDER BY sequence`,[streamId,cursor]);
-    if(!page.length)fail('capacity');
+    if(!page.length)fail('capacity_event_page');
     let pageBytes=0;
     for(const item of page){
-      if(!integer(item.sequence)||item.sequence<=cursor||typeof item.witness!=='string')fail('capacity');
+      if(!integer(item.sequence)||item.sequence<=cursor||typeof item.witness!=='string')fail('capacity_event_row');
       const size=bytes(item.witness)+1;pageBytes+=size;jsonBytes+=size;
-      if(pageBytes>IMAGE_WITNESS_LIMITS.pageBytes||jsonBytes>IMAGE_WITNESS_LIMITS.eventJsonBytes)fail('capacity');
+      if(pageBytes>IMAGE_WITNESS_LIMITS.pageBytes)fail('capacity_event_page');
+      if(jsonBytes>IMAGE_WITNESS_LIMITS.eventJsonBytes)fail('capacity_event_json');
       const row:Row=JSON.parse(item.witness);if(row.sequence!==item.sequence||row.stream_id!==streamId)fail('changed');
       eventRows.push(row);cursor=item.sequence;
     }
@@ -124,13 +126,13 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
   // one bounded exact row witness per revision, including mutable retention.
   const revisions=await read(`SELECT CASE WHEN typeof(revision_id)='text' AND length(CAST(revision_id AS BLOB))<=512 THEN revision_id ELSE NULL END AS revision_id,length(CAST(content_json AS BLOB)) AS body_bytes FROM artifact_revisions
     WHERE owner_id=? AND artifact_id IN (?,?) ORDER BY artifact_id,revision LIMIT ${IMAGE_WITNESS_LIMITS.revisions+1}`,[ownerId,key,outputId]);
-  if(revisions.length>IMAGE_WITNESS_LIMITS.revisions)fail('capacity');
+  if(revisions.length>IMAGE_WITNESS_LIMITS.revisions)fail('capacity_revision_count');
   let revisionBytes=0;
   const revisionRows:Row[]=[];
   guards.push({sql:'(SELECT COUNT(*) FROM artifact_revisions WHERE owner_id=? AND artifact_id IN (?,?))=?',bindings:[ownerId,key,outputId,revisions.length]});
   for(const meta of revisions){
-    if(typeof meta.revision_id!=='string'||!integer(meta.body_bytes)||meta.body_bytes>IMAGE_WITNESS_LIMITS.revisionBodyBytes)fail('capacity');
-    revisionBytes+=meta.body_bytes;if(revisionBytes>IMAGE_WITNESS_LIMITS.revisionBytes)fail('capacity');
+    if(typeof meta.revision_id!=='string'||!integer(meta.body_bytes)||meta.body_bytes>IMAGE_WITNESS_LIMITS.revisionBodyBytes)fail('capacity_revision_row');
+    revisionBytes+=meta.body_bytes;if(revisionBytes>IMAGE_WITNESS_LIMITS.revisionBytes)fail('capacity_revision_bytes');
     const row=await read(`SELECT ${revisionCell} AS witness FROM artifact_revisions WHERE owner_id=? AND artifact_id IN (?,?) AND revision_id=?`,[ownerId,key,outputId,meta.revision_id]);
     if(row.length!==1||typeof row[0]?.witness!=='string'||bytes(row[0].witness)>700_000)fail('changed');
     const value:Row=JSON.parse(row[0].witness);if(typeof value.content_json!=='string'||bytes(value.content_json)!==meta.body_bytes)fail('changed');

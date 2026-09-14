@@ -33,6 +33,10 @@ test('database-kind diagnosis never returns private messages or traverses getter
     assert.equal(classify({message:'transport',cause:{message}}),kind);
   }
   assert.equal(classify({message:'private unrecognized detail'}),'unknown');
+  for(const reason of ['reads','event_count','event_bytes','event_page','event_row','event_json','revision_count','revision_row','revision_bytes']){
+    assert.equal(classify(new Error('image_witness_capacity_'+reason)),'image_witness_capacity_'+reason);
+  }
+  assert.equal(classify(new Error('image_witness_capacity_private-payload')),'unknown');
 });
 test('request SQL budget counts statements and reserves readback before upload',()=>{
   const start=source.indexOf('class Lifetime'),end=source.indexOf('\nfunction internalKey',start);
