@@ -4,6 +4,8 @@ import { POLICY_VERSION } from "./policy-version.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { recordOutputProofCapacity } from "./output-proof-capacity-diagnostic.ts";
 import { prepareSceneSourceTransition, type SceneSourceVersion } from "./scene-source-generation.ts";
+import { prepareSceneJobSourceTransition } from "./scene-job-source-witness.ts";
+import type { OutputOperationSlot } from "./output-requirements-ledger.ts";
 
 export type OutputSqlValue = string | number | null;
 /** deadlineMs is server-only metadata for the same SQL proof; never a wire authority. */
@@ -175,6 +177,10 @@ export type OutputCommandWrite = {
   /** Server-only predecessor for a verified Scene operational write plan.
    * A replay has no new transition receipt and must not recapture one. */
   sceneSourceVersion?: SceneSourceVersion;
+  /** Private admission receipt initialized after every command sidecar. Never
+   * accepted from serialized command input or included in its public response. */
+  sceneJobAdmissions?: Array<{slot:OutputOperationSlot;version:SceneSourceVersion}>;
+  sceneJobRuns?: Array<{slot:OutputOperationSlot;version:SceneSourceVersion;previousRaw:string}>;
   /** Server-owned exact command envelope; committed on the same private last event. */
   retainedEnvelope?: Record<string, unknown>;
   buildSidecars?: (events: EventRow[]) => { statements: D1PreparedStatement[]; assertions?: OutputSqlAssertion[] };
@@ -196,10 +202,16 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
   const sourceTransition=input.sceneSourceVersion?prepareSceneSourceTransition(env,input.sceneSourceVersion):null;
   const events = input.events.map((event, index) => makeEvent(stream, input.expectedHead + index + 1, `user:${scope.actorUserId}`, "server:output-requirements", input.key,
     event.type, { ...event.payload, ...(input.retainedEnvelope && index === input.events.length - 1 ? { output_command_envelope: input.retainedEnvelope } : {}), project_id: scope.projectId, document_id: scope.documentId, actor_user_id: scope.actorUserId }));
+  const sceneJobInputs=[...(input.sceneJobAdmissions??[]).map(item=>({...item,phase:'admission' as const,previousRaw:null})),
+    ...(input.sceneJobRuns??[]).map(item=>({...item,phase:'run' as const}))];
+  if(sceneJobInputs.length>8||new Set(sceneJobInputs.map(item=>item.slot.jobId)).size!==sceneJobInputs.length)
+    throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+  const sceneJobs=sceneJobInputs.map(item=>prepareSceneJobSourceTransition(env,{scope,slot:item.slot,
+    correlationId:item.slot.jobId,predecessor:item.version,previousRaw:item.previousRaw,phase:item.phase,events}));
   const guards = [outputScopeAuthority(scope, input.permission, now),
     { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [stream, input.expectedHead] },
     ...(scope.kind === "project" ? [{ sql: "(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?", bindings: [scope.projectAccessId, scope.organizationId, input.expectedProjectHead] }] : []),
-    ...(input.sourceAssertions ?? []), ...(input.assertions ?? []),...(sourceTransition?.before??[])] as OutputSqlAssertion[];
+    ...(input.sourceAssertions ?? []), ...(input.assertions ?? []),...(sourceTransition?.before??[]),...sceneJobs.flatMap(item=>item.before)] as OutputSqlAssertion[];
   const statements = guards.flatMap((guard) => outputAssertionStatements(env, guard));
   for (const [index, event] of events.entries()) {
     statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...eventWriteBindings(event)));
@@ -221,6 +233,7 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
       .bind(last.sequence, now, scope.projectAccessId, scope.organizationId, scope.ownerUserId));
     statements.push(...outputAssertionStatements(env, { sql: "changes()=1" }));
   }
+  const sceneJobOffsets=sceneJobs.map(item=>{const offset=statements.length;statements.push(...item.after);return offset;});
   if(sourceTransition)statements.push(sourceTransition.after);
   let acknowledged: D1Result[];
   try { acknowledged = await env.DB.batch(statements); }
@@ -237,6 +250,7 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
     || Array.from({length:acknowledged.length},(_,index)=>index).some(index=>acknowledged[index]?.success !== true))
     throw new OutputConflictError("output_write_acknowledgment_invalid",409);
   const sceneSourceVersion=sourceTransition?.acknowledge(acknowledged,statements.length,statements.length-1);
+  sceneJobs.forEach((item,index)=>item.acknowledge(acknowledged.slice(sceneJobOffsets[index],sceneJobOffsets[index]!+item.after.length)));
   // The acknowledged transaction wrote these exact private envelopes. Retain
   // every appended body for the final response proof, including non-last events.
   for (const event of events) {

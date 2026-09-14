@@ -13,6 +13,7 @@ import type { PreparedSceneCost } from "./scene-cost-consent.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
+import { captureSceneSourceVersion } from './scene-source-generation.ts';
 
 type ScenePreflightProof = Readonly<{ prepared: PreparedSceneCost; sourceAssertions: readonly OutputSqlAssertion[]; requestId: string; expiresAt: string }>;
 const proofs = new WeakMap<OutputNativeTargetPreflight, ScenePreflightProof>();
@@ -70,10 +71,11 @@ export async function preflightOutputSceneTarget(input: OutputBridgeTargetInput)
   // Load the existing native source reader only for actual preparation, not for
   // grammar/provider-input inspection. Its real guards and callbacks remain intact.
   const { prepareSceneCostConsent } = await import("./scene-cost-consent.ts");
+  const sourceVersion=input.sceneSourceVersion??(input.sceneUseVersionedHistory?await captureSceneSourceVersion(env,{streamId:input.principal.streamId}):undefined);
   const prepared = await prepareSceneCostConsent(env, input.principal, input.scope.documentId, {
     artifactKind: "scene", productionMode: "manual", sceneMedium: "visual", itemCount: 1, sceneRequestId: source.requestId,
     snapshot: input.context.snapshot, sourceBlockVersions: input.context.sourceBlockVersions,
-  }, null, { synchronize: false });
+  }, null, { synchronize: false,...(sourceVersion?{versionedSource:{version:sourceVersion,projectId:input.scope.projectId,assertions:source.sourceAssertions}}:{}) });
   if (canonicalJson(prepared.authoredSnapshot) !== canonicalJson(input.context.snapshot)) return unavailable(target.id, "output_scene_source_changed");
   const providerInput = await createOutputSceneProviderInput(source.plan.request, prepared.effectiveSnapshot, target.instruction_text);
   if (!providerInput) return unavailable(target.id, "output_scene_request_unavailable");

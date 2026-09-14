@@ -231,14 +231,17 @@ test("a manual presentation bypasses only a verified video in another project",a
 
 test("atomically hands both paid-render reservations to the recovered provider attempt", async (context) => {
   const jobsApi = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
-  const handoff = jobsApi.match(/const\s+claims\s*=\s*outputBinding\s*\?\s*await\s+env\.DB\.batch\(([^;]+?)\)\s*:\s*await\s+env\.DB\.batch\(([^;]+?)\);/);
+  const handoff = jobsApi.match(/const\s+claimStatements\s*=\s*outputBinding\s*\?\s*(\[[^;]+?)\s*:\s*(\[claimAttempt,\s*tokenReservationHandoff,\s*costReservationHandoff\]);/);
   assert.ok(handoff, "reservation handoff distinguishes Output grants from the legacy job path");
   assert.match(handoff[2], /^\s*\[\s*claimAttempt\s*,\s*tokenReservationHandoff\s*,\s*costReservationHandoff\s*\]\s*$/);
   const outputBatch = handoff[1].replace(/\s+/gu, "");
-  assert.ok(outputBatch.startsWith('[claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),'), "every Output claim and reservation handoff is followed by an atomic rollback guard");
+  assert.ok(outputBatch.startsWith('[...sceneClaimPrefix,claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),'), "Scene custody precedes the claim; every Output claim and reservation handoff is followed by an atomic rollback guard");
   const admissionGuards='...outputAdmissionAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion))';
   const freshCallGuard='...(freshOutput?outputAssertionStatements(env,{sql:"NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)",bindings:[outputBinding.scope.key,outputBinding.slot.slotId]}):[])'.replace(/\s+/gu, "");
-  assert.ok(outputBatch.endsWith(`${admissionGuards},${freshCallGuard}]`), "source and actor-private assertions precede the additional fresh-slot call guard in the same atomic batch");
+  assert.ok(outputBatch.endsWith(`${admissionGuards},${freshCallGuard},...(sceneClaim?.after??[])]`), "source and actor-private assertions precede the fresh-slot guard and Scene witness handoff in the same atomic batch");
+  assert.match(jobsApi,/const claims=await env\.DB\.batch\(claimStatements\);/u);
+  assert.match(jobsApi,/claims\.length!==claimStatements\.length/u,"the complete atomic acknowledgement is required");
+  assert.match(jobsApi,/claimed = claims\[sceneClaimPrefix\.length\];/u,"the claim result accounts for the preceding Scene assertions");
   assert.match(jobsApi,/outputAdmissionAssertions=\[\.\.\.outputProof\.assertions,\.\.\.\(jobAuthority\?\[jobAuthority\]:\[\]\)\]/u,
     "the retained admission assertions contain both current source proof and exact actor-private project-job custody");
   assert.match(jobsApi,/const jobAuthority=documentJobProjectAuthority\(user,row\.document_id,jobId\)/u);

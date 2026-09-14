@@ -22,6 +22,7 @@ import { retainStoryboardFrameCheckpoint, storyboardFrameSequenceAssertion } fro
 import type { CapturedStoryboardPlan } from "./output-storyboard-plan.ts";
 import { assertOutputSceneAttempt } from "./output-scene-execution.ts";
 import { outputScenePreflightProof } from "./output-scene-preflight.ts";
+import { readSceneJobSourceWitness,sceneJobSourceWitnessAssertions,prepareSceneJobSourceTransition } from './scene-job-source-witness.ts';
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
 import type { PreparedSceneCost } from "./scene-cost-consent.ts";
@@ -115,7 +116,11 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const {scope,slot}=binding;
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
- const currentInput={env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,ownerHead:authority.sourceEpoch.head};
+ let sceneStored=job.scene_source_version_json!=null?await readSceneJobSourceWitness(env,scope,slot,job.correlation_id):null;
+ if(Boolean(job.scene_source_protocol===1)!==Boolean(sceneStored))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+ if(sceneStored&&!Object.hasOwn(authority.target,'scene_contract'))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+ let sceneTransition:ReturnType<typeof prepareSceneJobSourceTransition>|null=null;
+ const currentInput={env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,ownerHead:authority.sourceEpoch.head,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})};
  const current=await preflightOutputNativeTarget(currentInput);
  if(!current.available||await outputDigest(current)!==slot.routeDigest)throw new OutputConflictError("output_native_route_changed",409);
  const videoSourceAssertions=Object.hasOwn(authority.target,"video_contract")?outputVideoExecutionSourceAssertions(currentInput,current,slot):[];
@@ -144,7 +149,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const model3dPublication=model3dProof?model3dPublicationHead({jobId:job.job_id,ownerId:job.owner_id,streamId:job.stream_id,correlationId:job.correlation_id}):null;
  let videoHook:OutputVideoHookLease|null=null;
  const videoLifetimeAssertions=():OutputSqlAssertion[]=>{if(!videoHook)return[];videoHook.assertCurrent();return[{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(videoHook.deadlineMs).toISOString()],deadlineMs:videoHook.deadlineMs}];};
- const liveAssertions=()=>[...videoLifetimeAssertions(),...authority.assertions,...sceneAssertions,...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
+ const liveAssertions=(recoveredScene?:NonNullable<typeof sceneStored>)=>[...videoLifetimeAssertions(),...authority.assertions,...(recoveredScene?recoveredScene.assertions:[...sceneAssertions,...(sceneStored?.assertions??[])]),...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
  const settings=authority.targetPreflight.settings as OutputNativeSettings;
  if(settings.kind!==job.kind)throw new OutputConflictError("output_job_route_mismatch",403);
  const model3dPayload=model3dProof?await readOutputModel3dPayload(settings.payload):null;
@@ -169,7 +174,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  if(refreshAudio)await refreshAudio();
  const scenePayload=sceneProof?await readOutputScenePayload(settings.payload):null;
  const refreshScene=sceneProof?async()=>{
-  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})});
   const proof=outputScenePreflightProof(refreshed);
   const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
   if(!proof||!payload||!scenePayload||proof.requestId!==job.job_id||proof.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId
@@ -271,7 +276,16 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
   sourceEvents:authority.events,sourceHead:authority.head,
   async eventAppendCommitted(events){
    if(!events.length||events.length>8||events.some(event=>event.streamId!==job.stream_id||event.correlationId!==job.correlation_id))return false;
-   if(refreshScene)await refreshScene();if(refreshAudio)await refreshAudio();if(refreshModel3d&&!model3dPublication?.hasPublication())await refreshModel3d();
+   let recoveredScene:NonNullable<typeof sceneStored>|undefined;
+   if(sceneStored){
+    try{const candidate=await readSceneJobSourceWitness(env,scope,slot,job.correlation_id);
+     if(candidate.witness.phase!=='execution'||JSON.stringify(candidate.witness.predecessor)!==JSON.stringify(sceneStored.witness.successor)
+       ||JSON.stringify(candidate.witness.eventIds)!==JSON.stringify(events.map(event=>event.eventId))
+       ||JSON.stringify(candidate.witness.eventSequences)!==JSON.stringify(events.map(event=>event.sequence)))return false;
+     recoveredScene=candidate;
+    }catch{return false;}
+   }else if(refreshScene)await refreshScene();
+   if(refreshAudio)await refreshAudio();if(refreshModel3d&&!model3dPublication?.hasPublication())await refreshModel3d();
    const checks=events.map(event=>{const values=eventWriteBindings(event);
     return env.DB.prepare(`SELECT 1 AS present FROM events stored LEFT JOIN event_private_payloads body ON body.private_event_id=stored.event_id
       WHERE stored.event_id=? AND stored.stream_id=? AND stored.sequence=? AND stored.occurred_at=? AND stored.recorded_at=?
@@ -279,11 +293,16 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
        AND (? IS NULL AND body.private_event_id IS NULL OR ? IS NOT NULL AND body.owner_id=? AND body.project_id IS ? AND body.document_id IS ? AND body.private_json=? AND body.redacted_at IS NULL)`)
      .bind(...values.slice(0,13),values[16],values[16],values[13],values[14],values[15],values[16]);
    });
-   try{const results=await env.DB.batch([...liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)),...checks]);return results.slice(-checks.length).every(result=>result.results.length===1);}
+   try{const statements=[...liveAssertions(recoveredScene).flatMap(assertion=>outputAssertionStatements(env,assertion)),...checks],results=await env.DB.batch(statements);
+    if(!Array.isArray(results)||results.length!==statements.length||Array.from({length:statements.length},(_,i)=>i).some(i=>results[i]?.success!==true)
+      ||results.slice(-checks.length).some(result=>!Array.isArray(result.results)||result.results.length!==1||(result.results[0] as {present?:unknown}|undefined)?.present!==1))return false;
+    if(recoveredScene){sceneStored=recoveredScene;sceneTransition=null;await refreshScene?.();}return true;}
    catch{return false;}
   },
   eventWriteSidecars:events=>{
    model3dPublication?.capture(events,model3dCompletionJson);
+   sceneTransition=sceneStored?prepareSceneJobSourceTransition(env,{scope,slot,correlationId:job.correlation_id,
+     predecessor:sceneStored.witness.successor,previousRaw:sceneStored.raw,phase:'execution',events}):null;
    return [
    // Shared publication already checks its entire range in the project
    // sidecars. Personal jobs need the same rollback when a concurrent open
@@ -291,9 +310,11 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    ...(scope.kind==="personal"&&events.length?outputAssertionStatements(env,{sql:`(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?
      OR (NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(SELECT value FROM json_each(?))) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)<>?)`,
     bindings:[JSON.stringify(events.map(event=>event.eventId)),events.length,JSON.stringify(events.map(event=>event.eventId)),job.stream_id,events[0]!.sequence-1]}):[]),
-   ...prepareOutputImageProviderHealth(env,{job,slot,events,routes:settings.calls,claimedCalls,observedReceipts}),...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events)];
+   ...prepareOutputImageProviderHealth(env,{job,slot,events,routes:settings.calls,claimedCalls,observedReceipts}),...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events),...(sceneTransition?.after??[])];
   },
-  eventWriteCommitted:results=>{if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;},
+  eventWriteCommitted:results=>{if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;
+    if(sceneTransition){const receipt=sceneTransition.acknowledge(results.slice(-sceneTransition.after.length));
+      sceneStored=sceneJobSourceWitnessAssertions(scope,slot,job.correlation_id,receipt.raw);sceneTransition=null;}},
   publicationScopesComplete:()=>publicationScopesComplete,reference,settings:settings.payload,...(settings.imageRender?{imageRender:settings.imageRender}:{}),reservations:{reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens},
   async assertContext(context){if(context.documentRevision!==authority.context.documentRevision||await outputDigest(context.snapshot)!==await outputDigest(authority.context.snapshot))throw new OutputConflictError("output_source_changed",409);},
   async retainFalImageRequest(request,planning){

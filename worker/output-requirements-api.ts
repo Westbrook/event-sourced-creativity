@@ -8,6 +8,8 @@ import { outputVideoPreflightProof, requireOutputVideoOriginal } from "./output-
 import { outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
 import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
+import type { SceneSourceVersion } from './scene-source-generation.ts';
+import { readSceneJobSourceWitness } from './scene-job-source-witness.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { inspectOutputRequirement, outputCountSatisfies, outputRequirementInterpretationNeedsReview, type OutputRequirementSpec } from "../src/model/output-requirements.ts";
 import { compileOutputPlan, type OutputPlan, type OutputPlanTarget } from "../src/model/output-plan.ts";
@@ -67,11 +69,17 @@ export type OutputBridgeTargetInput = {
   sourceEvents?: readonly CreativeEvent[];
   /** Current retained source assertions, required by native Scene. */
   sourceAssertions?: readonly OutputSqlAssertion[];
+  /** Private original/same-transaction successor; never a wire authority. */
+  sceneSourceVersion?: SceneSourceVersion;
+  /** Initial server preparation only. Execution must provide its persisted
+   * successor instead of asking for a newly captured source baseline. */
+  sceneUseVersionedHistory?: boolean;
   sourceDigest: string; requirementsDigest: string;
 };
 export type OutputPreparedAdmission = {
   /** Retained source proofs run before command events in the same admission transaction. */
   sourceAssertions?: OutputSqlAssertion[];
+  sceneJobAdmissions?: OutputCommandWrite['sceneJobAdmissions'];
   /** Existing queue-anchor events, known before transaction allocation. No creative text in public envelopes. */
   events: Array<{ type: string; payload: Record<string, unknown> }>;
   /** Must be side-effect free until these statements run in the enclosing D1 batch. */
@@ -428,7 +436,8 @@ async function confirmPlan(trusted: OutputTrustedContext, body: Record<string, u
 }
 
 function bridgeTarget(trusted: OutputTrustedContext, plan: OutputConfirmedPlan, target: OutputPlanTarget): OutputBridgeTargetInput {
-  return { request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, target, context: requireCurrentSource(trusted), ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest };
+  return { request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, target, context: requireCurrentSource(trusted), ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest,
+    ...(Object.hasOwn(target,'scene_contract')?{sceneUseVersionedHistory:true}:{}) };
 }
 
 async function preflightPlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
@@ -600,7 +609,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId, costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
-  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
+  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent,sceneUseVersionedHistory:true } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
   // Preserve the original Scene quote deadline through final atomic admission.
   if (sceneExpiresAt && Date.parse(sceneExpiresAt) <= Date.now()) fail("scene_mini_app_confirmation_required", 403);
@@ -611,7 +620,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     const key = canonicalOutputJson(assertion);
     if (!captured.has(key)) { captured.add(key); sourceAssertions.push(assertion); }
   }
-  return commitOutputCommand(trusted.env, { ...write, sourceAssertions, events: [...prepared.events, { type: "OutputExecutionAuthorized", payload: { grant_id: grantId, plan_revision_id: plan.revisionId, preflight_id: preflightId, maximum_microusd: Number(body.maximumMicrousd), maximum_calls: preflight.maximumCalls, authorized_targets: slots.map((slot) => ({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })), source_digest: trusted.sourceDigest } }],
+  return commitOutputCommand(trusted.env, { ...write, sourceAssertions,sceneJobAdmissions:prepared.sceneJobAdmissions, events: [...prepared.events, { type: "OutputExecutionAuthorized", payload: { grant_id: grantId, plan_revision_id: plan.revisionId, preflight_id: preflightId, maximum_microusd: Number(body.maximumMicrousd), maximum_calls: preflight.maximumCalls, authorized_targets: slots.map((slot) => ({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })), source_digest: trusted.sourceDigest } }],
     assertions: [{ sql: "EXISTS(SELECT 1 FROM output_preflights preflight JOIN event_private_payloads body ON body.private_event_id=preflight.event_id AND body.redacted_at IS NULL WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND preflight.terms_digest=? AND preflight.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))", bindings: [trusted.scope.key, preflightId, trusted.scope.actorUserId, preflight.termsDigest, createdAt] }],
     buildSidecars: (events) => {
       const native = prepared.buildStatements(events);
@@ -653,7 +662,15 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
   const ready = await validateRecordedOutputRun(trusted, evidence, bridge, ["authorized", "queued", "running"]);
   const readyIds = ready.map((slot) => slot.slotId);
-  const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"), events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
+  const sceneJobRuns:NonNullable<OutputCommandWrite['sceneJobRuns']>=[];
+  for(const slot of ready){
+    if(!evidence.confirmedPlan.plan.targets.some(target=>target.id===slot.targetId&&Object.hasOwn(target,'scene_contract')))continue;
+    const retained=await trusted.env.DB.prepare('SELECT scene_source_version_json IS NOT NULL AS present,scene_source_protocol,correlation_id FROM document_jobs WHERE job_id=? AND owner_id=?').bind(slot.jobId,trusted.scope.ownerUserId).first<{present:number;scene_source_protocol:number;correlation_id:string}>();
+    if(retained&&Boolean(retained.scene_source_protocol===1)!==Boolean(retained.present))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+    if(retained?.present){const receipt=await readSceneJobSourceWitness(trusted.env,trusted.scope,slot,retained.correlation_id);
+      sceneJobRuns.push({slot,version:receipt.witness.successor,previousRaw:receipt.raw});}
+  }
+  const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"),sceneJobRuns, events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
     assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [],
     buildSidecars: () => ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId)], assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : [] }) });
   // Dispatch is an existing-job wake-up only. No new source read, slot, budget,

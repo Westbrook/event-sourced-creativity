@@ -13,6 +13,7 @@ import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputA
 import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
+import { prepareSceneJobSourceClaim } from './scene-job-source-witness.ts';
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
@@ -101,6 +102,9 @@ import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-sche
 
 export type DocumentJobRow = {
   output_slot_id?:string|null;
+  /** Private same-transaction Scene continuity receipt; never wire authority. */
+  scene_source_version_json?:string|null;
+  scene_source_protocol?:number;
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
   source_surface: string; correlation_id: string; requested_sequence: number; request_json: string; result_json: string | null;
   error_message: string | null; attempt_count: number; requested_at: string; started_at: string | null; completed_at: string | null;
@@ -166,8 +170,8 @@ const PAID_SUBMISSION_TOMBSTONE_SQL=`json_patch(json_object('providerSubmissionP
     'generationReceipt',json_patch(${UNCERTAIN_PRESENTATION_RECEIPT_SQL},json_object('artifact_kind',json_extract(request_json,'$.artifactKind'),'provider',json_extract(result_json,'$.generationReceipt.provider'),'model',json_extract(result_json,'$.generationReceipt.model'),
       'provider_request_status',CASE WHEN ${unresolvedProviderSubmissionSql()} THEN 'submission_unknown' ELSE 'submitted' END,
       'source_transmission_status',CASE WHEN ${unresolvedProviderSubmissionSql()} AND COALESCE(json_extract(result_json,'$.generationReceipt.source_transmission_status'),'')!='transmitted' THEN 'unknown' ELSE 'transmitted' END))))`;
-export const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END,result_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN ${PAID_SUBMISSION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN ${UNCERTAIN_AUDIO_TOMBSTONE_SQL} WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN ${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL} ELSE NULL END`;
-const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(request_json!='{}' OR result_json IS NOT NULL) AND NOT (${PAID_SUBMISSION_HOLD_SQL} AND request_json=json_object('artifactKind',json_extract(request_json,'$.artifactKind')) AND result_json=${PAID_SUBMISSION_TOMBSTONE_SQL} OR ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} AND request_json=json_object('artifactKind','slides') AND result_json=${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} OR ${UNCERTAIN_AUDIO_SUBMISSION_SQL} AND request_json=json_object('artifactKind','audio') AND result_json=${UNCERTAIN_AUDIO_TOMBSTONE_SQL} OR ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} AND request_json=json_object('artifactKind','storyboard') AND result_json=${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL})`;
+export const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END,result_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN ${PAID_SUBMISSION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN ${UNCERTAIN_AUDIO_TOMBSTONE_SQL} WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN ${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL} ELSE NULL END,scene_source_version_json=NULL`;
+const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(scene_source_version_json IS NOT NULL OR ((request_json!='{}' OR result_json IS NOT NULL) AND NOT (${PAID_SUBMISSION_HOLD_SQL} AND request_json=json_object('artifactKind',json_extract(request_json,'$.artifactKind')) AND result_json=${PAID_SUBMISSION_TOMBSTONE_SQL} OR ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} AND request_json=json_object('artifactKind','slides') AND result_json=${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} OR ${UNCERTAIN_AUDIO_SUBMISSION_SQL} AND request_json=json_object('artifactKind','audio') AND result_json=${UNCERTAIN_AUDIO_TOMBSTONE_SQL} OR ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} AND request_json=json_object('artifactKind','storyboard') AND result_json=${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL})))`;
 
 const activeProjectExecutionSql=`EXISTS(SELECT 1 FROM organization_projects project
   JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -2212,6 +2216,10 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       AND ${documentJobProjectSql("document_jobs")}<>''
       AND ${documentJobProjectSql("active")} NOT IN ('',${documentJobProjectSql("document_jobs")})))`;
   const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,...(outputBinding?[]:[staleBefore]),row.correlation_id,row.result_json,Number(independentPresentation)] as const;
+  const sceneClaim=outputBinding&&row.scene_source_version_json!=null?prepareSceneJobSourceClaim(env,{scope:outputBinding.scope,slot:outputBinding.slot,
+    previousRaw:row.scene_source_version_json,previousCorrelationId:row.correlation_id,correlationId:attemptCorrelationId}):null;
+  if(outputBinding&&Boolean(row.scene_source_protocol===1)!==Boolean(sceneClaim))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+  const sceneClaimPrefix=sceneClaim?.before.flatMap(assertion=>outputAssertionStatements(env,assertion))??[];
   const memoryClaimDb=env.DB,memoryClaimPrincipalKey=row.kind==="chat"&&row.source_surface==="chat"?documentJobMemoryPrincipalKey(user):"";
   let claimed;
   if (handoffPaidProviderReservations) {
@@ -2223,10 +2231,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       .bind(...claimBindings,tokenReservationId,costReservationId,billingOwnerId,user.streamId,previousRow.correlation_id,operation);
     const tokenReservationHandoff=env.DB.prepare(TOKEN_RESERVATION_HANDOFF_SQL).bind(attemptCorrelationId,nowIso,tokenReservationId,billingOwnerId,user.streamId,previousRow.correlation_id,operation,costReservationId,jobId,user.userId,attemptCorrelationId,attempt);
     const costReservationHandoff=env.DB.prepare(COST_RESERVATION_HANDOFF_SQL).bind(attemptCorrelationId,nowIso,costReservationId,billingOwnerId,user.streamId,previousRow.correlation_id,operation,tokenReservationId,attemptCorrelationId,jobId,user.userId,attemptCorrelationId,attempt);
-    const claims = outputBinding
-      ? await env.DB.batch([claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),...outputAdmissionAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion)),...(freshOutput?outputAssertionStatements(env,{sql:"NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)",bindings:[outputBinding.scope.key,outputBinding.slot.slotId]}):[])])
-      : await env.DB.batch([claimAttempt, tokenReservationHandoff, costReservationHandoff]);
-    claimed = claims[0];
+    const claimStatements=outputBinding
+      ? [...sceneClaimPrefix,claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),...outputAdmissionAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion)),...(freshOutput?outputAssertionStatements(env,{sql:"NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)",bindings:[outputBinding.scope.key,outputBinding.slot.slotId]}):[]),...(sceneClaim?.after??[])]
+      : [claimAttempt, tokenReservationHandoff, costReservationHandoff];
+    const claims=await env.DB.batch(claimStatements);
+    if(!Array.isArray(claims)||claims.length!==claimStatements.length||Array.from({length:claimStatements.length},(_,i)=>i).some(i=>claims[i]?.success!==true))
+      throw new OutputConflictError('output_write_acknowledgment_invalid',409);
+    sceneClaim?.acknowledge(claims.slice(-sceneClaim.after.length));
+    claimed = claims[sceneClaimPrefix.length];
     if(Number(claimed.meta.changes??0)!==1||!outputBinding&&claims.slice(1).some((claim)=>Number(claim.meta.changes??0)!==1)){
       const retained=await readJob(env,user.userId,jobId);
       if(retained&&retained.correlation_id===previousRow.correlation_id&&rowIsStale(retained))await failStaleJob(env,user,retained);
@@ -2237,7 +2249,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   }
   if (Number(claimed.meta.changes ?? 0) !== 1) return readJob(env, user.userId, jobId);
   if (previousAttempt > 0 && !handoffPaidProviderReservations&&!settledModel3dRecovery) await releaseInterruptedAttempt(env, user, previousRow, "execution_interrupted_retrying");
-  if(foregroundPresentation||outputBinding)row={...row,status:"running",attempt_count:attempt,correlation_id:attemptCorrelationId,started_at:row.started_at??nowIso,lease_expires_at:leaseExpiresAt,result_json:JSON.stringify(initialResult),updated_at:nowIso};
+  if(foregroundPresentation||outputBinding)row={...row,status:"running",attempt_count:attempt,correlation_id:attemptCorrelationId,started_at:row.started_at??nowIso,lease_expires_at:leaseExpiresAt,result_json:JSON.stringify(initialResult),updated_at:nowIso,...(sceneClaim?{scene_source_version_json:sceneClaim.raw}:{})};
   else{row=await readJob(env,user.userId,jobId);if(!row)return null;}
   if(previousAttempt>0&&!handoffPaidProviderReservations&&!hasPaidProviderCheckpoint){
     const checkpoint=parseResult(row);

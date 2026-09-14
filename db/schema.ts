@@ -1117,6 +1117,8 @@ export const documentJobs = sqliteTable(
     requestedSequence: integer("requested_sequence").notNull(),
     requestJson: text("request_json").notNull(),
     resultJson: text("result_json"),
+    sceneSourceVersionJson: text("scene_source_version_json"),
+    sceneSourceProtocol: integer("scene_source_protocol").notNull().default(0),
     errorMessage: text("error_message"),
     attemptCount: integer("attempt_count").notNull().default(0),
     requestedAt: text("requested_at").notNull(),
@@ -1132,6 +1134,7 @@ export const documentJobs = sqliteTable(
     index("idx_document_jobs_stream_document").on(table.streamId, table.documentId, table.requestedAt),
     index("idx_document_jobs_stream_status_requested").on(table.streamId,table.status,table.requestedAt,table.jobId),
     index("idx_document_jobs_stream_correlation").on(table.streamId,table.correlationId,table.jobId,table.ownerId),
+    check("ck_document_jobs_scene_source_protocol",sql`${table.sceneSourceProtocol} IN (0,1)`),
   ],
 );
 

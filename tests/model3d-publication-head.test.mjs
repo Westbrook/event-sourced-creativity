@@ -179,7 +179,7 @@ test("actual writer captures before guarded append and live assertions retain ev
   visit(ast); assert(selected.live && selected.sidecars);
   const x = publication(), model3dPublication = x.continuation;
   const other = Array.from({ length: 10 }, (_, index) => ({ sql: "?", bindings: [index] }));
-  const ports = { model3dPublication, model3dCompletionJson: x.completionJson, model3dAssertions: [x.fence],
+  const ports = { sceneStored:null,sceneTransition:null,model3dPublication, model3dCompletionJson: x.completionJson, model3dAssertions: [x.fence],
     authority: { assertions: [other[0]] }, sceneAssertions: [other[1]], audioAssertions: [other[2]], storyboardSourceAssertions: [other[3]], sceneEnvelopeAssertions: [other[4]], storyboardCompletionAssertions: [other[5]], projectJobAuthority: other[6], videoLifetimeAssertions: () => [other[7]], videoSourceAssertions: [other[8]], videoCompletionAssertions: [other[9]],
     outputScopeAuthority: () => ({ sql: "scope" }), scope: { kind: "personal" }, job: { job_id: x.original.jobId, owner_id: "owner", stream_id: x.original.streamId, correlation_id: x.original.correlationId, lease_expires_at: "2099-01-01" }, user: { userId: "owner" }, slot: {},
     env: {}, outputAssertionStatements: () => [], settings: { calls: [] }, claimedCalls: new Map(), observedReceipts: new Map(), prepareOutputImageProviderHealth: () => [], prepareOutputNativeProjectPublicationStatements: () => [] };
@@ -201,7 +201,7 @@ test("actual lost-ACK callback refuses captured but rolled-back events and accep
   const d = database(), x = publication(); let refreshes = 0;
   try {
     x.continuation.capture(x.events, x.completionJson);
-    const ports = { env: { DB: d.DB }, job: { stream_id: x.original.streamId, correlation_id: x.original.correlationId },
+    const ports = { sceneStored:null,sceneTransition:null,env: { DB: d.DB }, job: { stream_id: x.original.streamId, correlation_id: x.original.correlationId },
       model3dPublication: x.continuation, refreshScene: undefined, refreshAudio: undefined,
       refreshModel3d: async () => { refreshes++; throw Error("blind refreshed head is forbidden"); },
       liveAssertions: () => x.continuation.assertions([x.fence]), outputAssertionStatements, eventWriteBindings };

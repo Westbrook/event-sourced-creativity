@@ -85,6 +85,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   input.governanceWitness?{witness:input.governanceWitness,source:{ownerUserId:input.scope.ownerUserId,projectId:input.scope.projectId,contextId:input.scope.contextId??"",sourceDigest:input.sourceDigest,contextSnapshotDigest:await outputDigest(input.context.snapshot)}}:undefined);
  const governanceAssertions=outputAdmissionGovernanceAssertions(readScope);
  const sceneAssertions:OutputSqlAssertion[]=[];
+ const sceneJobAdmissions:NonNullable<OutputPreparedAdmission['sceneJobAdmissions']>=[];
  const prepared:Array<{slot:OutputOperationSlot;job:PreparedOutputDocumentJob;statements:D1PreparedStatement[];assertions:OutputSqlAssertion[];checkpoint:Record<string,unknown>}> = [];
  for(const slot of input.slots){
   const target=input.confirmedPlan.plan.targets.find(target=>target.id===slot.targetId);
@@ -142,6 +143,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
    return proof.prepared;
   };
   const scenePrepared=nativeScene?await refreshScene():null;
+  if(scenePrepared?.sourceVersion)sceneJobAdmissions.push({slot,version:scenePrepared.sourceVersion});
   const admissionPayload=nativeModel3d?{...settings.payload,model3dCostConsent:input.model3dCostConsent,sourceSurface:"outputs",paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeAudio?{...settings.payload,audioCostConsent:input.audioCostConsent,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeScene?{...settings.payload,sceneCostConsent:input.sceneCostConsent}:settings.payload;
   const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
   const job=await prepareOutputDocumentJob(input.request,input.env,{documentId:input.scope.documentId,kind:settings.kind,payload:admissionPayload},{jobId:slot.jobId,outputExecution:reference,readScope,
@@ -168,7 +170,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   if(budgetScope)assertions.push({sql:"EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN events anchor ON anchor.event_id=resource.source_event_id WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.resource_kind='job' AND resource.resource_id=? AND resource.actor_user_id=? AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=?)",bindings:[budgetScope.projectAccessId,budgetScope.organizationId,slot.jobId,job.user.userId,slot.jobId]});
   prepared.push({slot,job,statements:[...token.statements,...cost.statements],assertions,checkpoint:{reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:cost.period,costReservationMicrousd:cost.reservedMicrousd,outputExecution:reference,generationReceipt:{...record(job.initialResult.generationReceipt),reservation_status:"active",reservation_microusd:cost.reservedMicrousd,output_slot_id:slot.slotId,output_grant_id:slot.grantId}}});
  }
- return {sourceAssertions:[...governanceAssertions,...sceneAssertions],events:prepared.map(item=>item.job.queueEvent),buildStatements(events){const statements:D1PreparedStatement[]=[],assertions:OutputSqlAssertion[]=[];for(const item of prepared){const event=events.find(event=>event.type===item.job.queueEvent.type&&event.payload.job_id===item.slot.jobId);if(!event)throw new Error("output_job_anchor_missing");statements.push(...item.statements,...item.job.buildStatements(event,item.checkpoint));assertions.push(...item.assertions);}return{statements,assertions};}};
+ return {sourceAssertions:[...governanceAssertions,...sceneAssertions],sceneJobAdmissions,events:prepared.map(item=>item.job.queueEvent),buildStatements(events){const statements:D1PreparedStatement[]=[],assertions:OutputSqlAssertion[]=[];for(const item of prepared){const event=events.find(event=>event.type===item.job.queueEvent.type&&event.payload.job_id===item.slot.jobId);if(!event)throw new Error("output_job_anchor_missing");statements.push(...item.statements,...item.job.buildStatements(event,item.checkpoint));assertions.push(...item.assertions);}return{statements,assertions};}};
 }
 
 export const outputDocumentExecutionBridge:OutputExecutionBridge={
