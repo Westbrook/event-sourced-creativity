@@ -42,6 +42,21 @@ function changed(): never { throw new SceneHistoryProofError("scene_cost_history
 function unavailable(): never { throw new SceneHistoryProofError("scene_cost_history_unavailable"); }
 function capacity(reason: CapacityReason): never { throw new SceneHistoryProofError("scene_cost_history_capacity_exceeded", reason); }
 const bytes = (text: string) => encoder.encode(text).byteLength;
+// Keep exact byte identity, but avoid hex's 2x expansion for ordinary UTF-8
+// content. Invalid/split UTF-8 and text made larger by JSON escaping stay hex.
+// ignoreBOM preserves a leading U+FEFF instead of silently stripping its bytes.
+const exactTextDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function bodyLiteral(hex: string): readonly [string, "hex" | "utf8"] {
+  const original = Uint8Array.from({ length: hex.length / 2 }, (_, index) => Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16));
+  try {
+    const text = exactTextDecoder.decode(original), encoded = encoder.encode(text);
+    if (!text.includes("\u0000") && encoded.length === original.length && encoded.every((byte, index) => byte === original[index])
+      // All other tuple fields are identical; "utf8" adds exactly one byte
+      // over "hex", so this compares the full tuple's serialized byte size.
+      && bytes(JSON.stringify(text)) + 1 < bytes(JSON.stringify(hex))) return [text, "utf8"];
+  } catch { /* Arbitrary bytes remain in their original lossless hex form. */ }
+  return [hex, "hex"];
+}
 const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && bytes(value) <= 160;
 const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 function binaryTextCompare(left: string, right: string) {
@@ -168,8 +183,11 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
     WHERE actual.event_id=json_extract(expected.value,'$[0]') AND actual.order_sequence=json_extract(expected.value,'$[1]')
       AND typeof(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END) IS json_extract(expected.value,'$[6]')
       AND COALESCE(length(CAST(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB)),0)=json_extract(expected.value,'$[5]')
-      AND hex(substr(CAST(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB),
-        json_extract(expected.value,'$[3]'),json_extract(expected.value,'$[4]')))=json_extract(expected.value,'$[7]')))`);
+      AND typeof(json_extract(expected.value,'$[7]'))='text' AND CASE json_extract(expected.value,'$[8]')
+        WHEN 'utf8' THEN substr(CAST(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB),
+          json_extract(expected.value,'$[3]'),json_extract(expected.value,'$[4]')) IS CAST(json_extract(expected.value,'$[7]') AS BLOB)
+        WHEN 'hex' THEN hex(substr(CAST(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END AS BLOB),
+          json_extract(expected.value,'$[3]'),json_extract(expected.value,'$[4]')))=json_extract(expected.value,'$[7]') ELSE 0 END))`);
   const capturePieces = async (batch: Piece[]) => {
     // CROSS JOIN fixes the small expected list as the outer loop. Without it,
     // SQLite may scan the whole owner stream for every piece batch.
@@ -186,8 +204,10 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
       if (value.ordinal !== index || value.event_id !== piece.event_id || value.order_sequence !== piece.order_sequence
         || value.storage !== piece.storage || value.total !== piece.total || typeof value.part !== "string"
         || value.part.length !== piece.bytes * 2 || !/^[0-9A-F]+$/u.test(value.part)) changed();
-      // Fixed tuple: identity, order, field, byte offset/count, total, type, hex.
-      exact.append([piece.event_id, piece.order_sequence, piece.field, piece.offset, piece.bytes, piece.total, piece.storage, value.part]);
+      // Fixed tuple: identity, order, field, byte offset/count, total, type,
+      // exact value and its encoding. Storage type is independent of encoding.
+      const [literal, encoding] = bodyLiteral(value.part);
+      exact.append([piece.event_id, piece.order_sequence, piece.field, piece.offset, piece.bytes, piece.total, piece.storage, literal, encoding]);
     }
   };
   let rowCount = 0, afterSequence = 0, afterId = "", rawBytes = 0;

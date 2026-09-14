@@ -144,6 +144,64 @@ test("NUL, Unicode byte-boundary splits, missing/NULL/redacted and empty TEXT/BL
   } finally { f.db.close(); }
 });
 
+test("compact body literals preserve BOM, embedded NUL, arbitrary BLOB bytes and split Unicode exactly", async () => {
+  const f = fixture();
+  try {
+    const cases = [
+      ["plain", "original content ".repeat(100)],
+      ["bom", "\uFEFF" + "original content ".repeat(100)],
+      ["nul", "prefix\u0000" + "original content ".repeat(100)],
+      ["invalid", Buffer.from([0xff, 0xc0, 0x80, 0xed, 0xa0, 0x80, 0x00])],
+      ["utf8blob", Buffer.from("\uFEFF" + "original content ".repeat(100))],
+      ["controls", "\u0000".repeat(100)],
+      ["split", "x".repeat(8191) + "🙂" + "continued ".repeat(100)],
+      ["interior-bom", "before\uFEFF" + "original content ".repeat(100)],
+      ["escaped", '"quoted"\\path\r\n'.repeat(100)],
+    ];
+    for (const [index, [id, value]] of cases.entries()) f.add(id, index + 1, value);
+    const proof = await f.capture(); f.verify(proof.assertions);
+    const bodyTuples = proof.assertions.flatMap(a => (a.bindings ?? []).filter(v => typeof v === "string" && v.startsWith("[["))
+      .flatMap(v => JSON.parse(v)).filter(v => v.length === 9 && v[2] === "private_body"));
+    assert.equal(bodyTuples.find(v => v[0] === "plain")[8], "utf8");
+    assert.equal(bodyTuples.find(v => v[0] === "bom")[7][0], "\uFEFF");
+    assert.equal(bodyTuples.find(v => v[0] === "nul")[8], "hex");
+    assert.equal(bodyTuples.find(v => v[0] === "utf8blob")[8], "utf8");
+    assert.equal(bodyTuples.find(v => v[0] === "invalid")[8], "hex");
+    assert.equal(bodyTuples.find(v => v[0] === "controls")[8], "hex");
+    assert.ok(bodyTuples.filter(v => v[0] === "split").every(v => v[8] === "hex"));
+    for (const [id, value] of cases) {
+      const changed = typeof value === "string" ? value.slice(0, -1) + "!" : Buffer.concat([value.subarray(0, -1), Buffer.from([0x21])]);
+      f.db.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run(changed, id);
+      assert.throws(() => f.verify(proof.assertions), id);
+      f.db.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run(value, id);
+      f.verify(proof.assertions);
+    }
+    f.db.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id='utf8blob'").run(cases[4][1].toString());
+    assert.throws(() => f.verify(proof.assertions), "equal bytes cannot substitute TEXT for BLOB");
+  } finally { f.db.close(); }
+});
+
+test("dense retained history fits unchanged proof byte limits without hex expansion", async () => {
+  const f = fixture();
+  try {
+    f.db.exec("CREATE INDEX fixture_stream_sequence ON events(stream_id,sequence,event_id); BEGIN");
+    for (let index = 0; index < 30000; index++) f.add(`dense-${String(index).padStart(5, "0")}`, index + 1, "x".repeat(480));
+    f.db.exec("COMMIT");
+    const proof = await f.capture();
+    assert.equal(proof.rows, 30000); assert.ok(proof.rawBytes > 14_000_000);
+    assert.ok(proof.proofBytes < 30 * 1024 * 1024);
+    assert.ok(proof.captureReads <= 512);
+    const repeatedQueries = proof.captureReads + 2 * proof.assertions.length + Math.ceil(proof.rows / 6500) * (proof.assertions.length + 2);
+    assert.ok(repeatedQueries < 900, `dense repeated proof subtotal ${repeatedQueries}`);
+    for (const id of ["dense-00000", "dense-29999"]) {
+      f.db.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run("x".repeat(479) + "y", id);
+      assert.throws(() => f.verify(proof.assertions));
+      f.db.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run("x".repeat(480), id);
+    }
+    f.verify(proof.assertions);
+  } finally { f.db.close(); }
+});
+
 test("no-head private edit, public edit, redaction and private custody change all invalidate the original proof", async () => {
   const f = fixture();
   try {
