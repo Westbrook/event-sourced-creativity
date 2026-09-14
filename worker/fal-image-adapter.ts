@@ -112,6 +112,9 @@ const falError=(response:Response,body:unknown,fallback:string,prompt:string,req
 async function falJson(env:WorkerEnv,url:string,init:RequestInit,prompt:string,requestId:string|null=null,assertCurrent?:()=>Promise<void>){
   if(assertCurrent)await assertCurrent();
   let response:Response;try{response=await fetch(url,init);}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),...(requestId?{requestId}:{})},prompt);}
+  // workerd supports manual/follow, not redirect:"error". Refuse every 3xx
+  // before reading its body; never follow Location or forward authorization.
+  if(init.redirect==="manual"&&response.status>=300&&response.status<400){void response.body?.cancel().catch(()=>{});throw new Error("output_fal_redirect_refused");}
   let body:unknown={};try{body=await response.clone().json();}catch{/* Keep status-level failure evidence. */}
   if(assertCurrent)await assertCurrent();
   if(!response.ok)throw falError(response,body,`fal_image_${response.status}`,prompt,requestId);
@@ -227,7 +230,8 @@ async function readFalImageFile(result:FalImageResult,requestId:string,prompt:st
   const image=result.images?.[0];if(!image?.url)throw new ProviderRequestError({code:"fal_provider_returned_no_image",category:"provider",scope:"request",action:"retry",message:"Fal completed the request without an image URL.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
   let imageUrl:URL;try{imageUrl=new URL(image.url);}catch{throw new ProviderRequestError({code:"fal_provider_returned_invalid_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an invalid image location.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);}if(imageUrl.protocol!=="https:"||imageUrl.username||imageUrl.password||imageUrl.port||!(imageUrl.hostname==="fal.media"||imageUrl.hostname.endsWith(".fal.media")))throw new ProviderRequestError({code:"fal_provider_returned_untrusted_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an image location outside its trusted media domain.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
   await assertCurrent?.();
-  let imageResponse:Response;try{imageResponse=await fetch(image.url,{method:"GET",...(nativeRequest?{redirect:"error" as const}:{}),signal});}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),requestId},prompt);}
+  let imageResponse:Response;try{imageResponse=await fetch(image.url,{method:"GET",...(nativeRequest?{redirect:"manual" as const}:{}),signal});}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),requestId},prompt);}
+  if(nativeRequest&&imageResponse.status>=300&&imageResponse.status<400){void imageResponse.body?.cancel().catch(()=>{});throw new Error("output_fal_redirect_refused");}
   if(!imageResponse.ok)throw falError(imageResponse,{},`fal_image_download_${imageResponse.status}`,prompt,requestId);
   const bytes=nativeRequest?await boundedFalImageBytes(imageResponse):new Uint8Array(await imageResponse.arrayBuffer());
   await assertCurrent?.();if(!bytes.byteLength)throw new ProviderRequestError({code:"fal_provider_returned_empty_image",category:"provider",scope:"request",action:"retry",message:"Fal returned an empty image file.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
@@ -248,7 +252,7 @@ export async function readOutputFalImageResult(env:WorkerEnv,retained:OutputFalC
   const captured=await restoreOutputFalImageRequest(retained.contract,retained.body,retained.attempt.clientRequestId,retained.attempt.requestDigest);
   const canonical=falImageProviderReceipt(captured.contract.model,receipt.providerRequestId);
   if(Object.keys(receipt).length!==Object.keys(canonical).length||Object.entries(canonical).some(([key,value])=>receipt[key as keyof FalImageProviderReceipt]!==value))throw new Error("output_fal_recovery_receipt_mismatch");
-  const read=(url:string)=>falJson(env,url,{method:"GET",redirect:"error",headers:falHeaders(env),signal:options.signal},"",canonical.providerRequestId,options.assertCurrent);
+  const read=(url:string)=>falJson(env,url,{method:"GET",redirect:"manual",headers:falHeaders(env),signal:options.signal},"",canonical.providerRequestId,options.assertCurrent);
   options.onStage?.("provider_status");
   const state=await read(canonical.providerStatusUrl) as FalQueueState;
   if(!state||typeof state!=="object"||state.request_id!==undefined&&state.request_id!==canonical.providerRequestId)throw new Error("output_fal_recovery_receipt_mismatch");

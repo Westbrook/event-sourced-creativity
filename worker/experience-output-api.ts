@@ -82,7 +82,7 @@ const nativeDiagnosticSubtypes = new Map([
     "output_fal_recovery_content_unavailable", "output_fal_recovery_plan_unavailable", "output_fal_recovery_call_unavailable",
     "output_fal_recovery_origin_unavailable", "output_fal_recovery_provenance_unavailable", "output_fal_recovery_canceled",
     "output_fal_recovery_settlement_unavailable", "output_fal_recovery_unavailable", "output_fal_recovery_receipt_mismatch",
-    "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty",
+    "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty", "output_fal_redirect_refused",
     "output_fal_recovery_ack_unavailable",
     "output_fal_checkpoint_invalid", "output_job_binding_missing", "output_job_scope_mismatch", "output_execution_authority_revoked", "output_execution_scope_mismatch",
     "output_execution_grant_not_found", "output_execution_context_changed",

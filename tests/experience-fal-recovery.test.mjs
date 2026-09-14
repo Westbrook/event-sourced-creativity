@@ -32,7 +32,7 @@ test("recovery rejects missing authority and noncanonical receipt before any rea
 });
 test("recovery starts only an explicit canonical GET with redirects denied, no POST or automatic retry",async()=>{
   const c=await capture(),receipt=falImageProviderReceipt(c.contract.model,"recorded-request"),before=globalThis.fetch;const order=[];
-  globalThis.fetch=async(url,init)=>{order.push("read");assert.equal(url,receipt.providerStatusUrl);assert.equal(init.method,"GET");assert.equal(init.redirect,"error");assert.equal(init.body,undefined);throw new Error("transport_stopped");};
+  globalThis.fetch=async(url,init)=>{order.push("read");assert.equal(url,receipt.providerStatusUrl);assert.equal(init.method,"GET");assert.equal(init.redirect,"manual");assert.equal(init.body,undefined);throw new Error("transport_stopped");};
   try{
     await assert.rejects(readOutputFalImageResult({FAL_KEY:"inert-key-presence"},c,receipt,{assertCurrent:async()=>{order.push("guard");}}));
     assert.deepEqual(order,["guard","read"]);
@@ -50,6 +50,52 @@ test("original provider read reports fixed status stage without changing the GET
       assert.equal(reads,stop==='guard'?0:1);
     }finally{globalThis.fetch=before;}
   }
+});
+
+test("original queue reads refuse every 3xx without parsing private redirect content or following Location",async()=>{
+  const c=await capture(),receipt=falImageProviderReceipt(c.contract.model,"recorded-request"),before=globalThis.fetch;
+  // Controlled transport refusals only, not a successful provider journey.
+  for(const status of [300,301,302,303,304,305,307,308,399]){
+    let reads=0,cancels=0,parsed=0;
+    globalThis.fetch=async(url,init)=>{
+      reads++;assert.equal(url,receipt.providerStatusUrl);assert.equal(init.redirect,"manual");assert.equal(init.method,"GET");
+      return{status,body:{cancel(){cancels++;return Promise.reject(new Error('private cleanup failure'));}},
+        clone(){parsed++;throw Error('must not parse redirect');},headers:{get(){throw Error('must not inspect Location');}}};
+    };
+    try{
+      await assert.rejects(readOutputFalImageResult({FAL_KEY:"inert-key-presence"},c,receipt,{assertCurrent:async()=>{}}),
+        error=>error.message==='output_fal_redirect_refused');
+      assert.equal(reads,1);assert.equal(cancels,1);assert.equal(parsed,0);
+    }finally{globalThis.fetch=before;}
+  }
+});
+
+test("native media GET refuses redirects before image bytes and does not wait for cleanup",async()=>{
+  const {readFile}=await import('node:fs/promises'),{stripTypeScriptTypes}=await import('node:module');
+  const source=await readFile(new URL('../worker/fal-image-adapter.ts',import.meta.url),'utf8');
+  const start=source.indexOf('async function readFalImageFile('),end=source.indexOf('/** One read of an already accepted request.',start);
+  assert.ok(start>=0&&end>start);
+  for(const status of [301,302,303,307,308]){
+    const order=[];let cancels=0;
+    const read=new Function('fetch',stripTypeScriptTypes(source.slice(start,end))+';return readFalImageFile;')(
+      async(url,init)=>{order.push('GET');assert.equal(url,'https://fal.media/original.png');assert.equal(init.redirect,'manual');assert.equal(init.headers,undefined);
+        return{status,body:{cancel(){cancels++;return new Promise(()=>{});}},arrayBuffer(){throw Error('must not consume bytes');}};});
+    await assert.rejects(read({images:[{url:'https://fal.media/original.png'}]},'original','',{width:1024,height:1024},'png',undefined,{},async()=>{order.push('guard');}),/output_fal_redirect_refused/);
+    assert.deepEqual(order,['guard','GET']);assert.equal(cancels,1);
+  }
+});
+
+test("shared canonical result transport also refuses redirects without awaiting cancellation",async()=>{
+  const {readFile}=await import('node:fs/promises'),{stripTypeScriptTypes}=await import('node:module');
+  const source=await readFile(new URL('../worker/fal-image-adapter.ts',import.meta.url),'utf8');
+  const start=source.indexOf('async function falJson('),end=source.indexOf('\nfunction trustedFalQueueUrl',start);
+  const receipt=falImageProviderReceipt('ideogram/v4','recorded-request');
+  let reads=0,cancels=0;
+  const read=new Function('fetch',stripTypeScriptTypes(source.slice(start,end))+';return falJson;')(
+    async(url,init)=>{reads++;assert.equal(url,receipt.providerResponseUrl);assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');
+      return{status:302,body:{cancel(){cancels++;return new Promise(()=>{});}},clone(){throw Error('must not consume redirect JSON');}};});
+  await assert.rejects(read({},receipt.providerResponseUrl,{method:'GET',redirect:'manual'},'',receipt.providerRequestId,async()=>{}),/output_fal_redirect_refused/);
+  assert.equal(reads,1);assert.equal(cancels,1);
 });
 
 test("existing progress and finish SQL preserve the privately retained checkpoint across stale row writes",async()=>{
