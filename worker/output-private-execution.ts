@@ -311,9 +311,15 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
   if (!filter.ownerUserId && !filter.organizationId) throw new Error("output_storage_cleanup_scope_required");
   const now = new Date().toISOString();
   const limit=Number.isSafeInteger(filter.limit)&&Number(filter.limit)>0?Math.min(64,Number(filter.limit)):64;
-  await env.DB.prepare(`UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written') AND publication_event_id IS NULL
+  // Compile the complete personal recovery proof at its own query depth, then
+  // reuse its exact grant identity inside the deeper storage-custody predicate.
+  // Organization-only cleanup cannot retain a personal Fal recovery.
+  await env.DB.prepare(`WITH retained_fal_grants AS MATERIALIZED (
+    SELECT scope_key,grant_id FROM output_execution_grants WHERE actor_user_id=? AND ${retainedPersonalFalRecoverySql}
+  ) UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written') AND publication_event_id IS NULL
     AND EXISTS(SELECT 1 FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
       JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+      LEFT JOIN retained_fal_grants retained ON retained.scope_key=grant_row.scope_key AND retained.grant_id=grant_row.grant_id
       WHERE slot.scope_key=output_native_storage_writes.scope_key AND slot.slot_id=output_native_storage_writes.slot_id
       AND (grant_row.status='revoked' OR (grant_row.expires_at<=? AND NOT EXISTS(
         SELECT 1 FROM document_jobs recovery WHERE recovery.job_id=slot.job_id AND recovery.owner_id=grant_row.actor_user_id
@@ -322,7 +328,7 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
           AND length(json_extract(recovery.result_json,'$.outputFalRecovery.token'))=36
           AND output_native_storage_writes.storage_key=json_extract(recovery.result_json,'$.outputFalRecovery.storageKey')
           AND output_native_storage_writes.storage_key LIKE '%-recovery-'||json_extract(recovery.result_json,'$.outputFalRecovery.token')||'.png'
-          AND EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=grant_row.scope_key AND grant_id=grant_row.grant_id AND ${retainedPersonalFalRecoverySql})
+          AND retained.grant_id IS NOT NULL
           AND json_extract(recovery.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')
           OR recovery.kind='render_document' AND recovery.source_surface='outputs' AND recovery.document_id=plan.document_id AND plan.scope_kind='personal'
           AND plan.organization_id IS NULL AND plan.project_access_id IS NULL AND grant_row.context_id IS NULL
@@ -337,7 +343,7 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
           AND json_extract(recovery.result_json,'$.outputVideoRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))))
       AND (? IS NULL OR plan.owner_user_id=?) AND (? IS NULL OR plan.organization_id=?)
       AND (?=0 OR (plan.scope_kind='personal' AND plan.organization_id IS NULL AND plan.project_access_id IS NULL)))`)
-    .bind(now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();
+    .bind(filter.ownerUserId??null, now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();
   const receipts = await env.DB.prepare(`SELECT stored.scope_key,stored.slot_id,stored.storage_key,stored.content_sha256,stored.write_acknowledged,stored.updated_at,plan.owner_user_id,plan.document_id
     FROM output_native_storage_writes stored JOIN output_operation_slots slot ON slot.scope_key=stored.scope_key AND slot.slot_id=stored.slot_id
     JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id

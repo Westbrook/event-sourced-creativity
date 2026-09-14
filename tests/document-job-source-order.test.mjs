@@ -79,6 +79,10 @@ test("same-source genuinely later terminal Stop is not suppressed by an earlier 
   assert.equal(await h.store.stopDocumentJob(job.jobId),true);assert.equal(wire.job.status,"canceled");
   assert.ok(observed.some(entry=>entry?.jobId===job.jobId&&entry.status==="canceled"),"the authentic later terminal acknowledgement publishes before the optional view refresh");
   assert.notEqual(observed[0],detail);
+  // Stop's concurrent session refresh can supersede its first list read. Wait
+  // for an actual published successor, not just an observed HTTP response.
+  const read=h.store.beginNativeImageInitialListRead(),receipt=await read.initial;
+  await read.settled;assert.equal(receipt.status,"published");
   assert.equal(Boolean(privateJob(h,job.jobId)),listed.some(entry=>entry.jobId===job.jobId),"the existing bounded follow-up list remains authoritative for feed membership");
   assert.ok(h.store.sourceOwnershipActive(x.originalSource));
   assert.equal(worker.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"canceled");

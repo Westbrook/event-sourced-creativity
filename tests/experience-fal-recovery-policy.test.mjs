@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFile } from 'node:fs/promises';
 import { retainedPersonalFalRecoverySql } from '../worker/output-fal-recovery-policy.ts';
 import { readFalRecoveryCheckpoint } from '../worker/output-fal-recovery-policy.ts';
+import { compileSqliteExpressionDepth } from './helpers/d1-expression-depth.mjs';
 
 // Isolated SQL policy/lease metadata. No grant is admitted, no provider responds,
 // no artifact is created, and these rows are not runtime acceptance evidence.
@@ -68,7 +69,7 @@ test('actual recovery lease SQL is single-flight, rejects stale CAS and active w
 
 test('actual storage cleanup protects only the current recovery storage key, never an older token, expiry or revocation',async()=>{
   const source=await readFile(new URL('../worker/output-private-execution.ts',import.meta.url),'utf8');
-  const start=source.indexOf("UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written')"),end=source.indexOf('`)',start);assert.ok(start>=0&&end>start);
+  const start=source.indexOf("WITH retained_fal_grants AS MATERIALIZED ("),end=source.indexOf('`)',start);assert.ok(start>=0&&end>start);
   const sql=source.slice(start,end).replace('${retainedPersonalFalRecoverySql}',retainedPersonalFalRecoverySql);
   for(const mode of ['current','older','expired','revoked']){const {db}=fixture();try{
     db.exec("ALTER TABLE document_jobs ADD COLUMN source_surface TEXT; ALTER TABLE document_jobs ADD COLUMN request_json TEXT");
@@ -79,7 +80,8 @@ test('actual storage cleanup protects only the current recovery storage key, nev
     db.prepare("UPDATE document_jobs SET result_json=json_set(result_json,'$.outputFalRecovery',json(?))").run(JSON.stringify(recovery));
     if(mode==='revoked')db.exec("UPDATE output_execution_grants SET status='revoked'");
     db.prepare('INSERT INTO output_native_storage_writes VALUES(?,?,?,?,NULL,?)').run('scope','slot',mode==='older'?oldKey:key,'written','');
-    db.prepare(sql).run(future,future,'actor','actor',null,null,1);
+    const compiled=compileSqliteExpressionDepth(db,sql);assert.equal(compiled.ok,true,compiled.error);assert.equal(compiled.limit,100);
+    db.prepare(sql).run('actor',future,future,'actor','actor',null,null,1);
     assert.equal(db.prepare('SELECT status FROM output_native_storage_writes').get().status,mode==='current'?'written':'cleanup_pending',mode);
   }finally{db.close();}}
 });

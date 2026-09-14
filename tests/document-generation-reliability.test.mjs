@@ -67,6 +67,9 @@ async function reliabilityWorker(){
   assert.equal((await request("/api/session")).status,200);
   database.sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
   assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status,200);
+  // This administrative migration is intentionally not runtime bootstrap DDL.
+  // Use the existing idempotent schema so terminal settlement sees production's guards.
+  database.sqlite.exec((await import("node:fs")).readFileSync(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8"));
   return{
     ...database,environment,request,
     get backgroundCount(){return background.length;},
@@ -141,7 +144,11 @@ function independentProviderResponse(requestBody){
     const alias=source.sourceAlias,score=index===0,quoted=index===1;
     return{title:source.title,body:source.content,notes:`${source.content}\n[Sources] Independently authored source ${index+1}`,image_prompt:`Source-grounded editable composition ${index+1}`,context_group_ids:[],slide:{layout:score?"scorecard":quoted?"quote":index===11?"closing":"statement",kicker:`Authored position ${index+1}`,bullets:[],quote:quoted?{text:INDEPENDENT_SLIDE_QUOTE,speaker:"Product Owner",role:"Product Owner",source_id:alias,citation:"Authored stakeholder evidence"}:null,citations:[{source_id:alias,label:`Independently authored source ${index+1}`,anchor:`Authored slide ${index+1}`,excerpt:source.title}],source_ids:[alias],section:null,source_order:index+1,visual:{kind:score?"scorecard":quoted?"quote":"hero-type",label:score?"Six independently assessed goals":quoted?"Product Owner":"Authorized authored evidence",value:score?"61.13":quoted?INDEPENDENT_SLIDE_QUOTE:`Decision ${index+1}`,exact_value:score?"61.125":null,display_value:score?"61.13":null,unit:score?"/100":null,data:score?INDEPENDENT_SLIDE_SCORES.map(([label,value])=>({label,value,weight:Number(value)/100,exact_value:value,display_value:value,source_ids:[alias]})):[]}}};
   });
-  return{title:"Faithful event-sourced executive plan",summary:"Twelve independently authored and individually attributed slides.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`).join("\n\n"),presentation:{aspect_ratio:"16:9",theme:"Faithful event-sourced executive plan",footer_label:"Executive source evidence",style_preset:"field-notes",mode:"light",palette:{background:"#edf1ef",foreground:"#14211d",accent:"#287260",muted:"#586b64",surface:"#d9e3df"}},items};
+  // Keep the attributed quote in its dedicated field and source notes, without
+  // repeating the same visible sentence in the body (current copy validation).
+  for(const item of items)if(item.slide.quote)item.body="An attributed stakeholder statement supports independently reviewable product accountability.";
+  const markdown=items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`+(item.slide.quote?`\n\n“${item.slide.quote.text}” — ${item.slide.quote.speaker}`:"")).join("\n\n");
+  return{title:"Faithful event-sourced executive plan",summary:"Twelve independently authored and individually attributed slides.",content_markdown:markdown,presentation:{aspect_ratio:"16:9",theme:"Faithful event-sourced executive plan",footer_label:"Executive source evidence",style_preset:"field-notes",mode:"light",palette:{background:"#edf1ef",foreground:"#14211d",accent:"#287260",muted:"#586b64",surface:"#d9e3df"}},items};
 }
 
 function savedIndependentPresentationPlan(){
@@ -2600,7 +2607,7 @@ test("recertifies source-authored recurring file-format evidence and recovers it
         {label:"Fragmented handoffs",value,weight:1,source_ids:[alias]},
         {label:"Unified delivery",value:"one coherent Forma context",weight:.8,source_ids:[alias]},
       ]};
-      output.content_markdown=output.items.map((entry,index)=>`## ${index+1}. ${entry.title}\n${entry.body}`).join("\n\n");
+      output.content_markdown=output.items.map((entry,index)=>`## ${index+1}. ${entry.title}\n${entry.body}`+(entry.slide.quote?`\n\n“${entry.slide.quote.text}” — ${entry.slide.quote.speaker}`:"")).join("\n\n");
       return Response.json({id:`historical-source-evidence-response-${variant}-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(output),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
     };
     try{

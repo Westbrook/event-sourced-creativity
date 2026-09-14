@@ -29,11 +29,13 @@ const fixtureNames=new Set(['reliabilityDatabase','reliabilityWorker','json','IN
 
 const declarations=tree.statements.filter(node=>ts.isFunctionDeclaration(node)?fixtureNames.has(node.name?.text):ts.isVariableStatement(node)&&node.declarationList.declarations.some(value=>fixtureNames.has(value.name.getText(tree))));
 
-// Only the legacy fixture's dist import is replaced by the current source Worker.
-// These are unchanged fixture declarations; no production method is extracted/replaced.
+// Reuse the legacy fixture with the current source Worker and resolve its one
+// SQL fixture URL before loading declarations through a data URL. No production
+// method is extracted or replaced.
 const fixtureSource=`import assert from 'node:assert/strict';\nimport {DatabaseSync} from 'node:sqlite';\nimport worker from ${JSON.stringify(file('worker/index.ts'))};\nimport {appendAuditEvent} from ${JSON.stringify(file('worker/runtime.ts'))};\nimport {documentJobCanRecoverProviderRender,generationFailureGuidance} from ${JSON.stringify(file('src/model/document-jobs.ts'))};\n`+declarations.map(node=>node.getFullText(tree)).join('\n')+'\nexport {'+[...fixtureNames].join(',')+'};';
 
-const {reliabilityWorker,json,seedIndependentPresentation,independentProviderResponse,presentationAdmission,originalSourceAudioFixture}=await import('data:text/javascript;base64,'+Buffer.from(fixtureSource).toString('base64'));
+const resolvedFixtureSource=fixtureSource.replace('new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url)',JSON.stringify(path.join(ROOT,'db/operations/budget-hold-dispositions.sql')));
+const {reliabilityWorker,json,seedIndependentPresentation,independentProviderResponse,presentationAdmission,originalSourceAudioFixture}=await import('data:text/javascript;base64,'+Buffer.from(resolvedFixtureSource).toString('base64'));
 
 const {createSceneStoreHost,sceneDeferred}=await import(file('tests/helpers/scene-cost-store-host.mjs'));
 
