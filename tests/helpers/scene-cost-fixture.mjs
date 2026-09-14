@@ -9,7 +9,7 @@ const [{default:worker},{appendAuditEvent,readWorkspaceEvents},{storePrivateCont
 export const sceneCostFixtureProof={fixtures:0,nativeQueries:new Set(),maximumBindings:0};
 function sceneDatabase(){
   const sqlite=new DatabaseSync(":memory:");
-  const controls={beforeRead:null,afterRead:null,beforeRun:null,beforeBatch:null,writes:[],bindings:[]};
+  const controls={beforeRead:null,afterRead:null,beforeRun:null,beforeBatch:null,afterBatch:null,writes:[],bindings:[]};
   class Statement{
     constructor(sql,values=[]){this.sql=sql;this.values=values;}
     bind(...values){assert.ok(values.length<=100,"D1 accepts at most 100 bound parameters");controls.bindings.push(values.length);return new Statement(this.sql,values);}
@@ -18,7 +18,7 @@ function sceneDatabase(){
     async all(){await controls.beforeRead?.(this);const value=this.execute("all");await controls.afterRead?.(this,value);return value;}
     async run(){await controls.beforeRun?.(this);return this.execute("run");}
   }
-  const DB={prepare:sql=>new Statement(sql),async batch(statements){await controls.beforeBatch?.(statements);sqlite.exec("BEGIN");try{const result=statements.map(statement=>statement.execute(/^\s*(SELECT|WITH)\b/iu.test(statement.sql)?"all":"run"));sqlite.exec("COMMIT");return result;}catch(error){sqlite.exec("ROLLBACK");throw error;}},async exec(sql){sqlite.exec(sql);return{count:1,duration:0};}};
+  const DB={prepare:sql=>new Statement(sql),async batch(statements){await controls.beforeBatch?.(statements);let result;sqlite.exec("BEGIN");try{result=statements.map(statement=>statement.execute(/^\s*(SELECT|WITH)\b/iu.test(statement.sql)?"all":"run"));sqlite.exec("COMMIT");}catch(error){sqlite.exec("ROLLBACK");throw error;}if(controls.afterBatch)await controls.afterBatch(statements,result);return result;},async exec(sql){sqlite.exec(sql);return{count:1,duration:0};}};
   return{sqlite,DB,controls};
 }
 export async function createSceneCostFixture(count=9,medium="visual",{depth=false,shared=false,rightsDeadline=null}={}){

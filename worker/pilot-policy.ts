@@ -1,8 +1,9 @@
-import { assertOutputAdmissionActor, assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { intEnv, activeProjectBillingSql } from "./pilot-policy-primitives.ts";
 import { DEFAULT_EVIDENCE_RETENTION_DAYS } from "./private-content-storage.ts";
 export { DURABLE_WORK_RETENTION_END, DEFAULT_EVIDENCE_RETENTION_DAYS, privateContentRetentionClass, preparePrivateContent, storePrivateContent } from "./private-content-storage.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
+import type { OutputSqlAssertion } from "./output-command-core.ts";
 import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 import { MICRO_USD_PER_USD } from "./replay-cost.ts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations.ts";
@@ -203,7 +204,18 @@ export type ProjectBudgetScope={organizationId:string;projectAccessId:string;act
 /** Internal SQL capability; never accept this guard from request JSON. */
 export type BudgetReservationGuard={sql:string;bindings:Array<string|number|null>};
 async function budgetReservationAdmitted(env:WorkerEnv,guard:BudgetReservationGuard|undefined){return !guard||Boolean(await env.DB.prepare(`SELECT 1 AS admitted WHERE ${guard.sql}`).bind(...guard.bindings).first());}
-type BudgetReservationContext = { batchCounterInitialization?:boolean;outputAdmissionReads?:OutputAdmissionReads;reservationGuard?:BudgetReservationGuard; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
+/** Server-only SQL proofs. The caller must supply original captured assertions,
+ * never wire-authored SQL. Missing schema is an unavailable guarded boundary,
+ * not permission to initialize output schema from a read-only preparation path. */
+async function budgetReservationAssertionStatements(env:WorkerEnv,assertions:readonly OutputSqlAssertion[]=[]){
+  if(!assertions.length)return[];
+  // Capture before the lazy import yields; callers cannot swap source bindings.
+  const captured=assertions.map(assertion=>({...assertion,bindings:[...(assertion.bindings??[])]}));
+  if(!outputSchemaIsReady(env.DB))throw new Error("output_budget_assertion_schema_unavailable");
+  const {outputAssertionStatements}=await import("./output-command-core.ts");
+  return captured.flatMap(assertion=>outputAssertionStatements(env,assertion));
+}
+type BudgetReservationContext = { batchCounterInitialization?:boolean;outputAdmissionReads?:OutputAdmissionReads;reservationGuard?:BudgetReservationGuard;reservationAssertions?:readonly OutputSqlAssertion[]; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
 
 async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudgetScope){
   if(!scope.organizationId||!scope.projectAccessId||scope.actorUserId!==userId)return null;
@@ -255,14 +267,15 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
  * authorization and assert the returned reservation inside that same transaction. */
 export async function prepareBudgetReservation(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
   const reservationGuard=context.reservationGuard;
+  const reservationChecks=context.reservationAssertions?.length?await budgetReservationAssertionStatements(env,context.reservationAssertions):[];
   const amount = Math.max(0, Math.floor(tokens)); const limits = budgetLimits(env); const reservationPeriod = context.period ?? period();
   const scope=context.projectScope;
   assertOutputAdmissionBudget(context.outputAdmissionReads,env,userId,reservationPeriod,scope);
   const policy=scope?await readOutputAdmissionValue(context.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
   if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
   const counterInitialization:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[];
-  if(context.outputAdmissionReads)await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,context.outputAdmissionReads);
-  else if(context.batchCounterInitialization){
+  if(context.outputAdmissionReads&&!reservationChecks.length)await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,context.outputAdmissionReads);
+  else if(context.batchCounterInitialization||reservationChecks.length){
     // Same metadata writes and live reservation guards, committed together.
     counterInitialization.push(budgetRowStatement(env,"user",userId,limits.user,reservationPeriod),budgetRowStatement(env,"workspace","forma",limits.workspace,reservationPeriod));
     if(scope&&policy)counterInitialization.push(budgetRowStatement(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod));
@@ -279,9 +292,9 @@ export async function prepareBudgetReservation(env: WorkerEnv, userId: string, t
       AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='user' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)
       AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)${scopedPredicates}${reservationGuard?` AND (${reservationGuard.sql})`:""}`)
     .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.token_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(reservationGuard?.bindings??[]));
-  const reservationStatementIndex=counterInitialization.length;
+  const reservationStatementIndex=reservationChecks.length+counterInitialization.length;
   const statements=[
-    ...counterInitialization,reservationStatement,
+    ...reservationChecks,...counterInitialization,reservationStatement,
     env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,userId,reservationPeriod,reservationId),
     env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,reservationPeriod,reservationId),
   ];
@@ -873,6 +886,8 @@ type CostReservationOptions = {
   batchCounterInitialization?:boolean;
   outputAdmissionReads?:OutputAdmissionReads;
   reservationGuard?:BudgetReservationGuard;
+  /** Server-only original proofs, committed with counters/reservation/scopes. */
+  reservationAssertions?:readonly OutputSqlAssertion[];
   maximumMicrousd: number;
   allowUserOverage: boolean;
   reservationId?: string;
@@ -929,6 +944,7 @@ export async function costBudgetReservation(env: WorkerEnv, userId: string, rese
  * This does not reserve money. There is no separate Output budget authority. */
 export async function prepareCostBudgetReservation(env: WorkerEnv, userId: string, requestedMicrousd: number, options: CostReservationOptions) {
   const reservationGuard=options.reservationGuard;
+  const reservationChecks=options.reservationAssertions?.length?await budgetReservationAssertionStatements(env,options.reservationAssertions):[];
   const amount = Math.max(0, Math.floor(requestedMicrousd));
   if (!amount || amount > Math.floor(options.maximumMicrousd)) return { ok: false as const, scope: "authorization" as const };
   const limits = costBudgetLimits(env);
@@ -947,11 +963,11 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
   let userBefore:Record<string,unknown>|null=null;
   const counterInitialization:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[];
   let userBeforeStatementIndex:number|undefined;
-  if(options.outputAdmissionReads)userBefore=await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,options.outputAdmissionReads);
-  else if(options.batchCounterInitialization){
+  if(options.outputAdmissionReads&&!reservationChecks.length)userBefore=await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,options.outputAdmissionReads);
+  else if(options.batchCounterInitialization||reservationChecks.length){
     counterInitialization.push(costBudgetRowStatement(env,"user",userId,limits.user,reservationPeriod),costBudgetRowStatement(env,"workspace","forma",limits.workspace,reservationPeriod));
     if(scope&&policy)counterInitialization.push(costBudgetRowStatement(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod));
-    userBeforeStatementIndex=counterInitialization.length;
+    userBeforeStatementIndex=reservationChecks.length+counterInitialization.length;
     counterInitialization.push(env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId,reservationPeriod));
   }else {
     await ensureCostBudgetRow(env, "user", userId, limits.user, reservationPeriod);
@@ -969,9 +985,9 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
         AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer')
     AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='pilot_org' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)
     AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)`:"";
-  const reservationStatementIndex=counterInitialization.length;
+  const reservationStatementIndex=reservationChecks.length+counterInitialization.length;
   const statements=[
-    ...counterInitialization,
+    ...reservationChecks,...counterInitialization,
     env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_reservations (reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at)
       SELECT ?,?,?,?,?,?,?,?,0,'authorizing',?,?,NULL,?
       WHERE ?>0

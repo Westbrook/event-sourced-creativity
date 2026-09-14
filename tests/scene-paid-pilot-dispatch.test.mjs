@@ -114,9 +114,11 @@ for(const medium of ["visual","audio"])for(const mode of ["manual","managed"])fo
         }
         return now;
       });
-      f.controls.afterRead=async(statement,row)=>{
-        if(boundary!=="final-sql"||crossed||!statement.sql.startsWith("SELECT 1 AS current,")||!f.checkpoint().providerSubmissions
+      f.controls.afterBatch=async(statements,results)=>{
+        const index=statements.findIndex(statement=>statement.sql.startsWith("SELECT 1 AS current,"));
+        if(boundary!=="final-sql"||crossed||index<0||!f.checkpoint().providerSubmissions
           ||!Object.values(f.checkpoint().providerSubmissions).some(receipt=>receipt.status==="pending"))return;
+        const row=results[index]?.results?.[0];
         assert.equal(row.current,1);assert.equal(row.pilot_ends_at,endsAt);scheduled=true;crossed=true;now=expires?Date.parse(endsAt)+1:initial+1;
       };
       const result=await f.run();assert.equal(scheduled,true);assert.equal(crossed,true);
@@ -135,8 +137,8 @@ for(const [name,change] of [
 ])test("paid final snapshot includes "+name+" as well as the pinned cohort",async t=>{
   const f=await createPilotSceneFixture(),calls=scenePilotProvider(t);let changed=false;
   try{
-    await f.admit();f.controls.beforeRead=async statement=>{
-      if(changed||!statement.sql.startsWith("SELECT 1 AS current,")||!Object.values(f.checkpoint().providerSubmissions??{}).some(receipt=>receipt.status==="pending"))return;
+    await f.admit();f.controls.beforeBatch=async statements=>{
+      if(changed||!statements.some(statement=>statement.sql.startsWith("SELECT 1 AS current,"))||!Object.values(f.checkpoint().providerSubmissions??{}).some(receipt=>receipt.status==="pending"))return;
       changed=true;change(f);
     };
     const result=await f.run();assert.equal(changed,true);assert.ok(["failed","canceled"].includes(result.body.job.status));
@@ -325,5 +327,11 @@ for(const medium of ["visual","audio"])test(medium+" actual cached paid-plan bra
 
 test("paid Scene fixture SQL remains within native D1 limits",()=>{
   assert.ok(sceneCostFixtureProof.fixtures>0);assert.ok(sceneCostFixtureProof.nativeQueries.size>0);
-  assert.ok(sceneCostFixtureProof.maximumBindings<=100);assert.ok(sceneCostFixtureProof.maximumBindings>=84,"the real scoped pilot reservation path was exercised");
+  assert.ok(sceneCostFixtureProof.maximumBindings<=100);
+  const scopedPilotReservation=[...sceneCostFixtureProof.nativeQueries].some(sql=>
+    /INSERT\s+OR\s+IGNORE\s+INTO\s+cost_budget_reservations\b/iu.test(sql)
+    && /FROM\s+pilot_cohorts\s+cohort\s+JOIN\s+pilot_participants\s+participant\b/iu.test(sql)
+    && sql.includes("budget_scope_policies") && sql.includes("scope='pilot_org'") && sql.includes("scope='pilot_user'"));
+  assert.ok(scopedPilotReservation,
+    "native-depth evidence must include the actual scoped pilot reservation with membership and both pilot caps");
 });

@@ -12,7 +12,11 @@ import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "
 import { hasCapability, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { readProjectSourceEvents, resolveOwnerExecutionScope } from "./project-access.ts";
 import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow.ts";
-import { readWorkspaceEvents, streamHead, type WorkerEnv } from "./runtime.ts";
+import { readWorkspaceEvents, streamHead, type EventReadProof, type WorkerEnv } from "./runtime.ts";
+import { OutputConflictError, type OutputSqlAssertion } from "./output-command-core.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
+import { assertSceneHistoryRead, readSceneHistoryProof } from "./scene-history-proof-read.ts";
+import { SceneHistoryProofError } from "./scene-history-proof.ts";
 
 
 /** Private canonical audit witness, emitted only by the executor after a known local stop. */
@@ -55,7 +59,8 @@ function conjunction(guards: readonly BudgetReservationGuard[]): BudgetReservati
 export type PreparedSceneCost = {
   preview: SceneCostPreview;
   binding: ConsequentialBinding;
-  guard: BudgetReservationGuard;
+  /** Original bounded proofs; every write/dispatch must preserve the full array. */
+  assertions: readonly OutputSqlAssertion[];
   production: ManagedProductionPlan | null;
   authoredSnapshot: Record<string, unknown>;
   effectiveSnapshot: Record<string, unknown>;
@@ -96,14 +101,29 @@ export async function prepareSceneCostConsent(
   if (!(scope ? hasCapability(user, "project.read", scope) : user.access.capabilities.includes("project.read"))) fail("scene_cost_authority_changed", 403);
   if (contextSessionId !== null && (!scope || !requestIdValid(contextSessionId))) fail("scene_cost_authority_changed", 403);
   const sourceHead = await streamHead(env, user.streamId);
-  // This private manifest also detects redaction or content edits that do not advance the event head.
-  const manifestSql = scope
-    ? "SELECT COALESCE(json_group_array(json_array(event_id,sequence,payload,private_json,redacted_at)),'[]') AS evidence FROM (SELECT event.event_id,event.sequence,event.payload,secret.private_json,secret.redacted_at FROM project_event_scopes membership JOIN events event ON event.event_id=membership.event_id LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE membership.project_access_id=? AND membership.organization_id=? AND membership.project_id=? AND membership.owner_user_id=? ORDER BY membership.project_sequence)"
-    : "SELECT COALESCE(json_group_array(json_array(event_id,sequence,payload,private_json,redacted_at)),'[]') AS evidence FROM (SELECT event.event_id,event.sequence,event.payload,secret.private_json,secret.redacted_at FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.stream_id=? ORDER BY event.sequence)";
-  const manifestBindings = scope ? [scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId] : [user.streamId];
-  const manifest = await env.DB.prepare(manifestSql).bind(...manifestBindings).first<{ evidence: string }>();
-  if (!manifest) fail("scene_cost_authority_changed", 403);
-  const events = scope ? await readProjectSourceEvents(env, scope, { synchronize: options.synchronize === true }) : await readWorkspaceEvents(env, user.streamId);
+  const period = new Date().toISOString().slice(0, 7);
+  const monthEnd = new Date(Date.UTC(Number(period.slice(0,4)),Number(period.slice(5,7)),1)).toISOString();
+  const selected = contextSessionId ? await env.DB.prepare("SELECT expires_at FROM project_context_sessions WHERE context_id=? AND principal_user_id=? AND revoked_at IS NULL")
+    .bind(contextSessionId,user.userId).first<{expires_at:string}>() : null;
+  if(contextSessionId&&!selected)fail("scene_cost_authority_changed",403);
+  const readValidUntil = earliestSceneDeadline([monthEnd, selected?.expires_at, ...user.access.grants.map(grant=>grant.expiresAt)]);
+  const history = await readSceneHistoryProof(env, {
+    streamId: user.streamId, expectedOwnerHead: sourceHead, deadlineMs: Date.parse(readValidUntil),
+    ...(scope ? { project: { projectAccessId: scope.projectAccessId, organizationId: scope.organizationId,
+      projectId: scope.projectId, ownerUserId: scope.ownerUserId } } : {}),
+  });
+  // Certify the ACTUAL hydrated rows in the same snapshot as the original raw
+  // proof. A separate successful read cannot exclude transient edit/restore ABA.
+  const sourceProof: EventReadProof = {
+    statements: outputProofReadStatements(env, history.assertions),
+    verify(results) {
+      assertSceneHistoryRead(results, history.assertions.length);
+      requireSceneCostDeadline({validUntil: readValidUntil});
+    },
+  };
+  const events = scope
+    ? await readProjectSourceEvents(env, scope, { synchronize: options.synchronize === true, sourceProof })
+    : await readWorkspaceEvents(env, user.streamId, sourceProof);
   const projection = foldEvents(events, Infinity, documentId, initialDocument.projectId);
   const document = projection.documents.find(candidate => candidate.id === documentId && candidate.projectId === initialDocument.projectId && !candidate.removed);
   if (!document) fail("document_not_found", 404);
@@ -157,7 +177,7 @@ export async function prepareSceneCostConsent(
     ...(typeof payload.contextRootBlockId === "string" ? { contextRootBlockId: payload.contextRootBlockId } : {}),
   };
   const requestHash = await sceneCostRequestHash(request), sourceHash = await consentHash(effectiveSnapshot);
-  const model = String(env.OPENAI_MODEL ?? "gpt-5.6-terra"), period = new Date().toISOString().slice(0, 7);
+  const model = String(env.OPENAI_MODEL ?? "gpt-5.6-terra");
   const binding: ConsequentialBinding = {
     version: "scene-cost-v1", operation: "written-scene", intentHash: requestHash, actorUserId: user.userId,
     permissionEpoch: user.access.permissionEpoch, streamId: user.streamId, projectId: document.projectId, documentId,
@@ -172,26 +192,27 @@ export async function prepareSceneCostConsent(
   };
   const rights = scope ? await governedPackageSourceRightsValidity(env, scope.organizationId, projection.blocks) : { current: true, validUntil: null };
   if (!rights.current) fail("context_source_rights_expired");
-  const selected = contextSessionId ? await env.DB.prepare("SELECT expires_at FROM project_context_sessions WHERE context_id=? AND principal_user_id=? AND revoked_at IS NULL")
-    .bind(contextSessionId,user.userId).first<{expires_at:string}>() : null;
-  if(contextSessionId&&!selected)fail("scene_cost_authority_changed",403);
-  const monthEnd=new Date(Date.UTC(Number(period.slice(0,4)),Number(period.slice(5,7)),1)).toISOString();
   const authoredRights=(Array.isArray(trusted.snapshot.facts)?trusted.snapshot.facts:[]).map(value=>record(value))
     .filter(fact=>fact.active!==false&&record(fact.properties).active!==false&&Number(record(fact.properties).weight??1)>0)
     .map(fact=>creativeContextRightsValidity(record(fact.properties)));
   if(authoredRights.some(rights=>rights.issue))fail("context_source_rights_expired");
   const validUntil=earliestSceneDeadline([monthEnd,sourceDeadline,rights.validUntil,selected?.expires_at,...authoredRights.map(rights=>rights.validUntil),...user.access.grants.map(grant=>grant.expiresAt)]);
-  const guard = conjunction([
+  const assertions: readonly OutputSqlAssertion[] = Object.freeze([
     executionAdmissionGuard(user, binding, sourceHead),
     ...(selected?[{sql:"EXISTS(SELECT 1 FROM project_context_sessions WHERE context_id=? AND principal_user_id=? AND expires_at=? AND revoked_at IS NULL)",bindings:[contextSessionId!,user.userId,selected.expires_at]}]:[]),
-    { sql: "(" + manifestSql + ")=?", bindings: [...manifestBindings, manifest.evidence] },
+    ...history.assertions,
     sourceGuard, sourceRightsDispatchGuard(rights),
     ...(rights.validUntil ? [{ sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [rights.validUntil] }] : []),
     ...(scope ? [{ sql: "EXISTS(SELECT 1 FROM project_resource_scopes WHERE (project_access_id,organization_id,project_id,owner_user_id,resource_kind,resource_id)=(?,?,?,?,'document',?))", bindings: [scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, documentId] }] : []),
-  ]);
-  if (!await sceneCostAuthorityCurrent(env, guard)) fail("scene_cost_authority_changed", 403);
+    { sql: "? > strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [validUntil], deadlineMs: Date.parse(validUntil) },
+  ].map(assertion => {
+    const bindings = [...(assertion.bindings ?? [])]; Object.freeze(bindings);
+    return Object.freeze({ ...assertion, bindings });
+  }));
+  const checked = await env.DB.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions));
+  assertSceneHistoryRead(checked, assertions.length);
   requireSceneCostDeadline({validUntil});
-  return { preview, binding, guard, production, authoredSnapshot: trusted.snapshot, effectiveSnapshot, scope, validUntil };
+  return { preview, binding, assertions, production, authoredSnapshot: trusted.snapshot, effectiveSnapshot, scope, validUntil };
 }
 
 /** Synchronous after awaited SQL: a still-valid row can expire while its response is in transit. */
@@ -210,8 +231,10 @@ export function requireSceneCostApproval(value: unknown, prepared: PreparedScene
 
 export function sceneCostErrorResponse(error: unknown): Response {
   const code = error instanceof SceneCostConsentError || error instanceof ContextIntegrityError || error instanceof ProductionWorkflowContextError
-    ? error.code : error instanceof Error && error.message === "project_source_index_stale" ? error.message : "scene_cost_unavailable";
-  const status = error instanceof SceneCostConsentError || error instanceof ProductionWorkflowContextError ? error.status : 409;
+    || error instanceof SceneHistoryProofError || error instanceof OutputConflictError
+    ? error.code : error instanceof Error && (error.message === "project_source_index_stale" || error.message === "output_source_changed_during_read") ? error.message : "scene_cost_unavailable";
+  const status = error instanceof SceneCostConsentError || error instanceof ProductionWorkflowContextError
+    || error instanceof SceneHistoryProofError || error instanceof OutputConflictError ? error.status : 409;
   return Response.json({ error: code, attemptSubmission: "not-submitted" }, { status, headers: { "cache-control": "private, no-store" } });
 }
 

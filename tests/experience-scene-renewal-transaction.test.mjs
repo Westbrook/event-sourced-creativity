@@ -290,13 +290,23 @@ test('a late authorization index with no stream-head change blocks native renewa
 
 // Real mini-app intake and prepare/read handlers. No test constructs the renewal
 // sourceAssertions here: the product handler must assemble and enforce them.
-async function httpFixture(t, { capacity = false, originalAgeMs = 1_200_000 } = {}) {
+async function httpFixture(t, { capacity = false, originalAgeMs = 1_200_000, largeHistory = false } = {}) {
   const state = outputTestDatabase(':memory:'); t.after(() => state.sqlite.close());
   if (capacity) state.capacity = instrumentScenePreflightCapacity(state);
   await runtime.ensureSchema(state.env);
   const now = new Date().toISOString();
   state.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,'creator','pilot-2026-08-10',?,?,?)")
     .run(owner, 'creative@local.forma', 'Local creative', now, now, now);
+  if (largeHistory) {
+    // Genuine historical events precede the actual intake and confirmation;
+    // they are not forged source assertions or changes to saved receipts.
+    await runtime.appendEvents(state.env, Array.from({length:34}, (_, index) =>
+      runtime.makeEvent(stream, 0, `user:${owner}`, 'test', 'earlier-projects', 'ProjectCreated',
+        {project_id:`earlier-${index}`,name:'Earlier work '+ 'x'.repeat(65536)})));
+    state.historyEventId = state.sqlite.prepare("SELECT event_id FROM events WHERE correlation_id='earlier-projects' ORDER BY sequence LIMIT 1").get().event_id;
+    const historical = state.sqlite.prepare("SELECT SUM(length(CAST(private_json AS BLOB))) AS bytes FROM event_private_payloads WHERE owner_id=?").get(owner);
+    assert.ok(historical.bytes > 2_000_000, 'The native fixture must exceed the former single-value proof limit');
+  }
   const release = await registeredExperience('scene');
   const intent = { intentId: '00000000-0000-4000-8000-000000000091', experienceId: 'scene', releaseHash: release.releaseHash,
     values: {...initialValues(release), ...Object.fromEntries(Object.entries({characterA:'Mara', goalA:'Repair a bicycle',
@@ -413,6 +423,11 @@ function instrumentScenePreflightCapacity(state) {
     if (!active.fault) return result;
     observed.faults++;
     if (active.fault === 'missing-result') return result.slice(0, -1);
+    if (active.fault === 'sparse-result') { const sparse = [...result]; delete sparse[0]; return sparse; }
+    if (active.fault === 'null-result') return [null, ...result.slice(1)];
+    if (active.fault === 'nonarray-result') return { length: result.length };
+    if (active.fault === 'string-current') return result.map((row, index) => index === 0 ? { ...row, results: [{ current: '1' }] } : row);
+    if (active.fault === 'extra-proof-row') return result.map((row, index) => index === 0 ? { ...row, results: [{ current: 1 }, { current: 1 }] } : row);
     if (active.fault === 'false-predicate') return result.map((row, index) => index === 0 ? { ...row, results: [{ current: 0 }] } : row);
     if (active.fault === 'failed-result') return result.map((row, index) => index === 0 ? { ...row, success: false } : row);
     if (active.fault === 'expired-after-batch') {
@@ -456,6 +471,117 @@ function attachRealScenePreflight(state, fault = null) {
   };
   return returned;
 }
+
+test('actual HTTP Scene preflight preserves complete history above two megabytes without enlarging the requested Scene', async t => {
+  const s = await httpFixture(t, {capacity:true,largeHistory:true}), returned = attachRealScenePreflight(s);
+  const response = await s.send(s.body);
+  assert.equal(response.status,200,await response.clone().text());
+  const result = await response.json();
+  assert.equal(result.documentId,s.plan.documentId);
+  assert.equal(result.preflight.targets[0].available,true);
+  assert.equal(result.preflight.targets[0].reasonCode,'output_scene_ready');
+  assert.ok(result.sceneCostPreview);
+  assert.equal(result.permitted.authorize,true);
+  assert.equal(result.permitted.run,false);
+  assert.equal(returned.length,1);
+  const prepared = returned[0].proof?.prepared;
+  assert.ok(prepared);
+  assert.ok(JSON.stringify(prepared.effectiveSnapshot).length < 100_000, 'Unrelated historical bodies are proof, not Scene prompt content');
+  assert.ok(returned[0].proof.sourceAssertions.some(a => a.sql.includes('hex(substr')), 'The actual preflight retains complete byte-piece assertions');
+  for(const a of returned[0].proof.sourceAssertions) for(const value of a.bindings ?? [])
+    if(typeof value==='string') assert.ok(Buffer.byteLength(value)<=128*1024,'No source proof silently recombines the history into one large binding');
+  s.assertUnpaid();assert.equal(forbidden,0);
+});
+
+test('actual HTTP large-history preparation refuses an old no-head body edit during complete proof capture', async t => {
+  const s = await httpFixture(t, {capacity:true,largeHistory:true});
+  attachRealScenePreflight(s);
+  const batch = s.DB.batch.bind(s.DB); let raced = false;
+  s.DB.batch = async statements => {
+    if(!raced && statements.some(statement => statement.sql.startsWith('SELECT CASE WHEN (WITH source AS NOT MATERIALIZED')
+      && statement.sql.includes('hex(substr'))) {
+      const head = s.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head;
+      const original = s.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(s.historyEventId).private_json;
+      assert.equal(original[20000],'x');
+      const changed = original.slice(0,20000)+'y'+original.slice(20001);
+      assert.equal(Buffer.byteLength(changed),Buffer.byteLength(original),'No metadata/length shortcut can detect this later-chunk edit');
+      s.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(changed,s.historyEventId);
+      assert.equal(s.sqlite.prepare('SELECT length(CAST(private_json AS BLOB)) AS bytes FROM event_private_payloads WHERE private_event_id=?').get(s.historyEventId).bytes,Buffer.byteLength(original));
+      assert.equal(s.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head,head);
+      raced = true;
+    }
+    return batch(statements);
+  };
+  const response = await s.send(s.body);
+  assert.equal(raced,true,'The mutation targets the actual complete history check');
+  assert.equal(response.status,409,await response.clone().text());
+  const result = await response.json();
+  assert.equal(result.error,'output_source_changed_during_read');
+  // Confirmation can commit before preparation; the historical mutation itself
+  // must not append an event, create a quote, authorize or dispatch anything.
+  assert.equal(s.count('output_preflights'),1,'Only the retained original preflight remains');
+  s.assertUnpaid();assert.equal(forbidden,0);
+});
+
+test('actual HTTP Scene hydration rejects a transient historical edit even when restored before its read returns', async t => {
+  const s=await httpFixture(t,{capacity:true,largeHistory:true});
+  attachRealScenePreflight(s);
+  const batch=s.DB.batch.bind(s.DB);let raced=false,restored=false;
+  s.DB.batch=async statements=>{
+    const joined=statements.some(statement=>statement.sql.startsWith('SELECT * FROM events') && statement.sql.includes('event_private_payloads'))
+      && statements.some(statement=>statement.sql.startsWith('SELECT CASE WHEN (WITH source AS NOT MATERIALIZED') && statement.sql.includes('hex(substr'));
+    if(raced||!joined)return batch(statements);
+    raced=true;
+    const original=s.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(s.historyEventId).private_json;
+    const head=s.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head;
+    assert.equal(original[20000],'x');const changed=original.slice(0,20000)+'y'+original.slice(20001);
+    assert.equal(Buffer.byteLength(changed),Buffer.byteLength(original));
+    s.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(changed,s.historyEventId);
+    try {
+      // Actual page and exact proof execute together with the changed body.
+      // Restore only after SQLite produced those rows, before the caller sees them.
+      return await batch(statements);
+    } finally {
+      s.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(original,s.historyEventId);
+      assert.equal(s.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(stream).head,head);
+      assert.equal(s.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(s.historyEventId).private_json,original);
+      restored=true;
+    }
+  };
+  const response=await s.send(s.body);
+  assert.equal(raced,true,'Source hydration must be joined to the original complete history proof');
+  assert.equal(restored,true);
+  assert.equal(response.status,409,await response.clone().text());
+  assert.equal((await response.json()).error,'output_source_changed_during_read');
+  assert.equal(s.count('output_preflights'),1);
+  s.assertUnpaid();assert.equal(forbidden,0);
+});
+
+for(const fault of ['missing-page','failed-head','malformed-head']) test(`actual HTTP Scene joined hydration refuses ${fault} without accepting partial source`,async t=>{
+  const s=await httpFixture(t,{capacity:true,largeHistory:true});
+  attachRealScenePreflight(s);
+  const batch=s.DB.batch.bind(s.DB);let faulted=false;
+  s.DB.batch=async statements=>{
+    const joined=statements.some(statement=>statement.sql.startsWith('SELECT * FROM events')&&statement.sql.includes('event_private_payloads'))
+      && statements.some(statement=>statement.sql.startsWith('SELECT CASE WHEN (WITH source AS NOT MATERIALIZED')&&statement.sql.includes('hex(substr'));
+    const actual=await batch(statements);
+    if(faulted||!joined)return actual;
+    faulted=true;
+    assert.equal(actual[0].success,true);assert.equal(actual[1].success,true);
+    assert.ok(actual.slice(2).every(row=>row.success===true&&row.results[0]?.current===1));
+    // Negative transport-result controls only; every source/proof SQL above
+    // actually succeeded, and none of the authority predicate rows are changed.
+    if(fault==='missing-page')return [undefined,...actual.slice(1)];
+    if(fault==='failed-head')return [actual[0],{...actual[1],success:false},...actual.slice(2)];
+    return [actual[0],{...actual[1],results:[{head:'not-a-head'}]},...actual.slice(2)];
+  };
+  const response=await s.send(s.body);
+  assert.equal(faulted,true);
+  assert.equal(response.status,409,await response.clone().text());
+  assert.equal((await response.json()).error,'output_source_changed_during_read');
+  assert.equal(s.count('output_preflights'),1);
+  s.assertUnpaid();assert.equal(forbidden,0);
+});
 
 test('real Scene successor preflight survives cumulative original and renewal proof bindings', async t => {
   const s = await httpFixture(t, { capacity: true });
@@ -599,7 +725,7 @@ test('second Scene renewal rolls back on unrelated owner-head advance at native 
   s.assertAncestors();s.assertUnpaid();assert.equal(forbidden,0);
 });
 
-for (const fault of ['missing-result', 'false-predicate', 'failed-result', 'expired-after-batch'])
+for (const fault of ['missing-result', 'false-predicate', 'failed-result', 'expired-after-batch', 'sparse-result', 'null-result', 'nonarray-result', 'string-current', 'extra-proof-row'])
 test(`real Scene preflight refuses ${fault} after its actual source-proof batch`, async t => {
   const s = await httpFixture(t, { capacity: true }), returned = attachRealScenePreflight(s, fault);
   const response = await s.send(s.body);

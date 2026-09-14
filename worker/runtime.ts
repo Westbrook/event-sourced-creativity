@@ -853,6 +853,14 @@ export async function readEventPageWithHead(env: WorkerEnv, streamId: string, af
   return { events, head, nextAfter, hasMore: nextAfter < head };
 }
 
+/** Server-only original source proof, read alongside each hydrated page. The
+ * verifier is synchronous and must reject every failed/missing assertion and any
+ * expired deadline before rows are serialized or consumed by a projection. */
+export type EventReadProof = Readonly<{
+  statements: readonly D1PreparedStatement[];
+  verify: (results: Array<D1Result<Record<string, unknown>>>) => void;
+}>;
+
 /** Read a route-specific page and its authoritative stream head in one D1 round trip. */
 export async function readProfileEventPage(
   env: WorkerEnv,
@@ -860,6 +868,7 @@ export async function readProfileEventPage(
   profile: EventReadProfile,
   afterSequence = 0,
   limit = SCOPED_EVENT_PAGE_SIZE,
+  proof?: EventReadProof,
 ) {
   const pageSize = Math.max(1, Math.min(SCOPED_EVENT_PAGE_SIZE, Math.floor(limit)));
   const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROFILE_EXCLUDED_EVENT_TYPES[profile];
@@ -867,11 +876,19 @@ export async function readProfileEventPage(
   const operator = profile === "projects" ? "IN" : "NOT IN";
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
   const attentionFilter = profile !== "projects" ? ` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})` : "";
-  const [page, current] = await env.DB.batch<Record<string, unknown>>([
+  const checkedProof = proof ? { statements: [...proof.statements], verify: proof.verify } : null;
+  const [page, current, ...sourceChecks] = await env.DB.batch<Record<string, unknown>>([
     env.DB.prepare(`SELECT * FROM events${index} LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter} ORDER BY sequence ASC LIMIT ?`)
       .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
     env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
+    ...(checkedProof?.statements ?? []),
   ]);
+  if (checkedProof && (!page || page.success !== true || !Array.isArray(page.results) || page.results.length > pageSize
+    || !current || current.success !== true || !Array.isArray(current.results) || current.results.length !== 1
+    || typeof current.results[0]?.head !== "number" || !Number.isSafeInteger(current.results[0].head) || current.results[0].head < 0)) {
+    throw new Error("output_source_changed_during_read");
+  }
+  checkedProof?.verify(sourceChecks);
   const events = (page?.results ?? []).map(serializeEvent);
   const head = Number(current?.results[0]?.head ?? 0);
   // Excluded telemetry can trail the final useful event; advance past it.
@@ -880,9 +897,9 @@ export async function readProfileEventPage(
 }
 
 /** Load every projection-relevant account event without replaying telemetry. */
-export async function readWorkspaceEvents(env:WorkerEnv,streamId:string){
+export async function readWorkspaceEvents(env:WorkerEnv,streamId:string,proof?:EventReadProof){
   const events:EventRow[]=[];let after=0;
-  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,SCOPED_EVENT_PAGE_SIZE);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
+  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,SCOPED_EVENT_PAGE_SIZE,proof);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
 }
 
 /** Intelligence interactions need genuine attention evidence, not timer artifacts or raw admin telemetry. */

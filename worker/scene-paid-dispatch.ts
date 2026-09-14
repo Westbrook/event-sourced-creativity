@@ -2,6 +2,7 @@ import { claimedSceneBudgetGuard, type ClaimedSceneBudget } from "./pilot-policy
 import { requireSceneCostDeadline, type PreparedSceneCost } from "./scene-cost-consent.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 
 /** Nominal server-only origin. An incoming JSON code/marker cannot create this error. */
 export class ScenePaidPolicyStopError extends ProviderRequestError {
@@ -33,14 +34,30 @@ export async function scenePaidDispatchDeadline(env: WorkerEnv, prepared: Prepar
     throw new ScenePaidPolicyStopError();
   }
   const paid=claimedSceneBudgetGuard(env,claim);
-  // One final SQL snapshot recertifies BOTH source/custody and the originally billed hold.
-  // The returned cohort end belongs to that same snapshot, not a subsequent lookup.
-  const current=await env.DB.prepare(`SELECT 1 AS current,
-    (SELECT ends_at FROM pilot_cohorts WHERE cohort_id=? AND organization_id=?) AS pilot_ends_at
-    WHERE (${prepared.guard.sql}) AND (${paid.sql})`)
-    .bind(claim.pilotCohortId??"",claim.projectScope?.organizationId??"",...prepared.guard.bindings,...paid.bindings)
-    .first<{current:number;pilot_ends_at:string|null}>();
-  if(!current || claim.pilotCohortId && (!current.pilot_ends_at || !Number.isFinite(Date.parse(current.pilot_ends_at)))) {
+  // One final batch snapshot recertifies every original source/custody proof
+  // AND the originally billed hold. No giant conjunction or later pilot read.
+  const sourceStatements=outputProofReadStatements(env,prepared.assertions);
+  const checked=await env.DB.batch<Record<string,unknown>>([...sourceStatements,
+    env.DB.prepare(`SELECT 1 AS current,
+      (SELECT ends_at FROM pilot_cohorts WHERE cohort_id=? AND organization_id=?) AS pilot_ends_at
+      WHERE (${paid.sql})`)
+      .bind(claim.pilotCohortId??"",claim.projectScope?.organizationId??"",...paid.bindings),
+  ]);
+  if(!Array.isArray(checked)||checked.length!==sourceStatements.length+1)throw new ScenePaidPolicyStopError();
+  // Array.from inspects every expected index; a sparse returned slot is missing
+  // evidence, not a predicate that Array.prototype.some may silently skip.
+  const sourceChecks=Array.from({length:sourceStatements.length},(_,index)=>checked[index]);
+  const paidResult=checked[sourceStatements.length];
+  const row=paidResult?.results?.[0];
+  if(checked.length!==sourceStatements.length+1 || sourceChecks.some(result=>!result||result.success!==true
+    || !Array.isArray(result.results) || result.results.length!==1 || result.results[0]?.current!==1)
+    || !paidResult || paidResult.success!==true || !Array.isArray(paidResult.results) || paidResult.results.length!==1
+    || row?.current!==1 || row?.pilot_ends_at!==null && typeof row?.pilot_ends_at!=="string") {
+    throw new ScenePaidPolicyStopError();
+  }
+  const current=row as {current:number;pilot_ends_at:string|null};
+  if(claim.pilotCohortId && (!current.pilot_ends_at || !Number.isFinite(Date.parse(current.pilot_ends_at)))
+    || prepared.assertions.some(assertion=>assertion.deadlineMs!==undefined && !(assertion.deadlineMs>Date.now()))) {
     throw new ScenePaidPolicyStopError();
   }
   const validUntil=current.pilot_ends_at && Date.parse(current.pilot_ends_at)<Date.parse(prepared.validUntil)

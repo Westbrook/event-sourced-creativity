@@ -13,6 +13,7 @@ import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputA
 import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, readSlideCountPolicy, resolvePresentationCountRequest, sameSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
@@ -69,7 +70,7 @@ import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from
 import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES, PRESENTATION_ADAPTER_VERSION } from "./openai-adapter";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights";
 import { combinedSceneSnapshot } from "./managed-production";
-import { prepareSceneCostConsent, readExistingSceneRequest, requireSceneCostApproval, sceneCostErrorResponse, scenePolicyStopIncomingField, readScenePolicyStopEvidence, sceneRequestExclusion, type PreparedSceneCost } from "./scene-cost-consent.ts";
+import { prepareSceneCostConsent, readExistingSceneRequest, requireSceneCostApproval, SceneCostConsentError, sceneCostErrorResponse, scenePolicyStopIncomingField, readScenePolicyStopEvidence, sceneRequestExclusion, type PreparedSceneCost } from "./scene-cost-consent.ts";
 import { standingConstraints } from "../src/model/taste";
 import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from "../src/model/production-workflow";
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration";
@@ -1489,6 +1490,24 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     source_fact_count:Array.isArray(snapshot.facts)?snapshot.facts.length:0,source_snapshot_sha256:sourceHash,
     input_ref:stored.contentId,input_expires_at:stored.expiresAt,settings:requestSettings,
   };
+}
+
+/** Diagnose only the original proof after a known atomic CHECK rollback.
+ * No new source capture, insertion retry or inference from a failed diagnostic. */
+async function sceneAdmissionSourceConflict(env:WorkerEnv,prepared:PreparedSceneCost,failure:unknown):Promise<Response>{
+  if(!Array.isArray(prepared.assertions)||prepared.assertions.length===0)throw failure;
+  let checked:Array<D1Result<Record<string,unknown>>>;
+  try{checked=await env.DB.batch<Record<string,unknown>>(outputProofReadStatements(env,prepared.assertions));}
+  catch{throw failure;}
+  if(!Array.isArray(checked)||checked.length!==prepared.assertions.length)throw failure;
+  const rows=Array.from({length:prepared.assertions.length},(_,index)=>checked[index]);
+  if(rows.some(result=>!result||result.success!==true||!Array.isArray(result.results)||result.results.length!==1
+    ||typeof result.results[0]?.current!=="number"||![0,1].includes(result.results[0].current)))throw failure;
+  if(rows.some(result=>result.results[0].current===0)||!(Date.parse(prepared.validUntil)>Date.now())
+    ||prepared.assertions.some(assertion=>assertion.deadlineMs!==undefined&&!(assertion.deadlineMs>Date.now()))){
+    return sceneCostErrorResponse(new OutputConflictError("output_source_changed_during_read",409));
+  }
+  throw failure;
 }
 
 function parentJobIdFromRequest(request: Record<string, unknown>) {
@@ -3854,13 +3873,34 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }};
     return Response.json({prepared:true},{status:200});
   }
-  const inserted=documentJobInsert(env,admissionUser,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined,scenePrepared?sceneRequestExclusion(jobId,scenePrepared.guard):undefined);
+  const inserted=documentJobInsert(env,admissionUser,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined,scenePrepared?sceneRequestExclusion(jobId,{sql:"1",bindings:[]}):undefined);
   const resource=projectJobResource(env,admissionUser,jobId,documentId,createdAt,Boolean(scenePrepared));
   let created=false;
-  if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
+  let sceneAssertionFailure:unknown;
+  if(scenePrepared){
+    // Original source/authority proofs and the request exclusion participate in
+    // the SAME transaction as the job/resource insert, never a pre-read gate.
+    const checks=scenePrepared.assertions.flatMap(assertion=>outputAssertionStatements(env,assertion));
+    let results:Array<D1Result>=[];
+    try{results=await env.DB.batch([...checks,inserted,...(resource?[resource]:[])]);}
+    catch(error){
+      if(!(error instanceof Error)||!/^(?:D1_ERROR:\s*)?CHECK constraint failed:\s*(?:passed\s*=\s*1|output_atomic_assertions)(?:\s*:\s*SQLITE_CONSTRAINT(?:_CHECK)?)?$/u.test(error.message))throw error;
+      sceneAssertionFailure=error;
+    }
+    const expectedWrites=resource?2:1;
+    const writes=Array.from({length:expectedWrites},(_,index)=>results?.[checks.length+index]);
+    created=Array.isArray(results)&&results.length===checks.length+expectedWrites
+      &&writes.every(result=>result?.success===true&&typeof result.meta?.changes==="number"&&result.meta.changes===1);
+    if(resource&&!created&&Number(writes[0]?.meta?.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});
+  }else if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
   else created=Number((await inserted.run()).meta.changes??0)===1;
   if(!created){
-    if(scenePrepared){try{const retained=await readExistingSceneRequest(env,user,documentId,payload.sceneRequestId,project?.contextId??null,{certifyUnused:sceneInspection});if(retained)return retainedSceneResponse(retained);}catch(error){return sceneCostErrorResponse(error);}}
+    if(scenePrepared){
+      // Same-ID recovery is an authorized retained read, not a second insertion.
+      try{const retained=await readExistingSceneRequest(env,user,documentId,payload.sceneRequestId,project?.contextId??null,{certifyUnused:sceneInspection});if(retained)return retainedSceneResponse(retained);}
+      catch(error){if(sceneAssertionFailure&&!(error instanceof SceneCostConsentError))throw sceneAssertionFailure;return sceneCostErrorResponse(error);}
+      if(sceneAssertionFailure)return sceneAdmissionSourceConflict(env,scenePrepared,sceneAssertionFailure);
+    }
     if(kind==="render_document"||kind==="structure_adaptive"){
       const duplicate=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND document_id=? AND kind=? AND status IN('queued','running','committing') AND json_extract(request_json,'$.idempotencyKey')=? ORDER BY requested_at DESC LIMIT 1`)
         .bind(user.userId,user.streamId,documentId,kind,String(payload.idempotencyKey??"")).first<DocumentJobRow>();

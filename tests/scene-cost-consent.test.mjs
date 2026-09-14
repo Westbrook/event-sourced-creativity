@@ -93,8 +93,10 @@ test("the exact-source SQL guard rejects replacement after final preparation and
   try{
     const preview=(await f.preview()).body.sceneCostPreview;
     let intercepted=false;
-    f.controls.beforeRun=async statement=>{
-      if(intercepted||!/INSERT(?: OR IGNORE)? INTO document_jobs/u.test(statement.sql))return;
+    f.controls.beforeBatch=async statements=>{
+      if(intercepted||!statements.some(statement=>/INSERT(?: OR IGNORE)? INTO document_jobs/u.test(statement.sql)))return;
+      assert.ok(statements.some(statement=>statement.sql.startsWith("INSERT INTO output_atomic_assertions")),
+        "the actual job insert shares its transaction with original source CHECK proofs");
       intercepted=true;f.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(),f.contentRef);
     };
     const result=await f.approve(preview);
@@ -371,8 +373,8 @@ for(const boundary of ["private-source","selected-context","source-license"]){
       const inspected=await f.preview();assert.equal(inspected.response.status,200,JSON.stringify(inspected.body));
       assert.equal((await f.approve(inspected.body.sceneCostPreview)).response.status,202);
       let finalReads=0,expired=false;
-      f.controls.afterRead=async statement=>{
-        if(expired||!statement.sql.startsWith("SELECT 1 AS current,"))return;
+      f.controls.afterBatch=async statements=>{
+        if(expired||!statements.some(statement=>statement.sql.startsWith("SELECT 1 AS current,")))return;
         const job=f.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(f.requestId);
         if(!job?.result_json.includes('"status":"pending"'))return;
         finalReads++;

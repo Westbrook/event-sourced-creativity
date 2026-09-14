@@ -88,14 +88,16 @@ export async function preflightOutputSceneTarget(input: OutputBridgeTargetInput)
     budgetAcknowledged: true, preflightAcknowledged: true, outputTargetInstructions: target.instruction_text.trim(), sceneRequestId: source.requestId,
     outputScene: { intake: source.plan.request, sceneContract: source.contract, contract, costPreview } });
   if (!preflight) return unavailable(target.id, "output_scene_request_unavailable");
-  const sourceAssertions: OutputSqlAssertion[] = [...source.sourceAssertions, prepared.guard,
+  const sourceAssertions: OutputSqlAssertion[] = [...source.sourceAssertions, ...prepared.assertions,
     { sql: "? > strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [source.expiresAt], deadlineMs: Date.parse(source.expiresAt) }]
     .map(assertion => ({ ...assertion, bindings: [...(assertion.bindings ?? [])] }));
   // A renewed plan retains every ancestor witness. Keep each statement within
   // D1's parameter limits, while reading all predicates in one atomic batch.
   // Preserve the original assertions for admission and dispatch revalidation.
   const checked = await env.DB.batch<Record<string, unknown>>(outputProofReadStatements(env, sourceAssertions));
-  if (checked.length !== sourceAssertions.length || checked.some(result => result.success === false || Number(result.results[0]?.current) !== 1)
+  if (!Array.isArray(checked) || checked.length !== sourceAssertions.length
+    || Array.from({length:sourceAssertions.length},(_,index)=>checked[index]).some(result=>!result
+      || result.success!==true || !Array.isArray(result.results) || result.results.length!==1 || result.results[0]?.current!==1)
     || sourceAssertions.some(assertion => assertion.deadlineMs !== undefined && Date.now() >= assertion.deadlineMs)) return unavailable(target.id, "output_scene_source_changed");
   proofs.set(preflight, Object.freeze({ prepared: freeze(prepared), sourceAssertions: freeze(sourceAssertions), requestId: source.requestId, expiresAt: source.expiresAt }));
   return preflight;
