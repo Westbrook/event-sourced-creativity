@@ -7,6 +7,7 @@ import { VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { projectIntakeAuthority, type ProjectIntakeAuthorization } from "./intake-authority.ts";
 import { outputActiveSourceDeadlineAssertions, verifyOutputSourceRead } from "./output-disclosure-proof.ts";
 import { readOwnedImageReferenceCustody } from "./owned-image-reference-custody.ts";
+import { captureVideoCustodySnapshot } from "./video-custody-snapshot.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -49,11 +50,11 @@ export async function readVideoReferenceCustody(trusted: OutputTrustedContext, a
       && properties.likeness_transfer_consent !== true) fail("video_reference_likeness_permission_required", 403);
   };
   rightsCurrent();
-  const captured = () => JSON.stringify({ scope: trusted.scope, principal: trusted.principal, auth,
+  const captured = () => ({ scope: trusted.scope, principal: trusted.principal, auth,
     digest: trusted.sourceDigest, head: trusted.ownerHead, blocks: trusted.projection.libraryBlocks,
     snapshot: trusted.context?.snapshot, events: trusted.events, sourceAssertions: trusted.sourceAssertions,
     sourceProblems: trusted.sourceProblems, sourcePrivateCaptured: trusted.sourcePrivateCaptured });
-  const before = captured(), sourceDigest = trusted.sourceDigest, ownerHead = trusted.ownerHead;
+  const unchanged = captureVideoCustodySnapshot(captured()), sourceDigest = trusted.sourceDigest, ownerHead = trusted.ownerHead;
   const assertions = [projectIntakeAuthority(env, auth, { projectId: scope.projectId, documentId: scope.documentId }),
     ...trusted.sourceAssertions, ...outputActiveSourceDeadlineAssertions(trusted.context)]
     .map(assertion => ({ ...assertion, bindings: [...(assertion.bindings ?? [])] }));
@@ -61,10 +62,10 @@ export async function readVideoReferenceCustody(trusted: OutputTrustedContext, a
     referenceId: selection.referenceId, sha256: selection.sha256, properties, sourceEvents: trusted.events,
     maximumBytes: VIDEO_ADAPTER_CONTRACT.maxReferenceBytes,
     mimeTypes: VIDEO_ADAPTER_CONTRACT.supportedReferenceMimeTypes, signal: trusted.request.signal });
-  if (captured() !== before) fail("video_reference_source_changed");
+  if (!unchanged(captured())) fail("video_reference_source_changed");
   rightsCurrent(); trusted.request.signal.throwIfAborted();
   await verifyOutputSourceRead(env, scope, ownerHead, assertions);
-  if (captured() !== before) fail("video_reference_source_changed");
+  if (!unchanged(captured())) fail("video_reference_source_changed");
   rightsCurrent(); trusted.request.signal.throwIfAborted();
   const inspection = Object.freeze({ version: 1, qualification: "read-only-reference-inspection", selection, sourceDigest,
     intent: EXPERIENCE_VIDEO_INTENT,

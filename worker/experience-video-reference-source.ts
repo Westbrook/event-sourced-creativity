@@ -10,6 +10,9 @@ import type { BudgetReservationGuard } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 function fail(code: string, status = 409): never { throw Object.assign(new Error(code), { code, status }); }
+function stage(value: "context_read" | "custody_read" | "custody_verified") {
+  try { console.info("video_reference_prepare", { stage: value }); } catch { /* Optional fixed diagnostic only. */ }
+}
 export type PreparedVideoReferenceSource = Readonly<{ reference: VideoReferencePlan; head: number; guard: BudgetReservationGuard }>;
 
 /** Always a fresh server read. Neither a prior inspection response nor its
@@ -22,9 +25,12 @@ export async function prepareExperienceVideoReference(request: Request, env: Wor
   // this principal, not a fabricated HTTP credential. The continuation still
   // checks current consent, scope/capabilities and complete disclosure custody.
   if (auth.user !== auth.principal || auth.impersonation) fail("video_reference_scope_unavailable", 403);
+  stage("context_read");
   const trusted = await continueOutputTrustedContext(request, env, selection.sourceDocumentId, "read", auth);
   if (trusted instanceof Response) fail("video_reference_source_unavailable", trusted.status);
+  stage("custody_read");
   const inspection = await inspectVideoReferenceCustody(trusted, auth, selection);
+  stage("custody_verified");
   const block = trusted.projection.libraryBlocks.find(candidate => candidate.id === selection.sourceBlockId);
   const reference = readVideoReferencePlan({ version: 1, selection, sourceDigest: inspection.sourceDigest,
     properties: block?.properties }, selection);
