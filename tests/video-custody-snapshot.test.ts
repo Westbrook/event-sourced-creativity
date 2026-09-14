@@ -44,3 +44,21 @@ test("large history witness reuses payload strings and notices a late-history ed
   events[767]!.payload.text += "changed";
   assert.equal(unchanged({ events }), false);
 });
+
+test("witness binds prototype, cycles, framing and every UTF-16 code unit", () => {
+  for (const item of [[], {}]) {
+    const same = captureVideoCustodySnapshot({ item });
+    Object.setPrototypeOf(item, Array.isArray(item) ? Object.prototype : Array.prototype);
+    assert.equal(same({ item }), false);
+  }
+  const cycle: { self?: unknown; text: string } = { text: "x".repeat(8191) + "\ud83d\ude00\ud800" };
+  cycle.self = cycle;
+  const same = captureVideoCustodySnapshot({ cycle });
+  assert.equal(same({ cycle }), true);
+  cycle.text = cycle.text.slice(0, -1) + "\ud801";
+  assert.equal(same({ cycle }), false);
+  for (const [before, after] of [["k1:ae", "k1:ah"], [0, -0], [undefined, "undefined"], [NaN, "NaN"]]) {
+    const child = { value: before }, unchanged = captureVideoCustodySnapshot({ child });
+    child.value = after; assert.equal(unchanged({ child }), false);
+  }
+});

@@ -1,48 +1,60 @@
-/** In-request mutation witness. Retain primitive values by reference instead of
- * serializing several copies of the complete private event history. This is not
- * a database freshness proof; all existing SQL and media checks remain required.
- * Server-owned plain data only: accessors and exotic objects fail closed.
+import { createHash } from "node:crypto";
+
+/** Synchronous, in-request mutation witness. Hash bounded UTF-16 chunks, never
+ * materialize another full-history JSON string or retain copies of field arrays.
+ * Node crypto is supplied by the Worker's existing nodejs_compat configuration.
+ * This is not a database freshness proof: all SQL/media checks remain required.
  */
 export function captureVideoCustodySnapshot(root: object) {
-  type Node = { value: object; prototype: object | null; keys: string[]; values: unknown[]; enumerable: boolean[] };
-  const nodes: Node[] = [], seen = new WeakSet<object>();
-  let fields = 0;
-  const pending: Array<{ value: object; depth: number }> = [{ value: root, depth: 0 }];
+  const identities = new WeakMap<object, number>(); let nextIdentity = 0;
   const fail = (snapshotReason: string): never => { throw Object.assign(new Error("video_reference_snapshot_unavailable"), { snapshotReason }); };
-  while (pending.length) {
-    const { value, depth } = pending.pop()!;
-    if (seen.has(value)) continue;
-    if (depth > 96) fail("depth");
-    if (nodes.length >= 100_000) fail("nodes");
-    seen.add(value);
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) fail("prototype");
-    const keys = Object.getOwnPropertyNames(value), values: unknown[] = [], enumerable: boolean[] = [];
-    fields += keys.length;
-    if (fields > 500_000) fail("fields");
-    for (const key of keys) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !Object.hasOwn(descriptor, "value")) return fail("accessor");
-      const item: unknown = descriptor.value;
-      if (typeof item === "function" || typeof item === "symbol" || typeof item === "bigint") fail("primitive");
-      values.push(item);
-      enumerable.push(descriptor.enumerable === true);
-      if (item !== null && typeof item === "object") pending.push({ value: item, depth: depth + 1 });
-    }
-    nodes.push({ value, prototype, keys, values, enumerable });
-  }
-  const matches = (node: Node, value: object) => {
-    if (Object.getPrototypeOf(value) !== node.prototype) return false;
-    const keys = Object.getOwnPropertyNames(value);
-    if (keys.length !== node.keys.length) return false;
-    return keys.every((key, index) => {
-      if (key !== node.keys[index]) return false;
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      return !!descriptor && Object.hasOwn(descriptor, "value") && Object.is(descriptor.value, node.values[index])
-        && (descriptor.enumerable === true) === node.enumerable[index];
-    });
+  const fingerprint = (current: object, capture: boolean) => {
+    const hash = createHash("sha256"), seen = new WeakSet<object>();
+    let nodes = 0, fields = 0, pending = "";
+    const flush = () => { if (pending) { hash.update(pending, "utf16le"); pending = ""; } };
+    const write = (text: string) => {
+      // Preserve every UTF-16 code unit, including lone/split surrogates.
+      for (let offset = 0; offset < text.length; offset += 8192) {
+        pending += text.slice(offset, offset + 8192);
+        if (pending.length >= 8192) flush();
+      }
+    };
+    const visit = (value: unknown, depth: number) => {
+      if (depth > 96) fail("depth");
+      if (value === null) { write("null;"); return; }
+      if (typeof value === "string") { write("s" + value.length + ":"); write(value); return; }
+      if (typeof value === "number") { write("n" + (Object.is(value, -0) ? "-0" : String(value)) + ";"); return; }
+      if (typeof value === "boolean" || value === undefined) { write(typeof value + ":" + String(value) + ";"); return; }
+      if (typeof value !== "object") return fail("primitive");
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) fail("prototype");
+      // Only the outer selection may be recreated. Every nested identity must
+      // still be the same server-owned object on each recheck.
+      let identity = depth === 0 ? 0 : identities.get(value);
+      if (identity === undefined) {
+        if (!capture) fail("identity");
+        identity = ++nextIdentity; identities.set(value, identity);
+      }
+      write("r" + identity + ";");
+      if (seen.has(value)) return;
+      seen.add(value);
+      if (++nodes > 100_000) fail("nodes");
+      const keys = Object.getOwnPropertyNames(value);
+      fields += keys.length; if (fields > 1_000_000) fail("fields");
+      write((prototype === null ? "z" : prototype === Array.prototype ? "a" : "o") + (Array.isArray(value) ? "a" : "o") + keys.length + "{");
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !Object.hasOwn(descriptor, "value")) return fail("accessor");
+        write("k" + key.length + ":"); write(key); write(descriptor.enumerable ? "e" : "h");
+        visit(descriptor.value, depth + 1);
+      }
+      write("}");
+    };
+    visit(current, 0); flush(); return hash.digest("hex");
   };
-  // The outer selection object is recreated by the caller. Nested identities
-  // and every captured field must remain unchanged through each awaited step.
-  return (current: object) => matches(nodes[0]!, current) && nodes.every((node, index) => index === 0 || matches(node, node.value));
+  const original = fingerprint(root, true);
+  return (current: object) => {
+    try { return fingerprint(current, false) === original; }
+    catch { return false; }
+  };
 }

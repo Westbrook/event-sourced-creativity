@@ -140,19 +140,23 @@ test("actual private-image reader and derived guard join property, latest ingest
   assert.doesNotMatch(JSON.stringify(result), /api\/media|provider|"bytes"|"grant"/);
 });
 
-test("complete custody rechecks48MiB of distinct private history with an8MiB image retained", async () => {
+test("complete custody rechecks40,000 full event envelopes and48MiB of history with an8MiB image retained", async (t) => {
   const f = fixture();
   state.bytes = new Uint8Array(8 * 1024 * 1024); state.bytes.set(bytes); state.size = state.bytes.length;
   const digest = sha(state.bytes);
   f.selection.sha256 = digest; f.properties.source_content_hash = digest;
   f.block.properties.source_content_hash = digest; state.metadata.sha256 = digest;
   f.trusted.events.find(event => event.type === "ReferenceIngested").payload.content_hash = digest;
-  for (let i = 0; i < 768; i++) {
-    const text = Buffer.alloc(65_536, 120); text.write(String(i));
+  for (let i = 0; i < 40_000; i++) {
+    const text = Buffer.alloc(1_259, 120); text.write(String(i));
     f.event("UnrelatedHistoryObservation", { text: text.toString("utf8") });
+    Object.assign(f.trusted.events.at(-1), { recordedAt: "2026-09-14T00:00:00Z", clientId: "qualification",
+      causationId: null, compensatesEventId: null, schemaVersion: 1 });
   }
   f.trusted.ownerHead = f.trusted.events.length;
+  t.diagnostic(JSON.stringify({ qualification: "synthetic-node-not-worker", phase: "before-custody", heapMiB: process.memoryUsage().heapUsed / 1048576 }));
   const result = await inspect(f);
+  t.diagnostic(JSON.stringify({ qualification: "synthetic-node-not-worker", phase: "after-custody", heapMiB: process.memoryUsage().heapUsed / 1048576 }));
   assert.equal(result.content.byteLength, 8 * 1024 * 1024);
   assert.equal(f.calls.filter(call => call === "get").length, 1);
   assert.equal(f.calls.at(-1), "proof");
