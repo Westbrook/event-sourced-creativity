@@ -4,6 +4,7 @@ import type { CreativeEvent, CreativeProjection } from "../src/model/events.ts";
 import type { authoritativeCreativeContext } from "./context-authority.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { recordOutputProofCapacity } from "./output-proof-capacity-diagnostic.ts";
 
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u;
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -54,7 +55,9 @@ function outputProofReadStatements(env: WorkerEnv, assertions: readonly OutputSq
   return assertions.map((assertion) => {
     const sql = `SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS current`;
     const bindings = assertion.bindings ?? [];
-    if (encoder.encode(sql).byteLength > 100_000 || bindings.length > 100 || bindings.some((value) => typeof value === "string" && encoder.encode(value).byteLength > 2_000_000)) fail("output_source_proof_too_large", 413);
+    if (encoder.encode(sql).byteLength > 100_000) throw recordOutputProofCapacity(new OutputConflictError("output_source_proof_too_large", 413), "output_assertion_sql_bytes");
+    if (bindings.length > 100) throw recordOutputProofCapacity(new OutputConflictError("output_source_proof_too_large", 413), "output_assertion_bindings");
+    if (bindings.some((value) => typeof value === "string" && encoder.encode(value).byteLength > 2_000_000)) throw recordOutputProofCapacity(new OutputConflictError("output_source_proof_too_large", 413), "output_assertion_binding_bytes");
     return env.DB.prepare(sql).bind(...bindings);
   });
 }

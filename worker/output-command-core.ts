@@ -2,6 +2,7 @@ import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, uuidV7, type EventR
 import type { WorkerEnv } from "./runtime.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
+import { recordOutputProofCapacity } from "./output-proof-capacity-diagnostic.ts";
 
 export type OutputSqlValue = string | number | null;
 /** deadlineMs is server-only metadata for the same SQL proof; never a wire authority. */
@@ -80,7 +81,7 @@ export function retainedOutputBodyAssertions(scope: OutputScope): OutputSqlAsser
   const batches: string[] = []; let batch: Array<Record<string, string | number | null>> = [], batchBytes = 2, evidenceBytes = 0;
   for (const [id, { raw, projectId, documentId }] of retainedBodies.get(scope)?.entries() ?? []) {
     evidenceBytes += encoder.encode(raw).byteLength;
-    if (evidenceBytes > maximumEvidence) privateEvidenceFail("output_source_proof_too_large", 413);
+    if (evidenceBytes > maximumEvidence) throw recordOutputProofCapacity(new OutputConflictError("output_source_proof_too_large", 413), "private_source_raw_bytes");
     // SQLite substr counts Unicode code points, not JavaScript UTF-16 units.
     const pieces: Array<{ offset: number; length: number; part: string }> = [];
     let characters: string[] = [], total = 0, offset = 1;
@@ -91,7 +92,7 @@ export function retainedOutputBodyAssertions(scope: OutputScope): OutputSqlAsser
     if (characters.length || !pieces.length) pieces.push({ offset, length: characters.length, part: characters.join("") });
     for (const piece of pieces) {
       const expected = { id, projectId, documentId, total, ...piece }, bytes = encoder.encode(JSON.stringify(expected)).byteLength + 1;
-      if (bytes + 2 > maximumPayload) privateEvidenceFail("output_source_proof_too_large", 413);
+      if (bytes + 2 > maximumPayload) throw recordOutputProofCapacity(new OutputConflictError("output_source_proof_too_large", 413), "private_source_binding_bytes");
       if (batch.length && batchBytes + bytes > maximumPayload) { batches.push(JSON.stringify(batch)); batch = []; batchBytes = 2; }
       batch.push(expected); batchBytes += bytes;
     }

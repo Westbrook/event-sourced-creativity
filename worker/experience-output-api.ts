@@ -29,6 +29,7 @@ import { authorizeExperienceIntake, readExperienceDraft, experienceDraftGuard, r
 import { commitAtomicIntake } from "./project-intake.ts";
 import { loadOutputTrustedContext, outputExperienceCommands, type OutputExecutionBridge, type OutputTrustedContext } from "./output-requirements-api.ts";
 import { outputCommandReceiptAssertion } from "./output-command-core.ts";
+import { outputProofCapacityDiagnostic, type OutputProofCapacityReason } from "./output-proof-capacity-diagnostic.ts";
 import { experienceOutputAuthorization, experienceOutputBinding, experienceOutputEnvelope,
   type ExperienceOutputBinding, type ExperienceOutputStage } from "./experience-output-binding.ts";
 import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget, type ExperienceOutputRecipe } from "./experience-output-recipe.ts";
@@ -99,7 +100,7 @@ function diagnosticSubtype(cause: unknown): string | undefined {
   } } catch { /* Optional diagnosis must never replace the original refusal. */ }
   return fallback;
 }
-const unavailable = (code: string, status = 409, diagnostic?: { stage: DiagnosticStage; kind: string }) => {
+const unavailable = (code: string, status = 409, diagnostic?: { stage: DiagnosticStage; kind: string; capacity?: OutputProofCapacityReason }) => {
   const safeCode = diagnosticCodes.has(code) ? code : "experience_output_unavailable";
   // The platform associates this bounded code with its request log. Never log
   // source text, request bodies, provider responses, credentials or actor data.
@@ -567,7 +568,8 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     const item = record(cause) ? cause : {};
     const code = typeof item.code === "string" ? item.code : typeof item.message === "string" && /^[a-z][a-z0-9_]+$/u.test(item.message) ? item.message : "experience_output_unavailable";
     const kind = code !== "experience_output_unavailable" && diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause);
+    const capacity = code === "output_source_proof_too_large" && item.status === 413 ? outputProofCapacityDiagnostic(cause) : undefined;
     return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409,
-      { stage: diagnosticStage, kind: kind === "unknown" ? diagnosticSubtype(cause) ?? kind : kind });
+      { stage: diagnosticStage, kind: kind === "unknown" ? diagnosticSubtype(cause) ?? kind : kind, ...(capacity ? { capacity } : {}) });
   }
 }

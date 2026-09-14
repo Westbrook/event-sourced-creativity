@@ -197,17 +197,20 @@ test("same-count replacement and mutation between capture pages/pieces cannot re
 });
 
 test("capacity limits refuse before final verification, never raising limits or accepting truncation", async () => {
-  for (const limits of [{ rows: 1 }, { rawBytes: 3 }, { proofBytes: 1 }, { assertions: 1 }, { reads: 1 }, { bindingBytes: 1 }]) {
+  for (const [limits, reason] of [[{ rows: 1 }, "rows"], [{ rawBytes: 3 }, "raw_bytes"], [{ proofBytes: 1 }, "proof_bytes"],
+    [{ assertions: 1 }, "assertions"], [{ reads: 1 }, "reads"], [{ bindingBytes: 1 }, "binding_bytes"]]) {
     const f = fixture();
     try {
       f.add("one", 1, "1234"); f.add("two", 2, "5678");
-      await assert.rejects(f.capture({}, limits), error => error.code === "scene_cost_history_capacity_exceeded");
+      await assert.rejects(f.capture({}, limits), error => error.code === "scene_cost_history_capacity_exceeded"
+        && error.status === 413 && error.capacityReason === reason);
       assert.equal(f.verifications, 0);
     } finally { f.db.close(); }
   }
   const f = fixture();
   try {
-    await assert.rejects(f.capture({}, { rows: SCENE_HISTORY_PROOF_LIMITS.rows + 1 }), error => error.code === "scene_cost_history_capacity_exceeded");
+    await assert.rejects(f.capture({}, { rows: SCENE_HISTORY_PROOF_LIMITS.rows + 1 }), error => error.code === "scene_cost_history_capacity_exceeded"
+      && error.capacityReason === "limit_config");
     assert.equal(f.reads, 0);
   } finally { f.db.close(); }
 });

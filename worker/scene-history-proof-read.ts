@@ -1,6 +1,7 @@
 import type { WorkerEnv } from "./runtime.ts";
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { OutputConflictError } from "./output-command-core.ts";
+import { recordOutputProofCapacity } from "./output-proof-capacity-diagnostic.ts";
 import { captureSceneHistoryProof, SceneHistoryProofError, type SceneHistoryScope } from "./scene-history-proof.ts";
 
 /** Scene-only strict result shape. Never treat omitted success, extra rows or a
@@ -36,8 +37,10 @@ export function readSceneHistoryProof(env: WorkerEnv, scope: SceneHistoryScope) 
     // Reuse existing safe native codes; an unknown DB/transport failure keeps
     // its original identity and is never described as known source rejection.
     if (error instanceof SceneHistoryProofError) {
-      throw new OutputConflictError(error.code === "scene_cost_history_capacity_exceeded"
+      const refusal = new OutputConflictError(error.code === "scene_cost_history_capacity_exceeded"
         ? "output_source_proof_too_large" : "output_source_changed_during_read", error.status);
+      if (error.capacityReason) recordOutputProofCapacity(refusal, `scene_history_${error.capacityReason}`);
+      throw refusal;
     }
     throw error;
   });

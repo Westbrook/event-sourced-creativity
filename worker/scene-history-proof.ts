@@ -18,6 +18,7 @@ export const SCENE_HISTORY_PROOF_LIMITS = Object.freeze({
   assertions: 384, reads: 512, bindingBytes: 128 * 1024,
 });
 type Limits = { -readonly [Key in keyof typeof SCENE_HISTORY_PROOF_LIMITS]: number };
+type CapacityReason = "limit_config" | "reads" | "sql_bytes" | "bindings" | "binding_bytes" | "assertions" | "proof_bytes" | "rows" | "raw_bytes";
 type Cell = string | number | null;
 type Row = Record<string, Cell>;
 type Piece = { event_id: string; order_sequence: number; field: "public_body" | "private_body"; offset: number; bytes: number; total: number; storage: string };
@@ -28,13 +29,15 @@ const textFields = ["event_id", "event_stream", "event_type", "occurred_at", "re
 export class SceneHistoryProofError extends Error {
   readonly status: number;
   readonly code: "scene_cost_history_unavailable" | "scene_cost_history_changed" | "scene_cost_history_capacity_exceeded";
-  constructor(code: "scene_cost_history_unavailable" | "scene_cost_history_changed" | "scene_cost_history_capacity_exceeded") {
+  readonly capacityReason?: CapacityReason;
+  constructor(code: "scene_cost_history_unavailable" | "scene_cost_history_changed" | "scene_cost_history_capacity_exceeded", capacityReason?: CapacityReason) {
     super(code); this.code = code; this.name = "SceneHistoryProofError"; this.status = code === "scene_cost_history_capacity_exceeded" ? 413 : 409;
+    if (code === "scene_cost_history_capacity_exceeded" && capacityReason) this.capacityReason = capacityReason;
   }
 }
 function changed(): never { throw new SceneHistoryProofError("scene_cost_history_changed"); }
 function unavailable(): never { throw new SceneHistoryProofError("scene_cost_history_unavailable"); }
-function capacity(): never { throw new SceneHistoryProofError("scene_cost_history_capacity_exceeded"); }
+function capacity(reason: CapacityReason): never { throw new SceneHistoryProofError("scene_cost_history_capacity_exceeded", reason); }
 const bytes = (text: string) => encoder.encode(text).byteLength;
 const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && bytes(value) <= 160;
 const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -89,35 +92,39 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
     || scope.deadlineMs !== undefined && !Number.isFinite(scope.deadlineMs)) unavailable();
   const limits: Limits = { ...SCENE_HISTORY_PROOF_LIMITS };
   for (const key of Object.keys(lowerLimits) as Array<keyof Limits>) {
-    if (!Object.hasOwn(limits, key)) capacity();
+    if (!Object.hasOwn(limits, key)) capacity("limit_config");
     const value = lowerLimits[key];
-    if (!integer(value) || value < 1 || value > limits[key]) capacity();
+    if (!integer(value) || value < 1 || value > limits[key]) capacity("limit_config");
     limits[key] = value;
   }
   const deadline = () => { if (scope.deadlineMs !== undefined && Date.now() >= scope.deadlineMs) changed(); };
   const relation = sourceRelation(scope), cte = `WITH source AS NOT MATERIALIZED (${relation.sql})`;
   let reads = 0, proofBytes = 0;
   const read = async (sql: string, bindings: OutputSqlValue[]) => {
-    deadline(); if (++reads > limits.reads || bytes(sql) > 99_000 || bindings.length > 99
-      || bindings.some(value => typeof value === "string" && bytes(value) > limits.bindingBytes)) capacity();
+    deadline(); if (++reads > limits.reads) capacity("reads");
+    if (bytes(sql) > 99_000) capacity("sql_bytes");
+    if (bindings.length > 99) capacity("bindings");
+    if (bindings.some(value => typeof value === "string" && bytes(value) > limits.bindingBytes)) capacity("binding_bytes");
     const rows = await port.read(sql, bindings); deadline();
     if (!Array.isArray(rows)) unavailable();
     return rows;
   };
   const assertions: OutputSqlAssertion[] = [];
   const add = (sql: string, bindings: OutputSqlValue[]) => {
-    if (bytes(sql) > 99_000 || bindings.length > 99 || assertions.length >= limits.assertions) capacity();
+    if (bytes(sql) > 99_000) capacity("sql_bytes");
+    if (bindings.length > 99) capacity("bindings");
+    if (assertions.length >= limits.assertions) capacity("assertions");
     for (const value of bindings) if (typeof value === "string") {
-      const size = bytes(value); if (size > limits.bindingBytes) capacity(); proofBytes += size;
+      const size = bytes(value); if (size > limits.bindingBytes) capacity("binding_bytes"); proofBytes += size;
     }
-    if (proofBytes > limits.proofBytes) capacity();
+    if (proofBytes > limits.proofBytes) capacity("proof_bytes");
     assertions.push({ sql, bindings, ...(scope.deadlineMs === undefined ? {} : { deadlineMs: scope.deadlineMs }) });
   };
   const [initial, ...extra] = await read(`${cte} SELECT (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS owner_head,
     COUNT(*) AS source_count,COALESCE(MAX(order_sequence),0) AS source_head FROM source`, [...relation.bindings, scope.streamId]);
   if (!initial || extra.length || !integer(initial.owner_head) || !integer(initial.source_count) || !integer(initial.source_head)) unavailable();
   if (initial.owner_head !== scope.expectedOwnerHead) changed();
-  if (initial.source_count > limits.rows) capacity();
+  if (initial.source_count > limits.rows) capacity("rows");
   add(`${cte} SELECT (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
     AND COUNT(*)=? AND COALESCE(MAX(order_sequence),0)=? FROM source`,
   [...relation.bindings, scope.streamId, scope.expectedOwnerHead, initial.source_count, initial.source_head]);
@@ -145,7 +152,8 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
       })) as Row;
       rows.push(row); afterSequence = candidate.order_sequence; afterId = candidate.event_id;
       rawBytes += candidate.public_bytes + candidate.private_bytes;
-      if (rows.length > limits.rows || rawBytes > limits.rawBytes) capacity();
+      if (rows.length > limits.rows) capacity("rows");
+      if (rawBytes > limits.rawBytes) capacity("raw_bytes");
       if (rows.length > initial.source_count) changed();
     }
   }
@@ -154,7 +162,7 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
     let items: string[] = [], used = 2;
     for (const value of values) {
       const encoded = JSON.stringify(value), size = bytes(encoded) + 1;
-      if (size + 2 > limits.bindingBytes) capacity();
+      if (size + 2 > limits.bindingBytes) capacity("binding_bytes");
       if (items.length && used + size > limits.bindingBytes) { commit("[" + items.join(",") + "]"); items = []; used = 2; }
       items.push(encoded); used += size;
     }
