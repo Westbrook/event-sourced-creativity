@@ -3,7 +3,7 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { readFile } from 'node:fs/promises';
 import { retainedPersonalFalRecoverySql } from '../worker/output-fal-recovery-policy.ts';
-import { readFalRecoveryCheckpoint } from '../worker/output-fal-recovery-policy.ts';
+import { readFalRecoveryCheckpoint, falRecoveryJobStateAllowed } from '../worker/output-fal-recovery-policy.ts';
 import { compileSqliteExpressionDepth } from './helpers/d1-expression-depth.mjs';
 
 // Isolated SQL policy/lease metadata. No grant is admitted, no provider responds,
@@ -46,6 +46,26 @@ test('expiry cleanup exception matches only the single original personal Fal che
 test('original checkpoint parser rejects changed identity, missing hashes and extra private fields',()=>{
   const {db,checkpoint}=fixture();db.close();assert.deepEqual(readFalRecoveryCheckpoint(checkpoint),checkpoint);
   for(const changed of [{...checkpoint,model:'other'},{...checkpoint,requestDigest:''},{...checkpoint,planningRef:checkpoint.requestRef},{...checkpoint,rawPrompt:'private'},{...checkpoint,stage:'planning:initial'}])assert.equal(readFalRecoveryCheckpoint(changed),null);
+});
+test('failed original with a running operation matches recovery UI, handler and atomic identity without admitting active jobs',async()=>{
+  const source=await readFile(new URL('../worker/output-fal-recovery.ts',import.meta.url),'utf8');
+  const api=await readFile(new URL('../worker/experience-output-api.ts',import.meta.url),'utf8');
+  assert.match(source,/!falRecoveryJobStateAllowed\(job.status,slot.status\)/u);
+  assert.match(api,/job.status === "failed" && falRecoveryJobStateAllowed\(job.status,slot.status\)/u);
+  const sql=source.match(/const identity:OutputSqlAssertion=\{sql:`([\s\S]*?)`,bindings:/u)?.[1];assert.ok(sql);
+  const {db,checkpoint}=fixture();try{
+    db.exec("ALTER TABLE document_jobs ADD COLUMN correlation_id TEXT; UPDATE document_jobs SET correlation_id='correlation'; ALTER TABLE output_operation_slots ADD COLUMN target_contract_digest TEXT; ALTER TABLE output_operation_slots ADD COLUMN source_digest TEXT; ALTER TABLE output_operation_slots ADD COLUMN route_digest TEXT; UPDATE output_operation_slots SET target_contract_digest='target',source_digest='source',route_digest='route'");
+    const read=db.prepare(`SELECT ${sql} AS allowed`),bindings=['job','actor','creative:actor','document','correlation','scope','slot','grant','plan','target','source','route',JSON.stringify(checkpoint)];
+    for(const job of ['queued','running','committing','failed','completed','canceled','partial'])for(const slot of ['authorized','queued','running','uncertain','failed','succeeded','cancelled']){
+      db.prepare('UPDATE document_jobs SET status=?').run(job);db.prepare('UPDATE output_operation_slots SET status=?').run(slot);
+      const prior=['failed','completed'].includes(job)&&['uncertain','failed','succeeded'].includes(slot);
+      const expected=prior||job==='failed'&&slot==='running';
+      assert.equal(falRecoveryJobStateAllowed(job,slot),expected,`${job}/${slot}`);
+      assert.equal(Boolean(read.get(...bindings).allowed),expected,`atomic ${job}/${slot}`);
+    }
+    db.exec("UPDATE document_jobs SET status='failed'; UPDATE output_operation_slots SET status='running',attempt_ordinal=1");
+    assert.equal(read.get(...bindings).allowed,0,'No replacement attempt admitted');
+  }finally{db.close();}
 });
 test('actual recovery lease SQL is single-flight, rejects stale CAS and active worker, and allows a later expired-lease attempt',async()=>{
   const source=await readFile(new URL('../worker/output-fal-recovery.ts',import.meta.url),'utf8');

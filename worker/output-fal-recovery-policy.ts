@@ -1,5 +1,13 @@
 import { imageFormatEventFields } from "../src/model/image-format.ts";
 import { readOutputFalImageContract, type OutputFalImageContract } from "../src/model/output-fal-image-contract.ts";
+
+/** A failed worker may retain its original running operation while the accepted
+ * provider call is uncertain. Recovery is still fenced by the original receipt
+ * and expired worker/recovery leases; this never admits a running worker job. */
+export function falRecoveryJobStateAllowed(jobStatus:unknown,slotStatus:unknown):boolean {
+  return (jobStatus==="failed"||jobStatus==="completed")
+    && (slotStatus==="uncertain"||slotStatus==="failed"||slotStatus==="succeeded"||jobStatus==="failed"&&slotStatus==="running");
+}
 /** Narrow expiry-only cleanup exception; never a provider-dispatch permission.
  * Fixed internal aliases: output_execution_grants is the candidate grant.
  * Group equivalent AND predicates to keep nested cleanup queries within D1's

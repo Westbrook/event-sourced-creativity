@@ -1,5 +1,5 @@
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
-import { readFalRecoveryCheckpoint, falRecoveryEventProvenance } from "./output-fal-recovery-policy.ts";
+import { readFalRecoveryCheckpoint, falRecoveryEventProvenance, falRecoveryJobStateAllowed } from "./output-fal-recovery-policy.ts";
 import { loadOutputJobBinding, reconcileKnownOutputProviderReceipts, prepareOutputJobOutcomeStatements } from "./output-execution-control.ts";
 import { resolveOutputFalRecoveryAuthority } from "./output-requirements-api.ts";
 import { guardOutputPrivateWrites } from "./output-private-execution.ts";
@@ -43,7 +43,7 @@ async function acknowledgedRecoveryBatch<T extends Record<string,unknown>>(db:D1
 export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,options:{assertions:OutputSqlAssertion[];signal?:AbortSignal}){
   const binding=await loadOutputJobBinding(env,user,job);if(!binding)reject("output_native_operation_required");
   const {scope,slot}=binding;
-  if(job.output_slot_id!==slot.slotId||job.kind!=="generate"||!["failed","completed"].includes(job.status)||!['uncertain','failed','succeeded'].includes(slot.status))reject("output_fal_recovery_job_unavailable");
+  if(job.output_slot_id!==slot.slotId||job.kind!=="generate"||!falRecoveryJobStateAllowed(job.status,slot.status))reject("output_fal_recovery_job_unavailable");
   const proof=await resolveOutputFalRecoveryAuthority(env,scope,slot);
   const settings=object(proof.targetPreflight.settings),payload=object(settings.payload),contract=readOutputFalImageContract(payload.outputFalImage);
   if(!contract)reject("output_fal_recovery_contract_unavailable");
@@ -53,7 +53,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     WHERE current.job_id=? AND current.owner_id=? AND current.stream_id=? AND current.document_id=? AND current.correlation_id=? AND current.kind='generate'
       AND current.status IN('failed','completed') AND current.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_contract_digest=? AND slot.source_digest=? AND slot.route_digest=?
-      AND slot.status IN('uncertain','failed','succeeded') AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
+      AND (slot.status IN('uncertain','failed','succeeded') OR current.status='failed' AND slot.status='running') AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
       AND (SELECT COUNT(*) FROM output_operation_slots siblings WHERE siblings.scope_key=slot.scope_key AND siblings.grant_id=slot.grant_id)=1
       AND json_extract(current.result_json,'$.outputFalCheckpoint')=?)`,bindings:[job.job_id,user.userId,job.stream_id,scope.documentId,job.correlation_id,scope.key,slot.slotId,slot.grantId,slot.planRevisionId,slot.targetContractDigest,slot.sourceDigest,slot.routeDigest,JSON.stringify(checkpoint)]};
   const assertions:OutputSqlAssertion[]=[...proof.assertions,...options.assertions,identity,

@@ -17,7 +17,7 @@ import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRene
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
-import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
+import { retainedPersonalFalRecoverySql, falRecoveryJobStateAllowed } from "./output-fal-recovery-policy.ts";
 import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import { canonicalJson } from "../src/experiences/compiler.ts";
@@ -399,7 +399,7 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     if(Date.parse(String(storyboard.original.expiresAt))<=Date.now()){result.permitted.run=false;result.permitted.resumeRun=false;}
   }
   result.permitted.recoverResult = Boolean(run && binding.output === "image" && preflight.targets[0]?.provider === "fal" && preflight.targets[0]?.model === "ideogram/v4"
-    && preflight.targets[0]?.route === "document-image-fal-manual-v1" && job.status === "failed" && snapshot.permissions?.canRequest
+    && preflight.targets[0]?.route === "document-image-fal-manual-v1" && job.status === "failed" && falRecoveryJobStateAllowed(job.status,slot.status) && snapshot.permissions?.canRequest
     && ["authorized", "active", "completed"].includes(String(evidence.row.status)) && await trusted.env.DB.prepare(`SELECT 1 AS available FROM output_execution_grants
       WHERE scope_key=? AND grant_id=? AND ${retainedPersonalFalRecoverySql}
       AND NOT EXISTS(SELECT 1 FROM document_jobs current WHERE current.job_id=? AND (
