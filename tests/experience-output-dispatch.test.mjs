@@ -142,6 +142,16 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
     [new Error("D1_ERROR: unrecognized private database detail"),"d1_error"],
     ...["bridge_target_mismatch","bridge_preflight_incomplete","bridge_provider_call_routes_required","bridge_provider_call_routes_invalid"]
       .map(code=>[Object.assign(new Error("private source"),{code,status:500}),code]),
+    ...[
+      "output_native_operation_required", "output_execution_contract_changed", "output_execution_grant_inactive",
+      "output_fal_recovery_job_unavailable", "output_fal_recovery_scope_unsupported", "output_fal_recovery_route_unsupported",
+      "output_fal_recovery_contract_unavailable", "output_fal_recovery_checkpoint_unavailable", "output_fal_recovery_completion_unavailable",
+      "output_fal_recovery_content_unavailable", "output_fal_recovery_plan_unavailable", "output_fal_recovery_call_unavailable",
+      "output_fal_recovery_origin_unavailable", "output_fal_recovery_provenance_unavailable", "output_fal_recovery_canceled",
+      "output_fal_recovery_settlement_unavailable", "output_fal_recovery_unavailable", "output_fal_recovery_receipt_mismatch",
+      "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty",
+    ].flatMap(code=>[[new Error(code),code],[Object.assign(new Error("private original metadata"),{code,status:409}),code],
+      [new Error("private wrapper",{cause:new Error(code)}),code]]),
   ];
   for(const [cause,subtype] of cases){
     const response=invoke(cause,{warn:(...args)=>logged.push(args)}),body=await response.json();
@@ -160,6 +170,8 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
   const deep=new Error("D1_ERROR",{cause:new Error("private wrapper",{cause:new Error("private wrapper",{cause:new Error("SQLITE_TOOBIG")})})});
   assert.equal(readSubtype(deep),"d1_error","No inspection past three error nodes");
   assert.equal(readSubtype(new Error("x".repeat(2048)+"SQLITE_TOOBIG")),undefined,"No inspection past the bounded prefix");
+  assert.equal(readSubtype(new Error("output_fal_recovery_private_customer_named_example")),undefined,"No arbitrary recovery-prefix logging");
+  assert.equal(readSubtype(new Error("output_fal_recovery_plan_unavailable: private source")),undefined,"No suffix parsing of private recovery messages");
   const revoked=Proxy.revocable({},{});revoked.revoke();
   for(const cause of [new Proxy({}, {getOwnPropertyDescriptor(){throw Error("private descriptor trap");}}),revoked.proxy]){
     const response=invoke(new Error("opaque",{cause}),{warn:(...args)=>logged.push(args)});

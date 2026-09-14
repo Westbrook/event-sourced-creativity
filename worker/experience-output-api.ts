@@ -73,6 +73,17 @@ const nativeDiagnosticSubtypes = new Map([
   ["bridge_preflight_incomplete", "bridge_preflight_incomplete"],
   ["bridge_provider_call_routes_required", "bridge_provider_call_routes_required"],
   ["bridge_provider_call_routes_invalid", "bridge_provider_call_routes_invalid"],
+  // Fixed original-image recovery failures are log-only. Public responses still
+  // disclose no retained provider identity, private checkpoint or source detail.
+  ...[
+    "output_native_operation_required", "output_execution_contract_changed", "output_execution_grant_inactive",
+    "output_fal_recovery_job_unavailable", "output_fal_recovery_scope_unsupported", "output_fal_recovery_route_unsupported",
+    "output_fal_recovery_contract_unavailable", "output_fal_recovery_checkpoint_unavailable", "output_fal_recovery_completion_unavailable",
+    "output_fal_recovery_content_unavailable", "output_fal_recovery_plan_unavailable", "output_fal_recovery_call_unavailable",
+    "output_fal_recovery_origin_unavailable", "output_fal_recovery_provenance_unavailable", "output_fal_recovery_canceled",
+    "output_fal_recovery_settlement_unavailable", "output_fal_recovery_unavailable", "output_fal_recovery_receipt_mismatch",
+    "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty",
+  ].map(code => [code, code] as const),
 ]);
 function diagnosticSubtype(cause: unknown): string | undefined {
   let current: unknown = cause, fallback: string | undefined;
