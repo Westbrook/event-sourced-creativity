@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { withExperienceOutputDispatch } from "../worker/experience-output-dispatch.ts";
+import { ProviderRequestError } from "../worker/provider-errors.ts";
 
 // Dispatcher inputs only. No admitted/completed DB chain or provider fixture.
 function input() {
@@ -194,4 +195,24 @@ test("non-Fal preflights never enter the recovery metadata query",async()=>{
     assert.equal(await evaluate({}, {output:"image"},{status:"failed"},{permissions:{canRequest:true}},{row:{status:"active"}},{targets:[altered]},trusted,"original-grant"),false);
   }
   assert.equal(reads,0);
+});
+test("provider recovery diagnostics expose only fixed status or category labels, never private detail",async()=>{
+  const source=stripTypeScriptTypes(readFileSync(new URL('../worker/experience-output-api.ts',import.meta.url),'utf8'));
+  const helpers=source.slice(source.indexOf('const record ='),source.indexOf('async function refused('));
+  const caught=source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);assert.ok(caught);
+  const invoke=new Function('cause','console',helpers+"\nconst diagnosticStage='recover_result_provider_status';\n"+caught[1]);
+  const subtype=new Function('cause',helpers+';return diagnosticSubtype(cause);');
+  const detail={code:'private_arbitrary_code',category:'unknown',scope:'request',action:'none',message:'private provider body',retryable:false,retryAfterMs:null,requestId:'private-request-id',httpStatus:null};
+  for(const [change,kind] of [[{httpStatus:404},'provider_http_404'],[{httpStatus:422},'provider_http_422'],[{category:'network'},'provider_network'],[{category:'safety'},'provider_safety'],[{code:'fal_provider_returned_untrusted_image_url'},'fal_provider_returned_untrusted_image_url']]){
+    const cause=new ProviderRequestError({...detail,...change},'private prepared prompt'),logs=[];
+    const response=invoke(cause,{warn:(...args)=>logs.push(args)});
+    assert.equal(response.status,409);assert.equal((await response.json()).error,'experience_output_unavailable');
+    assert.equal(logs[0][1].kind,kind);assert.deepEqual(Object.keys(logs[0][1]),['code','status','stage','kind']);
+    assert.ok(!JSON.stringify(logs).includes('private'));assert.equal(subtype(new Error('wrapper',{cause})),kind);
+  }
+  let getters=0;const hostile=new ProviderRequestError({...detail,category:'private_category',httpStatus:418});
+  for(const key of ['code','category','httpStatus'])Object.defineProperty(hostile.detail,key,{get(){getters++;throw Error('private getter');}});
+  assert.equal(subtype(hostile),undefined);assert.equal(getters,0);
+  const unknown=new ProviderRequestError({...detail,category:'private_category',httpStatus:418});
+  assert.equal(subtype(unknown),undefined);
 });

@@ -38,6 +38,19 @@ test("recovery starts only an explicit canonical GET with redirects denied, no P
     assert.deepEqual(order,["guard","read"]);
   }finally{globalThis.fetch=before;}
 });
+test("original provider read reports fixed status stage without changing the GET or guard failure",async()=>{
+  const c=await capture(),receipt=falImageProviderReceipt(c.contract.model,"recorded-request"),before=globalThis.fetch;
+  for(const stop of ['guard','transport']){
+    const order=[],sentinel=new Error('private original guard');let reads=0;
+    globalThis.fetch=async()=>{reads++;order.push('GET');throw new Error('transport_stopped');};
+    try{
+      const result=readOutputFalImageResult({FAL_KEY:'inert-key-presence'},c,receipt,{onStage:stage=>order.push(stage),assertCurrent:async()=>{order.push('guard');if(stop==='guard')throw sentinel;}});
+      await assert.rejects(result,error=>stop==='guard'?error===sentinel:error.name==='ProviderRequestError');
+      assert.deepEqual(order,stop==='guard'?['provider_status','guard']:['provider_status','guard','GET']);
+      assert.equal(reads,stop==='guard'?0:1);
+    }finally{globalThis.fetch=before;}
+  }
+});
 
 test("existing progress and finish SQL preserve the privately retained checkpoint across stale row writes",async()=>{
   const {DatabaseSync}=await import("node:sqlite"),{readFile}=await import("node:fs/promises");

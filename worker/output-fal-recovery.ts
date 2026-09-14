@@ -123,7 +123,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
   const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy});
   try{
     options.onStage?.("provider_read");
-    const result=await readOutputFalImageResult(env,captured,receipt,{assertCurrent,signal});
+    const result=await readOutputFalImageResult(env,captured,receipt,{assertCurrent,signal,onStage:options.onStage});
     if(result.status==='pending')return{status:"pending" as const,jobId:job.job_id,slotId:slot.slotId,replayed:false};
     options.onStage?.("call_settle");
     await settleOutputProviderCall(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:'image:initial',clientRequestId:checkpoint.clientRequestId,status:'settled',usedMicrousd:result.costBreakdown.totalMicrousd,providerResponseId:receipt.providerRequestId,assertions:live()});

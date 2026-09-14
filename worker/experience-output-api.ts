@@ -88,6 +88,16 @@ const nativeDiagnosticSubtypes = new Map([
     "output_execution_grant_not_found", "output_execution_context_changed",
   ].map(code => [code, code] as const),
 ]);
+const providerDiagnosticCodes = new Set([
+  "fal_provider_returned_no_image", "fal_provider_returned_invalid_image_url", "fal_provider_returned_untrusted_image_url",
+  "fal_provider_returned_empty_image", "fal_provider_returned_non_image", "fal_provider_returned_invalid_request_id", "fal_provider_receipt_mismatch",
+]);
+const providerDiagnosticStatuses = new Map([[400,"provider_http_400"],[401,"provider_http_401"],[403,"provider_http_403"],[404,"provider_http_404"],
+  [408,"provider_http_408"],[409,"provider_http_409"],[410,"provider_http_410"],[422,"provider_http_422"],[429,"provider_http_429"],
+  [500,"provider_http_500"],[502,"provider_http_502"],[503,"provider_http_503"],[504,"provider_http_504"]]);
+const providerDiagnosticCategories = new Map([["safety","provider_safety"],["authentication","provider_authentication"],["access","provider_access"],
+  ["quota","provider_quota"],["rate_limit","provider_rate_limit"],["network","provider_network"],["canceled","provider_canceled"],
+  ["provider","provider_refused"],["server","provider_server"],["unknown","provider_unknown"]]);
 function diagnosticSubtype(cause: unknown): string | undefined {
   let current: unknown = cause, fallback: string | undefined;
   // D1 wrappers may retain the actionable error in cause. Only own data
@@ -99,6 +109,19 @@ function diagnosticSubtype(cause: unknown): string | undefined {
     const native = nativeDiagnosticSubtypes.get(typeof code === "string" ? code : typeof raw === "string" ? raw : "");
     if (native) return native;
     if (!(current instanceof Error)) break;
+    // Only fixed labels from own data properties, never a provider message,
+    // URL, request identifier, prepared prompt, arbitrary code or accessor.
+    if(Object.getOwnPropertyDescriptor(current,"name")?.value==="ProviderRequestError"){
+      const detail=Object.getOwnPropertyDescriptor(current,"detail")?.value;
+      if(record(detail)){
+        const providerCode=Object.getOwnPropertyDescriptor(detail,"code")?.value;
+        if(typeof providerCode==="string"&&providerDiagnosticCodes.has(providerCode))return providerCode;
+        const status=Object.getOwnPropertyDescriptor(detail,"httpStatus")?.value;
+        if(typeof status==="number"&&providerDiagnosticStatuses.has(status))return providerDiagnosticStatuses.get(status);
+        const category=Object.getOwnPropertyDescriptor(detail,"category")?.value;
+        if(typeof category==="string"&&providerDiagnosticCategories.has(category))return providerDiagnosticCategories.get(category);
+      }
+    }
     const message = typeof raw === "string" ? raw.slice(0, 2048) : "";
     if (/\b(?:CHECK|UNIQUE|FOREIGN KEY|NOT NULL) constraint failed\b|\bSQLITE_CONSTRAINT(?:_[A-Z_]+)?\b/iu.test(message)) return "d1_constraint";
     if (/\bWrong number of parameter bindings\b|\bSQLITE_RANGE\b/iu.test(message)) return "d1_binding_count";

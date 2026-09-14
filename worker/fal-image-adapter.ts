@@ -243,18 +243,21 @@ async function readFalImageFile(result:FalImageResult,requestId:string,prompt:st
 }
 
 /** One read of an already accepted request. Never plans, moderates, submits, cancels or claims. */
-export async function readOutputFalImageResult(env:WorkerEnv,retained:OutputFalCapturedRequest,receipt:FalImageProviderReceipt,options:{assertCurrent:()=>Promise<void>;signal?:AbortSignal}){
+export async function readOutputFalImageResult(env:WorkerEnv,retained:OutputFalCapturedRequest,receipt:FalImageProviderReceipt,options:{assertCurrent:()=>Promise<void>;signal?:AbortSignal;onStage?:(stage:"provider_status"|"provider_result"|"provider_media")=>void}){
   if(typeof options?.assertCurrent!=="function"||!env.FAL_KEY?.trim())throw new Error("output_fal_recovery_unavailable");
   const captured=await restoreOutputFalImageRequest(retained.contract,retained.body,retained.attempt.clientRequestId,retained.attempt.requestDigest);
   const canonical=falImageProviderReceipt(captured.contract.model,receipt.providerRequestId);
   if(Object.keys(receipt).length!==Object.keys(canonical).length||Object.entries(canonical).some(([key,value])=>receipt[key as keyof FalImageProviderReceipt]!==value))throw new Error("output_fal_recovery_receipt_mismatch");
   const read=(url:string)=>falJson(env,url,{method:"GET",redirect:"error",headers:falHeaders(env),signal:options.signal},"",canonical.providerRequestId,options.assertCurrent);
+  options.onStage?.("provider_status");
   const state=await read(canonical.providerStatusUrl) as FalQueueState;
   if(!state||typeof state!=="object"||state.request_id!==undefined&&state.request_id!==canonical.providerRequestId)throw new Error("output_fal_recovery_receipt_mismatch");
   if(state.status==="IN_QUEUE"||state.status==="IN_PROGRESS")return{status:"pending" as const,providerRequestId:canonical.providerRequestId};
   if(state.status!=="COMPLETED"||state.error!==undefined||state.error_type)throw new Error("output_fal_recovery_result_unavailable");
+  options.onStage?.("provider_result");
   const result=await read(canonical.providerResponseUrl) as FalImageResult;
   if(!result||typeof result!=="object"||result.error!==undefined)throw new Error("output_fal_recovery_result_unavailable");
+  options.onStage?.("provider_media");
   const image=await readFalImageFile(result,canonical.providerRequestId,"",captured.contract,"png",options.signal,captured,options.assertCurrent);
   await options.assertCurrent();
   return{status:"completed" as const,providerRequestId:canonical.providerRequestId,...image,costBreakdown:outputFalImageCost(captured.contract),pricingVersion:captured.contract.pricingVersion};
