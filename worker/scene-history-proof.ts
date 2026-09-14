@@ -95,6 +95,10 @@ const metadataSelect = `SELECT ${textFields.map(field => `CASE WHEN ${field} IS 
   typeof(private_body) AS private_type,COALESCE(length(CAST(private_body AS BLOB)),0) AS private_bytes,
   CASE WHEN ${textFields.map(field => `(${field} IS NULL OR (typeof(${field})='text' AND length(CAST(${field} AS BLOB))<=512))`).join(" AND ")} THEN 1 ELSE 0 END AS metadata_valid FROM source`;
 
+// Shared exact source relation and bounded metadata for the versioned reader.
+// Exporting these does not activate that reader or alter literal-proof limits.
+export { sourceRelation as sceneHistorySourceRelation, metadataSelect as sceneHistoryMetadataSelect, rowFields as sceneHistoryMetadataFields };
+
 /** Complete original row set, including missing/redacted private rows and project
  * membership. BLOB-byte hex slices preserve Unicode boundaries, empty values and
  * embedded NULs; total byte length and SQLite storage type are separately pinned.

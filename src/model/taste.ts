@@ -49,16 +49,31 @@ const axisFor = (property: string) => /color|palette|warm|temperature/i.test(pro
 const hash = (value: string) => { let result = 2166136261; for (let i=0;i<value.length;i++){result^=value.charCodeAt(i);result=Math.imul(result,16777619);} return (result>>>0).toString(16).padStart(8,"0"); };
 
 export function standingConstraints(events: CreativeEvent[], recordedAsOf = Number.POSITIVE_INFINITY) {
+  const fold = createStandingConstraintsFold(recordedAsOf);
+  for (const event of events) if (!fold.accept(event)) break;
+  return fold.finish();
+}
+
+/** The same authored-preference reducer for paged, complete history. */
+export function createStandingConstraintsFold(recordedAsOf = Number.POSITIVE_INFINITY) {
   const active = new Map<string, TasteBelief>();
-  for (const event of events) {
-    if (event.sequence > recordedAsOf) break;
+  let ended = false, finished = false;
+  const accept = (event: CreativeEvent): boolean => {
+    if (finished) throw new Error("constraints_fold_already_finished");
+    if (ended || event.sequence > recordedAsOf) { ended = true; return false; }
     if (event.type === "PreferenceAuthored") {
       const preferenceId = String(event.payload.preference_id); const axis = safeAxis(event.payload.axis); const value = concise(event.payload.value); const polarity = event.payload.polarity === "forbid" ? "forbid" : "affirm";
       active.set(preferenceId, { beliefId:`preference:${preferenceId}`, claimRef:`preference:${preferenceId}`, preferenceId, axis, value, polarity, authority:"authored", confidence:1, evidenceCount:1, evidenceRefs:[event.eventId], validFrom:event.occurredAt, recordedAt:event.recordedAt, freshness:1, sourceClaimRef:event.payload.source_claim_ref ? String(event.payload.source_claim_ref) : null });
     }
     if (event.type === "PreferenceRevoked") active.delete(String(event.payload.preference_id));
-  }
-  return [...active.values()];
+    return true;
+  };
+  const finish = () => {
+    if (finished) throw new Error("constraints_fold_already_finished");
+    finished = true;
+    return [...active.values()];
+  };
+  return { accept, finish };
 }
 
 function positiveContextEvidence(events: CreativeEvent[]) {

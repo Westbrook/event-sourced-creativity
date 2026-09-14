@@ -227,6 +227,14 @@ const itemId = (value: unknown) => {
 };
 
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = ""): CreativeProjection {
+  const fold = createCreativeEventFold(asOf, selectedDocumentId, selectedProjectId);
+  for (const event of events) if (!fold.accept(event)) break;
+  return fold.finish();
+}
+
+/** Consume complete ordered history without retaining the event array. Selection
+ * and membership cleanup run once, after the terminal source page is verified. */
+export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "") {
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "artifactCount" | "recentGenerations" | "recentArtifacts">>();
   const blocks = new Map<string, CreativeBlock>();
   const blockRelations = new Map<string, CreativeBlockRelation>();
@@ -268,8 +276,10 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const scopedFamily = (id: string, payload: Record<string, unknown>, objectId = "") =>
     families.get(scopedFamilyKey(id, familyProjectId(payload, objectId)));
 
-  for (const event of events) {
-    if (event.sequence > asOf) break;
+  let ended = false, finished = false;
+  const accept = (event: CreativeEvent): boolean => {
+    if (finished) throw new Error("creative_fold_already_finished");
+    if (ended || event.sequence > asOf) { ended = true; return false; }
     const p = event.payload;
     switch (event.type) {
       case "ProjectCreated": {
@@ -558,7 +568,11 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ConditionSet": conditions.set(String(p.condition_id), { ...p, fired: false }); break;
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
-  }
+    return true;
+  };
+  const finish = (): CreativeProjection => {
+  if (finished) throw new Error("creative_fold_already_finished");
+  finished = true;
   const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
   if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
   if(selectedProjectId&&selectedProjectId!==state.projectId){const requestedProject=projects.get(selectedProjectId);if(requestedProject){state.projectId=requestedProject.id;state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
@@ -602,6 +616,8 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);const projectArtifacts=[...artifacts.values()].filter((artifact)=>documentIds.has(artifact.documentId)).sort((left,right)=>right.sequence-left.sequence);const history=generationHistoryItems(projectOutputs);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||documentIds.has(block.documentId))).length,outputCount:history.length+projectArtifacts.length,artifactCount:projectArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:projectArtifacts.slice(0,2)};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
   if(!state.projects.length&&state.projectId){const history=generationHistoryItems(state.libraryOutputs);state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:history.length+state.libraryArtifacts.length,artifactCount:state.libraryArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:state.libraryArtifacts.slice(0,2)}];}
   return state;
+  };
+  return { accept, finish };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");
