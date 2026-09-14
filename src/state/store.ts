@@ -4407,9 +4407,17 @@ export class FormaStore {
   }
 
   /** Free current output inspection. Missing association stays an explicit UI choice. */
-  async loadGeneratedImageEdit(outputId:string,options:{current?:()=>boolean}={}):Promise<GeneratedImageEditSnapshot|null>{
+  async loadGeneratedImageEdit(outputId:string,options:{current?:()=>boolean;prepareSource?:boolean}={}):Promise<GeneratedImageEditSnapshot|null>{
     const owner=this.#generatedImageOwner(outputId,options.current);if(!owner.active())return null;
     try{
+      // Only an explicit review/open action opts in. Automatic reads remain GET
+      // only; preparation reuses an idempotent operational nonce, never a job.
+      if(options.prepareSource){
+        const prepared=await this.#generatedImageHttp('/api/generated-images/'+encodeURIComponent(outputId),
+          {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({operation:'prepare-current-read'})},owner.active);
+        if(!owner.active()||!prepared.ok||!prepared.body||typeof prepared.body!=='object'||Array.isArray(prepared.body)
+          ||(prepared.body as Record<string,unknown>).status!=='prepared')return null;
+      }
       const response=await this.#generatedImageHttp("/api/generated-images/"+encodeURIComponent(outputId),{method:"GET"},owner.active);
       if(!owner.active()||!response.ok||!response.body||typeof response.body!=="object"||Array.isArray(response.body))return null;
       const incoming=response.body as Record<string,unknown>;

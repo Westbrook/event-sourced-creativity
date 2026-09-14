@@ -1,6 +1,7 @@
 import { foldEvents, type CreativeEvent } from "../src/model/events.ts";
 import { originalGeneratedImageUrl } from "../src/model/generated-image-original-url.ts";
 import {readImageWitness,imageWitnessStatement,imageWitnessAcknowledged,imageWitnessPublished,type ImageWitnessGuard} from './generated-image-witness.ts';
+import {captureSceneSourceVersion} from './scene-source-generation.ts';
 import { GENERATED_IMAGE_EDIT_LIMITS } from "../src/model/generated-image-edit.ts";
 import { generatedImageEditOperationSha256, parseGeneratedImageEditRequest, parseGeneratedImageRevision,
   type GeneratedImageEditRequest, type GeneratedImageEditSnapshot, type GeneratedImageRevision } from "../src/model/generated-image-revision.ts";
@@ -92,20 +93,24 @@ class Lifetime {
 function internalKey(outputId: string) {
   return "generated-image/" + Array.from(encoder.encode(outputId), byte => byte.toString(16).padStart(2, "0")).join("");
 }
-function admission(env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string, outputId: string, contentId: string, mediaKeys: string[]): Guard {
+function principalAdmission(env: WorkerEnv, actor: PilotUser): Guard {
   const snapshot = actor.authorizationSnapshot, pilot = configuredPilotAdmissionGuard(env, actor);
   if (!snapshot) return { sql: "0", bindings: [] };
   return { sql: `EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal
     WHERE (principal.user_id,principal.email,principal.role,principal.updated_at,principal.consent_version,
       COALESCE(principal.permission_epoch,''),COALESCE(principal.grants_json,'[]'),COALESCE(principal.organizations_json,'[]'),
       COALESCE(principal.projects_json,'[]'),COALESCE(principal.identity_policies_json,'[]'),COALESCE(principal.approved_canvas_requirements,0))=(?,?,?,?,?,?,?,?,?,?,?))
-    AND (${pilot.sql}) AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
+    AND (${pilot.sql})`,bindings:[actor.userId,actor.userId,actor.email,actor.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,
+      snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...pilot.bindings]};
+}
+function admission(env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string, outputId: string, contentId: string, mediaKeys: string[]): Guard {
+  const principal=principalAdmission(env,actor);
+  return {sql:`(${principal.sql}) AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
     AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=?)
       OR (resource_kind='artifact' AND resource_id IN (?,?)) OR (resource_kind='content' AND resource_id=?)
       OR (resource_kind='media' AND resource_id IN (SELECT value FROM json_each(?))))
     AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=?)`,
-    bindings: [actor.userId,actor.userId,actor.email,actor.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,
-      snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...pilot.bindings,
+    bindings: [...principal.bindings,
       projectId,documentId,outputId,internalKey(outputId),contentId,JSON.stringify(mediaKeys),contentId] };
 }
 type Origin = { outputId: string; documentId: string; generationId: string; sourceEventId: string; contentRef: string; contentSha256: string };
@@ -391,9 +396,9 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
   life.check();
   requireFact(token(outputId), "invalid", 400);
   const url = new URL(request.url), operation = url.searchParams.get("operationSha256"), check = operation !== null;
-  requireFact(request.method === "GET" || request.method === "PATCH", "invalid", 405);
+  requireFact(request.method === "GET" || request.method === "PATCH" || request.method === "POST", "invalid", 405);
   requireFact(check ? request.method === "GET" && hash(operation) && Array.from(url.searchParams).length === 1 : !url.search, "invalid", 400);
-  if (request.method === "PATCH") requireFact(!request.headers.get("origin") || request.headers.get("origin") === url.origin, "forbidden", 403);
+  if (request.method !== "GET") requireFact(!request.headers.get("origin") || request.headers.get("origin") === url.origin, "forbidden", 403);
   const authenticated = await life.wait(requireUser(request, env, "viewer", { account: "principal" }));
   if (authenticated.response || !authenticated.user) return authenticated.response ?? reply({ status: "refused", code: "forbidden" }, 401);
   const actor = authenticated.user, consent = requireConsent(actor);
@@ -402,6 +407,17 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
   const selected = await life.wait(readProjectRequestContext(request, env, actor));
   if (selected.response) return selected.response;
   requireFact(!selected.context, "forbidden", 403);
+  if(request.method==='POST'){
+    requireFact(request.headers.get('content-type')?.split(';')[0]?.trim()==='application/json'&&request.body,'invalid',400);
+    const input=await boundedStream(request.body,128,null,life);
+    try{
+      const command:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(input));
+      requireFact(object(command)&&exactKeys(command,['operation'])&&command.operation==='prepare-current-read','invalid',400);
+      life.sql(4);
+      await life.wait(captureSceneSourceVersion(env,{streamId:actor.streamId},[principalAdmission(env,actor)]));
+      return reply({status:'prepared'});
+    }finally{input.fill(0);}
+  }
   let current = await observeCurrent(env, actor, outputId, life);
   if (check) {
     const item = committed(current, operation!);

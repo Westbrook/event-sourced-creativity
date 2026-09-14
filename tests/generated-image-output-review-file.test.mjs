@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { outputTestDatabase, registerOutputSourceImports } from "./output-server-test-helpers.mjs";
+import {readLocalMigrations,migrateLocalDatabase} from "../scripts/lib/local-migrations.mjs";
 import { readStoredZip } from "./output-asset-fixtures.mjs";
 
 // Actual Image handler fixture reused from the accepted finite 29-control donor.
@@ -128,6 +129,7 @@ async function fixture(t) {
   let externalAttempts = 0;
   t.mock.method(globalThis, "fetch", async () => { externalAttempts++; assert.fail("No provider or external request belongs to generated Image Save"); });
   const f = outputTestDatabase();
+  migrateLocalDatabase(f.sqlite,{migrations:readLocalMigrations(new URL('../drizzle/',import.meta.url))});
   let baselineSpend = null, baselinePaid = null;
   const amounts = values => ({ used: values.reduce((sum, row) => sum + row.used_microusd, 0), reserved: values.reduce((sum, row) => sum + row.reserved_microusd, 0) });
   // Own the DB immediately, including failures during schema/bootstrap/seed.
@@ -186,6 +188,9 @@ async function fixture(t) {
     return result.blockIds[0];
   };
   f.blockId = await f.associate({ url: f.originalUrl, sha256: hash(ORIGINAL) });
+  assert.deepEqual(await body(await handleGeneratedImageEdit(new Request("https://forma.test/api/generated-images/"+OUTPUT,
+    {method:"POST",headers:{...headers,"content-type":"application/json",origin:"https://forma.test"},
+      body:JSON.stringify({operation:"prepare-current-read"})}),f.env,OUTPUT)),{status:"prepared"});
   f.read = (operation, auth = headers) => handleGeneratedImageEdit(new Request("https://forma.test/api/generated-images/" + OUTPUT + (operation ? "?operationSha256=" + operation : ""), { headers: auth }), f.env, OUTPUT);
   f.save = async (request, bytes = EDITED, options = {}) => {
     const form = new FormData(); form.append("request", JSON.stringify(request)); form.append("png", new File([bytes], "declared-composition.png", { type: "image/png" }));
@@ -222,16 +227,17 @@ async function fixture(t) {
 function observeD1(t, f, { beforeBatch, mapResults = results => results } = {}) {
   const original = f.env.DB.batch, batch = original.bind(f.env.DB), observed = [];
   f.env.DB.batch = async statements => {
-    if (!statements[0]?.sql.includes("INSERT INTO event_write_stage") || !statements[0]?.sql.includes("private_content")) return batch(statements);
+    const offset=statements.findIndex(statement=>statement.sql.includes("INSERT INTO event_write_stage")&&statement.sql.includes("private_content"));
+    if(offset<0)return batch(statements);
     if (beforeBatch) await beforeBatch();
     const originals = statements.map(statement => statement.execute), metrics = []; observed.push(metrics);
     statements.forEach((statement, index) => { statement.execute = function(kind) {
       const before = f.sqlite.prepare("SELECT total_changes() n").get().n;
       const result = originals[index].call(this, kind), changes = f.sqlite.prepare("SELECT total_changes() n").get().n - before;
-      metrics.push({ success: result.success, directChanges: result.meta.changes, changes });
+      if(index>=offset)metrics.push({ success: result.success, directChanges: result.meta.changes, changes });
       return { ...result, meta: { ...result.meta, changes } };
     }; });
-    try { return mapResults(await batch(statements)); }
+    try { const result=await batch(statements);return [...result.slice(0,offset),...mapResults(result.slice(offset))]; }
     finally { statements.forEach((statement, index) => { statement.execute = originals[index]; }); }
   };
   t.after(() => { f.env.DB.batch = original; }); return observed;

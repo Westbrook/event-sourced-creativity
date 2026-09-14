@@ -491,7 +491,7 @@ export class FormaExperienceHost extends FormaElement {
       jobId: original.jobId, correlationId: original.correlationId, expiresAt: original.jobExpiresAt }, job,
       { documentId: p.documentId, projectId: p.projectId, documents: p.documents, events: this.store.events.get(), outputs: p.libraryOutputs, artifacts: p.artifacts });
   }
-  async #check() {
+  async #check(prepareImage=false) {
     const binding = this.#binding; if (!binding || !this.#readable(binding) || this.#busy) return;
     const operation = this.#beginOperation();
     this.#busy = true; this.#clearResult(); this.#resetDecision(); this.#status = "Checking status"; this.requestUpdate();
@@ -517,7 +517,7 @@ export class FormaExperienceHost extends FormaElement {
       const selected = () => current() && inspected.current() && bindingJson(this.#candidate(state, inspected.job)) === bindingJson(candidate)
         && Date.parse(candidate.expiresAt) > Date.now() && experienceResultGrantCurrent(state, Date.now());
       if (candidate.output === "image") {
-        const image = await operation.wait(this.store.loadGeneratedImageEdit(candidate.outputId, { current: selected })),  format = this.#imageFormat();
+        const image = await operation.wait(this.store.loadGeneratedImageEdit(candidate.outputId, { current: selected,prepareSource:prepareImage })),  format = this.#imageFormat();
         if (!image || !selected() || !format || image.status !== "current" || image.revision !== 0 || image.editEventId !== null
           || image.ownerId !== binding.ownerId || image.projectId !== state.projectId || image.documentId !== state.documentId || image.outputId !== candidate.outputId
           || image.generationId !== candidate.generationId || image.sourceEventId !== candidate.eventId || image.contentRef !== candidate.contentRef
@@ -920,7 +920,7 @@ export class FormaExperienceHost extends FormaElement {
         <button type="submit" class="button primary" data-experience-control="resumeRun" aria-disabled=${String(!resume)} ?disabled=${this.#buttonDisabled(!resume, "resumeRun")} @click=${(event: MouseEvent) => this.#arm(event, "resumeRun")}>${this.#model3dText("Resume")}</button></form>` : nothing}
       ${available&&state?.output==="video"&&state.original&&["queued","running"].includes(state.original.jobStatus)?html`<button type="button" class="button secondary" data-experience-control="stop" aria-disabled=${String(this.#busy||this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy||this.#loading,"stop")} @click=${this.#stopVideo}>Stop</button>`:nothing}
       <div class="experience-result-actions">${available && state?.permitted.recoverResult ? html`<button type="button" class="button primary" data-experience-action="recoverResult" data-experience-control="recoverResult" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "recoverResult")}
-        @click=${(event: MouseEvent) => { if (event.isTrusted) void this.#command("recoverResult", state); }}>${this.i18n.system("Recover result")}</button>` : nothing}${this.#readable(binding) ? html`<button type="button" class="button secondary" data-experience-control="check" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "check")} @click=${() => void this.#check()}>${this.#model3dText("Check status")}</button>` : nothing}
+        @click=${(event: MouseEvent) => { if (event.isTrusted) void this.#command("recoverResult", state); }}>${this.i18n.system("Recover result")}</button>` : nothing}${this.#readable(binding) ? html`<button type="button" class="button secondary" data-experience-control="check" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "check")} @click=${(event:MouseEvent) => {if(event.isTrusted)void this.#check(true);}}>${this.#model3dText("Check status")}</button>` : nothing}
         ${available && result ? html`<button type="button" class="button primary" data-experience-control="edit" aria-disabled=${String(this.#busy || result.output === "image" && !this.#imageReady(result))} ?disabled=${this.#buttonDisabled(this.#busy || result.output === "image" && !this.#imageReady(result), "edit")} @click=${() => { if (!this.#busy) void this.#navigate(() => this.#edit()); }}>${this.#model3dText("Edit in Forma")}</button>` : nothing}</div>
       ${available && terms?.rows.length && (terms.summary || result) && !unavailableProviderPreparation ? html`<details class="experience-terms experience-technical-terms"><summary>${this.i18n.system("Technical details")}</summary>${this.#termsContent(terms)}</details>` : nothing}
       <footer class="experience-host-exit"><button type="button" class="button secondary" data-experience-control="exit" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "exit")} @click=${() => { if (!this.#busy && !this.#loading) void this.#navigate(() => this.#exit()); }}>${this.#model3dText(this.#readable() ? "Open in Forma" : "Outputs")}</button></footer>

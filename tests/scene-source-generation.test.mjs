@@ -41,6 +41,22 @@ test('activation is one bounded nonce and immutable original token, without a hi
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM scene_source_generations').get().n,0);
   f.event('new');assert.throws(()=>f.check(first));
 });
+test('explicit preparation authority is atomic with nonce activation and idempotent',async t=>{
+  const f=fixture(t);f.event('a');
+  await assert.rejects(captureSceneSourceVersion(f.env,{streamId:'creative:a'},[{sql:'0',bindings:[]}]))
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM scene_source_epoch').get().n,0);
+  const first=await captureSceneSourceVersion(f.env,{streamId:'creative:a'},[{sql:'1',bindings:[]}]);
+  const again=await captureSceneSourceVersion(f.env,{streamId:'creative:a'},[{sql:'1',bindings:[]}]);assert.deepEqual(first,again);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM scene_source_epoch').get().n,1);
+  await assert.rejects(captureSceneSourceVersion(f.env,{streamId:'creative:a'},[{sql:'0',bindings:[]}]))
+  f.check(first);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM events').get().n,1);
+});
+test('preparation prefix rejects malformed own acknowledgments without reading getters',async t=>{
+  const f=fixture(t),batch=f.env.DB.batch;let touched=0;
+  f.env.DB.batch=async statements=>{const result=await batch(statements);Object.defineProperty(result,0,{get(){touched++;return {success:true,results:[{current:1}]};}});return result;};
+  await assert.rejects(captureSceneSourceVersion(f.env,{streamId:'creative:a'},[{sql:'1',bindings:[]}]),/scene_source_version_unavailable/);
+  assert.equal(touched,0);
+});
 test('private edit and restore, redaction, deletion and metadata changes invalidate original without owner head change',async t=>{
   const f=fixture(t);f.event('a');f.secret('a');
   for(const sql of ["UPDATE event_private_payloads SET private_json='changed'","UPDATE event_private_payloads SET private_json='private'",

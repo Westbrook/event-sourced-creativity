@@ -54,8 +54,9 @@ export class OutputCard extends FormaElement {
       &&this.output.contentRef===output.contentRef;
     const current=()=>returnCurrent()&&this.#imageEdit?.token===token&&this.#imageEditEpoch===epoch;
     this.#imageEditReturnCurrent=returnCurrent;
+    let prepareSource=event.isTrusted;
     this.#imageEdit=Object.freeze({token,ownerId,projectId:projection.projectId,documentId:projection.documentId,outputId:output.id,current,
-      read:()=>store.loadGeneratedImageEdit(output.id,{current}),
+      read:()=>{const prepare=prepareSource;prepareSource=false;return store.loadGeneratedImageEdit(output.id,{current,prepareSource:prepare});},
       capture:(sourceId:string)=>store.captureGeneratedImageEdit(output.id,sourceId,{current}),
       adopt:async()=>{if(!current())return false;const result=await store.addImageOutputAsContext(output.id,projection.documentId,"generated-image-editor",{reveal:false,current});
         return Boolean(current()&&result&&!("publication"in result)&&result.rootBlockId);},

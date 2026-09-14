@@ -42,15 +42,28 @@ export async function sceneSourceRebuildStatements(env: Pick<WorkerEnv, "DB">) {
 
 /** Called only by an explicit source-preparation operation. Activation inserts
  * one operational nonce after schema certification, never an authored record. */
-export async function captureSceneSourceVersion(env: Pick<WorkerEnv, "DB">, input: Scope): Promise<SceneSourceVersion> {
+export async function captureSceneSourceVersion(env: Pick<WorkerEnv, "DB">, input: Scope, admission:readonly OutputSqlAssertion[]=[]): Promise<SceneSourceVersion> {
   const scope = scopeOf(input);
-  const result = await env.DB.batch<Record<string, unknown>>([
+  if(admission.length>8)unavailable();
+  const batch = await env.DB.batch<Record<string, unknown>>([
+    ...admission.map(guard=>assertStatement(env,guard)),
     assertStatement(env, sceneSourceSchemaAssertion()), env.DB.prepare(SCENE_SOURCE_EPOCH_ACTIVATE_SQL),
     env.DB.prepare(`SELECT instance_nonce,generation AS epoch,
       COALESCE((SELECT generation FROM scene_source_generations WHERE scope_kind='stream' AND scope_key=?),0) AS stream_generation,
       COALESCE((SELECT generation FROM scene_source_generations WHERE scope_kind='project' AND scope_key=?),0) AS project_generation
       FROM scene_source_epoch WHERE singleton=1 AND schema_version=1`).bind(scope.streamId, scope.projectAccessId ?? null),
   ]);
+  // Optional caller authority is checked in the SAME transaction before nonce
+  // activation. Validate original own-data slots before removing that prefix.
+  if(!Array.isArray(batch)||batch.length!==admission.length+3||Array.from({length:batch.length},(_,index)=>index).some(index=>{
+    const slot=Object.getOwnPropertyDescriptor(batch,index),row=slot?.value;
+    if(!slot||!Object.hasOwn(slot,'value')||!row||typeof row!=='object'||Object.getOwnPropertyDescriptor(row,'success')?.value!==true)return true;
+    const error=Object.getOwnPropertyDescriptor(row,'error');if(error&&(!Object.hasOwn(error,'value')||error.value!==undefined))return true;
+    if(index>=admission.length)return false;
+    const rows=Object.getOwnPropertyDescriptor(row,'results')?.value,first=Array.isArray(rows)?Object.getOwnPropertyDescriptor(rows,0)?.value:null;
+    return !Array.isArray(rows)||rows.length!==1||!first||Object.getOwnPropertyDescriptor(first,'current')?.value!==1;
+  }))unavailable();
+  const result=Array.prototype.slice.call(batch,admission.length) as typeof batch;
   if (!Array.isArray(result) || result.length !== 3 || [0, 1, 2].some(index => result[index]?.success !== true)
     || !Array.isArray(result[0]!.results) || result[0]!.results.length !== 1 || result[0]!.results[0]?.current !== 1
     || !Array.isArray(result[2]!.results) || result[2]!.results.length !== 1) unavailable();
