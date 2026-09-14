@@ -1,5 +1,6 @@
 import { SAFE_SQL_EVENT_FIELDS, SAFE_SQL_IDENTIFIER_FIELDS } from "./event-privacy.ts";
 import { EVENT_WRITE_STAGE_TRIGGER_SQL, PROJECT_NOTIFICATION_TRIGGER_SQL, ensureSchema, type WorkerEnv } from "./runtime.ts";
+import { sceneSourceRebuildStatements } from "./scene-source-generation.ts";
 
 const identifierSuffixes = ["_count", "_tokens", "_microusd", "_ms", "_seconds", "_version", "_index", "_sequence", "_head", "_kind", "_type", "_status", "_mode", "_surface", "_scope", "_expires_at", "_created_at", "_updated_at", "_recorded_at", "_occurred_at", "_completed_at", "_fired_at", "_content_ref", "_input_ref", "_prompt_ref", "_note_ref", "_direction_ref", "_response_ref", "_statement_ref", "_condition_ref", "_object_ref", "_target_ref"];
 const sqlString = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -59,7 +60,11 @@ export async function migrateLegacyEventPayloads(env:WorkerEnv,scope?:{organizat
   if (Number(staging?.results[0]?.count ?? 0) !== 0) throw new Error("event_privacy_migration_busy");
   const indexStatements = (indexes?.results ?? []).map((row) => String(row.sql ?? "")).filter(Boolean);
   const triggerStatements = (triggers?.results ?? []).map((row) => String(row.sql ?? "")).filter(Boolean);
+  // A table rebuild bypasses row mutation triggers. Invalidate every original
+  // source certificate in this same transaction before replacing the table.
+  const sourceVersionGuards = await sceneSourceRebuildStatements(env);
   const statements = [
+    ...sourceVersionGuards.before,
     // Malformed JSON intentionally aborts and rolls back if another writer changed the immutable snapshot.
     env.DB.prepare(`SELECT CASE WHEN COUNT(*)=? AND COALESCE(MAX(rowid),0)=?${scope?` AND EXISTS(SELECT 1 FROM organizations governed
       JOIN organization_memberships owner ON owner.organization_id=governed.organization_id AND owner.user_id=governed.owner_user_id
@@ -81,6 +86,7 @@ export async function migrateLegacyEventPayloads(env:WorkerEnv,scope?:{organizat
     env.DB.prepare("ALTER TABLE events_privacy_rebuild RENAME TO events"),
     ...indexStatements.map((sql) => env.DB.prepare(sql)),
     ...triggerStatements.map((sql) => env.DB.prepare(sql)),
+    ...sourceVersionGuards.after,
     env.DB.prepare(EVENT_WRITE_STAGE_TRIGGER_SQL),
     env.DB.prepare(PROJECT_NOTIFICATION_TRIGGER_SQL),
     env.DB.prepare(`DELETE FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'${scope?` AND EXISTS(

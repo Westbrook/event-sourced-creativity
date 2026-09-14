@@ -48,6 +48,26 @@ export const eventPrivatePayloads = sqliteTable(
   (table) => [index("idx_event_private_payloads_owner_scope").on(table.ownerId, table.projectId, table.documentId, table.redactedAt)],
 );
 
+/** Operational change witnesses, never copies of authored history. Saturation
+ * stops new certificates without preventing privacy erasure of source rows. */
+export const sceneSourceGenerations = sqliteTable("scene_source_generations", {
+  scopeKind: text("scope_kind").notNull(), scopeKey: text("scope_key").notNull(),
+  generation: integer("generation").notNull(),
+}, table => [
+  primaryKey({ columns: [table.scopeKind, table.scopeKey] }),
+  check("scene_source_generation_kind", sql`${table.scopeKind} IN ('stream','project')`),
+  check("scene_source_generation_value", sql`typeof(${table.generation})='integer' AND ${table.generation} BETWEEN 1 AND 9007199254740991`),
+]);
+export const sceneSourceEpoch = sqliteTable("scene_source_epoch", {
+  singleton: integer("singleton").primaryKey().notNull(), schemaVersion: integer("schema_version").notNull(),
+  instanceNonce: text("instance_nonce").notNull(), generation: integer("generation").notNull(),
+}, table => [
+  check("scene_source_epoch_singleton", sql`${table.singleton}=1`),
+  check("scene_source_epoch_version", sql`${table.schemaVersion}=1`),
+  check("scene_source_epoch_nonce", sql`length(${table.instanceNonce})=32 AND ${table.instanceNonce} NOT GLOB '*[^0-9a-f]*'`),
+  check("scene_source_epoch_generation", sql`typeof(${table.generation})='integer' AND ${table.generation} BETWEEN 1 AND 9007199254740991`),
+]);
+
 /** A self-cleaning SQLite trigger commits immutable metadata and its private body together. */
 export const eventWriteStage = sqliteTable(
   "event_write_stage",

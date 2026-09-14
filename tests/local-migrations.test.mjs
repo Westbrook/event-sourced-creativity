@@ -128,8 +128,9 @@ test("local migrations: an existing schema without receipts is verified without 
 test("local migrations: Sites version 170 retains its 19-migration baseline when newer migrations are added", {
   skip: !actualMigrations.some(migration => migration.tag === assistantTags[1]),
 }, t => {
-  const additions = new Set(["0018_consequential_consent", "0019_authoring_commits", ...assistantTags, ...(model3dMigration ? [model3dTag] : [])]);
-  const baseline = actualMigrations.filter(migration => !additions.has(migration.tag));
+  // Pin the historical baseline, not a growing complement of known additions.
+  const baseline = actualMigrations.filter(migration => Number(migration.tag.slice(0,4)) < 18 || migration.tag === "0018_output_requirements");
+  const additions = new Set(actualMigrations.filter(migration => !baseline.includes(migration)).map(migration => migration.tag));
   assert.equal(baseline.length, 19);
   const sqlite = database(t);
   migrateLocalDatabase(sqlite, { migrations: baseline });
