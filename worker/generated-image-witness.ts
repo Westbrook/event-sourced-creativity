@@ -23,7 +23,7 @@ const eventCell=`CASE WHEN ${validText(eventText)} AND typeof(payload)='text' AN
 const revisionCell=`CASE WHEN ${validText(revisionText)} AND typeof(content_json)='text' AND length(CAST(content_json AS BLOB))<=${IMAGE_WITNESS_LIMITS.revisionBodyBytes}
   THEN ${json(revisionFields)} ELSE NULL END`;
 const integer=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
-function fail(kind:'capacity'|'changed'|'version'|'unavailable'):never {throw new Error('image_witness_'+kind);}
+function fail(kind:'capacity'|'changed'|'version'|'schema'|'epoch_absent'|'unavailable'):never {throw new Error('image_witness_'+kind);}
 const own=(value:object,key:PropertyKey)=>Object.getOwnPropertyDescriptor(value,key)?.value;
 const dense=(value:unknown):value is unknown[]=>Array.isArray(value)&&Array.from({length:value.length},(_,i)=>i).every(i=>{
   const descriptor=Object.getOwnPropertyDescriptor(value,i);return !!descriptor&&Object.hasOwn(descriptor,'value');
@@ -76,7 +76,15 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
       COALESCE((SELECT generation FROM scene_source_generations WHERE scope_kind='stream' AND scope_key=?),0) AS stream_generation
       FROM scene_source_epoch WHERE singleton=1 AND schema_version=1`).bind(streamId),
   ]);
-  if(!dense(captured)||captured.length!==2||!imageWitnessAcknowledged(captured.slice(0,1),1)||!checked(captured[1])||captured[1].results.length!==1)fail('version');
+  if(!dense(captured)||captured.length!==2)fail('version');
+  if(!imageWitnessAcknowledged(captured.slice(0,1),1)){
+    const result=captured[0];
+    if(checked(result)&&result.results.length===1&&result.results[0]&&typeof result.results[0]==='object'&&own(result.results[0],'current')===0)fail('schema');
+    fail('version');
+  }
+  if(!checked(captured[1]))fail('version');
+  if(captured[1].results.length===0)fail('epoch_absent');
+  if(captured[1].results.length!==1)fail('version');
   const token=captured[1].results[0]!;
   if(typeof token.instance_nonce!=='string'||!/^[a-f0-9]{32}$/u.test(token.instance_nonce)||!integer(token.epoch)||!integer(token.stream_generation))fail('version');
   const version:SceneSourceVersion={streamId,instanceNonce:token.instance_nonce,epoch:token.epoch,streamGeneration:token.stream_generation,projectGeneration:0};

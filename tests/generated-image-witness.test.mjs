@@ -24,7 +24,7 @@ function fixture(t){
     verify:async guards=>imageWitnessAcknowledged(await env.DB.batch(guards.map(g=>imageWitnessStatement(env,g))),guards.length)};
 }
 test('read refuses missing epoch without activating or modifying anything',async t=>{
-  const f=fixture(t);f.event(1);await assert.rejects(f.read(),/image_witness_version/);
+  const f=fixture(t);f.event(1);await assert.rejects(f.read(),/image_witness_epoch_absent/);
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM scene_source_epoch').get().n,0);
 });
 test('complete multi-megabyte history uses bounded pages with exact original proofs',async t=>{
@@ -73,7 +73,7 @@ test('schema mismatch, absent acknowledgment and cancellation fail closed',async
   const f=fixture(t);f.event(1);await f.capture();const batch=f.env.DB.batch;
   f.env.DB.batch=async statements=>{const r=await batch(statements);delete r[0].success;return r;};await assert.rejects(f.read());f.env.DB.batch=batch;
   await assert.rejects(f.read({check(){throw Error('cancelled');},async wait(p){return p;}}),/cancelled/);
-  f.db.exec('DROP TRIGGER scene_source_events_insert');await assert.rejects(f.read(),/image_witness_version/);
+  f.db.exec('DROP TRIGGER scene_source_events_insert');await assert.rejects(f.read(),/image_witness_schema/);
   assert.equal(imageWitnessAcknowledged([,],1),false);
   assert.equal(imageWitnessAcknowledged([{success:true,error:'explicit failure',results:[{current:1}]}],1),false);
   assert.equal(imageWitnessAcknowledged([{success:true,results:[Object.create({current:1})]}],1),false);
