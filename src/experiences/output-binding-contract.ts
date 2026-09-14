@@ -26,7 +26,8 @@ export type ExperienceNativeState = {
   status: "absent" | "preparing" | "review" | "authorized" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "partial" | "uncertain" | "unavailable";
   recovery?: "pending" | "completed";
   disposition: "never_admitted" | "prepared" | "original_authorized" | "original_run_recorded";
-  current: { custody: "verified"; source: "verified"; sourceDigest: string; requirementsDigest: string };
+  /** Changed source is read-only, completed original Image evidence, never a fresh plan. */
+  current: { custody: "verified"; source: "verified" | "changed"; sourceDigest: string; requirementsDigest: string };
   stage: ExperienceNativeStage | null;
   plan: { revisionId: string; targetId: string; targetContractDigest: string; sourceDigest: string; requirementsDigest: string } | null;
   preflight: ExperienceNativePreflight | null;

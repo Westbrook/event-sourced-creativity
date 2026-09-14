@@ -32,7 +32,7 @@ test('story binding decoding remains passive and cannot acquire Fal result recov
 });
 test('actual host source join uses explicit story contract and does not weaken exact source/target checks',()=>{
  const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('  #snapshotMatches('),end=src.indexOf('  #candidate(',begin);
- const method=stripTypeScriptTypes(src.slice(begin,end).replace('#snapshotMatches','function snapshotMatches').replace('this.#binding','this.binding'));
+ const method=stripTypeScriptTypes(src.slice(begin,end).replace('#snapshotMatches','function snapshotMatches').replaceAll('this.#binding','this.binding'));
  const check=new Function('isExperienceStoryTarget','bindingJson',method+';return snapshotMatches;')(isExperienceStoryTarget,JSON.stringify);
  const target=plan().targets[0],grant={id:'grant'},state={output:'short_story',documentId:'doc',projectId:'project',original:{grantId:'grant'},plan:{sourceDigest:'source',requirementsDigest:'req',revisionId:'plan',targetId:target.id,targetContractDigest:'contract'},grant};
  const snapshot={documentId:'doc',projectId:'project',scope:{kind:'personal',actorUserId:'owner'},sourceVerification:{status:'verified'},permissions:{canRequest:true},sourceRevision:'source',requirementRevision:'req',confirmedPlan:{revisionId:'plan',sourceDigest:'source',requirementsDigest:'req',targetContractDigests:{[target.id]:'contract'},plan:{targets:[target]}},grants:[grant]};

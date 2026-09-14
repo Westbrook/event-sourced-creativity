@@ -1,0 +1,21 @@
+.route-load-recovery {
+  position: fixed;
+  inset: auto max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) auto;
+  margin: 0;
+  box-sizing: border-box;
+  inline-size: min(30rem, calc(100vw - 2rem));
+  max-block-size: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--line-strong, #666);
+  border-radius: var(--forma-radius-medium, .625rem);
+  color: var(--ink, #fff);
+  background: var(--panel, #202020);
+  box-shadow: 0 .5rem 2rem #0004;
+  font: 1rem/1.5 system-ui, sans-serif;
+  overflow-wrap: anywhere;
+  z-index: 10000;
+}
+.route-load-recovery p { margin-block: .5rem 1rem; }
+.route-load-recovery button { min-block-size: 2.75rem; max-inline-size: 100%; white-space: normal; }
+.route-load-recovery button:focus-visible { outline: 3px solid var(--orange, #f59b41); outline-offset: 3px; }

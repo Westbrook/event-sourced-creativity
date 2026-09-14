@@ -89,6 +89,41 @@ function response(value: unknown, path = basePath, options: { status?: number; h
   return result;
 }
 
+function changedSourceResult() {
+  const value = state("succeeded"); value.current.source = "changed"; value.current.sourceDigest = "current-source-after-adoption";
+  value.original!.jobStatus = "completed"; value.original!.grantStatus = value.grant!.status = "completed";
+  value.grant!.pendingCalls = value.grant!.operations[0]!.pendingCalls = 0;
+  return value;
+}
+test("changed-source completed Image decoder retains separate current and original digests", () => {
+  const value = changedSourceResult(), decoded = decodeExperienceBinding(value, identity);
+  assert.deepEqual(decoded, value); assert.ok(Object.isFrozen(decoded));
+  assert.notEqual(value.current.sourceDigest, value.plan!.sourceDigest);
+  for (const action of ["prepare", "authorize", "run", "resumeRun", "recoverResult", "renewPreparation"] as const) {
+    const invalid = changedSourceResult(); invalid.permitted[action] = true;
+    assert.equal(decodeExperienceBinding(invalid, identity), null, action);
+  }
+  for (const change of [
+    (v: ExperienceNativeState) => { v.original!.run = null; },
+    (v: ExperienceNativeState) => { v.original!.jobStatus = "running"; },
+    (v: ExperienceNativeState) => { v.original!.grantStatus = v.grant!.status = "active"; },
+    (v: ExperienceNativeState) => { v.grant!.pendingCalls = 1; },
+    (v: ExperienceNativeState) => { v.original!.sourceDigest = v.current.sourceDigest; },
+    (v: ExperienceNativeState) => { v.grant!.actorUserId = "foreign"; },
+  ]) { const invalid = changedSourceResult(); change(invalid); assert.equal(decodeExperienceBinding(invalid, identity), null); }
+  const slides = changedSourceResult(); slides.output = "slides";
+  assert.equal(decodeExperienceBinding(slides, { ...identity, output: "slides" }), null);
+});
+
+test("retained changed-source transport never posts prepare, authorize, run, resume or recovery", async () => {
+  const calls: string[] = [];
+  const client = new ExperienceOutputBindingClient(identity, { origin, current: () => true,
+    request: async (_url, init) => { calls.push(init?.method ?? "GET"); return response(changedSourceResult()); } });
+  await client.read(); const shown = client.state as ExperienceNativeState;
+  for (const action of ["prepare", "authorize", "run", "resumeRun", "recoverResult", "renewPreparation"] as const) await client.command(action, shown);
+  assert.deepEqual(calls, ["GET"]);
+});
+
 function transport(replies: Array<Response | Error | (() => Promise<Response>)>) {
   const calls: Array<{ path: string; init: RequestInit }> = [];
   const request: typeof fetch = async (input, init = {}) => {

@@ -164,6 +164,8 @@ async function refused(response: Response): Promise<Response> {
   return result;
 }
 type Loaded = { trusted: OutputTrustedContext; binding: ExperienceOutputBinding; recipe: ExperienceOutputRecipe;
+  /** Passive completed Image inspection only; never permission to rebase a command. */
+  retainedImageSourceChanged?: boolean;
   retained: NonNullable<Awaited<ReturnType<typeof readExperienceDraft>>>; receipt: ExperienceIntakeReceipt;
   rootBinding: ExperienceOutputBinding; lineage: ExperienceOutputLineage;
   originals: Partial<Record<ExperienceOutputStage, Original>> };
@@ -243,7 +245,11 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   validateManagedRequirement(loaded);
   if (!experienceSourceMatches(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
     documents: trusted.projection.documents, blocks: trusted.projection.libraryBlocks.filter(block => block.id !== recipe.spec.id),
-    relations: trusted.projection.libraryBlockRelations, events: trusted.events })) error("experience_output_source_changed");
+    relations: trusted.projection.libraryBlockRelations, events: trusted.events })) {
+    if (request.method !== "GET" || permission !== "read" || binding.output !== "image" || !loaded.originals.run)
+      error("experience_output_source_changed");
+    loaded.retainedImageSourceChanged = true;
+  }
   if (trusted.sourceProblems.length) error("experience_output_source_unavailable", 410);
   return loaded;
 }
@@ -256,7 +262,8 @@ async function confirmed(loaded: Loaded) {
   const plan = await outputExperienceCommands.readConfirmedPlan(loaded.trusted, id);
   if (!plan || canonicalJson(plan) !== canonicalJson(saved.receipt.payload.confirmed_plan)
     || !matchExperienceOutputRecipeTarget(loaded.recipe, plan.plan, { documentId: loaded.binding.documentId,
-      sourceRevision: loaded.trusted.sourceDigest, requirementRevision: loaded.trusted.requirementsDigest })) error("experience_output_plan_changed");
+      sourceRevision: loaded.retainedImageSourceChanged ? plan.sourceDigest : loaded.trusted.sourceDigest,
+      requirementRevision: loaded.retainedImageSourceChanged ? plan.requirementsDigest : loaded.trusted.requirementsDigest })) error("experience_output_plan_changed");
   return plan;
 }
 
@@ -304,7 +311,8 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   const preflightValue = originals.preflight?.receipt.payload.preflight;
   const preflight = preflightValue as ExperienceNativeState["preflight"];
   if (originals.preflight && (!record(preflightValue) || !plan || preflight?.planRevisionId !== plan.revisionId
-    || preflight.sourceDigest !== trusted.sourceDigest || preflight.requirementsDigest !== trusted.requirementsDigest
+    || preflight.sourceDigest !== (loaded.retainedImageSourceChanged ? plan.sourceDigest : trusted.sourceDigest)
+    || preflight.requirementsDigest !== (loaded.retainedImageSourceChanged ? plan.requirementsDigest : trusted.requirementsDigest)
     || !Array.isArray(preflight.targets) || preflight.targets.length !== 1 || !record(preflight.targets[0]) || preflight.targets[0].targetId !== loaded.recipe.targetId
     || originals.preflight!.envelope.planRevisionId !== plan.revisionId)) error("experience_output_preflight_changed");
   const result: ExperiencePreparedState = { version: 1, draftId: binding.draftId, draftHash: binding.draftHash, releaseHash: binding.releaseHash,
@@ -467,6 +475,15 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
   const recovery = record(jobMetadata) ? jobMetadata.outputFalRecovery : null;
   if (binding.output === "image" && preflight.targets[0]?.provider === "fal" && result.status === "succeeded" && job.status === "completed" && grant.status === "completed" && record(recovery)
     && recovery.version === "output-fal-recovery-v1" && recovery.status === "completed" && typeof recovery.completionEventId === "string") result.recovery = "completed";
+  if (loaded.retainedImageSourceChanged) {
+    // Original receipts remain immutable. Today's authorization, source/private
+    // assertions and disclosure guards remain current; only the result is historical.
+    if (binding.output !== "image" || !run || result.status !== "succeeded" || job.status !== "completed"
+      || slot.status !== "succeeded" || grant.status !== "completed" || grant.pendingCalls !== 0
+      || grant.operations[0]!.pendingCalls !== 0) error("experience_output_source_changed");
+    result.current.source = "changed";
+    result.permitted = { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false, renewPreparation: false };
+  }
   return result;
 }
 

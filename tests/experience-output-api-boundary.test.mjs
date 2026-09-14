@@ -33,6 +33,7 @@ const seamExports = {
   "./output-video-recovery.ts": ["recoverOutputVideo"],
   "./experience-model3d-reference-source.ts": ["prepareExperienceModel3dReference"],
   "./experience-video-output-source.ts": ["prepareExperienceVideoOutputSource"],
+  "./output-scene-source.ts": ["outputScenePreparationIdentity"],
 };
 const actualAPIImports = new Set(["../src/experiences/compiler.ts", "../src/experiences/intake.ts",
   "../src/experiences/host-source.ts", "./experience-output-binding.ts", "./experience-output-recipe.ts", "./experience-output-originals.ts", "./output-fal-recovery-policy.ts",
@@ -40,7 +41,7 @@ const actualAPIImports = new Set(["../src/experiences/compiler.ts", "../src/expe
   "../src/model/output-storyboard-contract.ts", "../src/model/output-storyboard-offer.ts",
   "../src/model/output-scene-contract.ts", "../src/model/scene-mini-app-consent.ts",
   "./output-scene-preflight-contract.ts", "../src/model/output-narrative-contract.ts",
-  "./experience-model3d-recipe.ts", "../src/model/output-video-offer.ts",
+  "./experience-model3d-recipe.ts", "../src/model/output-video-offer.ts", "./experience-scene-renewal.ts", "./experience-scene-renewal-proof.ts", "./output-proof-capacity-diagnostic.ts",
   "../src/model/model3d-mini-app-consent.ts", "./output-model3d-execution.ts"]);
 const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   const parent = context.parentURL && new URL(context.parentURL);
@@ -61,7 +62,7 @@ const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   if (apiBoundary && !actualAPIImports.has(specifier)) {
     throw new Error(`boundary_unapproved_api_import: ${specifier}`);
   }
-  if (originalsBoundary && specifier !== "./experience-output-binding.ts") {
+  if (originalsBoundary && !["./experience-output-binding.ts", "./experience-scene-renewal.ts"].includes(specifier)) {
     throw new Error(`boundary_unapproved_originals_import: ${specifier}`);
   }
   return nextResolve(specifier, context);
@@ -232,6 +233,7 @@ async function harness(output = "slides") {
     return { synthetic: true, replayed: false };
   }
   seamRegistry.set(binding.draftId, {
+    outputScenePreparationIdentity: async () => { throw new Error("boundary_scene_preparation_forbidden"); },
     // These Image/Slides controls do not exercise 3D source custody. Never
     // silently simulate that helper or load its native runtime dependency graph.
     prepareExperienceModel3dReference: async () => { throw new Error("boundary_model3d_reference_forbidden"); },
@@ -290,7 +292,11 @@ async function prepare(h) { const result = await h.request("prepare", h.prepareB
 async function authorize(h) { await prepare(h); const result = await h.request("authorize", h.authorizeBody()); assert.equal(result.response.status, 200, JSON.stringify(result.value)); return result; }
 function assertUnavailable(result, code, status) {
   assert.equal(result.response.status, status ?? 409, JSON.stringify(result.value));
-  assert.equal(result.value.error, code); assert.equal(result.value.status, "unavailable");
+  // The production fixed-code boundary deliberately does not echo arbitrary
+  // synthetic seam errors (or codes outside its disclosure registry).
+  const withheld = new Set(["synthetic_auth_denied", "synthetic_trusted_scope_denied", "synthetic_native_refused",
+    "synthetic_lost_ack", "synthetic_custody_guard_failed", "experience_output_explicit_authorization_required"]);
+  assert.equal(result.value.error, withheld.has(code) ? "experience_output_unavailable" : code); assert.equal(result.value.status, "unavailable");
   assert.deepEqual(result.value.permitted, { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false });
 }
 
@@ -317,6 +323,53 @@ test("GET absent performs passive source/metadata reads but no native command", 
   assert.equal(h.schemaCalls, 0); assert.ok(h.preparedSql.length > 0);
   assert.ok(h.preparedSql.every(sql => /^\s*SELECT\b/iu.test(sql)), "adapter metadata access must remain SELECT-only");
   assert.equal(result.response.headers.get("cache-control"), "private, no-store");
+});
+
+async function completedChangedImage(output = "image") {
+  const h = await harness(output); await authorize(h);
+  assert.equal((await h.request("run", h.runBody())).response.status, 200);
+  h.job.status = "completed"; h.evidence.row.status = h.grant.status = "completed";
+  h.evidence.slots[0].status = h.grant.operations[0].status = "succeeded";
+  h.projection.libraryBlocks.push({ id: "adopted-original-reference", documentId: h.plan.documentId });
+  h.sourceDigest = "current-source-after-adoption";
+  return h;
+}
+test("passive completed Image reopen preserves original receipts and current changed source", async () => {
+  const h = await completedChangedImage(), before = copy(h.writes), result = await h.request();
+  assert.equal(result.response.status, 200, JSON.stringify(result.value));
+  assert.equal(result.value.current.source, "changed");
+  assert.equal(result.value.current.sourceDigest, h.sourceDigest);
+  assert.equal(result.value.plan.sourceDigest, "synthetic-source-digest");
+  assert.equal(result.value.original.sourceDigest, result.value.plan.sourceDigest);
+  assert.equal(result.value.original.jobId, "synthetic-job");
+  assert.ok(Object.values(result.value.permitted).every(flag => flag === false));
+  assert.deepEqual(h.writes, before);
+  assert.ok(h.disclosures.at(-1).sourceAssertions.some(a => a.sql.includes("document_jobs")));
+  for (const [action, body] of [["prepare", h.prepareBody()], ["authorize", h.authorizeBody()], ["run", h.runBody()],
+    ["recover-result", { draftHash: h.plan.draftHash, grantId: "synthetic-grant", jobId: "synthetic-job", explicitRecovery: true }]]) {
+    assertUnavailable(await h.request(action, body), "experience_output_source_changed");
+  }
+  assert.deepEqual(h.writes, before);
+});
+test("changed source never enables another output or incomplete original", async () => {
+  assertUnavailable(await (await completedChangedImage("slides")).request(), "experience_output_source_changed");
+  for (const change of [h => { h.job.status = "running"; }, h => { h.evidence.row.status = h.grant.status = "active"; },
+    h => { h.grant.pendingCalls = 1; }, h => { h.grant.operations[0].pendingCalls = 1; }]) {
+    const h = await completedChangedImage(); change(h);
+    assertUnavailable(await h.request(), "experience_output_source_changed");
+  }
+});
+test("changed-source result retains current custody, private source, managed requirement and original expiry gates", async () => {
+  for (const [change, code, status] of [
+    [h => { h.guardAlive = false; }, "experience_output_unavailable", 410],
+    [h => { h.sourceProblems.push("private source unavailable"); }, "experience_output_source_unavailable", 410],
+    [h => { h.job.expires_at = "2020-01-01T00:00:00.000Z"; }, "experience_output_original_job_unavailable", 410],
+    [h => { h.evidence.slots[0].attemptOrdinal = 1; }, "experience_output_original_operation_changed", 409],
+    [h => { h.grant.actorUserId = "foreign"; }, "experience_output_original_grant_unavailable", 410],
+    [h => { h.projection.libraryBlocks.find(b => b.id === h.recipe.spec.id).locked = true; }, "experience_output_requirement_changed", 409],
+  ]) {
+    const h = await completedChangedImage(); change(h); assertUnavailable(await h.request(), code, status);
+  }
 });
 
 for (const output of ["image", "slides"]) test(`${output}: separate prepare/authorize/run then GET reuses exact original identity`, async () => {

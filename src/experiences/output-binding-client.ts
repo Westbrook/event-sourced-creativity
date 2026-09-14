@@ -66,9 +66,16 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
     }
     if (!["draftId", "draftHash", "releaseHash", "documentId", "projectId", "output"].every(key => value[key] === identity[key as keyof ExperienceBindingIdentity])
       || value.sourceSurface !== "outputs" || !status.has(String(value.status)) || !stages.has(value.stage as never)
-      || !record(value.current) || value.current.custody !== "verified" || value.current.source !== "verified"
+      || !record(value.current) || value.current.custody !== "verified" || !["verified", "changed"].includes(String(value.current.source))
       || !text(value.current.sourceDigest) || !text(value.current.requirementsDigest)) return null;
     const plan = value.plan, preflight = value.preflight, original = value.original, grant = value.grant;
+    const retainedImage = value.current.source === "changed";
+    if (retainedImage && (value.output !== "image" || value.status !== "succeeded" || value.stage !== "run"
+      || value.disposition !== "original_run_recorded" || Object.values(permitted).some(flag => flag !== false)
+      || !record(original) || !commandIdentity(original.run) || original.jobStatus !== "completed"
+      || original.slotStatus !== "succeeded" || original.grantStatus !== "completed" || !record(grant)
+      || grant.status !== "completed" || grant.pendingCalls !== 0 || !Array.isArray(grant.operations)
+      || grant.operations.length !== 1 || !record(grant.operations[0]) || grant.operations[0].pendingCalls !== 0)) return null;
     if (Object.hasOwn(value, "sceneRenewal")) {
       const renewal = value.sceneRenewal;
       if (value.output !== "scene" || value.status !== "unavailable" || value.disposition !== "prepared"
@@ -121,7 +128,7 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
       }
     } else if (Object.hasOwn(value, "model3dCostPreview")) return null;
     if (plan !== null && (!record(plan) || !["revisionId", "targetId", "targetContractDigest", "sourceDigest", "requirementsDigest"].every(key => text(plan[key]))
-      || plan.sourceDigest !== value.current.sourceDigest || plan.requirementsDigest !== value.current.requirementsDigest)) return null;
+      || !retainedImage && (plan.sourceDigest !== value.current.sourceDigest || plan.requirementsDigest !== value.current.requirementsDigest))) return null;
     if (preflight !== null) {
       if (!record(preflight) || !record(plan) || !["id", "planRevisionId", "termsDigest", "sourceDigest", "requirementsDigest", "createdAt", "expiresAt"].every(key => text(preflight[key]))
         || preflight.planRevisionId !== plan.revisionId || preflight.sourceDigest !== plan.sourceDigest || preflight.requirementsDigest !== plan.requirementsDigest

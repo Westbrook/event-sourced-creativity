@@ -1,4 +1,5 @@
 import { ref } from "lit/directives/ref.js";
+import { retainedImageSourceMessage } from "../experiences/retained-image-source-message.ts";
 import { createVideoOutputContract, type VideoOutputContract } from "../model/output-video-contract.ts";
 import { readVideoReferencePlan } from "../experiences/video-reference-plan.ts";
 import { captureExperienceVideoTarget, verifyExperienceVideoRead } from "../experiences/video-native-result.ts";
@@ -233,7 +234,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #paidDecision(action: "authorize" | "run" | "resumeRun"): OutputPaidDecision | null {
     const state = this.#state(), binding = this.#binding, terms = this.#terms(state);
-    if (!binding || !state?.plan || !this.#visible(binding) || this.#busy || !state.permitted[action]
+    if (!binding || !state?.plan || state.current.source !== "verified" || !this.#visible(binding) || this.#busy || !state.permitted[action]
       || !binding.authorization || action === "authorize" && (!this.#approval || !terms?.available || !state.preflight)
       || action !== "authorize" && (!terms?.grantAvailable || !state.original || !state.grant
         || !Number.isFinite(Date.parse(state.original.expiresAt)) || !Number.isFinite(Date.parse(state.original.jobExpiresAt))
@@ -378,6 +379,7 @@ export class FormaExperienceHost extends FormaElement {
     } finally { if (this.#operation === operation) this.#refreshing = false; }
   }
   #statusLabel(state: ExperienceNativeState) {
+    if (state.current.source === "changed") return retainedImageSourceMessage(this.i18n.locale);
     if (state.recovery === "pending") return this.i18n.system("Result pending");
     if (state.permitted.recoverResult) return this.i18n.system("Recovery available");
     if (state.status === "unavailable" && state.disposition === "prepared") return this.i18n.system("Generation unavailable");
@@ -469,10 +471,13 @@ export class FormaExperienceHost extends FormaElement {
   }
   #snapshotMatches(state: ExperienceNativeState) {
     const resource = this.store.outputRequirements.resource(state.documentId), snapshot = resource.snapshot, plan = snapshot?.confirmedPlan;
+    const retainedImage = state.output === "image" && state.current?.source === "changed";
     if (!state.original || !state.plan || !snapshot || !plan || resource.state !== "ready" || resource.accessLost || resource.privateUnavailable
       || snapshot.documentId !== state.documentId || snapshot.projectId !== state.projectId || snapshot.scope.kind !== "personal"
       || snapshot.scope.actorUserId !== this.#binding?.ownerId || snapshot.sourceVerification.status !== "verified"
-      || !snapshot.permissions.canRequest || snapshot.sourceRevision !== state.plan.sourceDigest || snapshot.requirementRevision !== state.plan.requirementsDigest
+      || !snapshot.permissions.canRequest
+      || snapshot.sourceRevision !== (retainedImage ? state.current.sourceDigest : state.plan.sourceDigest)
+      || snapshot.requirementRevision !== (retainedImage ? state.current.requirementsDigest : state.plan.requirementsDigest)
       || plan.revisionId !== state.plan.revisionId || plan.sourceDigest !== state.plan.sourceDigest || plan.requirementsDigest !== state.plan.requirementsDigest
       || plan.targetContractDigests[state.plan.targetId] !== state.plan.targetContractDigest || plan.plan.targets.length !== 1
       || plan.plan.targets[0]?.id !== state.plan.targetId || (state.output === "scene" ? !captureExperienceSceneTarget(plan.plan.targets[0], this.#binding?.sceneSource)
@@ -880,6 +885,7 @@ export class FormaExperienceHost extends FormaElement {
     return html`<section class="experience-host" aria-busy=${String(this.#loading || this.#busy)}>
       <header class="experience-heading"><h1>${binding?.selection.output === "video" ? "Video" : binding?.selection.output === "image" ? "Image" : binding?.selection.output === "slides" ? "Slides" : binding?.selection.output === "short_story" ? "Short story" : binding?.selection.output === "scene" ? "Scene" : binding?.selection.output === "model3d" ? this.i18n.system("3D model") : binding?.selection.output === "audio" ? this.i18n.system("Audio") : binding?.selection.output === "storyboard" ? "Storyboard" : "Output"}</h1></header>
       <p data-experience-status class=${duplicateReviewStatus ? "experience-status-duplicate" : nothing} tabindex="-1" role="status" aria-live="polite">${this.#model3dText(this.#status)}</p>
+      ${available && state?.current.source === "changed" ? html`<p data-experience-retained-source dir="auto">${retainedImageSourceMessage(this.i18n.locale)}</p>` : nothing}
       ${sourceCapacity ? html`<p data-experience-source-capacity dir="auto">${this.i18n.t(sourceCapacity.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[sourceCapacity.id], sourceCapacity.values)}</p>` : nothing}
       ${available && result ? result.output === "image" ? html`<figure class="experience-native-image"><img data-experience-image src=${result.image.media.url} alt="Image" width=${result.image.media.width} height=${result.image.media.height}
         @load=${(event: Event) => this.#imageLoad(event, result)} @error=${() => { if (this.#result === result) { this.#clearResult(); this.#status = "Result unavailable"; this.requestUpdate(); } }}></figure>`
