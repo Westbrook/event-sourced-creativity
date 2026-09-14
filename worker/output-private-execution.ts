@@ -7,8 +7,9 @@ const privateWrite = (sql: string) => /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE
   || /\bUPDATE\s+document_jobs\s+SET\b[\s\S]*(?:result_json|request_json|lease_expires_at)/iu.test(sql);
 
 /** Existing writers run unchanged, with the same transaction guarding their private writes. */
-export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined}={}): WorkerEnv {
+export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined;onStorageStage?:(stage:"storage_reserve"|"storage_put"|"storage_ack")=>void}={}): WorkerEnv {
   const nativeKeys = new Map<string, string>();
+  const onStorageStage=options.onStorageStage;
   // The private-content INSERT also checks this exact policy version in its
   // transaction. Reusing one request-local read never bypasses a policy change.
   let retentionPolicy:Promise<unknown>|undefined=Object.hasOwn(options,"retentionPolicy")?Promise.resolve(options.retentionPolicy):undefined;
@@ -288,15 +289,18 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
         const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer)), byte => byte.toString(16).padStart(2, "0")).join("");
         const now = new Date().toISOString();
         nativeKeys.set(storageKey,hash);
+        onStorageStage?.("storage_reserve");
         await guardedBatch([
           env.DB.prepare("INSERT INTO output_native_storage_writes(scope_key,slot_id,storage_key,content_sha256,status,write_acknowledged,created_at,updated_at) VALUES(?,?,?,?,'writing',0,?,?)")
             .bind(scope.key, slot.slotId, storageKey, hash, now, now),
         ], true);
         let acknowledged = false;
         try {
+          onStorageStage?.("storage_put");
           const stored = await target.put(storageKey, value, {...options,customMetadata:{...options?.customMetadata,outputNativeStorage:"1",outputScopeKey:scope.key,outputSlotId:slot.slotId,outputOwnerId:scope.ownerUserId,outputDocumentId:scope.documentId,outputSha256:hash}});
           if (!stored) throw new Error("output_native_storage_write_not_confirmed");
           acknowledged = true;
+          onStorageStage?.("storage_ack");
           await guardedBatch([env.DB.prepare("UPDATE output_native_storage_writes SET write_acknowledged=1,status=CASE WHEN status='writing' THEN 'written' ELSE status END,updated_at=? WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=?")
             .bind(new Date().toISOString(), scope.key, slot.slotId, storageKey, hash)],true);
           return stored;

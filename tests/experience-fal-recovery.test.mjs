@@ -146,6 +146,20 @@ async function recoveryBatchSeam(){
   const checked=new Function("reject",stripTypeScriptTypes(source.slice(start,end))+";return acknowledgedRecoveryBatch;")(code=>{throw new Error(code);});
   return{source,checked,stripTypeScriptTypes};
 }
+test("native storage stages preserve reserve failure without touching object storage",async()=>{
+  const {readFile}=await import('node:fs/promises'),{stripTypeScriptTypes}=await import('node:module');
+  const source=await readFile(new URL('../worker/output-private-execution.ts',import.meta.url),'utf8');
+  const start=source.indexOf('return async (storageKey:')+'return '.length,end=source.indexOf('\n      };',start)+8;
+  assert.ok(start>7&&end>start);
+  const sentinel=new Error('private original SQL failure'),stages=[];let batches=0,puts=0;
+  const put=new Function('nativeKeys','scope','slot','env','guardedBatch','target','onStorageStage',
+    'return '+stripTypeScriptTypes(source.slice(start,end))+';')(
+      new Map(),{key:'scope',ownerUserId:'owner',documentId:'doc'},{slotId:'slot'},{DB:{prepare(){return{bind(){return{};}};}}},
+      async()=>{batches++;throw sentinel;},{put(){puts++;throw Error('forbidden');}},stage=>stages.push(stage));
+  await assert.rejects(put('original-key',new Uint8Array([1]),{customMetadata:{}}),error=>error===sentinel);
+  assert.deepEqual(stages,['storage_reserve']);assert.equal(batches,1);assert.equal(puts,0);
+  assert.deepEqual([...source.matchAll(/onStorageStage\?\.\("([a-z_]+)"\)/gu)].map(m=>m[1]),['storage_reserve','storage_put','storage_ack']);
+});
 test("original recovery requires every indexed batch acknowledgement and never retries an unknown commit",async()=>{
   const {checked}=await recoveryBatchSeam(),statements=[{},{}],ok=()=>({success:true,results:[]});
   const good=[ok(),{success:true,results:[{original:"retained"}]}];
@@ -193,6 +207,7 @@ test("recovery reports only fixed stages and preserves original early failures w
   const {falRecoveryJobStateAllowed}=await import('../worker/output-fal-recovery-policy.ts');
   const stageNames=[...source.matchAll(/options\.onStage\?\.\("([a-z_]+)"\)/gu)].map(match=>match[1]);
   assert.deepEqual(stageNames,['binding','authority','checkpoint','completion_read','private_read','request_restore','planning','calls_read','origin','lease','provider_read','call_settle','receipt_write','account_settle','storage_write','private_write','publish','publish']);
+  assert.match(source,/onStorageStage:options\.onStage/u,'Reuse the fixed internal stage callback');
   assert.equal((source.match(/options\.onStage\?\./gu)||[]).length,stageNames.length,'No dynamic or private stage payload');
   const body=stripTypeScriptTypes(source.slice(source.indexOf('const object='))).replace('export async function recoverOutputFalImage','async function recoverOutputFalImage');
   for(const stop of ['binding','authority','checkpoint']){

@@ -120,7 +120,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
   const live=()=>[...assertions,leaseAssertion];
   const timeout=AbortSignal.timeout(120_000),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
   const assertCurrent=async()=>{if(signal.aborted)throw new Error("output_fal_recovery_canceled");await acknowledgedRecoveryBatch(env.DB,live().flatMap(a=>outputAssertionStatements(env,a)));};
-  const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy});
+  const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy,onStorageStage:options.onStage});
   try{
     options.onStage?.("provider_read");
     const result=await readOutputFalImageResult(env,captured,receipt,{assertCurrent,signal,onStage:options.onStage});
