@@ -17,7 +17,16 @@ export async function nativeDocumentJobOriginSchema(env: WorkerEnv): Promise<{
   present: boolean; guard: {condition: string; bindings: (string | number | null)[]};
 }> {
   const db = env.DB;
-  const result = structuredClone(await db.prepare(`SELECT ${schemaExpression} AS schema_json`).all<Record<string, unknown>>());
+  return qualifyNativeDocumentJobOriginSchema(env,db,await nativeDocumentJobOriginSchemaRead(db).all<Record<string,unknown>>());
+}
+
+export const nativeDocumentJobOriginSchemaRead=(db:WorkerEnv["DB"])=>db.prepare(`SELECT ${schemaExpression} AS schema_json`);
+
+/** Qualifies one captured observation; its exact SQL witness still guards use. */
+export async function qualifyNativeDocumentJobOriginSchema(env:WorkerEnv,db:WorkerEnv["DB"],observation:unknown):Promise<{
+  present:boolean;guard:{condition:string;bindings:(string|number|null)[]};
+}> {
+  const result=structuredClone(observation) as D1Result<Record<string,unknown>>;
   if (env.DB !== db) throw new Error("native_document_job_origin_schema_database_changed");
   if (!result || result.success !== true || (result as typeof result & {error?: unknown}).error !== undefined || !Array.isArray(result.results)
     || result.results.length !== 1 || !Object.hasOwn(result.results, 0))

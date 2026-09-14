@@ -2263,6 +2263,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
 
   let persistedForegroundPresentation:DocumentJobRow|null=null;let outputOutcomeSynchronized=false;
   let operationEnvironment=env;let outputOperationExecution:OutputEventExecution|undefined;
+  let foregroundAccountSettlement:OutputEventExecution["accountSettlement"];
   try {
     if(consentedAdaptiveJob(row)){
       const response=await runWithHeartbeat(env,row,user,(control)=>executeApprovedAdaptivePlanning(env,user,row!,control)),body=await response.json() as Record<string,unknown>;
@@ -2303,7 +2304,10 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const outputExecution=outputBinding?await createOutputEventExecution(env,user,row,outputBinding,outputProof):undefined;
     outputOperationExecution=outputExecution;operationEnvironment=outputExecution?.guardedEnvironment??env;
     if(!foregroundPresentation)await updateJobProgress(operationEnvironment,row,"compiling",row.kind==="preview"||row.kind==="generate"?"Compiling the checked document state for generation.":row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
-    const response = await runWithHeartbeat(operationEnvironment, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, outputExecution?{...control,output:outputExecution}:control),nativeExecutionPolicy);
+    const response = await runWithHeartbeat(operationEnvironment, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, outputExecution?{...control,output:outputExecution}:foregroundPresentation&&!user.projectExecution?{...control,settlePersonalPresentation:async input=>{
+      const {settlePersonalPresentationBudgets}=await import("./pilot-policy.ts");
+      foregroundAccountSettlement=await settlePersonalPresentationBudgets(operationEnvironment,user.billingUserId??user.userId,{...input,jobId:row.job_id,streamId:row.stream_id,correlationId:row.correlation_id});
+    }}:control),nativeExecutionPolicy);
     documentJobMemoryClaims.delete(row);
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
     const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;
@@ -2339,7 +2343,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     if(!outputBinding&&response.ok&&foregroundPresentation&&Number(terminalWrite.meta.changes??0)===1){
       const saved:DocumentJobRow={...row,status:"completed",result_json:JSON.stringify(terminalResult),error_message:null,completed_at:completedAt,lease_expires_at:null,notified_at:parentJobIdFromRequest(parseRequest(row))?completedAt:row.notified_at,updated_at:completedAt};
-      persistedForegroundPresentation=await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",saved);
+      persistedForegroundPresentation=await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",saved,true,foregroundAccountSettlement);
     }else if(!outputBinding)await refreshGenerationReceipt(operationEnvironment,user,row,body,detail);
   } catch (error) {
     documentJobMemoryClaims.delete(row);

@@ -1284,6 +1284,55 @@ export async function settleCostBudget(env: WorkerEnv, userId: string, reservati
   return { settled, reservationId: row.reservation_id, reservedMicrousd: row.reserved_microusd, usedMicrousd: settled ? used : row.used_microusd, period: row.period, status: settled ? status : row.status };
 }
 
+/** Original personal foreground Slides only. Reuse the established settlement
+ * writers, but qualify the exact pair and acknowledge its final row atomically. */
+export async function settlePersonalPresentationBudgets(env:WorkerEnv,userId:string,input:{jobId:string;streamId:string;correlationId:string;reservationId:string;costReservationId:string;usedTokens:number;usedMicrousd:number}){
+  input=Object.freeze({...input});
+  const db=env.DB,fail=():never=>{throw new Error("presentation_settlement_unavailable");};
+  if(![input.usedTokens,input.usedMicrousd].every(n=>Number.isSafeInteger(n)&&n>=0))return fail();
+  const read=structuredClone(await db.batch([
+    db.prepare(`SELECT budget_reservations.*${outputReservationColumns(env,"budget_reservations")} FROM budget_reservations WHERE reservation_id=? AND owner_id=?`).bind(input.reservationId,userId),
+    db.prepare(`SELECT cost_budget_reservations.*${outputReservationColumns(env,"cost_budget_reservations")} FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?`).bind(input.costReservationId,userId),
+  ]));
+  const complete=(results:unknown,count:number):results is D1Result<Record<string,unknown>>[]=>Array.isArray(results)&&results.length===count&&Array.from({length:count},(_,i)=>i).every(i=>Object.hasOwn(results,i)&&results[i]?.success===true&&results[i]?.error===undefined);
+  const single=(result:D1Result<Record<string,unknown>>)=>Array.isArray(result.results)&&result.results.length===1&&Object.hasOwn(result.results,0)&&result.results[0]&&typeof result.results[0]==="object"&&!Array.isArray(result.results[0]);
+  if(env.DB!==db||!complete(read,2)||!read.every(single))return fail();
+  const token=read[0].results[0] as unknown as BudgetReservationRow,cost=read[1].results[0] as unknown as CostBudgetReservationRow;
+  if(token.reservation_id!==input.reservationId||cost.reservation_id!==input.costReservationId||token.owner_id!==userId||cost.owner_id!==userId
+    ||token.stream_id!==input.streamId||cost.stream_id!==input.streamId||token.correlation_id!==input.correlationId||cost.correlation_id!==input.correlationId
+    ||token.operation!=="document-render:slides"||cost.operation!==token.operation||token.period!==cost.period||cost.workspace_id!=="forma"
+    ||token.output_bound||cost.output_bound||token.output_uncertain||cost.output_uncertain
+    ||token.status!=="active"||!["active","executing"].includes(cost.status)
+    ||![token.reserved_tokens,cost.reserved_microusd].every(n=>Number.isSafeInteger(n)&&n>0)
+    ||token.used_tokens!==0||cost.used_microusd!==0||token.settled_at!==null||cost.settled_at!==null)return fail();
+  const tokens=tokenSettlementStatements(env,userId,token.reservation_id,token,null,input.usedTokens,"document_slides_completed");
+  const dollars=costSettlementStatements(env,userId,cost,null,input.usedMicrousd);
+  const {outputAssertionStatements}=await import("./output-requirements-ledger.ts");
+  const guard=outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost
+    ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period
+    JOIN document_jobs job ON job.owner_id=token.owner_id AND job.stream_id=token.stream_id AND job.correlation_id=token.correlation_id
+    WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.stream_id=? AND token.correlation_id=?
+      AND token.operation='document-render:slides' AND token.period=? AND token.status='active' AND cost.status=? AND cost.workspace_id='forma'
+      AND token.reserved_tokens=? AND cost.reserved_microusd=? AND token.updated_at IS ? AND cost.updated_at IS ?
+      AND job.job_id=? AND job.kind='render_document' AND job.status='committing' AND job.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND json_extract(job.request_json,'$.artifactKind')='slides'
+      AND json_extract(job.result_json,'$.reservationId')=token.reservation_id AND json_extract(job.result_json,'$.costReservationId')=cost.reservation_id
+      AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scope WHERE scope.reservation_id IN(token.reservation_id,cost.reservation_id))
+      AND NOT EXISTS(SELECT 1 FROM pilot_cost_reservation_scopes fixed WHERE fixed.reservation_id=cost.reservation_id)
+      AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.token_reservation_id=token.reservation_id OR slot.cost_reservation_id=cost.reservation_id)
+      AND NOT EXISTS(SELECT 1 FROM budget_hold_dispositions disposition WHERE disposition.token_reservation_id=token.reservation_id OR disposition.cost_reservation_id=cost.reservation_id))`,
+    bindings:[token.reservation_id,cost.reservation_id,userId,input.streamId,input.correlationId,token.period,cost.status,token.reserved_tokens,cost.reserved_microusd,token.updated_at,cost.updated_at,input.jobId]});
+  const acknowledged=(statements:D1PreparedStatement[])=>statements.flatMap(statement=>[statement,...outputAssertionStatements(env,{sql:"changes()=1"})]);
+  const statements=[...guard,...acknowledged(tokens.statements),...acknowledged(dollars.statements),
+    db.prepare("SELECT reservation_id,reserved_microusd,used_microusd,status FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?").bind(cost.reservation_id,userId)];
+  if(env.DB!==db)return fail();
+  const written=structuredClone(await db.batch(statements));
+  if(env.DB!==db||!complete(written,statements.length)||!single(written[written.length-1]))return fail();
+  const receipt=written[written.length-1].results[0];
+  if(Object.keys(receipt).length!==4||receipt.reservation_id!==cost.reservation_id||receipt.reserved_microusd!==cost.reserved_microusd||receipt.used_microusd!==input.usedMicrousd||receipt.status!==dollars.status)return fail();
+  return Object.freeze({reservation_id:cost.reservation_id,reserved_microusd:cost.reserved_microusd,used_microusd:input.usedMicrousd,status:dollars.status});
+}
+
 /** Compose the existing account settlements for one durable Output slot. */
 export async function settleDocumentGenerationBudgets(env:WorkerEnv,userId:string,input:{reservationId:string;costReservationId:string;usedTokens?:number;usedMicrousd?:number;reason?:string;assertions?:import("./output-requirements-ledger.ts").OutputSqlAssertion[]}){
   const read=await env.DB.batch([

@@ -1,4 +1,5 @@
-import {OutputConflictError,outputAssertionStatements,outputScopeAuthority,type OutputScope,type OutputOperationSlot,type OutputSqlAssertion} from './output-requirements-ledger.ts';
+import {OutputConflictError,outputAssertionStatements,outputScopeAuthority,type OutputScope,type OutputSqlAssertion} from './output-command-core.ts';
+import type {OutputOperationSlot} from './output-requirements-ledger.ts';
 import {sceneSourceVersionAssertions,type SceneSourceVersion} from './scene-source-generation.ts';
 import {SCENE_SOURCE_GENERATION_MAX} from '../db/scene-source-generations.ts';
 import type {EventRow} from './event-write-primitives.ts';

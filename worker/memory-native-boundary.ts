@@ -1,7 +1,7 @@
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
-import { nativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
-import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
+import { nativeStructuredOriginSchemaRead,qualifyNativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
+import { nativeDocumentJobOriginSchemaRead,qualifyNativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 
 type AnswerAlias = "answer" | "authored" | "private_content" | "content";
 type TurnAlias = "turn" | "prior" | "metadata";
@@ -21,15 +21,26 @@ export async function nativeMemoryAnswerExclusion(env: WorkerEnv,
   const answer = input.answerAlias, turn = input.turnAlias, db = env.DB;
   // Total additive-schema absence is compatible only while it remains absent.
   // A partial or unknown schema cannot certify an ordinary-content fallback.
-  const structured = await nativeStructuredOriginSchema(env);
+  // One request-local snapshot, not a cache. All exact schema/absence witnesses
+  // remain in the eventual consequential SQL below.
+  const observations=structuredClone(await db.batch([
+    nativeStructuredOriginSchemaRead(db),nativeDocumentJobOriginSchemaRead(db),
+    db.prepare("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins"
+      +(!turn?",EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='assistant_turns') AS turns":"")),
+  ]));
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
-  const documentJob = await nativeDocumentJobOriginSchema(env);
+  if(!Array.isArray(observations)||observations.length!==3||[0,1,2].some(i=>!Object.hasOwn(observations,i)||observations[i]?.success!==true||(observations[i] as {error?:unknown}).error!==undefined))throw new Error("memory_boundary_schema_unavailable");
+  const structured=await qualifyNativeStructuredOriginSchema(env,db,observations[0]);
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
-  const hasOrigins = await db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins'")
-    .first<{ present: number }>();
+  const documentJob=await qualifyNativeDocumentJobOriginSchema(env,db,observations[1]);
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
-  const hasTurns = !turn && await db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name='assistant_turns'")
-    .first<{ present: number }>();
+  const rows=observations[2].results;
+  if(!Array.isArray(rows)||rows.length!==1||!Object.hasOwn(rows,0))throw new Error("memory_boundary_schema_unavailable");
+  const flags=rows[0] as Record<string,unknown>;
+  if(!flags||typeof flags!=="object"||Array.isArray(flags)||Object.keys(flags).length!==(turn?1:2)
+    ||!Object.hasOwn(flags,"origins")||![0,1].includes(flags.origins as number)
+    ||!turn&&(!Object.hasOwn(flags,"turns")||![0,1].includes(flags.turns as number)))throw new Error("memory_boundary_schema_unavailable");
+  const hasOrigins={present:flags.origins},hasTurns=!turn&&{present:flags.turns};
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
   // Freeze omitted auxiliary branches too. If a table arrives between guard
   // construction and use, its newly registered/repointed contents require a

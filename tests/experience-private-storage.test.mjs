@@ -16,6 +16,39 @@ const root = realpathSync(rootInput);
 const manifest = JSON.parse(readFileSync(manifestInput, 'utf8'));
 assert.equal(manifest.reviewedFor, 'experience-private-storage-local-sqlite');
 const modulePaths = [
+  "src/experiences/video-reference.ts",
+  "src/experiences/contracts.ts",
+  "src/experiences/video-reference-plan.ts",
+  "src/experiences/scene-context.ts",
+  "src/experiences/model3d-reference.ts",
+  "src/experiences/model3d-reference-plan.ts",
+  "worker/output-proof-capacity-diagnostic.ts",
+  "worker/scene-source-generation.ts",
+  "worker/scene-job-source-witness.ts",
+  "src/model/reference-composition.ts",
+  "src/model/model3d-view.ts",
+  "db/scene-source-generation-tables.ts",
+  "db/scene-source-generations.ts",
+  "src/model/context-health.ts",
+  "src/model/prompt-policy.ts",
+  "src/model/reference-media.ts",
+  "src/model/block-types.ts",
+  "src/model/retained-state.ts",
+  "src/model/document-artifacts.ts",
+  "src/model/document-output-intent.ts",
+  "src/model/audio.ts",
+  "src/model/output-source-policy.ts",
+  "src/model/presentation-count-policy.ts",
+  "src/model/audio-local-conversion.ts",
+  "src/model/presentation-delivery.ts",
+  "src/model/presentation-source.ts",
+  "src/model/model3d-media-revision.ts",
+  "src/model/native-retained-model3d.ts",
+  "src/model/audio-provider-contracts.ts",
+  "src/model/audio-container.ts",
+  "src/model/combined-context.ts",
+  "src/model/model3d-assets.ts",
+  "src/model/model3d.ts",
   "src/experiences/catalog.ts",
   "src/experiences/compiler.ts",
   "src/experiences/image-ratio.ts",
@@ -362,9 +395,24 @@ async function savedOriginal(h, auth, plan, stored) {
   return { row: saved, read };
 }
 function oneCommitted(h, cleanupChanges = 1) {
+  assert.equal(h.sql.state.readBatches, 1, 'The exact schema observations share one read-only batch');
   assert.equal(h.sql.state.batchAttempts, 1); assert.equal(h.sql.state.committedBatches, 1); assert.equal(h.sql.state.rolledBackBatches, 0);
   assert.deepEqual(h.sql.state.batches[0].statements.map(item => item.changes), [1, cleanupChanges]);
 }
+
+test('private-storage: failed schema read batch writes nothing and cannot consume the later lost-write ACK',async t=>{
+  const {h,auth,plan}=await setup(t),before=h.sql.snapshot();h.sql.loseNextCommitAck();
+  const db=h.sql.DB;
+  await assert.rejects(db.batch([
+    db.prepare('SELECT (SELECT json_group_array(name) FROM sqlite_schema) AS schema_json'),
+    db.prepare('SELECT (SELECT json_group_array(name) FROM sqlite_schema) AS schema_json'),
+    db.prepare("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins INVALID SQL"),
+  ]));
+  assert.deepEqual(h.sql.snapshot(),before);assert.equal(h.sql.state.batchAttempts,0);assert.equal(h.sql.state.lostAckThrows,0);
+  await rejectedSave(h,auth,plan,/acknowledgement lost/u);
+  assert.equal(h.sql.state.committedBatches,1);assert.equal(h.sql.state.lostAckThrows,1);
+  assert.ok(row(h,plan.draftId),'Only the actual later save commits before losing its ACK');
+});
 async function rejectedSave(h, auth, plan, message) {
   let value;
   try { await save(h, auth, plan); } catch (error) { value = error; }

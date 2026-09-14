@@ -6,11 +6,12 @@ import test from "node:test";
 import worker from "../dist/server/index.js";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
 import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobCanRecoverProviderRender, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
-import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
+import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget, settlePersonalPresentationBudgets } from "../worker/pilot-policy.ts";
 import { appendAuditEvent, readWorkspaceEvents } from "../worker/runtime.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { artifactReviewState } from "../src/model/context-health.ts";
 import { isSceneCostPreview } from "../src/model/scene-cost-consent.ts";
+import { nativeMemoryAnswerExclusion } from "../worker/memory-native-boundary.ts";
 
 const workspaceRoot=new URL("../",import.meta.url).href;
 const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
@@ -184,6 +185,124 @@ async function stalePresentationAttempt(fixture,job,{attemptCount=1,reserve=fals
 }
 
 const flushExecution=async()=>{for(let index=0;index<8;index+=1)await new Promise(setImmediate);};
+
+function memorySchemaFixture(context){
+  const f=reliabilityDatabase();context.after(()=>f.sqlite.close());
+  f.sqlite.exec("CREATE TABLE private_content(content_id TEXT,kind TEXT);INSERT INTO private_content VALUES('ordinary','prompt');CREATE TABLE events(event_id TEXT,type TEXT,payload TEXT,actor TEXT)");
+  const env={DB:f.DB};return {...f,env,guard:()=>nativeMemoryAnswerExclusion(env,{answerAlias:'content'}),allows:guard=>f.sqlite.prepare('SELECT COUNT(*) AS count FROM private_content content WHERE '+guard.sql).get(...guard.bindings).count};
+}
+
+test('memory schema batch preserves absence witnesses and does not cache an additive table',async context=>{
+  const f=memorySchemaFixture(context),guard=await f.guard();assert.equal(f.controls.bindingCalls,1);assert.equal(f.allows(guard),1);
+  f.sqlite.exec("CREATE TABLE memory_native_answer_origins(answer_content_id TEXT,actor_user_id TEXT,scope_key TEXT,turn_id TEXT);INSERT INTO memory_native_answer_origins VALUES('ordinary','actor','scope','turn')");
+  assert.equal(f.allows(guard),0,'old absence witness cannot expose newly registered content');
+  const fresh=await f.guard();assert.equal(f.controls.bindingCalls,2);assert.equal(f.allows(fresh),0,'new observation excludes the registered body');
+});
+
+async function installMemorySchema(f){
+  const {readFileSync}=await import('node:fs');
+  for(const name of ['0033_memory_structured_answer_provenance.sql','0034_memory_document_job_origins.sql'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+}
+
+test('memory schema batch qualifies both exact deployed migrations and rejects a later schema change',async context=>{
+  const f=memorySchemaFixture(context),absent=await f.guard();await installMemorySchema(f);assert.equal(f.allows(absent),0);
+  const present=await f.guard();assert.equal(f.allows(present),1);assert.equal(f.controls.bindingCalls,2);
+  f.sqlite.exec('CREATE INDEX changed_origin_schema ON memory_document_job_answer_origins(origin_id)');
+  assert.equal(f.allows(present),0);await assert.rejects(f.guard(),/schema_unavailable/);
+});
+
+test('memory schema batch rejects database replacement during fingerprint hashing',async context=>{
+  const f=memorySchemaFixture(context);await installMemorySchema(f);const digest=crypto.subtle.digest.bind(crypto.subtle);
+  context.mock.method(crypto.subtle,'digest',async(...args)=>{const result=await digest(...args);f.env.DB={...f.DB};return result;});
+  await assert.rejects(f.guard(),/database_changed/);
+});
+
+for(const table of ['memory_structured_answer_origins','memory_document_job_answer_origins'])test('memory schema batch fails closed after partial additive schema '+table,async context=>{
+  const f=memorySchemaFixture(context),guard=await f.guard();f.sqlite.exec('CREATE TABLE '+table+'(id TEXT)');
+  assert.equal(f.allows(guard),0);await assert.rejects(f.guard(),/schema_unavailable/);
+});
+
+for(const fault of ['short','sparse','failed','error','missing-row','extra-row-key','string-flag','schema-json','database-swap'])test('memory schema batch rejects '+fault+' before returning a content guard',async context=>{
+  const f=memorySchemaFixture(context),batch=f.DB.batch.bind(f.DB);
+  f.DB.batch=async statements=>{const result=await batch(statements);
+    if(fault==='short')return result.slice(0,2);
+    if(fault==='sparse')delete result[1];
+    if(fault==='failed')result[0].success=false;
+    if(fault==='error')result[0].error='uncertain';
+    if(fault==='missing-row')result[2].results=[];
+    if(fault==='extra-row-key')result[0].results[0].unexpected=true;
+    if(fault==='string-flag')result[2].results[0].origins='0';
+    if(fault==='schema-json')result[1].results[0].schema_json='{}';
+    if(fault==='database-swap')f.env.DB={...f.DB};
+    return result;
+  };
+  await assert.rejects(f.guard(),/schema_unavailable|database_changed/);assert.equal(f.controls.bindingCalls,1);
+});
+
+// Actual personal settlement and SQLite transaction, with faults only at the
+// database transport or fixture rows. No provider request is made by these tests.
+async function personalSettlementFixture(context){
+  const fixture=await reliabilityWorker();await fixture.drainBackground();context.after(()=>fixture.sqlite.close());
+  const response=await fixture.request('/api/document-jobs',json(presentationAdmission('doc-atmosphere','settlement-pair-'+crypto.randomUUID())));
+  assert.equal(response.status,202);const {job}=await response.json();
+  const attempt=await stalePresentationAttempt(fixture,job,{reserve:true,renewed:true});
+  fixture.sqlite.prepare("UPDATE document_jobs SET status='committing' WHERE job_id=?").run(job.jobId);
+  const input={jobId:job.jobId,streamId:'creative:dev-local-creative',correlationId:attempt.correlation,reservationId:attempt.token.reservationId,costReservationId:attempt.cost.reservationId,usedTokens:2000,usedMicrousd:12000};
+  const settle=()=>settlePersonalPresentationBudgets(fixture.environment,'dev-local-creative',input);
+  const snapshot=()=>Object.fromEntries(['budget_reservations','cost_budget_reservations','budget_counters','cost_budget_counters'].map(table=>[table,fixture.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
+  return {...fixture,input,settle,snapshot};
+}
+
+test('personal presentation settlement atomically records both units and returns the actual receipt',async context=>{
+  const f=await personalSettlementFixture(context),before=f.controls.bindingCalls;
+  assert.deepEqual(await f.settle(),{reservation_id:f.input.costReservationId,reserved_microusd:1000000,used_microusd:12000,status:'settled'});
+  assert.equal(f.controls.bindingCalls-before,2,'one read batch and one guarded write batch');
+  for(const [table,unit,used] of [['budget_counters','tokens',2000],['cost_budget_counters','microusd',12000]]){
+    const rows=f.sqlite.prepare('SELECT * FROM '+table+' WHERE scope IN (\'user\',\'workspace\')').all();
+    assert.equal(rows.length,2);for(const row of rows){assert.equal(row['reserved_'+unit],0);assert.equal(row['used_'+unit],used);}
+  }
+  const settled=f.snapshot();await assert.rejects(f.settle(),/presentation_settlement_unavailable/);assert.deepEqual(f.snapshot(),settled,'repetition never charges twice');
+});
+
+test('personal presentation settlement owns its measured values before any await',async context=>{
+  const f=await personalSettlementFixture(context),original=f.DB.batch.bind(f.DB),costId=f.input.costReservationId;let calls=0;
+  f.DB.batch=async statements=>{const result=await original(statements);if(++calls===1)Object.assign(f.input,{usedTokens:9000,usedMicrousd:NaN,costReservationId:'mutated',jobId:'mutated'});return result;};
+  assert.deepEqual(await f.settle(),{reservation_id:costId,reserved_microusd:1000000,used_microusd:12000,status:'settled'});
+  assert.equal(f.sqlite.prepare('SELECT used_tokens FROM budget_reservations WHERE reservation_id=?').get(f.input.reservationId).used_tokens,2000);
+});
+
+for(const fault of ['wrong-owner','wrong-pair','expired-lease','changed-status','missing-counter','ignored-counter','ignored-cost','scope-arrived','invalid-amount','read-ack','sparse-ack','database-swap'])test('personal presentation settlement rejects '+fault+' without partial money changes',async context=>{
+  const f=await personalSettlementFixture(context),original=f.DB.batch.bind(f.DB);let calls=0;
+  if(fault==='wrong-owner')f.input.streamId='creative:other';
+  if(fault==='wrong-pair')f.sqlite.prepare("UPDATE document_jobs SET result_json=json_set(result_json,'$.costReservationId','another') WHERE job_id=?").run(f.input.jobId);
+  if(fault==='expired-lease')f.sqlite.prepare("UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z' WHERE job_id=?").run(f.input.jobId);
+  if(fault==='missing-counter')f.sqlite.exec("DELETE FROM budget_counters WHERE scope='workspace'");
+  if(fault==='ignored-counter')f.sqlite.exec("CREATE TRIGGER ignore_counter BEFORE UPDATE ON budget_counters WHEN OLD.scope='workspace' BEGIN SELECT RAISE(IGNORE); END");
+  if(fault==='ignored-cost')f.sqlite.exec("CREATE TRIGGER ignore_cost BEFORE UPDATE ON cost_budget_reservations BEGIN SELECT RAISE(IGNORE); END");
+  if(fault==='invalid-amount')f.input.usedTokens=NaN;
+  f.DB.batch=async statements=>{
+    calls++;
+    if(calls===2&&fault==='changed-status')f.sqlite.prepare("UPDATE cost_budget_reservations SET status='released' WHERE reservation_id=?").run(f.input.costReservationId);
+    if(calls===2&&fault==='scope-arrived')f.sqlite.prepare("INSERT INTO project_budget_reservation_scopes(reservation_kind,reservation_id,organization_id,project_access_id,actor_user_id,workspace_scope_id,created_at) VALUES('tokens',?,'org','project','dev-local-creative','org',?)").run(f.input.reservationId,new Date().toISOString());
+    const result=await original(statements);
+    if(calls===1&&fault==='read-ack')return result.slice(0,1);
+    if(calls===1&&fault==='sparse-ack'){delete result[0];return result;}
+    if(calls===1&&fault==='database-swap')f.environment.DB={...f.DB};
+    return result;
+  };
+  const before=f.snapshot();await assert.rejects(f.settle());
+  if(fault==='changed-status')before.cost_budget_reservations.find(row=>row.reservation_id===f.input.costReservationId).status='released';
+  assert.deepEqual(f.snapshot(),before,'transaction leaves all counters and reservations unchanged apart from the deliberate concurrent mutation');
+});
+
+for(const fault of ['lost-ack','short-ack','wrong-receipt'])test('personal presentation settlement never invents a receipt after '+fault,async context=>{
+  const f=await personalSettlementFixture(context),original=f.DB.batch.bind(f.DB);let calls=0;
+  f.DB.batch=async statements=>{const result=await original(statements);if(++calls===2){if(fault==='lost-ack')throw Error('lost acknowledgement after commit');if(fault==='short-ack')return result.slice(0,-1);result.at(-1).results[0].used_microusd=1;}return result;};
+  await assert.rejects(f.settle());const committed=f.snapshot();
+  assert.equal(committed.cost_budget_reservations.find(row=>row.reservation_id===f.input.costReservationId).used_microusd,12000);
+  assert.equal(committed.budget_reservations.find(row=>row.reservation_id===f.input.reservationId).used_tokens,2000);
+  await assert.rejects(f.settle());assert.deepEqual(f.snapshot(),committed,'lost ACK cannot repeat an already committed debit');
+});
 
 test("both audio admission routes reject invalid raw aliases and immutable input before provider contact",async()=>{
   const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
@@ -1084,6 +1203,7 @@ for(const [label,slideCount,repair] of [["a long-running twelve-block presentati
     assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));
     const result=(await completed.json()).job;assert.equal(result.status,"completed");
     const databaseSubrequests=fixture.controls.bindingCalls-before;
+    context.diagnostic(JSON.stringify({fixture:"presentation-request-budget",repair,databaseSubrequests,simulatedProviderCalls:providerCalls}));
     assert.ok(databaseSubrequests+providerCalls<50,`${databaseSubrequests} D1 binding calls and ${providerCalls} paid-provider requests must stay below the repository's conservative 50-request budget; actual hosted quotas require separate verification`);
     assert.equal(providerCalls,repair?2:1);assert.equal(validatedAtCommit,true);
     const envelopes=retained();assert.equal(envelopes.length,providerCalls);
@@ -1687,6 +1807,30 @@ test("rejects user-supplied slideshow recovery plans, provider receipts, and res
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,0);
   }finally{globalThis.fetch=previousFetch;}
+});
+
+test('owner-derived organization Slides billing retains its scoped settlement without a project cookie',async context=>{
+  const f=await reliabilityWorker();await f.drainBackground();context.after(()=>f.sqlite.close());
+  const documentId=await seedIndependentPresentation(f,'owner-derived-billing-document');
+  const workspace=await f.request('/api/workspaces',json({name:'Owner derived presentation billing'}));assert.equal(workspace.status,201);
+  const {organizationId}=await workspace.json();
+  const registered=await f.request(`/api/workspaces/${organizationId}/projects`,json({projectId:'project-atmosphere'}));assert.equal(registered.status,201);
+  // No project-context endpoint or cookie: admission/execution must discover
+  // the document owner's real organization scope themselves.
+  context.mock.method(globalThis,'fetch',async(url,init)=>{
+    assert.equal(String(url),'https://api.openai.com/v1/responses');
+    return Response.json({id:'owner-derived-scoped-response',model:'gpt-5.6-terra',output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  });
+  const admission=await f.request('/api/document-jobs',json(presentationAdmission(documentId,'owner-derived-billing')));assert.equal(admission.status,202,await admission.clone().text());
+  const {job}=await admission.json(),completed=await f.runJob(job);assert.equal(completed.status,200,await completed.clone().text());
+  const result=(await completed.json()).job;assert.equal(result.status,'completed',JSON.stringify(result.errorDetail));
+  const cost=f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE correlation_id=?').get(`${job.jobId}:attempt:1`);
+  assert.equal(cost.workspace_id,organizationId);assert.equal(cost.status,'settled');assert.equal(cost.used_microusd,12000);
+  assert.equal(result.result.generationReceipt.settled_cost_microusd,12000);
+  for(const [table,unit,used] of [['budget_counters','tokens',2000],['cost_budget_counters','microusd',12000]]){
+    const row=f.sqlite.prepare('SELECT * FROM '+table+" WHERE scope='workspace' AND scope_id=?").get(organizationId);
+    assert.equal(row['reserved_'+unit],0);assert.equal(row['used_'+unit],used);
+  }
 });
 
 test("enforces organization slideshow token caps before admission and truthfully settles bounded repair usage",async()=>{

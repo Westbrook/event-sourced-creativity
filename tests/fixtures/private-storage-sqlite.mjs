@@ -26,7 +26,7 @@ export function createPrivateStorageSqlite({ schema = 'absent' } = {}) {
   const personalInsertSuffix = ') THEN ? ELSE NULL END,?,?,NULL';
   const personalCleanupPrefix = "UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin','memory-document-job-origin') AND expires_at<=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id) AND ";
   const data = { schema, retired: false, closed: false, forbiddenWrites: 0, reentrantAttempts: 0, lateReadAttempts: 0,
-    prepares: 0, first: 0, all: 0, batchAttempts: 0, committedBatches: 0, rolledBackBatches: 0,
+    prepares: 0, first: 0, all: 0, readBatches: 0, batchAttempts: 0, committedBatches: 0, rolledBackBatches: 0,
     lostAckThrows: 0, reads: [], batches: [], fixtureMutations: [], fixtureDdl: [], cleanupFailure: null };
   let connectionActive = false, transactionOpen = false, nextLostAck = false;
   const statements = new WeakMap();
@@ -86,8 +86,8 @@ export function createPrivateStorageSqlite({ schema = 'absent' } = {}) {
       }
       if (failed) throw primary; // An explicit flag preserves even `throw undefined`.
     }
-    function read(rows, log) {
-      live(); rows.forEach(row => readable(row.sql)); acquire();
+    function read(rows, log, alreadyOwned = false) {
+      live(); rows.forEach(row => readable(row.sql)); if(!alreadyOwned)acquire();
       try {
         let failed = false, primary, result;
         try {
@@ -163,6 +163,29 @@ export function createPrivateStorageSqlite({ schema = 'absent' } = {}) {
       prepare(sql) { assert.equal(arguments.length, 1); return statementFor(sql); },
       async exec() { live(); refuse('Private storage attempted production schema/write execution'); },
       async batch(input) {
+        // The production boundary now observes its two schemas and auxiliary
+        // flags together. Keep that read-only snapshot separate from write
+        // accounting and lost-write-ACK injection; do not widen admitted DML.
+        if(Array.isArray(input)){
+          acquire();
+          try{
+            if(Object.getOwnPropertyDescriptor(input,'length')?.value===3){
+            const rows=[];
+            for(let index=0;index<3;index++){
+              const item=Object.getOwnPropertyDescriptor(input,String(index));
+              if(!item||!Object.hasOwn(item,'value'))refuse('Read batch needs own indexed statements');
+              const row=statements.get(item.value);
+              if(!row||row.bindings.length||row.sql.includes(';'))refuse('Read batch needs owned unbound schema statements');
+              const sql=normalized(row.sql);
+              if(index<2?!sql.startsWith('SELECT (SELECT json_group_array(')||!sql.endsWith(' AS schema_json')
+                :!sql.startsWith("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins"))refuse('Unexpected schema snapshot statement');
+              rows.push({sql:row.sql,bindings:[],kind:'all'});
+            }
+            live();data.readBatches++;
+            return read(rows,true,true);
+            }
+          }finally{connectionActive=false;}
+        }
         live(); data.batchAttempts++;
         const batch = { attempt: data.batchAttempts, statements: [], committed: false, rolledBack: false };
         data.batches.push(batch);

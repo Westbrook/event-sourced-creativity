@@ -47,10 +47,20 @@ export async function nativeStructuredOriginSchema(env: WorkerEnv): Promise<{
   present: boolean; guard: {condition: string; bindings: (string | number | null)[]};
 }> {
   const db = env.DB;
-  const result = structuredClone(await db.prepare(`SELECT ${structuredOriginSchemaExpression} AS schema_json`).all<Record<string, unknown>>());
+  return qualifyNativeStructuredOriginSchema(env,db,await nativeStructuredOriginSchemaRead(db).all<Record<string,unknown>>());
+}
+
+export const nativeStructuredOriginSchemaRead=(db:WorkerEnv["DB"])=>db.prepare(`SELECT ${structuredOriginSchemaExpression} AS schema_json`);
+
+/** Qualifies one captured observation; its exact SQL witness still guards use. */
+export async function qualifyNativeStructuredOriginSchema(env:WorkerEnv,db:WorkerEnv["DB"],observation:unknown):Promise<{
+  present:boolean;guard:{condition:string;bindings:(string|number|null)[]};
+}> {
+  const result=structuredClone(observation) as D1Result<Record<string,unknown>>;
   if (env.DB !== db) throw new Error("native_structured_origin_schema_database_changed");
-  if (result.success !== true || (result as typeof result & {error?: unknown}).error !== undefined || !Array.isArray(result.results) || result.results.length !== 1)
+  if (!result || result.success !== true || (result as typeof result & {error?: unknown}).error !== undefined || !Array.isArray(result.results) || result.results.length !== 1 || !Object.hasOwn(result.results,0))
     throw new Error("native_structured_origin_schema_unavailable");
+  if(!result.results[0]||typeof result.results[0]!=="object"||Array.isArray(result.results[0])||Object.keys(result.results[0]).length!==1||!Object.hasOwn(result.results[0],"schema_json"))throw new Error("native_structured_origin_schema_unavailable");
   const json = result.results[0].schema_json;
   if (typeof json !== "string" || bytes(json).length > 65536) throw new Error("native_structured_origin_schema_unavailable");
   let rows: unknown;
